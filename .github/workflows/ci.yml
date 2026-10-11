@@ -786,3 +786,40 @@ jobs:
           npm run test:ci --
           test/m93.windows-file-authority.test.ts
           test/m93.daemon-service-windows-integration.test.ts
+
+  merge-gate:
+    # One stable required check across both PR lanes. The classifier and every
+    # matrix job must settle before this job can report a result. A skipped or
+    # failed selected lane is a failure, including when classification failed.
+    name: Merge Gate
+    needs: [classify, site, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require selected CI lane
+        env:
+          GATE_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          node <<'NODE'
+          const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
+          const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+          const expected = ['classify', 'site', ...full];
+          if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
+              expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
+            throw new Error('CI dependency inventory is incomplete');
+          }
+          const outcome = (name) => jobs[name]?.result;
+          if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
+          const lane = jobs.classify.outputs?.lane;
+          if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
+          const selected = lane === 'site' ? ['site'] : full;
+          const excluded = lane === 'site' ? full : ['site'];
+          for (const name of selected) {
+            if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
+          }
+          for (const name of excluded) {
+            if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
+          }
+          console.log(`Merge Gate passed: ${lane} CI`);
+          NODE
