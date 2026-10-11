@@ -14,7 +14,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { cmdResources } from '../src/cli/resources.js';
 import {
-  prepareResourceNativeProfile, repinResourceNativeProfile, RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS, ResourceNativeProfileRepinError,
+  prepareResourceNativeProfile, repinResourceNativeProfile, RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS,
+  RESOURCE_NATIVE_PROFILE_MANIFEST_V2_KEYS, ResourceNativeProfileRepinError,
   upgradeResourceNativeProfileTemplate, ResourceNativeProfileTemplateUpgradeError, resolveNativeSeatLaunch,
   type ResourceNativeProfile, type ResourceNativeProfileRepinOptions, type ResourceNativeProfileTemplateUpgradeOptions,
 } from '../src/core/resources/native-profile.js';
@@ -96,7 +97,8 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
   it('pins prepare\'s manifest shape to the key list repin validates, so the two cannot drift silently', () => {
     for (const provider of ['codex', 'claude', 'grok'] as const) {
       const profile = prepared(provider);
-      expect(Object.keys(JSON.parse(readFileSync(profile.manifestPath, 'utf8')))).toEqual([...RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS]);
+      expect(Object.keys(JSON.parse(readFileSync(profile.manifestPath, 'utf8')))).toEqual(process.platform === 'darwin'
+        ? [...RESOURCE_NATIVE_PROFILE_MANIFEST_V2_KEYS] : [...RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS]);
     }
   });
 
@@ -351,8 +353,10 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
       expectRefusal(() => repin(profile, newBinary), 'failed-partial');
       stopFaults();
       expect(leftoverTemps(profile)).toEqual([]);
-      // Torn but safe: the launcher (what actually runs) already moved; the manifest has not.
-      expect(launch(profile).binary).toBe('native-new');
+      // A witnessed Mac profile refuses a torn manifest before native exec;
+      // legacy profiles keep their prior launcher-first behavior.
+      if (process.platform === 'darwin') expect(() => launch(profile)).toThrow();
+      else expect(launch(profile).binary).toBe('native-new');
       expect(readFileSync(profile.manifestPath, 'utf8')).toBe(original.manifest);
 
       // Moving somewhere else from a torn state is refused rather than guessed.

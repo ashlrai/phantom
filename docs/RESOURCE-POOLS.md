@@ -1704,7 +1704,25 @@ repaired or overwritten. A partial failure retains its leaf for inspection;
 never delete it automatically because a later login may have added credentials.
 
 The standalone launcher pins the selected native and Node executable paths and
-checks its original private directory identities. It uses `process.execve` to
+checks its original private directory identities. New macOS profiles additionally
+record the APFS volume UUID, directory inode and creation time, and preparation
+boot UUID in both a version-2 preparation manifest and the launcher. A device number may change after a reboot only when the stable
+volume and directory witnesses still match; any unavailable witness, replacement,
+permission change or device change during the preparation boot is refused.
+This adds a bounded local `df`/`diskutil`/`plutil` probe before native launch.
+Older profiles retain their original strict device and inode binding. Before
+their device changes, `ashlr resources profile upgrade-identity --directory
+<existing-profile> --dry-run` validates the old binding; repeat without
+`--dry-run` while that seat is idle to install the witness without reading
+native sign-in state. It saves `launcher.mjs.identity-prev` for inspection.
+It also saves `profile.json.identity-prev`; an interrupted publication refuses
+launch until the explicit upgrade verifies both backups and finishes the manifest.
+An already drifted profile cannot be upgraded: prepare a new private profile,
+sign in separately, verify the account and quota, then update the seat binding.
+Both files remain owner-managed and can be rewritten by the same macOS user;
+this witness detects replacement and accidental one-file edits under the private
+directory trust model, not a malicious owner with access to both files.
+The launcher uses `process.execve` to
 preserve PID, process group and stdio. A Node runtime supporting that API and a
 supported POSIX system are required; relocating/replacing state directories or
 removing the pinned runtime can invalidate the launcher. A native OS-level exec
