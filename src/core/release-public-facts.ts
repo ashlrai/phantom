@@ -143,8 +143,8 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
   throw new Error('Job enumeration limit exceeded');
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
- * added site-only PR lane. These two jobs never replace the 15 authority gates. */
-async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<boolean> {
+ * later site lane and merge gate. Neither replaces the 15 authority gates. */
+async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<'historical' | 'site' | 'gate'> {
   const path = '.github/workflows/ci.yml';
   const file = object(await reader.github(`${base}/contents/${path}?ref=${sourceSha}`, signal));
   equal(file['type'], 'file', 'CI workflow type'); equal(file['path'], path, 'CI workflow path');
@@ -157,7 +157,8 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(workflow['name'], 'CI', 'CI workflow name');
   const jobs = object(workflow['jobs']);
   const hasClassifier = Object.hasOwn(jobs, 'classify'); const hasSite = Object.hasOwn(jobs, 'site');
-  if (!hasClassifier && !hasSite) return false;
+  const hasGate = Object.hasOwn(jobs, 'merge-gate');
+  if (!hasClassifier && !hasSite && !hasGate) return 'historical';
   if (!hasClassifier || !hasSite) throw new Error('Incomplete source CI site topology');
   const classifier = object(jobs['classify']); const site = object(jobs['site']); const full = object(jobs['ci']);
   equal(classifier['name'], 'Classify PR site lane', 'classifier source name');
@@ -172,10 +173,26 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     if (matches.length !== 1) throw new Error('Classifier source step missing or ambiguous');
     equal(matches[0]!['run'], command, 'classifier source command');
   }
-  return true;
+  if (!hasGate) return 'site';
+  const gate = object(jobs['merge-gate']);
+  equal(gate['name'], 'Merge Gate', 'merge gate source name');
+  equal(gate['runs-on'], 'ubuntu-latest', 'merge gate source runner');
+  equal(gate['if'], '${{ always() }}', 'merge gate source condition');
+  const required = ['classify', 'site', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
+    'native-macos-broker-foundation', 'windows-service-authority'];
+  if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
+  if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
+  const step = object(gate['steps'][0]);
+  equal(step['name'], 'Require selected CI lane', 'merge gate source step');
+  equal(object(step['env'])['GATE_NEEDS'], '${{ toJSON(needs) }}', 'merge gate source input');
+  if (typeof step['run'] !== 'string' || !step['run'].includes("const selected = lane === 'site' ? ['site'] : full;") ||
+      !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')")) {
+    throw new Error('Incomplete source merge gate decision');
+  }
+  return 'gate';
 }
 
-function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string): void {
+function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean): void {
   for (const name of ['Classify PR site lane', 'Site PR (ecosystem)']) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Ancillary qualification job missing or ambiguous');
@@ -196,6 +213,17 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
       }
     }
   }
+  if (gate) {
+    const matches = jobs.filter((job) => job['name'] === 'Merge Gate');
+    if (matches.length !== 1) throw new Error('Merge gate job missing or ambiguous');
+    const job = matches[0]!;
+    equal(job['run_id'], id, 'merge gate run'); equal(job['head_sha'], sourceSha, 'merge gate candidate');
+    equal(job['status'], 'completed', 'merge gate status'); equal(job['conclusion'], 'success', 'merge gate outcome');
+    if (!Array.isArray(job['labels']) || job['labels'].includes('self-hosted') || !job['labels'].includes('ubuntu-latest')) throw new Error('Unexpected merge gate runner');
+    if (!Array.isArray(job['steps']) || job['steps'].some((step) => !['success', 'skipped'].includes(String(object(step)['conclusion'])) || object(step)['status'] !== 'completed')) throw new Error('Merge gate steps incomplete');
+    const steps = job['steps'].map(object).filter((step) => step['name'] === 'Require selected CI lane');
+    if (steps.length !== 1 || steps[0]!['status'] !== 'completed' || steps[0]!['conclusion'] !== 'success') throw new Error('Required merge gate step missing or skipped');
+  }
 }
 
 async function successfulRun(reader: ReleasePublicReader, base: string, repository: string, sourceSha: string, workflow: string, signal?: AbortSignal): Promise<{ id: number; attempt: number }> {
@@ -214,11 +242,12 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
   if (!['pull_request', 'push', 'workflow_dispatch'].includes(String(run['event']))) throw new Error('Unexpected qualification event');
   const jobs = await jobsFor(reader, base, id, attempt, signal);
   const names = workflow === 'ci.yml' ? RELEASE_CI_JOBS : ['Dependency audit (root + Raycast)'];
-  const ancillary = workflow === 'ci.yml' && await sourceCiAncillaryJobs(base, sourceSha, reader, signal);
-  const allNames: readonly string[] = ancillary ? [...names, 'Classify PR site lane', 'Site PR (ecosystem)'] : names;
+  const ancillary = workflow === 'ci.yml' ? await sourceCiAncillaryJobs(base, sourceSha, reader, signal) : 'historical';
+  const allNames: readonly string[] = ancillary === 'historical' ? names :
+    [...names, 'Classify PR site lane', 'Site PR (ecosystem)', ...(ancillary === 'gate' ? ['Merge Gate'] : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||
       new Set(jobs.map((job) => job['name'])).size !== jobs.length || jobs.some((job) => !allNames.includes(String(job['name'])))) throw new Error('Unexpected qualification job inventory');
-  if (ancillary) verifyCiAncillaryJobs(jobs, id, sourceSha);
+  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary === 'gate');
   for (const name of names) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Required qualification job missing or ambiguous');

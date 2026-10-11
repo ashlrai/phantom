@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { parse } from 'yaml';
 
@@ -103,6 +104,44 @@ describe('M30 CI workflow', () => {
     const policy = readFileSync(resolve(repoRoot, '.github/scripts/ci-site-lane.mjs'), 'utf8');
     expect(policy).toContain("if (eventName !== 'pull_request') return 'full'");
     expect(policy).toContain("if (paths.some((path) => !allowed.has(path))) return 'full'");
+  });
+
+  it('publishes one fail-closed Merge Gate result for exactly the selected lane', () => {
+    const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
+    const gate = jobs['merge-gate']!;
+    const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+    expect(gate.name).toBe('Merge Gate');
+    expect(gate.needs).toEqual(['classify', 'site', ...full]);
+    expect(gate.if).toBe('${{ always() }}');
+    expect(gate['runs-on']).toBe('ubuntu-latest');
+    expect(gate['continue-on-error']).toBeUndefined();
+    const steps = gate.steps as { env: Record<string, string>; run: string }[];
+    expect(steps).toHaveLength(1);
+    expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
+    const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
+    expect(source).toBeTruthy();
+    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success') => {
+      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
+        result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
+      }]));
+      return () => runInNewContext(source!, {
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies) } }, console: { log: () => {} },
+      });
+    };
+    const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
+    const complete = Object.fromEntries(full.map((name) => [name, 'success']));
+    expect(execute('site', { ...site, site: 'success' })).not.toThrow();
+    expect(execute('full', { ...complete, site: 'skipped' })).not.toThrow();
+    for (const name of full) {
+      for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+        expect(execute('full', { ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
+      }
+    }
+    expect(execute('site', { ...site, site: 'failure' })).toThrow();
+    expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
+    expect(execute('full', { ...complete, site: 'success' })).toThrow();
+    expect(execute('full', { ...complete, site: 'skipped' }, 'failure')).toThrow();
+    expect(execute('unknown', { ...complete, site: 'skipped' })).toThrow();
   });
 
   it('is reusable as the canonical release verification authority', () => {
@@ -332,8 +371,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(17);
-    expect(new Set(names).size).toBe(17);
+    expect(names).toHaveLength(18);
+    expect(new Set(names).size).toBe(18);
+    expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
     expect(names).toContain('Native macOS broker foundation (Rust 1.97.1)');

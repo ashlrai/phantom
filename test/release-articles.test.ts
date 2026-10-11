@@ -283,16 +283,49 @@ describe('fresh public facts are data, not saved release authority', () => {
     }
     return value;
   }
+  function withMergeGateJobs(endpoint: string, raw: unknown): unknown {
+    const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
+    if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+      const jobs = value['jobs'] as Record<string, unknown>[];
+      jobs.push({ id: 902, name: 'Merge Gate', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
+          { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
+        ] });
+      value['total_count'] = jobs.length;
+    }
+    return value;
+  }
   it('binds the current source classifier/site pair without replacing any of the 15 required gates', async () => {
-    const reader = fixtureReader(withAncillaryJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    const previousSiteSource = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8').split('\n  merge-gate:\n')[0]!;
+    const reader = fixtureReader(withAncillaryJobs, { workflowBytes: Buffer.from(previousSiteSource) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
     expect(reader.github).toHaveBeenCalledWith(`repos/${REPO}/contents/.github/workflows/ci.yml?ref=${SOURCE}`, undefined);
+  });
+  it('binds the new source Merge Gate while retaining all fifteen full qualification jobs', async () => {
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each(['missing', 'failure', 'skipped-step', 'wrong-runner'])('withholds release facts for Merge Gate %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const gate = jobs.find((job) => job['name'] === 'Merge Gate')!;
+        if (kind === 'missing') jobs.pop();
+        if (kind === 'failure') gate['conclusion'] = 'failure';
+        if (kind === 'skipped-step') (gate['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
+        if (kind === 'wrong-runner') gate['labels'] = ['self-hosted'];
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each(['unknown', 'duplicate-id', 'duplicate-name', 'required-failed', 'required-missing', 'classifier-failed',
     'classifier-step-skipped', 'classifier-step-duplicate', 'site-success', 'site-ran', 'ancillary-run', 'ancillary-head',
     'ancillary-runner', 'missing-pair'])('refuses current qualification topology %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const classifier = jobs.find(job => job['name'] === 'Classify PR site lane')!;
@@ -329,7 +362,7 @@ describe('fresh public facts are data, not saved release authority', () => {
       if (kind === 'site-condition') workflowBytes = Buffer.from(current.toString().replace("needs.classify.outputs.lane == 'site'", 'always()'));
       if (kind === 'classifier-command') workflowBytes = Buffer.from(current.toString().replace('node .github/scripts/ci-site-lane.mjs', 'echo site'));
       const reader = fixtureReader((endpoint, raw) => {
-        const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
+        const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
         if (endpoint.includes('/contents/.github/workflows/ci.yml?')) {
           if (kind === 'path') value['path'] = '.github/workflows/other.yml';
           if (kind === 'type') value['type'] = 'symlink';
