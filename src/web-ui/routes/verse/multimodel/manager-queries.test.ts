@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { pendingManagerMessage, submitManagerMessage, validManagerRead, validManagerProjection } from './manager-queries.js';
+import { outcomesQuery } from '../fleet/outcomes-queries.js';
 
 const healthy = (sessionId: string, outcomeId: string) => ({ sourceState: 'healthy', association: {
   outcomeId, revision: 3, scopeRevision: 1, paused: false, terminalStageIds: [],
@@ -97,7 +98,7 @@ describe('shared browser manager projection', () => {
   it.each([
     { mode: 'interactive', sessionId: null }, { mode: 'unknown' }, { conversationRevision: -1 },
     { running: { intent: 'plan', state: 'succeeded', route: { engine: 'codex', tier: 'frontier', seatId: 'personal', model: 'gpt-6.1-sol' } } },
-    { latest: { intent: 'review', state: 'succeeded', route: { engine: 'codex', tier: 'local', seatId: 'personal', model: 'gpt-6.1-sol' } } },
+    { latest: { intent: 'review', state: 'succeeded', route: { engine: 'codex', tier: 'unknown', seatId: 'personal', model: 'gpt-6.1-sol' } } },
     { next: { intent: 'publish' } },
   ])('refuses a malformed consumed projection %j', changed => {
     expect(validManagerProjection({ ...healthy('chat-1', 'work').association.manager, ...changed })).toBe(false);
@@ -106,5 +107,20 @@ describe('shared browser manager projection', () => {
     const degraded = { sourceState: 'degraded', enabled: false, mode: null, sessionId: null, conversationRevision: null, running: null, next: null, latest: null };
     expect(validManagerProjection(degraded)).toBe(true);
     expect(validManagerProjection({ ...degraded, enabled: true })).toBe(false);
+  });
+  it.each(['local', 'mid', 'frontier'])('accepts a recorded %s manager route', tier => {
+    const manager = { ...healthy('chat-1', 'work').association.manager,
+      latest: { intent: 'plan', state: 'aborted', route: { tier, engine: 'local-coder', seatId: 'local', model: 'qwen3.8:27b-ctx64k' } } };
+    expect(validManagerProjection(manager)).toBe(true);
+  });
+  it('keeps outcome records readable when the resident manager used a mid-tier model', async () => {
+    const manager = { ...healthy('chat-1', 'work').association.manager, mode: 'resident', sessionId: null, conversationRevision: 0,
+      latest: { intent: 'plan', state: 'aborted', route: { tier: 'mid', engine: 'local-coder', seatId: 'local', model: 'qwen3.8:27b-ctx64k' } } };
+    const outcome = { id: 'outcome-live', revision: 178, scopeRevision: 2, status: 'waiting-plan',
+      scope: { desiredOutcome: 'Improve startup', targetRepos: ['/repo'], acceptance: ['Measured faster startup'] },
+      tasks: [], manager };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ v: 1, sourceState: 'healthy',
+      outcomes: [outcome], enrollment: { sourceState: 'healthy', repos: ['/repo'] } })));
+    await expect(outcomesQuery.fetch()).resolves.toMatchObject({ outcomes: [outcome] });
   });
 });
