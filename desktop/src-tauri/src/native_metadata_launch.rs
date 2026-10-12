@@ -1203,6 +1203,7 @@ mod tests {
             let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
             command.spawn().unwrap()
         };
+        let child_pid = spawned.id();
         let output = spawned.wait_with_output().unwrap();
         assert!(!output.status.success());
         assert_eq!(output.stderr, b"Native metadata launch held: control-channel\n");
@@ -1217,8 +1218,8 @@ mod tests {
             .0,
         )
         .unwrap();
-        assert_eq!(identity["pid"], spawned.id());
-        assert_eq!(identity["pgid"], spawned.id());
+        assert_eq!(identity["pid"], child_pid);
+        assert_eq!(identity["pgid"], child_pid);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
