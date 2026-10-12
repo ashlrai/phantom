@@ -19,7 +19,8 @@
  *   4. the grant's CURRENT stage names the `devin` engine and the Devin seat
  *      is an enabled producer (its own engine identity — a Claude, Grok or
  *      Codex authorization never authorizes Devin);
- *   5. a Devin key connection is recorded;
+ *   5. a positive standing metered API allowance (no included-only billing inferred),
+ *      then a Devin key connection is recorded;
  *   6. the budget mode lets autonomy use Devin (A9 policy clamped to the
  *      grant: `reserve` mode keeps Devin off);
  *   7. the Devin ACU budget's FLEET gate: pause threshold, free ACUs for one
@@ -61,6 +62,7 @@ import type { CloudBacklogItem } from '../cloud/types.js';
 import type { BudgetPolicy } from '../routing/types.js';
 import type { AshlrConfig } from '../types.js';
 import type { DevinInternalLaunch } from './service.js';
+import { devinFleetApiBillingGate } from './api-billing.js';
 import type { DevinBudgetV1, DevinBudgetView, DevinLaunchResponse, DevinTaskV1 } from './types.js';
 
 /**
@@ -93,6 +95,7 @@ export type DevinFleetHoldCode =
   | 'not-enabled'
   | 'not-opted-in'
   | 'grant'
+  | 'billing'
   | 'not-connected'
   | 'budget-mode'
   | 'budget'
@@ -158,6 +161,8 @@ export function planDevinFleetLaunch(input: DevinFleetPlanInput): DevinFleetDeci
   if (input.section?.enabled !== true) return hold('not-enabled', 'The Devin lane is turned off.');
   if (input.section?.fleet !== true) return hold('not-opted-in', 'The fleet may not launch Devin sessions (`ashlr devin fleet on`).');
   if (!input.grant.ok) return hold('grant', input.grant.reason);
+  const billing = devinFleetApiBillingGate(input.policy);
+  if (!billing.ok) return hold('billing', billing.reason!);
   if (!input.connected) return hold('not-connected', 'No Devin key is connected.');
   if (!input.budgetMode.ok) return hold('budget-mode', input.budgetMode.reason);
   if (!input.view.canFleetLaunch.ok) return hold('budget', input.view.canFleetLaunch.reason ?? 'The Devin budget refused another fleet session.');
