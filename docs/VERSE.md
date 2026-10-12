@@ -146,6 +146,13 @@ a remote agent stopped, and no route contacts a provider. See
 [the coordination contract](PROACTIVE-COORDINATION.md) and
 [the remaining-work backlog](PROACTIVE-COORDINATION-BACKLOG.md).
 
+The local **Planning lab** shows declared or injected cached resource evidence,
+durable deterministic shadow evaluations, synthetic routing benchmarks and
+inspectable preference proposals. Usage, credits, costs and entitlement remain
+distinct; missing measurements stay unknown. Release readiness has no default
+commissioned target. Every lab result retains false execution/release authority;
+no collector, model call, provider contact or release action is started.
+
 Personal-agent transport still needs separate qualification. Dot plugin events
 require a provisioned authenticated plugin and event subscription; a Grok Bot
 routine requires its existing account-bound webhook and completion evidence.

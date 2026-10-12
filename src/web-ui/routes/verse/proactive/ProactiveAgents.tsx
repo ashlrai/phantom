@@ -15,6 +15,7 @@ import { VerseMark } from '../rail-icons.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { createProactiveProfile, deleteProactiveProfile, editProactiveProfile, proactiveProfilesQuery, coordinationQuery, recordCoordination, prepareCoordinationPacket } from './proactive-queries.js';
 import styles from './ProactiveAgents.module.css';
+import { PlanningLab } from './PlanningLab.js';
 
 const PROVIDERS: Record<ProactiveProvider, string> = { 'openai-dot': 'OpenAI Dot', 'grok-bot': 'Grok Bot', 'meta-muse': 'Meta Muse', other: 'Other agent' };
 const OPERATION_LABEL = { dispatch: 'Send work', status: 'Read status', cancel: 'Cancel work', result: 'Read results' };
@@ -152,6 +153,7 @@ export function ProactiveAgents() {
     </li>)}</ul> : null}
 
     <CoordinationBoard profiles={profiles} profilesAvailable={!unavailable} />
+    <PlanningLab />
 
     <Dialog open={editor !== null} onClose={() => { if (!busy) setEditor(null); }} titleId="proactive-profile-editor" title={editor?.saved ? `Edit ${editor.saved.displayName}` : 'Add a proactive agent'}
       description="Save a profile and planning preference for local assignments. This does not connect a transport, send work or enable spending.">

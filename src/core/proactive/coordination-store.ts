@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readReplayWatermark, reserveReplayWatermark } from './replay-watermark.js';
 import { readImmutablePrivateRecords, recoverImmutablePrivateRecordStore, writeImmutablePrivateRecord,
   type ImmutablePrivateRecordCodec, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 import { COMPANION_LIMITS, companionCanonical, companionDigest, companionIdentityEqual, companionTaskId, companionTextDigest,
@@ -87,11 +88,13 @@ function validTask(task: CompanionTask): boolean {
       !(attempt.handoffAt === null || companionTime(attempt.handoffAt)) || !(attempt.cancelRequestedAt === null || companionTime(attempt.cancelRequestedAt)) ||
       !(attempt.providerRunId === null || companionToken(attempt.providerRunId)) ||
       !(attempt.observationReference === null || companionText(attempt.observationReference, 2000)) ||
-      (attempt.contact === 'not-contacted' ? attempt.handoffAt !== null : !attempt.handoffAt) ||
+      (attempt.contact === 'not-contacted' ? attempt.handoffAt !== null : !attempt.handoffAt &&
+        !(['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) && attempt.cancelRequestedAt !== null && attempt.providerRunId === null)) ||
       (['accepted', 'unknown', 'proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) && !attempt.observationReference) ||
       (attempt.contact === 'accepted' && !attempt.providerRunId) ||
       (attempt.contact === 'cancel-confirmed' && !attempt.cancelRequestedAt) ||
-      (index < task.attempts.length - 1 && !['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact))) return false;
+      (index < task.attempts.length - 1 && !['proved-unstarted', 'cancel-confirmed'].includes(attempt.contact) &&
+        !(attempt.contact === 'not-contacted' && attempt.handoffAt === null && attempt.cancelRequestedAt !== null && attempt.providerRunId === null))) return false;
   }
   const reportIds = new Set<string>();
   for (const report of task.reports) {
@@ -169,9 +172,14 @@ export class CompanionCoordinationStore {
   read(): CompanionStoreRead {
     try {
       inspectPrivateDirectory(this.directory);
+      const watermark = readReplayWatermark(this.directory, { maxRecords: COMPANION_LIMITS.records });
+      if (watermark.sourceState === 'degraded') return { sourceState: 'degraded', state: null, records: [] };
       const read = readImmutablePrivateRecords(this.config(), { requireComplete: true });
-      if (read.sourceState === 'missing') return { sourceState: 'missing', state: null, records: [] };
+      if (read.sourceState === 'missing') return { sourceState: watermark.sourceState === 'missing' ? 'missing' : 'degraded', state: null, records: [] };
       if (!read.complete || read.sourceState !== 'healthy') return { sourceState: 'degraded', state: null, records: [] };
+      if (watermark.revision !== read.records.length || watermark.ledgerDigest !== (read.records.at(-1)?.digest ?? null)) {
+        return { sourceState: 'degraded', state: null, records: [] };
+      }
       const commands = new Set<string>();
       for (const [index, record] of read.records.entries()) {
         const previous = read.records[index - 1];
@@ -224,6 +232,7 @@ export class CompanionCoordinationStore {
     if (acquired.state !== 'acquired') return fail(acquired.state === 'contended' ? 'conflict' : 'unavailable');
     try {
       const requestDigest = companionDigest(request);
+      if (this.read().sourceState === 'degraded') return fail('unavailable');
       const recovery = recoverImmutablePrivateRecordStore(this.config());
       if (!['clean', 'recovered', 'missing'].includes(recovery)) return fail('unavailable');
       const read = this.read();
@@ -245,6 +254,10 @@ export class CompanionCoordinationStore {
       const record = { ...payload, digest: companionDigest(payload) };
       if (!parse(record)) return fail('invalid');
       if (Buffer.byteLength(codec.serialize(record)) > COMPANION_LIMITS.recordBytes) return fail('capacity');
+      if (!ownsLocalStoreLock(acquired.lock)) return fail('unavailable');
+      const reserved = reserveReplayWatermark(this.directory, { revision: record.revision, ledgerDigest: record.digest,
+        previousLedgerDigest: record.previousDigest }, { maxRecords: COMPANION_LIMITS.records });
+      if (!['recorded', 'replayed'].includes(reserved)) return fail('unavailable');
       const disposition = writeImmutablePrivateRecord(this.config(), record, { prepublish: () => ownsLocalStoreLock(acquired.lock) });
       if (!['recorded', 'replayed'].includes(disposition)) return fail(disposition === 'conflicted' ? 'conflict' : 'unavailable');
       return { ok: true, disposition: disposition as 'recorded' | 'replayed', revision: state.revision, taskId,

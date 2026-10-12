@@ -46,6 +46,11 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
+  'test/proactive-coordination.test.ts', // immutable ledger/watermark fsync, prefix-loss detection and ownership recovery
+  'test/proactive-coordination-api.test.ts', // scoped private packets/profiles plus immutable replay journals
+  'test/proactive-planning-api.test.ts', // durable offline receipts, exact request recovery and scoped packet loss
+  'test/proactive-routing-lab.test.ts', // immutable intent/settlement and independent replay custody with truncation faults
+  'test/proactive-replay-watermark.test.ts', // real private watermark fsync, orphan stages, file links and bounded custody
   'test/candidate-version-sync.test.ts', // real bounded CLI subprocesses; the subprocess case retains its original 5s deadline
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation

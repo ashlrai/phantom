@@ -4,12 +4,14 @@ import { getProactiveProfilesStore, ProactiveProfileError, type ProactiveProfile
 import { VERSE_PROACTIVE_AGENTS_PATH } from '../proactive/types.js';
 import type { ApiModule } from './api-modules.js';
 import { handleProactiveCoordinationApi } from './proactive-coordination-api.js';
+import { handleProactivePlanningApi } from './proactive-planning-api.js';
 
 export function createProactiveAgentsApi(store: () => ProactiveProfilesStore = getProactiveProfilesStore): ApiModule {
   return async (ctx, req, res, path, method) => {
     const base = VERSE_PROACTIVE_AGENTS_PATH;
     if (path !== base && !path.startsWith(`${base}/`)) return false;
     if (await handleProactiveCoordinationApi(ctx, req, res, path, method)) return true;
+    if (await handleProactivePlanningApi(ctx, req, res, path, method)) return true;
     try {
       if (method !== 'GET' && method !== 'POST') { sendJson(res, 404, { error: 'not found' }); return true; }
       if (method === 'POST') {

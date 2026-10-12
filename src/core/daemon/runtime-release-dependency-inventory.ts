@@ -496,6 +496,8 @@ function rootPackageIsPortable(
     'docs/QUICKSTART.md',
     'docs/AUTOMATIC-OUTCOMES.md',
     'docs/VERSE.md',
+    'docs/PROACTIVE-COORDINATION.md',
+    'docs/PROACTIVE-COORDINATION-BACKLOG.md',
     'docs/AUTONOMY-SETUP.md',
     'docs/RESIDENT-RUNTIME.md',
     'docs/AUTHORITY.md',

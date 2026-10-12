@@ -12,15 +12,17 @@ This engineering backlog was reviewed on 2026-10-12 in
 `/Users/masonwyatt/Documents/Codex/2026-10-12/task/phantom-coordination`, branch
 `codex/provider-neutral-companions-20261012`, based on
 `ea5f9ac2e6f66b8cece71b91fd9f663c513599f7` (`@ashlr/phantom` source candidate
-3.29.13). Parallel milestone edits are intentionally present in the proactive
-modules and UI. This document records source findings and implementation
-requirements; it does not claim those edits are tested, published, installed,
-commissioned or accepted with a real provider. Use the final milestone test
-report for its qualified revision and results.
+3.29.13). The first local coordination slice is preserved in commit `18ed964d9`.
+Resource projections, offline routing receipts and release readiness extend that
+slice. This document records source findings and implementation requirements;
+local verification does not claim publication, installation, commissioning or
+acceptance with a real provider. Use the milestone verification reports for
+their exact source hashes, checked revisions and results.
 
 The local milestone covers extensible profiles, scoped packets, a durable
 companion task ledger, manual reports and independent review, observable holds,
-and one local notification state. It provides coordination evidence without
+one local notification state, pure resource projections, offline routing
+evaluations and a read-only release evaluator. It provides evidence without
 provider contact. Funding references, declared capabilities and an enabled
 profile do not establish entitlements, a connection, transport qualification or
 spending permission. A fixture must be labeled simulated; a manual report must
@@ -44,6 +46,20 @@ release target, installed app or account setting was changed.
 | Funding and cost | [Credit observations](../src/core/resources/credit-pool-types.ts), [API promotion contracts](../src/core/resources/claude-api-grant-types.ts), [budget store](../src/core/routing/budget-store.ts). | Connection, balance, expiry, configured budget, entitlement and actual consumption must remain independent evidence. Generic companions need qualified accounting adapters. |
 
 ## Next implementation sequence
+
+The local planning follow-on adds public-snapshot resource DTOs with separate
+usage, native funding units/expiry, entitlement and actual/estimated/unknown
+costs. The default API reads saved declarations only; host cached-snapshot
+integration remains a separate seam because existing collectors can touch
+account configuration or assistant sessions. Credit pools use a neutral funding
+category and do not imply API access.
+
+The offline routing lab records deterministic shadow previews and a synthetic
+closed-choice benchmark with pinned request/input/snapshot/policy evidence,
+fallback reasons and local duration. It has no TypeSafe client, model calls,
+production preference writes or dispatch consumer. Preference proposals can be
+withdrawn as local records. Simulated results stay outside production priors;
+verified live outcomes and account/model cohorts remain future work.
 
 ### 1. Finish local coordination and an honest operator preview
 
@@ -197,11 +213,24 @@ this milestone. Follow [the current release guide](RELEASING.md); the legacy
 `release.yml` and [successor policy verifier](../scripts/verify-release-policy.mjs)
 remain frozen evidence contracts, not a canonical or generic release fallback.
 
-The smallest release follow-on is a pure, versioned release-plan/receipt adapter
-that projects the existing channel evidence into the Leader's task ledger.
-It should not acquire credentials or execute publishing. Target commissioning
-and effect consumers are separate changes, after agreeing the exact repository,
-package/site/app, channels, responsible owner and recovery plan.
+The local milestone now includes the pure
+[release-readiness evaluator](../src/core/proactive/release-readiness.ts) and
+[browser-safe projection contract](../src/core/proactive/release-readiness-types.ts).
+Its 31 focused offline tests pass, covering exact bindings, replay/conflict,
+freshness, dirty source, independent host validation, revoked scope, unresolved
+provider state and channel-specific recovery plans. Fixture success remains
+explicitly simulated. `ready-for-review` describes evidence and plans only;
+every effect flag and `releaseAuthorized` remain false. Post-check and recovery
+plans are declarations, not proof that checks, restoration or signer
+qualification occurred.
+
+The HTTP read-only release preview defaults to missing target evidence until an
+exact independently verified target is supplied; local build metadata cannot
+manufacture commissioning or provider status. This milestone adds no release
+consumer, target commissioning, credentials or publishing authority. The next
+release step is to project existing qualified channel receipts into the Leader's
+task ledger, then separately commission any effect consumer after agreeing the
+exact repository, package/site/app, channels, responsible owner and recovery plan.
 
 | Channel | Existing source seam | Required target binding and post-check | Recovery contract |
 |---|---|---|---|
@@ -219,6 +248,24 @@ Unknown provider state is reconciled before another write. A shared notification
 reports each channel's actual state without announcing global completion early.
 
 ## Authorization and delivery boundaries
+
+### Integration qualification observations (2026-10-12)
+
+These findings describe source or documented interfaces, not account admission.
+The parallel Phantom session supplied the installed Hermes inventory; no private
+history server was started and no account was inspected through it.
+
+| Integration | Source/documented capability | Current qualification gap |
+|---|---|---|
+| Supercenter | [Official MCP description](https://supercenter.app/platform/mcp) describes organization and per-agent endpoints, delegated permissions and audit. | No exact account endpoint or commissioned access is verified. Endpoint discovery is not scoped data-sharing approval. |
+| Conductor | [Official beta Cloud API](https://www.conductor.build/docs/api) manages cloud workspaces through a user API key; setup requires Pro. A queued prompt can still report idle before delivery. | No installed app/CLI or authorized account is verified. This does not provide control over arbitrary local Codex sessions; status alone is not verified completion. |
+| Hermes | Installed CLI reports 0.15.1; observed source revision `d29caf382868f8f5fb5e0c09f632f70f27e6e64e`. Its [pinned programmatic guide](https://github.com/NousResearch/hermes-agent/blob/d29caf382868f8f5fb5e0c09f632f70f27e6e64e/website/docs/developer-guide/programmatic-integration.md) and `gateway/platforms/api_server.py` contain a modern HTTP runs/capabilities interface. | No listener/dashboard is observed running or commissioned. The separate older `mcp_serve.py` bridge polls private session history and exposes conversation/message tools; it must not be started for capability discovery or substituted for a scoped task transport. |
+| Phantom personal companions | Configured provider/account/agent declarations and local scoped receipts exist. | Dots, Grok Bot and personal Muse transports, account ownership, scoped sharing and real completion/cancellation remain unqualified. |
+
+An offline adapter for an exact documented task API can be implemented and
+fixture-tested next. Live commissioning must separately bind account, capability,
+tenant/project scope, destination, usage/funding and current authorization. Tool
+presence, an authenticated account or a shared provider brand cannot widen it.
 
 Local schemas, stores, projections, fixture transports, previews, test coverage
 and a pure release-plan adapter can be developed without new account access.

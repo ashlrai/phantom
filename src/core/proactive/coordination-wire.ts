@@ -1,6 +1,7 @@
 /** Typed digest references preserve public redaction without exempting arbitrary hex secrets. */
 const DIGEST_FIELDS = new Set(['packetDigest', 'resultDigest', 'reportDigest', 'checkedResultDigest',
-  'id', 'attemptId', 'reportId', 'eventId']);
+  'id', 'attemptId', 'reportId', 'eventId', 'inputDigest', 'snapshotDigest', 'taskDigest',
+  'evaluationId', 'proposalId', 'artifactDigest', 'previousSignedInstallerDigest']);
 export function companionDigestToReference(value: string): string {
   return /^[a-f0-9]{64}$/.test(value) ? `sha256:${value.match(/.{8}/g)!.join('.')}` : value;
 }

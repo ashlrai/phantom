@@ -69,7 +69,9 @@ function apply(state: CompanionLedger, command: CompanionCommand, taskId: string
   switch (command.kind) {
     case 'assign': {
       const previous = task.attempts.at(-1);
-      if (task.state === 'verified' || previous && !['proved-unstarted', 'cancel-confirmed'].includes(previous.contact)) refuse('held');
+      const canceledBeforeIntent = previous?.contact === 'not-contacted' && previous.handoffAt === null &&
+        previous.cancelRequestedAt !== null && previous.providerRunId === null;
+      if (task.state === 'verified' || previous && !['proved-unstarted', 'cancel-confirmed'].includes(previous.contact) && !canceledBeforeIntent) refuse('held');
       if (task.attempts.length >= task.maxAttempts) refuse('capacity');
       const epoch = task.attempts.length + 1;
       const attempt: CompanionAttempt = { id: companionDigest([taskId, epoch, command.commandId]), epoch,
@@ -189,19 +191,27 @@ export function createCompanionCoordinator(options: { directory?: string; now?: 
       } catch { return failure('invalid'); }
     },
     reconcile(commandId, expectedRevision, taskId, attemptId) {
-      if (!options.host || !companionToken(commandId) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+      if (!companionToken(commandId) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
         !companionId(taskId) || !companionHash(attemptId)) return failure('held');
       try {
+        const request = { kind: 'reconcile', commandId, expectedRevision, taskId, attemptId };
+        const replay = store.replay(commandId, request);
+        if (replay) return replay;
+        if (!options.host) return failure('held');
         const read = store.read(); const task = read.state?.tasks[taskId]; const attempt = task?.attempts.find(item => item.id === attemptId);
         if (!task || !attempt) return failure(read.sourceState === 'degraded' ? 'unavailable' : 'not-found');
         const observed = options.host.observe(structuredClone(task), structuredClone(attempt));
         if (!validObservation(observed)) return failure('held');
         const observation = structuredClone(observed); const at = timestamp();
-        return store.transact(commandId, expectedRevision, { kind: 'reconcile', observation }, taskId, state => {
+        return store.transact(commandId, expectedRevision, request, taskId, state => {
           const currentTask = state.tasks[taskId]; const currentAttempt = currentTask?.attempts.find(item => item.id === attemptId);
           if (!currentTask || !currentAttempt || currentTask.id !== observation.taskId || currentAttempt.id !== observation.attemptId ||
             currentAttempt.epoch !== observation.epoch || !companionIdentityEqual(currentAttempt.assignee, observation.assignee) ||
-            currentAttempt.packetDigest !== observation.packetDigest || !currentAttempt.handoffAt || at < currentTask.updatedAt) refuse('held');
+            currentAttempt.packetDigest !== observation.packetDigest || at < currentTask.updatedAt) refuse('held');
+          const canceledBeforeIntent = currentAttempt.contact === 'not-contacted' && currentAttempt.handoffAt === null &&
+            currentAttempt.cancelRequestedAt !== null && currentAttempt.providerRunId === null && observation.providerRunId === null &&
+            ['proved-unstarted', 'cancel-confirmed'].includes(observation.state);
+          if (!currentAttempt.handoffAt && !canceledBeforeIntent) refuse('held');
           if (observation.state === 'proved-unstarted' && (currentAttempt.providerRunId !== null || ['accepted', 'cancel-confirmed'].includes(currentAttempt.contact)) ||
             observation.state === 'cancel-confirmed' && currentAttempt.cancelRequestedAt === null ||
             ['proved-unstarted', 'cancel-confirmed'].includes(currentAttempt.contact) && observation.state !== currentAttempt.contact ||

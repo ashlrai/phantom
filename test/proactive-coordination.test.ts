@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 import { createCompanionCoordinator } from '../src/core/proactive/coordination.js';
+import { readReplayWatermark, reserveReplayWatermark } from '../src/core/proactive/replay-watermark.js';
 import { companionTaskId, companionTextDigest, type CompanionCommand, type CompanionCoordinator,
   type CompanionHostObservation, type CompanionTask, type CompanionWrite } from '../src/core/proactive/coordination-types.js';
 
@@ -49,6 +50,68 @@ function observe(task: CompanionTask, state: CompanionHostObservation['state'], 
 }
 // Durable directory-entry fsync and immutable history validation are real local I/O.
 describe('companion coordination durable manual ledger', { timeout: 15_000 }, () => {
+  it.each(['accepted-tail', 'handoff-tail', 'all-ledger', 'watermarks'])('holds lost %s history instead of accepting a healthy prefix or replaying work', loss => {
+    const assigned = assign(create().id), task = handoff(assigned), attempt = task.attempts[0]!;
+    observe(task, 'accepted', 'accepted-before-loss');
+    const records = join(directory, 'ledger', 'records');
+    if (loss === 'all-ledger') rmSync(join(directory, 'ledger'), { recursive: true, force: true });
+    else if (loss === 'watermarks') rmSync(join(directory, 'replay-watermarks'), { recursive: true, force: true });
+    else {
+      const names = readdirSync(records).sort();
+      rmSync(join(records, names.at(-1)!));
+      if (loss === 'handoff-tail') rmSync(join(records, names.at(-2)!));
+    }
+    const restarted = createCompanionCoordinator({ directory });
+    expect(restarted.list()).toMatchObject({ sourceState: 'degraded', tasks: [] });
+    const command: CompanionCommand = { kind: 'handoff', commandId: 'handoff-1', expectedRevision: 2,
+      taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, ownerId: attempt.ownerId };
+    expect(restarted.replay(command)).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect(restarted.execute(command)).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect(restarted.execute({ kind: 'create', commandId: 'new-after-loss', expectedRevision: 0, task: input }))
+      .toMatchObject({ ok: false, reason: 'unavailable' });
+  });
+  it('holds a reserved watermark without its ledger record instead of recovering into a fresh request', () => {
+    const task = create(), head = readReplayWatermark(directory, { maxRecords: 2048 });
+    expect(reserveReplayWatermark(directory, { revision: 2, ledgerDigest: 'f'.repeat(64), previousLedgerDigest: head.ledgerDigest }, { maxRecords: 2048 })).toBe('recorded');
+    expect(coordinator.read(task.id)).toMatchObject({ sourceState: 'degraded', task: null });
+    expect(coordinator.execute({ kind: 'create', commandId: 'after-gap', expectedRevision: 1, task: input }))
+      .toMatchObject({ ok: false, reason: 'unavailable' });
+  });
+  it('replays host reconciliation before consulting a changed or unavailable host', () => {
+    const task = handoff(assign(create().id)), attempt = task.attempts[0]!;
+    const revision = coordinator.list().revision;
+    const accepted = observe(task, 'accepted', 'accepted-once');
+    observation = null;
+    const retry = good(coordinator.reconcile('accepted-once', revision, task.id, attempt.id));
+    expect(retry).toMatchObject({ disposition: 'replayed', revision: revision + 1 });
+    expect(retry.task).toEqual(accepted);
+    const noHost = createCompanionCoordinator({ directory });
+    expect(good(noHost.reconcile('accepted-once', revision, task.id, attempt.id)).task).toEqual(accepted);
+    observation = { taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, assignee: attempt.assignee,
+      packetDigest: attempt.packetDigest, state: 'unknown', providerRunId: null, evidenceReference: 'new-observation' };
+    expect(good(coordinator.reconcile('accepted-once', revision, task.id, attempt.id)).task).toEqual(accepted);
+    expect(coordinator.reconcile('accepted-once', revision + 1, task.id, attempt.id)).toMatchObject({ ok: false, reason: 'conflict' });
+  });
+  it('can supersede a locally canceled uncontacted attempt without claiming remote cancellation', () => {
+    let task = assign(create().id); const attempt = task.attempts[0]!;
+    task = good(execute({ kind: 'cancel', commandId: 'unsent-cancel', taskId: task.id, attemptId: attempt.id } as Omit<CompanionCommand, 'expectedRevision'>)).task;
+    expect(task.attempts[0]).toMatchObject({ contact: 'not-contacted', handoffAt: null, observationReference: null });
+    const next = assign(task.id, 'replace-unsent', peer);
+    expect(next.attempts).toHaveLength(2); expect(next.attempts[0]?.contact).toBe('not-contacted');
+    expect(createCompanionCoordinator({ directory }).read(task.id).task).toEqual(next);
+    expect(execute({ kind: 'handoff', commandId: 'old-owner-cannot-send', taskId: task.id, attemptId: attempt.id,
+      epoch: attempt.epoch, ownerId: attempt.ownerId } as Omit<CompanionCommand, 'expectedRevision'>)).toMatchObject({ ok: false, reason: 'held' });
+  });
+  it('accepts exact host cancellation evidence before handoff, but cannot fabricate acceptance', () => {
+    let task = assign(create().id); const attempt = task.attempts[0]!;
+    task = good(execute({ kind: 'cancel', commandId: 'cancel-no-intent', taskId: task.id, attemptId: attempt.id } as Omit<CompanionCommand, 'expectedRevision'>)).task;
+    observation = { taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, assignee: attempt.assignee,
+      packetDigest: attempt.packetDigest, state: 'accepted', providerRunId: 'fake-run', evidenceReference: 'fixture' };
+    expect(coordinator.reconcile('cannot-accept-unsent', coordinator.list().revision, task.id, attempt.id)).toMatchObject({ ok: false, reason: 'held' });
+    task = observe(task, 'cancel-confirmed', 'confirmed-unsent');
+    expect(task.attempts[0]).toMatchObject({ contact: 'cancel-confirmed', handoffAt: null, providerRunId: null });
+    expect(assign(task.id, 'after-confirmed-unsent', peer).attempts).toHaveLength(2);
+  });
   it('retains corrected source references while deduplicating the exact corrected report', () => {
     const initial = report(assign(create().id));
     const attempt = initial.attempts[0]!;
