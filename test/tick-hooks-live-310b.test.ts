@@ -122,7 +122,8 @@ function harness(): Harness {
     clampBudget: (p) => p,
     loadBudget: () => defaultBudgetPolicy(),
     capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [grokSeat(), claudeSeat()] }),
-    probeLocalRuntime: async () => ({ reachable: true, slots: 4, contextPerSlot: 65_536, detail: 'llama-server up with 4 slot(s)' }),
+    probeLocalRuntime: async () => ({ reachable: true, slots: 4, busySlots: 0, idleSlots: 4, observedAt: NOW_ISO,
+      contextPerSlot: 65_536, detail: 'llama-server up with 4 slot(s)' }),
     presence: async () => presenceNow,
     directives: () => null,
     liveLeaderConfig: (cfg) => cfg,
@@ -333,13 +334,38 @@ describe('lanes, presence and the router seam', () => {
     });
     const probe = vi.spyOn(health, 'probeLlamaRuntime').mockResolvedValue(original);
     try {
-      const cfg = { ...CFG, foundry: { ...CFG.foundry, localOnly: true }, models: { llamaServer: { baseUrl } } } as unknown as AshlrConfig;
+      const cfg = { ...CFG, models: { llamaServer: { baseUrl } } } as unknown as AshlrConfig;
       for (let i = 0; i < 2; i++) {
         expect(await probeLocalRuntimeDefault(cfg, null)).toMatchObject({
           reachable: true, slots: 2, busySlots: 1, idleSlots: 1, observedAt: NOW_ISO, contextPerSlot: 65_536,
         });
       }
       expect(probe.mock.calls).toEqual([[{ baseUrl, timeoutMs: 1_500 }], [{ baseUrl, timeoutMs: 1_500 }]]);
+    } finally { probe.mockRestore(); }
+  });
+
+  it('holds a mixed-mode llama-server lane when activity or per-slot context is unverified', async () => {
+    const health = await import('../src/core/local-runtime/llama/health.js');
+    const readings = [
+      { props: { total_slots: 4, default_generation_settings: { n_ctx: 65_536 } },
+        slots: Array.from({ length: 4 }, () => ({})) },
+      { props: { total_slots: 4 },
+        slots: Array.from({ length: 4 }, () => ({ is_processing: false })) },
+    ];
+    const snapshots = readings.map(({ props, slots }) => health.composeSnapshot({
+      origin: 'http://127.0.0.1:9864', baseUrl: 'http://127.0.0.1:9864/v1', host: '127.0.0.1', port: 9864,
+      readings: {
+        health: { httpStatus: 200, error: null, body: { status: 'ok' } },
+        props: { httpStatus: 200, error: null, body: props },
+        slots: { httpStatus: 200, error: null, body: slots },
+      }, record: null, ownershipVerified: false, launchAgent: false, killSwitch: false, now: NOW,
+    }));
+    const probe = vi.spyOn(health, 'probeLlamaRuntime').mockResolvedValueOnce(snapshots[0]!).mockResolvedValueOnce(snapshots[1]!);
+    try {
+      for (let index = 0; index < snapshots.length; index++) {
+        expect(await probeLocalRuntimeDefault(CFG, null)).toMatchObject({ reachable: false, slots: null,
+          contextPerSlot: null, detail: expect.stringContaining('unverified') });
+      }
     } finally { probe.mockRestore(); }
   });
 
@@ -377,12 +403,21 @@ describe('lanes, presence and the router seam', () => {
     { busySlots: 1, idleSlots: 2, observedAt: NOW_ISO },
     { busySlots: -1, idleSlots: 5, observedAt: NOW_ISO },
     { busySlots: 1.5, idleSlots: 2.5, observedAt: NOW_ISO },
-  ])('preserves configured-only dispatch when occupancy evidence is unknown %j', async (occupancy) => {
+  ])('holds mixed-mode local work when current occupancy evidence is unknown %j', async (occupancy) => {
     const hooks = createLiveTickHooks({ deps: { ...h.deps,
       probeLocalRuntime: async () => ({ reachable: true, slots: 4, ...occupancy, contextPerSlot: 65_536, detail: 'runtime' }),
     } });
     hooks.effectiveConfig(CFG);
-    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(4);
+    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(0);
+  });
+
+  it('holds mixed-mode local work when per-slot context is unknown', async () => {
+    const hooks = createLiveTickHooks({ deps: { ...h.deps,
+      probeLocalRuntime: async () => ({ reachable: true, slots: 4, busySlots: 0, idleSlots: 4,
+        observedAt: NOW_ISO, contextPerSlot: null, detail: 'context unavailable' }),
+    } });
+    hooks.effectiveConfig(CFG);
+    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(0);
   });
 
   it('does not renew activity after a slow tick or promote an unavailable runtime', async () => {
@@ -392,7 +427,7 @@ describe('lanes, presence and the router seam', () => {
       syncReleaseArticles: async () => { now += 2_001; },
     } });
     hooks.effectiveConfig(CFG);
-    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(4);
+    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(0);
     const down = createLiveTickHooks({ deps: { ...h.deps,
       probeLocalRuntime: async () => ({ reachable: false, slots: 4, busySlots: 0, idleSlots: 4, observedAt: NOW_ISO, contextPerSlot: 65_536, detail: 'down' }),
     } });
@@ -404,7 +439,8 @@ describe('lanes, presence and the router seam', () => {
     presenceNow = { present: false, reason: 'Away', evidenceAt: NOW_ISO };
     const hooks = createLiveTickHooks({ deps: {
       ...h.deps,
-      probeLocalRuntime: async () => ({ reachable: true, slots, contextPerSlot: 65_536, detail: 'wide runtime' }),
+      probeLocalRuntime: async () => ({ reachable: true, slots, busySlots: 0, idleSlots: slots, observedAt: NOW_ISO,
+        contextPerSlot: 65_536, detail: 'wide runtime' }),
     } });
     hooks.effectiveConfig(CFG);
     hooks.standingBacklog([item({ id: 'easy-wide', effort: 1 })]);
@@ -421,7 +457,8 @@ describe('lanes, presence and the router seam', () => {
   });
 
   it('caps the Ollama fallback to one effective local serving slot', async () => {
-    const reading = await probeLocalRuntimeDefault(CFG, {
+    const reading = await probeLocalRuntimeDefault({ ...CFG, foundry: { ...CFG.foundry,
+      allowedBackends: ['builtin', 'local-coder', 'grok-cli', 'claude'] } } as AshlrConfig, {
       v: 1, publishedAt: NOW_ISO,
       seats: [{ ...grokSeat(), engine: 'local', contextWindow: 65_536 }],
     });
@@ -432,7 +469,7 @@ describe('lanes, presence and the router seam', () => {
     presenceNow = { present: true, reason: 'A Verse chat turn is running.', evidenceAt: NOW_ISO };
     const hooks = createLiveTickHooks({ deps: {
       ...h.deps,
-      probeLocalRuntime: async () => ({ reachable: null, slots: 1, contextPerSlot: 65_536, detail: 'Ollama serializes Qwen3.8' }),
+      probeLocalRuntime: async () => ({ reachable: true, slots: 1, busySlots: 0, idleSlots: 1, observedAt: NOW_ISO, contextPerSlot: 65_536, detail: 'one measured local slot' }),
       legacyRoute: () => ({ backend: 'llama-server' as EngineId, tier: 'mid', reason: 'local runtime' }),
     } });
     hooks.effectiveConfig(CFG);
@@ -463,7 +500,7 @@ describe('lanes, presence and the router seam', () => {
     policy = policyFixture({ engines: ['local'] });
     const hooks = createLiveTickHooks({ deps: {
       ...h.deps,
-      probeLocalRuntime: async () => ({ reachable: null, slots: 1, contextPerSlot: 65_536, detail: 'Ollama serializes Qwen3.8' }),
+      probeLocalRuntime: async () => ({ reachable: true, slots: 1, busySlots: 0, idleSlots: 1, observedAt: NOW_ISO, contextPerSlot: 65_536, detail: 'one measured local slot' }),
       legacyRoute: () => ({ backend: 'llama-server' as EngineId, tier: 'mid', reason: 'local runtime' }),
     } });
     hooks.effectiveConfig(CFG);
@@ -1197,6 +1234,8 @@ describe('review c15 — best-of-N and experiments stay inside the lane caps', (
     const deps = {
       ...h.deps,
       now: () => now,
+      probeLocalRuntime: async () => ({ reachable: true, slots: 4, busySlots: 0, idleSlots: 4,
+        observedAt: new Date(now).toISOString(), contextPerSlot: 65_536, detail: 'measured runtime' }),
       runExperiment: (opts: { fleetQueueDepth: () => number; signal: AbortSignal }) => {
         started.push(opts.fleetQueueDepth());
         return new Promise<string | null>(() => undefined); // keeps running

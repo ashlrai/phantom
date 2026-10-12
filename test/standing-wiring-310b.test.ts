@@ -60,6 +60,7 @@ const REPO = 'ashlrai/binshield';
 const PATH = '/tmp/mirrors/ashlrai__binshield';
 const STALE_MIRROR = '/tmp/mirrors/ashlrai__stale';
 const CFG = {
+  models: { llamaServer: { baseUrl: 'http://127.0.0.1:8080/v1' } },
   foundry: {
     allowedBackends: ['builtin', 'llama-server', 'grok-cli', 'claude', 'nim', 'kimi', 'grok', 'ashlrcode'],
     fabric: { gateway: true, concurrentDispatch: true },
@@ -144,7 +145,7 @@ function deps(): Partial<LiveHooksDeps> {
     loadBudget: () => defaultBudgetPolicy(),
     liveLeaderConfig: (cfg) => cfg,
     capacitySnapshot: () => ({ v: 1, publishedAt: NOW_ISO, seats: [grokSeat()] }),
-    probeLocalRuntime: async () => ({ reachable: true, slots: 4, contextPerSlot: 65_536, detail: 'llama-server up with 4 slot(s)' }),
+    probeLocalRuntime: async () => ({ reachable: true, slots: 4, busySlots: 0, idleSlots: 4, observedAt: NOW_ISO, contextPerSlot: 65_536, detail: 'llama-server up with 4 slot(s)' }),
     presence: async () => ({ present: false, reason: 'Nobody is at the keyboard.', evidenceAt: null }),
     directives: () => {
       calls.order.push('directives');
