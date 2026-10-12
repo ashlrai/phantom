@@ -20,8 +20,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ### Fixed
 - Require a stable, source-bound merge gate for protected PRs while retaining
   the full platform matrix for non-site changes.
-- Parse GitHub's optional unattributed-change approval flag as a Boolean when
-  inspecting branch protection; unknown fields and invalid values still fail.
+- Parse GitHub's optional unattributed-change approval flag and requester-specific
+  ruleset bypass display when inspecting branch protection. The latter is not
+  treated as policy; unknown fields and invalid values still fail.
 
 ## [3.29.10] — 2026-10-10
 

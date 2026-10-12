@@ -530,6 +530,36 @@ describe('readBranchProtectionAttestation parsing', () => {
       .toMatchObject({ require_extra_approval_for_unattributed_changes: enabled });
   });
 
+  it.each(['always', 'pull_requests_only', 'never'])('accepts requester-specific ruleset bypass display %s without using it as policy', async (mode) => {
+    const rule = pullRequestRule();
+    const detail = mutateResult(rulesetDetail('main', [rule]), body => { body['current_user_can_bypass'] = mode; });
+    queue(successSequence({
+      classic: result('', 1, 'gh: Branch not protected (HTTP 404)'),
+      rules: result(effectiveRules([rule])),
+      rulesetDetails: [detail],
+    }));
+
+    const evidence = await readBranchProtectionAttestation(`/repo/bypass-display-${mode}`, undefined, { forceFresh: true });
+    expect(evidence.ok).toBe(true);
+    expect(evidence.policySnapshot?.rulesets[0]?.bypassActors).toEqual([
+      { actorId: null, actorType: 'OrganizationAdmin', bypassMode: 'always' },
+      { actorId: '42', actorType: 'Team', bypassMode: 'pull_request' },
+    ]);
+  });
+
+  it.each([null, true, 'admin'])('refuses malformed ruleset bypass display %s', async mode => {
+    const rule = pullRequestRule();
+    const detail = mutateResult(rulesetDetail('main', [rule]), body => { body['current_user_can_bypass'] = mode; });
+    queue(successSequence({
+      classic: result('', 1, 'gh: Branch not protected (HTTP 404)'),
+      rules: result(effectiveRules([rule])),
+      rulesetDetails: [detail],
+    }));
+    const evidence = await readBranchProtectionAttestation(`/repo/bypass-display-invalid-${String(mode)}`, undefined, { forceFresh: true });
+    expect(evidence).toMatchObject({ ok: false, available: false,
+      detail: 'Active ruleset policy is unavailable or malformed' });
+  });
+
   it.each([
     ['unknown key', { require_extra_approval_for_unattributed_changes: true, unexpected: true }],
     ['non-boolean value', { require_extra_approval_for_unattributed_changes: 'true' }],

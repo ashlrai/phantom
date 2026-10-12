@@ -3200,6 +3200,7 @@ const RULESET_DETAIL_FIELDS = [
   'bypass_actors',
   'conditions',
   'created_at',
+  'current_user_can_bypass',
   'enforcement',
   'id',
   'name',
@@ -3228,6 +3229,12 @@ function isOptionalRulesetDetailLink(value: unknown): boolean {
 
 function hasExactRulesetDetailEnvelope(detail: Record<string, unknown>): boolean {
   if (!hasExactKeys(detail, RULESET_DETAIL_FIELDS, RULESET_DETAIL_AUTHORITY_FIELDS)) return false;
+  // GitHub adds this requester-specific display value to GET /rulesets/:id.
+  // The policy snapshot is derived from the actual bypass actors, never it.
+  if (hasOwn(detail, 'current_user_can_bypass') &&
+      detail['current_user_can_bypass'] !== 'always' &&
+      detail['current_user_can_bypass'] !== 'pull_requests_only' &&
+      detail['current_user_can_bypass'] !== 'never') return false;
   for (const field of ['name', 'node_id', 'created_at', 'updated_at']) {
     if (hasOwn(detail, field) && !boundedNonEmptyString(detail[field], field === 'name' ? 256 : 100)) {
       return false;
