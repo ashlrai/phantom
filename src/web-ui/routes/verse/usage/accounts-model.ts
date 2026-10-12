@@ -329,7 +329,7 @@ export function accountCreditDetail(credits: NonNullable<Account['credits']>, hi
   if (credits.spendControlReached === true) return 'Balance reported; the provider reports credit spending held. Separate from subscription usage.';
   if (credits.spendControlReached !== false) return 'Balance reported; credit spending control is unconfirmed. Separate from subscription usage.';
   return creditsSpendable(credits)
-    ? 'The provider reports credits available. Separate from subscription usage; automatic credit spending is not enabled.'
+    ? 'The provider reports credits available. Separate from subscription usage; automatic dispatch requires separate spending authorization.'
     : 'The provider reports no available credits. Separate from subscription usage.';
 }
 
