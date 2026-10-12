@@ -19,7 +19,7 @@ describe('Historical startup usage display', () => {
     expect(withHistory.credits).toBeNull(); expect(withHistory.resetAt).toEqual(without.resetAt);
     expect(accountStatus(withHistory, { now: NOW, healthRead: false })).toEqual(accountStatus(without, { now: NOW, healthRead: false }));
     const display = barRows([withHistory], { now: NOW, healthRead: false })[0]!;
-    expect(display.level).toBe('unknown'); expect(display.leftPercent).toBe(28); expect(display.value).toBe('28% last');
+    expect(display.level).toBe('unknown'); expect(display.leftPercent).toBe(28); expect(display.value).toBe('28% left · last');
     expect(display.detail.join(' ')).toContain('Historical reading'); expect(display.summary).toContain('current usage unconfirmed');
     expect(withHistory.historicalUsage?.observedAt).toBe('2026-09-30T12:00:00.000Z');
   });
@@ -53,7 +53,7 @@ describe('Historical startup usage display', () => {
     expect(resourceUsageHistory(s, NOW)).toEqual(recorded);
     const row = buildCapacityRows([s], { now: NOW })[0]!;
     expect(row.windows).toEqual([]); expect(row.credits).toBeNull();
-    expect(barRows([row], { now: NOW, healthRead: false })[0]?.value).toBe('28% last');
+    expect(barRows([row], { now: NOW, healthRead: false })[0]?.value).toBe('28% left · last');
     expect(barRows([row], { now: NOW, healthRead: false })[0]?.level).toBe('unknown');
     expect(row.historicalUsage?.identitySource).toBe('native-account-checked-display-identity');
   });
