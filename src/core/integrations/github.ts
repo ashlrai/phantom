@@ -2917,6 +2917,7 @@ function validateRuleParameters(type: string, parameters: Record<string, unknown
         'dismiss_stale_reviews_on_push',
         'dismissal_restriction',
         'require_code_owner_review',
+        'require_extra_approval_for_unattributed_changes',
         'require_last_push_approval',
         'required_approving_review_count',
         'required_review_thread_resolution',
@@ -2931,6 +2932,7 @@ function validateRuleParameters(type: string, parameters: Record<string, unknown
       ],
     ) && isBooleanField(parameters, 'dismiss_stale_reviews_on_push') &&
       isBooleanField(parameters, 'require_code_owner_review') &&
+      isOptionalBooleanField(parameters, 'require_extra_approval_for_unattributed_changes') &&
       isBooleanField(parameters, 'require_last_push_approval') &&
       isBooleanField(parameters, 'required_review_thread_resolution') &&
       typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && count <= 10 &&
@@ -3198,6 +3200,7 @@ const RULESET_DETAIL_FIELDS = [
   'bypass_actors',
   'conditions',
   'created_at',
+  'current_user_can_bypass',
   'enforcement',
   'id',
   'name',
@@ -3226,6 +3229,12 @@ function isOptionalRulesetDetailLink(value: unknown): boolean {
 
 function hasExactRulesetDetailEnvelope(detail: Record<string, unknown>): boolean {
   if (!hasExactKeys(detail, RULESET_DETAIL_FIELDS, RULESET_DETAIL_AUTHORITY_FIELDS)) return false;
+  // GitHub adds this requester-specific display value to GET /rulesets/:id.
+  // The policy snapshot is derived from the actual bypass actors, never it.
+  if (hasOwn(detail, 'current_user_can_bypass') &&
+      detail['current_user_can_bypass'] !== 'always' &&
+      detail['current_user_can_bypass'] !== 'pull_requests_only' &&
+      detail['current_user_can_bypass'] !== 'never') return false;
   for (const field of ['name', 'node_id', 'created_at', 'updated_at']) {
     if (hasOwn(detail, field) && !boundedNonEmptyString(detail[field], field === 'name' ? 256 : 100)) {
       return false;

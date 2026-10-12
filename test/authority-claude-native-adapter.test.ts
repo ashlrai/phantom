@@ -113,6 +113,8 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
 });
 
 describe.runIf(process.platform === 'darwin' && typeof process.execve === 'function')('real inert native CLI and separately jailed tools',()=>{
+  // Successful launches include bounded sysctl/df/diskutil/plutil identity reads
+  // inside the outer jail; allow CI margin without relaxing runtime limits.
   it('holds a role when current native identity differs from the selected allowance',async()=>{
     const f=fixture();readyWatch();
     const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',
@@ -126,7 +128,7 @@ describe.runIf(process.platform === 'darwin' && typeof process.execve === 'funct
     const f=fixture();readyWatch();const evidence:AutonomousSpawnFinish[]=[];
     for(const key of ['ANTHROPIC_API_KEY','NODE_OPTIONS','HTTPS_PROXY'])vi.stubEnv(key,'fixture-ambient-must-not-pass');
     const events:unknown[]=[];
-    const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:JSON.stringify({text:'real tool π'}),signal:new AbortController().signal,admission:()=>true,timeoutMs:4000,recordEvidence:finish=>{evidence.push(finish);},retainCleanupFailure:()=>{throw Error('unexpected retention');},onEvent:event=>{events.push(event);}});
+    const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:JSON.stringify({text:'real tool π'}),signal:new AbortController().signal,admission:()=>true,timeoutMs:10_000,recordEvidence:finish=>{evidence.push(finish);},retainCleanupFailure:()=>{throw Error('unexpected retention');},onEvent:event=>{events.push(event);}});
     expect(result).toMatchObject({ok:true,providerContacted:true,usage:{tokensIn:9,tokensOut:4}});expect(result.captureDenied).not.toBe(true);
     expect(readFileSync(join(f.worktree,'written.txt'),'utf8')).toBe('real tool π');
     const contact=JSON.parse(readFileSync(join(f.profile.nativeStatePath,'contact.json'),'utf8'));expect(contact.environmentProtected).toBe(true);expect(contact.args.join(' ')).not.toContain('real tool π');
@@ -146,7 +148,7 @@ describe.runIf(process.platform === 'darwin' && typeof process.execve === 'funct
     publishLocalMetadata(f.profile.nativeStatePath);
     const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',
       prompt:JSON.stringify({text:'partial edit',fail:true,afterIdentity}),signal:new AbortController().signal,admission:()=>true,
-      timeoutMs:4000,recordEvidence() {},retainCleanupFailure(){throw Error('unexpected retention');}});
+      timeoutMs:10_000,recordEvidence() {},retainCleanupFailure(){throw Error('unexpected retention');}});
     const diagnostic=JSON.stringify({ok:result.ok,providerContacted:result.providerContacted,captureDenied:result.captureDenied,error:result.error,terminationReason:result.terminationReason});
     expect(existsSync(join(f.worktree,'written.txt')),diagnostic).toBe(true);
     expect(readFileSync(join(f.worktree,'written.txt'),'utf8')).toBe('partial edit');expect(result.ok).toBe(false);expect(result.providerContacted).toBe(true);
@@ -157,7 +159,7 @@ describe.runIf(process.platform === 'darwin' && typeof process.execve === 'funct
     const f=fixture();readyWatch();
     const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',
       prompt:JSON.stringify({text:'must not write',partialMetadata:true}),signal:new AbortController().signal,admission:()=>true,
-      timeoutMs:4000,recordEvidence() {},retainCleanupFailure(){throw Error('unexpected retention');}});
+      timeoutMs:10_000,recordEvidence() {},retainCleanupFailure(){throw Error('unexpected retention');}});
     expect(result).toMatchObject({ok:false,providerContacted:true,captureDenied:true});
     expect(readFileSync(join(f.profile.nativeStatePath,'.claude.json'),'utf8')).toBe('{');
     expect(readClaudeNativeBinding(f.cfg,'claude-a')).toBeNull();
@@ -172,7 +174,7 @@ describe.runIf(process.platform === 'darwin' && typeof process.execve === 'funct
         const address=server.address();if(!address||typeof address==='string')throw Error('fixture address unavailable');urls.push(`http://${host==='::1'?'[::1]':host}:${address.port}`);
       }
       setKernelEvidenceWatcherForTest(tag=>({tag,ready:true,finish:()=>({source:'kernel-log',state:'incomplete',reason:'intentional test-only denial evidence',denials:[]}),abort() {}}));
-      const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:JSON.stringify({networkProbes:urls}),signal:new AbortController().signal,admission:()=>true,timeoutMs:4000,recordEvidence() {},retainCleanupFailure() {}});
+      const result=await runClaudeNativeAdapter({...f,runId:'native-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:JSON.stringify({networkProbes:urls}),signal:new AbortController().signal,admission:()=>true,timeoutMs:10_000,recordEvidence() {},retainCleanupFailure() {}});
       expect(result.output).toContain('blocked');expect(result.output).not.toContain('connected');expect(result.captureDenied).toBe(true);
     }finally{await Promise.all(servers.map(server=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());})));}
   });

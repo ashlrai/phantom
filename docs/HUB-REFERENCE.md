@@ -481,7 +481,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr leader show/run/tick/veto` | The Leader: latest memo, a run when due, due class-B actions, veto |
 | `ashlr cloud launch/list/refresh/improve/budget/backlog` | The cloud lane: Claude Code cloud sessions, their budget and the self-improvement backlog |
 | `ashlr local-runtime start/stop/status` | Supervised llama-server with batching slots for local seats |
-| `ashlr resources profile prepare/repin` | Prepare or re-pin a private native profile for one account |
+| `ashlr resources profile prepare/repin/upgrade-identity` | Prepare or re-pin a private native profile; explicitly add a reboot-stable witness to an unchanged older macOS profile |
 | `ashlr setup` | First-activation checks; currently nonzero because resident service mutation is restricted |
 | `ashlr onboard <repo>` | Enroll one repo with walkthrough + dry run |
 | `ashlr enroll add/remove/list` | Manage enrolled repos |

@@ -14,12 +14,15 @@ import { claudeBrokerToolExecutor } from './claude-broker-executor.js';
 import { assertHostNativeAccountContext } from '../integrations/locus-job-env.js';
 
 const NATIVE_AUTH_HELPERS = ['/usr/bin/security','/bin/sh'] as const;
+// The witnessed profile launcher reads the current boot/APFS identity through
+// these fixed system tools before it execs Claude inside the outer jail.
+const NATIVE_IDENTITY_HELPERS = ['/usr/sbin/sysctl','/bin/df','/usr/sbin/diskutil','/usr/bin/plutil'] as const;
 const cleanupUnknown = (r: SpawnEngineResult): boolean => r.terminationReason === 'error-exit' &&
   /(?:termination authority lost|termination deadline elapsed|(?:closure|exit).*unconfirmed)/i.test(r.error ?? '');
-function trustedNativeAuthHelperEpoch(): string {
-  return NATIVE_AUTH_HELPERS.map(path => {
+function trustedNativeHelperEpoch(): string {
+  return [...NATIVE_AUTH_HELPERS,...NATIVE_IDENTITY_HELPERS].map(path => {
     const s = lstatSync(path, { bigint: true });
-    if (!s.isFile() || s.isSymbolicLink() || s.uid !== 0n || (s.mode & 0o022n) !== 0n || realpathSync(path) !== path) throw new Error('Native auth helper unavailable');
+    if (!s.isFile() || s.isSymbolicLink() || s.uid !== 0n || (s.mode & 0o022n) !== 0n || realpathSync(path) !== path) throw new Error('Native system helper unavailable');
     accessSync(path, constants.X_OK);
     return [path,s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].map(String).join(':');
   }).join('|');
@@ -28,7 +31,7 @@ function trustedNativeAuthHelperEpoch(): string {
  * this launcher for a model-authored program or a generic autonomous worker. */
 export function claudeNativeOuterLauncher(owned: AutonomousSpawn, binding: ClaudeNativeBinding, brokerPort: number, scratch: string): SandboxLauncher {
   if (process.platform !== 'darwin' || !Number.isInteger(brokerPort) || brokerPort < 1 || brokerPort > 65535) throw new Error('Native Claude confinement unavailable');
-  trustedNativeAuthHelperEpoch();
+  trustedNativeHelperEpoch();
   const profileRoot = dirname(binding.launch.command[1]);
   const nativeWrites = [binding.launch.nativeStatePath, join(profileRoot, 'anthropic-state')];
   // Only the official CLI can write its own runtime state; the model has no
@@ -46,7 +49,7 @@ export function claudeNativeOuterLauncher(owned: AutonomousSpawn, binding: Claud
     `(allow network-outbound (remote ip "localhost:${brokerPort}"))`,
     '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
     '(deny process-exec)',
-    `(allow process-exec ${[...binding.launch.command.slice(0,1),binding.launch.executable,...NATIVE_AUTH_HELPERS].map(literal).join(' ')})`,
+    `(allow process-exec ${[...binding.launch.command.slice(0,1),binding.launch.executable,...NATIVE_AUTH_HELPERS,...NATIVE_IDENTITY_HELPERS].map(literal).join(' ')})`,
   ];
   return { bin: SANDBOX_EXEC_PATH, prefixArgs: ['-p', `${base}\n${rules.join('\n')}`] };
 }
@@ -96,7 +99,7 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
       return !signal.aborted && options.admission() && observation !== null && observation.expiresAtMs > Date.now() && proof !== null && fresh !== null &&
         (fresh.localAccountDigest === null || fresh.localAccountDigest === observation.accountDigest) &&
         (owned === null || owned.evidence?.ready === true) &&
-        sameClaudeNativeBinding(proof.binding,fresh) && trustedNativeAuthHelperEpoch() === authHelperEpoch;
+        sameClaudeNativeBinding(proof.binding,fresh) && trustedNativeHelperEpoch() === authHelperEpoch;
     } catch { return false; }
   };
   const retain = () => { retained = true; options.retainCleanupFailure(); stop.abort(); };
@@ -106,7 +109,7 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
   }, 100);
   stopTimer.unref();
   try {
-    authHelperEpoch = trustedNativeAuthHelperEpoch();
+    authHelperEpoch = trustedNativeHelperEpoch();
     proof = await observeClaudeNativeBinding(options.cfg,options.seatId,options.runId,options.model,scratch,signal,options.admission);
     observation = proof?.observation ?? null;
     if (!proof || !current() || options.expectedAccountHint !== undefined && proof.observation.accountDigest !== options.expectedAccountHint) return held('Selected Claude native identity, allowance or credit protection unconfirmed');

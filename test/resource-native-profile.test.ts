@@ -40,7 +40,8 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
   });
   it.each(['codex', 'claude', 'grok'] as const)('prepares %s private files and unauthenticated locators without invoking anything', (provider) => {
     const before = readFileSync(binary); const profile = prepareResourceNativeProfile(options(provider));
-    expect(profile).toMatchObject({ schemaVersion: 1, scope: 'native-profile-preparation', status: 'prepared', authentication: 'not-checked', provider });
+    expect(profile).toMatchObject({ schemaVersion: process.platform === 'darwin' ? 2 : 1,
+      scope: 'native-profile-preparation', status: 'prepared', authentication: 'not-checked', provider });
     expect(JSON.parse(readFileSync(profile.manifestPath, 'utf8'))).toEqual(profile);
     expect(JSON.parse(readFileSync(profile.commandPath, 'utf8'))).toEqual([realpathSync(process.execPath), profile.launcherPath]);
     expect(profile.loginCommand).toEqual([...profile.command, ...(provider === 'codex' ? ['login']

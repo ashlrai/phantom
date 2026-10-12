@@ -9,7 +9,24 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.10] — Unreleased
+## [3.29.11] — Unreleased
+
+### Added
+- Bind new macOS native profiles to their APFS volume UUID, directory inode and
+  creation time so a device-number change after reboot can be verified without
+  accepting a replaced directory. An explicit `upgrade-identity` command adds
+  the witness to an unchanged older profile before its device number changes.
+
+### Fixed
+- Require a stable, source-bound merge gate for protected PRs while retaining
+  the full platform matrix for non-site changes.
+- Parse GitHub's optional unattributed-change approval flag and requester-specific
+  ruleset bypass display when inspecting branch protection. The latter is not
+  treated as policy; unknown fields and invalid values still fail.
+- Permit the fixed macOS identity probes inside Claude's outer native jail so
+  witnessed profiles can verify their boot and APFS volume before launch.
+
+## [3.29.10] — 2026-10-10
 
 ### Changed
 - Remove fixed 3.26 labels from the landing-page story and footer so those
