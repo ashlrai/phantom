@@ -11,6 +11,8 @@ import { workerEnvironment } from './worker.js';
 
 export interface ClaudeAccountUsageResult extends ClaudeAccountStatusResult {
   windows: ResourceConnectionQuotaWindow[];
+  /** Monotonic, bounded elapsed time for a timed-out composite stage; never native output. */
+  timeoutElapsedMs?: number;
   /** Complete current structured endpoint reply, after same-account/plan checks. */
   quotaFresh?: boolean;
   /** Current endpoint billing control; absent or malformed is not disabled. */
@@ -192,20 +194,23 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
   const pinned = validateClaudeAccountStatusOptions(options);
   const started = performance.now();
   const remaining = () => Math.max(0, Math.floor(pinned.timeoutMs - (performance.now() - started)));
+  const timeoutElapsedMs = () => Math.max(0, Math.min(pinned.timeoutMs, Math.floor(performance.now() - started)));
   const before = await probeClaudeAccountStatus(pinned);
   const report = (reason: string, windows: ResourceConnectionQuotaWindow[] = []): ClaudeAccountUsageResult =>
     ({ ...before, reason, windows, finishedAt: new Date().toISOString() });
   const failed = (status: ClaudeAccountStatusResult['status'], reason: string): ClaudeAccountUsageResult =>
-    ({ ...report(reason), status, loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null });
+    ({ ...report(reason), status, loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null,
+      ...(status === 'timed-out' ? { timeoutElapsedMs: timeoutElapsedMs() } : {}) });
+  if (before.status === 'timed-out' && before.reason === 'status-timed-out') return failed('timed-out', 'status-auth-timed-out');
   if (before.status !== 'observed' || !before.loggedIn || before.authMethod !== 'claude.ai') return report(before.reason);
   if (!before.accountHint) return report('usage-identity-unavailable');
   let scratch: string | undefined; let cleanupConfirmed = true;
   try {
     scratch = mkdtempSync(join(realpathSync(tmpdir()), 'ashlr-claude-usage-'));
-    const run = async (args: string[]) => {
+    const run = async (args: string[], stage: 'version' | 'usage') => {
       if (pinned.signal?.aborted) throw failed('cancelled', 'status-cancelled');
       const timeoutMs = remaining();
-      if (!timeoutMs) throw failed('timed-out', 'status-timed-out');
+      if (!timeoutMs) throw failed('timed-out', `status-${stage}-timed-out`);
       cleanupConfirmed = false;
       const value = await runVerifySubprocessAsync([...pinned.command, ...args], {
         cwd: scratch!, env: workerEnvironment(), timeoutMs, maxOutputChars: MAX_OUTPUT, signal: pinned.signal,
@@ -217,7 +222,7 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
       }
       cleanupConfirmed = true;
       if (value.cancelled || pinned.signal?.aborted) throw failed('cancelled', 'status-cancelled');
-      if (value.timedOut || !remaining()) throw failed('timed-out', 'status-timed-out');
+      if (value.timedOut || !remaining()) throw failed('timed-out', `status-${stage}-timed-out`);
       if (value.outputTruncated || Buffer.byteLength(value.stdout) > MAX_OUTPUT || Buffer.byteLength(value.stderr) > MAX_OUTPUT) {
         throw report('usage-output-invalid');
       }
@@ -225,23 +230,25 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
       return value.stdout;
     };
     // Unknown versions never receive a slash command: its fallback could be inference.
-    const reported = (await run(['--version'])).trim();
+    const reported = (await run(['--version'], 'version')).trim();
     if (!CLAUDE_USAGE_VERIFIED_VERSIONS.some((version) => reported === `${version} (Claude Code)`)) {
       return report('usage-version-unsupported');
     }
     const structured = reported === '2.1.280 (Claude Code)';
     const raw = await run(['--safe-mode', '--restricted', '--tools', '', '--strict-mcp-config', '--mcp-config',
-      '{"mcpServers":{}}', '--no-chrome', '--no-session-persistence', '--output-format', ...(structured ? ['stream-json', '--verbose'] : ['json']), '-p', '/usage']);
+      '{"mcpServers":{}}', '--no-chrome', '--no-session-persistence', '--output-format', ...(structured ? ['stream-json', '--verbose'] : ['json']), '-p', '/usage'], 'usage');
     const parsed = structured ? parseClaudeNativeUsageStream(raw, before.startedAt) : null;
     const windows = structured ? parsed?.windows : parseClaudeNativeUsage(raw);
+    if (!remaining()) return failed('timed-out', 'status-usage-timed-out');
     if (!windows) return report('usage-output-invalid');
-    if (!remaining()) return failed('timed-out', 'status-timed-out');
+    if (!remaining()) return failed('timed-out', 'status-reauth-timed-out');
     const after = await probeClaudeAccountStatus({ ...pinned, timeoutMs: remaining() });
+    if (after.status === 'timed-out' && after.reason === 'status-timed-out') return failed('timed-out', 'status-reauth-timed-out');
     if (after.status !== 'observed') return { ...after, windows: [], startedAt: before.startedAt };
     if (!after.loggedIn || after.authMethod !== before.authMethod || after.subscriptionType !== before.subscriptionType ||
       after.accountHint !== before.accountHint) return failed('failed', 'usage-account-changed');
     if (pinned.signal?.aborted) return failed('cancelled', 'status-cancelled');
-    if (!remaining()) return failed('timed-out', 'status-timed-out');
+    if (!remaining()) return failed('timed-out', 'status-reauth-timed-out');
     if (parsed?.quotaFresh && (after.subscriptionType === 'pro' || after.subscriptionType === 'max')) {
       for (const window of windows) if (window.id === 'seven_day' && window.resetsAt) window.resetProvenance = {
         kind: 'weekly-deadline', at: window.resetsAt, source: 'claude-native-usage-report', plan: after.subscriptionType,

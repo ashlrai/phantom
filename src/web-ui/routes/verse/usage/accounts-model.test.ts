@@ -132,6 +132,18 @@ describe('Claude missing-quota diagnostics', () => {
     expect(claudeQuotaDiagnostic('/private/profile?token=secret')).toBeNull();
     expect(claudeQuotaDiagnostic(null)).toBeNull();
   });
+  it.each([
+    ['status-auth-timed-out', 'first sign-in'],
+    ['status-version-timed-out', 'version'],
+    ['status-usage-timed-out', 'local usage'],
+    ['status-reauth-timed-out', 'final sign-in'],
+  ])('shows the reviewed %s stage without native output', (code, stage) => {
+    const diagnostic = claudeQuotaDiagnostic(code);
+    expect(diagnostic?.code).toBe(code);
+    expect(diagnostic?.sentence).toContain(stage);
+    expect(diagnostic?.sentence).toContain('Current quota remains unknown.');
+    expect(claudeQuotaDiagnostic(`${code}:PRIVATE_ACCOUNT`)).toBeNull();
+  });
 });
 
 describe('toWindowView — the sentinel 100 is a flag, not a measurement', () => {

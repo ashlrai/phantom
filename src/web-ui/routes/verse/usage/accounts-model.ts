@@ -243,6 +243,14 @@ export const REASON_COPY: Record<string, string> = {
     'The native check did not confirm process cleanup. Current quota remains unknown.',
   'status-timed-out':
     'The native account check timed out. Current quota remains unknown.',
+  'status-auth-timed-out':
+    'Claude’s first sign-in check timed out. Current quota remains unknown.',
+  'status-version-timed-out':
+    'Claude’s version check timed out. Current quota remains unknown.',
+  'status-usage-timed-out':
+    'Claude’s local usage check timed out. Current quota remains unknown.',
+  'status-reauth-timed-out':
+    'Claude’s final sign-in check timed out. Current quota remains unknown.',
   'probe-account-unavailable':
     'The pinned profile answered but carries no usable account identity — it is not authenticated.',
   'probe-account-unsupported':
@@ -282,6 +290,10 @@ export function claudeQuotaDiagnostic(reason: string | null | undefined): { code
     case 'usage-account-changed':
     case 'status-termination-uncertain':
     case 'status-timed-out':
+    case 'status-auth-timed-out':
+    case 'status-version-timed-out':
+    case 'status-usage-timed-out':
+    case 'status-reauth-timed-out':
     case 'connection-monitor-stopped':
     case 'connection-reading-expired':
       return { code: reason, sentence: REASON_COPY[reason]! };
