@@ -5,18 +5,26 @@ import styles from '../resources/ResourcesDrawer.module.css';
 
 const STATUS: Record<string, string> = {
   opening: 'Opening the separate Devin account window.',
-  open: 'Open Devin General, then record that page.',
+  open: 'Sign in and open Devin General once, then refresh usage.',
   closed: 'Devin account window closed. No dashboard observation is active.',
   'not-open': 'Open the Devin account window first.',
-  'open-general-or-usage': 'Navigate to General or Usage & limits in the Devin account window.',
+  'open-general-or-usage': 'Navigate to General in the Devin account window.',
   'organization-unavailable': 'Connect a verified Devin API organization before reading its dashboard.',
   'media-guard-unavailable': 'The account window was closed because the native media guard could not be confirmed.',
-  'page-changed': 'The page changed during capture. Record General again.',
-  'read-failed': 'The dashboard labels could not be read. Record the page again.',
-  'page-loading': 'Page changed. Record General, Usage, then General again within two minutes.',
-  'general-verified-read-usage': 'Organization ID matches. Open Usage & limits in the Devin window and record it.',
-  'usage-held-confirm-general': 'Usage is held privately. Return to General and record it again to confirm the same organization.',
-  'verify-general-first': 'Open General and record its organization ID first.',
+  'page-changed': 'The page changed during refresh. Open General and try again.',
+  'read-failed': 'The dashboard labels could not be read. Open General and try again.',
+  'open-general-first': 'Sign in and open the Devin General settings page once, then refresh.',
+  'refresh-in-progress': 'A dashboard refresh is already running.',
+  'refreshing-general': 'Reading the organization ID before the usage page.',
+  'refreshing-usage': 'Reading the Usage & limits page.',
+  'confirming-general': 'Confirming the same organization after the usage page.',
+  'refresh-cancelled': 'The refresh was cancelled because the page changed or closed.',
+  'auto-on': 'Automatic refresh is on while this account window stays open.',
+  'auto-off': 'Automatic refresh is off.',
+  'page-loading': 'The dashboard page is loading.',
+  'general-verified-read-usage': 'Organization ID matches. Reading usage.',
+  'usage-held-confirm-general': 'Usage was read. Confirming the organization.',
+  'verify-general-first': 'Open General and refresh again.',
   'restart-verification': 'The reading expired or changed. Start again on General.',
   'organization-mismatch': 'The dashboard organization differs from the connected Devin organization.',
   'external-sign-in-unavailable': 'This sign-in leaves Devin. Embedded Google or other external sign-in is unavailable here; use Devin in your browser.',
@@ -27,13 +35,15 @@ const STATUS: Record<string, string> = {
 export function DevinDashboardReader({ orgId }: { orgId: string | null }) {
   const bridge = nativeDevinReader();
   const [event, setEvent] = useState<DevinReaderEvent | null>(null);
+  const [autoEnabled, setAutoEnabled] = useState(false);
   const [now, setNow] = useState(Date.now());
-  useEffect(() => { setEvent(null); }, [orgId]);
+  useEffect(() => { setEvent(null); setAutoEnabled(false); }, [orgId]);
   useEffect(() => {
     const onNative = (raw: Event) => {
       const next = readDevinReaderEvent(raw);
       if (!next) return;
       setEvent(next);
+      if (next.kind === 'status' && (next.state === 'closed' || next.state === 'auto-off' || next.state === 'not-open')) setAutoEnabled(false);
       setNow(Date.now());
     };
     window.addEventListener(DEVIN_READER_EVENT, onNative);
@@ -45,11 +55,12 @@ export function DevinDashboardReader({ orgId }: { orgId: string | null }) {
   return <section aria-label="Devin dashboard observation">
     <p className={styles.creditsHead}><span>Devin dashboard observation</span><span className={styles.pill} data-tone="neutral">display only</span></p>
     <p className={styles.fine}>Observe the signed-in organization's displayed allowance without sharing cookies with Phantom's agent browser. The Devin window still allows normal account actions; Phantom only extracts these fields. This does not prove a human billing seat or authorize session spending.</p>
-    <p className={styles.fine}>In the separate Devin window, record General, then Usage &amp; limits, then General again. Each reading expires after two minutes.</p>
+    <p className={styles.fine}>Sign in to the separate Devin window and open General once. Refresh then reads General, Usage &amp; limits, and General again automatically. Each observation expires after two minutes.</p>
     <div>
-      <Button size="sm" variant="ghost" onClick={() => { setEvent(null); bridge.send({ op: 'open', orgId }); }}>Open Devin account window</Button>{' '}
-      <Button size="sm" variant="ghost" onClick={() => bridge.send({ op: 'capture' })}>Record this page</Button>{' '}
-      <Button size="sm" variant="ghost" onClick={() => { bridge.send({ op: 'close' }); setEvent(null); }}>Close</Button>
+      <Button size="sm" variant="ghost" onClick={() => { setEvent(null); setAutoEnabled(false); bridge.send({ op: 'open', orgId }); }}>Open Devin account window</Button>{' '}
+      <Button size="sm" variant="ghost" onClick={() => bridge.send({ op: 'capture' })}>Refresh usage</Button>{' '}
+      <Button size="sm" variant="ghost" onClick={() => { if (bridge.send({ op: 'auto', enabled: !autoEnabled })) setAutoEnabled(!autoEnabled); }}>{autoEnabled ? 'Auto refresh on' : 'Auto refresh off'}</Button>{' '}
+      <Button size="sm" variant="ghost" onClick={() => { bridge.send({ op: 'close' }); setAutoEnabled(false); setEvent(null); }}>Close</Button>
     </div>
     {snapshot ? <div role="status">
       <p className={styles.fine}>Organization dashboard observation · {new Date(snapshot.observedAtMs).toLocaleTimeString()} · account identity unverified</p>

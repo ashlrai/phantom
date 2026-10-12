@@ -88,14 +88,15 @@
     return true
   }
 
-  // Dedicated Devin account reader. The only verbs are open, capture, close;
+  // Dedicated Devin account reader. The only verbs are open, refresh, auto, close;
   // it is not part of the agent browser and accepts no URL or script input.
   function sendDevinReader(msg) {
     if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return false
     if (Object.getPrototypeOf(msg) !== Object.prototype) return false
-    if (msg.op !== 'open' && msg.op !== 'capture' && msg.op !== 'close') return false
+    if (msg.op !== 'open' && msg.op !== 'capture' && msg.op !== 'auto' && msg.op !== 'close') return false
     if (msg.op === 'open' && (typeof msg.orgId !== 'string' || !/^org-[A-Za-z0-9_-]{1,120}$/.test(msg.orgId))) return false
-    var payload = msg.op === 'open' ? { op: 'open', orgId: msg.orgId } : { op: msg.op }
+    if (msg.op === 'auto' && typeof msg.enabled !== 'boolean') return false
+    var payload = msg.op === 'open' ? { op: 'open', orgId: msg.orgId } : msg.op === 'auto' ? { op: 'auto', enabled: msg.enabled } : { op: msg.op }
     var internals = window.__TAURI_INTERNALS__
     if (!internals || typeof internals.invoke !== 'function') return false
     try {

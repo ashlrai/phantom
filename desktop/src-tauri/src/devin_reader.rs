@@ -18,9 +18,13 @@ use tauri::{
 
 pub const REQUEST_EVENT: &str = "shell-devin-reader";
 const LABEL: &str = "devin-quota-reader";
+const INERT_URL: &str = "about:blank";
 const START_URL: &str = "https://app.devin.ai/settings/usage";
 const DATA_STORE_ID: [u8; 16] = *b"ashlr-devin-quot";
 const TRANSACTION_TTL: Duration = Duration::from_secs(120);
+const AUTO_READ_TTL: Duration = Duration::from_secs(20);
+const AUTO_RETRY_DELAY: Duration = Duration::from_millis(250);
+const MAX_AUTO_ATTEMPTS: u8 = 32;
 const SNAPSHOT_TTL_MS: u64 = 120_000;
 const EXTRACT: &str = include_str!("devin_reader_extract.js");
 const INIT_NONCE: &str = "(function(){try{var b=new Uint8Array(16);crypto.getRandomValues(b);Object.defineProperty(window,'__ashlrDevinReaderNonce',{value:Array.from(b,function(x){return x.toString(16).padStart(2,'0')}).join(''),writable:false,configurable:false})}catch(_){}})();";
@@ -36,6 +40,10 @@ struct Session {
     epoch: u64,
     capture_seq: u64,
     pending: Option<Pending>,
+    auto: Option<AutoRead>,
+    auto_generation: u64,
+    auto_enabled: bool,
+    cadence_generation: u64,
 }
 
 impl Session {
@@ -52,14 +60,57 @@ impl Session {
     }
 
     fn finish_open(&mut self, generation: u64) -> bool {
-        let current = self.open_generation == generation && self.expected_org.is_some();
+        if self.open_generation != generation {
+            return false;
+        }
         self.opening = false;
-        current
+        self.expected_org.is_some()
     }
 
     fn cancel_open(&mut self) {
         self.expected_org = None;
         self.open_generation = self.open_generation.wrapping_add(1);
+        self.opening = false;
+    }
+
+    fn cancel_auto(&mut self) {
+        self.auto_generation = self.auto_generation.wrapping_add(1);
+        self.capture_seq = self.capture_seq.wrapping_add(1);
+        self.auto = None;
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoPhase {
+    FirstGeneral,
+    Usage,
+    LastGeneral,
+}
+
+impl AutoPhase {
+    fn page(self) -> &'static str {
+        match self {
+            Self::FirstGeneral | Self::LastGeneral => "general",
+            Self::Usage => "usage",
+        }
+    }
+}
+
+struct AutoRead {
+    generation: u64,
+    slug: String,
+    phase: AutoPhase,
+    started: Instant,
+    attempts: u8,
+}
+
+impl AutoRead {
+    fn expects(&self, url: &Url) -> bool {
+        page_path(url).is_some_and(|(slug, page)| slug == self.slug && page == self.phase.page())
+    }
+
+    fn current(&self, generation: u64) -> bool {
+        self.generation == generation && self.started.elapsed() <= AUTO_READ_TTL
     }
 }
 
@@ -92,6 +143,9 @@ enum Request {
         org_id: String,
     },
     Capture,
+    Auto {
+        enabled: bool,
+    },
     Close,
 }
 
@@ -196,6 +250,9 @@ pub fn handle_event(app: &AppHandle, payload: &str) {
                 let mut session = lock(&state);
                 if session.expected_org.as_deref() != Some(&org_id) {
                     session.pending = None;
+                    session.cancel_auto();
+                    session.auto_enabled = false;
+                    session.cadence_generation = session.cadence_generation.wrapping_add(1);
                 }
                 session.expected_org = Some(org_id);
                 let Some(generation) = session.begin_open() else {
@@ -216,20 +273,31 @@ pub fn handle_event(app: &AppHandle, payload: &str) {
                 let _ = window.set_focus();
                 status(app, "open");
             } else {
-                let app = app.clone();
-                let _ = thread::Builder::new()
+                let worker_app = app.clone();
+                if thread::Builder::new()
                     .name("devin-reader-open".into())
-                    .spawn(move || open_window(&app, generation));
+                    .spawn(move || open_window(&worker_app, generation))
+                    .is_err()
+                {
+                    if let Some(state) = app.try_state::<ReaderState>() {
+                        lock(&state).finish_open(generation);
+                    }
+                    status(app, "unavailable");
+                }
             }
         }
-        Request::Capture => capture(app),
+        Request::Capture => begin_refresh(app),
+        Request::Auto { enabled } => set_auto_cadence(app, enabled),
         Request::Close => {
             if let Some(window) = app.get_webview_window(LABEL) {
-                let _ = window.close();
+                let _ = window.destroy();
             }
             if let Some(state) = app.try_state::<ReaderState>() {
                 let mut session = lock(&state);
                 session.pending = None;
+                session.cancel_auto();
+                session.auto_enabled = false;
+                session.cadence_generation = session.cadence_generation.wrapping_add(1);
                 session.cancel_open();
                 session.capture_seq = session.capture_seq.wrapping_add(1);
             }
@@ -238,27 +306,123 @@ pub fn handle_event(app: &AppHandle, payload: &str) {
     }
 }
 
+fn begin_refresh(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        status(app, "not-open");
+        return;
+    };
+    let Ok(url) = window.url() else {
+        status(app, "page-unavailable");
+        return;
+    };
+    let Some((slug, "general")) = page_path(&url) else {
+        status(app, "open-general-first");
+        return;
+    };
+    let Some(state) = app.try_state::<ReaderState>() else {
+        return;
+    };
+    let mut session = lock(&state);
+    if session.opening || session.expected_org.is_none() {
+        drop(session);
+        status(app, "organization-unavailable");
+        return;
+    }
+    if session.auto.is_some() {
+        drop(session);
+        status(app, "refresh-in-progress");
+        return;
+    }
+    session.cancel_auto();
+    session.pending = None;
+    session.auto = Some(AutoRead {
+        generation: session.auto_generation,
+        slug: slug.into(),
+        phase: AutoPhase::FirstGeneral,
+        started: Instant::now(),
+        attempts: 0,
+    });
+    drop(session);
+    status(app, "refreshing-general");
+    capture(app);
+}
+
+fn set_auto_cadence(app: &AppHandle, enabled: bool) {
+    let Some(state) = app.try_state::<ReaderState>() else {
+        return;
+    };
+    let (generation, active) = {
+        let mut session = lock(&state);
+        session.cadence_generation = session.cadence_generation.wrapping_add(1);
+        session.auto_enabled =
+            enabled && session.expected_org.is_some() && app.get_webview_window(LABEL).is_some();
+        (session.cadence_generation, session.auto_enabled)
+    };
+    if !active {
+        status(app, if enabled { "not-open" } else { "auto-off" });
+        return;
+    }
+    let worker_app = app.clone();
+    if thread::Builder::new()
+        .name("devin-reader-cadence".into())
+        .spawn(move || loop {
+            thread::sleep(Duration::from_secs(60));
+            let Some(state) = worker_app.try_state::<ReaderState>() else {
+                break;
+            };
+            let session = lock(&state);
+            if !session.auto_enabled || session.cadence_generation != generation {
+                break;
+            }
+            let idle = session.auto.is_none();
+            drop(session);
+            if idle {
+                begin_refresh(&worker_app);
+            }
+        })
+        .is_err()
+    {
+        if let Some(state) = app.try_state::<ReaderState>() {
+            lock(&state).auto_enabled = false;
+        }
+        status(app, "unavailable");
+        return;
+    }
+    status(app, "auto-on");
+}
+
 fn open_window(app: &AppHandle, generation: u64) {
-    let Ok(url) = Url::parse(START_URL) else {
+    let (Ok(blank), Ok(start)) = (Url::parse(INERT_URL), Url::parse(START_URL)) else {
         status(app, "unavailable");
         return;
     };
     let nav_app = app.clone();
     let load_app = app.clone();
-    let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
+    // WebKit loads an external URL during build(), before with_webview can
+    // install the media-deny delegate. Begin on an inert document instead.
+    let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(blank))
         .title("Devin account — Phantom dashboard observation")
         .visible(false)
         .inner_size(920.0, 720.0)
         .initialization_script(INIT_NONCE)
         .on_navigation(move |url| {
             let allowed = provider_url(url) || (url.scheme() == "about" && url.path() == "blank");
-            if !allowed {
-                if let Some(state) = nav_app.try_state::<ReaderState>() {
-                    let mut session = lock(&state);
+            if let Some(state) = nav_app.try_state::<ReaderState>() {
+                let mut session = lock(&state);
+                if !allowed || session.auto.as_ref().is_some_and(|auto| !auto.expects(url)) {
                     session.pending = None;
+                    session.cancel_auto();
                     session.capture_seq = session.capture_seq.wrapping_add(1);
+                    drop(session);
+                    status(
+                        &nav_app,
+                        if allowed {
+                            "refresh-cancelled"
+                        } else {
+                            "external-sign-in-unavailable"
+                        },
+                    );
                 }
-                status(&nav_app, "external-sign-in-unavailable");
             }
             allowed
         })
@@ -269,6 +433,14 @@ fn open_window(app: &AppHandle, generation: u64) {
                     let mut session = lock(&state);
                     session.epoch = session.epoch.wrapping_add(1);
                     session.capture_seq = session.capture_seq.wrapping_add(1);
+                    if session
+                        .auto
+                        .as_ref()
+                        .is_some_and(|auto| !auto.expects(payload.url()))
+                    {
+                        session.pending = None;
+                        session.cancel_auto();
+                    }
                     if let Some(pending) = session.pending.as_ref() {
                         let same_slug =
                             page_path(payload.url()).is_some_and(|(slug, _)| slug == pending.slug);
@@ -278,6 +450,15 @@ fn open_window(app: &AppHandle, generation: u64) {
                     }
                 }
                 status(&load_app, "page-loading");
+            } else if matches!(payload.event(), PageLoadEvent::Finished) {
+                let should_capture = load_app.try_state::<ReaderState>().is_some_and(|state| {
+                    lock(&state).auto.as_ref().is_some_and(|auto| {
+                        auto.expects(payload.url()) && auto.started.elapsed() <= AUTO_READ_TTL
+                    })
+                });
+                if should_capture {
+                    capture(&load_app);
+                }
             }
         });
     #[cfg(target_os = "macos")]
@@ -324,6 +505,22 @@ fn open_window(app: &AppHandle, generation: u64) {
                 let _ = window.destroy();
                 return;
             }
+            // Only the guarded WKWebView may contact Devin. Keep it hidden
+            // and fail closed if navigation itself cannot be started.
+            if window.navigate(start).is_err() {
+                let _ = window.destroy();
+                status(app, "unavailable");
+                return;
+            }
+            // Close or an organization switch can happen while navigation is
+            // dispatched. Never reveal a late worker's stale window.
+            if app.try_state::<ReaderState>().is_none_or(|state| {
+                let session = lock(&state);
+                session.open_generation != generation || session.expected_org.is_none()
+            }) {
+                let _ = window.destroy();
+                return;
+            }
             let _ = window.show();
             let _ = window.set_focus();
             status(app, "open");
@@ -352,7 +549,9 @@ fn capture(app: &AppHandle) {
     };
     if page_path(&before).is_none() {
         if let Some(state) = app.try_state::<ReaderState>() {
-            lock(&state).pending = None;
+            let mut session = lock(&state);
+            session.pending = None;
+            session.cancel_auto();
         }
         status(app, "open-general-or-usage");
         return;
@@ -362,6 +561,17 @@ fn capture(app: &AppHandle) {
     };
     let (epoch, sequence) = {
         let mut session = lock(&state);
+        if session
+            .auto
+            .as_ref()
+            .is_some_and(|auto| !auto.expects(&before))
+        {
+            session.pending = None;
+            session.cancel_auto();
+            drop(session);
+            status(app, "refresh-cancelled");
+            return;
+        }
         session.capture_seq = session.capture_seq.wrapping_add(1);
         (session.epoch, session.capture_seq)
     };
@@ -377,19 +587,98 @@ fn capture(app: &AppHandle) {
             let current = lock(&state);
             let changed = !current.capture_current(epoch, sequence);
             drop(current);
-            if changed || window.url().ok().as_ref() != Some(&before) {
+            if changed {
+                return;
+            }
+            if window.url().ok().as_ref() != Some(&before) {
+                if let Some(state) = callback_app.try_state::<ReaderState>() {
+                    lock(&state).cancel_auto();
+                }
                 status(&callback_app, "page-changed");
                 return;
             }
             let Some(read) = decode(raw) else {
-                status(&callback_app, "unavailable");
+                retry_or_fail(&callback_app, "unavailable");
                 return;
             };
             apply_read(&callback_app, &state, &before, epoch, sequence, read);
         })
         .is_err()
     {
-        status(app, "read-failed");
+        retry_or_fail(app, "read-failed");
+    }
+}
+
+fn retry_or_fail(app: &AppHandle, code: &'static str) {
+    let Some(state) = app.try_state::<ReaderState>() else {
+        return;
+    };
+    let generation = {
+        let mut session = lock(&state);
+        let Some(auto) = session.auto.as_mut() else {
+            drop(session);
+            status(app, code);
+            return;
+        };
+        if auto.started.elapsed() > AUTO_READ_TTL || auto.attempts >= MAX_AUTO_ATTEMPTS {
+            session.pending = None;
+            session.cancel_auto();
+            drop(session);
+            status(app, code);
+            return;
+        }
+        auto.attempts += 1;
+        auto.generation
+    };
+    let worker_app = app.clone();
+    if thread::Builder::new()
+        .name("devin-reader-retry".into())
+        .spawn(move || {
+            thread::sleep(AUTO_RETRY_DELAY);
+            let Some(state) = worker_app.try_state::<ReaderState>() else {
+                return;
+            };
+            let mut session = lock(&state);
+            let current = session
+                .auto
+                .as_ref()
+                .is_some_and(|auto| auto.current(generation));
+            let expired = session
+                .auto
+                .as_ref()
+                .is_some_and(|auto| auto.generation == generation && !current);
+            if expired {
+                session.pending = None;
+                session.cancel_auto();
+            }
+            drop(session);
+            if current {
+                capture(&worker_app);
+            } else if expired {
+                status(&worker_app, "usage-unavailable");
+            }
+        })
+        .is_err()
+    {
+        if let Some(state) = app.try_state::<ReaderState>() {
+            lock(&state).cancel_auto();
+        }
+        status(app, "unavailable");
+    }
+}
+
+fn navigate_phase(app: &AppHandle, slug: &str, page: &str) {
+    let url = format!("https://app.devin.ai/org/{slug}/settings/{page}");
+    let result = Url::parse(&url)
+        .ok()
+        .and_then(|url| app.get_webview_window(LABEL)?.navigate(url).ok());
+    if result.is_none() {
+        if let Some(state) = app.try_state::<ReaderState>() {
+            let mut session = lock(&state);
+            session.pending = None;
+            session.cancel_auto();
+        }
+        status(app, "refresh-cancelled");
     }
 }
 
@@ -446,11 +735,24 @@ fn apply_read(
     sequence: u64,
     read: Extracted,
 ) {
-    if read.error.is_some() {
-        status(app, "unavailable");
+    if let Some(error) = read.error.as_deref() {
+        if matches!(
+            error,
+            "org-label" | "org-field" | "org-value" | "usage-heading" | "usage-fields"
+        ) {
+            retry_or_fail(app, "usage-unavailable");
+        } else {
+            if let Some(state) = app.try_state::<ReaderState>() {
+                lock(&state).cancel_auto();
+            }
+            status(app, "unavailable");
+        }
         return;
     }
     let Some((slug, page)) = page_path(url) else {
+        if let Some(state) = app.try_state::<ReaderState>() {
+            lock(&state).cancel_auto();
+        }
         status(app, "page-changed");
         return;
     };
@@ -461,6 +763,9 @@ fn apply_read(
             .as_deref()
             .is_some_and(|n| n.len() == 32 && n.bytes().all(|b| b.is_ascii_hexdigit()))
     {
+        if let Some(state) = app.try_state::<ReaderState>() {
+            lock(&state).cancel_auto();
+        }
         status(app, "page-changed");
         return;
     }
@@ -470,23 +775,37 @@ fn apply_read(
         status(app, "page-changed");
         return;
     }
+    if !session
+        .auto
+        .as_ref()
+        .is_some_and(|auto| auto.expects(url) && auto.started.elapsed() <= AUTO_READ_TTL)
+    {
+        session.pending = None;
+        session.cancel_auto();
+        drop(session);
+        status(app, "refresh-cancelled");
+        return;
+    }
     let nonce = read.document_nonce.as_deref().unwrap_or_default();
     if session.pending.as_ref().is_some_and(|pending| {
         (pending.last_epoch == epoch && pending.last_nonce != nonce)
             || (pending.last_epoch != epoch && pending.last_nonce == nonce)
     }) {
         session.pending = None;
+        session.cancel_auto();
         drop(session);
         status(app, "page-changed");
         return;
     }
     let Some(expected) = session.expected_org.as_deref() else {
+        session.cancel_auto();
         status(app, "organization-unavailable");
         return;
     };
     if page == "general" {
         let Some(org_id) = read.org_id.filter(|id| org_id_valid(id) && id == expected) else {
             session.pending = None;
+            session.cancel_auto();
             drop(session);
             status(app, "organization-mismatch");
             return;
@@ -497,6 +816,7 @@ fn apply_read(
                 && pending.started.elapsed() <= TRANSACTION_TTL
             {
                 if let Some(usage) = pending.usage {
+                    session.cancel_auto();
                     drop(session);
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -519,16 +839,29 @@ fn apply_read(
             last_epoch: epoch,
             usage: None,
         });
+        let advance = session.auto.as_mut().is_some_and(|auto| {
+            if auto.phase != AutoPhase::FirstGeneral || auto.slug != slug {
+                return false;
+            }
+            auto.phase = AutoPhase::Usage;
+            auto.attempts = 0;
+            true
+        });
         drop(session);
-        status(app, "general-verified-read-usage");
+        if advance {
+            status(app, "refreshing-usage");
+            navigate_phase(app, slug, "usage");
+        } else {
+            status(app, "general-verified-read-usage");
+        }
     } else {
         let Some(usage) = valid_usage(&read) else {
-            session.pending = None;
             drop(session);
-            status(app, "usage-unavailable");
+            retry_or_fail(app, "usage-unavailable");
             return;
         };
         let Some(pending) = session.pending.as_mut() else {
+            session.cancel_auto();
             drop(session);
             status(app, "verify-general-first");
             return;
@@ -538,6 +871,7 @@ fn apply_read(
             || pending.usage.is_some()
         {
             session.pending = None;
+            session.cancel_auto();
             drop(session);
             status(app, "restart-verification");
             return;
@@ -545,8 +879,21 @@ fn apply_read(
         pending.usage = Some(usage);
         pending.last_nonce = nonce.into();
         pending.last_epoch = epoch;
+        let advance = session.auto.as_mut().is_some_and(|auto| {
+            if auto.phase != AutoPhase::Usage || auto.slug != slug {
+                return false;
+            }
+            auto.phase = AutoPhase::LastGeneral;
+            auto.attempts = 0;
+            true
+        });
         drop(session);
-        status(app, "usage-held-confirm-general");
+        if advance {
+            status(app, "confirming-general");
+            navigate_phase(app, slug, "general");
+        } else {
+            status(app, "usage-held-confirm-general");
+        }
     }
 }
 
@@ -555,8 +902,12 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
         if let Some(state) = app.try_state::<ReaderState>() {
             let mut session = lock(&state);
             session.pending = None;
+            session.cancel_auto();
+            session.auto_enabled = false;
+            session.cadence_generation = session.cadence_generation.wrapping_add(1);
             session.expected_org = None;
             session.open_generation = session.open_generation.wrapping_add(1);
+            session.opening = false;
             session.capture_seq = session.capture_seq.wrapping_add(1);
         }
         status(app, "closed");
@@ -569,6 +920,7 @@ mod tests {
 
     #[test]
     fn provider_navigation_is_exact_origin_and_page_paths_are_closed() {
+        assert_eq!(INERT_URL, "about:blank");
         for bad in [
             "http://app.devin.ai/org/a/settings/usage",
             "https://evil.app.devin.ai/org/a/settings/usage",
@@ -578,11 +930,11 @@ mod tests {
             assert!(!provider_url(&Url::parse(bad).unwrap()));
         }
         assert_eq!(
-            page_path(&Url::parse("https://app.devin.ai/org/mason/settings/general").unwrap()),
-            Some(("mason", "general"))
+            page_path(&Url::parse("https://app.devin.ai/org/example/settings/general").unwrap()),
+            Some(("example", "general"))
         );
         assert!(page_path(
-            &Url::parse("https://app.devin.ai/org/mason/settings/usage?other=1").unwrap()
+            &Url::parse("https://app.devin.ai/org/example/settings/usage?other=1").unwrap()
         )
         .is_none());
     }
@@ -614,14 +966,14 @@ mod tests {
     fn usage_requires_finite_bounded_values() {
         let good = Extracted {
             page: Some("usage".into()),
-            slug: Some("mason".into()),
+            slug: Some("example".into()),
             document_nonce: Some("0".repeat(32)),
             org_id: None,
             weekly_used_percent: Some(0.0),
             on_demand_balance_usd: Some(0.0),
             plan: Some("Max".into()),
-            monthly_price_usd: Some(200.0),
-            reset_prose: Some("Resets in 6 days".into()),
+            monthly_price_usd: Some(123.0),
+            reset_prose: Some("Resets in 4 days".into()),
             renewal_prose: None,
             auto_reload: Some(false),
             error: None,
@@ -648,6 +1000,8 @@ mod tests {
         session.expected_org = Some("org-b".into());
         let second = session.begin_open().unwrap();
         assert_ne!(first, second);
+        assert!(!session.finish_open(first));
+        assert!(session.opening);
         assert!(session.finish_open(second));
     }
 
@@ -664,5 +1018,36 @@ mod tests {
         session.epoch += 1;
         assert!(!session.capture_current(4, 10));
         assert!(session.capture_current(5, 10));
+    }
+
+    #[test]
+    fn automatic_bracket_requires_exact_phase_slug_and_cancels_old_callbacks() {
+        let mut session = Session {
+            expected_org: Some("org-example".into()),
+            epoch: 3,
+            capture_seq: 7,
+            ..Session::default()
+        };
+        session.cancel_auto();
+        let generation = session.auto_generation;
+        session.auto = Some(AutoRead {
+            generation,
+            slug: "example".into(),
+            phase: AutoPhase::FirstGeneral,
+            started: Instant::now(),
+            attempts: 0,
+        });
+        let general = Url::parse("https://app.devin.ai/org/example/settings/general").unwrap();
+        let usage = Url::parse("https://app.devin.ai/org/example/settings/usage").unwrap();
+        let other = Url::parse("https://app.devin.ai/org/other/settings/general").unwrap();
+        assert!(session.auto.as_ref().unwrap().expects(&general));
+        assert!(!session.auto.as_ref().unwrap().expects(&usage));
+        assert!(!session.auto.as_ref().unwrap().expects(&other));
+        session.auto.as_mut().unwrap().phase = AutoPhase::Usage;
+        assert!(session.auto.as_ref().unwrap().expects(&usage));
+        let old_sequence = session.capture_seq;
+        session.cancel_auto();
+        assert!(!session.capture_current(3, old_sequence));
+        assert!(session.auto.is_none());
     }
 }

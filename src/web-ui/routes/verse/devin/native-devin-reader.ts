@@ -18,10 +18,12 @@ export type DevinReaderEvent =
 
 type Bridge = { version?: unknown; send?: unknown };
 
-export function nativeDevinReader(win: Window = window): { send(op: { op: 'open'; orgId: string } | { op: 'capture' | 'close' }): boolean } | null {
+type ReaderRequest = { op: 'open'; orgId: string } | { op: 'capture' | 'close' } | { op: 'auto'; enabled: boolean };
+
+export function nativeDevinReader(win: Window = window): { send(op: ReaderRequest): boolean } | null {
   const bridge = (win as unknown as { __ASHLR_DESKTOP__?: { devinReader?: Bridge } }).__ASHLR_DESKTOP__?.devinReader;
   if (bridge?.version !== 1 || typeof bridge.send !== 'function') return null;
-  return { send: bridge.send as (op: { op: 'open'; orgId: string } | { op: 'capture' | 'close' }) => boolean };
+  return { send: bridge.send as (op: ReaderRequest) => boolean };
 }
 
 export function readDevinReaderEvent(event: Event, now: number = Date.now()): DevinReaderEvent | null {
