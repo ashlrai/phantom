@@ -41,6 +41,34 @@ describe('strict local Leader stream', () => {
     expect(init.headers).not.toHaveProperty('Authorization');
     expect(JSON.parse(String(init.body))).toMatchObject({ model, stream: true, max_tokens: 40, stream_options: { include_usage: true } });
   });
+  it('sends a disabled-thinking template kwarg only when the bound caller asks for it', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(response(chunk('ok', 'stop') + done))); vi.stubGlobal('fetch', fetch);
+    await client({ strictStreaming: { expectedModel: model, disableThinking: true } }).chatStream!(messages, undefined, () => {});
+    await client().chatStream!(messages, undefined, () => {});
+    expect(JSON.parse(String((fetch.mock.calls[0] as [string, RequestInit])[1].body))).toMatchObject({
+      chat_template_kwargs: { enable_thinking: false }, max_tokens: 40,
+    });
+    expect(JSON.parse(String((fetch.mock.calls[1] as [string, RequestInit])[1].body))).not.toHaveProperty('chat_template_kwargs');
+  });
+  it('accepts a bounded multi-frame stream above the old 1 MiB envelope cap', async () => {
+    const frame = `data: ${JSON.stringify({ model, id: 'x'.repeat(256), object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { content: 'a' }, finish_reason: null }] })}\n\n`;
+    const stream = frame.repeat(3_000) + chunk(null, 'stop') + done;
+    expect(encoder.encode(stream).byteLength).toBeGreaterThan(1024 * 1024);
+    expect(encoder.encode(stream).byteLength).toBeLessThan(2 * 1024 * 1024);
+    const fetch = vi.fn().mockResolvedValue(response(stream)); vi.stubGlobal('fetch', fetch);
+    const result = await client({ maxResponseBytes: 2 * 1024 * 1024, maxOutputTokens: 3_072 }).chatStream!(messages, undefined, () => {});
+    expect(result.content).toHaveLength(3_000); expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('still refuses an oversized or length-terminated response without replay', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(response(chunk('x'.repeat(2 * 1024 * 1024), 'stop') + done))
+      .mockResolvedValueOnce(response(chunk('partial', 'length') + done));
+    vi.stubGlobal('fetch', fetch);
+    const delta = vi.fn();
+    await expect(client({ maxResponseBytes: 2 * 1024 * 1024 }).chatStream!(messages, undefined, delta)).rejects.toThrow(/byte limit/);
+    await expect(client({ maxResponseBytes: 2 * 1024 * 1024 }).chatStream!(messages, undefined, delta)).rejects.toThrow(/not completed/);
+    expect(delta).not.toHaveBeenCalled(); expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('counts one POST dispatch attempt after preconditions, including an HTTP refusal, without retry', async () => {
     const onRequestStart = vi.fn(), fetch = vi.fn().mockResolvedValue(new Response('', {status:503})); vi.stubGlobal('fetch',fetch);
     await expect(client({onRequestStart},'https://example.com/v1').chatStream!(messages,undefined,()=>{})).rejects.toThrow();

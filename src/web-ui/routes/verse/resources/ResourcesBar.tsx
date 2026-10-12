@@ -139,7 +139,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       const historicalValue = history.windows.some(window => window.limitReached) ? 'limit was reached · last'
         : historicalUsed === null ? 'last reading' : `${usedPercentText(historicalUsed)} used · last`;
       out.push({ key: row.seatId, engine: row.engine, name: row.label, leftPercent: recordedLeft, level: 'unknown',
-        value: row.engine === 'codex' ? historicalValue : recordedLeft === null ? 'last reading' : `${usedPercentText(recordedLeft)} last`,
+        value: row.engine === 'codex' ? historicalValue : recordedLeft === null ? 'last reading' : `${usedPercentText(recordedLeft)} left · last`,
         ...(creditLabel === undefined ? {} : { creditLabel, creditHeld }),
         ...(exactCreditBalance === undefined ? {} : { exactCreditBalance }),
         summary: `${row.label}${surfaceLabel}: last known usage · current usage unconfirmed${creditSummary}`,

@@ -166,6 +166,24 @@ describe('requests', () => {
     expect(f.requests.every((r) => r.headers['authorization'] === `Bearer ${FAKE_KEY}`)).toBe(true);
   });
 
+  it('resolves one direct organization member and sends explicit human attribution', async () => {
+    const f = fakeDevin();
+    const c = client(f);
+    expect(await c.getOrganizationUserByEmail(FAKE_ORG, 'Mason@Example.com')).toEqual({ userId: 'user-mason', email: 'mason@example.com' });
+    const session = await c.createSession(FAKE_ORG, { prompt: 'Synthetic fixture', createAsUserId: 'user-mason' });
+    expect((f.requests[1]!.body as Record<string, unknown>)['create_as_user_id']).toBe('user-mason');
+    expect((await c.getSession(FAKE_ORG, session.sessionId)).userId).toBe('user-mason');
+    expect(f.requests[0]!.path).toBe(`/v3beta1/organizations/${FAKE_ORG}/members/users?email=mason%40example.com&first=2`);
+  });
+
+  it('fails closed on a missing direct member or unsafe attribution id', async () => {
+    const f = fakeDevin();
+    const c = client(f);
+    expect(await c.getOrganizationUserByEmail(FAKE_ORG, 'absent@example.com')).toBeNull();
+    await expect(c.createSession(FAKE_ORG, { prompt: 'x', createAsUserId: '../other' })).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(f.requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
   it('creates a session with exactly the documented SessionCreateRequest fields', async () => {
     const f = fakeDevin();
     const session = await client(f).createSession(FAKE_ORG, {

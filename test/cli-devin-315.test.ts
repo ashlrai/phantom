@@ -54,6 +54,13 @@ function harness(patch: Partial<DevinCliDeps> = {}) {
 }
 
 describe('ashlr devin', () => {
+  it('selects a human seat by email without treating selection as allowance proof', async () => {
+    const h = harness({ selectHumanSeat: async email => ({ email: email.toLowerCase(), selectedAt: new Date().toISOString() }) });
+    expect(await runDevinCli(['seat', '--email', 'Mason@Example.com'], h.deps)).toBe(0);
+    expect(h.out.join('\n')).toContain('mason@example.com');
+    expect(h.out.join('\n')).toContain('does not prove remaining plan allowance');
+    expect(await runDevinCli(['seat'], h.deps)).toBe(2);
+  });
   it('connect reads the key hidden, never prints it, and turns the lane on', async () => {
     const h = harness();
     expect(await runDevinCli(['connect', '--org', 'org-abc'], h.deps)).toBe(0);

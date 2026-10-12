@@ -9,7 +9,36 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.12] — Unreleased
+## [3.29.13] — Unreleased
+
+### Added
+- Allow an explicitly selected loopback llama-server to serve Fleet alongside
+  subscription seats, using current slot activity and per-slot context readings.
+- Select a verified organization member for Devin service-user session
+  attribution and verify that attribution after creation. Attribution does not
+  establish a subscription allowance, credit balance or cash billing boundary.
+- Give Leader tasks an explicit goal milestone identity so rewording the same
+  milestone does not queue duplicate work; distinct milestones remain separate.
+
+### Fixed
+- Hold autonomous native Codex producer calls without fresh, exact-account
+  subscription-only billing-control proof, including retries. The current
+  Codex quota feed does not supply that proof, so those autonomous calls remain
+  held pending a genuine provider control source; manual Verse Codex chats use
+  a separate turn path and are unchanged.
+- Keep the served Qwen3.8 Leader's output budget for its structured memo and
+  bound the streaming transport separately from the model's token allowance.
+- Accept qualified local and mid-tier outcome-manager records in the workbench.
+- Show stale lane capacity as unobserved and label historical remaining allowance.
+- Publish exact native metadata child identity before fallible launch checks,
+  preserving full signed-image verification before execution and recovery.
+  Failures before durable identity publication remain held for recovery.
+- Refuse local app installation while quota collection or ownership is unresolved.
+- Report native launch failure stages without provider, account or command data.
+- Identify whether Claude quota collection timed out during sign-in, version,
+  usage or final sign-in verification while retaining the bounded probe budget.
+
+## [3.29.12] — 2026-10-12
 
 ### Changed
 - Clarify that the resident USD ceiling is secondary to signed metered authority:

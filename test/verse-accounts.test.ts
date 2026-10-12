@@ -664,6 +664,12 @@ describe('verse accounts — per-provider derivation', () => {
     const capacity = buildSeatTelemetry(root, { collector: warmCollector(root, [missing]) }).get('claude')!.capacity;
     expect(capacity).toMatchObject({ usability: 'unknown', windows: [], quotaReadReason: 'usage-output-invalid' });
     expect(JSON.stringify(capacity)).not.toContain(FAKE_BEARER);
+    for (const reason of ['status-auth-timed-out', 'status-version-timed-out',
+      'status-usage-timed-out', 'status-reauth-timed-out']) {
+      const timedOut = { ...missing, reason };
+      expect(buildSeatTelemetry(root, { collector: warmCollector(root, [timedOut]) }).get('claude')!.capacity)
+        .toMatchObject({ usability: 'unknown', windows: [], quotaReadReason: reason });
+    }
     const unreviewed = { ...missing, reason: '/private/provider/output?token=private' };
     expect(buildSeatTelemetry(root, { collector: warmCollector(root, [unreviewed]) }).get('claude')!.capacity)
       .not.toHaveProperty('quotaReadReason');

@@ -422,14 +422,27 @@ export async function probeLocalRuntimeDefault(cfg: AshlrConfig, snapshot: Capac
     try {
       const { probeLlamaRuntime } = await import('../local-runtime/llama/health.js');
       const reading = await probeLlamaRuntime({ baseUrl: resolveLlamaServerBaseUrl(cfg), timeoutMs: 1_500 });
+      const slots = reading.slots.configured;
+      const busy = reading.slots.busy;
+      const idle = reading.slots.idle;
+      const context = reading.contextPerSlot;
+      // A serving process alone is not admission evidence. Unknown occupancy
+      // can hide another client, and unknown per-slot context can truncate an
+      // agent before its system prompt fits. Hold until both are observed.
+      const usable = reading.state === 'up' && typeof slots === 'number' && Number.isSafeInteger(slots) && slots > 0 &&
+        typeof busy === 'number' && Number.isSafeInteger(busy) && busy >= 0 &&
+        typeof idle === 'number' && Number.isSafeInteger(idle) && idle >= 0 && busy + idle === slots &&
+        typeof context === 'number' && Number.isSafeInteger(context) && context > 0;
       return {
-        reachable: reading.state === 'up',
-        slots: reading.slots.configured,
-        busySlots: reading.slots.busy,
-        idleSlots: reading.slots.idle,
+        reachable: usable,
+        slots: usable ? slots : null,
+        busySlots: usable ? busy : null,
+        idleSlots: usable ? idle : null,
         observedAt: reading.checkedAt,
-        contextPerSlot: reading.contextPerSlot,
-        detail: `llama-server ${reading.state}${reading.slots.configured !== null ? ` with ${reading.slots.configured} slot(s)` : ''}`,
+        contextPerSlot: usable ? context : null,
+        detail: usable ? `llama-server up with ${slots} slot(s) at ${context} ctx/slot`
+          : reading.state === 'up' ? 'llama-server slot activity or per-slot context is unverified'
+            : `llama-server ${reading.state}`,
       };
     } catch {
       return { reachable: null, slots: null, contextPerSlot: null, detail: 'the local runtime probe failed' };
@@ -451,13 +464,14 @@ export async function probeLocalRuntimeDefault(cfg: AshlrConfig, snapshot: Capac
   };
 }
 
-/** Use only complete, current activity; an unknown observation keeps the existing total-capacity policy. */
+/** Only complete, current slot activity and usable per-slot context can admit a fleet turn. */
 function measuredLocalIdle(reading: LocalRuntimeReading, nowMs: number): number | null {
-  const { slots, busySlots, idleSlots, observedAt } = reading;
+  const { slots, busySlots, idleSlots, observedAt, contextPerSlot } = reading;
   if (reading.reachable !== true || typeof slots !== 'number' || !Number.isSafeInteger(slots) || slots <= 0
     || typeof busySlots !== 'number' || !Number.isSafeInteger(busySlots) || busySlots < 0
     || typeof idleSlots !== 'number' || !Number.isSafeInteger(idleSlots) || idleSlots < 0
     || busySlots > slots || idleSlots > slots || busySlots + idleSlots !== slots
+    || typeof contextPerSlot !== 'number' || !Number.isSafeInteger(contextPerSlot) || contextPerSlot <= 0
     || typeof observedAt !== 'string') return null;
   const atMs = Date.parse(observedAt);
   const ageMs = nowMs - atMs;
@@ -1816,7 +1830,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const experimentWidth = lastFleetQueueDepth > 0 ? EXPERIMENT_LOCAL_SLOTS_BUSY : EXPERIMENT_LOCAL_SLOTS_IDLE;
       const idleBeforeExperiment = measuredLocalIdle(local, deps.now());
       if (!hookCtx.dryRun && !hookCtx.meteredUsdExhausted && holdProduction === null && lanes.local.slots > 0
-        && (idleBeforeExperiment === null || idleBeforeExperiment >= experimentWidth)) {
+        // The explicitly armed llama-server fleet needs a current idle-slot
+        // reading even for background experiments. Preserve the legacy local
+        // fallback when that fleet is not armed.
+        && (idleBeforeExperiment === null ? !localFleetEnabled(cfg) : idleBeforeExperiment >= experimentWidth)) {
         let overnight = false;
         try {
           overnight = deps.overnightActive();
@@ -1838,7 +1855,9 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         lanes.local = { lane: 'local', slots: left, capReason: `A harness experiment is using ${countOf(lanes.local.slots - left, 'local slot')}.` };
       }
       const measuredIdle = measuredLocalIdle(local, deps.now());
-      if (measuredIdle !== null) {
+      if (measuredIdle === null && localFleetEnabled(cfg)) {
+        lanes.local = { lane: 'local', slots: 0, capReason: 'Current llama-server slots, activity, or per-slot context could not be verified.' };
+      } else if (measuredIdle !== null) {
         // Existing experiments may already occupy observed slots: min avoids
         // double subtraction. A newly launched experiment was not observed,
         // so only its new reservation comes out of measured idle once.

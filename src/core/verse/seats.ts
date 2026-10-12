@@ -554,6 +554,10 @@ function claudeQuotaReadReason(record: VerseAccountRecord): VerseClaudeQuotaRead
     case 'usage-account-changed':
     case 'status-termination-uncertain':
     case 'status-timed-out':
+    case 'status-auth-timed-out':
+    case 'status-version-timed-out':
+    case 'status-usage-timed-out':
+    case 'status-reauth-timed-out':
     case 'connection-monitor-stopped':
     case 'connection-reading-expired':
       return record.reason;

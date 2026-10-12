@@ -279,6 +279,8 @@ export type VerseClaudeQuotaReadReason =
   | 'usage-output-invalid' | 'usage-process-failed' | 'usage-version-unsupported'
   | 'usage-identity-unavailable' | 'usage-account-changed'
   | 'status-termination-uncertain' | 'status-timed-out'
+  | 'status-auth-timed-out' | 'status-version-timed-out'
+  | 'status-usage-timed-out' | 'status-reauth-timed-out'
   | 'connection-monitor-stopped' | 'connection-reading-expired';
 
 /** Everything the seat list needs to draw a capacity meter honestly. */

@@ -34,9 +34,11 @@ import { dirname, join } from 'node:path';
 import type { WorkItem, WorkSource } from '../types.js';
 import { currentStandingPolicy } from '../authority/effective-config.js';
 import { STANDING_GRANT_CEILINGS, STANDING_GRANT_PATTERNS } from '../authority/types.js';
+import { loadGoal } from '../goals/store.js';
 import type { RoutingDifficulty } from '../routing/types.js';
 import type { ReasoningInsight } from '../reasoning/types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { repoIdentityOfPath } from './repo-identity.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import {
   FLEET_ACTORS,
@@ -176,6 +178,9 @@ function sanitizeTask(raw: unknown): FleetTask | null {
   if (!isIso(r['createdAt']) || !isIso(r['updatedAt'])) return null;
   const parkedUntil = r['parkedUntil'];
   if (parkedUntil !== null && !isIso(parkedUntil)) return null;
+  const goalId = cleanRef(r['goalId']);
+  const milestoneId = cleanRef(r['milestoneId']);
+  if (r['milestoneId'] != null && (milestoneId === null || goalId === null)) return null;
   return {
     v: 1,
     id: r['id'],
@@ -186,7 +191,8 @@ function sanitizeTask(raw: unknown): FleetTask | null {
     difficulty: r['difficulty'] as RoutingDifficulty,
     value: Math.max(1, Math.min(5, Math.round(value))),
     requestedBy: r['requestedBy'] as FleetActor,
-    goalId: cleanRef(r['goalId']),
+    goalId,
+    ...(milestoneId !== null ? { milestoneId } : {}),
     landingId: cleanRef(r['landingId']),
     insightId: cleanRef(r['insightId']),
     dedupeKey: cleanRef(r['dedupeKey']),
@@ -227,6 +233,11 @@ export function readTaskQueue(file: string = taskQueuePath()): TaskQueueRead {
     const tasks: FleetTask[] = [];
     for (const entry of raw['tasks']) {
       const task = sanitizeTask(entry);
+      // Never discard an identity-bearing row and then admit a duplicate as
+      // if the queue were empty. Legacy malformed rows retain old behavior.
+      if (!task && typeof entry === 'object' && entry !== null && 'milestoneId' in entry) {
+        return { ok: false, reason: 'An exact-milestone task in the fleet queue is invalid.' };
+      }
       if (task) tasks.push(task);
     }
     return { ok: true, tasks };
@@ -316,16 +327,17 @@ function validateInput(input: FleetTaskInput): { ok: true } | { ok: false; reaso
   if (typeof input.value !== 'number' || !Number.isFinite(input.value) || input.value < 1 || input.value > 5) {
     return { ok: false, reason: 'value must be a number from 1 to 5.' };
   }
-  for (const key of ['goalId', 'landingId', 'insightId', 'dedupeKey'] as const) {
+  for (const key of ['goalId', 'milestoneId', 'landingId', 'insightId', 'dedupeKey'] as const) {
     const ref = input[key];
     if (ref !== undefined && ref !== null && cleanRef(ref) === null) {
       return { ok: false, reason: `${key} must be a short identifier without spaces.` };
     }
   }
+  if (input.milestoneId != null && input.goalId == null) return { ok: false, reason: 'milestoneId requires goalId.' };
   return { ok: true };
 }
 
-/** Queue a task (idempotent on `dedupeKey`). */
+/** Queue a task (idempotent on `dedupeKey` or a validated exact milestone). */
 export function enqueueTask(input: FleetTaskInput, opts: TaskStoreOptions = {}): EnqueueTaskResult {
   const valid = validateInput(input);
   if (!valid.ok) return { ...valid, writeAttempted: false };
@@ -334,8 +346,33 @@ export function enqueueTask(input: FleetTaskInput, opts: TaskStoreOptions = {}):
   const nowIso = new Date(nowMs).toISOString();
   const file = opts.file ?? taskQueuePath();
   const dedupeKey = cleanRef(input.dedupeKey);
-  type EnqueueOutcome = { task: FleetTask | null; deduped: boolean; full: boolean };
+  const goalId = cleanRef(input.goalId);
+  const milestoneId = cleanRef(input.milestoneId);
+  type EnqueueOutcome = { task: FleetTask | null; deduped: boolean; full: boolean; reason?: string };
   const outcome = withQueue<EnqueueOutcome>(file, nowMs, (tasks) => {
+    if (milestoneId !== null) {
+      // A model-provided milestone name is never enough. Read the saved goal
+      // while holding the queue lock, then admit only its exact pending id.
+      const goal = loadGoal(goalId!);
+      const projectRepo = goal?.project ? repoIdentityOfPath(goal.project) : null;
+      if (!goal || !['active', 'planning'].includes(goal.status) ||
+          projectRepo?.toLowerCase() !== input.repo.toLowerCase() ||
+          !goal.milestones.some((m) => m.id === milestoneId && m.status === 'pending')) {
+        return { tasks, result: { task: null, deduped: false, full: false,
+          reason: 'The exact pending goal milestone could not be verified for this repo.' }, write: false };
+      }
+      // A pre-identity Leader task may already cover this milestone. Its
+      // title is not reliable evidence for binding it to any saved milestone.
+      // Hold all new exact work for this goal until Mason reviews that legacy
+      // task; do not silently collapse distinct milestones or run both forms.
+      if (tasks.some((t) => t.goalId === goalId && t.milestoneId == null && OPEN_STATUSES.has(t.status))) {
+        return { tasks, result: { task: null, deduped: false, full: false,
+          reason: 'Open legacy work for this goal needs review before exact milestone tasks can be queued.' }, write: false };
+      }
+      const existing = tasks.find((t) => t.repo.toLowerCase() === input.repo.toLowerCase() &&
+        t.goalId === goalId && t.milestoneId === milestoneId && OPEN_STATUSES.has(t.status));
+      if (existing) return { tasks, result: { task: existing, deduped: true, full: false }, write: false };
+    }
     if (dedupeKey !== null) {
       const existing = tasks.find((t) => t.dedupeKey === dedupeKey && OPEN_STATUSES.has(t.status));
       if (existing) return { tasks, result: { task: existing, deduped: true, full: false }, write: false };
@@ -355,7 +392,8 @@ export function enqueueTask(input: FleetTaskInput, opts: TaskStoreOptions = {}):
       difficulty: input.difficulty,
       value: Math.max(1, Math.min(5, Math.round(input.value))),
       requestedBy: input.requestedBy,
-      goalId: cleanRef(input.goalId),
+      goalId,
+      ...(milestoneId !== null ? { milestoneId } : {}),
       landingId: cleanRef(input.landingId),
       insightId: cleanRef(input.insightId),
       dedupeKey,
@@ -372,6 +410,7 @@ export function enqueueTask(input: FleetTaskInput, opts: TaskStoreOptions = {}):
     return { tasks: [...tasks, task], result: { task, deduped: false, full: false }, write: true };
   });
   if (!outcome.ok) return { ok: false, reason: outcome.reason, writeAttempted: outcome.writeAttempted };
+  if (outcome.result.reason) return { ok: false, reason: outcome.result.reason, writeAttempted: false };
   if (outcome.result.full) {
     return { ok: false, reason: `The fleet already holds ${TASK_QUEUE_LIMITS.maxOpenTasks} unfinished tasks.`, writeAttempted: false };
   }

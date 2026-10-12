@@ -281,9 +281,20 @@ describe('resolveServingCapacity', () => {
 // ---------------------------------------------------------------------------
 
 describe('readLocalFleetSettings', () => {
-  it('is armed by the local-only policy, not by a switch of its own', () => {
+  it('keeps local-only behavior and requires an explicit llama-server backend in mixed mode', () => {
     expect(readLocalFleetSettings(makeCfg()).enabled).toBe(false);
     expect(readLocalFleetSettings(localOnlyCfg()).enabled).toBe(true);
+    const mixed = makeCfg({ foundry: { allowedBackends: ['builtin', 'llama-server', 'claude'] } });
+    expect(readLocalFleetSettings(mixed)).toMatchObject({ enabled: true, source: 'allowed-backend' });
+    expect(readLocalFleetSettings(mixed).detail).toContain('mixed mode');
+    expect(localFleetEnabled(mixed)).toBe(true);
+    expect(readLocalFleetSettings(makeCfg({ foundry: { allowedBackends: ['builtin', 'local-coder', 'claude'] } })).enabled).toBe(false);
+    const remote = makeCfg({
+      foundry: { allowedBackends: ['llama-server'] },
+      models: { llamaServer: { baseUrl: 'https://example.com/v1' } },
+    });
+    expect(localFleetEnabled(remote)).toBe(false);
+    expect(readLocalFleetSettings(remote).enabled).toBe(false);
   });
 
   it('follows an env-enabled local-only', () => {
