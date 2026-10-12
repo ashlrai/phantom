@@ -135,8 +135,73 @@ Human CLI: `phm team view | join | approve | deny | claim | release | say`.
 * **Phase 4:** cross-org federation, learned routing of handoffs to the best
   fleet, recursive self-improvement loops gated by the same approvals.
 
-## 8. Decisions for the operator
+
+## 9. Leader agent, channels and org structure (design, Phase 2–3)
+
+A **leader agent** is a team member with role `leader` (an agent role that can
+*propose* but never self-approve). It:
+
+* manages communication channels: each channel is a record
+  `{id, kind: 'telegram'|'slack'|'local', externalRef, team, department, members[]}`;
+  multiple Telegram chats map to multiple teams/departments;
+* grants and revokes agent access via `access.requested` → human
+  `approval.decided` → `access.granted` / `access.revoked` events (grant =
+  member + channel + capability set + expiry);
+* maintains the org chart: `department.created {id, name, mission, leadId}` and
+  `role.assigned {memberId, departmentId, title}`, so a largely agent-run
+  company has explicit departments (Engineering, Growth, Ops, Context &
+  Resource Steward) with a human owner accountable for each.
+
+Every grant, revocation, new channel and department change is a consequential
+action requiring a human owner/admin approval.
+
+**Telegram adapter:** a bridge process maps Telegram updates to
+`message.posted` (channel = Telegram chat) and posts team events back. The bot
+token is resolved only through a Phantom Secrets reference
+(`phm_TELEGRAM_LEADER_BOT_TOKEN`) by the Secrets proxy at send time; it never
+enters the team log, config files or agent context. Inbound messages from
+unknown Telegram user ids are dropped; Telegram users map to members via
+`access.granted`. No adapter ships with credentials; Phase 1 has none.
+
+## 10. Connectors as canonical sources (design, Phase 2)
+
+Grok Bot, Meta Muse and OpenAI agents already share the same Gmail, Google
+Calendar and Google Drive. The context layer must **point at** those systems,
+not copy them into markdown:
+
+* `source.registered {id, kind: 'gmail'|'gcal'|'gdrive'|'github'|..., account, scope}`
+  declares a canonical source (no credentials; access stays in each agent's
+  own sanctioned connector).
+* Context entries may be **pointers**: `{sourceId, ref (thread/event/file id),
+  summary, summarizedAt, sourceVersion, ttl}`. Retrieval returns the summary
+  with its freshness; stale entries are flagged so the agent re-reads the
+  source rather than trusting a cached copy.
+* **Hierarchical summaries**: `summary.rolled {children[], level, text}`
+  replaces many raw entries with one summary (day → week → project), raw
+  children kept as pointers for drill-down. Dedupe is by `(sourceId, ref)` and
+  by content hash, so five agents logging the same email produce one entry.
+
+## 11. Context & resource steward (department + agent)
+
+* **Shipped in Phase 1:** `phm steward disk [--apply]` measures Codex sessions
+  and logs, Claude projects and Phantom logs/runs against per-root retention
+  and quotas (defaults: Codex sessions 14 d / 2 GB, Codex log 7 d / 512 MB,
+  Claude projects 30 d / 2 GB, Phantom logs 14 d / 512 MB, runs 30 d / 2 GB).
+  Dry run by default; `--apply` deletes only retention-expired or
+  oldest-over-quota files inside allowlisted roots, never symlinks, never files
+  touched in the last hour.
+* Phase 2: scheduled steward (daemon tick), configurable policy, context-size
+  budgets enforced on `context_get` packs and on team log compaction
+  (snapshot + rotate `events.jsonl`), stale worktree/artifact cleanup.
+* Phase 3: concurrency scheduler that places agent sessions on the local
+  machine (e.g. 128 GB RAM running a local model: admit by free RAM/VRAM and
+  model residency) vs cloud subscriptions/credits (admit by quota windows,
+  reusing RESOURCE-POOLS / RESET-AWARE-SCHEDULING).
+
+## 12. Decisions for the operator
 
 1. Who besides Mason is owner/admin of the `ashlr` team.
 2. Hosting for the Phase 2 sync service (self-hosted vs. phm.dev cloud).
 3. Whether `merge` should stay consequential for green, reviewed PRs.
+4. Which Telegram chats map to which teams/departments, and who approves leader-agent access grants.
+5. Steward default quotas, and whether to schedule `--apply` automatically.
