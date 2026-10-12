@@ -32,10 +32,12 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Make older completed and archived agents discoverable through Done history,
   and guide onboarding toward one bounded change with an inspected diff and
   actual repository test output.
-- Prepare read-only native pool commissioning plans with exact historical
-  configuration checks, grouped personal aliases and preserved policy/history.
-  Plans expose identity, custody, context and collector-epoch application holds;
-  writable migration and provider authorization remain separate.
+- Add explicit native pool re-enrollment with a reviewed plan digest, atomic
+  staged custody, interrupted-publication recovery and exact completed replay.
+  Preserve policy, receipts, aliases and operator holds; keep retained old
+  context behind its original account boundary. Runtime admission requires
+  intact transition custody and fresh target collector/profile evidence, with
+  subscription-only billing qualification separate from locator migration.
 
 ### Fixed
 - Read the installed resident service definition without following a swapped
@@ -67,6 +69,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   Recheck tightened allowances after preparation and retry backoff. Human
   attribution and subscription labels do not establish included API billing;
   native CLI, manual launches and usage metadata keep their existing paths.
+- Reject quota-proof metadata failures before native contact or after known
+  settlement without falsely reporting uncertain native termination. Actual
+  unknown or uncertain launches retain their durable recovery fence.
 
 ## [3.29.13] — 2026-10-12
 
