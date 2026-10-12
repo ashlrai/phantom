@@ -9,7 +9,19 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.11] — Unreleased
+## [3.29.12] — Unreleased
+
+### Changed
+- Clarify that the resident USD ceiling is secondary to signed metered authority:
+  subscription and local work may continue after a positive ceiling is reached,
+  while setting the ceiling to zero stops all resident work.
+
+### Fixed
+- Explain a missing Claude quota reading in Apps & Accounts and Resources using
+  an allowlisted diagnostic reason. An unavailable reading remains unavailable;
+  no provider output or account identifier is exposed.
+
+## [3.29.11] — 2026-10-11
 
 ### Added
 - Bind new macOS native profiles to their APFS volume UUID, directory inode and
