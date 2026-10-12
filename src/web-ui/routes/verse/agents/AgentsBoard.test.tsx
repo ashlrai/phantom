@@ -12,7 +12,7 @@ import type { AgentBoardResponse, AgentCard } from '../../../../core/verse/agent
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll, refetchQuery } from '../../../data/cache.js';
 import { CLAUDE_SEAT, CODEX_SEAT, installFetch, json, TEST_TOKEN, type RecordedCall } from '../context/context-fixtures.test-support.js';
-import { resetVerseUi } from '../verse-ui-store.js';
+import { resetVerseUi, getVerseUiState } from '../verse-ui-store.js';
 import { AgentsBoard } from './AgentsBoard.js';
 import { requestAgentsFocus } from './agents-focus.js';
 import {
@@ -317,4 +317,38 @@ it('keeps unknown outcomes visible and offers inspection without a retry-all act
   fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
   expect(screen.getByRole('dialog', { name: 'New agent' })).not.toHaveTextContent('Outcome uncertain');
   expect(screen.getByLabelText('What should it do?')).toHaveValue('');
+});
+
+
+it('reveals older completed chats and archived workspaces through the existing Done filter', async () => {
+  const archive = card({ id: 'ag_eeeeeeeeeeeeeeee', agentId: 'ag_eeeeeeeeeeeeeeee', sessionId: 'vs_archived',
+    title: 'Archived checkout', column: 'done', status: 'archived', reason: 'archived', reasonText: 'Archived',
+    archived: true, restorable: true, workspacePath: null, startedAt: null });
+  const { calls } = installFetch(call => {
+    if (call.path === '/api/verse/agents' && call.method === 'GET') return json(board([...CARDS, archive]));
+    if (call.path.startsWith('/api/verse/bootstrap')) return json({ seats: [CLAUDE_SEAT], projects: [], sessions: [], dispatchEnabled: true });
+    if (call.path.endsWith('/restore')) return json({ agent: {} });
+    return json({ error: 'not found' }, 404);
+  });
+  render(<AgentsBoard />);
+  await screen.findByRole('button', { name: /Fix login/ });
+  expect(screen.queryByRole('button', { name: /Old chat/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Archived checkout/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('2 older Done cards');
+  fireEvent.click(screen.getByRole('button', { name: 'Show older work' }));
+  expect(screen.getByRole('combobox', { name: 'Done history' })).toHaveValue('all');
+  await screen.findByRole('button', { name: /Archived checkout/ });
+  expect(screen.getByRole('button', { name: /Old chat/ })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Done history' }), { target: { value: 'recent' } });
+  expect(screen.queryByRole('button', { name: /Archived checkout/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Done history' }), { target: { value: 'all' } });
+  fireEvent.click(screen.getByRole('button', { name: /Archived checkout/ }));
+  const details = await screen.findByRole('complementary', { name: 'Details: Archived checkout' });
+  fireEvent.click(within(details).getByRole('button', { name: 'Restore' }));
+  await waitFor(() => expect(calls.filter(call => call.path.endsWith('/restore'))).toHaveLength(1));
+  expect(calls.find(call => call.path.endsWith('/restore'))?.path).toBe('/api/verse/agents/ag_eeeeeeeeeeeeeeee/restore');
+  fireEvent.click(within(details).getByRole('button', { name: 'Open chat' }));
+  expect(getVerseUiState().activeSessionId).toBe('vs_archived');
 });

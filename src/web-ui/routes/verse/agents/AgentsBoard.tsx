@@ -105,6 +105,9 @@ export function AgentsBoard() {
   // The clock ticks every second for the elapsed labels; the Done cut-off only needs minutes.
   const minute = Math.floor(now / 60_000);
   const cards = useMemo(() => filterCards(allCards, filter, minute * 60_000), [allCards, filter, minute]);
+  const olderDoneCount = useMemo(() => filter.doneWithinMs === null ? 0
+    : filterCards(allCards, { ...filter, doneWithinMs: null }, minute * 60_000).length - cards.length,
+  [allCards, filter, minute, cards.length]);
   const columns = useMemo(() => groupByColumn(cards), [cards]);
   const repos = useMemo(() => reposOf(allCards), [allCards]);
   const cursor: BoardCursor | null = cursorId ? locate(columns, cursorId) : null;
@@ -286,6 +289,11 @@ export function AgentsBoard() {
             <option value="">All repos</option>
             {repos.map((r) => <option key={r} value={r}>{r}</option>)}
           </Select>
+          <Select aria-label="Done history" size="sm" value={filter.doneWithinMs === null ? 'all' : 'recent'}
+            onChange={(e) => setFilter((f) => ({ ...f, doneWithinMs: e.target.value === 'all' ? null : DEFAULT_FILTER.doneWithinMs }))}>
+            <option value="recent">Done: last 3 days</option>
+            <option value="all">Done: all saved</option>
+          </Select>
           <Input aria-label="Filter cards" size="sm" placeholder="Filter" value={filter.query} onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))} />
           <Button size="sm" variant="ghost" onClick={() => runBulk('read', markReadTargets(cards), 'Mark all read')} busy={busy === 'bulk:read'} title="Needs you is never cleared by this">
             Mark all read
@@ -295,6 +303,10 @@ export function AgentsBoard() {
         </div>
       </header>
 
+      {olderDoneCount > 0 ? <div className={styles.banner} role="status">
+        {olderDoneCount} older Done {olderDoneCount === 1 ? 'card is' : 'cards are'} hidden by the time filter.{' '}
+        <Button size="sm" variant="ghost" onClick={() => setFilter((f) => ({ ...f, doneWithinMs: null }))}>Show older work</Button>
+      </div> : null}
       {notice ? <p className={styles.banner} data-tone={notice.tone} role="status">{notice.text}</p> : null}
       {spawnAttempts.some(attempt => attempt.outcome !== 'started') && !dialog.open ? <div className={styles.banner} data-tone="danger" role="status">
         Launch results still need review.{' '}
