@@ -1,0 +1,17 @@
+{
+  "$comment": "Single source of truth for the Phantom ecosystem repos counted in aggregate stats (scripts/ecosystem-stats.mjs).",
+  "owner": "ashlrai",
+  "repos": [
+    "phantom",
+    "phantom-secrets",
+    "locus",
+    "lexicon",
+    "ashlr-md",
+    "ashlr-stack",
+    "ashlr-plugin",
+    "ashlr-core-efficiency",
+    "binshield",
+    "homebrew-phantom",
+    "homebrew-tap"
+  ]
+}
