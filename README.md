@@ -64,6 +64,11 @@ Website availability does not establish installed fleet or hosted-service readin
 
 ---
 
+
+## Set up in two minutes
+
+Run the setup wizard from the first-run tour or **Settings → Onboarding**, or type `phm setup workbench` in a terminal. It turns on the Ashlr companions (Phantom Secrets and Locus first), picks up the accounts you already have, files every key under a personal, company or client scope, and finishes with a health check. Starting with a single Claude Code login works too. See [docs/onboarding.md](docs/onboarding.md).
+
 ## What it is
 
 **Phantom** brings supported coding agents, accounts and local models into one

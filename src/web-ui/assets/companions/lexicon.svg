@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- Lexicon mark: the dictionary "L" with a proofreader's correction stroke beneath it,
+       drawn in non-photo blue, the pale cyan a reproduction camera could not see. -->
+  <rect width="400" height="400" rx="88" fill="#070a0f"/>
+  <path d="M112 106v155h95" fill="none" stroke="#e6e9ee" stroke-width="33" stroke-linecap="square"/>
+  <path d="M228 303c24-33 45-50 64-54" fill="none" stroke="#a4dded" stroke-width="28" stroke-linecap="round"/>
+</svg>

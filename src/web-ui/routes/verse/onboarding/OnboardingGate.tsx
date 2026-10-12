@@ -11,10 +11,16 @@
  */
 import { lazy } from 'react';
 import { useOnboarding } from './useOnboarding.js';
+import { SetupWizardGate } from '../setup/SetupWizardGate.js';
 
 const OnboardingFlow = lazy(() => import('./OnboardingFlow.js').then((m) => ({ default: m.OnboardingFlow })));
 
 export function OnboardingGate() {
   const onboarding = useOnboarding();
-  return onboarding.open ? <OnboardingFlow /> : null;
+  return (
+    <>
+      {onboarding.open ? <OnboardingFlow /> : null}
+      <SetupWizardGate />
+    </>
+  );
 }

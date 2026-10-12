@@ -563,6 +563,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'goals recover-stale',           desc: 'Reset stale proposal-less in-progress goal lanes back to pending so the fleet can advance them again.', topic: 'autonomy' },
   { cmd: 'goals repair-timestamps',        desc: 'Linux/macOS-only dry-run or exact-plan repair for stale goal updatedAt values (offline, byte-surgical, backed up).', topic: 'autonomy' },
   { cmd: 'roadmap <run|resume|status>',  desc: 'Goal Loop: run a roadmap of milestone files, one FRESH agent process per milestone; resumable from state.json (LOCAL-FIRST; --allow-cloud for API engines).', topic: 'autonomy' },
+  { cmd: 'setup workbench',              desc: 'Setup wizard in the terminal: companions, resources by scope, confirm-each-step plan, context import, health.', topic: 'core' },
   { cmd: 'setup',                        desc: 'Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.', topic: 'core' },
   { cmd: 'goal "<objective>"',           desc: 'Live owner-invoked objective → plan → one sandboxed proposal-only advance; never resident or unattended authority.', topic: 'autonomy' },
   { cmd: 'goal "<objective>" --direct',  desc: 'One owner-invoked proposal-only run with bounded --json output; no unattended authority or verification proof.', topic: 'autonomy' },

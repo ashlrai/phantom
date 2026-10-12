@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="pl-grad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c2410c"/>
+      <stop offset="100%" stop-color="#8B2E1A"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#1a0f0c"/>
+  <rect x="1" y="1" width="62" height="62" rx="13" fill="none" stroke="url(#pl-grad)" stroke-opacity="0.25" stroke-width="1.5"/>
+  <!-- Ledger lines -->
+  <line x1="14" y1="22" x2="50" y2="22" stroke="url(#pl-grad)" stroke-opacity="0.4" stroke-width="1"/>
+  <line x1="14" y1="32" x2="50" y2="32" stroke="url(#pl-grad)" stroke-opacity="0.5" stroke-width="1"/>
+  <line x1="14" y1="42" x2="50" y2="42" stroke="url(#pl-grad)" stroke-opacity="0.6" stroke-width="1"/>
+  <!-- Brand square -->
+  <rect x="14" y="14" width="10" height="10" fill="url(#pl-grad)"/>
+  <!-- Row marks -->
+  <circle cx="46" cy="32" r="2.5" fill="url(#pl-grad)"/>
+  <circle cx="46" cy="42" r="2.5" fill="url(#pl-grad)" opacity="0.7"/>
+</svg>

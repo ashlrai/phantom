@@ -104,6 +104,12 @@ function buildSummary(steps: OnboardStep[]): string {
  * Daemon-service authority denial is blocking and returns 1.
  */
 export async function cmdSetup(args: string[]): Promise<number> {
+  // `phm setup workbench …` is the read-mostly companion/resources wizard; it
+  // needs no resident-service authority, so it runs before that refusal.
+  if (args[0] === 'workbench') {
+    const { cmdSetupWorkbench } = await import('./setup-workbench.js');
+    return cmdSetupWorkbench(args.slice(1));
+  }
   const jsonMode  = args.includes('--json');
   const wireMode  = args.includes('--wire');
   const yesMode   = args.includes('--yes') || !process.stdin.isTTY;
