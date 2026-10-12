@@ -1832,6 +1832,13 @@ export async function planGoal(
 // M41: single-sourced from prompts/roles.SYNTHESIZER_ROLE (verbatim).
 const SYNTHESIS_SYSTEM = SYNTHESIZER_ROLE;
 
+function incompleteTaskSummary(tasks: RunTask[]): string {
+  return tasks
+    .filter((task) => task.status !== 'done')
+    .map((task) => `[${task.id}] ${task.status}: ${task.error ?? task.goal}`)
+    .join('\n');
+}
+
 /**
  * Synthesize a final answer from completed task results.
  * Returns a best-effort string even if the model call fails.
@@ -1862,12 +1869,13 @@ async function synthesize(
   const taskSummary = doneTasks
     .map((t) => `### ${t.id}: ${t.goal}\n${t.result ?? '(no result)'}`)
     .join('\n\n');
+  const incompleteSummary = incompleteTaskSummary(tasks);
 
   const messages: ChatMessage[] = [
     { role: 'system', content: SYNTHESIS_SYSTEM },
     {
       role: 'user',
-      content: `Goal: ${goal}\n\nTask results:\n\n${taskSummary}\n\nPlease synthesize a final answer.`,
+      content: `Goal: ${goal}\n\nTask results:\n\n${taskSummary}${incompleteSummary ? `\n\nIncomplete tasks:\n${incompleteSummary}\n\nThese results are partial. Explain the unfinished work without claiming the goal is complete.` : ''}\n\nPlease synthesize a final answer.`,
     },
   ];
   const promptReservation = conservativeRequestTokenReservation(messages, []);
@@ -4591,11 +4599,15 @@ async function runGoalInternal(
     return state;
   }
 
-  state.result = synthResult;
-
-  // Determine final status
-  const failedCount = state.tasks.filter((t) => t.status === 'failed').length;
-  state.status = failedCount === state.tasks.length ? 'failed' : 'done';
+  // 'done' grants downstream success authority. Failed prerequisites leave
+  // skipped descendants, and independent successes are only partial results.
+  // Keep the existing schema: 'failed' covers these incomplete graphs, while
+  // budget/cancellation interruptions retain 'aborted' above.
+  const complete = state.tasks.length > 0 && state.tasks.every((task) => task.status === 'done');
+  state.status = complete ? 'done' : 'failed';
+  state.result = complete
+    ? synthResult
+    : `${doneTasks.length > 0 ? 'Partial results — run incomplete.' : 'Run failed — no tasks completed successfully.'}\n\nIncomplete tasks:\n${incompleteTaskSummary(state.tasks)}\n\n${synthResult}`;
   state.updatedAt = new Date().toISOString();
   saveRun(state);
 

@@ -227,6 +227,7 @@ import {
   parseTaskList,
   planGoal,
   runGoal,
+  loadRun,
   foldBrowserVerify,
   TITRR_MAX_ATTEMPTS,
   titrrTestRun,
@@ -1221,6 +1222,53 @@ describe('M199 runGoal — never-throws: runTask throws → task marked failed, 
     const t1 = state.tasks.find((t) => t.id === 't1');
     expect(t1?.status).toBe('failed');
     expect(t1?.error).toMatch(/model crashed|Unexpected orchestrator/);
+  });
+});
+
+describe('runGoal — incomplete task graphs cannot report success', () => {
+  it.each([false, true])('fails a dependency-blocked graph with independent success=%s', async (independentSuccess) => {
+    const tasks = [
+      { id: 'failed', goal: 'Required prerequisite', deps: [] },
+      { id: 'blocked', goal: 'Depends on prerequisite', deps: ['failed'] },
+      { id: 'transitively-blocked', goal: 'Depends on blocked task', deps: ['blocked'] },
+      ...(independentSuccess ? [{ id: 'success', goal: 'Independent work', deps: [] }] : []),
+    ];
+    const client = makeClient('ollama');
+    vi.mocked(client.chat)
+      .mockResolvedValueOnce({ content: JSON.stringify(tasks), usage: { tokensIn: 5, tokensOut: 10 } })
+      .mockResolvedValue({ content: 'Independent result summary', usage: { tokensIn: 2, tokensOut: 5 } });
+    vi.mocked(getActiveClient).mockResolvedValue(client as any);
+    vi.mocked(runTask).mockImplementation(async (task: any) => {
+      if (task.id === 'success') {
+        task.status = 'done';
+        task.result = 'Independent work completed';
+      } else {
+        task.status = 'failed';
+        task.error = 'Required work failed';
+      }
+    });
+    vi.mocked(verifyTaskStructured).mockResolvedValue({ ok: true, reason: 'ok' } as any);
+
+    const state = await runGoal('Complete every required task', makeConfig(), makeOpts());
+
+    expect(state.tasks.map((task) => task.status)).toEqual([
+      'failed', 'skipped', 'skipped', ...(independentSuccess ? ['done'] : []),
+    ]);
+    expect(runTask).toHaveBeenCalledTimes(independentSuccess ? 2 : 1);
+    expect(state.status).toBe('failed');
+    expect(loadRun(state.id)?.status).toBe('failed');
+    expect(loadRun(state.id)?.runEventSummary?.status).toBe('failed');
+    if (independentSuccess) {
+      expect(state.result).toContain('Independent result summary');
+      expect(state.result).toContain('Partial results');
+      expect(state.result).toContain('[blocked] skipped');
+      expect(state.result).toContain('[failed] failed');
+      const [synthesisMessages] = vi.mocked(client.chat).mock.calls[1] as unknown as [{ content: string }[]];
+      expect(synthesisMessages[1].content).toContain('[blocked] skipped');
+    } else {
+      expect(client.chat).toHaveBeenCalledTimes(1);
+      expect(state.result).toContain('No tasks completed successfully');
+    }
   });
 });
 
