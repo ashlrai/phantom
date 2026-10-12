@@ -202,6 +202,9 @@
 /src/core/run/engine-registry.ts @masonwyatt23
 /src/core/resources/native-profile.ts @masonwyatt23
 /src/core/resources/pool-commissioning*.ts @masonwyatt23
+/src/core/resources/connection-config.ts @masonwyatt23
+/src/core/resources/quota-refresh-config.ts @masonwyatt23
+/src/core/resources/worker-bindings.ts @masonwyatt23
 /src/core/vision/leader-apply.ts @masonwyatt23
 /src/core/learn/harness-registry.ts @masonwyatt23
 /src/core/learn/experiments.ts @masonwyatt23
@@ -798,6 +801,7 @@
 /test/resource-pool-commissioning-apply.test.ts @masonwyatt23
 /test/resource-pool-commissioning-check.test.ts @masonwyatt23
 /test/resource-pool-commissioning-collector.test.ts @masonwyatt23
+/test/resource-pool-commissioning-config-import.test.ts @masonwyatt23
 /test/resource-pool-commissioning-independent.test.ts @masonwyatt23
 /test/resource-pool-commissioning-recovery.test.ts @masonwyatt23
 /test/resource-pool-commissioning-transaction-cli.test.ts @masonwyatt23
