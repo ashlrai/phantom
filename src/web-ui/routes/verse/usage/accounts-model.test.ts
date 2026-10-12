@@ -14,6 +14,7 @@ import {
   buildAccountCard,
   buildAccountCards,
   buildLocalCard,
+  claudeQuotaDiagnostic,
   creditsSpendable,
   toWindowView,
   windowLabel,
@@ -119,6 +120,17 @@ describe('bindingWindow — the constraint that actually blocks work', () => {
       windows: [win({ id: 'primary', usedPercent: 12 }), win({ id: 'secondary', limitReached: true })],
     });
     expect(bindingWindow(codex)?.id).toBe('secondary');
+  });
+});
+
+describe('Claude missing-quota diagnostics', () => {
+  it('uses reviewed copy and never prints an untrusted probe reason', () => {
+    expect(claudeQuotaDiagnostic('usage-output-invalid')).toEqual({
+      code: 'usage-output-invalid',
+      sentence: 'Claude’s native usage response could not be verified. Current quota remains unknown.',
+    });
+    expect(claudeQuotaDiagnostic('/private/profile?token=secret')).toBeNull();
+    expect(claudeQuotaDiagnostic(null)).toBeNull();
   });
 });
 

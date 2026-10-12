@@ -500,6 +500,18 @@ describe('ResourcesDrawer — accounts', () => {
     expect(calls.length).toBe(count);
   });
 
+  it('shows the reviewed Claude quota failure beside an absent meter, without a false zero', async () => {
+    roster = [nativeSeat(capacity({ planType: 'max', windows: [], binding: null, usability: 'unknown',
+      observedAt: CHECKED, quotaReadReason: 'usage-output-invalid' }),
+    { id: 'claude-missing', engine: 'claude', label: 'Claude without quota', accountId: 'claude-missing' })];
+    render(<ResourcesDrawer mode="docked" now={NOW} />);
+    const card = within(await screen.findByRole('heading', { name: /^Claude without quota/ }).then((head) => head.closest('li')!));
+    expect(card.getByText('Usage not reported by this resource.')).toBeInTheDocument();
+    expect(card.getByText(/native usage response could not be verified/)).toBeInTheDocument();
+    expect(card.getByText('usage-output-invalid')).toBeInTheDocument();
+    expect(card.queryByText('0%')).toBeNull();
+  });
+
   it('Reconnect opens the provider sign-in through the token gate — the seat id only', async () => {
     const user = userEvent.setup();
     render(<ResourcesDrawer mode="docked" now={NOW} />);

@@ -8,7 +8,7 @@
  * Instants are built in local time so "Sat 11:46 PM" holds in any zone.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SeatHealthReport } from '../../../../core/verse/health-types.js';
 import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
@@ -125,6 +125,29 @@ describe('AccountsGroup', () => {
     const unread = nativeSeat(capacity({ usability: 'unknown' }), { id: 'codex-new', engine: 'codex', label: 'New Codex', accountId: 'codex-new' });
     const second = renderGroupInto([unread]);
     expect(within(second).getByText('Checking…')).toBeInTheDocument();
+  });
+
+  it('explains a signed-in Claude quota failure without turning missing usage into zero', () => {
+    const missing = nativeSeat(capacity({ planType: 'max', windows: [], binding: null, usability: 'unknown',
+      observedAt: CHECKED, quotaReadReason: 'usage-output-invalid' }),
+    { id: 'claude-missing', engine: 'claude', label: 'Claude without quota', accountId: 'claude-missing' });
+    const { list } = renderGroup({ seats: [missing], health: [report('claude-missing', { engine: 'claude' })] });
+    const row = rowOf(list, 'Claude without quota');
+    expect(within(row).getByText('Connected')).toBeInTheDocument();
+    expect(within(row).getByText(/native usage response could not be verified/)).toBeInTheDocument();
+    expect(within(row).getByText('usage-output-invalid')).toBeInTheDocument();
+    expect(row.textContent).not.toContain('0%');
+
+    cleanup();
+
+    const zeroWindow = seatWindow({ id: 'five_hour', usedPercent: 0, resetsAt: RESET });
+    const measured = nativeSeat(capacity({ planType: 'max', windows: [zeroWindow], binding: zeroWindow,
+      usability: 'ready', observedAt: CHECKED, quotaReadReason: 'usage-output-invalid' }),
+    { id: 'claude-zero', engine: 'claude', label: 'Claude zero usage', accountId: 'claude-zero' });
+    const measuredList = renderGroup({ seats: [measured], health: [report('claude-zero', { engine: 'claude' })] }).list;
+    const measuredRow = rowOf(measuredList, 'Claude zero usage');
+    expect(within(measuredRow).getByText('0%')).toBeInTheDocument();
+    expect(within(measuredRow).queryByText('usage-output-invalid')).toBeNull();
   });
 
   it('Check again runs a sweep with the token, reads "Checking…" in place, and says when it is done', async () => {
