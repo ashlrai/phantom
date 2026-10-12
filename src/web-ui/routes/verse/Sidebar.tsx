@@ -1,3 +1,4 @@
+import { useCapacityClock } from './usage/use-capacity-clock.js';
 /**
  * routes/verse/Sidebar.tsx — the chat list (3.10, SPEC-310C §2; model:
  * chat/sidebar-model.ts).
@@ -117,6 +118,7 @@ const NO_SEEN: ReadonlyMap<string, number> = new Map();
 const SessionSearch = lazy(() => import('./context/SessionSearch.js').then((m) => ({ default: m.SessionSearch })));
 
 export function Sidebar(props: SidebarProps) {
+  useCapacityClock(undefined, props.seats.map(seat => seat.capacity));
   const { sessions, sessionsStatus, sessionsError, projects, seats, selectedId, query, onQuery, onSelect, onNew,
     onRetry, onCollapse, onDisconnect, activity = null, selectedTerminal = null, meta = null, metaError = null, localSeen = NO_SEEN, actions } = props;
   const searchId = useId();

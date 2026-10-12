@@ -1,3 +1,4 @@
+import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
 /** Selected-account mutation is loaded only after an operator requests a check. */
 import type { VerseAccountReadingRefresh, VerseSeatsResponse } from '../../../../core/verse/types.js';
 import { normalizeCodexCredits } from '../../../../core/resources/codex-credits.js';
@@ -43,8 +44,8 @@ export async function refreshAccountReading(seatId: string, isCurrent: () => boo
       const now = Date.now();
       if (result.state === 'held' || !Number.isFinite(at) || at > now || !Number.isFinite(expires) || expires <= now ||
         seat?.health.state !== 'ready' || capacity?.evidenceSource !== 'collector' || !Number.isFinite(readAt) || readAt < at || readAt > now ||
-        !(capacity.windows?.some(window => typeof window.usedPercent === 'number' && Number.isFinite(window.usedPercent) && window.usedPercent >= 0 && window.usedPercent <= 100) ||
-          normalizeCodexCredits(capacity.credits) !== null && typeof capacity.creditsExpiresAt === 'string' && Date.parse(capacity.creditsExpiresAt) > now && Date.parse(capacity.creditsExpiresAt) >= expires)) {
+        !(currentQuotaReading(capacity.observedAt, capacity.quotaExpiresAt, now, (capacity.windows ?? []).map(window => window.resetsAt ?? null)) && Date.parse(capacity.quotaExpiresAt!) >= expires && capacity.windows?.some(window => typeof window.usedPercent === 'number' && Number.isFinite(window.usedPercent) && window.usedPercent >= 0 && window.usedPercent <= 100) ||
+          normalizeCodexCredits(capacity.credits) !== null && currentQuotaReading(capacity.observedAt, capacity.creditsExpiresAt, now) && typeof capacity.creditsExpiresAt === 'string' && Date.parse(capacity.creditsExpiresAt) >= expires)) {
         throw new Error('The fresh reading does not confirm current usage. Refresh before trying again.');
       }
     }

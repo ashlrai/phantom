@@ -1,3 +1,4 @@
+import { useCapacityClock } from '../../usage/use-capacity-clock.js';
 /**
  * routes/verse/mobile/screens/HomeSeats.tsx — Home's seat meters: every seat
  * the Mac has (Claude, both Codex accounts, Grok, Devin, local models) plus
@@ -30,7 +31,7 @@ export function orderSeats(seats: readonly VerseSeat[]): VerseSeat[] {
 }
 
 function SeatMeter({ seat }: { seat: VerseSeat }) {
-  const view = seatSubscription(seat);
+  const view = seatSubscription(seat, useCapacityClock(undefined, [seat.capacity]));
   if (view.kind === 'local') {
     return <Meter label={seat.label} percent={null} valueText={view.word} note={view.summary} />;
   }
@@ -40,12 +41,12 @@ function SeatMeter({ seat }: { seat: VerseSeat }) {
     : binding.limitReached
       ? 'limit reached'
       : binding.usedPercent === null ? 'unknown' : `${Math.round(binding.usedPercent)}% used`;
-  const noteParts = [binding ? `${binding.label} window` : null, binding?.resetText ? `resets ${binding.resetText}` : null, view.credits].filter(Boolean);
+  const noteParts = view.quotaCurrent === false ? [view.summary, view.credits] : [binding ? `${binding.label} window` : null, binding?.resetText ? `resets ${binding.resetText}` : null, view.credits].filter(Boolean);
   return (
     <Meter
       label={`${seat.label}${view.plan ? ` · ${view.plan}` : ''}`}
-      percent={binding?.limitReached ? 100 : binding?.usedPercent ?? null}
-      valueText={valueText}
+      percent={view.quotaCurrent === false ? null : binding?.limitReached ? 100 : binding?.usedPercent ?? null}
+      valueText={view.quotaCurrent === false ? `${valueText} · last` : valueText}
       note={noteParts.length > 0 ? noteParts.join(' · ') : view.summary}
     />
   );

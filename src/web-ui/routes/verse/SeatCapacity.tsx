@@ -1,3 +1,4 @@
+import { useCapacityClock } from './usage/use-capacity-clock.js';
 /**
  * routes/verse/SeatCapacity.tsx — the shared rendering of a seat's
  * subscription capacity, so the resources panel, the new-chat dialog and the
@@ -75,6 +76,7 @@ export function SeatWindowMeter({
 }): ReactNode {
   const name = `${ariaPrefix} ${windowView.label}`;
 
+  if (windowView.current === false) return <div className={styles.window}><span className={styles.unknownValue}>{windowView.limitReached ? 'limit was flagged' : windowView.usedPercent === null ? 'usage unknown' : `${percentText(windowView.usedPercent)} used`} · last reading; current usage and resets unconfirmed</span></div>;
   if (windowView.limitReached) {
     return (
       <div className={prominent ? styles.windowLead : styles.window}>
@@ -125,7 +127,7 @@ export function SeatWindowMeter({
  * about to be made. Local seats say so instead of being given meters.
  */
 export function SeatCapacityNote({ seat, className }: { seat: VerseSeat; className?: string }): ReactNode {
-  const view = seatSubscription(seat);
+  const view = seatSubscription(seat, useCapacityClock(undefined, [seat.capacity]));
   return (
     <div className={`${styles.note} ${className ?? ''}`} data-capacity={view.cls}>
       <div className={styles.noteHead}>
