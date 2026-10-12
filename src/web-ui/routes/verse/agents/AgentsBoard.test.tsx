@@ -7,10 +7,10 @@
  * Plus the pure model (movement, filters, labels, the spawn form).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AgentBoardResponse, AgentCard } from '../../../../core/verse/agents/types.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
-import { evictAll } from '../../../data/cache.js';
+import { evictAll, refetchQuery } from '../../../data/cache.js';
 import { CLAUDE_SEAT, CODEX_SEAT, installFetch, json, TEST_TOKEN, type RecordedCall } from '../context/context-fixtures.test-support.js';
 import { resetVerseUi } from '../verse-ui-store.js';
 import { AgentsBoard } from './AgentsBoard.js';
@@ -230,4 +230,89 @@ describe('<AgentsBoard>', () => {
     ]);
     await screen.findByText(/Started 2 agents/);
   });
+});
+
+
+it('labels cached cards stale after a refresh failure and retries with a fresh reading', async () => {
+  const { calls } = server();
+  render(<AgentsBoard />);
+  await screen.findByRole('button', { name: /Fix login/ });
+  await act(async () => { await refetchQuery('verse-agents', async () => { throw new TypeError('Failed to fetch'); }, true); });
+  expect(screen.getByRole('alert')).toHaveTextContent('Cached board');
+  expect(screen.getByRole('alert')).toHaveTextContent('Last successful read');
+  expect(screen.getByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+  const before = calls.filter(call => call.path === '/api/verse/agents').length;
+  fireEvent.click(screen.getByRole('button', { name: 'Retry board read' }));
+  await waitFor(() => expect(calls.filter(call => call.path === '/api/verse/agents')).toHaveLength(before + 1));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+});
+
+
+it('keeps a partial batch visible and retries only the confirmed failed seat', async () => {
+  let workspaceCalls = 0;
+  let sessionCalls = 0;
+  const { calls } = server(call => {
+    if (call.path.endsWith('/workspaces')) {
+      workspaceCalls++;
+      if (workspaceCalls === 2) return json({ error: 'token refused' }, 401);
+      return json({ agent: { id: `agent-${workspaceCalls}`, workspace: { path: `/workspace-${workspaceCalls}` } }, config: {}, archivedForCap: [] }, 201);
+    }
+    if (call.path === '/api/verse/sessions') return json({ id: `chat-${++sessionCalls}` }, 201);
+    if (call.path.endsWith('/bind')) return json({ agent: { id: call.path.split('/').at(-2) }, held: false });
+    return undefined;
+  });
+  render(<AgentsBoard />);
+  await screen.findByRole('button', { name: /Fix login/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Same task on N seats' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Same task on several seats' });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Codex/ }));
+  fireEvent.change(within(dialog).getByLabelText(/What should/), { target: { value: 'Fix it' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Start 2 agents' }));
+  await within(dialog).findByText(/Not started/);
+  expect(within(dialog).getByRole('list', { name: 'Launch results' }).textContent).toContain('Started');
+  expect(within(dialog).queryByRole('button', { name: 'Start 2 agents' })).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Retry failed (1)' }));
+  await waitFor(() => expect(workspaceCalls).toBe(3));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Same task on several seats' })).not.toBeInTheDocument());
+  expect(calls.filter(call => call.path === '/api/verse/sessions').map(call => (call.body as { seatId: string }).seatId)).toEqual([CLAUDE_SEAT.id, CODEX_SEAT.id]);
+});
+
+it('keeps unknown outcomes visible and offers inspection without a retry-all action', async () => {
+  let binds = 0;
+  const { calls } = server(call => {
+    if (call.path.endsWith('/workspaces')) return json({ agent: { id: `agent-${binds}`, workspace: { path: '/workspace' } }, config: {}, archivedForCap: [] }, 201);
+    if (call.path === '/api/verse/sessions') return json({ id: `chat-${binds}` }, 201);
+    if (call.path.endsWith('/bind')) {
+      binds++;
+      return binds === 1 ? json({ agent: { id: 'agent-0' }, held: false }) : json({ error: 'lost after prompt' }, 500);
+    }
+    return undefined;
+  });
+  render(<AgentsBoard />);
+  await screen.findByRole('button', { name: /Fix login/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Same task on N seats' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Same task on several seats' });
+  fireEvent.click(within(dialog).getByRole('checkbox', { name: /Codex/ }));
+  fireEvent.change(within(dialog).getByLabelText(/What should/), { target: { value: 'Fix it' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Start 2 agents' }));
+  await within(dialog).findByText(/Outcome uncertain/);
+  expect(within(dialog).getByText(/Check the board and chats before starting another agent/)).toBeInTheDocument();
+  expect(within(dialog).getAllByRole('button', { name: 'Open chat' })).toHaveLength(2);
+  expect(within(dialog).queryByRole('button', { name: /Retry|Start/ })).not.toBeInTheDocument();
+  fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
+  expect(calls.filter(call => call.path.endsWith('/workspaces'))).toHaveLength(2);
+  expect(calls.filter(call => call.path.endsWith('/bind'))).toHaveLength(2);
+  expect(within(dialog).getByRole('list', { name: 'Launch results' })).toHaveTextContent('Claude Max');
+  expect(within(dialog).getByRole('list', { name: 'Launch results' })).toHaveTextContent('Personal Codex');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+  expect(screen.getByText('Launch results still need review.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'View launch results' }));
+  const reopened = screen.getByRole('dialog', { name: 'Same task on several seats' });
+  expect(within(reopened).getByText(/Outcome uncertain/)).toBeInTheDocument();
+  expect(within(reopened).getByRole('list', { name: 'Launch results' })).toHaveTextContent('Personal Codex');
+  expect(calls.filter(call => call.path.endsWith('/workspaces'))).toHaveLength(2);
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Dismiss launch results' }));
+  fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
+  expect(screen.getByRole('dialog', { name: 'New agent' })).not.toHaveTextContent('Outcome uncertain');
+  expect(screen.getByLabelText('What should it do?')).toHaveValue('');
 });

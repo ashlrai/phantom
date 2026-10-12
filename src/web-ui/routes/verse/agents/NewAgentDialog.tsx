@@ -23,7 +23,8 @@ import { Switch } from '../../../components/primitives/Switch.js';
 import { defaultSeatChoice, SeatSelector, type SeatChoice } from '../SeatSelector.js';
 import { ENGINE_LABEL } from '../verse-model.js';
 import { checkSpawnForm, seatRows, titleFromPrompt, type SpawnForm } from './agents-model.js';
-import { fetchWorkspaceConfig, type SpawnInput } from './agents-queries.js';
+import { describeContextError } from '../context/use-token-gate.js';
+import { fetchWorkspaceConfig, type SpawnAttempt, type SpawnInput } from './agents-queries.js';
 import styles from './Agents.module.css';
 
 export interface NewAgentDialogProps {
@@ -34,6 +35,11 @@ export interface NewAgentDialogProps {
   initialRoot: string | null;
   busy: boolean;
   error: string | null;
+  attempts?: readonly SpawnAttempt[];
+  onRetry?: () => void;
+  onInspect?: (sessionId: string) => void;
+  onInspectAgent?: (agentId: string) => void;
+  onAcknowledge?: () => void;
   onClose: () => void;
   /** One input per seat; the board runs them (token gate, progress, errors). */
   onSpawn: (inputs: SpawnInput[]) => void;
@@ -49,9 +55,12 @@ function configSummary(read: WorkspaceConfigRead): string {
   return `${read.source === 'file' ? '.ashlr/verse/workspace.json' : 'No workspace.json (defaults)'}: ${parts.join(' · ')}`;
 }
 
-export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy, error, onClose, onSpawn }: NewAgentDialogProps) {
+export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy, error, attempts, onRetry, onInspect, onInspectAgent, onAcknowledge, onClose, onSpawn }: NewAgentDialogProps) {
   const titleId = useId();
   const promptId = useId();
+  const resultsRef = useRef<HTMLHeadingElement>(null);
+  const hasAttempts = (attempts?.length ?? 0) > 0;
+  useEffect(() => { if (hasAttempts) resultsRef.current?.focus(); }, [hasAttempts]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const sorted = useMemo(() => [...projects].sort((a, b) => Number(b.enrolled) - Number(a.enrolled) || a.name.localeCompare(b.name)), [projects]);
   const rows = useMemo(() => seatRows(seats), [seats]);
@@ -103,6 +112,7 @@ export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
+    if (busy || hasAttempts) return;
     const form: SpawnForm = { root, title, prompt, seats: chosenSeats, isolate: multi ? true : isolate, planFirst, capText, autoFix, autoMerge };
     const checked = checkSpawnForm(form);
     if (!checked.ok) {
@@ -146,6 +156,31 @@ export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy
       initialFocusRef={promptRef}
       widthClassName={styles.dialogWidth}
     >
+      {hasAttempts ? <div className={styles.form}>
+        <h3 ref={resultsRef} tabIndex={-1}>Launch results</h3>
+        <ul aria-label="Launch results" aria-live="polite">
+          {attempts!.map((attempt, index) => <li key={`${attempt.input.seatId}:${index}`}>
+            <p>{rows.find(row => row.seatId === attempt.input.seatId)?.label ?? attempt.input.seatId} · {attempt.input.model}</p>
+            <strong>{attempt.input.title}</strong> — {attempt.outcome === 'started' ? 'Started' : attempt.outcome === 'failed' ? 'Not started' : 'Outcome uncertain'}
+            {attempt.error ? <p>{describeContextError(attempt.error.cause)}{attempt.outcome === 'uncertain' ? ' Check the board and chats before starting another agent.' : ''}</p> : null}
+            {attempt.error?.agentId && attempt.outcome === 'uncertain' ? <>
+              <p>A workspace or agent was created.</p>
+              {onInspectAgent ? <Button size="sm" variant="ghost" onClick={() => onInspectAgent(attempt.error!.agentId!)}>Show agent</Button> : null}
+            </> : null}
+            {(attempt.result?.sessionId ?? attempt.error?.sessionId) && onInspect ? <Button size="sm" variant="ghost"
+              onClick={() => onInspect(attempt.result?.sessionId ?? attempt.error!.sessionId!)}>Open chat</Button> : null}
+          </li>)}
+        </ul>
+        {error ? <p className={styles.formError} role="alert">{error}</p> : null}
+        <div className={styles.formActions}>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Done</Button>
+          {onAcknowledge ? <Button variant="ghost" onClick={onAcknowledge} disabled={busy}>Dismiss launch results</Button> : null}
+          {attempts!.some(attempt => attempt.outcome === 'failed') && onRetry ? <Button variant="primary" busy={busy} onClick={onRetry}>
+            Retry failed ({attempts!.filter(attempt => attempt.outcome === 'failed').length})
+          </Button> : null}
+        </div>
+        {busy ? <p role="status">Starting the remaining agents…</p> : null}
+      </div> : (
       <form className={styles.form} onSubmit={submit}>
         <Select label="Repository" value={root} onChange={(e) => setRoot(e.target.value)} disabled={busy}>
           {sorted.length === 0 ? <option value="">No projects yet — open one in Chat first</option> : null}
@@ -229,6 +264,7 @@ export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy
         </div>
         <p className={styles.keyHint}>⌘ Return starts {count > 1 ? 'them' : 'it'}.</p>
       </form>
+      )}
     </Dialog>
   );
 }
