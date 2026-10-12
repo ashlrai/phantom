@@ -62,7 +62,7 @@ export function ashlrMdCandidates(deps: DetectDeps = {}): string[] {
     out.push(join(local, 'Programs', 'Ashlr MD', 'Ashlr MD.exe'), join(local, 'Ashlr MD', 'Ashlr MD.exe'));
     if (env.ProgramFiles) out.push(join(env.ProgramFiles, 'Ashlr MD', 'Ashlr MD.exe'));
   } else {
-    out.push('/usr/bin/ashlr-md', '/usr/share/applications/Ashlr MD.desktop',
+    out.push('/usr/bin/md-opener', '/usr/bin/ashlr-md', '/usr/share/applications/Ashlr MD.desktop',
       join(home, '.local', 'share', 'applications', 'Ashlr MD.desktop'));
   }
   return out;

@@ -12,7 +12,7 @@ or **Open** in the web/desktop UI (`POST /api/open`) — it:
 1. Uses **Ashlr MD** via `mdopener://open?path=<abs path>` if it is installed
    (detected via the `mdopen` CLI on `PATH`, or the app in `/Applications` /
    `~/Applications` on macOS, `%LOCALAPPDATA%\Programs\Ashlr MD` on Windows,
-   `/usr/bin/ashlr-md` or the `.desktop` entry on Linux).
+   `/usr/bin/md-opener` or the `Ashlr MD.desktop` entry on Linux).
 2. Otherwise falls back to your configured editor (`cursor` / `vscode`) — nothing breaks —
    and the CLI prints a one-line install offer.
 
