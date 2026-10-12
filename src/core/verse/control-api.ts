@@ -65,7 +65,8 @@ import { parseGoalPreferences, resolveGoalPreferences, unavailableGoalPreference
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { lstatSync, readdirSync } from 'node:fs';
-import { lstat as lstatAsync, readFile as readFileAsync } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat as lstatAsync, open as openAsync } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import type { AshlrConfig, AuditEntry, DaemonConfig } from '../types.js';
@@ -207,6 +208,46 @@ export interface VerseResidentAwakeSnapshot {
   saved: boolean;
 }
 
+/** Pin the installed plist before reading; any path replacement stays unknown. */
+export async function readInstalledResidentPlist(filePath: string): Promise<{ serviceInstalled: boolean | null; installed: boolean | null }> {
+  const unknown = { serviceInstalled: null, installed: null };
+  const maxBytes = 64 * 1024;
+  let before;
+  try {
+    before = await lstatAsync(filePath);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { serviceInstalled: false, installed: null } : unknown;
+  }
+  const ownedRegular = (stat: typeof before) => stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 &&
+    stat.size > 0 && stat.size <= maxBytes &&
+    (typeof process.getuid !== 'function' || stat.uid === process.getuid());
+  const same = (left: typeof before, right: typeof before) => left.dev === right.dev && left.ino === right.ino &&
+    left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+  if (!ownedRegular(before) || typeof fsConstants.O_NOFOLLOW !== 'number') return unknown;
+  let handle;
+  try {
+    handle = await openAsync(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_NONBLOCK ?? 0));
+    const opened = await handle.stat();
+    if (!ownedRegular(opened) || !same(before, opened)) return unknown;
+    const bytes = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (read.bytesRead <= 0) return unknown;
+      offset += read.bytesRead;
+    }
+    const heldAfter = await handle.stat();
+    const pathAfter = await lstatAsync(filePath);
+    if (!same(opened, heldAfter) || !same(opened, pathAfter)) return unknown;
+    return { serviceInstalled: true, installed: plistKeepAwake(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) };
+  } catch {
+    return unknown;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 async function residentAwakeSnapshot(cfg: AshlrConfig, saved = false): Promise<VerseResidentAwakeSnapshot> {
   const opts = daemonServiceInstallOptions(cfg, { autostart: true });
   const configured = opts.keepAwake === true;
@@ -215,19 +256,7 @@ async function residentAwakeSnapshot(cfg: AshlrConfig, saved = false): Promise<V
       serviceInstalled: null, serviceRunning: null, restartRequired: false, saved };
   }
   const def = generateServiceDefinition(opts);
-  let installed: boolean | null = null;
-  let serviceInstalled: boolean | null = null;
-  try {
-    const stat = await lstatAsync(def.filePath);
-    // A settings read must not follow an unexpected link or special file.
-    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 64 * 1024 &&
-        (typeof process.getuid !== 'function' || stat.uid === process.getuid())) {
-      serviceInstalled = true;
-      installed = plistKeepAwake(await readFileAsync(def.filePath, 'utf8'));
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') serviceInstalled = false;
-  }
+  const { serviceInstalled, installed } = await readInstalledResidentPlist(def.filePath);
   const status = serviceStatus(opts);
   return { schema: 'ashlr.resident-awake.v1', supported: true, configured, installed,
     serviceInstalled, serviceRunning: status.runtimeState === 'unknown' ? null : status.running,

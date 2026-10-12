@@ -91,7 +91,10 @@ export function ResidentAwakePanel() {
     if (!state || !nativeFleetAvailable('resident-start') || !nativeFleetAvailable('resident-restart')) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const op = state.serviceRunning === true ? 'resident-restart' : 'resident-start';
+      // An unknown launchd state may still have a running manager. Use the
+      // native confirmed restart path to stop it before updating its plist.
+      const op = state.serviceInstalled === true && state.serviceRunning !== false
+        ? 'resident-restart' : 'resident-start';
       const result = await runNativeFleetOp(op, { onProgress: (event) => setMessage(event.message) });
       if (result.phase !== 'done') setError(result.message);
       await refresh();
@@ -103,7 +106,8 @@ export function ResidentAwakePanel() {
     }
   }
 
-  const canApply = state?.supported && (state.restartRequired || state.serviceInstalled === false);
+  const canApply = state?.supported && (state.restartRequired || state.serviceInstalled === false ||
+    (state.serviceInstalled === true && state.serviceRunning === false));
   const native = nativeFleetAvailable('resident-start') && nativeFleetAvailable('resident-restart');
   return (
     <Panel title="Resident Mac">

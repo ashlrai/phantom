@@ -6,9 +6,9 @@ import { ResidentAwakePanel } from './ResidentAwakePanel.js';
 
 const TOKEN = 'a'.repeat(64);
 
-function answer(configured: boolean, installed: boolean) {
+function answer(configured: boolean, installed: boolean, serviceRunning: boolean | null = true) {
   return { schema: 'ashlr.resident-awake.v1', supported: true, configured, installed,
-    serviceInstalled: true, serviceRunning: true, restartRequired: configured !== installed, saved: false };
+    serviceInstalled: true, serviceRunning, restartRequired: configured !== installed, saved: false };
 }
 
 describe('ResidentAwakePanel', () => {
@@ -68,5 +68,39 @@ describe('ResidentAwakePanel', () => {
     const toggle = await screen.findByRole('switch', { name: 'Keep Mac awake while resident runs' });
     await waitFor(() => expect(screen.getByText(/Unlock the mutation hold/)).toBeInTheDocument());
     expect(toggle).toBeDisabled();
+  });
+
+  it('offers native Start when the installed preference matches but the service is stopped', async () => {
+    const sent: string[] = [];
+    (window as unknown as Record<string, unknown>)['__ASHLR_DESKTOP__'] = {
+      fleet: { version: 1, ops: ['resident-start', 'resident-restart'], send: (request: { id: string; op: string }) => {
+        sent.push(request.op);
+        queueMicrotask(() => window.dispatchEvent(new CustomEvent('ashlr:fleet', {
+          detail: { id: request.id, op: request.op, phase: 'done', message: 'Confirmed native start complete.' },
+        })));
+        return true;
+      } },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(answer(true, true, false)), { status: 200 })));
+    render(<ResidentAwakePanel />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Review start' }));
+    await waitFor(() => expect(sent).toEqual(['resident-start']));
+  });
+
+  it('uses native Restart for an installed service whose runtime state is unknown', async () => {
+    const sent: string[] = [];
+    (window as unknown as Record<string, unknown>)['__ASHLR_DESKTOP__'] = {
+      fleet: { version: 1, ops: ['resident-start', 'resident-restart'], send: (request: { id: string; op: string }) => {
+        sent.push(request.op);
+        queueMicrotask(() => window.dispatchEvent(new CustomEvent('ashlr:fleet', {
+          detail: { id: request.id, op: request.op, phase: 'done', message: 'Confirmed native restart complete.' },
+        })));
+        return true;
+      } },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(answer(true, false, null)), { status: 200 })));
+    render(<ResidentAwakePanel />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Review service update' }));
+    await waitFor(() => expect(sent).toEqual(['resident-restart']));
   });
 });
