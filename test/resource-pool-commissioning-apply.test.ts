@@ -7,6 +7,7 @@ import { commissioningHash } from '../src/core/resources/pool-commissioning-cust
 import { resourcePoolStatus, setResourcePoolAllocation, setResourceWorkerAccess } from '../src/core/resources/pool-runtime.js';
 import * as writes from '../src/core/util/private-file-write.js';
 import * as native from '../src/core/resources/native-profile.js';
+import { canonical } from '../src/core/universe/artifacts.js';
 import { independentCommissioningFixture as fixture, saveIndependentJson as save, independentTree as tree } from './support/pool-commissioning-transaction-fixture.js';
 const roots: ReturnType<typeof fixture>[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const f of roots.splice(0)) f.cleanup(); });
@@ -21,6 +22,14 @@ function setup(real = false) {
   });
   const plan = checkResourcePoolCommissioning(f.request);
   return { f, plan, input: { ...f.request, expectedPlanDigest: plan.planDigest }, directory: join(f.root, 'pool-commissioning', commissioningHash(f.request)) };
+}
+function historicalConsole(f: ReturnType<typeof fixture>) {
+  const at = new Date().toISOString(); const file = join(f.root, 'resource-console-state.json');
+  save(file, { schemaVersion: 2, scopeDigest: commissioningHash({ pool: f.active.pool, bindings: f.active.bindings, workspace: f.workspace }),
+    paused: false, jobs: [{ id: 'retained-before-enrollment', state: 'settled', enqueuedAt: at, updatedAt: at,
+      allowedWorkerIds: ['cmp'], mode: 'read-only', workerId: 'cmp', outcome: 'completed', reason: null,
+      taskDigest: 'f'.repeat(64), input: null, retainHistory: true, history: { prompt: 'INERT_OLD_PROMPT', output: { text: 'INERT_OLD_OUTPUT', truncated: false } } }] });
+  return file;
 }
 
 describe.skipIf(process.platform !== 'darwin')('offline commissioning transaction', () => {
@@ -69,6 +78,26 @@ describe.skipIf(process.platform !== 'darwin')('offline commissioning transactio
   });
   it('refuses resume without immutable custody and never creates a new transaction', () => {
     const {f,input}=setup(); const before=tree(f.base); expect(() => resumeResourcePoolCommissioning(input)).toThrow(); expect(tree(f.base)).toEqual(before);
+  });
+  it('refuses structurally valid historical console origin relabeling during ordinary runtime admission', () => {
+    const { f } = setup(); const file = historicalConsole(f);
+    applyResourcePoolCommissioning({ ...f.request, expectedPlanDigest: checkResourcePoolCommissioning(f.request).planDigest });
+    const console = JSON.parse(readFileSync(file, 'utf8')); const job = console.jobs[0];
+    job.originPoolDigest = f.ledger().poolDigest;
+    job.taskDigest = commissioningHash({ schemaVersion: 1, id: job.id, prompt: job.history.prompt, cwd: f.workspace,
+      allowedWorkerIds: ['cmp'], mode: 'read-only', timeoutMs: 1000, maxOutputTokens: 128 });
+    save(file, console); const before = readFileSync(file);
+    expect(() => resourcePoolStatus(f.root, f.currentPool(), f.currentBindings(), [])).toThrow(/custody/);
+    expect(readFileSync(file)).toEqual(before); expect(existsSync(f.invoked)).toBe(false);
+  });
+  it('preserves intentional history erasure and later new jobs under the runtime console proof', () => {
+    const { f } = setup(); const file = historicalConsole(f);
+    applyResourcePoolCommissioning({ ...f.request, expectedPlanDigest: checkResourcePoolCommissioning(f.request).planDigest });
+    const console = JSON.parse(readFileSync(file, 'utf8')); const job = console.jobs[0]; job.history = null;
+    console.jobs.push({ ...job, id: 'later-current-task', originPoolDigest: f.ledger().poolDigest, taskDigest: 'a'.repeat(64) });
+    save(file, console); const before = canonical(console);
+    expect(resourcePoolStatus(f.root, f.currentPool(), f.currentBindings(), []).sourceState).toBe('healthy');
+    expect(canonical(JSON.parse(readFileSync(file, 'utf8')))).toBe(before); expect(existsSync(f.invoked)).toBe(false);
   });
   it.each(['journal.json','ready.json','before-pool.json','after-pool.json'])('holds runtime and replay after completed %s disappears', name => {
     const {f,input,directory}=setup(); applyResourcePoolCommissioning(input); rmSync(join(directory,name)); const before=tree(f.base);

@@ -10,6 +10,8 @@ import { validateResourceQuotaRefreshConfig } from './quota-refresh.js';
 import { resourceQuotaBuckets } from './quota-scope.js';
 import { validateResourcePoolCommissioningJournal } from './pool-commissioning.js';
 import { resolveNativeSeatLaunch } from './native-profile.js';
+import { decodeResourceConsoleState } from './pool-supervisor.js';
+import { assertConsolePreserved, type ConsoleProof } from './pool-evolution.js';
 export const COMMISSIONING_BYTES = 4 * 1024 * 1024;
 export const commissioningHash = (value: unknown): string => digest(canonical(value));
 export function commissioningPresent(path: string): boolean {
@@ -92,6 +94,7 @@ export function assertOfflineResourcePoolCommissioningHistory(root: string, stat
 function verifyCustody(root: string, state: ResourcePoolState, allowedPendingRequest: string | undefined, offlineSnapshot: boolean): Map<string, ResourceCommissioningFence> {
   try {
     const history = state.configurationHistory ?? []; const fences = resourceCommissioningFences(history);
+    const consolePins: Array<{ workspace: string; proof: ConsoleProof }> = [];
     const parent = join(root, 'pool-commissioning'); const requests = new Set(history.flatMap(row => row.commissioning ? [row.commissioning.requestDigest] : []));
     if (allowedPendingRequest) requests.add(allowedPendingRequest);
     if (commissioningPresent(parent)) {
@@ -123,8 +126,9 @@ function verifyCustody(root: string, state: ResourcePoolState, allowedPendingReq
         canonical(validateResourcePoolConfigHistory(after.configurationHistory)) !== canonical(history.slice(0, index + 1)) ||
         canonical(deriveResourcePoolCommissionedState(before, epoch)) !== canonical(after) || after.pendingEvolution !== undefined) throw new Error();
       for (const old of after.attempts) if (canonical(state.attempts.find(r => r.id === old.id)) !== canonical(old)) throw new Error();
-      const input = journal.input as { root: string; accountsRoot: string };
+      const input = journal.input as { root: string; accountsRoot: string; workspace: string };
       if (input.root !== root || !input.accountsRoot) throw new Error();
+      if (!offlineSnapshot) consolePins.push({ workspace: input.workspace, proof: journal.consoleProof as ConsoleProof });
       for (const w of t.workers) {
         const current = fences.get(w.workerId)!;
         if (current.planDigest === t.planDigest) for (const f of fences.values()) if (f.planDigest === t.planDigest && f.capacityKey === w.capacityKey) f.accountsRoot = input.accountsRoot;
@@ -140,6 +144,16 @@ function verifyCustody(root: string, state: ResourcePoolState, allowedPendingReq
         const pin = quota.workers.find(w => w.workerId === workerId);
         const buckets = resourceQuotaBuckets(selected.pool.workers.find(w => w.id === workerId)!) ?? f.quotaBucketIds;
         if (!pin || pin.accountHint !== f.quotaAccountHint || canonical(pin.bucketIds) !== canonical(buckets)) throw new Error();
+      }
+      // Preserved historical origins are an admission fact, not mutable console labels.
+      // The existing proof allows explicit history erasure and new jobs, while refusing
+      // relabeling an old source into the currently commissioned account scope.
+      for (const pin of consolePins) if (pin.proof.scopeDigest !== null) {
+        const file = join(root, 'resource-console-state.json'); const active = history.at(-1)!;
+        const console = commissioningPresent(file) ? decodeResourceConsoleState(readCommissioningData(file, root), {
+          workspace: pin.workspace, pool: active.pool, bindings: active.bindings, configHistory: history,
+        }) : null;
+        assertConsolePreserved(console, pin.proof);
       }
     }
     // Only current target profiles are live requirements; older immutable snapshots remain historical.
