@@ -43,15 +43,19 @@
     var balanceLabels = exact(/^Remaining balance$/i)
     var plan = Array.from(panel.querySelectorAll('h3')).filter(function (e) { return visible(e) && /^Max$/i.test(text(e)) })
     var monthly = []
+    var planRenews = []
     if (plan.length === 1) {
       var card = plan[0].parentElement
       for (var level = 0; card && card !== panel && level < 4; level++, card = card.parentElement) {
         if (text(card).length > 240) break
-        var prices = Array.from(card.querySelectorAll('span')).filter(function (e) {
-          return visible(e) && /^\$\d{1,6}(?:\.\d{2})?\/month$/i.test(text(e))
+        // The provider renders plan price/renewal as leaf divs as well as
+        // spans. Admit bounded text fields, excluding their duplicate wrappers.
+        var fields = Array.from(card.querySelectorAll('span,div,p')).filter(function (e) {
+          return visible(e) && e.children.length === 0
         })
-        var renewals = Array.from(card.querySelectorAll('span')).filter(visible).map(text)
-        if (prices.length === 1 && renewals.some(function (v) { return /^Renews on [A-Za-z]+ \d{1,2}, \d{4}$/.test(v) })) { monthly = prices; break }
+        var prices = fields.filter(function (e) { return /^\$\d{1,6}(?:\.\d{2})?\/month$/i.test(text(e)) })
+        var renewals = fields.map(text).filter(function (v) { return /^Renews on [A-Za-z]+ \d{1,2}, \d{4}$/.test(v) })
+        if (prices.length === 1 && renewals.length > 0) { monthly = prices; planRenews = renewals; break }
       }
     }
     // A value is accepted only when its label/value share the same small
@@ -63,7 +67,7 @@
       if (inRow.length === 1) balance = text(inRow[0])
     }
     var resets = exact(/^Resets in \d{1,3} days?$/).map(text)
-    var renews = exact(/^Renews on [A-Za-z]+ \d{1,2}, \d{4}$/).map(text)
+    var renews = planRenews
     var autoLabels = Array.from(panel.querySelectorAll('label,[aria-label]')).filter(function (e) {
       return visible(e) && /^Auto-?reload$/i.test(text(e) || e.getAttribute('aria-label') || '')
     })

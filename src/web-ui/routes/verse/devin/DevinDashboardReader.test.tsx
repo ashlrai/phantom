@@ -41,6 +41,24 @@ function nativeStatus(state: string) {
 }
 
 describe('Devin dashboard observation', () => {
+  it('reads the current provider plan card with leaf div price and renewal fields', () => {
+    // Sanitized live DOM shape observed on 2026-10-12; no account text or page HTML.
+    const current = usage('0% used', '<div>$200/month</div>')
+      .replace('<span>Renews on June 15, 2030</span>', '<div>Renews on October 27, 2026</div>');
+    expect(extract(current, 'usage')).toMatchObject({
+      page: 'usage', plan: 'Max', monthlyPriceUsd: 200, renewalProse: 'Renews on October 27, 2026',
+      weeklyUsedPercent: 0, onDemandBalanceUsd: 0, autoReload: null,
+    });
+    expect(extract(current.replace('<div>$200/month</div>', '<div><span>$200/month</span></div>'), 'usage'))
+      .toMatchObject({ page: 'usage', monthlyPriceUsd: 200 });
+    expect(extract(current + '<span>Renews on May 1, 2030</span>', 'usage'))
+      .toMatchObject({ page: 'usage', renewalProse: 'Renews on October 27, 2026' });
+    expect(extract(current.replace('<div>$200/month</div>', '<div>$200/month</div><div>$300/month</div>'), 'usage'))
+      .toMatchObject({ error: 'usage-fields' });
+    expect(extract(current.replace('<div>$200/month</div>', '') + '<div>$200/month</div>', 'usage'))
+      .toMatchObject({ error: 'usage-fields' });
+  });
+
   it('reads only a weekly-labelled allowance and associated Max monthly price', () => {
     const valid = extract(usage('0% used', '<span>$123/month</span>'), 'usage');
     expect(valid).toMatchObject({ page: 'usage', weeklyUsedPercent: 0, monthlyPriceUsd: 123, onDemandBalanceUsd: 0 });
