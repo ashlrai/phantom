@@ -134,8 +134,15 @@ export function llamaLeaderTransport(inputBinding: LocalLeaderBinding, cfg: Ashl
       const remaining = (opts.timeoutMs ?? 15 * 60_000) - (performance.now() - started);
       if (remaining <= 0 || controller.signal.aborted) throw new Error('Local Leader deadline elapsed');
       const client = buildOpenAICompatibleClient(binding.baseUrl, '', binding.servingModel, false, 0.2, controller.signal, {
-        cfg, onRequestStart: () => { inferenceRequestStarted = true; }, strictStreaming: { expectedModel: binding.servingModel }, redirect: 'error', timeoutMs: Math.ceil(remaining),
-        maxRequestBytes: 1024 * 1024, maxResponseBytes: 1024 * 1024, maxOutputTokens: opts.maxOutputTokens ?? 4096,
+        // The pinned Qwen3.8 template defaults to xhigh thinking. Closing its
+        // thinking span before generation leaves the bounded Leader output for
+        // the JSON memo, as the former Ollama lane's `think: false` did.
+        cfg, onRequestStart: () => { inferenceRequestStarted = true; }, strictStreaming: {
+          expectedModel: binding.servingModel, disableThinking: binding.model.startsWith('qwen3.8:'),
+        }, redirect: 'error', timeoutMs: Math.ceil(remaining),
+        // SSE repeats a JSON envelope for every token. A 3,072-token answer
+        // can exceed 1 MiB on the wire while staying inside its token cap.
+        maxRequestBytes: 1024 * 1024, maxResponseBytes: 2 * 1024 * 1024, maxOutputTokens: opts.maxOutputTokens ?? 4096,
       });
       const result = await client.chatStream!([{ role: 'system', content: system }, { role: 'user', content: user }], undefined, () => {}, controller.signal);
       if (result.usageKnown === true && Number.isSafeInteger(result.usage.tokensIn) && result.usage.tokensIn >= 0 &&
