@@ -161,7 +161,8 @@ export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy
         <ul aria-label="Launch results" aria-live="polite">
           {attempts!.map((attempt, index) => <li key={`${attempt.input.seatId}:${index}`}>
             <p>{rows.find(row => row.seatId === attempt.input.seatId)?.label ?? attempt.input.seatId} · {attempt.input.model}</p>
-            <strong>{attempt.input.title}</strong> — {attempt.outcome === 'started' ? 'Started' : attempt.outcome === 'failed' ? 'Not started' : 'Outcome uncertain'}
+            <strong>{attempt.input.title}</strong> — {attempt.outcome === 'started' ? (attempt.result?.held ? 'Workspace and chat created' : 'Started') : attempt.outcome === 'failed' ? 'Not started' : 'Outcome uncertain'}
+            {attempt.outcome === 'started' && attempt.result?.held ? <p>First prompt held for setup.</p> : null}
             {attempt.error ? <p>{describeContextError(attempt.error.cause)}{attempt.outcome === 'uncertain' ? ' Check the board and chats before starting another agent.' : ''}</p> : null}
             {attempt.error?.agentId && attempt.outcome === 'uncertain' ? <>
               <p>A workspace or agent was created.</p>

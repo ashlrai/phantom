@@ -228,7 +228,7 @@ describe('<AgentsBoard>', () => {
       { sessionId: `vs_${CLAUDE_SEAT.id}`, prompt: 'Fix it' },
       { sessionId: `vs_${CODEX_SEAT.id}`, prompt: 'Fix it' },
     ]);
-    await screen.findByText(/Started 2 agents/);
+    expect(await screen.findByText(/Created 2 agents/)).toHaveTextContent('2 first prompts are held for setup.');
   });
 });
 
@@ -258,7 +258,7 @@ it('keeps a partial batch visible and retries only the confirmed failed seat', a
       return json({ agent: { id: `agent-${workspaceCalls}`, workspace: { path: `/workspace-${workspaceCalls}` } }, config: {}, archivedForCap: [] }, 201);
     }
     if (call.path === '/api/verse/sessions') return json({ id: `chat-${++sessionCalls}` }, 201);
-    if (call.path.endsWith('/bind')) return json({ agent: { id: call.path.split('/').at(-2) }, held: false });
+    if (call.path.endsWith('/bind')) return json({ agent: { id: call.path.split('/').at(-2) }, held: true });
     return undefined;
   });
   render(<AgentsBoard />);
@@ -269,7 +269,9 @@ it('keeps a partial batch visible and retries only the confirmed failed seat', a
   fireEvent.change(within(dialog).getByLabelText(/What should/), { target: { value: 'Fix it' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Start 2 agents' }));
   await within(dialog).findByText(/Not started/);
-  expect(within(dialog).getByRole('list', { name: 'Launch results' }).textContent).toContain('Started');
+  expect(within(dialog).getByRole('list', { name: 'Launch results' })).toHaveTextContent('Workspace and chat created');
+  expect(within(dialog).getByText('First prompt held for setup.')).toBeInTheDocument();
+  expect(await screen.findByText(/Created 1 agent/)).toHaveTextContent('1 first prompt is held for setup.');
   expect(within(dialog).queryByRole('button', { name: 'Start 2 agents' })).not.toBeInTheDocument();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Retry failed (1)' }));
   await waitFor(() => expect(workspaceCalls).toBe(3));

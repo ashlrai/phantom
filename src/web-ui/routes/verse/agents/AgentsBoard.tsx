@@ -180,12 +180,13 @@ export function AgentsBoard() {
       setSpawnAttempts(attempts);
       refetch();
       const started = attempts.filter(attempt => attempt.outcome === 'started');
+      const held = started.filter(attempt => attempt.result?.held).length;
       const archived = started.reduce((count, attempt) => count + (attempt.result?.archivedForCap.length ?? 0), 0);
       if (started[0]?.result) setCursorId(started[0].result.agent.id);
       if (started.length === attempts.length) setDialog({ open: false, multi: false });
       setNotice({
         tone: started.length === attempts.length ? 'neutral' : 'danger',
-        text: `Started ${started.length} agent${started.length === 1 ? '' : 's'}.${archived ? ` Archived ${archived} idle workspaces to stay under the cap (restorable).` : ''}${attempts.some(attempt => attempt.outcome === 'uncertain') ? ' Some launch outcomes need review before starting another agent.' : ''}`,
+        text: `Created ${started.length} agent${started.length === 1 ? '' : 's'}.${held ? ` ${held} first prompt${held === 1 ? ' is' : 's are'} held for setup.` : ''}${archived ? ` Archived ${archived} idle workspaces to stay under the cap (restorable).` : ''}${attempts.some(attempt => attempt.outcome === 'uncertain') ? ' Some launch outcomes need review before starting another agent.' : ''}`,
       });
     }, (err: unknown) => setSpawnError(describeContextError(err))).finally(() => {
       spawnInFlight.current = false;
