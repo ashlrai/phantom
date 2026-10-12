@@ -109,7 +109,10 @@ export function devinConsumptionEvidence(raw: unknown, now = Date.now()): { valu
   const stale = snapshot.state !== 'ready' || snapshot.stale === true || expires <= now;
   lines.push(`Retrieved ${new Date(fetched).toLocaleString()}${stale ? ' · last reading, current consumption unconfirmed' : ' · retrieval is current; provider publication delay is unknown'}.`);
   lines.push(`${report.days.length} daily reporting bucket${report.days.length === 1 ? '' : 's'}; dates retained as provider values.`);
-  return { value: report.days.length === 0 && report.totalAcus === 0 ? 'No consumption reported' : `${formatConsumptionAcu(report.totalAcus)} consumed${stale ? ' · last' : ''}`, lines, stale, report };
+  const value = report.days.length === 0 && report.totalAcus === 0
+    ? '0 ACUs reported'
+    : `${formatConsumptionAcu(report.totalAcus)} consumed`;
+  return { value: `${value}${stale ? ' · last' : ''}`, lines, stale, report };
 }
 
 /** Display consumption with two significant figures; raw provider values remain unchanged. */

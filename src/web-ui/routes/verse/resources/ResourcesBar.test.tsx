@@ -440,9 +440,11 @@ describe('fresh Devin sidebar readbacks', () => {
     expect(screen.getByRole('button', { name: 'Devin (cloud): consumption not reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } };
     view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): No consumption reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = reading; clock.mockReturnValue(NOW + 400_000); view.rerender(<ResourcesBar expanded />);
     expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs consumed · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    consumption = { ...reading, report: { totalAcus: 0, days: [] } }; view.rerender(<ResourcesBar expanded />);
+    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /40 ACUs held exposure/ })).toBeInTheDocument();
   });
 });
