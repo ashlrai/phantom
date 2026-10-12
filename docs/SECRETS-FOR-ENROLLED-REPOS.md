@@ -7,7 +7,9 @@ Companion detection itself is covered in [COMPANIONS.md](COMPANIONS.md).
 ## One-time setup per machine
 
 ```sh
-brew tap ashlrai/phantom && brew install ashlrai/phantom/phantom  # Secrets v0.7.9
+brew tap ashlrai/phantom
+brew trust --formula ashlrai/phantom/phantom
+brew install ashlrai/phantom/phantom   # Secrets v0.7.9
 phm companions --json        # confirm Phantom finds exactly one native `phantom`
 phm mcp ecosystem            # inspect Secrets/Locus MCP registration
 phm mcp ecosystem --write    # register the selected absolute executable
