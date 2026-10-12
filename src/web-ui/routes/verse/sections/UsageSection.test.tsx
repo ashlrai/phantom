@@ -236,7 +236,7 @@ describe('UsageSection — accounts', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('does NOT read a fully used Codex week with credits as blocked', async () => {
+  it('shows available Codex credits after weekly exhaustion without implying dispatch authorization', async () => {
     render(<UsageSection />);
     await waitFor(() => expect(card('Personal Codex')).toBeInTheDocument());
 
@@ -246,7 +246,8 @@ describe('UsageSection — accounts', () => {
     expect(within(codex).getByText('2,000')).toBeInTheDocument();
     expect(within(codex).getByText('pro plan')).toBeInTheDocument();
     expect(within(codex).getByText(/provider reports credits available/)).toBeInTheDocument();
-    expect(within(codex).getByText(/automatic credit spending is not enabled/)).toBeInTheDocument();
+    expect(within(codex).getByText(/automatic dispatch requires separate spending authorization/)).toBeInTheDocument();
+    expect(within(codex).queryByText(/automatic credit spending is not enabled/)).not.toBeInTheDocument();
   });
 
   it('renders Grok as an actionable signed-out state, not a zero meter', async () => {
