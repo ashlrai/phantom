@@ -512,6 +512,43 @@ describe('readBranchProtectionAttestation parsing', () => {
     });
   });
 
+  it.each([true, false])('preserves GitHub pull_request extra-approval flag %s', async (enabled) => {
+    const rule = pullRequestRule();
+    (rule['parameters'] as Record<string, unknown>)['require_extra_approval_for_unattributed_changes'] = enabled;
+    queue(successSequence({
+      classic: result('', 1, 'gh: Branch not protected (HTTP 404)'),
+      rules: result(effectiveRules([rule])),
+      rulesetDetails: [rulesetDetail('main', [rule])],
+    }));
+
+    const evidence = await readBranchProtectionAttestation(
+      `/repo/extra-approval-${enabled}`, undefined, { forceFresh: true },
+    );
+
+    expect(evidence.ok).toBe(true);
+    expect(evidence.policySnapshot?.rulesets[0]?.rules[0]?.parameters)
+      .toMatchObject({ require_extra_approval_for_unattributed_changes: enabled });
+  });
+
+  it.each([
+    ['unknown key', { require_extra_approval_for_unattributed_changes: true, unexpected: true }],
+    ['non-boolean value', { require_extra_approval_for_unattributed_changes: 'true' }],
+  ])('rejects a pull_request rule with %s', async (label, changes) => {
+    const rule = pullRequestRule();
+    Object.assign(rule['parameters'] as Record<string, unknown>, changes);
+    queue(successSequence({ rules: result(effectiveRules([rule])) }));
+
+    const evidence = await readBranchProtectionAttestation(
+      `/repo/invalid-extra-approval-${label}`, undefined, { forceFresh: true },
+    );
+
+    expect(evidence).toMatchObject({
+      ok: false,
+      available: false,
+      detail: 'Effective branch rules are unavailable or malformed',
+    });
+  });
+
   it('returns available but unprotected evidence for static absence', async () => {
     queue(successSequence({
       classic: result('', 1, 'HTTP 404: Branch not protected'),

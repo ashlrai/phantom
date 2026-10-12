@@ -2917,6 +2917,7 @@ function validateRuleParameters(type: string, parameters: Record<string, unknown
         'dismiss_stale_reviews_on_push',
         'dismissal_restriction',
         'require_code_owner_review',
+        'require_extra_approval_for_unattributed_changes',
         'require_last_push_approval',
         'required_approving_review_count',
         'required_review_thread_resolution',
@@ -2931,6 +2932,7 @@ function validateRuleParameters(type: string, parameters: Record<string, unknown
       ],
     ) && isBooleanField(parameters, 'dismiss_stale_reviews_on_push') &&
       isBooleanField(parameters, 'require_code_owner_review') &&
+      isOptionalBooleanField(parameters, 'require_extra_approval_for_unattributed_changes') &&
       isBooleanField(parameters, 'require_last_push_approval') &&
       isBooleanField(parameters, 'required_review_thread_resolution') &&
       typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && count <= 10 &&
