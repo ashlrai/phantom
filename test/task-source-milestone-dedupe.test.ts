@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { addMilestone, createGoal, updateMilestoneStatus } from '../src/core/goals/store.js';
-import { enqueueTask, readTaskQueue } from '../src/core/fleet/task-source.js';
+import { cancelTask, enqueueTask, readTaskQueue } from '../src/core/fleet/task-source.js';
 import type { FleetTaskInput } from '../src/core/fleet/fleet-types.js';
 import { buildLeaderGoalEvidence } from '../src/core/vision/leader-goal-evidence.js';
 import { parseActionParams } from '../src/core/vision/leader-memo.js';
@@ -82,6 +82,27 @@ describe('exact milestone queue admission', () => {
     expect(updateMilestoneStatus(goal.id, secondId, 'done', { now: new Date(NOW + 4000).toISOString() })).not.toBeNull();
     expect(enqueueTask(task(goal.id, secondId, 'Finished slice'), options())).toMatchObject({ ok: false, writeAttempted: false });
     expect(readTaskQueue(file)).toEqual({ ok: true, tasks: [] });
+  });
+
+  it('holds new milestone work while any same-goal legacy task is open, then admits distinct milestones', () => {
+    const { goal, firstId, secondId } = goalWithMilestones();
+    const legacyInput = { repo: 'ashlrai/binshield', source: 'leader' as const, requestedBy: 'leader' as const,
+      detail: '', difficulty: 'low' as const, value: 3, goalId: goal.id };
+    const oldFirst = enqueueTask({ ...legacyInput, title: 'Fix autopilot CLI' }, options());
+    const oldSecond = enqueueTask({ ...legacyInput, title: 'Repair missing CLI target' }, options());
+    expect(oldFirst.ok && oldSecond.ok).toBe(true);
+    if (!oldFirst.ok || !oldSecond.ok) return;
+    const originalBytes = readFileSync(file, 'utf8');
+    const held = enqueueTask(task(goal.id, firstId, 'Restore CLI installation'), options());
+    expect(held).toMatchObject({ ok: false, writeAttempted: false });
+    expect(!held.ok && held.reason).toContain('legacy work');
+    expect(readFileSync(file, 'utf8')).toBe(originalBytes);
+
+    expect(cancelTask({ taskId: oldFirst.task.id, actor: 'mason', reason: 'reviewed duplicate' }, options()).ok).toBe(true);
+    expect(enqueueTask(task(goal.id, secondId, 'Other milestone'), options())).toMatchObject({ ok: false, writeAttempted: false });
+    expect(cancelTask({ taskId: oldSecond.task.id, actor: 'mason', reason: 'reviewed duplicate' }, options()).ok).toBe(true);
+    expect(enqueueTask(task(goal.id, firstId, 'Restore CLI installation'), options())).toMatchObject({ ok: true, deduped: false });
+    expect(enqueueTask(task(goal.id, secondId, 'Other milestone'), options())).toMatchObject({ ok: true, deduped: false });
   });
 
   it('keeps legacy goal tasks readable and rejects corrupt exact-milestone records', () => {

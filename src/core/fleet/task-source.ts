@@ -361,6 +361,14 @@ export function enqueueTask(input: FleetTaskInput, opts: TaskStoreOptions = {}):
         return { tasks, result: { task: null, deduped: false, full: false,
           reason: 'The exact pending goal milestone could not be verified for this repo.' }, write: false };
       }
+      // A pre-identity Leader task may already cover this milestone. Its
+      // title is not reliable evidence for binding it to any saved milestone.
+      // Hold all new exact work for this goal until Mason reviews that legacy
+      // task; do not silently collapse distinct milestones or run both forms.
+      if (tasks.some((t) => t.goalId === goalId && t.milestoneId == null && OPEN_STATUSES.has(t.status))) {
+        return { tasks, result: { task: null, deduped: false, full: false,
+          reason: 'Open legacy work for this goal needs review before exact milestone tasks can be queued.' }, write: false };
+      }
       const existing = tasks.find((t) => t.repo.toLowerCase() === input.repo.toLowerCase() &&
         t.goalId === goalId && t.milestoneId === milestoneId && OPEN_STATUSES.has(t.status));
       if (existing) return { tasks, result: { task: existing, deduped: true, full: false }, write: false };
