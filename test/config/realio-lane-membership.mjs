@@ -120,6 +120,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m442.runtime-release-launch-revalidation.test.ts', // large dependency fixtures, permissions and recursive cleanup
   'test/m444.external-skill-audit.test.ts', // large real audit trees and recursive cleanup
   'test/m466.host-merge-revocation-protocol.test.ts', // 4097-file store bounds and competing subprocess CAS
+  'test/resource-pool-commissioning-independent.test.ts', // witnessed metadata, custody loss and crash recovery
   'test/resource-pool-commissioning-apply.test.ts',
   'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
   'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
