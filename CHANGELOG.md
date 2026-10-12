@@ -20,8 +20,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   admission, budgets, or the ACU ledger. Embedded sign-in and real account
   extraction still require user-present validation.
 - Add an opt-in resident Mac awake preference with status and controls in
-  Settings. Its installed service requests macOS idle and system sleep
-  prevention while running on AC power; a stopped service holds no assertion.
+  Settings. Its installed service requests idle sleep prevention while running,
+  plus system sleep prevention on AC power; a stopped service holds no assertion.
   The setting does not override lid closure or the signed authority policy. The
   resident panel includes a finite, reduced-motion-aware coffee scene with Ash.
 
