@@ -65,7 +65,7 @@ describe.skipIf(process.platform !== 'darwin')('read-only pool commissioning pre
   it('prepares exact historical-to-active four-worker recovery without changing receipts, policies or files', () => {
     const f = fixture(); const before = tree(f.base); const p = checkResourcePoolCommissioning(f.request);
     expect(p).toMatchObject({ status: 'planned', configurationDisposition: 'historical', historyCount: 2, preservedReceiptCount: 5,
-      applicationReady: false, applicationImplemented: false, executionAuthorized: false, providerContacted: false,
+      applicationReady: false, applicationImplemented: true, executionAuthorized: false, providerContacted: false,
       identityContinuityVerified: false, independentAccountIdentityVerified: false, stateChanged: false });
     expect(p.invalidatedWorkerIds).toEqual(['general', 'spark', 'cmp', 'claude']);
     expect(p.proposedCapacities[0]?.workerIds).toEqual(['general', 'spark']);
@@ -91,7 +91,7 @@ describe.skipIf(process.platform !== 'darwin')('read-only pool commissioning pre
       paused: true, jobs: [historical, queued] });
     const before = tree(f.base); const p = checkResourcePoolCommissioning(f.request);
     expect(p.preservedJobCount).toBe(2); expect(p.heldQueuedIds).toEqual(['waiting']);
-    expect(p.applicationHolds).toContain('cross-epoch-context-acknowledgment-not-implemented');
+    expect(p.applicationHolds).toContain('current-account-quota-and-billing-qualification-required');
     expect(JSON.stringify(p)).not.toContain('PRIVATE_'); expect(tree(f.base)).toEqual(before);
   });
   it.each(['pool.json', 'bindings.json', 'quota-config.json', 'connections.json'])('refuses a partial %s publication without repairing it', name => {
@@ -189,7 +189,7 @@ describe.skipIf(process.platform !== 'darwin')('read-only pool commissioning pre
     const f = fixture(); f.state.observations = f.active.pool.workers.map(w => ({ workerId: w.id, health: 'ready', retryAfter: null,
       observedAt: new Date(Date.now() - 100).toISOString(), expiresAt: new Date(Date.now() + 50_000).toISOString(), windows: [] })) as never[];
     save(join(f.root, 'pool-state.json'), f.state); const p = checkResourcePoolCommissioning(f.request);
-    expect(p.applicationReady).toBe(false); expect(p.applicationHolds).toContain('target-collector-observation-epoch-fence-not-implemented');
+    expect(p.applicationReady).toBe(false); expect(p.applicationHolds).toContain('fresh-target-collector-evidence-required');
   });
 });
 
@@ -197,7 +197,7 @@ describe('commissioning check CLI authority boundary', () => {
   it.each(['apply', 'resume'])('rejects writable %s before inspecting any request', async action => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdResourcePool(['commission', action, '--request', '/private/never-read', '--json'])).toBe(2);
-    expect(out.mock.calls.flat().join('')).toContain('Expected check subcommand');
+    expect(out.mock.calls.flat().join('')).toContain('--expected-plan-digest');
   });
   it('rejects provider witness fields and accessors before inspection', () => {
     let touched = false;

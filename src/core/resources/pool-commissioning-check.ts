@@ -5,12 +5,14 @@ import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { validateResourceConnectionConfig } from './connection-monitor.js';
+import { consoleProof } from './pool-evolution.js';
 import { decodeResourceConsoleState } from './pool-supervisor.js';
 import { decodeResourcePoolState } from './pool-runtime.js';
 import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
 import { resolveNativeSeatLaunch } from './native-profile.js';
 import { validateResourceQuotaRefreshConfig } from './quota-refresh.js';
 import { resourceQuotaBuckets } from './quota-scope.js';
+import { assertOfflineResourcePoolCommissioningHistory } from './pool-commissioning-custody.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -29,11 +31,8 @@ export interface ResourcePoolCommissioningCheckRequest {
   enrollments: Array<{ capacityKey: string; seatId: string }>;
 }
 export const RESOURCE_POOL_COMMISSIONING_APPLICATION_HOLDS = [
-  'explicit-new-enrollment-approval-required',
-  'transactional-apply-and-crash-recovery-not-implemented',
-  'runtime-transition-custody-not-implemented',
-  'cross-epoch-context-acknowledgment-not-implemented',
-  'target-collector-observation-epoch-fence-not-implemented',
+  'account-identity-continuity-unverified',
+  'fresh-target-collector-evidence-required',
   'current-account-quota-and-billing-qualification-required',
 ] as const;
 export interface ResourcePoolCommissioningCheckPlan {
@@ -42,8 +41,8 @@ export interface ResourcePoolCommissioningCheckPlan {
   configurationDisposition: 'active' | 'historical'; historyCount: number; preservedReceiptCount: number;
   preservedJobCount: number; heldQueuedIds: string[]; invalidatedWorkerIds: string[];
   proposedCapacities: Array<{ capacityKey: string; seatId: string; provider: string; workerIds: string[]; profileMetadataDigest: string }>;
-  preservationDigest: string; targetConfigurationDigest: string;
-  applicationHolds: readonly string[]; applicationReady: false; applicationImplemented: false;
+  preservationDigest: string; targetConfigurationDigest: string; targetConsoleDigest: string; targetConsoleProofDigest: string;
+  applicationHolds: readonly string[]; applicationReady: false; applicationImplemented: true;
   identityContinuityVerified: false; independentAccountIdentityVerified: false;
   executionAuthorized: false; providerContacted: false; stateChanged: false;
 }
@@ -63,7 +62,7 @@ function outside(workspace: string, file: string): boolean {
   const nested = relative(workspace, file);
   return nested === '..' || nested.startsWith(`..${sep}`) || isAbsolute(nested);
 }
-function request(value: unknown): ResourcePoolCommissioningCheckRequest {
+export function validateResourcePoolCommissioningRequest(value: unknown): ResourcePoolCommissioningCheckRequest {
   const encoded = canonicalEvidencePackJsonV3(value);
   if (encoded === null || Buffer.byteLength(encoded) > 64 * 1024) return refuse('invalid-input');
   const v: unknown = JSON.parse(encoded);
@@ -80,8 +79,7 @@ function request(value: unknown): ResourcePoolCommissioningCheckRequest {
 function offline(root: string): void {
   if (['.resource-console.lock', '.pool.lock', '.resource-quota-refresh.lock'].some(name => present(join(root, name)))) refuse('ownership-present');
   if (present(join(root, '.resource-quota-refresh-pending.json'))) refuse('uncertain-work');
-  // No existing commissioning state is interpreted as successful or auto-repaired.
-  if (present(join(root, 'pool-commissioning'))) refuse('state-unavailable');
+
 }
 interface CapturedFile { text: string; identity: string }
 function file(filePath: string, anchor: string): CapturedFile {
@@ -103,10 +101,12 @@ function directoryIdentity(directory: string): string {
 
 /** Offline check only. A valid plan is inert preparation, never commissioning custody or account evidence. */
 export function checkResourcePoolCommissioning(value: unknown): ResourcePoolCommissioningCheckPlan {
-  try { return check(request(value)); }
+  try { return prepareResourcePoolCommissioning(value).plan; }
   catch (e) { if (e instanceof ResourcePoolCommissioningCheckError) throw e; return refuse('state-unavailable'); }
 }
-function check(input: ResourcePoolCommissioningCheckRequest): ResourcePoolCommissioningCheckPlan {
+/** Internal bounded snapshots for the offline transaction; does not write or acquire ownership. */
+export function prepareResourcePoolCommissioning(value: unknown) {
+  const input = validateResourcePoolCommissioningRequest(value);
   inspectPrivateDirectory(input.accountsRoot); inspectPrivateDirectory(input.root); offline(input.root);
   const directoryPins = [input.accountsRoot, input.root, input.workspace].map(path => ({ path, identity: directoryIdentity(path) }));
   const captured = new Map<string, { anchor: string; file: CapturedFile }>();
@@ -119,11 +119,12 @@ function check(input: ResourcePoolCommissioningCheckRequest): ResourcePoolCommis
   const history = validateResourcePoolConfigHistory(ledger.configurationHistory);
   const active = history.at(-1)!;
   const state = decodeResourcePoolState(ledger, active.pool, active.bindings);
+  assertOfflineResourcePoolCommissioningHistory(input.root, state);
   if (state.attempts.some(row => row.status === 'reserved' || row.status === 'uncertain')) refuse('uncertain-work');
   const pool = read(join(input.accountsRoot, 'pool.json'), input.accountsRoot);
   const bindings = read(join(input.accountsRoot, 'bindings.json'), input.accountsRoot);
   const selected = resourcePoolConfigSnapshot(pool, bindings);
-  if (!history.some(row => canonical(row) === canonical(selected))) refuse('config-conflict');
+  if (!history.some(row => row.poolDigest === selected.poolDigest && canonical(row.pool) === canonical(selected.pool) && canonical(row.bindings) === canonical(selected.bindings))) refuse('config-conflict');
   const quotaValue = read(join(input.accountsRoot, 'quota-config.json'), input.accountsRoot);
   const quota = validateResourceQuotaRefreshConfig(quotaValue, selected.pool, selected.bindings);
   const rosterValue = read(join(input.accountsRoot, 'connections.json'), input.accountsRoot);
@@ -147,8 +148,8 @@ function check(input: ResourcePoolCommissioningCheckRequest): ResourcePoolCommis
     if (!launch.ok || canonical(launch.launch.command) !== canonical(seat.command)) refuse('profile-invalid');
     const profile = read(join(dirname(seat.command[1]!), 'profile.json'), dirname(seat.command[1]!));
     if (!record(profile) || profile.schemaVersion !== 2 || !record(profile.identity)) refuse('profile-invalid');
-    read(join(dirname(seat.command[1]!), 'launcher.mjs'), dirname(seat.command[1]!), false, false);
-    read(join(dirname(seat.command[1]!), 'command.json'), dirname(seat.command[1]!));
+    const launcher = read(join(dirname(seat.command[1]!), 'launcher.mjs'), dirname(seat.command[1]!), false, false);
+    const commandFile = read(join(dirname(seat.command[1]!), 'command.json'), dirname(seat.command[1]!));
     if (aliases.every(row => row.kind === 'native-cli' && canonical(row.command) === canonical(seat.command))) refuse('enrollment-invalid');
     for (const alias of aliases) if (alias.kind === 'native-cli') alias.command = [...seat.command];
     if (provider === 'codex') {
@@ -156,7 +157,7 @@ function check(input: ResourcePoolCommissioningCheckRequest): ResourcePoolCommis
       hints.set(enrollment.capacityKey, seat.expectedAccountHint);
     }
     capacities.push({ capacityKey: enrollment.capacityKey, seatId: seat.id, provider, workerIds: aliases.map(a => a.workerId),
-      profileMetadataDigest: hash({ profile, command: seat.command }) });
+      profileMetadataDigest: hash({ profile, command: seat.command, launcher, commandFile }) });
   }
   // Locator/hint uniqueness is an operational deduplication check, never independent account proof.
   for (const a of nextBindings) for (const b of nextBindings) {
@@ -187,17 +188,21 @@ function check(input: ResourcePoolCommissioningCheckRequest): ResourcePoolCommis
     provider: enrollment.provider as 'codex' | 'claude', seatId: enrollment.seatId }).ok) refuse('profile-invalid');
   offline(input.root);
   if (directoryPins.some(row => directoryIdentity(row.path) !== row.identity)) refuse('state-changed');
+  const nextConsole = console === null ? null : { ...console, schemaVersion: 5 as const, originPoolDigest: console.originPoolDigest ?? active.poolDigest };
   const report = {
     schemaVersion: 1 as const, status: 'planned' as const, fromPoolDigest: active.poolDigest, targetPoolDigest: target.poolDigest,
     rosterDigest: hash(rosterValue), configurationDisposition: selected.poolDigest === active.poolDigest ? 'active' as const : 'historical' as const,
     historyCount: history.length, preservedReceiptCount: state.attempts.length, preservedJobCount: console?.jobs.length ?? 0,
     heldQueuedIds: console?.jobs.filter(row => row.state === 'queued').map(row => row.id) ?? [],
     invalidatedWorkerIds: capacities.flatMap(row => row.workerIds), proposedCapacities: capacities,
-    preservationDigest: hash({ state, console: consoleValue }), targetConfigurationDigest: hash({ target, quota: nextQuota }),
-    applicationHolds: [...RESOURCE_POOL_COMMISSIONING_APPLICATION_HOLDS], applicationReady: false as const, applicationImplemented: false as const,
+    preservationDigest: hash({ stateDigest: hash(state), consoleDigest: hash(consoleValue) }),
+    targetConsoleDigest: hash(nextConsole), targetConsoleProofDigest: hash(consoleProof(nextConsole)), targetConfigurationDigest: hash({ target, quota: nextQuota }),
+    applicationHolds: [...RESOURCE_POOL_COMMISSIONING_APPLICATION_HOLDS], applicationReady: false as const, applicationImplemented: true as const,
     identityContinuityVerified: false as const, independentAccountIdentityVerified: false as const,
     executionAuthorized: false as const, providerContacted: false as const, stateChanged: false as const,
   };
-  return { ...report, planDigest: hash({ input, report, directoryPins, sourceFiles: [...captured].map(([name, row]) => ({ path: name,
-    identity: row.file.identity, contentDigest: digest(row.file.text) })) }) };
+  const planBasis = { input, report, directoryPins, sourceFiles: [...captured].map(([name, row]) => ({ path: name,
+    identity: row.file.identity, contentDigest: digest(row.file.text) })) };
+  const plan = { ...report, planDigest: hash(planBasis) };
+  return { input, plan, planBasis, active, state, console, consoleValue, target, nextQuota, captured, directoryPins };
 }

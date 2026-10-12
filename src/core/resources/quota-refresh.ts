@@ -10,6 +10,7 @@ import { probeCodexResourceAccount, sanitizeCodexProbeCleanupDiagnostics, type C
   type CodexResourceProbeOptions, type CodexResourceProbeResult } from './codex-account-probe.js';
 import { acquireResourceQuotaRefreshLease, type ResourceQuotaRefreshLease } from './quota-refresh-lease.js';
 import { createNativeMetadataCoordinator, withNativeMetadataAdmission, type NativeMetadataCoordinator } from './metadata-coordinator.js';
+import { captureResourceCommissioningObservation } from './pool-commissioning-evidence.js';
 import { resourceQuotaBuckets, expandResourceQuotaDenials } from './quota-scope.js';
 
 export const RESOURCE_QUOTA_REFRESH_INTERVAL_MS = 30_000;
@@ -290,22 +291,36 @@ function createRefresher(options: ReturnType<typeof checkedOptions>, once: boole
           coordinator?.abort();
           void close().catch(() => {});
         };
+        let beforeCommissioning: ReturnType<typeof captureResourceCommissioningObservation>;
+        try { beforeCommissioning = captureResourceCommissioningObservation(cwd, pool, bindings, config, row.config.workerId); }
+        catch {
+          // No native port was invoked; the coordinator settles its ready/no-contact reservation.
+          return { ...cancelledBeforeNativeContact(row.config.workerId, config.poolDigest, row.lastAttemptAt!), reason: 'commissioning-capture-unavailable' };
+        }
+        let result: CodexResourceProbeResult;
         try {
-          const result = await probe({ pool, bindings, workerId: row.config.workerId, cwd,
+          result = await probe({ pool, bindings, workerId: row.config.workerId, cwd,
             bucketIds: row.config.bucketIds, expectedAccountHint: row.config.accountHint, timeoutMs: PROBE_TIMEOUT_MS,
             signal: controller.signal, ...(processGroupLifecycle ? { processGroupLifecycle: withNativeMetadataAdmission(processGroupLifecycle, () => {
-              if (!owns() || controller.signal.aborted) throw new Error('Metadata quota admission changed');
+              if (!owns() || controller.signal.aborted || canonical(captureResourceCommissioningObservation(cwd, pool, bindings, config, row.config.workerId)) !== canonical(beforeCommissioning)) throw new Error('Metadata quota admission changed');
             }) } : {}) });
           const status = object(result) ? Object.getOwnPropertyDescriptor(result, 'status') : undefined;
           if (!status || !('value' in status) || typeof status.value !== 'string' ||
-            !['observed', 'failed', 'timed-out', 'cancelled', 'uncertain'].includes(status.value)) {
-            throw new Error('Native quota settlement unavailable');
-          }
-          if (status.value === 'uncertain') unsettled();
+            !['observed', 'failed', 'timed-out', 'cancelled', 'uncertain'].includes(status.value)) throw new Error('Native quota settlement unavailable');
+          if (status.value === 'uncertain') { unsettled(); return result; }
+        } catch {
+          // Only an unknown native outcome/lifecycle is termination uncertainty.
+          unsettled(); throw new Error('Native quota settlement unavailable');
+        }
+        try {
+          const afterCommissioning = captureResourceCommissioningObservation(cwd, pool, bindings, config, row.config.workerId);
+          if (canonical(beforeCommissioning) !== canonical(afterCommissioning)) return { ...result, status: 'failed' as const, reason: 'commissioning-profile-or-collector-changed', observation: null };
+          // The target-scoped native result, never caller envelope fields, establishes provenance.
+          if (afterCommissioning && result.observation) return { ...result, observation: { ...result.observation, commissioning: afterCommissioning } };
           return result;
         } catch {
-          unsettled();
-          throw new Error('Native quota settlement unavailable');
+          // A known-settled probe stays settled; profile evidence now requires recollection.
+          return { ...result, status: 'failed' as const, reason: 'commissioning-capture-unavailable', observation: null };
         }
       };
       const result = coordinator ? await coordinator.run(collect, (value) => value.status !== 'uncertain') : await collect();

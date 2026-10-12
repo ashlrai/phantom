@@ -18,6 +18,9 @@ import { MAX_RESOURCE_OBSERVATION_WINDOWS, RESOURCE_OBSERVATION_OVERFLOW, planRe
 import { executeResourceWorker, validateResourceBindings, type ResourceBinding, type ResourceWorkerTask, type ResourceWorkerResult } from './worker.js';
 import { resourceUsageScopeForProvider, validResourceExecutionDuration, validResourceExecutionMeasurement, type ResourceExecutionMeasurement } from './performance.js';
 import { RESOURCE_NATIVE_PROCESS_SIGNALS, validResourceNativeProcessForReceipt, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
+import { assertResourcePoolCommissioningCustody, commissioningPresent } from './pool-commissioning-custody.js';
+import { qualifyResourceCommissioningObservations } from './pool-commissioning-evidence.js';
+import { crossesResourceCommissioning } from './pool-evolution-policy.js';
 import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
 import { canonicalResourceLedgerJson } from './pool-ledger-json.js';
 import type { ResourcePoolConfigSnapshot } from './pool-evolution-types.js';
@@ -281,8 +284,12 @@ export function decodeResourcePoolState(value: unknown, pool: ResourcePool, bind
 }
 function loadState(root: string, pool: ResourcePool, bindings: ResourceBinding[], poolDigest: string): PoolState {
   const file = join(root, 'pool-state.json');
-  if (!existsSync(file)) return { schemaVersion: 1, poolDigest, observations: [], attempts: [] };
-  return decodeResourcePoolState(readResourceJson(file, MAX_STATE_BYTES), pool, bindings);
+  if (!existsSync(file)) {
+    if (commissioningPresent(join(root, 'pool-commissioning'))) throw new Error('Resource commissioning ledger unavailable; never reinitialize');
+    return { schemaVersion: 1, poolDigest, observations: [], attempts: [] };
+  }
+  const state = decodeResourcePoolState(readResourceJson(file, MAX_STATE_BYTES), pool, bindings);
+  assertResourcePoolCommissioningCustody(root, state); return state;
 }
 /** Read-only verified snapshots; never returns execution authority or repairs an interrupted upgrade. */
 export function readResourcePoolHistory(root: string, pool: ResourcePool, bindings: ResourceBinding[]): ResourcePoolConfigSnapshot[] {
@@ -339,6 +346,10 @@ export function requireResourcePoolSettlementHeadroom(state: ResourcePoolState, 
   // These are byte envelopes, not accepted observations or fabricated receipts.
   const observations = pool.workers.map((worker) => ({ workerId: worker.id, observedAt: quotaDate,
     expiresAt: quotaDate, updatedAt: quotaDate, health: 'unavailable', retryAfter: quotaDate,
+    ...(state.configurationHistory?.some(e => e.commissioning?.workers.some(w => w.workerId === worker.id)) ? { commissioning: {
+      planDigest: '0'.repeat(64), poolDigest: '0'.repeat(64), profileMetadataDigest: '0'.repeat(64), profileEpochDigest: '0'.repeat(64),
+      collectorBindingDigest: '0'.repeat(64), collectorOwner: '0'.repeat(64), subscriptionOnlyBoundary: { source: 'codex-siwc-app-credit-control',
+        accountHint: '0'.repeat(64), observedAt: quotaDate, expiresAt: quotaDate, creditsEnabled: false } } } : {}),
     windows: Array.from({ length: MAX_RESOURCE_OBSERVATION_WINDOWS }, (_, index) => ({
       id: String(index).padStart(64, '0'), usedPercent: widestNumber, resetsAt: quotaDate })) }));
   if (Buffer.byteLength(canonical({ ...state, attempts, observations }) + '\n') > MAX_STATE_BYTES) {
@@ -394,8 +405,11 @@ export function mergeResourceObservations(previous: ResourceObservation[], incom
   return [...merged.values()];
 }
 
-function plan(state: PoolState, pool: ResourcePool, bindings: ResourceBinding[], allowedWorkerIds: string[], nowMs: number,
+function plan(root: string, state: PoolState, pool: ResourcePool, bindings: ResourceBinding[], allowedWorkerIds: string[], nowMs: number,
   unavailableWorkerIds: string[], quotaUnavailableWorkerIds: string[] = []): ResourceAssignmentPlan {
+  const commissioning = qualifyResourceCommissioningObservations(root, state, pool, bindings, state.observations);
+  state = { ...state, observations: commissioning.observations };
+  unavailableWorkerIds = [...new Set([...unavailableWorkerIds, ...commissioning.quotaDenied, ...commissioning.billingDenied])];
   const ceiling = allocation(state).ceilingPercent;
   // Policy is an admission-only projection, never the identity used for receipts,
   // native probes or immutable enrollment. Zero is vetoed without reserve=100.
@@ -465,8 +479,12 @@ function plan(state: PoolState, pool: ResourcePool, bindings: ResourceBinding[],
   }
   // The synthetic health veto exists only in this planning clone. The returned
   // evidence and persisted ledger retain the actual captured observations.
-  return planResourceAssignment({ pool, observations, allowedWorkerIds, activeCounts, taskReservationCounts, nowMs,
+  const result = planResourceAssignment({ pool, observations, allowedWorkerIds, activeCounts, taskReservationCounts, nowMs,
     quotaScopeExcludedWorkerIds: excludedResourceQuotaScopeWorkerIds(pool, bindings, quotaScopeAccess(state).exclusions) });
+  return { ...result, exclusions: result.exclusions.map(row => ({ ...row, reasons: [ ...row.reasons,
+    ...(commissioning.quotaDenied.includes(row.workerId) ? ['commissioning-quota-provenance-required' as const] : []),
+    ...(commissioning.billingDenied.includes(row.workerId) ? ['commissioning-billing-boundary-required' as const] : []),
+  ] })) };
 }
 
 function scope(poolValue: ResourcePool, bindingsValue: ResourceBinding[]): { pool: ResourcePool; bindings: ResourceBinding[]; poolDigest: string } {
@@ -475,7 +493,7 @@ function scope(poolValue: ResourcePool, bindingsValue: ResourceBinding[]): { poo
 }
 
 /** Apply fresh invocation evidence to an owned or read-only in-memory state. */
-function freshAdmission(state: PoolState, pool: ResourcePool, bindings: ResourceBinding[], allowedWorkerIds: string[],
+function freshAdmission(root: string, state: PoolState, pool: ResourcePool, bindings: ResourceBinding[], allowedWorkerIds: string[],
   current: unknown, unavailableWorkerIds: string[], quotaUnavailableWorkerIds: string[]) {
   if (!object(current) || !exact(current, ['observations', 'unavailableWorkerIds',
     ...(Object.hasOwn(current, 'quotaUnavailableWorkerIds') ? ['quotaUnavailableWorkerIds'] : [])])) {
@@ -489,12 +507,12 @@ function freshAdmission(state: PoolState, pool: ResourcePool, bindings: Resource
   // A current collector refusal must survive a newer external zero reading.
   // Occupancy/task caps remain waitable in the final plan, not converted into
   // an invocation-only health refusal. Both admission paths use this policy.
-  const currentPlan = plan({ ...state, observations }, pool, bindings, allowedWorkerIds, Date.now(), currentGates, currentQuotaGates);
+  const currentPlan = plan(root, { ...state, observations }, pool, bindings, allowedWorkerIds, Date.now(), currentGates, currentQuotaGates);
   for (const exclusion of currentPlan.exclusions) {
     if (exclusion.reasons.some((reason) => !['worker-not-allowed', 'concurrency-exhausted',
       'operator-task-cap-reached', 'operator-quota-scope-excluded'].includes(reason))) quotaUnavailable.add(exclusion.workerId);
   }
-  state.observations = mergeResourceObservations(state.observations, observations);
+  state.observations = mergeResourceObservations(state.observations, qualifyResourceCommissioningObservations(root, state, pool, bindings, observations).observations);
   return { unavailableWorkerIds: [...unavailable], quotaUnavailableWorkerIds: [...quotaUnavailable] };
 }
 
@@ -507,8 +525,8 @@ export function resourceAdmissionPreflight(root: string, poolValue: ResourcePool
   if (!allowed.length) throw new Error('Invalid resource admission workers');
   const state = inspectRoot(root, false) ? loadState(root, pool, bindings, poolDigest)
     : { schemaVersion: 1 as const, poolDigest, observations: [], attempts: [] };
-  const gates = freshAdmission(state, pool, bindings, allowed, evidence, [], []);
-  return plan(state, pool, bindings, allowed, Date.now(), gates.unavailableWorkerIds, gates.quotaUnavailableWorkerIds);
+  const gates = freshAdmission(root, state, pool, bindings, allowed, evidence, [], []);
+  return plan(root, state, pool, bindings, allowed, Date.now(), gates.unavailableWorkerIds, gates.quotaUnavailableWorkerIds);
 }
 
 /** Read-only: no directory, lock, observation, or assignment is published. */
@@ -520,9 +538,9 @@ export function resourcePoolStatus(root: string, poolValue: ResourcePool, bindin
   const observed = validateResourceObservations(incoming, pool);
   const exists = inspectRoot(root, false);
   const state = exists ? loadState(root, pool, bindings, poolDigest) : { schemaVersion: 1 as const, poolDigest, observations: [], attempts: [] };
-  state.observations = mergeResourceObservations(state.observations, observed);
+  state.observations = mergeResourceObservations(state.observations, qualifyResourceCommissioningObservations(root, state, pool, bindings, observed).observations);
   return { schemaVersion: 1 as const, sourceState: exists ? 'healthy' as const : 'missing' as const,
-    poolId: pool.id, plan: plan(state, pool, bindings, pool.workers.map((row) => row.id), Date.now(), unavailable, quotaUnavailable),
+    poolId: pool.id, plan: plan(root, state, pool, bindings, pool.workers.map((row) => row.id), Date.now(), unavailable, quotaUnavailable),
     ...(state.schemaVersion === 2 ? { configurationDigests: state.configurationHistory!.map(row => row.poolDigest) } : {}),
     observations: state.observations, attempts: state.attempts, allocation: allocation(state), workerAccess: workerAccess(state),
     quotaScopeAccess: quotaScopeAccess(state) };
@@ -645,18 +663,19 @@ export async function runResourceTask(options: { root: string; pool: ResourcePoo
   const taskDigest = digest(canonical(task));
   if (signal?.aborted) throw new Error('Resource task cancelled before reservation');
   const admission = transaction(root, pool, bindings, poolDigest, (state) => {
-    state.observations = mergeResourceObservations(state.observations, incoming);
+    state.observations = mergeResourceObservations(state.observations, qualifyResourceCommissioningObservations(root, state, pool, bindings, incoming).observations);
     const previous = state.attempts.find((row) => row.id === task.id);
     if (previous) {
+      if (state.configurationHistory && crossesResourceCommissioning(state.configurationHistory, previous.poolDigest, state.poolDigest)) throw new Error('Historical request crosses commissioning boundary');
       if (previous.taskDigest !== taskDigest) throw new Error('Resource task identity conflict');
       return { receipt: previous, plan: null, replayed: true };
     }
     let gates = { unavailableWorkerIds: unavailable, quotaUnavailableWorkerIds: quotaUnavailable };
     if (options.readAdmissionEvidence) {
-      gates = freshAdmission(state, pool, bindings, task.allowedWorkerIds, options.readAdmissionEvidence(), unavailable, quotaUnavailable);
+      gates = freshAdmission(root, state, pool, bindings, task.allowedWorkerIds, options.readAdmissionEvidence(), unavailable, quotaUnavailable);
       if (signal?.aborted) throw new Error('Resource task cancelled before reservation');
     }
-    const assignment = plan(state, pool, bindings, task.allowedWorkerIds, Date.now(), gates.unavailableWorkerIds, gates.quotaUnavailableWorkerIds);
+    const assignment = plan(root, state, pool, bindings, task.allowedWorkerIds, Date.now(), gates.unavailableWorkerIds, gates.quotaUnavailableWorkerIds);
     if (!assignment.selectedWorkerId) return { receipt: null, plan: assignment, replayed: false };
     if (state.attempts.length >= MAX_ATTEMPTS) throw new Error('Resource ledger capacity reached');
     const binding = bindings.find((row) => row.workerId === assignment.selectedWorkerId)!;
@@ -676,6 +695,13 @@ export async function runResourceTask(options: { root: string; pool: ResourcePoo
     try { dispatchAllowed = beforeWorkerDispatch() === true; }
     catch { dispatchAllowed = false; }
   }
+  // Recheck in the core AFTER caller callbacks and immediately before invocation.
+  // External host preconditions are not custody, and cannot remove it between reservation and contact.
+  try {
+    const live = loadState(root, pool, bindings, poolDigest);
+    const gates = qualifyResourceCommissioningObservations(root, live, pool, bindings, live.observations);
+    if (gates.quotaDenied.includes(worker.id) || gates.billingDenied.includes(worker.id)) dispatchAllowed = false;
+  } catch { dispatchAllowed = false; }
   // This interval excludes both durable-store transactions and any supervisor queue.
   // Adapter preparation, execution and cleanup are included; it is not provider latency.
   const executionStarted = performance.now();
@@ -697,7 +723,7 @@ export async function runResourceTask(options: { root: string; pool: ResourcePoo
     const index = state.attempts.findIndex((row) => row.id === reserved.id);
     if (index < 0 || canonical(state.attempts[index]) !== canonical(reserved)) throw new Error('Resource assignment changed before settlement');
     if (result.observation) state.observations = mergeResourceObservations(state.observations,
-      validateResourceObservations([result.observation], pool));
+      qualifyResourceCommissioningObservations(root, state, pool, bindings, validateResourceObservations([result.observation], pool)).observations);
     state.attempts[index] = receipt;
   });
   return { ...admission, receipt, output: result.status === 'completed' ? result.output : null };
