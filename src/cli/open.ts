@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process';
 import { isAbsolute, resolve } from 'node:path';
 import type { AshlrConfig } from '../core/types.js';
+import { planMarkdownOpen } from '../core/markdown-opener.js';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -94,6 +95,12 @@ export function editorDeepLink(path: string, editor: AshlrConfig['editor']): str
  * so callers may retry via openInFinder.
  */
 export function openInEditor(path: string, cfg: AshlrConfig): void {
+  // Markdown → Ashlr MD when installed (opt out: cfg.markdownOpener = 'editor').
+  const md = planMarkdownOpen(path, cfg);
+  if (md.kind === 'ashlr-md') {
+    openUrl(md.url);
+    return;
+  }
   openUrl(editorDeepLink(path, cfg.editor));
 }
 

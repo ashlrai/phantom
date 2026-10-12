@@ -1483,6 +1483,10 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
+  const { planMarkdownOpen, ashlrMdInstallHint } = await import('../core/markdown-opener.js');
+  const md = planMarkdownOpen(chosen.path, cfg);
+  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
+  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
