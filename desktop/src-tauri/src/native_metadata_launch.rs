@@ -1206,7 +1206,10 @@ mod tests {
         let child_pid = spawned.id();
         let output = spawned.wait_with_output().unwrap();
         assert!(!output.status.success());
-        assert_eq!(output.stderr, b"Native metadata launch held: control-channel\n");
+        assert_eq!(
+            output.stderr,
+            b"Native metadata launch held: control-channel\n"
+        );
         assert_eq!(fs::read(&control).unwrap(), b"unchanged");
         let identity: serde_json::Value = serde_json::from_slice(
             &read(
