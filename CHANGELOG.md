@@ -23,6 +23,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Parse GitHub's optional unattributed-change approval flag and requester-specific
   ruleset bypass display when inspecting branch protection. The latter is not
   treated as policy; unknown fields and invalid values still fail.
+- Permit the fixed macOS identity probes inside Claude's outer native jail so
+  witnessed profiles can verify their boot and APFS volume before launch.
 
 ## [3.29.10] — 2026-10-10
 
