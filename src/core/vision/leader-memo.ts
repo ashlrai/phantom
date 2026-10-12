@@ -306,7 +306,7 @@ function parseGoalProposal(value: unknown): LeaderGoalProposal | null {
 
 function parseTaskInput(value: unknown): FleetTaskInput | null {
   if (!isRecord(value)) return null;
-  if (!hasExactKeys(value, ['repo', 'title', 'difficulty', 'value'], ['detail', 'goalId', 'playbook'])) return null;
+  if (!hasExactKeys(value, ['repo', 'title', 'difficulty', 'value'], ['detail', 'goalId', 'milestoneId', 'playbook'])) return null;
   const repo = value['repo'];
   if (typeof repo !== 'string' || !NAME_WITH_OWNER_RE.test(repo)) return null;
   const title = cleanModelText(value['title'], 120);
@@ -317,6 +317,8 @@ function parseTaskInput(value: unknown): FleetTaskInput | null {
   if (!Number.isInteger(taskValue) || (taskValue as number) < 1 || (taskValue as number) > 5) return null;
   const goalId = value['goalId'] ?? null;
   if (goalId !== null && (typeof goalId !== 'string' || !GOAL_ID_RE.test(goalId))) return null;
+  const milestoneId = value['milestoneId'] ?? null;
+  if (milestoneId !== null && (goalId === null || typeof milestoneId !== 'string' || !GOAL_ID_RE.test(milestoneId))) return null;
   // 3.15: a playbook id rides in the detail as a `!macro` line, so every lane
   // the task reaches (fleet brief, cloud backlog) resolves it the same way
   // (playbooks/resolve.ts); an id that names no playbook is inert text.
@@ -334,6 +336,7 @@ function parseTaskInput(value: unknown): FleetTaskInput | null {
     value: taskValue as number,
     requestedBy: 'leader',
     goalId,
+    ...(milestoneId !== null ? { milestoneId } : {}),
     dedupeKey: null,
   };
 }
@@ -1031,7 +1034,8 @@ export const LEADER_MEMO_SCHEMA_TEXT = `{
   "questionsForMason": ["<a genuine strategic fork only Mason can decide>"],
   "questionForms": [{"index": "<corresponding questionsForMason slot, starting at 0>", "mode": "single|multiple|short-answer", "options": ["<complete visible label; omit options for short-answer>"]}],
   "actions": [{"kind": "<action kind>", "params": {<exact params for the kind>}, "summary": "<one line>", "why": "<argument>"}]
-}`;
+}
+For a goal-bound work.dispatch action, set task.goalId and task.milestoneId to the exact ids shown in goals.items[].pendingMilestones. The saved goal and pending milestone are checked again when the task is queued; rewording its title cannot create another open task for that milestone. Omit milestoneId only for legacy or non-goal work.`;
 
 // ---------------------------------------------------------------------------
 // Ids
