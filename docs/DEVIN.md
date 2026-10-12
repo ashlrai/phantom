@@ -179,9 +179,19 @@ that a personal CLI subscription funds its sessions.
 Max has a weekly included allowance shared between Devin sessions, CLI and
 Desktop, with no daily cap. That allowance and purchased on-demand credits are
 separate from Phantom's tracked ACU ledger and organization consumption report.
-Phantom does not read Max's remaining weekly allowance or on-demand balance;
-check the account's Usage page on app.devin.ai. Enterprise ACU billing does not
-define a personal Max allowance
+The optional desktop dashboard reader can observe the organization's displayed
+Max weekly **used percentage** and on-demand balance after you sign in to a
+separate Devin account window. One refresh reads General, Usage & limits, and
+General again, accepting the result only when the organization ID matches the
+connected API organization on both sides. Its two-minute observation is for
+display only; it does not prove the signed-in human account, feed launch
+admission, or replace the ACU ledger. Automatic refresh is opt-in while that
+window stays open. Its separate browser data store does not use the agent
+browser or copy cookies from your usual browser. Embedded Devin sign-in and
+the live account reading still need validation; external Google sign-in may
+refuse embedded windows. Check app.devin.ai in your usual browser when the
+observation is unavailable. Enterprise ACU billing does not define a personal
+Max allowance
 ([self-serve billing](https://docs.devin.ai/admin/billing/self-serve)).
 
 Reported usage combines actual session readings with your explicit adjustment.

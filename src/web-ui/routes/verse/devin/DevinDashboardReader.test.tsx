@@ -27,7 +27,18 @@ function usage(weekly: string, monthly: string) {
   </div>`;
 }
 
-afterEach(() => { cleanup(); delete (window as unknown as Record<string, unknown>).__ASHLR_DESKTOP__; });
+afterEach(() => { cleanup(); vi.useRealTimers(); delete (window as unknown as Record<string, unknown>).__ASHLR_DESKTOP__; });
+
+function observation(percent: number, expiresAtMs = Date.now() + 90_000) {
+  return { kind: 'snapshot', source: 'devin-dashboard-organization', accountVerified: false, orgId: 'org-example',
+    observedAtMs: Date.now(), expiresAtMs,
+    usage: { weeklyUsedPercent: percent, onDemandBalanceUsd: 0, plan: 'Max', monthlyPriceUsd: 123,
+      resetProse: 'Resets in 4 days', renewalProse: null, autoReload: false } };
+}
+
+function nativeStatus(state: string) {
+  act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: { kind: 'status', state } })));
+}
 
 describe('Devin dashboard observation', () => {
   it('reads only a weekly-labelled allowance and associated Max monthly price', () => {
@@ -87,5 +98,47 @@ describe('Devin dashboard observation', () => {
     expect(send).toHaveBeenCalledWith({ op: 'auto', enabled: true });
     fireEvent.click(screen.getByRole('button', { name: 'Auto refresh on' }));
     expect(send).toHaveBeenCalledWith({ op: 'auto', enabled: false });
+  });
+
+  it('keeps a current observation during automatic refresh, then replaces or invalidates it', () => {
+    (window as unknown as Record<string, unknown>).__ASHLR_DESKTOP__ = { devinReader: { version: 1, send: vi.fn(() => true) } };
+    render(<DevinDashboardReader orgId="org-example" />);
+    act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: observation(12) })));
+    nativeStatus('auto-on');
+    nativeStatus('refreshing-general');
+    nativeStatus('refreshing-usage');
+    expect(screen.getByText(/weekly 12% used/)).toBeInTheDocument();
+    act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: observation(15) })));
+    expect(screen.queryByText(/weekly 12% used/)).not.toBeInTheDocument();
+    expect(screen.getByText(/weekly 15% used/)).toBeInTheDocument();
+    nativeStatus('organization-mismatch');
+    expect(screen.queryByText(/weekly 15% used/)).not.toBeInTheDocument();
+  });
+
+  it('expires a current observation on time and clears a replacement on close', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-06-01T12:00:00Z'));
+    (window as unknown as Record<string, unknown>).__ASHLR_DESKTOP__ = { devinReader: { version: 1, send: vi.fn(() => true) } };
+    render(<DevinDashboardReader orgId="org-example" />);
+    act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: observation(12, Date.now() + 500) })));
+    expect(screen.getByText(/weekly 12% used/)).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(501));
+    expect(screen.queryByText(/weekly 12% used/)).not.toBeInTheDocument();
+    act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: observation(18) })));
+    expect(screen.getByText(/weekly 18% used/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText(/weekly 18% used/)).not.toBeInTheDocument();
+  });
+
+  it('discards an expired observation on window focus after throttled timers', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-06-01T12:00:00Z'));
+    (window as unknown as Record<string, unknown>).__ASHLR_DESKTOP__ = { devinReader: { version: 1, send: vi.fn(() => true) } };
+    render(<DevinDashboardReader orgId="org-example" />);
+    act(() => window.dispatchEvent(new CustomEvent(DEVIN_READER_EVENT, { detail: observation(12, Date.now() + 500) })));
+    expect(screen.getByText(/weekly 12% used/)).toBeInTheDocument();
+    vi.setSystemTime(new Date('2030-06-01T12:00:01Z'));
+    act(() => window.dispatchEvent(new Event('focus')));
+    expect(screen.queryByText(/weekly 12% used/)).not.toBeInTheDocument();
   });
 });

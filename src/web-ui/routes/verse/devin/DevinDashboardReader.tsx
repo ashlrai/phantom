@@ -32,40 +32,76 @@ const STATUS: Record<string, string> = {
   unavailable: 'The dashboard observation is unavailable. Use the Devin website.',
 };
 
+const INVALIDATES_OBSERVATION = new Set([
+  'closed', 'not-open', 'organization-unavailable', 'organization-mismatch',
+  'media-guard-unavailable', 'page-unavailable', 'page-changed', 'read-failed', 'refresh-cancelled',
+  'open-general-first', 'open-general-or-usage',
+  'verify-general-first', 'restart-verification', 'external-sign-in-unavailable',
+  'usage-unavailable', 'unavailable',
+]);
+
+type Snapshot = Extract<DevinReaderEvent, { kind: 'snapshot' }>;
+
 export function DevinDashboardReader({ orgId }: { orgId: string | null }) {
   const bridge = nativeDevinReader();
-  const [event, setEvent] = useState<DevinReaderEvent | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [now, setNow] = useState(Date.now());
-  useEffect(() => { setEvent(null); setAutoEnabled(false); }, [orgId]);
+  useEffect(() => { setSnapshot(null); setStatus(null); setAutoEnabled(false); }, [orgId]);
   useEffect(() => {
     const onNative = (raw: Event) => {
       const next = readDevinReaderEvent(raw);
       if (!next) return;
-      setEvent(next);
-      if (next.kind === 'status' && (next.state === 'closed' || next.state === 'auto-off' || next.state === 'not-open')) setAutoEnabled(false);
+      if (next.kind === 'snapshot') {
+        if (next.orgId !== orgId) return;
+        setSnapshot(next);
+        setStatus(null);
+      } else {
+        setStatus(next.state);
+        if (INVALIDATES_OBSERVATION.has(next.state)) setSnapshot(null);
+        if (next.state === 'closed' || next.state === 'auto-off' || next.state === 'not-open') setAutoEnabled(false);
+      }
       setNow(Date.now());
     };
     window.addEventListener(DEVIN_READER_EVENT, onNative);
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
-    return () => { window.removeEventListener(DEVIN_READER_EVENT, onNative); window.clearInterval(timer); };
-  }, []);
+    const onResume = () => {
+      const resumedAt = Date.now();
+      setNow(resumedAt);
+      setSnapshot((current) => current && current.expiresAtMs <= resumedAt ? null : current);
+    };
+    window.addEventListener('focus', onResume);
+    document.addEventListener('visibilitychange', onResume);
+    return () => {
+      window.removeEventListener(DEVIN_READER_EVENT, onNative);
+      window.removeEventListener('focus', onResume);
+      document.removeEventListener('visibilitychange', onResume);
+      window.clearInterval(timer);
+    };
+  }, [orgId]);
+  useEffect(() => {
+    if (!snapshot) return;
+    const timer = window.setTimeout(() => setSnapshot((current) => current === snapshot ? null : current),
+      Math.max(0, snapshot.expiresAtMs - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [snapshot]);
   if (!bridge || !orgId) return null;
-  const snapshot = event?.kind === 'snapshot' && event.orgId === orgId && event.expiresAtMs > now ? event : null;
+  const current = snapshot?.orgId === orgId && snapshot.expiresAtMs > now ? snapshot : null;
   return <section aria-label="Devin dashboard observation">
     <p className={styles.creditsHead}><span>Devin dashboard observation</span><span className={styles.pill} data-tone="neutral">display only</span></p>
-    <p className={styles.fine}>Observe the signed-in organization's displayed allowance without sharing cookies with Phantom's agent browser. The Devin window still allows normal account actions; Phantom only extracts these fields. This does not prove a human billing seat or authorize session spending.</p>
-    <p className={styles.fine}>Sign in to the separate Devin window and open General or Usage &amp; limits for your organization. Refresh then reads General, Usage &amp; limits, and General again automatically. Each observation expires after two minutes.</p>
+    <p className={styles.fine}>See the connected organization's displayed usage in a separate Devin window. Phantom does not share its cookies with the agent browser or use this observation to authorize spending. Sign in, open General or Usage &amp; limits, then refresh. Readings expire after two minutes.</p>
     <div>
-      <Button size="sm" variant="ghost" onClick={() => { setEvent(null); setAutoEnabled(false); bridge.send({ op: 'open', orgId }); }}>Open Devin account window</Button>{' '}
+      <Button size="sm" variant="ghost" onClick={() => { bridge.send({ op: 'open', orgId }); }}>Open Devin account window</Button>{' '}
       <Button size="sm" variant="ghost" onClick={() => bridge.send({ op: 'capture' })}>Refresh usage</Button>{' '}
       <Button size="sm" variant="ghost" onClick={() => { if (bridge.send({ op: 'auto', enabled: !autoEnabled })) setAutoEnabled(!autoEnabled); }}>{autoEnabled ? 'Auto refresh on' : 'Auto refresh off'}</Button>{' '}
-      <Button size="sm" variant="ghost" onClick={() => { bridge.send({ op: 'close' }); setAutoEnabled(false); setEvent(null); }}>Close</Button>
+      <Button size="sm" variant="ghost" onClick={() => { bridge.send({ op: 'close' }); setAutoEnabled(false); setSnapshot(null); setStatus('closed'); }}>Close</Button>
     </div>
-    {snapshot ? <div role="status">
-      <p className={styles.fine}>Organization dashboard observation · {new Date(snapshot.observedAtMs).toLocaleTimeString()} · account identity unverified</p>
-      <p className={styles.fine}>Max · ${snapshot.usage.monthlyPriceUsd}/month · weekly {snapshot.usage.weeklyUsedPercent}% used{snapshot.usage.resetProse ? ` · ${snapshot.usage.resetProse}` : ''}</p>
-      <p className={styles.fine}>On-demand balance ${snapshot.usage.onDemandBalanceUsd.toFixed(2)} · auto-reload {snapshot.usage.autoReload === null ? 'not observed' : snapshot.usage.autoReload ? 'on' : 'off'}</p>
-    </div> : <p className={styles.fine} role="status">{event?.kind === 'status' ? STATUS[event.state] ?? 'No current dashboard observation is available.' : 'No current dashboard observation is available.'}</p>}
+    {current ? <div role="status">
+      <p className={styles.fine}>Organization dashboard observation · {new Date(current.observedAtMs).toLocaleTimeString()} · account identity unverified</p>
+      <p className={styles.fine}>Max · ${current.usage.monthlyPriceUsd}/month · weekly {current.usage.weeklyUsedPercent}% used{current.usage.resetProse ? ` · ${current.usage.resetProse}` : ''}</p>
+      <p className={styles.fine}>On-demand balance ${current.usage.onDemandBalanceUsd.toFixed(2)} · auto-reload {current.usage.autoReload === null ? 'not observed' : current.usage.autoReload ? 'on' : 'off'}</p>
+      {status ? <p className={styles.fine}>{STATUS[status] ?? 'Checking the dashboard.'}</p> : null}
+    </div> : <p className={styles.fine} role="status">{status ? STATUS[status] ?? 'No current dashboard observation is available.' : 'No current dashboard observation is available.'}</p>}
   </section>;
 }

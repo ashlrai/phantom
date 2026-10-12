@@ -9,6 +9,27 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.29.14] — Unreleased
+
+### Added
+- Add an optional desktop-only Devin dashboard observation. In a separate
+  account window, a user-present sign-in can read the displayed Max weekly
+  percentage, on-demand balance, auto-reload state, and plan price. Each
+  short-lived reading brackets Usage with matching organization IDs from
+  General before and after. It is display-only and does not change launch
+  admission, budgets, or the ACU ledger. Embedded sign-in and real account
+  extraction still require user-present validation.
+- Add an opt-in resident Mac awake preference with status and controls in
+  Settings. Its installed service requests macOS idle and system sleep
+  prevention while running on AC power; a stopped service holds no assertion.
+  The setting does not override lid closure or the signed authority policy. The
+  resident panel includes a finite, reduced-motion-aware coffee scene with Ash.
+
+### Fixed
+- Read the installed resident service definition without following a swapped
+  symlink, and report service transition states without claiming an awake
+  assertion before the resident confirms it.
+
 ## [3.29.13] — Unreleased
 
 ### Added
