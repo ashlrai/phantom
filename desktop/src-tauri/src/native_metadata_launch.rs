@@ -571,7 +571,52 @@ fn not_started(
         &b,
     )
 }
+// Closed, static failure stages. Diagnostics never carry ticket, account,
+// provider, argv or environment data and never act as recovery evidence.
+#[derive(Clone, Copy)]
+enum LaunchStage {
+    Ticket,
+    ProcessGroup,
+    ImageBinding,
+    BootBinding,
+    Reservation,
+    ControlChannel,
+    ChildIdentity,
+    Registration,
+    ParentNotice,
+    ParentGo,
+    OwnerBinding,
+    Exec,
+}
+impl LaunchStage {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Ticket => "ticket",
+            Self::ProcessGroup => "process-group",
+            Self::ImageBinding => "image-binding",
+            Self::BootBinding => "boot-binding",
+            Self::Reservation => "reservation",
+            Self::ControlChannel => "control-channel",
+            Self::ChildIdentity => "child-identity",
+            Self::Registration => "registration",
+            Self::ParentNotice => "parent-notice",
+            Self::ParentGo => "parent-go",
+            Self::OwnerBinding => "owner-binding",
+            Self::Exec => "exec",
+        }
+    }
+}
+thread_local! {
+    static LAUNCH_STAGE: std::cell::Cell<LaunchStage> = const {
+        std::cell::Cell::new(LaunchStage::Ticket)
+    };
+}
+
+fn stage(value: LaunchStage) {
+    LAUNCH_STAGE.set(value);
+}
 fn run() -> Result<()> {
+    stage(LaunchStage::Ticket);
     let name = std::env::var(TICKET_ENV).map_err(|_| ())?;
     std::env::remove_var(TICKET_ENV);
     let path = PathBuf::from(&name);
@@ -581,11 +626,14 @@ fn run() -> Result<()> {
     let t = parse_ticket(&bytes)?;
     need(path == root.join(format!(".resource-quota-launch-{}.json", t.id)))?;
     let digest = hash(&bytes);
+    stage(LaunchStage::ProcessGroup);
     let pid = unsafe { libc::getpid() };
     need(unsafe { libc::getpgrp() } == pid)?;
+    stage(LaunchStage::ImageBinding);
     check(root, &path, &t, &digest)?;
     // Registration survives owner death before notification. A fresh live owner
     // and native parent are required only for go, never fabricated on recovery.
+    stage(LaunchStage::BootBinding);
     need(
         metadata(
             "/usr/sbin/sysctl",
@@ -594,7 +642,9 @@ fn run() -> Result<()> {
         .to_lowercase()
             == t.boot_identity.boot_id,
     )?;
+    stage(LaunchStage::Reservation);
     reservation(root, &t, "preparing", pid)?;
+    stage(LaunchStage::ControlChannel);
     // fd3 must be a private full-duplex pipe/socket; fd0 is never consumed here.
     let fd = unsafe { libc::fcntl(3, libc::F_GETFD) };
     need(fd >= 0)?;
@@ -602,6 +652,7 @@ fn run() -> Result<()> {
     // Node's Unix stdio pipe is a socketpair, as is the inert native fixture.
     // An inherited regular file is not a private duplex control channel.
     need(control.metadata().map_err(|_| ())?.file_type().is_socket())?;
+    stage(LaunchStage::ChildIdentity);
     let registration = Registration {
         schema_version: 1,
         scope: "native-metadata-child",
@@ -613,6 +664,7 @@ fn run() -> Result<()> {
     };
     let mut registered = serde_json::to_vec(&registration).map_err(|_| ())?;
     registered.push(b'\n');
+    stage(LaunchStage::Registration);
     write(
         &PathBuf::from(format!("{}.registered", path.display())),
         &registered,
@@ -636,9 +688,11 @@ fn run() -> Result<()> {
         )?;
     }
     let result = (|| {
+        stage(LaunchStage::ParentNotice);
         control
             .write_all(format!("{digest}\n").as_bytes())
             .map_err(|_| ())?;
+        stage(LaunchStage::ParentGo);
         let mut packet = Vec::new();
         let mut one = [0u8; 1];
         loop {
@@ -660,9 +714,11 @@ fn run() -> Result<()> {
                 && Path::new(&go.argv[0]).is_absolute()
                 && go.argv.iter().all(|s| !s.contains('\0')),
         )?;
+        stage(LaunchStage::OwnerBinding);
         check(root, &path, &t, &digest)?;
         owner(root, &t)?;
         reservation(root, &t, "registered", pid)?;
+        stage(LaunchStage::Exec);
         let argv: Vec<CString> = go
             .argv
             .iter()
@@ -819,7 +875,16 @@ pub fn dispatch(args: &[String]) -> Option<i32> {
     if args.len() != 2 || args[1] != FLAG {
         return Some(126);
     }
-    Some(if run().is_ok() { 0 } else { 126 })
+    Some(if run().is_ok() {
+        0
+    } else {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "Native metadata launch held: {}",
+            LAUNCH_STAGE.get().code()
+        );
+        126
+    })
 }
 #[cfg(test)]
 mod tests {
@@ -1109,7 +1174,7 @@ mod tests {
             )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         unsafe {
             command.pre_exec(move || {
                 if libc::setsid() < 0
@@ -1121,11 +1186,13 @@ mod tests {
                 Ok(())
             });
         }
-        let mut spawned = {
+        let spawned = {
             let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
             command.spawn().unwrap()
         };
-        assert!(!spawned.wait().unwrap().success());
+        let output = spawned.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        assert_eq!(output.stderr, b"Native metadata launch held: control-channel\n");
         assert_eq!(fs::read(&control).unwrap(), b"unchanged");
         assert!(!root
             .join(format!(".resource-quota-launch-{}.json.registered", t.id))
