@@ -107,6 +107,26 @@ function read(path: string, max = MAX_BYTES): { bytes: Buffer; stat: BigIntStats
     return { bytes: bytes.subarray(0, count), stat: before };
   } finally { closeSync(fd); }
 }
+/** Recovery must verify the signed desktop image's bytes before an early
+ * child registration can stand in for the parent's missing ready notice. */
+export function verifyPinnedDesktopImage(path: string, expected: BigIntStats, digest: string): void {
+  if (!HASH.test(digest) || !expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n ||
+    realpathSync(path) !== path || expected.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Native desktop image changed');
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!same(expected, fstat(fd))) throw new Error('Native desktop image changed');
+    const hash = createHash('sha256'), buffer = Buffer.alloc(64 * 1024); let offset = 0;
+    for (;;) {
+      const count = readSync(fd, buffer, 0, buffer.length, offset);
+      if (count === 0) break;
+      offset += count;
+      if (BigInt(offset) > expected.size) throw new Error('Native desktop image changed');
+      hash.update(buffer.subarray(0, count));
+    }
+    if (BigInt(offset) !== expected.size || hash.digest('hex') !== digest ||
+      !same(expected, fstat(fd)) || !same(expected, lstatSync(path, { bigint: true }))) throw new Error('Native desktop image changed');
+  } finally { closeSync(fd); }
+}
 // Kept separate so the standalone launcher has no dependency on the broad
 // collector/worker graph. Both readers pin fd and named inode around bytes.
 const fstat = (fd: number) => fstatSync(fd, { bigint: true });
@@ -168,6 +188,7 @@ function checkDesktopTicket(ticket: Record<string, unknown>, raw: Buffer): void 
   if (!image.isFile() || image.isSymbolicLink() || image.nlink !== 1n || realpathSync(ticket.host.path) !== ticket.host.path ||
     Object.entries({ dev: image.dev, ino: image.ino, size: image.size, mtimeNs: image.mtimeNs, ctimeNs: image.ctimeNs,
       mode: image.mode, uid: image.uid, nlink: image.nlink }).some(([key, value]) => String(value) !== (ticket.host as { stamp: Record<string, unknown> }).stamp[key])) throw new Error('Native desktop image changed');
+  verifyPinnedDesktopImage(ticket.host.path, image, ticket.host.sha256);
 }
 /** Recovery evidence only. Never contacts a provider, acquires a lease or signals a child. */
 export function inspectNativeMetadataLaunch(root: string, id: string, binding: NativeMetadataLaunchBinding): NativeMetadataChildIdentity & { registrationDigest: string } {
