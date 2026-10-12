@@ -794,6 +794,7 @@
 /test/resource-native-profile-identity.test.ts @masonwyatt23
 /test/resource-native-profile-review.test.ts @masonwyatt23
 /test/resource-native-profile.test.ts @masonwyatt23
+/test/resource-pool-commissioning-check.test.ts @masonwyatt23
 /test/resource-pool-evolution-engineering.test.ts @masonwyatt23
 /test/resource-pool-ledger-bounds.test.ts @masonwyatt23
 /test/resource-pool-policy.test.ts @masonwyatt23

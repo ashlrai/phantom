@@ -32,6 +32,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Make older completed and archived agents discoverable through Done history,
   and guide onboarding toward one bounded change with an inspected diff and
   actual repository test output.
+- Prepare read-only native pool commissioning plans with exact historical
+  configuration checks, grouped personal aliases and preserved policy/history.
+  Plans expose identity, custody, context and collector-epoch application holds;
+  writable migration and provider authorization remain separate.
 
 ### Fixed
 - Read the installed resident service definition without following a swapped
@@ -56,6 +60,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Detect lost local coordination records with separate replay watermarks,
   replay committed acknowledgments before fresh host observations, and allow
   cancellation of an assignment that has never been handed off.
+- Describe available Codex credits separately from spending authorization;
+  an unreached provider spending control does not mean credit spending is off.
 
 ## [3.29.13] — 2026-10-12
 

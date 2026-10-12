@@ -525,6 +525,7 @@ function rootPackageIsPortable(
     'docs/UNIVERSE-AUTONOMY-RESEARCH.md',
     'docs/NORTH-STAR.md',
     'docs/RESOURCE-POOLS.md',
+    'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     'docs/RUNTIME_ACTIVATION_AUTHORITY.md',
     'docs/REMOTE-PHONE.md',
     'docs/contracts/CONTRACT-M515.md',

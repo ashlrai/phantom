@@ -2576,6 +2576,13 @@ can use the shared pool for candidate responses; a benchmark does not enable it.
 
 ## Failure and recovery
 
+For a pool whose old launcher identities cannot establish continuity, use
+`phm resources pool commission check --request /absolute/private/request.json --json`
+to prepare an inert, content-bound new-roster plan. The check preserves policy,
+history and unresolved evidence; it does not apply a migration or contact providers.
+See [native pool commissioning preparation](RESOURCE-POOL-COMMISSIONING-CHECK.md)
+for request fields, refusal cases and the remaining writable-application gates.
+
 SIGINT/SIGTERM abort the owned request/process and await bounded cleanup. Native
 process ownership is limited to the existing subprocess runner's process-group
 contract, not escaped descendants. No failure is silently restarted on another
