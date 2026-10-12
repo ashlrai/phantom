@@ -26,6 +26,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   Failures before durable identity publication remain held for recovery.
 - Refuse local app installation while quota collection or ownership is unresolved.
 - Report native launch failure stages without provider, account or command data.
+- Identify whether Claude quota collection timed out during sign-in, version,
+  usage or final sign-in verification while retaining the bounded probe budget.
 
 ## [3.29.12] — 2026-10-12
 
