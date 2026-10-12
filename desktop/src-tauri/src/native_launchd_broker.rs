@@ -1991,7 +1991,7 @@ mod macos {
         use super::*;
         use std::{
             fs,
-            os::unix::fs::{symlink, PermissionsExt},
+            os::unix::fs::{symlink, FileExt, PermissionsExt},
             path::PathBuf,
         };
 
@@ -2775,16 +2775,44 @@ mod macos {
         fn tampered_journal_fails_closed_without_rollback_mutation() {
             let fixture = Fixture::new("journal-tamper");
             let result = execute_fixture(&fixture, Some(3));
-            assert!(result.is_err());
+            assert!(matches!(
+                result,
+                Err(BrokerError::Conflict("injected-crash"))
+            ));
             let journal = Path::new(&fixture.request.journal_parent)
                 .join(journal_name(&fixture.request.transaction_id, 0));
-            let mut bytes = fs::read(&journal).unwrap();
-            bytes[10] ^= 1;
-            fs::write(&journal, bytes).unwrap();
-            assert!(matches!(
-                recover_fixture(&fixture),
-                Err(BrokerError::Authentication) | Err(BrokerError::Json(_))
-            ));
+            // Change one authenticated frame byte in place. Truncating and
+            // rewriting the whole journal introduces a second, unrelated
+            // file-lifecycle race into this recovery test.
+            let bytes = fs::read(&journal).unwrap();
+            assert_eq!(bytes[10], b':');
+            let altered = bytes[10] ^ 1;
+            let file = fs::OpenOptions::new().write(true).open(&journal).unwrap();
+            assert_eq!(file.write_at(&[altered], 10).unwrap(), 1);
+            file.sync_all().unwrap();
+            drop(file);
+            let mut expected = bytes;
+            expected[10] = altered;
+            assert_eq!(fs::read(&journal).unwrap(), expected);
+            let recovery = recover_fixture(&fixture);
+            let recovery_diagnostic = match &recovery {
+                Ok(RecoveryOutcome::Committed(_)) => "committed",
+                Ok(RecoveryOutcome::RolledBack) => "rolled-back",
+                Err(BrokerError::Authentication) => "authentication",
+                Err(BrokerError::Json(_)) => "json",
+                Err(BrokerError::Conflict(_)) => "conflict",
+                Err(BrokerError::Invalid(_)) => "invalid",
+                Err(BrokerError::ReconciliationRequired(_)) => "reconciliation-required",
+                Err(BrokerError::Io(_)) => "io",
+                Err(BrokerError::UnsupportedPlatform) => "unsupported-platform",
+            };
+            assert!(
+                matches!(
+                    recovery,
+                    Err(BrokerError::Authentication) | Err(BrokerError::Json(_))
+                ),
+                "recovery diagnostic: {recovery_diagnostic}"
+            );
             assert_eq!(
                 fixture
                     .pointer_root
@@ -2793,6 +2821,13 @@ mod macos {
                     .raw_target,
                 format!("releases/{}", "2".repeat(40))
             );
+            assert_eq!(
+                fixture.plist_root.observe_plist("daemon.plist").unwrap(),
+                fixture.request.expected_plist
+            );
+            assert!(Path::new(&fixture.request.journal_parent)
+                .join(active_name())
+                .exists());
         }
     }
 }
