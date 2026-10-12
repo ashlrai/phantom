@@ -65,10 +65,14 @@ import { parseGoalPreferences, resolveGoalPreferences, unavailableGoalPreference
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { lstatSync, readdirSync } from 'node:fs';
+import { lstat as lstatAsync, readFile as readFileAsync } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import type { AshlrConfig, AuditEntry, DaemonConfig } from '../types.js';
 import { loadConfigReadOnly, loadConfigReadOnlyStrict, resolveSubscriptionMaxPercent, saveConfig } from '../config.js';
+import { plistKeepAwake } from '../authority/resident.js';
+import { daemonServiceInstallOptions } from '../daemon/service-config.js';
+import { generateServiceDefinition, serviceStatus } from '../daemon/service.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { buildControlEssentials, type ControlEssentials } from '../web/control.js';
 import type { CachedFleetStatus } from '../web/fleet-status-cache.js';
@@ -154,6 +158,7 @@ const CONTROL_PREFIX = '/api/verse';
 const CONTROL_ROUTES = new Set([
   `${CONTROL_PREFIX}/control`,
   `${CONTROL_PREFIX}/caps`,
+  `${CONTROL_PREFIX}/resident-awake`,
   `${CONTROL_PREFIX}/scope`,
   `${CONTROL_PREFIX}/audit`,
   `${CONTROL_PREFIX}/daemon`,
@@ -188,6 +193,45 @@ export interface VerseControlApiContext {
    * thread instead of freezing this one for seconds.
    */
   readProjections?: ReadProjectionReader;
+}
+
+/** The service preference is deliberately separate from live daemon caps. */
+export interface VerseResidentAwakeSnapshot {
+  schema: 'ashlr.resident-awake.v1';
+  supported: boolean;
+  configured: boolean;
+  installed: boolean | null;
+  serviceInstalled: boolean | null;
+  serviceRunning: boolean | null;
+  restartRequired: boolean;
+  saved: boolean;
+}
+
+async function residentAwakeSnapshot(cfg: AshlrConfig, saved = false): Promise<VerseResidentAwakeSnapshot> {
+  const opts = daemonServiceInstallOptions(cfg, { autostart: true });
+  const configured = opts.keepAwake === true;
+  if (process.platform !== 'darwin') {
+    return { schema: 'ashlr.resident-awake.v1', supported: false, configured, installed: null,
+      serviceInstalled: null, serviceRunning: null, restartRequired: false, saved };
+  }
+  const def = generateServiceDefinition(opts);
+  let installed: boolean | null = null;
+  let serviceInstalled: boolean | null = null;
+  try {
+    const stat = await lstatAsync(def.filePath);
+    // A settings read must not follow an unexpected link or special file.
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 64 * 1024 &&
+        (typeof process.getuid !== 'function' || stat.uid === process.getuid())) {
+      serviceInstalled = true;
+      installed = plistKeepAwake(await readFileAsync(def.filePath, 'utf8'));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') serviceInstalled = false;
+  }
+  const status = serviceStatus(opts);
+  return { schema: 'ashlr.resident-awake.v1', supported: true, configured, installed,
+    serviceInstalled, serviceRunning: status.runtimeState === 'unknown' ? null : status.running,
+    restartRequired: serviceInstalled === true && installed !== null && installed !== configured, saved };
 }
 
 // ---------------------------------------------------------------------------
@@ -1643,6 +1687,52 @@ export async function handleVerseControlApi(
         return true;
       }
       sendJson(res, 404, { error: `not found: ${method} ${path}` });
+      return true;
+    }
+
+    // ── /api/verse/resident-awake ────────────────────────────────────────
+    // Persisted service preference, never a live cap or server-side service
+    // restart. Native confirms and performs the separate resident restart.
+    if (path === `${CONTROL_PREFIX}/resident-awake`) {
+      if (method !== 'GET' && method !== 'POST') {
+        sendJson(res, 404, { error: `not found: ${method} ${path}` });
+        return true;
+      }
+      if (method === 'POST' && !passesPostGate(ctx, req, res)) return true;
+      let body: Record<string, unknown> | null = null;
+      if (method === 'POST') {
+        body = await readJsonBody(req, res);
+        if (!body) return true;
+        if (Object.keys(body).length !== 1 || typeof body['keepAwake'] !== 'boolean') {
+          sendInvalid(res, 'body must contain only keepAwake as a boolean');
+          return true;
+        }
+        if (process.platform !== 'darwin') {
+          sendError(res, 'VERSE_REFUSED', 'Resident awake is available only for the macOS launchd service.');
+          return true;
+        }
+      }
+      let current: AshlrConfig;
+      try {
+        current = loadConfigReadOnlyStrict();
+        if (current.daemon?.keepAwake !== undefined && typeof current.daemon.keepAwake !== 'boolean') {
+          throw new Error('invalid daemon.keepAwake');
+        }
+      } catch {
+        sendError(res, 'VERSE_UNAVAILABLE', 'Resident configuration is invalid or unavailable; nothing was changed.');
+        return true;
+      }
+      if (body) {
+        try {
+          saveConfig({ ...current, daemon: { ...current.daemon, keepAwake: body['keepAwake'] as boolean } });
+          current = loadConfigReadOnlyStrict();
+          if (current.daemon?.keepAwake !== body['keepAwake']) throw new Error('readback mismatch');
+        } catch {
+          sendError(res, 'VERSE_UNAVAILABLE', 'Resident preference could not be saved and verified; check its status before retrying.');
+          return true;
+        }
+      }
+      sendJson(res, 200, await residentAwakeSnapshot(current, body !== null));
       return true;
     }
 
