@@ -2338,7 +2338,8 @@ quota windows and execution support:
   fall back to cached usage. Its reports stay approximate, with exact reset
   timestamps null and no quota-freshness or network-health claim. Validated
   2.1.280 structured reports can publish fresh quota windows and exact resets;
-  incomplete, cached or unsupported output stays unknown. Fresh usage alone
+  text fallback stays approximate and provides no fresh quota proof. Incomplete
+  or unsupported output stays unknown. Fresh usage alone
   does not authorize dispatch. A subscription-only billing boundary additionally
   requires verified extra usage disabled for that exact checked account.
 - Grok uses native ACP auth/billing metadata, with identity checked before and
