@@ -53,6 +53,54 @@ describe('private proactive profiles', () => {
     await expect(store.create({ ...input, fundingReference: { kind: 'promotional-api', accountId: 'account-b', poolId: 'pool' } })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await expect(store.create({ ...input, fundingReference: { kind: 'subscription', accountId: 'account-a', poolId: null, balance: 200 } })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
+  it('supports arbitrary providers, several accounts and agents, with declared capabilities and bounded preferences', async () => {
+    const identity = { provider: 'acme-companion', accountId: 'company-a', agentId: 'assistant-a' };
+    const profile = await store.create({ identity, displayName: 'Generalist', capabilityIds: ['research', 'email-drafting'],
+      preferences: { priority: 70, maxConcurrent: 2, projectBindingIds: ['client-project-a'] } });
+    const account = await store.create({ identity: { ...identity, accountId: 'company-b' }, displayName: 'Other account' });
+    const agent = await store.create({ identity: { ...identity, agentId: 'assistant-b' }, displayName: 'Other agent' });
+    expect(new Set([profile.id, account.id, agent.id]).size).toBe(3);
+    expect(profile.capabilityIds).toEqual(['research', 'email-drafting']);
+    expect(profile.capabilityVerification).toBe('declared-unverified');
+    expect(profile.preferences).toEqual({ priority: 70, maxConcurrent: 2, projectBindingIds: ['client-project-a'] });
+    expect(account.preferences).toEqual({ priority: 50, maxConcurrent: 1, projectBindingIds: [] });
+    expect(account.capabilityIds).toEqual([]);
+    expect(profile.connection).toBe('configured'); expect(profile.operations.result.state).toBe('unsupported');
+    const updated = await store.update(profile.id, { expectedVersion: 1, preferences: { priority: 0 }, capabilityIds: ['engineering'] });
+    expect(updated.preferences).toEqual({ priority: 0, maxConcurrent: 1, projectBindingIds: [] });
+    expect(updated.identity).toEqual(identity);
+    await expect(store.update(profile.id, { expectedVersion: 1, capabilityIds: [] })).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+  it('rejects invalid provider/capability slugs, duplicates, unbounded preferences and credential references', async () => {
+    for (const provider of ['Acme', 'acme.bot', 'acme--bot', '-acme', 'a'.repeat(65), 'acme\nprovider']) {
+      await expect(store.create({ ...input, identity: { ...input.identity, provider } })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    for (const patch of [{ capabilityIds: ['research', 'research'] }, { capabilityIds: ['Research'] },
+      { capabilityIds: Array.from({ length: 33 }, (_, index) => `cap-${index}`) },
+      { capabilityIds: [`sk-${'ab1'.repeat(16)}`] }, { preferences: { priority: 101 } },
+      { preferences: { priority: 1.5 } }, { preferences: { maxConcurrent: 0 } }, { preferences: { maxConcurrent: 33 } },
+      { preferences: { projectBindingIds: ['same', 'same'] } }, { preferences: { projectBindingIds: ['bad\u0000id'] } },
+      { preferences: { projectBindingIds: [`sk-${'Ab1c'.repeat(16)}`] } }, { preferences: { authority: true } }]) {
+      await expect(store.create({ ...input, ...patch })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    }
+    expect((await store.list()).profiles).toEqual([]);
+  });
+  it('hydrates existing v1 records without rewriting storage, changing stable IDs or promoting capabilities', async () => {
+    const created = await store.create({ ...input, identity: { ...input.identity, accountId: 'a'.repeat(64) },
+      fundingReference: { kind: 'subscription', accountId: 'a'.repeat(64), poolId: 'b'.repeat(64) } }), file = join(directory, 'profiles.json');
+    const saved = JSON.parse(await readFile(file, 'utf8'));
+    delete saved.profiles[0].capabilityIds; delete saved.profiles[0].capabilityVerification; delete saved.profiles[0].preferences;
+    const legacy = JSON.stringify(saved); await writeFile(file, legacy);
+    const migrated = (await createProactiveProfilesStore({ directory: () => directory }).list()).profiles[0]!;
+    expect(migrated.id).toBe(created.id); expect(migrated.version).toBe(1);
+    expect(migrated.capabilityIds).toEqual([]); expect(migrated.capabilityVerification).toBe('declared-unverified');
+    expect(migrated.preferences).toEqual({ priority: 50, maxConcurrent: 1, projectBindingIds: [] });
+    expect(await readFile(file, 'utf8')).toBe(legacy);
+    const updated = await store.update(migrated.id, { expectedVersion: 1, capabilityIds: ['review'] });
+    expect(updated.id).toBe(created.id); expect(updated.version).toBe(2);
+    saved.profiles[0].capabilityVerification = 'verified'; await writeFile(file, JSON.stringify(saved));
+    await expect(store.list()).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+  });
   it('uses versions for edits/deletes and preserves both accounts during concurrent writes', async () => {
     const profile = await store.create(input);
     const other = createProactiveProfilesStore({ directory: () => directory });
@@ -181,5 +229,14 @@ describe('proactive profile API and native tools', () => {
     await expect(deleteProactiveProfile({ id: created.profile.id, expectedVersion: 1 })).rejects.toMatchObject({ code: 'CONFLICT' });
     await deleteProactiveProfile({ id: created.profile.id, expectedVersion: 2 });
     expect((await getProactiveProfilesStore().list()).profiles[0]?.identity.accountId).toBe('account-b');
+  });
+  it('filters arbitrary providers through native tools and returns declared capabilities without claiming qualification', async () => {
+    const created = await createProactiveProfile({ profile: { ...input, identity: { ...input.identity, provider: 'custom-cloud' },
+      capabilityIds: ['research'], preferences: { maxConcurrent: 3 } } }) as { profile: { id: string } };
+    const page = await listProactiveProfiles({ provider: 'custom-cloud' }) as { total: number; profiles: Array<{ id: string; capabilityVerification: string; preferences: { maxConcurrent: number } }> };
+    expect(page.total).toBe(1); expect(page.profiles[0]?.id).toBe(created.profile.id);
+    expect(page.profiles[0]?.capabilityVerification).toBe('declared-unverified');
+    expect(page.profiles[0]?.preferences.maxConcurrent).toBe(3);
+    await expect(listProactiveProfiles({ provider: 'invalid provider' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 });

@@ -115,16 +115,17 @@ integration.
 
 ### Proactive agent profiles
 
-Saved proactive profiles describe personal Dots, Grok Bots, Muse agents or other
-persistent agents. They keep provider/account/agent identity separate from the
+Saved proactive profiles support arbitrary provider identifiers and multiple
+accounts and agents per provider, including Dots, Grok Bots and Muse agents.
+They keep provider/account/agent identity separate from the
 editable name, avatar, responsibilities, computer and connected-service metadata.
 The profile is **configured**; saving it does not establish a working connection.
 Operation readiness shows what has been qualified, with no fabricated run result.
 Meta Model API remains a separate executable resource.
 
-The enabled field saves an intended planning preference. Current planners do not
-consume these profiles; it does not enable dispatch, change a provider account or
-authorize spending. A funding reference points to the
+Declared capabilities, priority, concurrency and project preferences feed the
+local assignment preview. They are unverified metadata; enabled does not enable
+dispatch, change a provider account or authorize spending. A funding reference points to the
 same account; it supplies no balance, expiry or eligibility. Keep credentials and
 inbox contents out of profile metadata.
 
@@ -135,6 +136,15 @@ Updates and deletes require the current `expectedVersion`; stale writes return
 `phm_proactive_agents_list`, `phm_proactive_agents_create`,
 `phm_proactive_agents_update` and `phm_proactive_agents_delete` use the same store.
 The list tool pages summaries; the API returns complete saved metadata.
+
+**Local coordination** records scoped goals, criteria, planning limits and an
+exact recipient. Phantom prepares a local brief without importing account data.
+Assignments have durable ownership and replay receipts. Handoff and cancellation
+are local intents; reports and digest-bound operator reviews are explicitly manual.
+Pending notices are acknowledged in one local feed. Lease expiry does not prove
+a remote agent stopped, and no route contacts a provider. See
+[the coordination contract](PROACTIVE-COORDINATION.md) and
+[the remaining-work backlog](PROACTIVE-COORDINATION-BACKLOG.md).
 
 Personal-agent transport still needs separate qualification. Dot plugin events
 require a provisioned authenticated plugin and event subscription; a Grok Bot
