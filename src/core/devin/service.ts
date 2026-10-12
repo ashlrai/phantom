@@ -660,7 +660,7 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
   const adoptWithAttribution = async (session: DevinSession): Promise<DevinLaunchResponse> => {
     if (!humanSeat) return adopt(session);
     // Create responses may omit user_id. Only the exact GET can establish the
-    // billed human seat; a failed GET still leaves a live, fully held session.
+    // selected human session attribution; a failed GET still leaves a live, fully held session.
     let observed: DevinSession = session;
     try { observed = await client.getSession(orgId, session.sessionId); } catch { /* retain the created id and full ACU exposure */ }
     if (observed.userId === humanSeat.userId) return adopt(observed);

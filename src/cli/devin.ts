@@ -309,7 +309,7 @@ async function cmdStatus(deps: DevinCliDeps, args: string[]): Promise<number> {
   deps.out(`Devin: ${status.state === 'ready' ? 'ready' : status.state.replace('-', ' ')} — ${status.reason}`);
   if (status.orgId) deps.out(`  Organization: ${status.orgId}${status.principalName ? ` · ${status.principalName}` : ''} · key in the ${status.keyStore === 'keychain' ? 'macOS Keychain' : 'custody helper'}`);
   if (status.attribution) deps.out(status.attribution.kind === 'human-seat'
-    ? `  Session attribution: selected human member ${status.attribution.email} (permission and allowance unconfirmed until a session readback).`
+    ? `  Session attribution: selected human member ${status.attribution.email} (verify it on each new session; allowance and cash exposure remain unknown).`
     : status.attribution.kind === 'personal'
       ? '  Session attribution: the personal token owner.'
       : '  Session attribution: the service user. Select a human seat with `ashlr devin seat --email <address>` to use included human usage.');

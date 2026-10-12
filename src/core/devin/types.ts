@@ -347,7 +347,7 @@ export interface DevinStatus {
   principalName: string | null;
   keyStore: DevinConnectionV1['keyStore'] | null;
   selfIdentity?: DevinSelfIdentitySummary;
-  /** The authenticated API principal and billed human seat are separate identities. */
+  /** The authenticated API principal and selected session attribution are separate identities; no billing balance is inferred. */
   attribution?: { kind: 'human-seat' | 'service-user' | 'personal'; email: string | null; verifiedAt: string | null };
   /** "Chat: ready — …" when the Devin chat seat can be used (3.15), else "Chat: off — why". */
   chatLine: string;
