@@ -62,6 +62,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   cancellation of an assignment that has never been handed off.
 - Describe available Codex credits separately from spending authorization;
   an unreached provider spending control does not mean credit spending is off.
+- Hold Devin fleet API launches under a zero or unavailable standing metered
+  allowance before credentials, queue publication and every create attempt.
+  Recheck tightened allowances after preparation and retry backoff. Human
+  attribution and subscription labels do not establish included API billing;
+  native CLI, manual launches and usage metadata keep their existing paths.
 
 ## [3.29.13] — 2026-10-12
 
