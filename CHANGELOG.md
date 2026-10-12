@@ -12,6 +12,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.13] — Unreleased
 
 ### Added
+- Allow an explicitly selected loopback llama-server to serve Fleet alongside
+  subscription seats, using current slot activity and per-slot context readings.
 - Select a verified organization member for Devin service-user session
   attribution and verify that attribution after creation. Attribution does not
   establish a subscription allowance, credit balance or cash billing boundary.
@@ -19,6 +21,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   milestone does not queue duplicate work; distinct milestones remain separate.
 
 ### Fixed
+- Keep the served Qwen3.8 Leader's output budget for its structured memo and
+  bound the streaming transport separately from the model's token allowance.
 - Accept qualified local and mid-tier outcome-manager records in the workbench.
 - Show stale lane capacity as unobserved and label historical remaining allowance.
 - Publish exact native metadata child identity before fallible launch checks,
