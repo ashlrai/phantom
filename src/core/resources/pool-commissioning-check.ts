@@ -4,13 +4,13 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:p
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
-import { validateResourceConnectionConfig } from './connection-monitor.js';
+import { validateResourceConnectionConfig } from './connection-config.js';
 import { consoleProof } from './pool-evolution.js';
 import { decodeResourceConsoleState } from './pool-supervisor.js';
 import { decodeResourcePoolState } from './pool-runtime.js';
 import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
 import { resolveNativeSeatLaunch } from './native-profile.js';
-import { validateResourceQuotaRefreshConfig } from './quota-refresh.js';
+import { validateResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { resourceQuotaBuckets } from './quota-scope.js';
 import { assertOfflineResourcePoolCommissioningHistory } from './pool-commissioning-custody.js';
 

@@ -6,7 +6,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { decodeResourcePoolState, requireResourcePoolSettlementHeadroom, type ResourcePoolState } from './pool-runtime.js';
 import type { ResourcePoolConfigSnapshot } from './pool-evolution-types.js';
 import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
-import { validateResourceQuotaRefreshConfig } from './quota-refresh.js';
+import { validateResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { resourceQuotaBuckets } from './quota-scope.js';
 import { validateResourcePoolCommissioningJournal } from './pool-commissioning.js';
 import { resolveNativeSeatLaunch } from './native-profile.js';

@@ -10,7 +10,7 @@ import { decodeResourcePoolState, type ResourcePoolState } from './pool-runtime.
 import { decodeResourceConsoleState, previewResourceConsolePoolEvolution } from './pool-supervisor.js';
 import { assertConsolePreserved, consoleProof, type ConsoleProof } from './pool-evolution.js';
 import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
-import { validateResourceQuotaRefreshConfig } from './quota-refresh.js';
+import { validateResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { prepareResourcePoolCommissioning, ResourcePoolCommissioningCheckError,
   validateResourcePoolCommissioningRequest, type ResourcePoolCommissioningCheckPlan, type ResourcePoolCommissioningCheckRequest } from './pool-commissioning-check.js';
 import { assertOfflineResourcePoolCommissioningHistory, assertResourcePoolCommissioningCustody, COMMISSIONING_BYTES, commissioningHash as hash, commissioningPresent as present,

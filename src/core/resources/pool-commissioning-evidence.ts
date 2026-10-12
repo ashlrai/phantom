@@ -5,7 +5,7 @@ import { validSubscriptionOnlyBoundary } from '../routing/subscription-only.js';
 import { decodeResourcePoolState, type ResourcePoolState } from './pool-runtime.js';
 import type { ResourcePool, ResourceObservation, ResourceObservationCommissioning } from './pool-policy.js';
 import type { ResourceBinding } from './worker.js';
-import type { ResourceQuotaRefreshConfig } from './quota-refresh.js';
+import type { ResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { inspectResourceQuotaRefreshOwner } from './quota-refresh-lease.js';
 import { readSharedQuotaEvidence } from './quota-shared-evidence.js';
 import { assertResourcePoolCommissioningCustody, type ResourceCommissioningFence, commissioningHash as hash, commissioningPresent as present,

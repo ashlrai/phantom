@@ -7,7 +7,7 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readResourceJson } from './pool-runtime.js';
 import { validateResourceObservations, validateResourcePool, type ResourceObservation, type ResourcePool } from './pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from './worker.js';
-import { RESOURCE_QUOTA_REFRESH_TTL_MS, validateResourceQuotaRefreshConfig, type ResourceQuotaRefreshConfig } from './quota-refresh.js';
+import { RESOURCE_QUOTA_REFRESH_TTL_MS, validateResourceQuotaRefreshConfig, type ResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { inspectResourceQuotaRefreshOwner, type ResourceQuotaRefreshLease } from './quota-refresh-lease.js';
 import { captureResourceCommissioningObservations } from './pool-commissioning-evidence.js';
 import { expandResourceQuotaDenials, resourceQuotaBuckets } from './quota-scope.js';
