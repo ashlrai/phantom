@@ -63,6 +63,7 @@ mod browser_input;
 mod browser_pane;
 mod computer;
 mod desktop_prefs;
+mod devin_reader;
 mod fleet_ops;
 mod native_update_runtime;
 mod health_watch;
@@ -1525,6 +1526,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     *lock(&app.state::<AppState>().power) = Some(power_manager);
     app.manage(app_menu::ZoomLevel::default());
     app.manage(browser_pane::BrowserPanes::default());
+    app.manage(devin_reader::ReaderState::default());
     // Dictation (voice/): models and the lexicon cache live in the app-data
     // dir (~/Library/Application Support/ai.ashlr.desktop).
     let app_data = app
@@ -1648,6 +1650,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let handle = handle.clone();
         app.listen(browser_pane::BROWSER_EVENT, move |event| {
             browser_pane::handle_event(&handle, event.payload());
+        });
+    }
+    {
+        let handle = handle.clone();
+        app.listen(devin_reader::REQUEST_EVENT, move |event| {
+            devin_reader::handle_event(&handle, event.payload());
         });
     }
     // ── dictation (shell contract v1 `voice`, voice/mod.rs) ─────────────────
@@ -2313,6 +2321,7 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
         WindowEvent::Destroyed if browser_pane::is_browser_label(window.label()) => {
             browser_pane::on_tab_destroyed(&handle, window.label());
         }
+        WindowEvent::Destroyed => devin_reader::on_destroyed(&handle, window.label()),
         WindowEvent::Focused(false) if is_main => {
             if let Some(state) = handle.try_state::<AppState>() {
                 flush_window_state(&state, true);

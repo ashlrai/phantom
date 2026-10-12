@@ -88,6 +88,23 @@
     return true
   }
 
+  // Dedicated Devin account reader. The only verbs are open, capture, close;
+  // it is not part of the agent browser and accepts no URL or script input.
+  function sendDevinReader(msg) {
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return false
+    if (Object.getPrototypeOf(msg) !== Object.prototype) return false
+    if (msg.op !== 'open' && msg.op !== 'capture' && msg.op !== 'close') return false
+    if (msg.op === 'open' && (typeof msg.orgId !== 'string' || !/^org-[A-Za-z0-9_-]{1,120}$/.test(msg.orgId))) return false
+    var payload = msg.op === 'open' ? { op: 'open', orgId: msg.orgId } : { op: msg.op }
+    var internals = window.__TAURI_INTERNALS__
+    if (!internals || typeof internals.invoke !== 'function') return false
+    try {
+      var pending = internals.invoke('plugin:event|emit', { event: 'shell-devin-reader', payload: payload })
+      if (pending && typeof pending.catch === 'function') pending.catch(function () {})
+    } catch (_) { return false }
+    return true
+  }
+
   // Dictation (protocol v1, voice/mod.rs). Same rules as the browser channel:
   // plain objects only, JSON round-tripped, size-capped; native parses the
   // op strictly (voice/protocol.rs) and answers through
@@ -233,6 +250,7 @@
       }),
       send: sendBrowser
     }),
+    devinReader: Object.freeze({ version: 1, send: sendDevinReader }),
     // Dictation: capture + transcription run natively (the WKWebView has no
     // Web Speech API). Absent on older shells — that absence is the web UI's
     // feature test, exactly like `browser`.
@@ -268,6 +286,18 @@
         try {
           window.dispatchEvent(new CustomEvent('ashlr:browser', { detail: detail }))
         } catch (_) {}
+      },
+      enumerable: false,
+      writable: false,
+      configurable: false
+    })
+  } catch (_) {}
+
+  try {
+    Object.defineProperty(window, '__ASHLR_DEVIN_READER_EVENT__', {
+      value: function (detail) {
+        if (!detail || typeof detail !== 'object') return
+        try { window.dispatchEvent(new CustomEvent('ashlr:devin-reader', { detail: detail })) } catch (_) {}
       },
       enumerable: false,
       writable: false,
