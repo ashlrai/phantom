@@ -163,23 +163,45 @@ enters the team log, config files or agent context. Inbound messages from
 unknown Telegram user ids are dropped; Telegram users map to members via
 `access.granted`. No adapter ships with credentials; Phase 1 has none.
 
-## 10. Connectors as canonical sources (design, Phase 2)
+## 10. Source-of-truth map and BYO registry (design, Phase 2)
 
-Grok Bot, Meta Muse and OpenAI agents already share the same Gmail, Google
-Calendar and Google Drive. The context layer must **point at** those systems,
-not copy them into markdown:
+Principle: **bring your own everything** (accounts, APIs, local models, infra,
+MCP servers, CLIs, skills, workflows, any subset of Ashlr companions or none),
+simple defaults, opt-in constraints, approval gates only for truly
+consequential actions.
 
-* `source.registered {id, kind: 'gmail'|'gcal'|'gdrive'|'github'|..., account, scope}`
-  declares a canonical source (no credentials; access stays in each agent's
-  own sanctioned connector).
-* Context entries may be **pointers**: `{sourceId, ref (thread/event/file id),
-  summary, summarizedAt, sourceVersion, ttl}`. Retrieval returns the summary
-  with its freshness; stale entries are flagged so the agent re-reads the
-  source rather than trusting a cached copy.
-* **Hierarchical summaries**: `summary.rolled {children[], level, text}`
-  replaces many raw entries with one summary (day → week → project), raw
-  children kept as pointers for drill-down. Dedupe is by `(sourceId, ref)` and
-  by content hash, so five agents logging the same email produce one entry.
+**Source-of-truth map** — one readable file, `~/.ashlr/sources.toml` (repo
+override `.phantom/sources.toml`), mapping a *domain* to the connector that is
+canonical for it:
+
+```toml
+[code]     connector = "github"          # primary for engineering
+[issues]   connector = "github"
+[docs]     connector = "gdrive"          # or "local:docs/", "notion-mcp", ...
+[calendar] connector = "gcal"
+[comms]    connector = "telegram"
+```
+
+* Auto-detected from what is actually connected (gh auth, MCP servers in agent
+  configs, installed CLIs, companions inventory); detection only *proposes*
+  the file, the engineer edits it.
+* The context layer stores **pointers, not copies**: `{domain, connector, ref,
+  summary, summarizedAt, sourceVersion}`; retrieval returns the summary with
+  freshness and tells the agent to re-read the source when stale. Dedupe by
+  `(connector, ref)` and content hash; hierarchical summaries (item → day →
+  project) replace large raw context, children kept as pointers.
+* No credentials in the map; access stays with each agent's own connector or
+  Phantom Secrets references.
+
+**Registry of connectors, plugins and skills** — a flat catalog
+(`name, kind: connector|plugin|skill|companion, install, provides[domains|tools]`)
+reusing Phantom's existing plugin/companion inventory; everything optional and
+composable, installed per user or per repo, nothing required (a single Claude
+Code account with no companions is a valid setup).
+
+**Configurable gates** — the consequential-action list in §3 is the default;
+Phase 2 reads `.phantom/team.toml` `approval_required = [...]` so a team can
+narrow or widen it. Everything else runs without ceremony.
 
 ## 11. Context & resource steward (department + agent)
 
