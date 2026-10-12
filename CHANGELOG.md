@@ -21,6 +21,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   milestone does not queue duplicate work; distinct milestones remain separate.
 
 ### Fixed
+- Hold autonomous native Codex producer calls without fresh, exact-account
+  subscription-only billing-control proof, including retries. The current
+  Codex quota feed does not supply that proof, so those autonomous calls remain
+  held pending a genuine provider control source; manual Verse Codex chats use
+  a separate turn path and are unchanged.
 - Keep the served Qwen3.8 Leader's output budget for its structured memo and
   bound the streaming transport separately from the model's token allowance.
 - Accept qualified local and mid-tier outcome-manager records in the workbench.

@@ -4,6 +4,8 @@ import { assertSelectedOutcomeAdmission, selectedOutcomeAdmissionCurrent, Select
 import { observeRoleAccount, roleAccountEpoch, nativeLaunchEpoch } from './role-account.js';
 import { resolveNativeSeatLaunch, type NativeSeatLaunch } from '../resources/native-profile.js';
 import { resolveAccountsRoot } from '../verse/seats.js';
+import { readCapacitySnapshot } from '../routing/budget-store.js';
+import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
 import { assertHostNativeAccountContext } from '../integrations/locus-job-env.js';
 import { devinCliBindingCurrent, refreshDevinCliExecutionBinding, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
 /**
@@ -2252,10 +2254,19 @@ export async function runEngineSandboxed(
   let selectedCodexAccountEpoch: string | null = null;
   let selectedCodexIdentityStillCurrent: (() => boolean) | null = null;
   let selectedCodexSpawns = 0;
+  const selectedCodexSubscriptionOnlyCurrent = (): boolean => {
+    try {
+      const hint = opts.selectedCodexAccount?.accountHint;
+      if (!opts.seatId || !hint || !/^[a-f0-9]{64}$/.test(hint)) return false;
+      const rows = readCapacitySnapshot()?.seats.filter(seat => seat.engine === 'codex' && seat.seatId === opts.seatId);
+      return rows?.length === 1 && rows[0]!.accountHint === hint && subscriptionOnlyCurrent(rows[0]!, Date.now());
+    } catch { return false; }
+  };
   const selectedCodexLaunchCurrent = (): boolean => {
     try {
       if (runCancelled() || !selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) ||
-          !selectedCodexLaunch || !opts.selectedCodexAccount || !opts.selectedCodexAccount.admitted()) return false;
+          !selectedCodexLaunch || !opts.selectedCodexAccount || !opts.selectedCodexAccount.admitted() ||
+          !selectedCodexSubscriptionOnlyCurrent()) return false;
       const fresh = resolveNativeSeatLaunch({accountsRoot:resolveAccountsRoot(cfg),provider:'codex',seatId:opts.seatId});
       return fresh.ok && nativeLaunchEpoch(fresh.launch) === selectedCodexLaunchEpoch &&
         (selectedCodexIdentityStillCurrent === null || selectedCodexIdentityStillCurrent());
@@ -2461,6 +2472,12 @@ export async function runEngineSandboxed(
       // A generic empty-auth overlay cannot stand in for native account proof.
       if (confinementProfile.networkEgress && (engineKey === 'claude' || engineKey === 'claude-cli')) {
         if (!selectedStandingClaude || !model) return refuse('engine-unsupported', 'Claude producers require a selected native profile, current host authority and fresh native account/credit-protection proof');
+      }
+      // A current quota window proves allowance, not that the provider cannot
+      // spill into paid app credits. The native source must publish a fresh
+      // account-bound billing control, rechecked at every Codex contact.
+      if (engineKey === 'codex' && (!selectedStandingCodex || !selectedCodexSubscriptionOnlyCurrent())) {
+        return refuse('engine-unsupported', 'autonomous Codex requires a selected native account and fresh subscription-only billing control');
       }
       // Autonomous Devin needs current native principal/executable/catalog evidence.
       // Source model IDs or old promotion observations cannot authorize billing.
