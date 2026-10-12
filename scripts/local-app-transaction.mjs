@@ -109,9 +109,10 @@ export async function requireLocalQuiescence(io) {
   for (const {args} of processes.values()) if (paths.some((path) => args.startsWith(`${path}/Contents/MacOS/`))) fail('close Phantom normally before installation; a native app or owned sidecar is still running');
   const record = readSidecarRecord(io);
   if (record && (processes.has(record.desktopPid) || processes.has(record.sidecarPid))) fail('recorded native/sidecar process identity is still live or uncertain; close the app and use normal recovery first');
-  const accountsRoot = join(io.home, '.ashlr', 'account-connections');
+  const ashlrRoot = join(io.home, '.ashlr');
+  const accountsRoot = join(ashlrRoot, 'account-connections');
   const ledgerRoot = join(accountsRoot, 'ledger');
-  for (const path of [accountsRoot, ledgerRoot]) {
+  for (const path of [ashlrRoot, accountsRoot, ledgerRoot]) {
     const stat = io.lstat(path);
     if (stat && (!stat.isDirectory || stat.isSymbolicLink)) fail('quota collector storage is unsafe or uncertain; resolve it before installation');
   }

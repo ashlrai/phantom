@@ -654,11 +654,10 @@ describe('identity-bound Phantom native migration', () => {
     expect(readBoundedFile).not.toHaveBeenCalled();
     expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
   });
-  it('holds installation when quota collector storage is a symlink, even without a pending marker', async () => {
+  it.each(['.ashlr', '.ashlr/account-connections', '.ashlr/account-connections/ledger'])('holds installation when %s is a symlink, even without a pending marker', async root => {
     const f = appIo(); const selected = selectLocalApp(HASH, f.io);
-    const ledger = `${HOME}/.ashlr/account-connections/ledger`;
     const lstat = f.io.lstat;
-    const io = {...f.io, lstat: (path: string) => path === ledger ? {isDirectory: false, isSymbolicLink: true} : lstat(path)};
+    const io = {...f.io, lstat: (path: string) => path === `${HOME}/${root}` ? {isDirectory: false, isSymbolicLink: true} : lstat(path)};
     await expect(installLocalApp(nativeInput(selected), io)).rejects.toThrow(/quota collector storage is unsafe/);
     expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
   });
