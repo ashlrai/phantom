@@ -299,7 +299,9 @@ function fakeIo(overrides: Record<string, unknown> = {}) {
     validateLocalPath: () => {}, readCurrentPointer: () => null, restoreCurrentPointer: () => {}, switchCurrentPointer: () => {}, writeInstallJournal: () => {}, readLink: (path: string) => links.get(path) ?? '', linkTargetExists: () => true, createAlias: (path: string, target: string) => {links.set(path, target);}, removeAlias: (path: string) => {links.delete(path);},
     readFile: () => JSON.stringify({ name: '@ashlr/hub', version: '3.11.1' }),
     exists: (path: string) => path === APP_PATH || (calls.some((call) => call[0] === '/usr/bin/open') && path.endsWith('.desktop-sidecar.json')),
-    lstat: (path: string) => path.includes('/.local/bin/') ? (links.has(path) ? {dev: 1, ino: 50, isSymbolicLink: true} : null) : ({ dev: 1, ino: 2, size: 1, isFile: path.endsWith('KILL') || path.endsWith('.desktop-sidecar.json'), isDirectory: !path.endsWith('KILL') && !path.endsWith('.desktop-sidecar.json'), isSymbolicLink: false }),
+    lstat: (path: string) => (path.endsWith('.resource-quota-refresh-pending.json') || path.endsWith('.resource-quota-refresh.lock')) ? null :
+      path.includes('/.local/bin/') ? (links.has(path) ? {dev: 1, ino: 50, isSymbolicLink: true} : null) :
+      ({ dev: 1, ino: 2, size: 1, isFile: path.endsWith('KILL') || path.endsWith('.desktop-sidecar.json'), isDirectory: !path.endsWith('KILL') && !path.endsWith('.desktop-sidecar.json'), isSymbolicLink: false }),
     appInventory: () => INVENTORY,
     executionLeaseCensus: async () => ({ leases: [], unknown: 0, reaped: 0 }),
     makeInstallStage: () => '/Applications/.phantom-install-fixture',
@@ -570,7 +572,9 @@ function appIo(installed: string[] = [LEGACY_APP_PATH]) {
     home: HOME, repoRoot: REPO, log: () => {}, exclusiveRenamePreflight: () => {}, writeInstallJournal: () => {}, readBoundedFile: () => '',
     exists: (path: string) => bundles.has(path),
     readFile: () => '',
-    lstat: (path: string) => path.endsWith('KILL') ? (kill ? { isFile: true, isSymbolicLink: false } : null) : { isDirectory: true, isSymbolicLink: false, dev: 1, ino: bundles.get(path)?.ino ?? 3 },
+    lstat: (path: string) => path.endsWith('KILL') ? (kill ? { isFile: true, isSymbolicLink: false } : null) :
+      (path.endsWith('.resource-quota-refresh-pending.json') || path.endsWith('.resource-quota-refresh.lock')) ? null :
+      { isDirectory: true, isSymbolicLink: false, dev: 1, ino: bundles.get(path)?.ino ?? 3 },
     appInventory: (path: string) => archiveBad && path.includes('archive-check') ? 'b'.repeat(64) : bundles.get(path)?.inventory ?? INVENTORY,
     executionLeaseCensus: async () => ({ leases: [], unknown, reaped: 0 }),
     makeInstallStage: () => '/Applications/.phantom-install-test',
@@ -639,6 +643,44 @@ describe('identity-bound Phantom native migration', () => {
     }
     f.processes(''); await expect(requireLocalQuiescence(f.io)).resolves.toBeUndefined();
     expect(f.calls.some((c) => ['kill', 'osascript', 'launchctl'].includes(c[0]!))).toBe(false);
+  });
+  it.each(['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock'])('holds installation while quota collector %s remains, without reading its contents', async name => {
+    const f = appIo(); const selected = selectLocalApp(HASH, f.io);
+    const ledger = `${HOME}/.ashlr/account-connections/ledger`;
+    const lstat = f.io.lstat;
+    const readBoundedFile = vi.fn(() => { throw new Error('quota bytes must not be read'); });
+    const io = {...f.io, lstat: (path: string) => path === `${ledger}/${name}` ? {isFile: true, isSymbolicLink: false} : lstat(path), readBoundedFile};
+    await expect(installLocalApp(nativeInput(selected), io)).rejects.toThrow(/quota collector work or ownership is unresolved/);
+    expect(readBoundedFile).not.toHaveBeenCalled();
+    expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
+  });
+  it('holds installation when quota collector storage is a symlink, even without a pending marker', async () => {
+    const f = appIo(); const selected = selectLocalApp(HASH, f.io);
+    const ledger = `${HOME}/.ashlr/account-connections/ledger`;
+    const lstat = f.io.lstat;
+    const io = {...f.io, lstat: (path: string) => path === ledger ? {isDirectory: false, isSymbolicLink: true} : lstat(path)};
+    await expect(installLocalApp(nativeInput(selected), io)).rejects.toThrow(/quota collector storage is unsafe/);
+    expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
+  });
+  it('rechecks quota collector closure after staging and keeps the old app if a marker appears', async () => {
+    const f = appIo(); const selected = selectLocalApp(HASH, f.io);
+    const marker = `${HOME}/.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json`;
+    const lstat = f.io.lstat;
+    let present = false;
+    const io = {...f.io, lstat: (path: string) => path === marker && present ? {isFile: true, isSymbolicLink: false} : lstat(path)};
+    await expect(installLocalApp({...nativeInput(selected), prepare: async () => {present = true;}}, io)).rejects.toThrow(/quota collector work or ownership is unresolved/);
+    expect(f.bundles.has(LEGACY_APP_PATH)).toBe(true);
+    expect(f.bundles.has(APP_PATH)).toBe(false);
+  });
+  it('rechecks quota collector closure after caller admission before the app move', async () => {
+    const f = appIo(); const selected = selectLocalApp(HASH, f.io);
+    const marker = `${HOME}/.ashlr/account-connections/ledger/.resource-quota-refresh-pending.json`;
+    const lstat = f.io.lstat;
+    let present = false;
+    const io = {...f.io, lstat: (path: string) => path === marker && present ? {isFile: true, isSymbolicLink: false} : lstat(path)};
+    await expect(installLocalApp({...nativeInput(selected), beforeSwitch: async () => {present = true;}}, io)).rejects.toThrow(/quota collector work or ownership is unresolved/);
+    expect(f.bundles.has(LEGACY_APP_PATH)).toBe(true);
+    expect(f.calls.some(call => call[0] === 'exclusive-rename')).toBe(false);
   });
   it.each([LEGACY_APP_PATH, APP_PATH])('stages and verifies before switching %s, retaining only a compressed rollback artifact', async (path) => {
     const f = appIo([path]); const selected = selectLocalApp(HASH, f.io);
