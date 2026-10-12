@@ -658,6 +658,22 @@ describe('verse accounts — per-provider derivation', () => {
     expect(note).toContain('claude-account-usage.ts');
   });
 
+  it('projects only reviewed Claude quota failure codes onto an empty seat meter', () => {
+    const missing = connection({ id: 'claude', provider: 'claude', health: 'unknown', planType: 'max',
+      reason: 'usage-output-invalid', windows: [] });
+    const capacity = buildSeatTelemetry(root, { collector: warmCollector(root, [missing]) }).get('claude')!.capacity;
+    expect(capacity).toMatchObject({ usability: 'unknown', windows: [], quotaReadReason: 'usage-output-invalid' });
+    expect(JSON.stringify(capacity)).not.toContain(FAKE_BEARER);
+    const unreviewed = { ...missing, reason: '/private/provider/output?token=private' };
+    expect(buildSeatTelemetry(root, { collector: warmCollector(root, [unreviewed]) }).get('claude')!.capacity)
+      .not.toHaveProperty('quotaReadReason');
+    const zero = { ...missing, reason: 'usage-output-invalid', windows: [
+      { id: 'five_hour', usedPercent: 0, resetsAt: null },
+    ] };
+    expect(buildSeatTelemetry(root, { collector: warmCollector(root, [zero]) }).get('claude')!.capacity)
+      .not.toHaveProperty('quotaReadReason');
+  });
+
   /**
    * UPDATED DELIBERATELY (V2.1 fixer pass). This used to assert that a Codex
    * window at exactly 100 IS the `rateLimitReachedType` sentinel. That

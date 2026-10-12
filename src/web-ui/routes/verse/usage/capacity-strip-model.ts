@@ -26,6 +26,7 @@ import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import { ENGINE_MONOGRAM } from '../../../../core/verse/workbench-types.js';
 import type { VerseEngine, VerseSeat } from '../../../data/api-types.js';
 import type { ResourceLastKnownUsage } from '../../../../core/resources/reading-cache-types.js';
+import type { VerseClaudeQuotaReadReason } from '../../../../core/verse/types.js';
 import { resourceCreditHistory, resourceUsageHistory } from '../resources/resource-usage-history.js';
 import { buildBudgetRows, STATUS_WORDS, type BudgetSeatStatus } from '../budget/budget-model.js';
 import { relativePhrase } from '../context/context-model.js';
@@ -101,6 +102,8 @@ export interface CapacityRow {
   creditState?: 'available' | 'held' | 'none' | 'unknown';
   reserve: CapacityReserve | null;
   notes: string[];
+  /** Reviewed Claude native-check code; only relevant while its usage meter is absent. */
+  quotaReadReason?: VerseClaudeQuotaReadReason | null;
   /** For the collapsed local row: how many local seats it stands for. */
   localCount: number;
   /** When this seat was last checked (health sweep, else the usage reading), ISO; null when never. */
@@ -249,6 +252,7 @@ function seatRow(
     creditSpendControlReached: view.creditSpendControlReached ?? null,
     reserve: reserveOf(budget.get(seat.id)),
     notes: [...view.notes],
+    quotaReadReason: windows.length === 0 && seat.engine === 'claude' ? seat.capacity?.quotaReadReason ?? null : null,
     localCount: 1,
     checkedAt: parseable(report?.checkedAt) ? report!.checkedAt : parseable(view.observedAt) ? view.observedAt : null,
     // The LATEST reset among ALL the spent windows (not only the ones this row

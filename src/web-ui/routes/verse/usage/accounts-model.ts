@@ -231,8 +231,18 @@ export const REASON_COPY: Record<string, string> = {
     'Native account collection is not configured for this accounts root.',
   'usage-version-unsupported':
     'The usage probe is pinned to a different provider build than the one installed, so it did not run.',
+  'usage-output-invalid':
+    'Claude’s native usage response could not be verified. Current quota remains unknown.',
+  'usage-process-failed':
+    'Claude’s native usage command failed. Current quota remains unknown.',
+  'usage-identity-unavailable':
+    'Claude sign-in did not provide the account identity needed to bind a usage reading. Current quota remains unknown.',
   'usage-account-changed':
     'The account behind this profile changed between reads; the reading was discarded.',
+  'status-termination-uncertain':
+    'The native check did not confirm process cleanup. Current quota remains unknown.',
+  'status-timed-out':
+    'The native account check timed out. Current quota remains unknown.',
   'probe-account-unavailable':
     'The pinned profile answered but carries no usable account identity — it is not authenticated.',
   'probe-account-unsupported':
@@ -259,6 +269,25 @@ export const REASON_COPY: Record<string, string> = {
 export function reasonSentence(reason: string | null, fallback: string): string {
   if (reason === null) return fallback;
   return REASON_COPY[reason] ?? fallback;
+}
+
+/** Only reviewed Claude quota codes may explain a missing meter in seat views. */
+export function claudeQuotaDiagnostic(reason: string | null | undefined): { code: string; sentence: string } | null {
+  if (reason === undefined || reason === null) return null;
+  switch (reason) {
+    case 'usage-output-invalid':
+    case 'usage-process-failed':
+    case 'usage-version-unsupported':
+    case 'usage-identity-unavailable':
+    case 'usage-account-changed':
+    case 'status-termination-uncertain':
+    case 'status-timed-out':
+    case 'connection-monitor-stopped':
+    case 'connection-reading-expired':
+      return { code: reason, sentence: REASON_COPY[reason]! };
+    default:
+      return null;
+  }
 }
 
 /** Ordering rank: what Mason can use comes first. */

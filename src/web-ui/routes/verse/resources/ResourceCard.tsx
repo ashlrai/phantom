@@ -24,6 +24,7 @@ import { Button } from '../../../components/primitives/Button.js';
 import { accountActions, type AccountAction } from '../apps/apps-model.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
 import { usedPercentText } from '../percent-text.js';
+import { claudeQuotaDiagnostic } from '../usage/accounts-model.js';
 import { windowSentence, type AccountStatus, type CapacityRow, type CapacityWindowRow } from '../usage/capacity-strip-model.js';
 import type { ResourceReadinessRow } from '../../../../core/routing/readiness-types.js';
 import { ReadinessLines } from './ReadinessLines.js';
@@ -128,6 +129,7 @@ export function ResourceCard({ row, status, settled, mode, busy, onAction, readi
   const primaryWindow = row.windows.find((w) => w.binding) ?? row.windows[0] ?? null;
   const otherWindows = row.windows.filter((w) => w !== primaryWindow);
   const reserveText = reserve === null ? null : reserve.percent !== null && mode !== null ? `${reserve.label} · ${MODE_WORD[mode]}` : reserve.label;
+  const quotaDiagnostic = row.windows.length === 0 ? claudeQuotaDiagnostic(row.quotaReadReason) : null;
   return (
     <li className={styles.card} data-status={status.kind} data-seat={row.seatId} data-verse-anchor={`resources:${row.seatId}`}>
       <div className={styles.cardHead}>
@@ -148,6 +150,7 @@ export function ResourceCard({ row, status, settled, mode, busy, onAction, readi
           {primaryWindow !== null ? <WindowMeter row={row} w={primaryWindow} reservePercent={reserve?.percent ?? null} /> : null}
         </div>
       ) : <p className={styles.subtle}>Usage not reported by this resource.</p>}
+      {quotaDiagnostic ? <p className={styles.subtle}>Claude quota check: {quotaDiagnostic.sentence} <code>{quotaDiagnostic.code}</code></p> : null}
       {row.lastReading ? <p className={styles.subtle}>Last known usage · latest check failed.</p> : null}
       {row.windows.length === 0 && row.historicalUsage && !row.signedOut ? <div className={styles.fine}>
         <p>Last known usage · current availability unconfirmed.</p>

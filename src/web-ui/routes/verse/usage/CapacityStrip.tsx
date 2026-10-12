@@ -40,6 +40,7 @@ import { useSeatHealth } from '../health/useSeatHealth.js';
 import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { useSeatsRefresh } from '../useSeatsRefresh.js';
 import { nativeCreditBalanceTitle } from '../resources/codex-credit-value.js';
+import { claudeQuotaDiagnostic } from './accounts-model.js';
 import { verseBootstrapQuery } from '../verse-queries.js';
 import {
   accountStatus,
@@ -218,6 +219,7 @@ function CapacityRowView({
   const windows = compact ? (binding ? [binding] : []) : row.windows;
   const actions = renderActions ? renderActions(row) : null;
   const reserve = row.reserve;
+  const quotaDiagnostic = status !== null && windows.length === 0 ? claudeQuotaDiagnostic(row.quotaReadReason) : null;
   return (
     <li className={styles.row} data-capacity={row.cls} data-compact={compact || undefined} data-status={status?.kind}>
       <MonogramTile monogram={row.monogram} engine={row.engine} size="sm" />
@@ -241,6 +243,7 @@ function CapacityRowView({
           ) : null}
         </div>
         {!compact || windows.length === 0 ? <p className={styles.summary}>{row.summary}</p> : null}
+        {quotaDiagnostic ? <p className={styles.summary}>Claude quota check: {quotaDiagnostic.sentence} <code>{quotaDiagnostic.code}</code></p> : null}
         {status !== null && !compact ? <StampLine status={status} /> : null}
         {windows.length > 0 ? (
           <div className={styles.bars}>
