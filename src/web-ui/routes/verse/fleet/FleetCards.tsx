@@ -47,16 +47,25 @@ export function fleetStatus(read: OptionalRead<FleetLiveSnapshotV1> | undefined,
 // ---------------------------------------------------------------------------
 
 /** "Local · off" — the chip is the lane and its slots; its why is one line below the strip (and its title). */
+const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10 minutes.';
+
 function LaneChip({ lane }: { lane: FleetLaneState }) {
   const text = laneChipText(lane);
+  // The server uses zero slots when the last completed standing snapshot is
+  // stale. That is unknown capacity, not an observed disabled lane. Keep the
+  // independently observed active producer count visible in that case.
+  const capacityUnknown = lane.slots === 0 && lane.capReason === STALE_STANDING_LANES;
+  const slots = capacityUnknown
+    ? `${lane.busy > 0 ? `${lane.busy} working · ` : ''}capacity unobserved`
+    : text.slots;
   return (
-    <li className={styles.lane} data-off={lane.slots === 0 || undefined} title={laneReason(lane) ?? undefined}>
+    <li className={styles.lane} data-off={lane.slots === 0 && !capacityUnknown || undefined} title={laneReason(lane) ?? undefined}>
       <EngineMarker engine={LANE_ENGINE[lane.lane]} />
       <span className={styles.laneName}>{text.name}</span>
       <span className={styles.laneSep} aria-hidden="true">
         {' · '}
       </span>
-      <span className={styles.laneSlots}>{text.slots}</span>
+      <span className={styles.laneSlots}>{slots}</span>
     </li>
   );
 }
@@ -77,7 +86,9 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
           {notes.map((n) => (
             <li key={n.lanes.join(',')}>
               {n.all ? null : <span className={styles.laneNoteLanes}>{n.lanes.map((l) => LANE_LABEL[l]).join(', ')}: </span>}
-              {asSentence(n.reason)}
+              {asSentence(n.reason === STALE_STANDING_LANES
+                ? 'Lane capacity is unobserved because no completed standing tick has reported lanes in the last 10 minutes. Active producer counts are shown when known.'
+                : n.reason)}
             </li>
           ))}
         </ul>

@@ -712,6 +712,24 @@ describe('steering', () => {
   });
 });
 
+describe('lane observations', () => {
+  it('shows working producers without calling stale, unobserved capacity off', async () => {
+    const now = Date.now();
+    const staleReason = 'No standing tick has reported lanes in the last 10 minutes.';
+    const live = fleetLive('live', now);
+    live.lanes = live.lanes.map((lane) => ({ ...lane, slots: 0,
+      busy: lane.lane === 'grok-cli' ? 1 : 0, capReason: staleReason }));
+    stubSurfaceFetch({ kind: 'live', now, routes: { '/api/verse/fleet/live': live } });
+    render(<FleetSection />);
+    const lanes = await screen.findByRole('list', { name: 'Lanes: busy of slots' });
+    const grok = within(lanes).getByText('Grok').closest('li');
+    expect(grok).toHaveTextContent('1 working · capacity unobserved');
+    expect(grok).not.toHaveAttribute('data-off');
+    expect(lanes).not.toHaveTextContent('off');
+    expect(screen.getByText(/no completed standing tick has reported lanes/)).toBeInTheDocument();
+  });
+});
+
 describe('the grant editor', () => {
   it('edits the scope, shows the diff the server computed, and signs exactly that draft', async () => {
     setMutationToken(TOKEN);
