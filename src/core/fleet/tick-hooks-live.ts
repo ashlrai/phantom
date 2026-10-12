@@ -1830,7 +1830,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const experimentWidth = lastFleetQueueDepth > 0 ? EXPERIMENT_LOCAL_SLOTS_BUSY : EXPERIMENT_LOCAL_SLOTS_IDLE;
       const idleBeforeExperiment = measuredLocalIdle(local, deps.now());
       if (!hookCtx.dryRun && !hookCtx.meteredUsdExhausted && holdProduction === null && lanes.local.slots > 0
-        && (idleBeforeExperiment === null || idleBeforeExperiment >= experimentWidth)) {
+        // The explicitly armed llama-server fleet needs a current idle-slot
+        // reading even for background experiments. Preserve the legacy local
+        // fallback when that fleet is not armed.
+        && (idleBeforeExperiment === null ? !localFleetEnabled(cfg) : idleBeforeExperiment >= experimentWidth)) {
         let overnight = false;
         try {
           overnight = deps.overnightActive();

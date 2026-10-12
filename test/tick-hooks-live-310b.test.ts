@@ -1150,6 +1150,21 @@ describe('review c15 — best-of-N and experiments stay inside the lane caps', (
     expect(runExperiment).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['unknown occupancy', { busySlots: null, idleSlots: null, observedAt: NOW_ISO, contextPerSlot: 65_536 }],
+    ['stale occupancy', { busySlots: 0, idleSlots: 4, observedAt: new Date(NOW - 3_000).toISOString(), contextPerSlot: 65_536 }],
+    ['unknown context', { busySlots: 0, idleSlots: 4, observedAt: NOW_ISO, contextPerSlot: null }],
+  ])('does not start an armed llama-server experiment with %s', async (_case, reading) => {
+    const runExperiment = vi.fn(async () => null);
+    const hooks = createLiveTickHooks({ deps: { ...h.deps, runExperiment,
+      probeLocalRuntime: async () => ({ reachable: true, slots: 4, ...reading, detail: 'runtime' }),
+    } });
+    hooks.effectiveConfig(CFG);
+    hooks.standingBacklog([]);
+    expect((await hooks.beforeTick(hookCtx)).laneCaps.local).toBe(0);
+    expect(runExperiment).not.toHaveBeenCalled();
+  });
+
   it('counts a newly started experiment after observation once, then does not double-count its observed occupancy', async () => {
     let busySlots = 2;
     const runExperiment = vi.fn(() => new Promise<string | null>(() => undefined));
