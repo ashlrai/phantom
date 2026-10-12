@@ -1591,7 +1591,7 @@ export function projectFleetSnapshot(
       ' — the daemon that wrote it may no longer be running',
     );
   }
-  if (!snapshot.enabled) notes.push('local-only is off; this fleet is not armed');
+  if (!snapshot.enabled) notes.push('llama-server fleet is not armed by local-only mode or an explicit backend allowlist');
   if (snapshot.concurrency.limiter === 'fail-closed') {
     notes.push(`concurrency failed closed to 1: ${snapshot.concurrency.reason}`);
   }
