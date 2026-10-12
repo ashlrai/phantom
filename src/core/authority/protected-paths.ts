@@ -174,6 +174,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/core/run/sandboxed-engine.ts',
   'src/core/run/engine-registry.ts',
   'src/core/resources/native-profile.ts',
+  // Native re-enrollment custody and evidence decide whether dispatch is admitted.
+  'src/core/resources/pool-commissioning*.ts',
   // Leader and learning
   'src/core/vision/leader-apply.ts',
   'src/core/learn/harness-registry.ts',
@@ -212,6 +214,7 @@ export const TIER1_TEST_STEMS: readonly string[] = Object.freeze([
   'provenance', 'sandboxed-engine', 'leader-apply', 'harness-registry', 'revocation', 'agent-semantic',
   'home-isolation', 'tier1',
   'engine-registry', 'native-profile', 'experiments', 'heldout', 'tasks-heldout',
+  'pool-commissioning',
   'best-of-n', 'subscription-usage', 'leader-seat', 'reserve-breach',
 ]);
 
