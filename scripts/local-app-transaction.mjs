@@ -109,6 +109,17 @@ export async function requireLocalQuiescence(io) {
   for (const {args} of processes.values()) if (paths.some((path) => args.startsWith(`${path}/Contents/MacOS/`))) fail('close Phantom normally before installation; a native app or owned sidecar is still running');
   const record = readSidecarRecord(io);
   if (record && (processes.has(record.desktopPid) || processes.has(record.sidecarPid))) fail('recorded native/sidecar process identity is still live or uncertain; close the app and use normal recovery first');
+  const accountsRoot = join(io.home, '.ashlr', 'account-connections');
+  const ledgerRoot = join(accountsRoot, 'ledger');
+  for (const path of [accountsRoot, ledgerRoot]) {
+    const stat = io.lstat(path);
+    if (stat && (!stat.isDirectory || stat.isSymbolicLink)) fail('quota collector storage is unsafe or uncertain; resolve it before installation');
+  }
+  // A closed app is not proof that its native quota child registered or exited.
+  // Preserve the collector's own same-boot recovery fence across an app switch.
+  for (const name of ['.resource-quota-refresh-pending.json', '.resource-quota-refresh.lock']) {
+    if (io.lstat(join(ledgerRoot, name))) fail('quota collector work or ownership is unresolved; use supported collector recovery before installation');
+  }
 }
 
 function readProcesses(io) {
@@ -276,6 +287,7 @@ export async function installLocalApp(input, io) {
     if (io.appInventory(staged) !== verified.inventory) fail('the verified staged app changed before installation');
     await requireLocalQuiescence(io); // last-contact guard after the potentially slow inventories
     if (input.beforeSwitch) await input.beforeSwitch(); // fresh caller admission after slow inventories
+    await requireLocalQuiescence(io); // callback work cannot make collector ownership uncertain before the first move
     journal('verified');
     if (selected) { io.renameExclusive(selected.path, retired, selected); moved = true; }
     io.renameExclusive(staged, PHANTOM_APP_PATH, verified); installed = true;
