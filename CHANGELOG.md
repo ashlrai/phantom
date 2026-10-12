@@ -24,13 +24,40 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   plus system sleep prevention on AC power; a stopped service holds no assertion.
   The setting does not override lid closure or the signed authority policy. The
   resident panel includes a finite, reduced-motion-aware coffee scene with Ash.
+- Add local companion task records, explicitly scoped handoff packets, manual
+  reports and independent operator review in the existing proactive workbench.
+  Resource evidence, offline routing comparisons and release-readiness views
+  distinguish declarations from verified evidence. External companion transports
+  remain unqualified; these records do not authorize provider dispatch.
+- Make older completed and archived agents discoverable through Done history,
+  and guide onboarding toward one bounded change with an inspected diff and
+  actual repository test output.
 
 ### Fixed
 - Read the installed resident service definition without following a swapped
   symlink, and report service transition states without claiming an awake
   assertion before the resident confirms it.
+- Read the current Devin dashboard's bounded plan-card price and renewal fields
+  when the provider renders them as leaf divs, while rejecting ambiguous cards.
+- Require every task to complete before a run reports `done`; retain partial
+  results and explain failed or blocked descendants.
+- Finalize durable output before publishing terminal run state. Drain large SSE
+  replays with backpressure, independently resume task/step/output events, and
+  keep browser replay open through its terminal frame. SSE IDs are opaque
+  versioned cursors; legacy numeric cursors remain accepted. Capture gaps and
+  interrupted reconnects are visible separately from the run outcome.
+- Reject ambiguous MCP routes and collect bounded paginated inventories before
+  replacing them. Failed discovery revokes invocation routes and exposes stale
+  inventory diagnostics.
+- Mark cached agent boards stale after refresh failure. Preserve per-seat launch
+  results and retry only confirmed unstarted attempts; disclose held first
+  prompts. Clear dismissed MCP drafts and reject late parked actions without
+  implying cancellation of a write already issued.
+- Detect lost local coordination records with separate replay watermarks,
+  replay committed acknowledgments before fresh host observations, and allow
+  cancellation of an assignment that has never been handed off.
 
-## [3.29.13] — Unreleased
+## [3.29.13] — 2026-10-12
 
 ### Added
 - Allow an explicitly selected loopback llama-server to serve Fleet alongside
