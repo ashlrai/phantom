@@ -109,7 +109,7 @@ never asks for the key in the page, and no HTTP route accepts one.
 
    The **Devin (CLI)** seat appears in New chat once the binary is found. It
    does not use the API key above.
-8. **Optional: fleet use.** Three things, all yours:
+8. **Optional: fleet use.** These requirements must all hold:
    - `ashlr devin fleet on` records the opt-in.
    - Reinstall the custody helper so it can sign grants that name Devin
      (helper 1.1.0 or later): `sudo scripts/install-custody.sh` from the
@@ -118,6 +118,9 @@ never asks for the key in the page, and no HTTP route accepts one.
    - Sign a grant that includes Devin: `ashlr authority draft`, or re-approve
      from Phantom. With the opt-in on, a key connected and the new helper, the
      draft adds `devin` to the grant and a Devin seat that may only produce.
+   - Fleet API launches require a positive finite standing metered allowance.
+     Zero or unavailable allowance holds API launches. Human attribution and
+     Max labels do not establish included API billing; ACU caps are separate.
 
    Until the grant names Devin, the Devin card's Fleet line reads **Not in the
    grant** and the fleet launches nothing.
@@ -134,6 +137,9 @@ Read the reason on the Devin card before changing anything:
 - **Not in the grant:** re-approve a grant that includes Devin and its repository.
 - **Waiting:** the effective standing policy is held or unconfirmed. This is
   different from having no saved grant; follow the displayed authority reason.
+- **Billing held:** the standing metered API allowance is zero or unavailable.
+  Review `ashlr authority draft`; attribution and ACU limits do not bypass this
+  hold. Native CLI and usage metadata use separate admission paths.
 - **Paused:** a tracked ACU, reserve, daily, concurrency or session limit refuses
   another launch. Unresolved creates retain their exposure until verified
   settlement; a zero consumption report does not release those holds.
@@ -336,7 +342,7 @@ complete inventory immediately before contacting Devin:
 - **Chat:** "Pick “Devin (cloud)” in New chat. Each chat is one Devin
   session." when ready, or what to fix.
 - **Fleet:** Off, Waiting, **Not in the grant** (with "Draft a new grant (or
-  re-approve) with the Devin fleet opt-in on."), Paused or Ready.
+  re-approve) with the Devin fleet opt-in on."), Billing held, Paused or Ready.
 
 A separate **organization API consumption** section shows the provider's
 fractional consumed ACUs over all available reporting dates, retrieval time,
@@ -427,9 +433,12 @@ A grant may name it only as a producer: a Devin seat can never judge or lead.
 never on a dry run, the daemon may launch one Devin session. It checks, in
 order, and the first check that fails decides: KILL; a grant in force; the lane
 on (`devin.enabled`); the fleet opt-in (`devin.fleet`); the grant's current
-stage naming `devin` with a producer seat; the key; the budget mode; and the
+stage naming `devin` with a producer seat; a positive finite metered allowance;
+the key; the budget mode; and the
 fleet budget (reserve, daily ACUs, sessions per day, concurrency, and the
-fleet caps). KILL is read again just before the API call. It takes work from
+fleet caps). KILL and the allowance are rechecked before each create attempt,
+including explicit rate-limit retries. A positive allowance is permission under
+the standing policy, not proof of funding or exact dollar accounting. It takes work from
 the shared cloud backlog: the Leader's `work.dispatch` items and bounded-fix
 areas (bug, issue, tests, reliability, accessibility, ux, charts, accounts and
 similar), on a repository in the grant, with a brief of at most 8,000
