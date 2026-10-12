@@ -5,15 +5,15 @@ import styles from '../resources/ResourcesDrawer.module.css';
 
 const STATUS: Record<string, string> = {
   opening: 'Opening the separate Devin account window.',
-  open: 'Sign in and open Devin General once, then refresh usage.',
+  open: 'Sign in and open Devin General or Usage & limits, then refresh usage.',
   closed: 'Devin account window closed. No dashboard observation is active.',
   'not-open': 'Open the Devin account window first.',
-  'open-general-or-usage': 'Navigate to General in the Devin account window.',
+  'open-general-or-usage': 'Navigate to General or Usage & limits in the Devin account window.',
   'organization-unavailable': 'Connect a verified Devin API organization before reading its dashboard.',
   'media-guard-unavailable': 'The account window was closed because the native media guard could not be confirmed.',
   'page-changed': 'The page changed during refresh. Open General and try again.',
   'read-failed': 'The dashboard labels could not be read. Open General and try again.',
-  'open-general-first': 'Sign in and open the Devin General settings page once, then refresh.',
+  'open-general-first': 'Sign in and open General or Usage & limits for the connected organization, then refresh.',
   'refresh-in-progress': 'A dashboard refresh is already running.',
   'refreshing-general': 'Reading the organization ID before the usage page.',
   'refreshing-usage': 'Reading the Usage & limits page.',
@@ -55,7 +55,7 @@ export function DevinDashboardReader({ orgId }: { orgId: string | null }) {
   return <section aria-label="Devin dashboard observation">
     <p className={styles.creditsHead}><span>Devin dashboard observation</span><span className={styles.pill} data-tone="neutral">display only</span></p>
     <p className={styles.fine}>Observe the signed-in organization's displayed allowance without sharing cookies with Phantom's agent browser. The Devin window still allows normal account actions; Phantom only extracts these fields. This does not prove a human billing seat or authorize session spending.</p>
-    <p className={styles.fine}>Sign in to the separate Devin window and open General once. Refresh then reads General, Usage &amp; limits, and General again automatically. Each observation expires after two minutes.</p>
+    <p className={styles.fine}>Sign in to the separate Devin window and open General or Usage &amp; limits for your organization. Refresh then reads General, Usage &amp; limits, and General again automatically. Each observation expires after two minutes.</p>
     <div>
       <Button size="sm" variant="ghost" onClick={() => { setEvent(null); setAutoEnabled(false); bridge.send({ op: 'open', orgId }); }}>Open Devin account window</Button>{' '}
       <Button size="sm" variant="ghost" onClick={() => bridge.send({ op: 'capture' })}>Refresh usage</Button>{' '}
