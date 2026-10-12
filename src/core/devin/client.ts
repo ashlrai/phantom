@@ -27,6 +27,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import {
   DEVIN_API_BASE_URL,
   DEVIN_ORG_ID_PATTERN,
+  isDevinOpaqueSelfId,
   isDevinSelfIdentity,
   type DevinSelfIdentity,
   DEVIN_SESSION_ID_PATTERN,
@@ -115,6 +116,8 @@ export interface DevinSession {
   sessionId: string;
   /** Provider-reported account context; short create responses may omit it. */
   orgId?: string;
+  /** Provider attribution; absent on short create responses. */
+  userId?: string;
   url: string;
   status: DevinSessionStatus;
   statusDetail: string | null;
@@ -142,6 +145,8 @@ export interface DevinSessionMessage {
 /** SessionCreateRequest fields Verse sends. https://docs.devin.ai/api-reference/v3/sessions/post-organizations-sessions */
 export interface DevinCreateSessionInput {
   prompt: string;
+  /** Explicit human attribution for a service-user key; requires ImpersonateOrgSessions. */
+  createAsUserId?: string;
   title?: string;
   /** "owner/name" repository names. */
   repos?: string[];
@@ -220,6 +225,8 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   if (typeof status !== 'string' || !SESSION_STATUSES.includes(status as DevinSessionStatus)) return null;
   const orgId = raw['org_id'];
   if (orgId !== undefined && (typeof orgId !== 'string' || !DEVIN_ORG_ID_PATTERN.test(orgId))) return null;
+  const userId = raw['user_id'];
+  if (userId !== undefined && userId !== null && !isDevinOpaqueSelfId(userId)) return null;
 
   const detail = raw['status_detail'];
   if (detail !== undefined && detail !== null && typeof detail !== 'string') return null;
@@ -248,6 +255,7 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   return {
     sessionId,
     ...(typeof orgId === 'string' ? { orgId } : {}),
+    ...(typeof userId === 'string' ? { userId } : {}),
     url,
     status: status as DevinSessionStatus,
     statusDetail: typeof detail === 'string' ? detail.slice(0, 60) : null,
@@ -413,8 +421,9 @@ export class DevinClient {
     return `DevinClient(${this.baseUrl})`;
   }
 
-  private async request(method: 'GET' | 'POST' | 'DELETE', path: string, body: unknown, policy: RetryPolicy, beforeRead?: () => boolean, consumptionRetry = false, beforeContact?: () => void): Promise<unknown> {
-    const url = `${this.baseUrl}${path}`;
+  private async request(method: 'GET' | 'POST' | 'DELETE', path: string, body: unknown, policy: RetryPolicy, beforeRead?: () => boolean, consumptionRetry = false, beforeContact?: () => void, beta = false): Promise<unknown> {
+    const base = beta ? this.baseUrl.replace(/\/v3$/, '/v3beta1') : this.baseUrl;
+    const url = `${base}${path}`;
     const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' };
     let payload: string | undefined;
     if (body !== undefined) {
@@ -484,6 +493,26 @@ export class DevinClient {
     return parsed;
   }
 
+  /** GET /v3beta1/organizations/{org}/members/users?email= — direct members only. */
+  async getOrganizationUserByEmail(orgId: string, email: string): Promise<{ userId: string; email: string } | null> {
+    const org = checkOrg(orgId);
+    const normalized = email.trim().toLowerCase();
+    if (!/^[^\s@]{1,128}@[^\s@]{1,255}$/.test(normalized)) throw new DevinApiError('invalid-request', 'Enter one Devin account email address.');
+    const query = new URLSearchParams({ email: normalized, first: '2' });
+    const raw = await this.request('GET', `/organizations/${encodeURIComponent(org)}/members/users?${query}`, undefined, 'read', undefined, false, undefined, true);
+    if (!isRecord(raw) || !Array.isArray(raw['items']) || raw['has_next_page'] !== false || raw['items'].length > 1) {
+      throw new DevinApiError('unparsed', 'Devin membership could not be verified.');
+    }
+    if (raw['items'].length === 0) return null;
+    const member = raw['items'][0];
+    if (!isRecord(member) || typeof member['email'] !== 'string' || member['email'].toLowerCase() !== normalized
+      || !isDevinOpaqueSelfId(member['user_id']) || !Array.isArray(member['role_assignments'])
+      || !member['role_assignments'].some((assignment: unknown) => isRecord(assignment) && assignment['org_id'] === org)) {
+      throw new DevinApiError('unparsed', 'Devin did not verify this user as a direct member of the connected organization.');
+    }
+    return { userId: member['user_id'], email: normalized };
+  }
+
   /** POST /v3/organizations/{org_id}/sessions — https://docs.devin.ai/api-reference/v3/sessions/post-organizations-sessions */
   async createSession(orgId: string, input: DevinCreateSessionInput, beforeContact?: () => void): Promise<DevinSession> {
     const org = checkOrg(orgId);
@@ -491,6 +520,10 @@ export class DevinClient {
       throw new DevinApiError('invalid-request', 'The Devin prompt is empty or too long.');
     }
     const body: Record<string, unknown> = { prompt: input.prompt };
+    if (input.createAsUserId !== undefined) {
+      if (!isDevinOpaqueSelfId(input.createAsUserId)) throw new DevinApiError('invalid-request', 'The selected Devin user id is invalid.');
+      body['create_as_user_id'] = input.createAsUserId;
+    }
     if (input.title) body['title'] = input.title.slice(0, 200);
     if (input.repos && input.repos.length > 0) body['repos'] = input.repos.slice(0, 10);
     if (input.tags && input.tags.length > 0) body['tags'] = input.tags.slice(0, 50);

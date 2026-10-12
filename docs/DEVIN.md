@@ -65,15 +65,17 @@ never asks for the key in the page, and no HTTP route accepts one.
    Both start with `cog_`. Legacy `apk_` keys are refused because they do not
    work with the v3 API. Cognition documents personal-token sessions as
    attributed to that user; a service user can attribute sessions to a human
-   with `create_as_user_id` and `ImpersonateOrgSessions`. Phantom does not send
-   `create_as_user_id`, so a connected service user or matching organization
-   does not establish access to a human's included quota
+   with `create_as_user_id` and `ImpersonateOrgSessions`. Phantom can request
+   that attribution after an explicit direct-member selection; a connected
+   service user or matching organization alone does not establish access to a
+   human's included quota
    ([session attribution](https://docs.devin.ai/api-reference/overview#session-attribution)).
 5. **Connect.**
 
    ```sh
    ashlr devin connect                 # paste the key at the hidden prompt
    ashlr devin connect --org org-…     # for an org-scoped service user
+   ashlr devin seat --email you@example.com  # direct human member for future service-user sessions
    ```
 
    The org id is at the top of Settings › Devin API. Connect verifies the key
@@ -81,8 +83,14 @@ never asks for the key in the page, and no HTTP route accepts one.
    The key goes into the **macOS Keychain** (service `ai.ashlr.devin`, trusted
    only by `/usr/bin/security`), written on stdin and never on a command line.
    It is never written to a file. `~/.ashlr/devin/connection.json` holds only
-   the organization and principal. On success the lane turns on, and connect
-   reminds you about the budget and the GitHub integration. The prompt works
+   the organization, principal and selected human member metadata. Selection
+   reads Devin's direct organization-member endpoint and checks the key's
+   `/self` identity. Before each new session it rechecks membership, sends
+   `create_as_user_id`, then reads the exact session to verify `user_id`.
+   Devin may still refuse `ImpersonateOrgSessions` on create; selection and
+   readback do not prove allowance, reset timing, prepaid balance or zero cash
+   overage. Existing sessions keep their original attribution. Connecting turns
+   on the lane and reminds you about the budget and GitHub integration. The prompt works
    only in an interactive terminal, and storing the key needs macOS.
 6. **Budget.** Set the ACU budget before the first launch:
 

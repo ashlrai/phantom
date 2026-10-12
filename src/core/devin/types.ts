@@ -330,6 +330,8 @@ export interface DevinConnectionV1 {
   updatedAt: string;
   /** Optional source observation; legacy V1 connections retain unknown identity. */
   selfIdentity?: DevinConnectionSelfIdentity;
+  /** Explicit direct member selected for service-user session attribution. Never a plan-balance claim. */
+  humanSeat?: { userId: string; email: string; selectedAt: string };
 }
 
 export type DevinConnectionState = 'disabled' | 'not-connected' | 'ready' | 'unreachable';
@@ -345,6 +347,8 @@ export interface DevinStatus {
   principalName: string | null;
   keyStore: DevinConnectionV1['keyStore'] | null;
   selfIdentity?: DevinSelfIdentitySummary;
+  /** The authenticated API principal and billed human seat are separate identities. */
+  attribution?: { kind: 'human-seat' | 'service-user' | 'personal'; email: string | null; verifiedAt: string | null };
   /** "Chat: ready — …" when the Devin chat seat can be used (3.15), else "Chat: off — why". */
   chatLine: string;
   /** "Fleet: ready" or "Fleet: … — why". */
