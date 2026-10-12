@@ -42,9 +42,14 @@ function fixture(maxTasks = 10) {
     kind: 'native-cli', command: [process.execPath, script] }));
   const config = { schemaVersion: 1 as const, poolDigest: digest(canonical({ pool, bindings })), workers: pool.workers.map((worker) => ({
     workerId: worker.id, accountHint: 'a'.repeat(64), bucketIds: resourceQuotaBuckets(worker)! })) };
-  const observations = pool.workers.map((worker): ResourceObservation => ({ workerId: worker.id, observedAt: time(), updatedAt: time(),
-    expiresAt: time(Date.now() + 60_000), health: 'ready', retryAfter: null, windows: ['primary', 'secondary'].map((window) => ({
-      id: `codex_${resourceQuotaBuckets(worker)![0]}_${window}`, usedPercent: 20, resetsAt: time(Date.now() + 3_600_000) })) }));
+  const observations = pool.workers.map((worker): ResourceObservation => {
+    // The collector records one capture instant. Separate clock reads can make
+    // updatedAt differ or the strict 60-second expiry exceed its TTL by 1 ms.
+    const observedAt = time();
+    return { workerId: worker.id, observedAt, updatedAt: observedAt,
+      expiresAt: time(Date.parse(observedAt) + 60_000), health: 'ready', retryAfter: null, windows: ['primary', 'secondary'].map((window) => ({
+        id: `codex_${resourceQuotaBuckets(worker)![0]}_${window}`, usedPercent: 20, resetsAt: time(Date.now() + 3_600_000) })) };
+  });
   return { root, pool, bindings, config, observations };
 }
 function task(id = 'first', allowedWorkerIds = ['general', 'spark']): ResourceTask {
