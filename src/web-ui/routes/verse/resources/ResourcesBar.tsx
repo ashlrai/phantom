@@ -272,7 +272,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   // The drawer owns this cadence while open; hidden bars/windows do not poll.
   usePollWhileVisible(refreshDevin, coldPending ? 5_000 : DEVIN_POLL_MS, { enabled: resources.bar && !resources.open });
   const savedOrder = useResourceOrder();
-  const [providerView, setProviderView] = useState(false);
+  // 0: ordinary; 1: provider pending/unavailable; 2: provider ready.
+  const [providerView, setProviderView] = useState(0);
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -511,6 +512,36 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
       setAnnouncement(`${name} moved to position ${ids.indexOf(target) + 1} of ${ids.length}.`);
     }
   };
+  const ordinaryRows = ordered.map((entry, index) => (
+    <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
+      data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
+      draggable
+      onDragStart={(event) => {
+        setDragged(entry.key);
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('application/x-ashlr-resource', entry.key);
+      }}
+      onDragOver={(event) => {
+        if (dragged !== null && ids.includes(dragged) && dragged !== entry.key) {
+          event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget(entry.key);
+        }
+      }}
+      onDrop={(event) => {
+        if (dragged !== null && ids.includes(dragged)) { event.preventDefault(); move(dragged, entry.key); }
+        setDragged(null); setDropTarget(null);
+      }}
+      onDragEnd={() => { setDragged(null); setDropTarget(null); }}
+    >
+      {entry.content}
+      <span className={styles.moveControls}>
+        <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
+          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
+        <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
+          disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+      </span>
+    </div>
+  ));
+
   if (ordered.length === 0) return null;
   return (
     <div className={styles.bar} data-expanded={expanded || undefined} data-compact={expanded && resources.compact || undefined} role="group" aria-label="Resources at a glance" aria-busy={data.refreshing || undefined}>
@@ -520,43 +551,16 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         onClick={() => setResourcesCompact(!resources.compact)}>
         <span>Resources</span>{resources.compact ? <IconChevronDown /> : <IconChevronUp />}
       </button> : null}
-      {expanded ? <button type="button" className={styles.densityToggle} aria-pressed={providerView} onClick={() => setProviderView(value => !value)}>
+      {expanded ? <button type="button" className={styles.densityToggle} aria-pressed={providerView !== 0} onClick={() => setProviderView(value => value ? 0 : 1)}>
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
-      {providerView && expanded ? <Suspense fallback={<p role="status" className={styles.coverageNote}>Reading provider groups…</p>}>
-        <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar"
+      {providerView && expanded ? <Suspense fallback={null}>
+        <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}
           renderResource={resource => <div data-resource-id={resource.resourceId}>{entryByKey.get(resource.resourceId)?.content}</div>} />
-      </Suspense> : ordered.map((entry, index) => (
-        <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
-          data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
-          draggable
-          onDragStart={(event) => {
-            setDragged(entry.key);
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('application/x-ashlr-resource', entry.key);
-          }}
-          onDragOver={(event) => {
-            if (dragged !== null && ids.includes(dragged) && dragged !== entry.key) {
-              event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget(entry.key);
-            }
-          }}
-          onDrop={(event) => {
-            if (dragged !== null && ids.includes(dragged)) { event.preventDefault(); move(dragged, entry.key); }
-            setDragged(null); setDropTarget(null);
-          }}
-          onDragEnd={() => { setDragged(null); setDropTarget(null); }}
-        >
-          {entry.content}
-          <span className={styles.moveControls}>
-            <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
-              disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
-            <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-              disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
-          </span>
-        </div>
-      ))}
+      </Suspense> : null}
+      {providerView === 2 && expanded ? null : ordinaryRows}
     </div>
   );
 }

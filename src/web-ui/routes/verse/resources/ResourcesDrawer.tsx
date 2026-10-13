@@ -112,7 +112,8 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
   const data = useCapacityData();
   const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
   const healthRead = data.health !== null;
-  const [grouping, setGrouping] = useState<'tier' | 'provider'>('tier');
+  // 0: tier; 1: provider pending/unavailable; 2: provider ready.
+  const [grouping, setGrouping] = useState(0);
   const [busy, setBusy] = useState<{ seatId: string; kind: AccountAction['kind'] } | null>(null);
   const [note, setNote] = useState<Note>(null);
   const actionGeneration = useRef(0);
@@ -406,6 +407,15 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
     }
   }
 
+  const ordinaryRows = sections.map((section) => (
+    <section key={section.tier} className={styles.group} aria-labelledby={`${titleId}-${section.tier}`} data-tier-section={section.tier}>
+      <h3 id={`${titleId}-${section.tier}`} className={styles.groupTitle}>{TIER_LABELS[section.tier]}</h3>
+      <p className={styles.groupBlurb}>{TIER_BLURBS[section.tier]}</p>
+      <ul className={styles.cards}>
+        {section.entries.map(renderEntry)}
+      </ul>
+    </section>
+  ));
   const panel = (
     <div
       ref={panelRef}
@@ -460,23 +470,16 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
         ) : null}
         <CreditPools accountNames={new Map(data.seats.map(seat => [seat.id, seat.label]))} />
         <div className={styles.groupingControls} role="group" aria-label="Resource grouping">
-          <button type="button" aria-pressed={grouping === 'tier'} onClick={() => setGrouping('tier')}>By tier</button>
-          <button type="button" aria-pressed={grouping === 'provider'} onClick={() => setGrouping('provider')}>By provider</button>
+          <button type="button" aria-pressed={grouping === 0} onClick={() => setGrouping(0)}>By tier</button>
+          <button type="button" aria-pressed={grouping !== 0} onClick={() => setGrouping(value => value || 1)}>By provider</button>
         </div>
         {readinessCurrent && readinessRead.data?.value?.checkedAt ? <p className={styles.subtle}>Admission checked <time dateTime={readinessRead.data.value.checkedAt} title={readinessRead.data.value.checkedAt}>{new Date(readinessRead.data.value.checkedAt).toLocaleString()}</time> · separate from usage observations.</p> : null}
-        {grouping === 'provider' ? <Suspense fallback={<p role="status" className={styles.subtle}>Reading provider groups…</p>}>
-          <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="drawer"
+        {grouping !== 0 ? <Suspense fallback={null}>
+          <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="drawer" ready={grouping === 2} onReady={setGrouping}
             classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.subtle, cards: styles.cards }}
             renderResource={resource => { const entry = entryByKey.get(resource.resourceId); return entry ? renderEntry(entry) : null; }} />
-        </Suspense> : sections.map((section) => (
-          <section key={section.tier} className={styles.group} aria-labelledby={`${titleId}-${section.tier}`} data-tier-section={section.tier}>
-            <h3 id={`${titleId}-${section.tier}`} className={styles.groupTitle}>{TIER_LABELS[section.tier]}</h3>
-            <p className={styles.groupBlurb}>{TIER_BLURBS[section.tier]}</p>
-            <ul className={styles.cards}>
-              {section.entries.map(renderEntry)}
-            </ul>
-          </section>
-        ))}
+        </Suspense> : null}
+        {grouping === 2 ? null : ordinaryRows}
         <p className={note ? styles.note : styles.visuallyHidden} data-tone={note?.tone} role="status" aria-live="polite">{note?.text ?? ''}</p>
 
         <section className={styles.group} aria-labelledby={`${titleId}-decisions`}>
