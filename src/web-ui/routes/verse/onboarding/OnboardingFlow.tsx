@@ -77,6 +77,7 @@ import {
   setOnboardingStep,
 } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
+import { openSetupWizard } from '../setup/setup-wizard-store.js';
 import styles from './onboarding.module.css';
 
 // The setup checklist is its own chunk (shared with the "Autonomy is off" state).
@@ -140,6 +141,9 @@ function WelcomeStep() {
         <kbd className={styles.kbd}>⌘K</kbd> runs anything by name · <kbd className={styles.kbd}>⌘J</kbd> is everything
         waiting on you · Settings, Apps &amp; Accounts and Usage are under the gear.
       </p>
+      <Button variant="ghost" size="sm" onClick={openSetupWizard}>
+        Set up companions and accounts…
+      </Button>
     </StepBody>
   );
 }

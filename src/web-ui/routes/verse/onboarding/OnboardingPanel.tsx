@@ -15,6 +15,7 @@ import { Panel, SettingRow } from '../sections/SettingRow.js';
 import { relativePhrase } from '../context/context-model.js';
 import { replayOnboarding } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
+import { openSetupWizard } from '../setup/setup-wizard-store.js';
 import styles from './onboarding.module.css';
 
 /**
@@ -42,6 +43,14 @@ export function OnboardingPanel() {
       >
         <Button variant="subtle" size="sm" onClick={replayOnboarding} disabled={open}>
           {open ? 'Showing' : 'Replay'}
+        </Button>
+      </SettingRow>
+      <SettingRow
+        label="Run the setup wizard"
+        description="Choose companions (Phantom Secrets, Locus and extras), connect accounts and keys by scope, follow a confirm-each-step plan, and re-check health."
+      >
+        <Button variant="subtle" size="sm" onClick={openSetupWizard}>
+          Open
         </Button>
       </SettingRow>
       <details className={styles.guide}>
