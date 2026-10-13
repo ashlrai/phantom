@@ -1757,6 +1757,14 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/home ── daily home dashboard (src/core/home/dashboard.ts), read-only.
+    if (path === '/api/home' && method === 'GET') {
+      const { buildHomeDashboard } = await import('../home/dashboard.js');
+      const { realHomeSources } = await import('../home/dashboard-sources.js');
+      sendJson(res, 200, await buildHomeDashboard(realHomeSources()));
+      return true;
+    }
+
     // ── GET /api/ecosystem ── read-only onboarding readiness per repo
     // (src/core/ecosystem/onboard.ts, statusOnly — writes nothing).
     if (path === '/api/ecosystem' && method === 'GET') {
