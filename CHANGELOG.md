@@ -40,6 +40,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   subscription-only billing qualification separate from locator migration.
 
 ### Fixed
+- Skip unmatched path characters in the composer's file finder without changing
+  scores, ordering or result limits. Preserve the existing handler CPU budget.
 - Keep a resource supervisor available when another enrolled owner atomically
   commits a valid pool ledger during its custody read. Retry only the observed
   file replacement with bounded fresh reads; unsafe data, invalid controls and
