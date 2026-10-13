@@ -335,6 +335,7 @@
     "src/core/fabric/production-velocity.ts",
     "src/core/fabric/resource-monitor.ts",
     "src/core/fabric/usage-api.ts",
+    "src/core/firstrun/wizard.ts",
     "src/core/fleet/agent-action-ledger.ts",
     "src/core/fleet/agreement.ts",
     "src/core/fleet/attempt-identity.ts",
