@@ -40,6 +40,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   subscription-only billing qualification separate from locator migration.
 
 ### Fixed
+- Honor the provider's original native quota expiry across resource cards,
+  account details, composer seats and mobile views. Cached readings remain
+  dated history after failed refreshes; exact expiry and focus resumption clear
+  current claims without renewing evidence or coupling independent credits.
 - Read the installed resident service definition without following a swapped
   symlink, and report service transition states without claiming an awake
   assertion before the resident confirms it.
