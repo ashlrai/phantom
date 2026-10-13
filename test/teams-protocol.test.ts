@@ -6,6 +6,9 @@ import {
   acquireClaim, addContext, appendEvent, claimsOverlap, decideApproval, foldTeam, importEvents,
   readEvents, releaseClaim, requestHandoff, retrieveContext, teamState, transitionHandoff, type TeamActor,
 } from '../src/core/teams/index.js';
+import { localHumanActor, ownerConfigPath } from '../src/core/teams/index.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { callNativeTool } from '../src/core/mcp-native.js';
 
 const mason: TeamActor = { kind: 'human', id: 'human:mason' };
@@ -13,10 +16,13 @@ const evan: TeamActor = { kind: 'human', id: 'human:evan' };
 const grok: TeamActor = { kind: 'agent', id: 'agent:grok-bot/mason', provider: 'grok-bot', onBehalfOf: 'human:mason' };
 const codex: TeamActor = { kind: 'agent', id: 'agent:codex/acct-2', provider: 'codex' };
 const T = 'ashlr';
+function pinOwner(human: string) { const p = ownerConfigPath(); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, JSON.stringify({ human })); }
+const AGENT_MARKERS = ['PHM_AGENT_ID','ASHLR_AGENT_ID','ASHLR_AGENT','CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX','CODEX_THREAD_ID','CODEX_SESSION_ID','GROK_BOT_AGENT','CURSOR_AGENT'];
+const saved: Record<string, string | undefined> = {};
 let home: string; let prev: string | undefined;
 
-beforeEach(() => { prev = process.env['ASHLR_HOME']; home = mkdtempSync(join(tmpdir(), 'phm-teams-')); process.env['ASHLR_HOME'] = home; });
-afterEach(() => { if (prev === undefined) delete process.env['ASHLR_HOME']; else process.env['ASHLR_HOME'] = prev; rmSync(home, { recursive: true, force: true }); });
+beforeEach(() => { prev = process.env['ASHLR_HOME']; home = mkdtempSync(join(tmpdir(), 'phm-teams-')); process.env['ASHLR_HOME'] = home; for (const k of AGENT_MARKERS) { saved[k] = process.env[k]; delete process.env[k]; } });
+afterEach(() => { if (prev === undefined) delete process.env['ASHLR_HOME']; else process.env['ASHLR_HOME'] = prev; rmSync(home, { recursive: true, force: true }); for (const k of AGENT_MARKERS) if (saved[k] !== undefined) process.env[k] = saved[k]; });
 
 describe('team protocol', () => {
   it('claim overlap semantics', () => {
@@ -70,6 +76,7 @@ describe('team protocol', () => {
   });
 
   it('consequential handoffs need human owner approval; agents and members cannot approve', () => {
+    pinOwner('mason');
     appendEvent(T, mason, 'member.joined', {});
     appendEvent(T, evan, 'member.joined', {});
     const h = requestHandoff(T, codex, { title: 'Release 3.30', action: 'release' }) as { handoffId: string; approvalId: string; state: string };
@@ -79,6 +86,22 @@ describe('team protocol', () => {
     expect(() => decideApproval(T, evan, h.approvalId, 'approve')).toThrow();
     expect(decideApproval(T, mason, h.approvalId, 'approve').state).toBe('approved');
     expect(transitionHandoff(T, grok, h.handoffId, 'accept').state).toBe('accepted');
+  });
+
+  it('approval identity is derived locally, never caller-supplied', () => {
+    pinOwner('mason');
+    appendEvent(T, mason, 'member.joined', {});
+    const h = requestHandoff(T, codex, { title: 'Deploy', action: 'deploy' }) as { approvalId: string };
+    // A caller claiming to be the owner from another identity is rejected.
+    pinOwner('evan');
+    expect(() => decideApproval(T, mason, h.approvalId, 'approve')).toThrow(/derived locally/);
+    pinOwner('mason');
+    // Agent processes cannot approve even when they present the owner's human id.
+    expect(() => localHumanActor({ CODEX_THREAD_ID: 'x' })).toThrow(/agent process/);
+    expect(() => localHumanActor({ CLAUDECODE: '1' })).toThrow(/agent process/);
+    expect(() => decideApproval(T, { kind: 'human', id: 'agent:codex/acct-2' }, h.approvalId, 'approve')).toThrow(/humans/);
+    expect(localHumanActor({}).id).toBe('human:mason');
+    expect(decideApproval(T, mason, h.approvalId, 'approve').state).toBe('approved');
   });
 
   it('refuses secrets anywhere in the log', () => {
@@ -164,7 +187,13 @@ describe('phm team CLI', () => {
       expect(await cmdTeam(['claim', 'ashlrai/phantom', '--branch', 'x', '--as', 'mason'])).toBe(0);
       expect(await cmdTeam(['claim', 'ashlrai/phantom', '--as', 'evan'])).toBe(1);
       const h = requestHandoff('default', codex, { title: 'deploy site', action: 'deploy' }) as { approvalId: string };
-      expect(await cmdTeam(['approve', h.approvalId, '--as', 'mason'])).toBe(0);
+      // --as cannot impersonate the owner: the approver is the locally pinned owner.
+      pinOwner('evan');
+      expect(await cmdTeam(['approve', h.approvalId, '--as', 'mason'])).toBe(1);
+      expect(teamState('default').approvals[0]!.state).toBe('pending');
+      pinOwner('mason');
+      expect(await cmdTeam(['approve', h.approvalId, '--as', 'evan'])).toBe(0);
+      expect(teamState('default').approvals[0]!.decidedBy).toBe('human:mason');
       expect(teamState('default').approvals[0]!.state).toBe('approved');
       expect(await cmdTeam(['bogus'])).toBe(2);
     } finally { console.log = log; console.error = err; }
