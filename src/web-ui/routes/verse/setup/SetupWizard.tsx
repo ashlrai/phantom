@@ -13,7 +13,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '../../../components/primitives/index.js';
-import { IconCheckCircle, IconCopy, IconExternalLink, IconInfo, IconPlus, IconTrash } from '../../../components/primitives/icons.js';
+import { IconAlert, IconCheckCircle, IconCopy, IconExternalLink, IconInfo, IconPlus, IconTrash } from '../../../components/primitives/icons.js';
 import { copyText } from '../../../components/primitives/clipboard.js';
 import { useQuery } from '../../../data/hooks.js';
 import { verseHealthQuery } from '../health/health-queries.js';
@@ -116,7 +116,7 @@ function CompanionsStep({ selection }: { selection: Record<CompanionId, boolean>
               </Button>
               {/* Opens the repo page, where the user stars it themselves — never automated. */}
               <Button variant="ghost" size="sm" onClick={() => openExternal(repoUrl(c))} aria-label={`Star ${c.title} on GitHub`}>
-                ★ Star
+                Star
               </Button>
             </div>
           </div>
@@ -182,7 +182,7 @@ function ResourceForm({ onDone }: { onDone: () => void }) {
           spellCheck={false}
         />
       ) : null}
-      {!v.ok && (label || credentialName || scopeName) ? <p className={styles.error} role="alert">{v.errors[0]}</p> : null}
+      {!v.ok && (label || credentialName || scopeName) ? <p className={styles.error} role="alert"><IconAlert size={12} aria-hidden="true" /> {v.errors[0]}</p> : null}
       <div className={styles.quietActions}>
         <Button type="submit" variant="subtle" size="sm" disabled={!v.ok}>Add</Button>
         <Button type="button" variant="ghost" size="sm" onClick={onDone}>Cancel</Button>

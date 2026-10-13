@@ -233,9 +233,6 @@
   color: var(--text-primary);
 }
 
-.error::before {
-  content: '⚠ ';
-}
 
 .planRow {
   display: flex;
