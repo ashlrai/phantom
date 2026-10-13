@@ -18,6 +18,7 @@
  * rather than editing the shared statusToTone() mapping other views depend
  * on.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useMemo, useRef, useState } from 'react';
 import { controlSnapshotQuery } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -77,9 +78,7 @@ export function SecurityView() {
       {query.status === 'loading' ? (
         <SkeletonLine width="60%" />
       ) : query.status === 'error' || !security ? (
-        <p className={styles.error} role="alert">
-          {query.error?.message ?? 'Failed to load control snapshot.'}
-        </p>
+        <ErrorState what="Control snapshot" error={query.error?.message ?? 'Failed to load control snapshot.'} fix="ashlr status --json" />
       ) : !security.available ? (
         <p className={styles.unavailable}>
           No cached security data available — the backlog is absent, empty, or has no security-source findings.

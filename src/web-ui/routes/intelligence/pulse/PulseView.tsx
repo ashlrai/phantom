@@ -5,6 +5,7 @@ import { tokenEvidenceLabel } from '../../../../core/run/token-evidence.js';
  * routes/fleet-dashboard/FleetDashboardView.tsx (useQuery, status branching,
  * never blank on refresh) + DESIGN.md "Adding a new view" checklist.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useState } from 'react';
 import { pulseQuery, type PulseWindow } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -73,9 +74,7 @@ export function PulseView() {
       {query.status === 'loading' ? (
         <SkeletonCardGrid count={4} />
       ) : query.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {query.error?.message ?? 'Failed to load pulse data.'}
-        </div>
+        <ErrorState what="Pulse data" error={query.error?.message ?? 'Failed to load pulse data.'} fix="ashlr pulse --json" />
       ) : query.data ? (
         <PulseBody rollup={query.data} />
       ) : null}

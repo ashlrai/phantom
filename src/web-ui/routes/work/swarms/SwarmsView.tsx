@@ -6,6 +6,7 @@
  * view (SwarmDetailView.tsx) — a list of up to 200 rows isn't the place for
  * one SVG diagram per row.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { swarmsQuery } from '../../../data/queries.js';
@@ -151,9 +152,7 @@ export function SwarmsView() {
           <SkeletonRow />
         </div>
       ) : swarmsResult.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {swarmsResult.error?.message ?? 'Failed to load swarms.'}
-        </div>
+        <ErrorState what="Swarms" error={swarmsResult.error?.message ?? 'Failed to load swarms.'} fix="ashlr swarm list --json" />
       ) : filtered.length === 0 ? (
         <p className={styles.empty}>No swarms match the current filters.</p>
       ) : (

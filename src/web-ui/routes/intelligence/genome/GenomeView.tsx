@@ -5,6 +5,7 @@
  * rows render in browse mode (no query — the full unfiltered list), and
  * never eagerly render thousands of DOM rows.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useEffect, useMemo, useState } from 'react';
 import { genomeQuery, isRecallHit } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -116,9 +117,7 @@ export function GenomeView() {
           <SkeletonRow />
         </div>
       ) : resourceQuery.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {resourceQuery.error?.message ?? 'Failed to load genome data.'}
-        </div>
+        <ErrorState what="Genome data" error={resourceQuery.error?.message ?? 'Failed to load genome data.'} fix="ashlr genome status --json" />
       ) : rows.length === 0 ? (
         <p className={styles.empty}>
           {isSearching ? `No genome entries match "${debouncedQuery}".` : 'No genome entries recorded yet.'}

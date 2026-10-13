@@ -18,6 +18,7 @@
  * `complete: killSwitch.sourceState === 'healthy'`) before being handed to
  * <Epistemic/> — same withhold-the-control behavior, correct source shape.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useEffect, useRef, useState } from 'react';
 import { fleetStatusQuery, fleetActivityQuery } from '../../../data/queries.js';
 import { useQuery, useMutationHold } from '../../../data/hooks.js';
@@ -113,9 +114,7 @@ export function FleetView() {
       {fleetQuery.status === 'loading' ? (
         <SkeletonLine width="60%" />
       ) : fleetQuery.status === 'error' || !fleet ? (
-        <p className={styles.error} role="alert">
-          {fleetQuery.error?.message ?? 'Failed to load fleet status.'}
-        </p>
+        <ErrorState what="Fleet status" error={fleetQuery.error?.message ?? 'Failed to load fleet status.'} fix="ashlr fleet status --json" />
       ) : (
         <>
           <section className={styles.section}>
@@ -265,9 +264,7 @@ export function FleetView() {
         {activityQuery.status === 'loading' ? (
           <SkeletonLine width="70%" />
         ) : activityQuery.status === 'error' || !activityQuery.data ? (
-          <p className={styles.error} role="alert">
-            {activityQuery.error?.message ?? 'Failed to load fleet activity.'}
-          </p>
+          <ErrorState what="Fleet activity" error={activityQuery.error?.message ?? 'Failed to load fleet activity.'} fix="ashlr fleet status --json" />
         ) : (
           <dl className={styles.metaGrid}>
             <div>

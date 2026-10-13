@@ -1,5 +1,0 @@
-.empty { padding: 20px; border-radius: 10px; border: 1px dashed var(--border, rgba(127,127,127,0.4)); }
-.error { padding: 14px; border-radius: 10px; border: 1px solid var(--danger, #d64545); }
-.title { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
-.detail { opacity: 0.7; font-size: 12px; margin: 0 0 6px; }
-.error code, .empty code { padding: 2px 6px; border-radius: 5px; background: var(--surface-2, rgba(127,127,127,0.12)); font-size: 12px; }

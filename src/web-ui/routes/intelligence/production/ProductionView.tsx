@@ -22,6 +22,7 @@
  * of pretending the 'review' bucket is clean. Flagged separately for a
  * backend follow-up (add parse/network counts to ProductionSummary).
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useState } from 'react';
 import { dashboardSnapshotQuery, modelsQuery, type ModelStatsWindow } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -71,9 +72,7 @@ export function ProductionView() {
       {snapshotQuery.status === 'loading' ? (
         <SkeletonCardGrid count={4} />
       ) : snapshotQuery.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {snapshotQuery.error?.message ?? 'Failed to load production summary.'}
-        </div>
+        <ErrorState what="Production summary" error={snapshotQuery.error?.message ?? 'Failed to load production summary.'} fix="ashlr status --json" />
       ) : !production ? (
         <p className={styles.notAvailable}>
           Production summary not available on this server (older producer, or not yet populated).
@@ -101,9 +100,7 @@ export function ProductionView() {
       {modelsResult.status === 'loading' ? (
         <SkeletonCardGrid count={3} />
       ) : modelsResult.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {modelsResult.error?.message ?? 'Failed to load per-model stats.'}
-        </div>
+        <ErrorState what="Per-model stats" error={modelsResult.error?.message ?? 'Failed to load per-model stats.'} fix="ashlr models --json" />
       ) : modelsResult.data ? (
         <ModelStatsSection result={modelsResult.data} />
       ) : null}
