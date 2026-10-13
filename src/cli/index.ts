@@ -1869,6 +1869,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'improve': {
+        const { cmdImprove } = await import('./improve.js');
+        process.exitCode = await cmdImprove(rest);
+        break;
+      }
+
       case 'steward': {
         const { cmdSteward } = await import('./steward.js');
         process.exitCode = await cmdSteward(rest);
