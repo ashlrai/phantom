@@ -471,6 +471,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status',                       desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'settings', desc: 'View or change autonomy, repos, schedules, models, budget, notifications, constitution (--json).', topic: 'core' },
   { cmd: 'home', desc: 'Daily dashboard: shipped PRs, value per $/token/s, running now, needs you (--json).', topic: 'core' },
   { cmd: 'today', desc: 'Alias of `home`.', topic: 'core' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
