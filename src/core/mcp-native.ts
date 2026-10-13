@@ -231,8 +231,8 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'ashlr_settings_set',
-    description: 'Change one setting: {key, value} with the same keys as `ashlr settings set`. Agents may apply NARROWING changes only (lower autonomy, lower budget, unenroll a repo, disable a schedule, fewer engines, notification toggles). A widening change (more autonomy, spend, repos, schedules, or any constitution edit) is not applied: it returns status needs-human with the exact command for the human.',
-    inputSchema: { type: 'object', properties: { key: { type: 'string', enum: ['autonomy.level', 'repos.enroll', 'repos.unenroll', 'schedules.enable', 'schedules.disable', 'models.allowedEngines', 'budget.dailyUsd', 'budget.perItemMaxTokens', 'budget.maxConcurrent', 'notifications.desktop', 'notifications.proactive', 'constitution.save', 'constitution.revert'] }, value: {} }, required: ['key', 'value'], additionalProperties: false },
+    description: 'Change one setting: {key, value} with the same keys as `ashlr settings set`. Agents may apply NARROWING changes only (lower autonomy, lower budget, unenroll a repo, disable a schedule, fewer engines, notification toggles). A widening change (more autonomy, spend, repos, schedules or engines, adding/changing a webhook, or any constitution edit) is not applied: it returns status needs-human with the exact command for the human.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string', enum: ['autonomy.level', 'repos.enroll', 'repos.unenroll', 'schedules.enable', 'schedules.disable', 'models.allowedEngines', 'budget.dailyUsd', 'budget.perItemMaxTokens', 'budget.maxConcurrent', 'notifications.desktop', 'notifications.proactive', 'notifications.slackWebhook', 'notifications.discordWebhook', 'constitution.save', 'constitution.revert'] }, value: {} }, required: ['key', 'value'], additionalProperties: false },
     safety: 'append',
     handler: async (args) => {
       const { applySettingsChange } = await import('./settings/settings.js');

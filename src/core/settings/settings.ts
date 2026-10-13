@@ -18,7 +18,7 @@ export interface SettingsV1 {
   autonomy: { level: AutonomyLevel; grantActive: boolean; maxLevel: AutonomyLevel };
   repos: { enrolled: string[] };
   schedules: { id: string; name: string; enabled: boolean }[];
-  models: { allowedEngines: string[] | null };
+  models: { allowedEngines: string[] | null; available: string[] };
   budget: { dailyUsd: number; perItemMaxTokens: number | null; maxConcurrent: number | null };
   notifications: { desktop: boolean; proactive: boolean; slack: boolean; discord: boolean };
   constitution: { path: string | null; versions: { id: string; at: string; bytes: number; note: string }[] };
@@ -33,10 +33,11 @@ export type SettingsChange =
   | { key: 'budget.perItemMaxTokens'; value: number }
   | { key: 'budget.maxConcurrent'; value: number }
   | { key: 'notifications.desktop' | 'notifications.proactive'; value: boolean }
+  | { key: 'notifications.slackWebhook' | 'notifications.discordWebhook'; value: string }
   | { key: 'constitution.save'; value: { text: string; note?: string } }
   | { key: 'constitution.revert'; value: string };
 
-export const SETTINGS_KEYS = ['autonomy.level', 'repos.enroll', 'repos.unenroll', 'schedules.enable', 'schedules.disable', 'models.allowedEngines', 'budget.dailyUsd', 'budget.perItemMaxTokens', 'budget.maxConcurrent', 'notifications.desktop', 'notifications.proactive', 'constitution.save', 'constitution.revert'] as const;
+export const SETTINGS_KEYS = ['autonomy.level', 'repos.enroll', 'repos.unenroll', 'schedules.enable', 'schedules.disable', 'models.allowedEngines', 'budget.dailyUsd', 'budget.perItemMaxTokens', 'budget.maxConcurrent', 'notifications.desktop', 'notifications.proactive', 'notifications.slackWebhook', 'notifications.discordWebhook', 'constitution.save', 'constitution.revert'] as const;
 
 export interface SettingsResult {
   ok: boolean;
@@ -66,6 +67,11 @@ export function parseSettingsChange(raw: unknown): { ok: true; change: SettingsC
     case 'budget.dailyUsd': return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1000 ? { ok: true, change: { key, value } } : bad('must be a number from 0 to 1000');
     case 'budget.perItemMaxTokens': return Number.isInteger(value) && (value as number) >= 1000 && (value as number) <= 10_000_000 ? { ok: true, change: { key, value: value as number } } : bad('must be a whole number from 1000 to 10000000');
     case 'budget.maxConcurrent': return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 64 ? { ok: true, change: { key, value: value as number } } : bad('must be a whole number from 0 to 64');
+    case 'notifications.slackWebhook': case 'notifications.discordWebhook': {
+      if (value === '') return { ok: true, change: { key, value: '' } };
+      const re = key === 'notifications.slackWebhook' ? /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]{10,200}$/ : /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d{5,30}\/[A-Za-z0-9_-]{20,200}$/;
+      return typeof value === 'string' && re.test(value) ? { ok: true, change: { key, value } } : bad(key === 'notifications.slackWebhook' ? 'must be an https://hooks.slack.com/services/… URL, or "" to remove it' : 'must be an https://discord.com/api/webhooks/… URL, or "" to remove it');
+    }
     case 'notifications.desktop': case 'notifications.proactive': return typeof value === 'boolean' ? { ok: true, change: { key, value } as SettingsChange } : bad('must be true or false');
     case 'constitution.save': {
       const v = value as { text?: unknown; note?: unknown } | null;
@@ -86,6 +92,8 @@ export function changeDirection(change: SettingsChange, current: SettingsV1): 'n
     case 'budget.perItemMaxTokens': return current.budget.perItemMaxTokens !== null && change.value <= current.budget.perItemMaxTokens ? 'narrowing' : 'widening';
     case 'budget.maxConcurrent': return current.budget.maxConcurrent !== null && change.value <= current.budget.maxConcurrent ? 'narrowing' : 'widening';
     case 'notifications.desktop': case 'notifications.proactive': return 'narrowing'; // local, outbound to the human only
+    // A webhook sends data off the machine: adding or changing one widens reach; removing narrows.
+    case 'notifications.slackWebhook': case 'notifications.discordWebhook': return change.value === '' ? 'narrowing' : 'widening';
     case 'constitution.save': case 'constitution.revert': return 'widening'; // the agents' own rules
   }
 }
@@ -93,6 +101,7 @@ export function changeDirection(change: SettingsChange, current: SettingsV1): 'n
 /** The exact CLI a human runs for a change. */
 export function settingsCommand(change: SettingsChange): string {
   if (change.key === 'constitution.save') return 'ashlr settings set constitution.save --file <AGENTS.md>';
+  if (change.key === 'notifications.slackWebhook' || change.key === 'notifications.discordWebhook') return `ashlr settings set ${change.key} ${change.value === '' ? '""' : '<webhook-url>'}`;
   const v = change.value as unknown;
   return `ashlr settings set ${change.key} ${Array.isArray(v) ? v.join(',') : String(v)}`;
 }

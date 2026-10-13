@@ -2,6 +2,9 @@
 import { existsSync } from 'node:fs';
 import type { SettingsBackend, SettingsChange, SettingsV1, AutonomyLevel } from './settings.js';
 
+/** Engine ids the Settings model picker offers (src/core/types.ts EngineId). */
+export const KNOWN_ENGINES = ['claude', 'codex', 'grok', 'grok-cli', 'devin-cli', 'claude-api', 'kimi', 'nim', 'opencode', 'hermes', 'meta-muse', 'ashlrcode', 'aw', 'local-coder', 'llama-server', 'builtin'] as const;
+
 export async function realSettingsBackend(actorLabel: string): Promise<SettingsBackend> {
   const config = await import('../config.js');
   const policy = await import('../sandbox/policy.js');
@@ -18,7 +21,7 @@ export async function realSettingsBackend(actorLabel: string): Promise<SettingsB
       autonomy: { level: readClamp().clamp.switch as AutonomyLevel, grantActive: ev.grantState === 'active', maxLevel: ev.grantState === 'active' ? 'autonomous' : 'propose' },
       repos: { enrolled: policy.listEnrolled() },
       schedules: (await automations.listAutomations()).map((a) => ({ id: a.id, name: a.name, enabled: a.enabled })),
-      models: { allowedEngines: cfg.foundry?.allowedBackends ? [...cfg.foundry.allowedBackends] : null },
+      models: { allowedEngines: cfg.foundry?.allowedBackends ? [...cfg.foundry.allowedBackends] : null, available: [...KNOWN_ENGINES] },
       budget: { dailyUsd: cfg.daemon?.dailyBudgetUsd ?? 1, perItemMaxTokens: cfg.daemon?.perItemMaxTokens ?? null, maxConcurrent: cfg.daemon?.maxConcurrent ?? null },
       notifications: { desktop: cfg.notify?.desktop === true, proactive: cfg.comms?.proactive === true, slack: !!cfg.notify?.slackWebhook, discord: !!cfg.notify?.discordWebhook },
       constitution: { path: existsSync(path) ? path : null, versions: constitution.listVersions() },
@@ -42,6 +45,8 @@ export async function realSettingsBackend(actorLabel: string): Promise<SettingsB
       case 'budget.dailyUsd': return editConfig((c) => { c.daemon = { ...(c.daemon ?? {}), dailyBudgetUsd: ch.value }; });
       case 'budget.perItemMaxTokens': return editConfig((c) => { c.daemon = { ...(c.daemon ?? {}), perItemMaxTokens: ch.value }; });
       case 'budget.maxConcurrent': return editConfig((c) => { c.daemon = { ...(c.daemon ?? {}), maxConcurrent: ch.value }; });
+      case 'notifications.slackWebhook': return editConfig((c) => { const n = { ...(c.notify ?? {}) }; if (ch.value) n.slackWebhook = ch.value; else delete n.slackWebhook; c.notify = n; });
+      case 'notifications.discordWebhook': return editConfig((c) => { const n = { ...(c.notify ?? {}) }; if (ch.value) n.discordWebhook = ch.value; else delete n.discordWebhook; c.notify = n; });
       case 'notifications.desktop': return editConfig((c) => { c.notify = { ...(c.notify ?? {}), desktop: ch.value }; });
       case 'notifications.proactive': return editConfig((c) => { c.comms = { ...(c.comms ?? {}), proactive: ch.value } as never; });
       case 'constitution.save': { const id = constitution.saveConstitution(ch.value.text, ch.value.note ?? ''); return { ok: true, detail: id === 'unchanged' ? 'unchanged' : `saved; previous text kept as version ${id}` }; }

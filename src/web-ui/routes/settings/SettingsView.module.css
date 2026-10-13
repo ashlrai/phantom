@@ -14,3 +14,4 @@
 .editor { width: 100%; min-height: 120px; font-family: ui-monospace, monospace; font-size: 12px; }
 .ok { color: var(--ok, #2f9e62); margin: 0; }
 .error { color: var(--danger, #d64545); margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px; }

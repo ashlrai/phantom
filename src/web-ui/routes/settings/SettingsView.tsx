@@ -24,6 +24,7 @@ export function SettingsView() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [draft, setDraft] = useState('');
   const [budget, setBudget] = useState('');
+  const [hooks, setHooks] = useState({ slack: '', discord: '' });
 
   async function send(key: string, value: unknown) {
     try {
@@ -73,7 +74,16 @@ export function SettingsView() {
         )}
       </Section>
       <Section title="Models" hint="Engines the fleet may use.">
-        <p>{s.models.allowedEngines?.join(', ') ?? 'All configured engines'}</p>
+        {s.models.allowedEngines === null ? <p className={styles.hint}>All configured engines are allowed. Tick engines to restrict the fleet to them.</p> : null}
+        <div className={styles.grid}>{s.models.available.map((e) => {
+          const on = s.models.allowedEngines?.includes(e) ?? false;
+          return <label key={e}><input type="checkbox" checked={on} onChange={() => {
+            const cur = s.models.allowedEngines ?? [];
+            const next = on ? cur.filter((x) => x !== e) : [...cur, e];
+            if (next.length === 0) { setMsg({ ok: false, text: 'Keep at least one engine; to allow all, edit foundry.allowedBackends in ~/.ashlr/config.json' }); return; }
+            change('models.allowedEngines', next);
+          }} /> {e}</label>;
+        })}</div>
       </Section>
       <Section title="Budget caps">
         <p>${s.budget.dailyUsd}/day · {s.budget.perItemMaxTokens ?? '—'} tokens per item · {s.budget.maxConcurrent ?? '—'} concurrent</p>
@@ -85,7 +95,13 @@ export function SettingsView() {
       <Section title="Notifications">
         <label className={styles.row}><input type="checkbox" checked={s.notifications.desktop} onChange={(e) => change('notifications.desktop', e.target.checked)} /> Desktop notification when a proposal needs you</label>
         <label className={styles.row}><input type="checkbox" checked={s.notifications.proactive} onChange={(e) => change('notifications.proactive', e.target.checked)} /> Proactive fleet updates (Telegram)</label>
-        <p className={styles.hint}>Slack {s.notifications.slack ? 'set' : 'not set'} · Discord {s.notifications.discord ? 'set' : 'not set'} (webhooks are set in ~/.ashlr/config.json)</p>
+        {(['slack', 'discord'] as const).map((k) => (
+          <form key={k} className={styles.row} onSubmit={(e) => { e.preventDefault(); const v = hooks[k].trim(); if (v) change(`notifications.${k}Webhook`, v); }}>
+            <label>{k === 'slack' ? 'Slack' : 'Discord'} webhook <input aria-label={`${k} webhook`} type="password" autoComplete="off" value={hooks[k]} onChange={(e) => setHooks({ ...hooks, [k]: e.target.value })} placeholder={s.notifications[k] ? 'set (hidden)' : k === 'slack' ? 'https://hooks.slack.com/services/…' : 'https://discord.com/api/webhooks/…'} /></label>
+            <button type="submit" disabled={!hooks[k].trim()}>Save</button>
+            {s.notifications[k] ? <button type="button" className={styles.link} onClick={() => change(`notifications.${k}Webhook`, '')}>Remove</button> : null}
+          </form>
+        ))}
       </Section>
       <Section title="Constitution" hint={s.constitution.path ?? 'No AGENTS.md found — set $ASHLR_CONSTITUTION or run `ashlr ecosystem up`.'}>
         <textarea aria-label="Constitution text" className={styles.editor} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Paste the new AGENTS.md text; the current text is kept as a version you can revert to." />
