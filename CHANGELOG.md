@@ -31,6 +31,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Restrict steward effects to the documented roots and actions, refuse
   symlink paths and observed file replacements, and preserve existing archives
   through exclusive creation and verification before removing an original.
+- Reject established agent contexts for human team joining and approval.
+  Preserve the first local human's ownership after agent activity and refuse
+  agent role promotion, including inconsistent event and member kinds.
 
 ## [3.29.14] — Unreleased
 
