@@ -1,3 +1,4 @@
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/Workspace.tsx — the chat pane: the header strip, the 720px
  * transcript, and — stacked above the composer — everything about the turn
@@ -141,6 +142,7 @@ export interface WorkspaceProps {
 }
 
 export function Workspace(props: WorkspaceProps) {
+  const capacityNow = useCapacityClock(undefined, props.seats.map(seat => seat.capacity));
   const { view, seats, projects, dispatchEnabled, locked, hasAnySessions, onSend, onStop, onRename, onRequestDelete,
     onSeatChange, onNew, onRetry, sidebarCollapsed, onToggleSidebar, onOpenSession, handoffOpen, onHandoffOpenChange,
     otherRunning, onRequestDevinStop } = props;
@@ -327,7 +329,7 @@ export function Workspace(props: WorkspaceProps) {
   const modesAvailable = session !== null && budget !== null && engineSupportsModes(session.engine) &&
     (hasExpansiveMode(budget.option) || mode === 'expansive');
   const activeSeat = session ? seatById(seats, session.seatId) ?? null : null;
-  const capacity = activeSeat === null ? null : seatSubscription(activeSeat);
+  const capacity = activeSeat === null ? null : seatSubscription(activeSeat, capacityNow);
   /** The capacity worth a chip in the header: tight or spent, else none. */
   const flagged = capacity !== null && worthFlagging(capacity.cls) ? capacity : null;
   // The status chip's tooltip: what the chat runs on (seat · model), then the

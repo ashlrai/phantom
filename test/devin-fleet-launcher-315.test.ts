@@ -50,7 +50,7 @@ function devinPolicy(repos = [repoPolicy(REPO)]): EffectivePolicy {
   return {
     ...base,
     engines: [...base.engines, 'devin'],
-    spend: { ...base.spend, seats: { ...base.spend.seats, devin: { seatId: 'devin', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] } } },
+    spend: { ...base.spend, meteredUsdPerDay: 25, seats: { ...base.spend.seats, devin: { seatId: 'devin', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] } } },
   };
 }
 
@@ -89,6 +89,13 @@ describe('planDevinFleetLaunch — every gate, in order; the first failure is th
     budgetMode: ok,
     view: { canFleetLaunch: { ok: true, reason: null } },
     pick: () => ({ item: item(), repo: REPO }),
+  });
+
+  it.each([0, -1, NaN, Infinity, undefined])('holds metered allowance %s without reading a backlog candidate', allowance => {
+    const input = base(); input.policy!.spend.meteredUsdPerDay = allowance as number;
+    input.pick = vi.fn(() => ({ item: item(), repo: REPO }));
+    expect(planDevinFleetLaunch(input)).toMatchObject({ kind: 'hold', code: 'billing', reason: expect.stringContaining('metered API allowance') });
+    expect(input.pick).not.toHaveBeenCalled();
   });
 
   it('launches when everything holds', () => {
@@ -263,6 +270,14 @@ describe('runDevinFleetTick', () => {
   }
 
   const creates = () => api.requests.filter((r) => r.method === 'POST' && /\/sessions$/.test(r.path));
+
+  it('holds $0 fleet API authority before key reads, queue writes and provider calls', async () => {
+    live!.spend.meteredUsdPerDay = 0; keychain.calls.length = 0;
+    expect(await runDevinFleetTick(deps())).toMatchObject({ outcome: 'held', code: 'billing', reason: expect.stringContaining('$0/day') });
+    expect(creates()).toEqual([]); expect(api.requests).toEqual([]); expect(keychain.calls).toEqual([]);
+    expect(listDevinTasks()).toEqual([]);
+    expect(rows.map(row => row.data.topic)).toEqual(['devin:fleet-hold']);
+  });
 
   it('launches ONE fleet session on the Leader item (skipping open-ended and ungranted work), ledgered before and after', async () => {
     const result = await runDevinFleetTick(deps());

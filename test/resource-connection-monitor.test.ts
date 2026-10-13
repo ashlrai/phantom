@@ -552,6 +552,19 @@ describe('native metadata monitoring', () => {
 
 
 describe('current Codex credits publication', () => {
+  it.each([false, true, null])('keeps credit-spend limit %s separate from subscription-only billing proof', async (spendControlReached) => {
+    probes.codex.mockResolvedValue({ ...codex(), credits: {
+      hasCredits: true, unlimited: false, balance: '123.456789', spendControlReached,
+    } });
+    const handle = start({ config: config(['codex']) }); await settle();
+    const row = handle.snapshot().accounts[0]!;
+    expect(row).toMatchObject({ state: 'observed', authentication: 'signed-in', windows: quota(),
+      codexCredits: { hasCredits: true, spendControlReached } });
+    // Available credits and an unreached limit say nothing about disabling
+    // paid fallback. Never manufacture the account-bound dispatch witness.
+    expect(row).not.toHaveProperty('subscriptionOnlyBoundary');
+  });
+
   it('publishes each native account balance independently and clears it on failure, expiry and stop', async () => {
     const credits = { hasCredits: true, unlimited: false, balance: '123.456789', spendControlReached: false };
     probes.codex.mockResolvedValueOnce({ ...codex(), credits });

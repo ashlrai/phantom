@@ -43,6 +43,7 @@ import { computeQualityMetrics } from './fleet/quality-metrics.js';
 import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { listProposals } from './inbox/store.js';
+import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
 // M169: best-effort imports for new elite-state tools
 // Each is wrapped in a lazy async import inside the handler so module-level
@@ -169,11 +170,11 @@ interface NativeToolImpl extends NativeToolDef {
 const TOOLS: NativeToolImpl[] = [
   {
     name: 'phm_proactive_agents_list', description: 'Read a page of configured personal-agent profile summaries and operation readiness. Profiles do not prove a connected adapter or authorize spending.',
-    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', enum: ['openai-dot', 'grok-bot', 'meta-muse', 'other'] }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
   },
   {
-    name: 'phm_proactive_agents_create', description: 'Save private personal-agent metadata with its real provider/account/agent identity. Enabled records a preference for future planning; current planners do not consume profiles. Never enables transport or spending.',
+    name: 'phm_proactive_agents_create', description: 'Save private agent metadata with its provider/account/agent identity, declared capabilities and local assignment preferences. Saving does not establish a connected adapter, autonomous dispatch or spending authority.',
     inputSchema: { type: 'object', properties: { profile: PROACTIVE_PROFILE_INPUT_SCHEMA }, required: ['profile'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).createProactiveProfile(args),
   },
@@ -204,6 +205,41 @@ const TOOLS: NativeToolImpl[] = [
       if (!validOutcomeTaskContextRequest(input)) throw new Error('Use an exact saved outcome/task ID and valid context query fields.');
       return (await import('./verse/outcomes-io.js')).runOutcomeTaskContext(input);
     },
+  },
+  {
+    name: 'phm_team_register', description: 'Register this agent (Claude Code, Codex, Grok Bot, Meta Muse, OpenAI dot, Devin, local) on the local team bus with its capabilities. Identity only; grants no authority.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_register, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamRegister(args),
+  },
+  {
+    name: 'phm_team_publish', description: 'Post a team message or a presence/status heartbeat to the local team bus. Credential-shaped text is refused.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_publish, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamPublish(args),
+  },
+  {
+    name: 'phm_team_view', description: 'Read the team view: members and presence, active repo/branch/path claims, handoffs, pending approvals and recent messages.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_view, safety: 'read',
+    handler: async args => (await import('./teams/tools.js')).teamView(args),
+  },
+  {
+    name: 'phm_team_claim', description: 'Acquire or release a lease on a repo, branch or path so humans and agent fleets do not collide. Returns conflicts instead of overriding another holder.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_claim, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamClaim(args),
+  },
+  {
+    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff between agents and humans. Consequential actions (deploy, release, merge, rotate-secret, external-message, delete, spend) wait for human owner/admin approval.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_handoff, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamHandoff(args),
+  },
+  {
+    name: 'phm_team_context_add', description: 'Add scoped shared context (owner personal/company/client:<name>, project, person) with required provenance. Credential-shaped values are refused; reference secrets as phm_<name>.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_add, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamContextAdd(args),
+  },
+  {
+    name: 'phm_team_context_get', description: 'Retrieve a compact, cited context pack for a query under a token budget. Scope-filtered: client context never crosses clients and personal context stays personal.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_get, safety: 'read',
+    handler: async args => (await import('./teams/tools.js')).teamContextGet(args),
   },
   {
     name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',

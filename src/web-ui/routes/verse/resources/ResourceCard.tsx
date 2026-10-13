@@ -73,7 +73,10 @@ function WindowMeter({ row, w, reservePercent }: { row: CapacityRow; w: Capacity
   let level: 'ok' | 'tight' | 'limit' | 'unknown';
   let value: string;
   let used = 0;
-  if (w.limitReached) {
+  if (row.quotaCurrent === false) {
+    level = 'unknown';
+    value = `${w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : usedPercentText(w.usedPercent)} · last`;
+  } else if (w.limitReached) {
     level = 'limit';
     value = 'limit reached';
     used = 100;
@@ -94,7 +97,7 @@ function WindowMeter({ row, w, reservePercent }: { row: CapacityRow; w: Capacity
         {ceiling !== null ? <span className={styles.meterTick} style={{ left: `${ceiling}%` }} /> : null}
       </span>
       <span className={styles.meterValue} aria-hidden="true">{value}</span>
-      {w.resetText !== null ? <span className={styles.meterReset} title={w.resetText} aria-hidden="true">{w.resetText}</span> : null}
+      {row.quotaCurrent !== false && w.resetText !== null ? <span className={styles.meterReset} title={w.resetText} aria-hidden="true">{w.resetText}</span> : null}
     </div>
   );
 }

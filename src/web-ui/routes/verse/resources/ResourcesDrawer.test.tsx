@@ -533,6 +533,30 @@ describe('ResourcesDrawer — accounts', () => {
     expect(calls.some(c => c.method === 'POST' && c.url === '/api/verse/health/refresh')).toBe(false);
   });
 
+  it('confirms an independently current credit-only account reading without claiming current subscription usage', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    try {
+      const observedAt = new Date(NOW).toISOString();
+      const expiresAt = new Date(NOW + 60_000).toISOString();
+      const creditOnly = nativeSeat(capacity({ windows: [], binding: null, observedAt, quotaExpiresAt: null,
+        credits: { hasCredits: true, unlimited: false, balance: '42' }, creditsExpiresAt: expiresAt }),
+        { id: 'codex-personal', engine: 'codex', label: 'Personal Codex', accountId: 'codex-personal' });
+      const ordinary = globalThis.fetch;
+      vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/verse/seats/refresh') {
+          roster = [creditOnly];
+          return Promise.resolve(json({ seatId: 'codex-personal', state: 'completed', reading: 'current',
+            reason: 'observed', observedAt, expiresAt, nextCheckAt: null, joined: false }));
+        }
+        return ordinary(input, init);
+      }));
+      render(<ResourcesDrawer mode="docked" now={NOW} />);
+      await userEvent.setup().click(await screen.findByRole('button', { name: 'Check again: Personal Codex' }));
+      expect(await screen.findByText('Confirmed Personal Codex’s current account reading.')).toBeInTheDocument();
+      expect(screen.queryByText(/Confirmed Personal Codex’s current usage reading/)).toBeNull();
+    } finally { clock.mockRestore(); }
+  });
+
   it('does not announce a late selected check after auth loss and re-hold', async () => {
     const ordinary = globalThis.fetch;
     let release!: (value: Response) => void;

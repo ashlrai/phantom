@@ -49,7 +49,7 @@ import { reasonSentence } from '../usage/accounts-model.js';
 import { findCommand, formatChord } from '../shell/command-catalog.js';
 import { isGuardOpen, requestGuarded } from '../shell/guarded-action.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { ACCOUNT_CLOCK_MS, useCapacityData } from '../usage/CapacityStrip.js';
+import { ACCOUNT_CLOCK_MS, useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
 import { accountStatus, accountStatusRank, buildCapacityRows, capacityHeadline, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { COST_BASIS_RANK, costBasisOf, engineTier, TIER_BLURBS, TIER_LABELS, type ResourceTier } from '../../../../core/routing/tiers.js';
 import { refreshAccountReading, refreshSeats } from '../useSeatsRefresh.js';
@@ -107,9 +107,8 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
   const panelRef = useRef<HTMLDivElement>(null);
   const overlay = mode === 'overlay';
   const data = useCapacityData();
-  const [tick, setTick] = useState(() => Date.now());
-  usePollWhileVisible(() => setTick(Date.now()), ACCOUNT_CLOCK_MS, { enabled: fixedNow === undefined });
-  const now = fixedNow ?? tick;
+  const [, setTick] = useState(() => Date.now());
+  const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
   const healthRead = data.health !== null;
   const [busy, setBusy] = useState<{ seatId: string; kind: AccountAction['kind'] } | null>(null);
   const [note, setNote] = useState<Note>(null);
@@ -273,7 +272,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
             const nextCheck = Number.isFinite(next) && next > Date.now()
               ? ` Next check after ${new Date(next).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : '';
             readingNote = result.reading === 'current'
-              ? `${result.state === 'cached' ? 'Showing' : 'Confirmed'} ${row.label}’s current usage reading.`
+              ? `${result.state === 'cached' ? 'Showing' : 'Confirmed'} ${row.label}’s current account reading.`
               : result.state === 'held'
                 ? `Usage check held. ${reasonSentence(result.reason, 'Refresh the account list before trying again.')}`
                 : `${result.state === 'cached' ? 'No current usage reading is available.' : 'Check completed; no current usage reading was reported.'} ${reasonSentence(result.reason, 'The provider did not report a usable reading.')}${nextCheck}`;

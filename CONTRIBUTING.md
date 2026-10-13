@@ -132,6 +132,29 @@ No hint file is checked in, downloaded, or activated by this conversion.
 
 ### Definition of green
 
+#### Keep development and release checks economical
+
+Run the affected whole test modules while editing, then `npm run gate -- --base
+<base-sha>` for related tests and static checks. Use an explicit base when
+integrating parallel branches so the selection includes every combined change.
+The local gate does not push, dispatch Actions, or contact model providers.
+Its import graph cannot cover tests that read source as text; also run
+`npm run check:release:fast` after the canonical build for release changes.
+
+For final local source qualification, run `prepublishOnly` once as described
+below. Reuse the exact completed hosted build for canonical publication instead
+of rebuilding or repacking it. Local feedback does not replace protected merge
+checks, independent Audit, attestation, signing, or installed acceptance.
+
+Standard GitHub-hosted runners are free in public repositories; larger runners
+and private-repository usage have different billing rules. Artifact and cache
+storage have separate allowances. Before starting hosted work, verify repository
+visibility, runner labels, current usage, and the owner's blocking budget through
+GitHub's billing readback. Do not increase a budget or select a paid runner as a
+fallback. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+#### Complete source qualification
+
 For the complete local source release check, run the canonical script once:
 
 ```sh

@@ -428,3 +428,16 @@ export function plistBudgetUsd(content: string | null): number | null {
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
 }
+
+/** PURE: the installed launchd argv's awake request. Unknown plist shapes stay unknown. */
+export function plistKeepAwake(content: string | null): boolean | null {
+  if (!content) return null;
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/u.exec(content)?.[1];
+  if (!array) return null;
+  const argv = [...array.matchAll(/<string>([^<]*)<\/string>/gu)].map((match) => match[1]);
+  if (argv[0] === 'caffeinate') {
+    return argv.length >= 7 && argv[1] === '-i' && argv[2] === '-s' &&
+      argv[5] === 'daemon' && argv[6] === 'start' ? true : null;
+  }
+  return argv.length >= 4 && argv[2] === 'daemon' && argv[3] === 'start' ? false : null;
+}

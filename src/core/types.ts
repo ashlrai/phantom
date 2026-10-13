@@ -4650,6 +4650,8 @@ export interface ApplyResult {
  * merged over conservative hard-coded defaults.
  */
 export interface DaemonConfig {
+  /** Request macOS idle/system sleep inhibition on AC while the resident launchd service runs. Requires a confirmed service restart. */
+  keepAwake?: boolean;
   /** HARD daily spend ceiling (USD). When today's spend reaches it, the daemon
    *  idles/stops. Resets per calendar day. Default modest. */
   dailyBudgetUsd: number;
