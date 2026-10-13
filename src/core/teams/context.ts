@@ -67,9 +67,17 @@ export function retrieveContext(team: string, req: { query: string; scope: Conte
   if (!validOwnerScope(req.scope?.owner)) throw new Error('scope.owner must be personal, company or client:<name>.');
   const budget = Math.min(Math.max(req.budgetTokens ?? 1200, 100), 16_000);
   const q = terms(req.query);
-  const all = listContext(team);
-  const superseded = new Set(all.flatMap((e) => e.supersedes));
-  const visible = all.filter((e) => !superseded.has(e.id) && scopeVisible(e.scope, req.scope));
+  const scoped = listContext(team).filter(entry => scopeVisible(entry.scope, req.scope));
+  const byId = new Map(scoped.map(entry => [entry.id, entry]));
+  // A hidden context cannot remove visible evidence. Even a broad request
+  // may admit several projects/owners: replacement applies only within the
+  // exact original scope, never across those independently admitted facts.
+  const superseded = new Set(scoped.flatMap(entry => entry.supersedes.filter(id => {
+    const target = byId.get(id);
+    return target !== undefined && entry.scope.owner === target.scope.owner
+      && entry.scope.project === target.scope.project && entry.scope.person === target.scope.person;
+  })));
+  const visible = scoped.filter(entry => !superseded.has(entry.id));
   const now = req.now ?? Date.now();
   const halfLifeMs = (req.halfLifeDays ?? 14) * 86_400_000;
   const docs = visible.map((e) => ({ e, toks: terms(`${e.title} ${e.title} ${e.tags.join(' ')} ${e.text}`) }));

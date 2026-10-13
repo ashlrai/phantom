@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addContext, compileTaskContext, requestHandoff, retrieveContext, transitionHandoff, type TeamActor } from '../src/core/teams/index.js';
 import { gatherProposals, isPublicEvidenceRef, openProposalPr, renderProposal, renderPublicProposal, type Exec } from '../src/core/improve/loop.js';
+import type { ContextScope } from '../src/core/teams/context.js';
 
 const a: TeamActor = { kind: 'agent', id: 'agent:codex/1' };
 const b: TeamActor = { kind: 'agent', id: 'agent:grok-bot/m' };
@@ -28,6 +29,35 @@ describe('evidence-scored context', () => {
     addContext(T, a, { title: 'Node version', text: 'CI uses node 22.', source: 'ci@2', scope: { owner: 'company' }, supersedes: [old.id] });
     const items = retrieveContext(T, { query: 'node ci', scope: { owner: 'company' } }).items;
     expect(items.map((i) => i.source)).toEqual(['ci@2']);
+  });
+
+  const boundaries: { name: string; old: ContextScope; replacement: ContextScope; request: ContextScope }[] = [
+    { name: 'another client', old: { owner: 'client:a' }, replacement: { owner: 'client:b' }, request: { owner: 'client:a' } },
+    { name: 'hidden person', old: { owner: 'company', person: 'mason' }, replacement: { owner: 'company', person: 'evan' }, request: { owner: 'company', person: 'mason' } },
+    { name: 'hidden project', old: { owner: 'company', project: 'a/repo' }, replacement: { owner: 'company', project: 'b/repo' }, request: { owner: 'company', project: 'a/repo' } },
+    { name: 'hidden personal owner', old: { owner: 'company' }, replacement: { owner: 'personal' }, request: { owner: 'company' } },
+    { name: 'different projects in a broad request', old: { owner: 'company', project: 'a/repo' }, replacement: { owner: 'company', project: 'b/repo' }, request: { owner: 'company' } },
+    { name: 'different visible owner scopes', old: { owner: 'personal' }, replacement: { owner: 'company' }, request: { owner: 'personal' } },
+    { name: 'unscoped project replacement', old: { owner: 'company', project: 'a/repo' }, replacement: { owner: 'company' }, request: { owner: 'company', project: 'a/repo' } },
+    { name: 'unscoped person replacement', old: { owner: 'company', person: 'mason' }, replacement: { owner: 'company' }, request: { owner: 'company', person: 'mason' } },
+  ];
+  it.each(boundaries)('does not let $name suppress visible context', ({ old, replacement, request }) => {
+    const original = addContext(T, a, { title: 'Original deployment fact', text: 'Original deployment uses signed releases.', source: 'original@1', scope: old });
+    const before = retrieveContext(T, { query: 'deployment', scope: request });
+    expect(before.items.map(item => item.id)).toContain(original.id);
+    addContext(T, b, { title: 'Other deployment fact', text: 'Other deployment uses separate staging.', source: 'other@1', scope: replacement, supersedes: [original.id] });
+    const after = retrieveContext(T, { query: 'deployment', scope: request });
+    expect(after.items.map(item => item.id)).toContain(original.id);
+    expect(after.items.find(item => item.id === original.id)?.source).toBe('original@1');
+  });
+
+  it('retains valid same-scope replacement chains and ignores other scoped suppression', () => {
+    const scope: ContextScope = { owner: 'client:a', project: 'a/repo', person: 'mason' };
+    const old = addContext(T, a, { title: 'Deployment version', text: 'Deployment version one.', source: 'deploy@1', scope });
+    const middle = addContext(T, a, { title: 'Deployment version', text: 'Deployment version two.', source: 'deploy@2', scope, supersedes: [old.id] });
+    const latest = addContext(T, a, { title: 'Deployment version', text: 'Deployment version three.', source: 'deploy@3', scope, supersedes: [middle.id] });
+    addContext(T, b, { title: 'Other deployment version', text: 'Other deployment version four.', source: 'other@4', scope: { ...scope, owner: 'client:b' }, supersedes: [latest.id] });
+    expect(retrieveContext(T, { query: 'deployment', scope }).items.map(item => item.source)).toEqual(['deploy@3']);
   });
 
   it('compiles task context with the constitution prefix under budget', () => {
