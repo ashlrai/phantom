@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ashlrMdDeepLink, ashlrMdInstallHint, isAshlrMdInstalled, isMarkdownPath,
   markdownOpenerPref, planMarkdownOpen,
-} from '../src/core/markdown-opener.js';
+} from '../src/cli/open.js';
 
 const none = { platform: 'darwin' as const, env: { PATH: '/usr/bin' }, home: '/Users/m', exists: () => false };
 const app = { ...none, exists: (p: string) => p === '/Applications/Ashlr MD.app' };
