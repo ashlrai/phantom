@@ -34,6 +34,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Reject established agent contexts for human team joining and approval.
   Preserve the first local human's ownership after agent activity and refuse
   agent role promotion, including inconsistent event and member kinds.
+- Keep context replacements within the same owner, project and person scope;
+  hidden or separately scoped evidence cannot suppress an admitted record.
+- Create improvement proposals in unique owned worktrees, withhold private or
+  unverified GitHub evidence, and scrub public titles consistently. Proposals
+  remain drafts; automatic merging requires the existing protected process.
 
 ## [3.29.14] — Unreleased
 
