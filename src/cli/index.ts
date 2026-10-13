@@ -1869,6 +1869,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'steward': {
+        const { cmdSteward } = await import('./steward.js');
+        process.exitCode = await cmdSteward(rest);
+        break;
+      }
+
+      case 'team': {
+        const { cmdTeam } = await import('./team.js');
+        process.exitCode = await cmdTeam(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
