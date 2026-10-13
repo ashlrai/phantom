@@ -57,7 +57,7 @@ export interface TeamEvent<P = Record<string, unknown>> {
 }
 
 /** Actions that must be approved by a human owner/admin before acceptance. */
-export const CONSEQUENTIAL_ACTIONS = ['deploy', 'release', 'merge', 'rotate-secret', 'external-message', 'delete', 'spend'] as const;
+export const CONSEQUENTIAL_ACTIONS = ['push-main', 'deploy', 'release', 'merge', 'rotate-secret', 'external-message', 'delete', 'spend'] as const;
 export type ConsequentialAction = typeof CONSEQUENTIAL_ACTIONS[number];
 
 export interface ClaimTarget { repo: string; branch?: string; path?: string }

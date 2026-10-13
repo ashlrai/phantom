@@ -70,7 +70,7 @@ interface TeamEvent { v: 1; id: string /* <ms36>-<rand> */; ts: string; team: st
 Claim overlap: same repo, and branches not different, and paths equal or
 prefix-related (a repo-wide claim blocks everything in that repo).
 
-Consequential actions: `deploy, release, merge, rotate-secret,
+Consequential actions (sandbox-first: everything else runs freely in the task worktree): `push-main, deploy, release, merge, rotate-secret,
 external-message, delete, spend`. Agents can request them; nobody can accept
 them until a human owner/admin runs `phm team approve <id>`. There is no MCP
 tool that approves.
@@ -205,20 +205,48 @@ narrow or widen it. Everything else runs without ceremony.
 
 ## 11. Context & resource steward (department + agent)
 
-* **Shipped in Phase 1:** `phm steward disk [--apply]` measures Codex sessions
-  and logs, Claude projects and Phantom logs/runs against per-root retention
-  and quotas (defaults: Codex sessions 14 d / 2 GB, Codex log 7 d / 512 MB,
-  Claude projects 30 d / 2 GB, Phantom logs 14 d / 512 MB, runs 30 d / 2 GB).
-  Dry run by default; `--apply` deletes only retention-expired or
-  oldest-over-quota files inside allowlisted roots, never symlinks, never files
-  touched in the last hour.
-* Phase 2: scheduled steward (daemon tick), configurable policy, context-size
-  budgets enforced on `context_get` packs and on team log compaction
-  (snapshot + rotate `events.jsonl`), stale worktree/artifact cleanup.
-* Phase 3: concurrency scheduler that places agent sessions on the local
-  machine (e.g. 128 GB RAM running a local model: admit by free RAM/VRAM and
-  model residency) vs cloud subscriptions/credits (admit by quota windows,
-  reusing RESOURCE-POOLS / RESET-AWARE-SCHEDULING).
+* **Shipped in Phase 1:** `phm steward disk [--apply] [--json]`. Codex
+  session stores have hit 70–534 GiB in public reports, so the steward:
+  * measures `~/.codex/sessions`, `~/.codex/log`, `~/.claude/projects`,
+    `~/.ashlr/logs`, `~/.ashlr/runs` against retention + quota (Codex
+    sessions 30 d / 20 GB, Claude projects 30 d / 10 GB, logs 14 d / 1 GB,
+    runs 30 d / 4 GB) and warns;
+  * **never hand-deletes vendor sessions**: cold Codex/Claude sessions are
+    gzip-copied to `~/.ashlr/archive/`, verified byte-for-byte, then removed,
+    and the report points to vendor-native retention (`codex delete`, Claude
+    `cleanupPeriodDays`);
+  * never touches anything modified in the last 24 h (active sessions), never
+    follows symlinks, only acts inside allowlisted roots, and is a dry run
+    unless `--apply`. Plain logs Phantom owns are deleted by retention/quota.
+* Phase 2: scheduled steward tick with threshold alerts, policy in
+  `phantom.toml` (`codex_sessions_max_gb`, `log_retention_days`), summary cards
+  for archived sessions, team-log snapshot + rotation, stale worktree cleanup,
+  context budgeter (stable cached prefix, recall-first compaction, ≤2k-token
+  subagent summaries, no full-history forks).
+* Phase 3: resource scheduler — local model (128 GB RAM box) for summarize /
+  triage / compaction, subscriptions for coding, API spend only where worth it,
+  RAM and concurrency caps (reuses RESOURCE-POOLS / RESET-AWARE-SCHEDULING).
+
+## 11a. Alignment with the 2026-10 research (shared-context-orchestration)
+
+* **Read fans out, write is single-threaded:** worktree per task + short-lived
+  claim (Phase 1 claims default 2 h, min 1 min); one writer per branch; PRs are
+  the only merge path. Phase 2 wires auto-claim + worktree into dispatch.
+* **Open protocols, no private bus:** the team log is Phantom's durable state;
+  agents reach it via MCP tools now and via **A2A Agent Cards** (Phantom, Grok
+  Bot, Meta Muse, coding workers) in Phase 2. Secrets, Locus, claims and
+  context are exposed as MCP servers/tools.
+* **Chat for humans only:** Telegram/Slack carry digests and approvals; agent
+  traffic goes over A2A tasks + the queue. The leader agent is a router and
+  digest writer, not a free-chatting "org chart" (research: 4% vs 30%).
+* **`phantom.toml`:** layered user → org → repo, zero-config auto-detect,
+  warnings on unknown keys, `phm config validate` / `phm config explain`
+  (effective value + origin). Holds the source-owner map, approval list
+  overrides and steward budgets.
+* **One instruction source** generates AGENTS.md, CLAUDE.md and Skills
+  (progressive disclosure) so instructions never drift.
+* **Registries:** wizard reads the ashlrai Claude plugin marketplace and
+  `io.github.ashlrai/*` MCP Registry entries instead of a hand-kept catalog.
 
 ## 12. Decisions for the operator
 
