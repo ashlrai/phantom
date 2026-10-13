@@ -85,8 +85,9 @@ describe('setup assistant', () => {
     const enabled = new Set(['phantom-secrets', 'locus'] as const);
     const plans = [planResource(claude, enabled), planResource({ ...acmeKey, label: `leak ${FAKE_KEY}` }, enabled)];
     const proposals = buildProposals(enabled, plans, new Set(['locus']));
-    expect(proposals.some((p) => p.id === 'install:phantom-secrets')).toBe(true);
-    expect(proposals.some((p) => p.id === 'install:locus')).toBe(false);
+    const install = proposals.find((p) => p.id === 'install:companions')!;
+    expect(install.command).toContain('ashlrai/phantom/phantom');
+    expect(install.command).not.toContain('locus');
     expect(proposals.at(-1)?.kind).toBe('verify');
     const brief = buildAssistantBrief(enabled, plans, proposals);
     expect(brief).toContain('phm:OPENAI_API_KEY_ACME');

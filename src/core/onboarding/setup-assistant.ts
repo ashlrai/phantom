@@ -30,9 +30,16 @@ export type ProposalDecision = 'pending' | 'confirmed' | 'skipped';
 
 export function buildProposals(companions: ReadonlySet<CompanionId>, plans: readonly ResourcePlan[], installed: ReadonlySet<CompanionId> = new Set()): SetupProposal[] {
   const out: SetupProposal[] = [];
-  for (const c of COMPANION_MANIFEST) {
-    if (!companions.has(c.id) || installed.has(c.id)) continue;
-    out.push({ id: `install:${c.id}`, kind: 'install-companion', title: `Install ${c.title}`, why: c.tagline, command: c.install });
+  // One grouped step, not one per companion: fewer choices on screen.
+  const toInstall = COMPANION_MANIFEST.filter((c) => companions.has(c.id) && !installed.has(c.id));
+  if (toInstall.length) {
+    out.push({
+      id: 'install:companions',
+      kind: 'install-companion',
+      title: toInstall.length === 1 ? `Install ${toInstall[0]!.title}` : `Install ${toInstall.length} companions`,
+      why: toInstall.map((c) => c.title).join(', '),
+      command: toInstall.map((c) => c.install).join('\n'),
+    });
   }
   for (const p of plans) {
     const meta = kindMeta(p.entry.kind);
@@ -41,7 +48,9 @@ export function buildProposals(companions: ReadonlySet<CompanionId>, plans: read
       out.push({
         id: `res:${p.entry.id}:${i}`,
         kind,
-        title: kind === 'store-credential'
+        title: step.startsWith('phantom init')
+          ? 'Create this project’s Secrets vault (once)'
+          : kind === 'store-credential'
           ? `Store ${p.entry.credentialName} ${p.store === 'phantom-secrets' ? 'in Phantom Secrets' : 'in the OS keychain'}`
           : kind === 'bind-scope' ? `Bind ${p.entry.label} to its ${p.entry.scope} scope` : `Connect ${p.entry.label} (${meta.label})`,
         why: kind === 'store-credential' ? 'You type the value in a hidden terminal prompt; Phantom and the assistant only see a reference.'
