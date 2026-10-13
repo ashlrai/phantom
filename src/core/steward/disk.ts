@@ -138,8 +138,7 @@ export function runSteward(policy: StewardPolicy, opts: { apply?: boolean; now?:
           const realArchive = realpathSync(policy.archiveDir);
           const realDestDir = realpathSync(dirname(dest));
           if (!(realDestDir === realArchive || realDestDir.startsWith(realArchive + sep))) continue;
-          try { if (lstatSync(dest).isSymbolicLink()) continue; } catch { /* new file */ }
-          writeFileSync(dest, gz, { mode: 0o600 });
+          writeFileSync(dest, gz, { mode: 0o600, flag: 'wx' }); // never overwrite an existing archive (file, link or hardlink)
           if (!gunzipSync(readFileSync(dest)).equals(raw)) continue; // verify before removing
           unlinkSync(f.path);
           report.archived.files++; report.archived.bytes += f.bytes;
