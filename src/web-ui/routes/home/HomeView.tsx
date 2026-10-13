@@ -5,6 +5,8 @@
 import { Link } from 'react-router-dom';
 import { homeDashboardQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
+import { WelcomeCard } from './WelcomeCard.js';
+import { ErrorState } from '../../components/states/States.js';
 import styles from './HomeView.module.css';
 
 const dur = (s: number | null) => (s === null ? '—' : s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
@@ -21,7 +23,7 @@ export function HomeView() {
       <div className={styles.view}>
         <h1 className={styles.title}>Today</h1>
         {q.error
-          ? <div role="alert" className={styles.callout}><p>The home dashboard could not load.</p><p>Run <code>ashlr home --json</code> in a terminal to see the exact error, then check <code>gh auth status</code>.</p></div>
+          ? <ErrorState what="The home dashboard" error={q.error} fix="ashlr home --json" />
           : <p className={styles.muted}>Loading today…</p>}
       </div>
     );
@@ -32,6 +34,7 @@ export function HomeView() {
         <h1 className={styles.title}>Today</h1>
         <span className={styles.muted}>last {d.windowHours}h · {new Date(d.generatedAt).toLocaleTimeString()}</span>
       </header>
+      <WelcomeCard />
       {d.empty ? (
         <section className={styles.empty}>
           <h2>Nothing shipped yet, and nothing needs you.</h2>

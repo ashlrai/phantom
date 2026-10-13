@@ -356,6 +356,7 @@ export function agentDocsText(): string {
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
   lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('Welcome: ashlr_welcome_status is the first-run wizard (ashlr welcome --json).');
   lines.push('Settings: ashlr_settings_get reads; ashlr_settings_set applies narrowing changes');
   lines.push('only (widening returns needs-human + command). CLI: ashlr settings [set k v] --json.');
   lines.push('Home: ashlr_home is the daily dashboard (merged PRs, spend, value per $/token/s,');

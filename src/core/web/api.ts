@@ -1757,6 +1757,24 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/welcome ── first-run wizard state; POST marks a step done/skipped/dismissed.
+    if (path === '/api/welcome' && method === 'GET') {
+      sendJson(res, 200, await (await import('../firstrun/wizard.js')).loadWizard());
+      return true;
+    }
+    if (path === '/api/welcome' && method === 'POST') {
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: { step?: unknown; how?: unknown };
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { sendJson(res, 400, { error: 'invalid JSON body', command: 'ashlr welcome --skip <step>' }); return true; }
+      const wiz = await import('../firstrun/wizard.js');
+      const ids = ['github', 'ecosystem', 'budget', 'notifications', 'autonomy', 'dismiss'];
+      if (typeof body.step !== 'string' || !ids.includes(body.step)) { sendJson(res, 400, { error: `step must be one of ${ids.join(', ')}` }); return true; }
+      wiz.markFirstRun(body.step as never, body.how === 'skipped' ? 'skipped' : 'finished');
+      sendJson(res, 200, await wiz.loadWizard());
+      return true;
+    }
+
     // ── GET /api/settings ── read-only settings view.
     if (path === '/api/settings' && method === 'GET') {
       sendJson(res, 200, await (await (await import('../settings/backend.js')).realSettingsBackend('web')).read());

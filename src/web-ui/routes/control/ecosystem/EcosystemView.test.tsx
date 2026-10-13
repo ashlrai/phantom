@@ -31,6 +31,6 @@ describe('EcosystemView', () => {
   it('has an actionable empty/error state', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('x', { status: 500 })));
     render(<MemoryRouter><EcosystemView /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/Ecosystem status is unavailable/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Ecosystem status could not load/)).toBeInTheDocument());
   });
 });

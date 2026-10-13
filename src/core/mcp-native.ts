@@ -216,6 +216,13 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('./website/host-release.js')).websiteStatus(),
   },
   {
+    name: 'ashlr_welcome_status',
+    description: 'First-run wizard state (same as `ashlr welcome --json` and the console Welcome card): five setup steps (GitHub, ecosystem repos, budget, notifications, autonomy) with done/todo/skipped, the exact command for each, and the next step. Read-only; apply steps with ashlr_ecosystem_up / ashlr_settings_set.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./firstrun/wizard.js')).loadWizard(),
+  },
+  {
     name: 'ashlr_settings_get',
     description: 'Phantom settings (same as `ashlr settings --json` and the console Settings page): autonomy level and cap, enrolled repos, schedules, allowed engines, budget caps, notifications, constitution path and versions. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
