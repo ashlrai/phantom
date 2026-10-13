@@ -154,8 +154,9 @@ current availability unconfirmed; a current credit reading does not refresh an
 expired subscription reading. See the
 [source-expiry guard](../src/core/verse/quota-freshness.ts) and
 [follow-up acceptance](PROACTIVE-COORDINATION-BACKLOG.md#local-resource-display-follow-up).
-This slice is local and unreleased; the source package version alone does not
-establish a final 3.29.14 release, installed behavior or provider qualification.
+This source candidate includes the resource-display slice for 3.29.15. Verify
+matching published artifacts before installation; the source version alone
+does not establish publication, installed behavior or provider qualification.
 
 [Routing lab](../src/core/proactive/routing-lab.ts) saves a deterministic shadow
 evaluation of one exact saved task/brief, or runs a synthetic offline benchmark.

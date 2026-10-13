@@ -102,10 +102,10 @@ verified live outcomes and account/model cohorts remain future work.
 
 ### Local resource-display follow-up
 
-This bounded next slice is local and unreleased. A source version of 3.29.14 is
-not evidence of a final release, publication, installation or live acceptance.
-Team backend proposals and transport/funding qualification remain separate
-backlog work.
+This source candidate includes the bounded resource-display slice for 3.29.15.
+A source version is not evidence of publication, installation or live
+acceptance. Team collaboration, external transports and funding retain
+separate operational acceptance gates.
 
 Operator/source acceptance:
 

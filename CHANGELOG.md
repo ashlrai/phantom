@@ -9,6 +9,29 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.29.15] — Unreleased
+
+### Added
+- Group resource displays by provider while keeping configured references,
+  current readings and verified account coverage separate. Unknown identities,
+  balances and capacity stay unknown; grouping does not authorize execution.
+- Add local team claims, handoffs and scoped shared context, an evidence-scored
+  task context compiler, and public-only self-improvement proposals through
+  the normal protected pull-request path. Human team approval, standing
+  authority and provider qualification remain separate gates.
+- Add bounded steward disk and session-retention planning with the existing
+  operator controls; source availability does not establish runtime acceptance.
+
+### Fixed
+- Preserve original quota and credit expiry across resource cards, provider
+  groups and capacity views. Connection and admission checks cannot refresh
+  or extend retained usage evidence.
+- Keep ordinary resource rows and controls available when optional provider
+  grouping fails to load or returns invalid data.
+- Restrict steward effects to the documented roots and actions, refuse
+  symlink paths and observed file replacements, and preserve existing archives
+  through exclusive creation and verification before removing an original.
+
 ## [3.29.14] — Unreleased
 
 ### Added
