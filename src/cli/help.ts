@@ -348,6 +348,9 @@ export function agentDocsText(): string {
   lines.push('planning preferences, not provider connections or verified dispatch capability.');
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
+  lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
+  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_context_add and');
+  lines.push('phm_team_context_get. Claims are leases; consequential handoffs wait for human approval.');
   lines.push('Equivalent MCP tools (when wired via `ashlr wire`): ashlr_orient,');
   lines.push('ashlr_ask, ashlr_recall, ashlr_learn, ashlr_backlog, ashlr_health,');
   lines.push('ashlr_status, ashlr_impact, ashlr_pulse, ashlr_inbox_list,');
@@ -648,6 +651,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes 21 native ashlr_* tools).', topic: 'integrations' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
+  { cmd: 'team <view|join|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
   { cmd: 'companions [--json] [--root <dir>] [--bin-dir <dir>]', desc: 'Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.', topic: 'integrations' },
   { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
   { cmd: 'gh <pr|issue|ci>',             desc: 'Read GitHub open PRs, issues, or CI status for the current repo (read-only).', topic: 'integrations' },

@@ -1869,6 +1869,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'team': {
+        const { cmdTeam } = await import('./team.js');
+        process.exitCode = await cmdTeam(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
