@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { listContext, teamState } from '../teams/index.js';
 import type { StewardReport } from '../steward/disk.js';
+import { readTelemetry } from '../metrics/telemetry.js';
+import { rollup } from '../metrics/scoring.js';
 
 export interface Evidence { ref: string; summary: string }
 export interface Proposal { id: string; title: string; rationale: string; evidence: Evidence[]; evalPlan: string; metric: string }
@@ -34,6 +36,11 @@ export function gatherProposals(team: string, steward?: StewardReport): Proposal
   for (const f of feedback.slice(0, 10)) {
     const title = `Address: ${f.title}`;
     out.push({ id: pid(title), title, rationale: f.text.slice(0, 600), evidence: [{ ref: f.source, summary: f.title }], evalPlan: 'Add a failing test or eval reproducing the report, then make it pass.', metric: 'task success rate on the reported workflow' });
+  }
+  for (const a of rollup(readTelemetry()).byAgent) {
+    if (a.prsShipped < 3 || a.avgQuality === null || a.avgQuality >= 0.5) continue;
+    const title = `Improve PR quality for ${a.key}`;
+    out.push({ id: pid(title), title, rationale: `${a.key} shipped ${a.prsShipped} PRs with mean quality ${a.avgQuality}.`, evidence: [{ ref: `metrics:agent/${a.key}`, summary: `value/1M tok ${a.valuePerMTok}` }], evalPlan: 'Compare quality on the next 10 tasks of the same type with a revised strategy (bandit arm).', metric: 'mean PR quality score' });
   }
   return out;
 }
