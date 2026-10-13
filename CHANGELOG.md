@@ -9,7 +9,81 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.13] — Unreleased
+## [3.29.14] — Unreleased
+
+### Added
+- Add an optional desktop-only Devin dashboard observation. In a separate
+  account window, a user-present sign-in can read the displayed Max weekly
+  percentage, on-demand balance, auto-reload state, and plan price. Each
+  short-lived reading brackets Usage with matching organization IDs from
+  General before and after. It is display-only and does not change launch
+  admission, budgets, or the ACU ledger. Embedded sign-in and real account
+  extraction still require user-present validation.
+- Add an opt-in resident Mac awake preference with status and controls in
+  Settings. Its installed service requests idle sleep prevention while running,
+  plus system sleep prevention on AC power; a stopped service holds no assertion.
+  The setting does not override lid closure or the signed authority policy. The
+  resident panel includes a finite, reduced-motion-aware coffee scene with Ash.
+- Add local companion task records, explicitly scoped handoff packets, manual
+  reports and independent operator review in the existing proactive workbench.
+  Resource evidence, offline routing comparisons and release-readiness views
+  distinguish declarations from verified evidence. External companion transports
+  remain unqualified; these records do not authorize provider dispatch.
+- Make older completed and archived agents discoverable through Done history,
+  and guide onboarding toward one bounded change with an inspected diff and
+  actual repository test output.
+- Add explicit native pool re-enrollment with a reviewed plan digest, atomic
+  staged custody, interrupted-publication recovery and exact completed replay.
+  Preserve policy, receipts, aliases and operator holds; keep retained old
+  context behind its original account boundary. Runtime admission requires
+  intact transition custody and fresh target collector/profile evidence, with
+  subscription-only billing qualification separate from locator migration.
+
+### Fixed
+- Skip unmatched path characters in the composer's file finder without changing
+  scores, ordering or result limits. Preserve the existing handler CPU budget.
+- Keep a resource supervisor available when another enrolled owner atomically
+  commits a valid pool ledger during its custody read. Retry only the observed
+  file replacement with bounded fresh reads; unsafe data, invalid controls and
+  incomplete commissioning still hold execution.
+- Honor the provider's original native quota expiry across resource cards,
+  account details, composer seats and mobile views. Cached readings remain
+  dated history after failed refreshes; exact expiry and focus resumption clear
+  current claims without renewing evidence or coupling independent credits.
+- Read the installed resident service definition without following a swapped
+  symlink, and report service transition states without claiming an awake
+  assertion before the resident confirms it.
+- Read the current Devin dashboard's bounded plan-card price and renewal fields
+  when the provider renders them as leaf divs, while rejecting ambiguous cards.
+- Require every task to complete before a run reports `done`; retain partial
+  results and explain failed or blocked descendants.
+- Finalize durable output before publishing terminal run state. Drain large SSE
+  replays with backpressure, independently resume task/step/output events, and
+  keep browser replay open through its terminal frame. SSE IDs are opaque
+  versioned cursors; legacy numeric cursors remain accepted. Capture gaps and
+  interrupted reconnects are visible separately from the run outcome.
+- Reject ambiguous MCP routes and collect bounded paginated inventories before
+  replacing them. Failed discovery revokes invocation routes and exposes stale
+  inventory diagnostics.
+- Mark cached agent boards stale after refresh failure. Preserve per-seat launch
+  results and retry only confirmed unstarted attempts; disclose held first
+  prompts. Clear dismissed MCP drafts and reject late parked actions without
+  implying cancellation of a write already issued.
+- Detect lost local coordination records with separate replay watermarks,
+  replay committed acknowledgments before fresh host observations, and allow
+  cancellation of an assignment that has never been handed off.
+- Describe available Codex credits separately from spending authorization;
+  an unreached provider spending control does not mean credit spending is off.
+- Hold Devin fleet API launches under a zero or unavailable standing metered
+  allowance before credentials, queue publication and every create attempt.
+  Recheck tightened allowances after preparation and retry backoff. Human
+  attribution and subscription labels do not establish included API billing;
+  native CLI, manual launches and usage metadata keep their existing paths.
+- Reject quota-proof metadata failures before native contact or after known
+  settlement without falsely reporting uncertain native termination. Actual
+  unknown or uncertain launches retain their durable recovery fence.
+
+## [3.29.13] — 2026-10-12
 
 ### Added
 - Allow an explicitly selected loopback llama-server to serve Fleet alongside

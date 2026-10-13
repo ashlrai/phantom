@@ -1,6 +1,6 @@
 /** Native metadata tools share the UI store and its stale-write checks. */
-import { getProactiveProfilesStore, ProactiveProfileError } from './profiles.js';
-import { PROACTIVE_PROVIDERS, type ProactiveProfile } from './types.js';
+import { getProactiveProfilesStore, parseProactiveSlug, ProactiveProfileError } from './profiles.js';
+import { type ProactiveProfile } from './types.js';
 import { scrubSecrets } from '../knowledge/index.js';
 
 function args(value: Record<string, unknown>, keys: string[]): void {
@@ -10,6 +10,7 @@ function summary(profile: ProactiveProfile) {
   return {
     id: profile.id, version: profile.version, identity: profile.identity, displayName: profile.displayName,
     avatar: profile.avatar, responsibility: profile.responsibility.slice(0, 240),
+    capabilityIds: profile.capabilityIds, capabilityVerification: profile.capabilityVerification, preferences: profile.preferences,
     serviceCount: profile.services.length, computer: profile.computer, fundingReference: profile.fundingReference,
     enabled: profile.enabled, connection: profile.connection, operations: profile.operations, lastRun: profile.lastRun,
   };
@@ -17,7 +18,7 @@ function summary(profile: ProactiveProfile) {
 export async function listProactiveProfiles(value: Record<string, unknown>): Promise<unknown> {
   args(value, ['accountId', 'provider', 'offset', 'limit']);
   if (value['accountId'] !== undefined && (typeof value['accountId'] !== 'string' || value['accountId'].length > 256)) throw new ProactiveProfileError('INVALID_INPUT', 'Invalid account filter.');
-  if (value['provider'] !== undefined && !PROACTIVE_PROVIDERS.includes(value['provider'] as typeof PROACTIVE_PROVIDERS[number])) throw new ProactiveProfileError('INVALID_INPUT', 'Invalid provider filter.');
+  if (value['provider'] !== undefined) value = { ...value, provider: parseProactiveSlug(value['provider']) };
   const offset = value['offset'] ?? 0, limit = value['limit'] ?? 10;
   if (!Number.isSafeInteger(offset) || Number(offset) < 0 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) throw new ProactiveProfileError('INVALID_INPUT', 'Use a nonnegative offset and a limit from 1 to 50.');
   const all = (await getProactiveProfilesStore().list()).profiles.filter(profile =>
