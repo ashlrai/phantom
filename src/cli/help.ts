@@ -348,6 +348,9 @@ export function agentDocsText(): string {
   lines.push('planning preferences, not provider connections or verified dispatch capability.');
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
+  lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
+  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_context_add and');
+  lines.push('phm_team_context_get. Claims are leases; consequential handoffs wait for human approval.');
   lines.push('Equivalent MCP tools (when wired via `ashlr wire`): ashlr_orient,');
   lines.push('ashlr_ask, ashlr_recall, ashlr_learn, ashlr_backlog, ashlr_health,');
   lines.push('ashlr_status, ashlr_impact, ashlr_pulse, ashlr_inbox_list,');
