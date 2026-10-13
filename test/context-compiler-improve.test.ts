@@ -70,6 +70,17 @@ describe('self-improvement loop', () => {
     expect(renderPublicProposal(ps[0]!)).not.toMatch(/\(team:/);
   });
 
+  it('--auto-merge opens a ready PR and arms auto-merge without --admin or direct pushes', () => {
+    addContext(T, b, { title: 'x', text: 'y', source: 'https://github.com/ashlrai/phantom/issues/1', scope: { owner: 'company' }, tags: ['bug'] });
+    const [p] = gatherProposals(T);
+    const calls: string[] = [];
+    const exec: Exec = (cmd, args) => { calls.push([cmd, ...args].join(' ')); return cmd === 'git' && args[0] === 'symbolic-ref' ? 'origin/main\n' : cmd === 'gh' && args[1] === 'create' ? 'https://github.com/x/y/pull/2\n' : ''; };
+    expect(openProposalPr(p!, home, exec, { autoMerge: true })).toBe('https://github.com/x/y/pull/2');
+    expect(calls.some((c) => c.startsWith('gh pr create') && c.includes('--draft'))).toBe(false);
+    expect(calls).toContain('gh pr merge https://github.com/x/y/pull/2 --auto --squash');
+    expect(calls.some((c) => /--admin|push origin main|push -f|push --force/.test(c))).toBe(false);
+  });
+
   it('keeps public GitHub evidence links and withholds everything else', () => {
     addContext(T, b, { title: 'Crash on start', text: 'secret customer detail', source: 'https://github.com/ashlrai/phantom/issues/12', scope: { owner: 'company' }, tags: ['bug'] });
     addContext(T, b, { title: 'Private DM', text: 'private', source: 'slack:dm/xyz', scope: { owner: 'company' }, tags: ['bug'] });

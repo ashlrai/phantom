@@ -1,7 +1,7 @@
 /**
- * Self-improvement proposal loop (Phase 1): turn evidence into proposals and,
- * when asked, open them as DRAFT pull requests. It never merges, never pushes
- * to the default branch and never deploys (CONSTITUTION.md "Always ask").
+ * Self-improvement proposal loop: turn evidence into proposals and open them as
+ * PRs (draft, or ready with auto-merge armed so they merge only on green). It
+ * never pushes to the default branch, never uses --admin and never tags/deploys.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -73,7 +73,9 @@ export type Exec = (cmd: string, args: string[], cwd: string) => string;
 const realExec: Exec = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 /** Open one proposal as a draft PR from an isolated worktree. Returns the PR URL. */
-export function openProposalPr(p: Proposal, repoDir: string, exec: Exec = realExec): string {
+export interface OpenPrOptions { /** Open ready (not draft) and arm GitHub auto-merge so it merges on green. */ autoMerge?: boolean }
+
+export function openProposalPr(p: Proposal, repoDir: string, exec: Exec = realExec, opts: OpenPrOptions = {}): string {
   const base = exec('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoDir).trim().replace(/^origin\//, '') || 'main';
   const branch = `improve/${p.id}-${slug(p.title)}`;
   if (branch === base) throw new Error('Refusing to write to the default branch.');
@@ -87,7 +89,12 @@ export function openProposalPr(p: Proposal, repoDir: string, exec: Exec = realEx
     exec('git', ['add', 'workplans/proposals'], wt);
     exec('git', ['commit', '-m', `proposal: ${p.title}`], wt);
     exec('git', ['push', '-u', 'origin', branch], wt);
-    return exec('gh', ['pr', 'create', '--draft', '--base', base, '--head', branch, '--title', `proposal: ${p.title}`, '--body', renderPublicProposal(p)], wt).trim();
+    const url = exec('gh', ['pr', 'create', ...(opts.autoMerge ? [] : ['--draft']), '--base', base, '--head', branch, '--title', `proposal: ${p.title}`, '--body', renderPublicProposal(p)], wt).trim();
+    if (opts.autoMerge) {
+      // GitHub merges only when required checks/reviews pass; never --admin.
+      try { exec('gh', ['pr', 'merge', url, '--auto', '--squash'], wt); } catch { /* auto-merge disabled on repo: PR stays open for a merge-on-green runner */ }
+    }
+    return url;
   } finally {
     try { exec('git', ['worktree', 'remove', '--force', wt], repoDir); } catch { /* best effort */ }
   }
