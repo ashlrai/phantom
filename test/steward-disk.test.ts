@@ -60,4 +60,42 @@ describe('steward disk guardrails', () => {
     expect(r.deleted.files).toBe(0);
     expect(existsSync(f)).toBe(true);
   });
+
+  it('refuses a root that is itself a symlink to outside home', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'phm-outside-'));
+    try {
+      const victim = join(outside, 'precious.log'); writeFileSync(victim, Buffer.alloc(2048)); const t = (now - 90 * 86_400_000) / 1000; utimesSync(victim, t, t);
+      mkdirSync(join(home, '.ashlr'), { recursive: true });
+      symlinkSync(outside, join(home, '.ashlr/logs'));
+      const r = runSteward(defaultStewardPolicy(home), { home, now, apply: true });
+      const rr = r.roots.find((x) => x.id === 'ashlr-logs')!;
+      expect(rr.refused).toMatch(/symlink|outside/);
+      expect(existsSync(victim)).toBe(true);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  it('refuses a root whose parent component is a symlink leaving home', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'phm-outside-'));
+    try {
+      mkdirSync(join(outside, 'sessions'), { recursive: true });
+      const victim = join(outside, 'sessions/old.jsonl'); writeFileSync(victim, 'x'); const t = (now - 90 * 86_400_000) / 1000; utimesSync(victim, t, t);
+      symlinkSync(outside, join(home, '.codex'));
+      const r = runSteward(defaultStewardPolicy(home), { home, now, apply: true });
+      expect(r.roots.find((x) => x.id === 'codex-sessions')!.refused).toBeTruthy();
+      expect(existsSync(victim)).toBe(true);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  it('does not follow file or directory symlinks inside a root', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'phm-outside-'));
+    try {
+      const victim = join(outside, 'v.log'); writeFileSync(victim, Buffer.alloc(4096)); const t = (now - 90 * 86_400_000) / 1000; utimesSync(victim, t, t);
+      file('.ashlr/logs/real-old.log', 1, 90);
+      symlinkSync(victim, join(home, '.ashlr/logs/link.log'));
+      symlinkSync(outside, join(home, '.ashlr/logs/dirlink'));
+      runSteward(defaultStewardPolicy(home), { home, now, apply: true });
+      expect(existsSync(victim)).toBe(true);
+      expect(existsSync(join(home, '.ashlr/logs/real-old.log'))).toBe(false);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
+  });
 });
