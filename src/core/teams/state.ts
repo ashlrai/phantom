@@ -2,6 +2,7 @@
  * Pure fold over the team log + the guarded operations (claims, handoffs,
  * approvals) that need a consistent read-then-append under the team lock.
  */
+import { assertLocalHuman } from './identity.js';
 import {
   CONSEQUENTIAL_ACTIONS, claimsOverlap, validId,
   type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
@@ -135,6 +136,7 @@ export function transitionHandoff(team: string, actor: TeamActor, handoffId: str
 
 export function decideApproval(team: string, actor: TeamActor, approvalId: string, decision: 'approve' | 'deny') {
   if (actor.kind !== 'human') throw new Error('Only humans can decide approvals.');
+  actor = assertLocalHuman(actor);
   return withTeamLock(team, () => {
     appendUnlocked(team, actor, 'approval.decided', { approvalId, decision });
     const a = teamState(team).approvals.find((x) => x.id === approvalId);

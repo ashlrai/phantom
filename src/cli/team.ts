@@ -4,13 +4,13 @@
  */
 import { userInfo } from 'node:os';
 import {
-  DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, type TeamActor,
+  localHumanActor, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, type TeamActor,
 } from '../core/teams/index.js';
 
 const USAGE = `Usage: phm team <view|join|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
   view                         Members, presence, claims, handoffs and pending approvals
   join [--role admin]          Join the team (the first human becomes owner)
-  approve|deny <approvalId>    Decide a consequential handoff (owner/admin only)
+  approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
   claim <owner/repo> [--branch b] [--path p] [--reason r] [--ttl-min n]
   release <claimId>
   say <text...>                Post a message to the team channel`;
@@ -45,7 +45,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         return out(s, lines.join('\n'));
       }
       case 'join': { const role = flag(rest, '--role'); const ev = appendEvent(team, me, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${me.id}.`); }
-      case 'approve': case 'deny': { const r = decideApproval(team, me, rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}`); }
+      case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}`); }
       case 'claim': {
         const branch = flag(rest, '--branch'); const path = flag(rest, '--path'); const reason = flag(rest, '--reason') ?? ''; const ttl = flag(rest, '--ttl-min');
         const r = acquireClaim(team, me, { repo: rest[0] ?? '', branch, path }, reason, ttl ? Number(ttl) * 60_000 : undefined);
