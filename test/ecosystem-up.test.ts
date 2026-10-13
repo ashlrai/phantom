@@ -5,7 +5,7 @@ import { parseUpArgs, renderEcosystemReport } from '../src/cli/ecosystem-up.js';
 import { isReadOnlyProbe } from '../src/core/ecosystem/onboard-deps.js';
 
 const WS = '/ws';
-function fake(over: { onDisk?: string[]; autoMerge?: boolean; checks?: string[]; grant?: GrantState; ghOk?: boolean } = {}) {
+function fake(over: { onDisk?: string[]; autoMerge?: boolean; checks?: string[]; grant?: GrantState; ghOk?: boolean; classic?: string[] } = {}) {
   const disk = new Set((over.onDisk ?? []).map((n) => join(WS, n, '.git')));
   const enrolled: string[] = [];
   const autos: { id: string; name: string; enabled: boolean }[] = [];
@@ -16,6 +16,7 @@ function fake(over: { onDisk?: string[]; autoMerge?: boolean; checks?: string[];
     exists: (p) => disk.has(p),
     run: async (_bin, args) => {
       if (args[0] === 'auth') return { code: over.ghOk === false ? 1 : 0, stdout: '', stderr: '' };
+      if (String(args[1]).includes('/protection/')) return over.classic ? { code: 0, stdout: JSON.stringify({ contexts: over.classic }), stderr: '' } : { code: 1, stdout: '', stderr: '404' };
       if (String(args[1]).includes('/rules/')) return { code: 0, stdout: JSON.stringify((over.checks ?? ['test']).map((c) => ({ type: 'required_status_checks', parameters: { required_status_checks: [{ context: c }] } }))), stderr: '' };
       return { code: 0, stdout: JSON.stringify({ allow_auto_merge: over.autoMerge ?? true, default_branch: 'main' }), stderr: '' };
     },
@@ -87,6 +88,12 @@ describe('ashlr ecosystem up', () => {
     const { deps, calls } = fake({ onDisk: ECOSYSTEM_REPOS.map((r) => r.name), grant: { state: 'active', repos: ['ashlrai/phantom'], grantSeq: 3, eliteDirect: true } });
     await runEcosystemUp(deps, { workspace: WS, yes: true });
     expect(calls.sign).toBe(1);
+  });
+
+  it('reads classic branch protection as a CI gate (no false alarm)', async () => {
+    const r = await runEcosystemUp(fake({ checks: [], classic: ['test (18)', 'test (20)', 'test (22)'] }).deps, { statusOnly: true, workspace: WS });
+    expect(r.repos[0]!.requiredChecks).toEqual(['test (18)', 'test (20)', 'test (22)']);
+    expect(r.repos[0]!.fixes).toEqual([]);
   });
 
   it('pure helpers', () => {

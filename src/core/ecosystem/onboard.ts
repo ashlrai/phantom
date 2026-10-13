@@ -175,6 +175,16 @@ export function requiredChecksFromRules(rules: unknown): string[] {
   return [...out].sort();
 }
 
+/** PURE: contexts from classic branch protection `.../protection/required_status_checks`. */
+export function requiredChecksFromClassic(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return [];
+  const b = body as { contexts?: unknown; checks?: { context?: unknown }[] };
+  const out = new Set<string>();
+  if (Array.isArray(b.contexts)) for (const c of b.contexts) if (typeof c === 'string') out.add(c);
+  if (Array.isArray(b.checks)) for (const c of b.checks) if (typeof c?.context === 'string') out.add(c.context);
+  return [...out].sort();
+}
+
 function parseJson(text: string): unknown {
   try { return JSON.parse(text) as unknown; } catch { return null; }
 }
@@ -195,7 +205,8 @@ async function probeRepo(deps: EcosystemDeps, repo: EcosystemRepoStatus): Promis
     repo.fixes.push({ why: 'could not read branch rules', command: `gh api repos/${repo.nameWithOwner}/rules/branches/${repo.defaultBranch}` });
     return;
   }
-  const checks = requiredChecksFromRules(parseJson(rules.stdout));
+  const classic = await deps.run('gh', ['api', `repos/${repo.nameWithOwner}/branches/${repo.defaultBranch}/protection/required_status_checks`]);
+  const checks = [...new Set([...requiredChecksFromRules(parseJson(rules.stdout)), ...(classic.code === 0 ? requiredChecksFromClassic(parseJson(classic.stdout)) : [])])].sort();
   repo.requiredChecks = checks;
   repo.verifyRequired = checks.some((c) => VERIFY_CHECK.test(c));
   if (checks.length === 0) {
