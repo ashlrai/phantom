@@ -165,6 +165,8 @@ export async function cmdServe(args: string[]): Promise<number> {
   let handle: import('../core/types.js').WebServerHandle;
   try {
     handle = await startServer(cfg, { port, open, allowDispatch });
+    // Warm the slow GitHub probes behind Today/Ecosystem so the first page load is instant.
+    void import('../core/ecosystem/status-cache.js').then((m) => m.cachedEcosystemStatus()).catch(() => undefined);
   } catch (err) {
     console.error(red('error: ') + 'Failed to start server: ' + String(err));
     return 1;

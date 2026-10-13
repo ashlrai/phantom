@@ -1805,9 +1805,7 @@ export async function handleApi(
     // ── GET /api/ecosystem ── read-only onboarding readiness per repo
     // (src/core/ecosystem/onboard.ts, statusOnly — writes nothing).
     if (path === '/api/ecosystem' && method === 'GET') {
-      const { runEcosystemUp } = await import('../ecosystem/onboard.js');
-      const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
-      sendJson(res, 200, await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { statusOnly: true }));
+      sendJson(res, 200, await (await import('../ecosystem/status-cache.js')).cachedEcosystemStatus());
       return true;
     }
 
@@ -1825,7 +1823,9 @@ export async function handleApi(
       }
       const { runEcosystemUp } = await import('../ecosystem/onboard.js');
       const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
-      sendJson(res, 200, await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { allowGrant: false }));
+      const upReport = await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { allowGrant: false });
+      (await import('../ecosystem/status-cache.js')).invalidateEcosystemStatus();
+      sendJson(res, 200, upReport);
       return true;
     }
 

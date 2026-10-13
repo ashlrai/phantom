@@ -1,5 +1,6 @@
 /** Real read-only sources for buildHomeDashboard. */
 import { spawn } from 'node:child_process';
+import { swr } from '../util/swr-cache.js';
 import { HOME_REPOS, parseMergedSearch, type HomeSources } from './dashboard.js';
 
 function gh(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -17,11 +18,11 @@ function gh(args: string[]): Promise<{ code: number; stdout: string; stderr: str
 export function realHomeSources(): HomeSources {
   return {
     now: () => new Date(),
-    mergedPrs: async (since) => {
+    mergedPrs: async (since) => swr(`home-merged-${since.slice(0, 13)}`, async () => {
       const args = ['search', 'prs', '--merged', `--merged-at=>=${since.slice(0, 19)}`, '--limit', '200', '--json', 'repository,number,title,url,closedAt,createdAt,author', ...HOME_REPOS.flatMap((r) => ['--repo', r])];
       const r = await gh(args);
       return r.code === 0 ? { prs: parseMergedSearch(r.stdout) } : { prs: [], error: r.stderr.trim().split('\n')[0] || `gh exited ${r.code}` };
-    },
+    }, { ttlMs: 60_000 }),
     runs: async () => {
       const { listRunsDetailed } = await import('../run/orchestrator.js');
       const read = listRunsDetailed({ limit: 500 });
@@ -35,9 +36,7 @@ export function realHomeSources(): HomeSources {
       return listProposals({ status: 'pending' }).map((p) => ({ id: p.id, title: (p as { title?: string }).title ?? p.id }));
     },
     onboardingNext: async () => {
-      const { runEcosystemUp } = await import('../ecosystem/onboard.js');
-      const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
-      const r = await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { statusOnly: true });
+      const r = await (await import('../ecosystem/status-cache.js')).cachedEcosystemStatus();
       return r.ready ? null : r.nextCommand;
     },
   };
