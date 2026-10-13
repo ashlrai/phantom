@@ -1,3 +1,4 @@
+import { useCapacityClock } from '../seat-subscription.js';
 /**
  * routes/verse/composer/SeatChip.tsx — the seat this chat runs on, in the
  * composer footer (SPEC-310C §2 "Seat chip"; unit C3).
@@ -35,7 +36,7 @@ import { budgetQuery } from '../budget/budget-queries.js';
 import { useSeatHealth } from '../health/useSeatHealth.js';
 import { capacityRowFor, windowSentence } from '../usage/capacity-strip-model.js';
 import type { SeatChoice } from '../SeatSelector.js';
-import { firstRunnableModel, orderSeatsByTier, seatCapacity, SEAT_CAPACITY_WORD, seatWindowLabel } from '../verse-model.js';
+import { firstRunnableModel, orderSeatsByTier, nativeQuotaCurrent, seatCapacity, SEAT_CAPACITY_WORD, seatWindowLabel } from '../verse-model.js';
 import styles from './composer.module.css';
 import { usedPercentText } from '../percent-text.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
@@ -85,7 +86,8 @@ export function seatWindows(seat: VerseSeat | undefined): VerseSeatWindow[] {
 }
 
 /** The window the ring draws: the 5-hour one when reported, else the fullest one. */
-export function ringWindow(seat: VerseSeat | undefined): VerseSeatWindow | null {
+export function ringWindow(seat: VerseSeat | undefined, now: number = Date.now()): VerseSeatWindow | null {
+  if (seat && !nativeQuotaCurrent(seat, now)) return null;
   const windows = seatWindows(seat).filter((w) => w.usedPercent !== null || w.limitReached);
   const short = windows.find((w) => w.id === 'five_hour');
   if (short) return short;
@@ -151,13 +153,14 @@ function budgetSentence(budget: BudgetView | null, seatId: string, status: strin
  * app-wide cached reads, fetched only while this bubble is open.
  */
 function SeatTooltip({ seats, seat, label }: { seats: readonly VerseSeat[]; seat: VerseSeat | undefined; label: string }) {
+  const capacityNow = useCapacityClock(undefined, seats.map(seat => seat.capacity));
   const budget = useQuery(budgetQuery);
   const health = useSeatHealth();
-  const row = seat ? capacityRowFor(seats, seat.id, { health: health.data?.seats ?? null, budget: budget.data ?? null }) : null;
+  const row = seat ? capacityRowFor(seats, seat.id, { health: health.data?.seats ?? null, budget: budget.data ?? null, now: capacityNow }) : null;
   // The shared row's windows (label, %, verbatim reset, the reserve on the
   // binding one); before the roster has a row, the seat record's own.
   const windows: Array<{ id: string; line: string }> = row
-    ? row.windows.map((w) => ({ id: w.id, line: windowSentence({ label: '' }, w, w.binding ? row.reserve?.percent ?? null : null).trimStart() }))
+    ? row.windows.map((w) => ({ id: w.id, line: windowSentence({ label: '', quotaCurrent: row.quotaCurrent }, w, w.binding ? row.reserve?.percent ?? null : null).trimStart() }))
     : seatWindows(seat).map((w) => ({ id: w.id, line: windowLine(w) }));
   const budgetLine = seat && seat.engine !== 'local' ? budgetSentence(budget.data ?? null, seat.id, budget.status) : null;
   return (
@@ -181,6 +184,7 @@ function SeatTooltip({ seats, seat, label }: { seats: readonly VerseSeat[]; seat
 }
 
 export function SeatChip({ seats, seat, engine, label, name = label, disabled = false, compact = false, onContinueOn, onQuickContinue, onReviewHandoff, onNewChat }: SeatChipProps) {
+  const capacityNow = useCapacityClock(undefined, seats.map(seat => seat.capacity));
   const [open, setOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
   // The detail bubble is this component's own (not the Tooltip primitive):
@@ -277,7 +281,7 @@ export function SeatChip({ seats, seat, engine, label, name = label, disabled = 
           <p className={styles.menuHeading}><span>This chat runs on <strong>{label}</strong></span></p>
           {others.map((s) => {
             const model = firstRunnableModel(s)!;
-            const cap = seatCapacity(s);
+            const cap = seatCapacity(s, capacityNow);
             return (
               <button key={s.id} type="button" role="menuitem" className={`${styles.menuItem} ${styles[`engine-${s.engine}`] ?? ''}`}
                 data-capacity={cap.cls}

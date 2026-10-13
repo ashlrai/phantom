@@ -1832,6 +1832,13 @@ export async function planGoal(
 // M41: single-sourced from prompts/roles.SYNTHESIZER_ROLE (verbatim).
 const SYNTHESIS_SYSTEM = SYNTHESIZER_ROLE;
 
+function incompleteTaskSummary(tasks: RunTask[]): string {
+  return tasks
+    .filter((task) => task.status !== 'done')
+    .map((task) => `[${task.id}] ${task.status}: ${task.error ?? task.goal}`)
+    .join('\n');
+}
+
 /**
  * Synthesize a final answer from completed task results.
  * Returns a best-effort string even if the model call fails.
@@ -1862,12 +1869,13 @@ async function synthesize(
   const taskSummary = doneTasks
     .map((t) => `### ${t.id}: ${t.goal}\n${t.result ?? '(no result)'}`)
     .join('\n\n');
+  const incompleteSummary = incompleteTaskSummary(tasks);
 
   const messages: ChatMessage[] = [
     { role: 'system', content: SYNTHESIS_SYSTEM },
     {
       role: 'user',
-      content: `Goal: ${goal}\n\nTask results:\n\n${taskSummary}\n\nPlease synthesize a final answer.`,
+      content: `Goal: ${goal}\n\nTask results:\n\n${taskSummary}${incompleteSummary ? `\n\nIncomplete tasks:\n${incompleteSummary}\n\nThese results are partial. Explain the unfinished work without claiming the goal is complete.` : ''}\n\nPlease synthesize a final answer.`,
     },
   ];
   const promptReservation = conservativeRequestTokenReservation(messages, []);
@@ -2346,6 +2354,18 @@ async function runGoalInternal(
   const sink: StreamSink = runStreamIdentity
     ? withOptionalRunOutputPersistence(callerSink, runStreamIdentity, cfg)
     : callerSink;
+  let sinkEnded = false;
+  const endSink = (): void => {
+    if (sinkEnded) return;
+    sinkEnded = true;
+    endStreamSink(sink);
+  };
+  const saveTerminalRun = (terminalState: RunState): void => {
+    // Terminal state lets replay readers stop at EOF. Finalize the redaction
+    // window synchronously before publishing it; an ordinary flush retains it.
+    endSink();
+    saveRun(terminalState);
+  };
 
   try {
 
@@ -2406,7 +2426,7 @@ async function runGoalInternal(
   // authority, not a request to start a new unsandboxed producer.
   if (opts.requireSandbox === true && engine === 'builtin' && !opts.resumeId) {
     const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-    saveRun(unavailable);
+    saveTerminalRun(unavailable);
     return unavailable;
   }
   if (engine !== 'builtin') {
@@ -2436,7 +2456,7 @@ async function runGoalInternal(
       }
       if (opts.requireSandbox === true) {
         const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-        saveRun(unavailable);
+        saveTerminalRun(unavailable);
         return unavailable;
       }
       process.stderr.write(
@@ -2468,7 +2488,7 @@ async function runGoalInternal(
           } else {
             if (opts.requireSandbox === true) {
               const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-              saveRun(unavailable);
+              saveTerminalRun(unavailable);
               return unavailable;
             }
             process.stderr.write(
@@ -2478,7 +2498,7 @@ async function runGoalInternal(
         } catch {
           if (opts.requireSandbox === true) {
             const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-            saveRun(unavailable);
+            saveTerminalRun(unavailable);
             return unavailable;
           }
           // stat failed — keep the default cwd for legacy callers
@@ -2534,12 +2554,12 @@ async function runGoalInternal(
 
           if (cancelled() && !titrrSandbox) {
             const cancelledState = newCancelledRunState(goal, opts, engine, 'external');
-            saveRun(cancelledState);
+            saveTerminalRun(cancelledState);
             return cancelledState;
           }
           if (!titrrSandbox && opts.requireSandbox === true) {
             const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-            saveRun(unavailable);
+            saveTerminalRun(unavailable);
             return unavailable;
           }
 
@@ -2816,7 +2836,7 @@ async function runGoalInternal(
 
             if (cancelled() && !lastApiR) {
               const cancelledState = newCancelledRunState(goal, opts, engine, 'external');
-              saveRun(cancelledState);
+              saveTerminalRun(cancelledState);
               return cancelledState;
             }
             if (lastApiR) {
@@ -2846,7 +2866,7 @@ async function runGoalInternal(
                   ? `api-model engine "${engine}" → inbox proposal ${lastApiR.proposalId}`
                   : `api-model engine "${engine}" → no diff produced`,
               });
-              saveRun(lastApiR.state);
+              saveTerminalRun(lastApiR.state);
               return lastApiR.state;
             }
           }
@@ -2859,7 +2879,7 @@ async function runGoalInternal(
           // fall through only for legacy callers that did not require a sandbox.
           if (opts.requireSandbox === true) {
             const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-            saveRun(unavailable);
+            saveTerminalRun(unavailable);
             return unavailable;
           }
           engine = 'builtin';
@@ -2897,14 +2917,14 @@ async function runGoalInternal(
 
           if (cancelled() && !titrrSandbox) {
             const cancelledState = newCancelledRunState(goal, opts, engine, 'external');
-            saveRun(cancelledState);
+            saveTerminalRun(cancelledState);
             return cancelledState;
           }
 
           if (!titrrSandbox) {
             if (opts.requireSandbox === true) {
               const unavailable = newSandboxUnavailableRunState(goal, opts, engine);
-              saveRun(unavailable);
+              saveTerminalRun(unavailable);
               return unavailable;
             }
             const fallback = await runEngineSandboxed(engineId, goal, cfg, {
@@ -2935,7 +2955,7 @@ async function runGoalInternal(
             const fallbackState = cancelled()
               ? asCancelledRunState(fallbackStateWithRetention)
               : fallbackStateWithRetention;
-            saveRun(fallbackState);
+            saveTerminalRun(fallbackState);
             return fallbackState;
           }
 
@@ -3210,7 +3230,7 @@ async function runGoalInternal(
 
           if (!lastR) {
             const cancelledState = newCancelledRunState(goal, opts, engine, 'external');
-            saveRun(cancelledState);
+            saveTerminalRun(cancelledState);
             return cancelledState;
           }
           const finalR = cancelled()
@@ -3247,7 +3267,7 @@ async function runGoalInternal(
               ? `engine "${engine}" → inbox proposal ${finalR.proposalId} [${titrrAnnotation || 'titrr'}]`
               : `engine "${engine}" ${finalR.state.status}`,
           });
-          saveRun(finalR.state);
+          saveTerminalRun(finalR.state);
           return finalR.state;
         }
 
@@ -3304,7 +3324,7 @@ async function runGoalInternal(
 
         if (cancelled() || engineResult.terminationReason === 'cancelled') {
           const cancelledState = asCancelledRunState(delegatedState);
-          saveRun(cancelledState);
+          saveTerminalRun(cancelledState);
           return cancelledState;
         }
 
@@ -3315,7 +3335,7 @@ async function runGoalInternal(
           delegatedState.status = 'failed';
           delegatedState.result = `Engine "${engine}" failed: ${errMsg}`;
           delegatedState.updatedAt = new Date().toISOString();
-          saveRun(delegatedState);
+          saveTerminalRun(delegatedState);
           return delegatedState;
         }
 
@@ -3323,7 +3343,7 @@ async function runGoalInternal(
         delegatedState.result = engineResult.output;
         delegatedState.updatedAt = new Date().toISOString();
         emit(sink, { kind: 'task-done', text: `engine "${engine}" completed` });
-        saveRun(delegatedState);
+        saveTerminalRun(delegatedState);
         return delegatedState;
       }
     }
@@ -4506,7 +4526,7 @@ async function runGoalInternal(
       state.terminationReason = 'cancelled';
     }
     state.updatedAt = new Date().toISOString();
-    saveRun(state);
+    saveTerminalRun(state);
 
     // M19: Emit telemetry (best-effort, opt-in). Awaited so the local sink is
     // flushed before the process exits; bounded + fully caught, never throws.
@@ -4586,18 +4606,22 @@ async function runGoalInternal(
     state.result = 'Run cancelled.';
     state.terminationReason = 'cancelled';
     state.updatedAt = new Date().toISOString();
-    saveRun(state);
+    saveTerminalRun(state);
     await fireEmitRun(state, cfg);
     return state;
   }
 
-  state.result = synthResult;
-
-  // Determine final status
-  const failedCount = state.tasks.filter((t) => t.status === 'failed').length;
-  state.status = failedCount === state.tasks.length ? 'failed' : 'done';
+  // 'done' grants downstream success authority. Failed prerequisites leave
+  // skipped descendants, and independent successes are only partial results.
+  // Keep the existing schema: 'failed' covers these incomplete graphs, while
+  // budget/cancellation interruptions retain 'aborted' above.
+  const complete = state.tasks.length > 0 && state.tasks.every((task) => task.status === 'done');
+  state.status = complete ? 'done' : 'failed';
+  state.result = complete
+    ? synthResult
+    : `${doneTasks.length > 0 ? 'Partial results — run incomplete.' : 'Run failed — no tasks completed successfully.'}\n\nIncomplete tasks:\n${incompleteTaskSummary(state.tasks)}\n\n${synthResult}`;
   state.updatedAt = new Date().toISOString();
-  saveRun(state);
+  saveTerminalRun(state);
 
   // -- M19: Emit telemetry (best-effort, opt-in) ------------------------------
   // Awaited so the local sink is flushed before the process exits; bounded +
@@ -4627,10 +4651,13 @@ async function runGoalInternal(
       finalizeEngineer();
     }
   } catch (error) {
-    failStreamSink(sink, error);
+    if (!sinkEnded) {
+      sinkEnded = true;
+      failStreamSink(sink, error);
+    }
     throw error;
   } finally {
-    endStreamSink(sink);
+    endSink();
   }
 }
 

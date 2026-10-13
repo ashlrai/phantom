@@ -27,7 +27,7 @@ import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usedPercentText } from '../percent-text.js';
 import { historicalLeftPercent } from './resource-usage-history.js';
-import { ACCOUNT_CLOCK_MS, useCapacityData } from '../usage/CapacityStrip.js';
+import { useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { accountStatus, buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
@@ -160,23 +160,24 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
       : binding?.limitReached ? 'limit reached' : null;
     // Credit availability/holds do not change the subscription battery's state.
-    const level = row.engine === 'codex' && !row.lastReading && !row.signedOut
+    const level = row.quotaCurrent === false ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
       ? left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok' : LEVEL_OF_STATUS[status.kind] ?? 'unknown';
-    const value = row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
-      ? `${subscriptionValue}${row.lastReading ? ' · last' : ''}`
+    const value = row.quotaCurrent === false && subscriptionValue !== null ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
+      ? `${subscriptionValue}${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`
       : level === 'out' ? (status.kind === 'spent' ? 'spent' : status.label.toLowerCase())
-      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading ? ' · last' : ''}`;
+      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`;
     const detail = row.windows.map((w) => {
       const used = w.limitReached ? 'limit reached' : w.usedPercent === null ? 'no reading' : `${usedPercentText(w.usedPercent)} used`;
       // The accounts model already words it "resets Fri 2:25 PM"; don't say it twice.
       const reset = w.resetText ? w.resetText.replace(/^resets\s+/i, '') : '';
-      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · resets ${reset}` : ''}`;
+      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${row.quotaCurrent === false ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
     });
     detail.push(...creditDetail);
     if (row.engine === 'grok') detail.push('Grok Build · native CLI; Grok Bot has a separate allowance.');
     if (row.windows.length === 0) detail.push('Usage is not reported by this resource.');
     if (row.lastReading) detail.push('Last known usage · latest check failed.');
     if (row.reserve) detail.push(row.reserve.label);
+    if (row.quotaCurrent === false) detail.push('Last known usage · current usage and resets unconfirmed.');
     if (status.usableAgain) detail.push(`Usable again ${status.usableAgain}`);
     if (status.checked) detail.push(status.checked);
     out.push({
@@ -251,15 +252,13 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
     && Date.now() - coldStartedAt < DEVIN_POLL_MS;
   // The drawer owns this cadence while open; hidden bars/windows do not poll.
   usePollWhileVisible(refreshDevin, coldPending ? 5_000 : DEVIN_POLL_MS, { enabled: resources.bar && !resources.open });
-  const [, setClock] = useState(() => Date.now());
   const savedOrder = useResourceOrder();
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   // The poll triggers expiry renders; query arrivals use the actual render time,
   // so a freshly retrieved reading is not rejected by an older clock tick.
-  usePollWhileVisible(() => setClock(Date.now()), ACCOUNT_CLOCK_MS);
-  const now = Date.now();
+  const now = useCapacityClock(undefined, data.seats.map(seat => seat.capacity));
   const rows = useMemo(
     () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
     [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],

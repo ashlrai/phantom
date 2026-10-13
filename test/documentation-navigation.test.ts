@@ -120,6 +120,7 @@ describe('operator documentation navigation', () => {
     expect(manifest.files).not.toContain('src');
     expect(OPERATOR_DOCUMENTATION).toEqual(expect.arrayContaining([
       'docs/PHANTOM-BRAND.md', 'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/RESIDENT-RUNTIME.md', 'docs/DEVIN.md',
+      'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     ]));
   });
 
@@ -156,6 +157,17 @@ describe('operator documentation navigation', () => {
     expect(result.ok).toBe(false);
     expect(result.errors).toEqual(expect.arrayContaining([
       expect.objectContaining({ file: 'docs/AUTONOMY-SETUP.md', href: expect.stringContaining(`${guide}.md`) }),
+    ]));
+  });
+
+  it('refuses an omitted commissioning guide as both an entrypoint and linked navigation', () => {
+    const root = packagedDocumentation();
+    rmSync(join(root, 'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md'));
+    const result = checkDocumentation({ root, mode: 'package' });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: 'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md', href: null }),
+      expect.objectContaining({ file: 'docs/RESOURCE-POOLS.md', href: 'RESOURCE-POOL-COMMISSIONING-CHECK.md' }),
     ]));
   });
 

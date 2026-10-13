@@ -288,7 +288,7 @@ describe('selected account reading confirmation', () => {
   const instant = '2026-09-23T20:00:00.000Z';
   const receipt = { seatId: 'target', state: 'completed', reading: 'current', reason: 'probe-observed',
     observedAt: instant, expiresAt: '2026-09-23T20:01:00.000Z', nextCheckAt: '2026-09-23T20:00:30.000Z', joined: false };
-  const target = { id: 'target', health: { state: 'ready' }, capacity: { evidenceSource: 'collector', observedAt: instant,
+  const target = { id: 'target', health: { state: 'ready' }, capacity: { evidenceSource: 'collector', observedAt: instant, quotaExpiresAt: receipt.expiresAt,
     windows: [{ usedPercent: 0 }], credits: null } };
   async function seed() {
     vi.setSystemTime(instant); setMutationToken(token);
@@ -317,6 +317,13 @@ describe('selected account reading confirmation', () => {
       ['/api/verse/seats/refresh', 'POST'], ['/api/verse/seats', 'GET']]);
     expect(JSON.parse(String(requests[0].init?.body))).toEqual({ seatId: 'target' });
     expect(getQuerySnapshot<VerseBootstrap>(VERSE_BOOTSTRAP_KEY).data?.seats).toEqual([target]);
+  });
+
+  it.each([undefined,null,'invalid','2026-09-23T20:00:00.000Z','2026-09-23T20:00:30.000Z'])('refuses quota readback without the original unexpired receipt-bound expiry %s',async quotaExpiresAt=>{
+    await seed();const seat={...target,capacity:{...target.capacity,quotaExpiresAt}};
+    vi.stubGlobal('fetch',vi.fn(async(_input:unknown,init?:RequestInit)=>json(init?.method==='POST'?receipt:{...LIVE_SEATS,seats:[seat]})));
+    await expect(refreshAccountReading('target')).rejects.toThrow('does not confirm');
+    expect(getQuerySnapshot<VerseBootstrap>(VERSE_BOOTSTRAP_KEY).data).toEqual(BOOTSTRAP);
   });
 
   it('accepts a newer current collector observation that wins the selected readback race', async () => {

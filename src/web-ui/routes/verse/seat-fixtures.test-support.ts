@@ -89,12 +89,13 @@ export function capacity(over: Partial<Capacity> = {}): Capacity {
   return {
     // Fixture metadata is explicitly unexpired; expiry behavior has separate clocked tests.
     creditsExpiresAt: '2033-01-01T00:00:00.000Z',
+    quotaExpiresAt: '2033-01-01T00:00:00.000Z',
     planType: null,
     binding: null,
     windows: [],
     credits: null,
     usability: 'unknown',
-    observedAt: null,
+    observedAt: '2020-01-01T00:00:00.000Z',
     evidenceSource: 'collector',
     notes: [],
     ...over,
