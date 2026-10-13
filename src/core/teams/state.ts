@@ -45,14 +45,15 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         // Presence, claims and declared caller aliases cannot found ownership.
         // The CLI derives the joining human locally; raw logs retain their
         // documented same-OS-user trust boundary.
-        if (ev.actor.kind === 'human' && target === ev.actor.id && !foundingHumanJoined) {
+        if (ev.actor.kind === 'human' && m.kind === 'human' && target === ev.actor.id && !foundingHumanJoined) {
           if (![...members.values()].some(member => member.kind === 'human' && ['owner', 'admin'].includes(member.role))) m.role = 'owner';
           foundingHumanJoined = true;
         }
         const existing = members.get(target);
         const humanRole = role && ['owner', 'admin', 'member'].includes(role);
-        if (existing?.kind === 'human' && humanRole && (ev.actor.id === target ? existing.role === role : ['owner', 'admin'].includes(m.role))) existing.role = role;
-        else if (!existing && target.startsWith('human:') && humanRole && ['owner', 'admin'].includes(m.role)) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
+        const humanRoleGrant = ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role);
+        if (existing?.kind === 'human' && humanRole && (ev.actor.id === target ? existing.role === role : humanRoleGrant)) existing.role = role;
+        else if (!existing && target.startsWith('human:') && humanRole && humanRoleGrant) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
         break;
       }
       case 'agent.registered':
@@ -75,7 +76,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       case 'approval.decided': {
         const a = approvals.get(str(p.approvalId));
         // Only humans with owner/admin role can decide; agents never self-approve.
-        if (a && a.state === 'pending' && ev.actor.kind === 'human' && ['owner', 'admin'].includes(m.role)) {
+        if (a && a.state === 'pending' && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role)) {
           a.state = p.decision === 'approve' ? 'approved' : 'denied'; a.decidedBy = ev.actor.id;
           const h = handoffs.get(a.handoffId);
           if (h) { h.state = a.state === 'approved' ? 'open' : 'declined'; h.updatedAt = ev.ts; }

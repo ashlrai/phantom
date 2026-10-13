@@ -91,6 +91,24 @@ describe('team protocol', () => {
     expect(teamState(T).members.find(member => member.id === codex.id)).toBeUndefined();
   });
 
+  it('does not found ownership by changing the actor kind of an existing agent identity', () => {
+    appendEvent(T, codex, 'agent.registered', {});
+    appendEvent(T, { kind: 'human', id: codex.id }, 'member.joined', {});
+    appendEvent(T, codex, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === codex.id)?.role).toBe('agent');
+    expect(teamState(T).members.find(member => member.id === evan.id)).toBeUndefined();
+    appendEvent(T, mason, 'member.joined', {});
+    expect(teamState(T).members.find(member => member.id === mason.id)?.role).toBe('owner');
+  });
+
+  it('does not grant human roles through an agent event reusing an existing human owner identity', () => {
+    appendEvent(T, mason, 'member.joined', {});
+    appendEvent(T, { kind: 'agent', id: mason.id }, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === evan.id)).toBeUndefined();
+    appendEvent(T, mason, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === evan.id)?.role).toBe('admin');
+  });
+
   it('claims prevent collisions and release', () => {
     const a = acquireClaim(T, codex, { repo: 'ashlrai/phantom', branch: 'feat/x' }, 'feature');
     expect(a.ok).toBe(true);
