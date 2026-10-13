@@ -61,4 +61,32 @@ describe('retained cache clock never renews original quota',()=>{
     expect(hook.result.current.current).toBe(false);
     expect(hook.result.current.now).toBe(T+60_001);
   });
+  it('rechecks visible retained evidence on focus after wall time passes expiry without timer delivery or a fetch',async()=>{
+    const {hook,fetch}=await seed();
+    const retained=hook.result.current.data.seats;
+    const reads=fetch.mock.calls.length;
+    vi.setSystemTime(T+60_001);
+    expect(hook.result.current.current).toBe(true);
+    act(()=>{fireEvent(window,new Event('focus'));});
+    expect(hook.result.current.current).toBe(false);
+    expect(hook.result.current.now).toBe(T+60_001);
+    expect(hook.result.current.data.seats).toBe(retained);
+    expect(hook.result.current.rows[0]!.windows[0]!.usedPercent).toBe(43);
+    expect(fetch.mock.calls.length).toBe(reads);
+  });
+  it('keeps focus inert for fixed clocks and hidden sections',()=>{
+    vi.useFakeTimers();vi.setSystemTime(T+10_000);
+    const hidden=({children}:{children:ReactNode})=><SectionVisibilityProvider visible={false}>{children}</SectionVisibilityProvider>;
+    const fixed=renderHook(()=>useCapacityClock(T+10_000),{wrapper});
+    const inactive=renderHook(()=>useCapacityClock(),{wrapper:hidden});
+    const renders=vi.fn();
+    const invisible=renderHook(()=>{renders();return useCapacityClock();},{wrapper:hidden});
+    const before=renders.mock.calls.length;
+    vi.setSystemTime(T+60_001);
+    act(()=>{fireEvent(window,new Event('focus'));});
+    expect(fixed.result.current).toBe(T+10_000);
+    expect(inactive.result.current).toBe(T+10_000);
+    expect(invisible.result.current).toBe(T+10_000);
+    expect(renders.mock.calls.length).toBe(before);
+  });
 });

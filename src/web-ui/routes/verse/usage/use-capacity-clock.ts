@@ -11,6 +11,13 @@ export function useCapacityClock(fixedNow?: number, readings: readonly Reading[]
   const visible = sectionVisible && documentVisible;
   const now = fixedNow ?? Date.now();
   usePollWhileVisible(() => invalidate(tick => tick + 1), ACCOUNT_CLOCK_MS, { enabled: fixedNow === undefined });
+  useEffect(() => {
+    if (!visible || fixedNow !== undefined || typeof window === 'undefined') return;
+    // Focus can return before throttled timers run; repaint against actual wall time.
+    const onFocus = () => invalidate(tick => tick + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [visible, fixedNow]);
   const next = readings.flatMap(reading => [reading?.quotaExpiresAt, reading?.expiresAt, reading?.creditsExpiresAt, ...(reading?.windows ?? []).map(window => window.resetsAt)])
     .reduce((soon, value) => { const at = typeof value === 'string' ? Date.parse(value) : NaN; return at > now ? Math.min(soon, at) : soon; }, Infinity);
   useEffect(() => {

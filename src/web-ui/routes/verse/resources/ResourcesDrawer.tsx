@@ -272,7 +272,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
             const nextCheck = Number.isFinite(next) && next > Date.now()
               ? ` Next check after ${new Date(next).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : '';
             readingNote = result.reading === 'current'
-              ? `${result.state === 'cached' ? 'Showing' : 'Confirmed'} ${row.label}’s current usage reading.`
+              ? `${result.state === 'cached' ? 'Showing' : 'Confirmed'} ${row.label}’s current account reading.`
               : result.state === 'held'
                 ? `Usage check held. ${reasonSentence(result.reason, 'Refresh the account list before trying again.')}`
                 : `${result.state === 'cached' ? 'No current usage reading is available.' : 'Check completed; no current usage reading was reported.'} ${reasonSentence(result.reason, 'The provider did not report a usable reading.')}${nextCheck}`;
