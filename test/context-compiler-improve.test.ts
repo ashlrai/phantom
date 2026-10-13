@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addContext, compileTaskContext, requestHandoff, retrieveContext, transitionHandoff, type TeamActor } from '../src/core/teams/index.js';
-import { gatherProposals, openProposalPr, renderProposal, type Exec } from '../src/core/improve/loop.js';
+import { gatherProposals, isPublicEvidenceRef, openProposalPr, renderProposal, renderPublicProposal, type Exec } from '../src/core/improve/loop.js';
 
 const a: TeamActor = { kind: 'agent', id: 'agent:codex/1' };
 const b: TeamActor = { kind: 'agent', id: 'agent:grok-bot/m' };
@@ -54,7 +54,9 @@ describe('self-improvement loop', () => {
     for (const t of ['x', 'y']) { const h = requestHandoff(T, a, { to: b.id, title: t }); transitionHandoff(T, b, h.handoffId, 'decline'); }
     addContext(T, b, { title: 'Wizard too many clicks', text: 'Users want one click setup.', source: 'tg:123', scope: { owner: 'company' }, tags: ['feedback'] });
     const ps = gatherProposals(T);
-    expect(ps.map((p) => p.title)).toEqual(['Reduce declined handoffs (2)', 'Address: Wizard too many clicks']);
+    expect(ps[0]!.title).toBe('Reduce declined handoffs (2)');
+    expect(ps[1]!.title).toMatch(/^Address feedback item [0-9a-f]{10}$/);
+    expect(renderProposal(ps[1]!, { includeLocal: true })).toContain('Wizard too many clicks');
     expect(renderProposal(ps[0]!)).toContain('## Metric to move');
     const calls: string[][] = [];
     const exec: Exec = (cmd, args) => { calls.push([cmd, ...args]); return cmd === 'git' && args[0] === 'symbolic-ref' ? 'origin/master\n' : cmd === 'gh' ? 'https://github.com/x/y/pull/1\n' : ''; };
@@ -62,5 +64,19 @@ describe('self-improvement loop', () => {
     const flat = calls.map((c) => c.join(' '));
     expect(flat.some((c) => c.startsWith('gh pr create --draft --base master'))).toBe(true);
     expect(flat.some((c) => /\bmerge\b|push origin master|push -f|push --force/.test(c))).toBe(false);
+    // Private feedback never reaches the PR (branch, title, body, commit) or the diff.
+    for (const c of flat) expect(c).not.toMatch(/Wizard|one click|tg:123/);
+    expect(readFileSync(join(tmpdir(), `phm-improve-${ps[1]!.id}`, 'workplans', 'proposals', `${ps[1]!.id}.md`), 'utf8')).not.toMatch(/Wizard|one click|tg:123/);
+    expect(renderPublicProposal(ps[0]!)).not.toMatch(/\(team:/);
+  });
+
+  it('keeps public GitHub evidence links and withholds everything else', () => {
+    addContext(T, b, { title: 'Crash on start', text: 'secret customer detail', source: 'https://github.com/ashlrai/phantom/issues/12', scope: { owner: 'company' }, tags: ['bug'] });
+    addContext(T, b, { title: 'Private DM', text: 'private', source: 'slack:dm/xyz', scope: { owner: 'company' }, tags: ['bug'] });
+    const body = gatherProposals(T).map(renderPublicProposal).join('\n');
+    expect(body).toContain('https://github.com/ashlrai/phantom/issues/12');
+    expect(body).not.toMatch(/secret customer|Crash on start|Private DM|slack:dm/);
+    expect(body).toContain('private evidence item(s) withheld');
+    expect(isPublicEvidenceRef('https://evil.example/github.com/a/b/issues/1')).toBe(false);
   });
 });

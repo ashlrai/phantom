@@ -9,7 +9,7 @@ export async function cmdImprove(argv: string[]): Promise<number> {
   const proposals = gatherProposals(val('--team') ?? 'default', runSteward(defaultStewardPolicy()));
   if (!args.includes('--open-pr')) {
     if (args.includes('--json')) console.log(JSON.stringify(proposals, null, 2));
-    else console.log(proposals.length ? proposals.map(renderProposal).join('\n---\n') : 'No proposals: no qualifying evidence yet.');
+    else console.log(proposals.length ? proposals.map((p) => renderProposal(p, { includeLocal: true })).join('\n---\n') : 'No proposals: no qualifying evidence yet.');
     return 0;
   }
   const repo = val('--repo');
