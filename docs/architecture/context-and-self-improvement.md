@@ -53,7 +53,12 @@ Phase 1 signals: repeated declined handoffs, steward over-quota roots, and
 context tagged `feedback` / `bug` / `feature-request`. `phm improve propose`
 prints proposals; `--open-pr --repo <dir>` opens each as a **draft** PR
 (`workplans/proposals/<id>.md`) on an `improve/*` branch. It never merges,
-never pushes to the default branch and never deploys.
+never pushes to the default branch and never deploys. `--auto-merge` is refused
+before proposal effects: this loop cannot supply the existing protected merge
+process's authority and verification evidence. GitHub evidence links require a
+fresh public-repository visibility check; private or unknown links and local
+measurements remain withheld. Each proposal uses a unique owned worktree;
+uncertain acquisition or cleanup is retained for explicit inspection.
 
 ## 5. Roadmap
 

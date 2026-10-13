@@ -1,6 +1,6 @@
 ---
 constitution: phantom
-version: 1
+version: 2
 changes: reviewed pull request only
 ---
 
@@ -57,9 +57,9 @@ change to this file.
 
 ## Self-improvement loop
 
-Phantom may open PRs that propose or implement improvements. With
-`--auto-merge` they are opened ready for review with GitHub auto-merge (squash)
-armed, so they merge only when every required check is green and any required
-review is satisfied. Without it they stay drafts. Proposals never carry private
-context (public evidence links only), and the "Always ask" list above still
+Phantom may open draft PRs that propose improvements. The proposal loop
+cannot authorize auto-merge; merges use the existing protected approval process
+with every required check green on the exact head and required review satisfied.
+Proposals never carry private context. Evidence links are published only after
+repository visibility is verified as public. The "Always ask" list above still
 applies to everything they do.
