@@ -22,6 +22,9 @@ describe('metrics pillar', () => {
   it('scores significance and quality sensibly', () => {
     expect(significance({ repo: 'a/b', number: 1, additions: 2000, userFacing: true, risk: 'high', areas: ['secrets'] })).toBeGreaterThan(significance({ repo: 'a/b', number: 2, additions: 5 }));
     expect(quality({ repo: 'a/b', number: 1, ciPassedFirstTry: true })).toBeGreaterThan(quality({ repo: 'a/b', number: 1, followUpFixes: 2 }));
+    // non-constraining: review findings and CI retries are not penalized; size/risk only add
+    expect(quality({ repo: 'a/b', number: 1, reviewFindings: 9, ciPassedFirstTry: false })).toBe(quality({ repo: 'a/b', number: 1 }));
+    expect(significance({ repo: 'a/b', number: 1, additions: 20000, risk: 'high' })).toBeGreaterThan(significance({ repo: 'a/b', number: 1, additions: 200, risk: 'low' }));
     expect(quality({ repo: 'a/b', number: 1 }, [], true)).toBe(0);
     expect(quality({ repo: 'a/b', number: 1 }, [5, 5])).toBeGreaterThan(quality({ repo: 'a/b', number: 1 }, [1]));
   });
@@ -53,5 +56,22 @@ describe('metrics pillar', () => {
   it('feeds low-quality agents into the self-improvement loop', () => {
     for (let i = 1; i <= 3; i++) session(`q${i}`, 'local-model', 'yolo', 1000, { number: 10 + i, followUpFixes: 3, ciPassedFirstTry: false });
     expect(gatherProposals('default').map((p) => p.title)).toContain('Improve PR quality for local-model');
+  });
+});
+
+describe('pluggable async raters', () => {
+  it('samples deterministically, grades concurrently, swallows failures, and supports a Jev adapter', async () => {
+    const { gradeBatch, jevRater, localModelRater, sampled } = await import('../src/core/metrics/raters.js');
+    const items = Array.from({ length: 200 }, (_, i) => ({ pr: { repo: 'a/b', number: i }, title: `pr ${i}`, summary: 'x' }));
+    const s = items.filter((i) => sampled(i.pr, 0.1)).length;
+    expect(s).toBeGreaterThan(5); expect(s).toBeLessThan(45);
+    expect(items.filter((i) => sampled(i.pr, 0.1)).length).toBe(s);
+    let n = 0;
+    const local = localModelRater(async () => { n++; if (n === 2) throw new Error('down'); return 'Rating: 4'; });
+    const res = await gradeBatch(items.slice(0, 10), local, { concurrency: 3 });
+    expect(res).toHaveLength(9);
+    expect(res.every((r) => r.result.rating === 4)).toBe(true);
+    const jev = jevRater(async (_state, options) => ({ label: options[4]!, confidence: 0.9 }));
+    expect((await jev.rate(items[0]!)).rating).toBe(5);
   });
 });

@@ -1,25 +1,32 @@
 /** PR significance/quality scoring, value attribution and allocation. */
 import type { PrRef, TelemetryEvent } from './telemetry.js';
 
-/** 0..10: size (log), risk, user-facing impact, critical areas. */
+/**
+ * 0..10, upside-weighted: bigger, bolder, user-facing and core changes score
+ * higher. Size and risk are never penalties (high risk tolerance).
+ */
 export function significance(pr: PrRef): number {
-  const size = Math.min(4, Math.log10(1 + (pr.additions ?? 0) + (pr.deletions ?? 0)) * 1.3);
-  const risk = pr.risk === 'high' ? 2 : pr.risk === 'medium' ? 1 : 0.3;
+  const size = Math.log10(1 + (pr.additions ?? 0) + (pr.deletions ?? 0)) * 1.4; // grows without a penalty cap
+  const bold = pr.risk === 'high' ? 2 : pr.risk === 'medium' ? 1 : 0.3;
   const user = pr.userFacing ? 2.5 : 0.5;
-  const area = (pr.areas ?? []).some((a) => /security|auth|secrets|release|billing|core/i.test(a)) ? 1.5 : 0.5;
-  return Math.round(Math.min(10, size + risk + user + area) * 100) / 100;
+  const area = (pr.areas ?? []).some((a) => /security|auth|secrets|release|billing|core|infra/i.test(a)) ? 1.5 : 0.5;
+  return Math.round(Math.min(10, size + bold + user + area) * 100) / 100;
 }
 
-/** 0..1: quantitative signals blended with mean qualitative rating when present. */
+/**
+ * 0..1. Lightweight and non-blocking: only real regressions lower it
+ * (follow-up fixes, reverts). CI retries and review comments are normal
+ * iteration and are not penalized; first-try green and coverage gains add a
+ * small bonus. Ratings (async, sampled) blend in when present.
+ */
 export function quality(pr: PrRef, ratings: number[] = [], reverted = false): number {
   if (reverted) return 0;
-  let q = 0.6;
-  if (pr.ciPassedFirstTry === true) q += 0.15; else if (pr.ciPassedFirstTry === false) q -= 0.1;
-  q -= Math.min(0.3, (pr.reviewFindings ?? 0) * 0.05);
-  q -= Math.min(0.4, (pr.followUpFixes ?? 0) * 0.15);
-  q += Math.max(-0.1, Math.min(0.15, (pr.coverageDelta ?? 0) / 20));
+  let q = 0.75;
+  if (pr.ciPassedFirstTry === true) q += 0.1;
+  q -= Math.min(0.5, (pr.followUpFixes ?? 0) * 0.15);
+  q += Math.max(0, Math.min(0.1, (pr.coverageDelta ?? 0) / 20));
   q = Math.max(0, Math.min(1, q));
-  if (ratings.length) q = 0.6 * q + 0.4 * ((ratings.reduce((a, b) => a + b, 0) / ratings.length - 1) / 4);
+  if (ratings.length) q = 0.7 * q + 0.3 * ((ratings.reduce((a, b) => a + b, 0) / ratings.length - 1) / 4);
   return Math.round(q * 1000) / 1000;
 }
 
