@@ -1757,6 +1757,25 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/settings ── read-only settings view.
+    if (path === '/api/settings' && method === 'GET') {
+      sendJson(res, 200, await (await (await import('../settings/backend.js')).realSettingsBackend('web')).read());
+      return true;
+    }
+
+    // ── POST /api/settings ── one {key, value} change from the console
+    // (dispatch-gated + mutation token; the human at the console is the actor).
+    if (path === '/api/settings' && method === 'POST') {
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'invalid JSON body', command: 'ashlr settings set <key> <value>' }); return true; }
+      const { applySettingsChange } = await import('../settings/settings.js');
+      const result = await applySettingsChange(await (await import('../settings/backend.js')).realSettingsBackend('web'), body, 'human');
+      sendJson(res, result.ok ? 200 : result.status === 'invalid' ? 400 : 409, result);
+      return true;
+    }
+
     // ── GET /api/home ── daily home dashboard (src/core/home/dashboard.ts), read-only.
     if (path === '/api/home' && method === 'GET') {
       const { buildHomeDashboard } = await import('../home/dashboard.js');

@@ -116,6 +116,12 @@ export const NAV_GROUPS: NavGroup[] = [
         implemented: true,
       },
       {
+        path: '/control/settings',
+        label: 'Settings',
+        description: 'Autonomy level, repos, schedules, models, budget caps, notifications and the versioned constitution.',
+        implemented: true,
+      },
+      {
         path: '/control/fleet',
         label: 'Fleet',
         description: 'Queue depth, lease health, and the kill switch.',

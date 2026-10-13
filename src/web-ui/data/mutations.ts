@@ -77,3 +77,10 @@ export async function enableEcosystemAutonomy(): Promise<import('../../core/ecos
   invalidate('ecosystem-status');
   return report;
 }
+
+/** One settings change (same {key, value} as `ashlr settings set`). */
+export async function changeSetting(key: string, value: unknown): Promise<import('../../core/settings/settings.js').SettingsResult> {
+  const r = await post<import('../../core/settings/settings.js').SettingsResult>('/api/settings', { key, value });
+  invalidate('settings');
+  return r;
+}

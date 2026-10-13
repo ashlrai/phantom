@@ -80,6 +80,8 @@ describe('native tool registry', () => {
         'ashlr_routing',
         'ashlr_scorecard',
         'ashlr_self_heal',
+        'ashlr_settings_get',
+        'ashlr_settings_set',
         'ashlr_status',
         'ashlr_website_publish',
         'ashlr_website_status',

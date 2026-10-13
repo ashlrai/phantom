@@ -1,0 +1,16 @@
+.view { padding: 24px; display: flex; flex-direction: column; gap: 14px; max-width: 900px; }
+.title { margin: 0; font-size: 24px; }
+.section { padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(127,127,127,0.25)); }
+.h2 { margin: 0 0 6px; font-size: 15px; }
+.hint { margin: 0 0 6px; opacity: 0.65; font-size: 13px; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.list li { display: flex; justify-content: space-between; gap: 12px; }
+.row { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.segmented { display: inline-flex; border: 1px solid var(--border, rgba(127,127,127,0.35)); border-radius: 8px; overflow: hidden; }
+.seg, .segOn { padding: 6px 14px; border: 0; background: transparent; cursor: pointer; text-transform: capitalize; color: inherit; }
+.segOn { background: var(--accent, #6d5efc); color: #fff; }
+.seg:disabled { opacity: 0.4; cursor: not-allowed; }
+.link { border: 0; background: none; color: var(--accent, #6d5efc); cursor: pointer; }
+.editor { width: 100%; min-height: 120px; font-family: ui-monospace, monospace; font-size: 12px; }
+.ok { color: var(--ok, #2f9e62); margin: 0; }
+.error { color: var(--danger, #d64545); margin: 0; }
