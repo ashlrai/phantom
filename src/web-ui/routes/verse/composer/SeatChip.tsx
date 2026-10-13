@@ -1,4 +1,4 @@
-import { useCapacityClock } from '../usage/use-capacity-clock.js';
+import { useCapacityClock } from '../seat-subscription.js';
 /**
  * routes/verse/composer/SeatChip.tsx — the seat this chat runs on, in the
  * composer footer (SPEC-310C §2 "Seat chip"; unit C3).

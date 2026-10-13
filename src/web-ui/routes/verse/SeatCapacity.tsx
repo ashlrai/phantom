@@ -1,4 +1,4 @@
-import { useCapacityClock } from './usage/use-capacity-clock.js';
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/SeatCapacity.tsx — the shared rendering of a seat's
  * subscription capacity, so the resources panel, the new-chat dialog and the

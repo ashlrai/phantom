@@ -1,4 +1,4 @@
-import { useCapacityClock } from '../../usage/use-capacity-clock.js';
+import { useCapacityClock } from '../../seat-subscription.js';
 /**
  * routes/verse/mobile/screens/HomeSeats.tsx — Home's seat meters: every seat
  * the Mac has (Claude, both Codex accounts, Grok, Devin, local models) plus

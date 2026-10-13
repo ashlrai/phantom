@@ -1,3 +1,4 @@
+export { ACCOUNT_CLOCK_MS, useCapacityClock } from './usage/use-capacity-clock.js';
 import { currentQuotaReading } from '../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/seat-subscription.ts — "what subscription is behind this seat,

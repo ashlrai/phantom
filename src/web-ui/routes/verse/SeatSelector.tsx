@@ -1,4 +1,4 @@
-import { useCapacityClock } from './usage/use-capacity-clock.js';
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/SeatSelector.tsx — grouped seat/model picker. A native
  * <select> with one <optgroup> per engine (Claude · Codex · Grok · Local)

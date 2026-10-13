@@ -1,4 +1,4 @@
-import { useCapacityClock } from './usage/use-capacity-clock.js';
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/Workspace.tsx — the chat pane: the header strip, the 720px
  * transcript, and — stacked above the composer — everything about the turn

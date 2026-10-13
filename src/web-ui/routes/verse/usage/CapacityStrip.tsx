@@ -61,8 +61,8 @@ import styles from './CapacityStrip.module.css';
 const TIGHT_AT = 90;
 
 /** How often an accounts strip re-reads the clock ("usable again in 7h", "checked 2m ago"). */
-export { ACCOUNT_CLOCK_MS, useCapacityClock } from './use-capacity-clock.js';
-import { useCapacityClock } from './use-capacity-clock.js';
+export { ACCOUNT_CLOCK_MS, useCapacityClock } from '../seat-subscription.js';
+import { useCapacityClock } from '../seat-subscription.js';
 
 /**
  * Apps & Accounts mode: every row leads with a sentence-case status

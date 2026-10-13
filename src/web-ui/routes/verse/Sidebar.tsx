@@ -1,4 +1,4 @@
-import { useCapacityClock } from './usage/use-capacity-clock.js';
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/Sidebar.tsx — the chat list (3.10, SPEC-310C §2; model:
  * chat/sidebar-model.ts).
