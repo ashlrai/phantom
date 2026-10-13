@@ -40,6 +40,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   subscription-only billing qualification separate from locator migration.
 
 ### Fixed
+- Keep a resource supervisor available when another enrolled owner atomically
+  commits a valid pool ledger during its custody read. Retry only the observed
+  file replacement with bounded fresh reads; unsafe data, invalid controls and
+  incomplete commissioning still hold execution.
 - Honor the provider's original native quota expiry across resource cards,
   account details, composer seats and mobile views. Cached readings remain
   dated history after failed refreshes; exact expiry and focus resumption clear

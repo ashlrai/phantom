@@ -173,8 +173,10 @@ export function validateResourceTask(value: unknown): ResourceTask {
     mode: value.mode as ResourceTask['mode'] };
 }
 
-/** Bounded descriptor read, private regular file only; no credential-file discovery. */
-export function readResourceJson(file: string, maxBytes = 2 * 1024 * 1024): unknown {
+const RESOURCE_FILE_UNAVAILABLE = 'Resource file unavailable, unsafe, oversized, or malformed';
+class ResourceFileReplacedDuringRead extends Error {}
+
+function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
   if (!path(file) || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_STATE_BYTES) {
     throw new Error('Invalid resource file');
   }
@@ -187,15 +189,54 @@ export function readResourceJson(file: string, maxBytes = 2 * 1024 * 1024): unkn
       !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
     fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const opened = fstatSync(fd);
-    if (opened.dev !== named.dev || opened.ino !== named.ino || opened.size !== named.size) throw new Error();
+    if (opened.dev !== named.dev || opened.ino !== named.ino || opened.size !== named.size ||
+      opened.uid !== named.uid || opened.mode !== named.mode || opened.nlink !== 1) throw new Error();
     const bytes = Buffer.alloc(named.size);
     if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw new Error();
     const after = fstatSync(fd); const installed = lstatSync(file);
-    if (after.size !== named.size || after.mtimeMs !== named.mtimeMs || after.ctimeMs !== named.ctimeMs ||
-      installed.dev !== named.dev || installed.ino !== named.ino) throw new Error();
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-  } catch { throw new Error('Resource file unavailable, unsafe, oversized, or malformed'); }
+    if (after.dev !== named.dev || after.ino !== named.ino || after.size !== named.size ||
+      after.mtimeMs !== named.mtimeMs || after.uid !== named.uid || after.mode !== named.mode) throw new Error();
+    const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    if (installed.dev !== named.dev || installed.ino !== named.ino) {
+      // A production ledger transaction renames its new private file over the
+      // old one. The open old descriptor keeps its bytes, but unlink changes
+      // its ctime and link count. Distinguish only that valid replacement from
+      // in-place edits or unsafe files; mutable-ledger reads may start afresh.
+      if (after.nlink !== 0 || after.ctimeMs < named.ctimeMs || !installed.isFile() || installed.isSymbolicLink() ||
+        installed.nlink !== 1 || installed.uid !== named.uid || (installed.mode & 0o777) !== 0o600 ||
+        installed.size < 2 || installed.size > maxBytes || realpathSync(file) !== file ||
+        !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
+      throw new ResourceFileReplacedDuringRead(RESOURCE_FILE_UNAVAILABLE);
+    }
+    if (after.ctimeMs !== named.ctimeMs || after.nlink !== 1) throw new Error();
+    return value;
+  } catch (error) {
+    if (error instanceof ResourceFileReplacedDuringRead) throw error;
+    throw new Error(RESOURCE_FILE_UNAVAILABLE);
+  }
   finally { if (fd !== undefined) closeSync(fd); }
+}
+
+/** Bounded descriptor read, private regular file only; immutable inputs never retry. */
+export function readResourceJson(file: string, maxBytes = 2 * 1024 * 1024): unknown {
+  try { return readResourceJsonSnapshot(file, maxBytes); }
+  catch (error) {
+    if (error instanceof ResourceFileReplacedDuringRead) throw new Error(RESOURCE_FILE_UNAVAILABLE);
+    throw error;
+  }
+}
+
+function readMutablePoolState(file: string): unknown {
+  // Other owners can commit this ledger while a supervisor observes it. Retry
+  // only a witnessed post-read atomic replacement, with at most three complete
+  // fresh reads. Never retry a mutation, invalid data or commissioning custody.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return readResourceJsonSnapshot(file, MAX_STATE_BYTES); }
+    catch (error) {
+      if (!(error instanceof ResourceFileReplacedDuringRead) || attempt === 2) throw new Error(RESOURCE_FILE_UNAVAILABLE);
+    }
+  }
+  throw new Error(RESOURCE_FILE_UNAVAILABLE);
 }
 
 function inspectRoot(root: string, create: boolean): boolean {
@@ -288,7 +329,7 @@ function loadState(root: string, pool: ResourcePool, bindings: ResourceBinding[]
     if (commissioningPresent(join(root, 'pool-commissioning'))) throw new Error('Resource commissioning ledger unavailable; never reinitialize');
     return { schemaVersion: 1, poolDigest, observations: [], attempts: [] };
   }
-  const state = decodeResourcePoolState(readResourceJson(file, MAX_STATE_BYTES), pool, bindings);
+  const state = decodeResourcePoolState(readMutablePoolState(file), pool, bindings);
   assertResourcePoolCommissioningCustody(root, state); return state;
 }
 /** Read-only verified snapshots; never returns execution authority or repairs an interrupted upgrade. */

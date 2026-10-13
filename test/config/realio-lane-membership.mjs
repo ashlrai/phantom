@@ -186,6 +186,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-worker-process.test.ts', // real bounded stdin and process ownership
   'test/resource-worker.test.ts', // native worker fixtures and numeric-loopback model transport
   'test/resource-pool-runtime.test.ts', // durable admission, concurrent tasks, and replay
+  'test/resource-pool-ledger-read-race.test.ts', // real atomic ledger commits, read races and custody refusal
   'test/resource-admission-preflight.test.ts', // read-only admission parity against private persisted ledgers
   'test/resource-performance-runtime.test.ts', // monotonic measurements in the private task ledger
   'test/resource-review-benchmark.test.ts', // fixed calibration through real ledger and loopback transport
