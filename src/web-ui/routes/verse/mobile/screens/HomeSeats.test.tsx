@@ -1,0 +1,19 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { capacity, nativeSeat, seatWindow } from '../../seat-fixtures.test-support.js';
+const fixture=vi.hoisted(()=>({seats:[] as unknown[]}));
+vi.mock('../../../../data/hooks.js',()=>({useQuery:(query:{key:string})=>({data:query.key==='verse-bootstrap'?{seats:fixture.seats}:undefined})}));
+vi.mock('../../useSeatsRefresh.js',()=>({useSeatsRefresh:()=>{}}));
+import { HomeSeats } from './HomeSeats.js';
+afterEach(()=>{cleanup();vi.useRealTimers();});
+it('keeps mobile native quota as gray recorded values at original expiry',()=>{
+  vi.useFakeTimers();const t=Date.parse('2026-10-12T12:00:00.000Z');vi.setSystemTime(t+10_000);
+  const window=seatWindow({id:'weekly',usedPercent:43,resetsAt:null});
+  fixture.seats=[nativeSeat(capacity({windows:[window],binding:window,usability:'ready',observedAt:new Date(t).toISOString(),quotaExpiresAt:new Date(t+60_000).toISOString()}),{engine:'codex',label:'Synthetic native'})];
+  render(<HomeSeats />);
+  expect(screen.getByRole('meter')).toHaveAttribute('aria-valuenow','43');
+  act(()=>{vi.advanceTimersByTime(50_000);});
+  expect(screen.getByRole('meter')).not.toHaveAttribute('aria-valuenow');
+  expect(screen.getByText('43% used · last')).toBeInTheDocument();
+  expect(screen.getByText(/current usage unconfirmed/)).toBeInTheDocument();
+});

@@ -170,11 +170,11 @@ interface NativeToolImpl extends NativeToolDef {
 const TOOLS: NativeToolImpl[] = [
   {
     name: 'phm_proactive_agents_list', description: 'Read a page of configured personal-agent profile summaries and operation readiness. Profiles do not prove a connected adapter or authorize spending.',
-    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', enum: ['openai-dot', 'grok-bot', 'meta-muse', 'other'] }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
   },
   {
-    name: 'phm_proactive_agents_create', description: 'Save private personal-agent metadata with its real provider/account/agent identity. Enabled records a preference for future planning; current planners do not consume profiles. Never enables transport or spending.',
+    name: 'phm_proactive_agents_create', description: 'Save private agent metadata with its provider/account/agent identity, declared capabilities and local assignment preferences. Saving does not establish a connected adapter, autonomous dispatch or spending authority.',
     inputSchema: { type: 'object', properties: { profile: PROACTIVE_PROFILE_INPUT_SCHEMA }, required: ['profile'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).createProactiveProfile(args),
   },

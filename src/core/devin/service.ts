@@ -32,6 +32,7 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-sto
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { devinBudgetView, DEVIN_ACCOUNTING_UNAVAILABLE } from './budget.js';
+import { devinFleetApiBillingGate } from './api-billing.js';
 import { devinTaskDiagnostics } from './create-recovery.js';
 import { stateFromSession } from './session-state.js';
 import { DevinApiError, DevinClient, devinFailureSentence, type DevinFetch, type DevinSession } from './client.js';
@@ -209,7 +210,8 @@ export const DEVIN_CHAT_VERDICT: ReadinessVerdict = Object.freeze(devinChatVerdi
  * Ready needs the lane on, a key, Mason's opt-in, a live standing grant whose
  * current stage names the `devin` engine with a producer-only Devin seat
  * (3.15 — its own engine identity; see authority/effective-config.ts
- * standingAuthorizesDevin) and the budget's reserve and fleet caps. Devin PRs
+ * standingAuthorizesDevin), a positive standing metered API allowance, and
+ * the budget's reserve and fleet caps. Devin PRs
  * then merge only under the two-judge rule (merge-gates.ts G6) — or, 3.15,
  * on green tests alone when Devin ran an elite model (SWE-2, GPT-6) under an
  * elite-direct grant (authority/elite-models.ts).
@@ -240,6 +242,9 @@ export function devinFleetVerdict(input: {
     return v(false, 'warn', 'Not in the grant', `${granted.reason} Draft a new grant (or re-approve) with the Devin fleet opt-in on.`,
       commandFix('Draft a grant that includes Devin', 'ashlr authority draft'));
   }
+  const billing = devinFleetApiBillingGate(input.policy);
+  if (!billing.ok) return v(false, 'warn', 'Billing held', billing.reason!,
+    commandFix('Review the standing metered allowance', 'ashlr authority draft'));
   if (!input.fleetGate.ok) return v(false, 'warn', 'Paused', input.fleetGate.reason ?? 'The Devin budget refused another fleet session.');
   return v(true, 'ok', 'Ready', 'The fleet may launch Devin on well-scoped backlog work. Its PRs pass every standing gate; on an elite model (SWE-2, GPT-6) under an elite-direct grant they land on green tests, otherwise they merge only when two judges from different families ship them.');
 }
@@ -556,6 +561,10 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
     // authorizes Claude (or anything else) never authorizes Devin.
     const granted = standingAuthorizesDevin(policy);
     if (!granted.ok) return refusal(granted.reason, 'not-enabled');
+    // Fleet API creation is distinct from native free CLI authority. Manual,
+    // chat and operator launches retain their existing explicit ACU semantics.
+    const billing = devinFleetApiBillingGate(policy);
+    if (!billing.ok) return refusal(billing.reason!, 'budget');
   }
   const connected = await connectedClient(deps);
   if ('error' in connected) return refusal(connected.error, connected.failure);
@@ -584,6 +593,13 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
   const playbook = chatLaunch && resolvedPlaybook.match === 'auto'
     ? { ...resolvedPlaybook, ref: null, match: null, block: '' }
     : resolvedPlaybook;
+
+  // Preparation awaited key/branch/playbook work. A tightened dollar gate
+  // must refuse before even publishing a new local queue reservation.
+  if (origin === 'fleet') {
+    const billing = devinFleetApiBillingGate(safePolicy(deps));
+    if (!billing.ok) return refusal(billing.reason!, 'budget');
+  }
 
   // --- budget gate + persist queued (no await between them) ----------------
   const now = clock();
@@ -689,6 +705,8 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
       if (!policy || !repoPolicyFor(policy, repo)) throw new DevinApiError('not-enabled', 'The current standing grant no longer authorizes this Devin repo.');
       const granted = standingAuthorizesDevin(policy);
       if (!granted.ok) throw new DevinApiError('not-enabled', granted.reason);
+      const billing = devinFleetApiBillingGate(policy);
+      if (!billing.ok) throw new DevinApiError('budget', billing.reason!);
       const clamped = clampBudgetPolicy(loadBudgetPolicy(), policy, [DEVIN_SEAT_ID]);
       if (!effectiveSeatPolicy(clamped, DEVIN_SEAT_ID, 'devin').enabled) throw new DevinApiError('budget', 'The current budget policy keeps autonomy off Devin.');
     }

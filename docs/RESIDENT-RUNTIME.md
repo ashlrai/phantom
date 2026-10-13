@@ -275,6 +275,20 @@ Note that the continuous loop already re-reads config each tick (see (a)). The
 plist flag only feeds the start-time spend-guard recovery and the startup log
 line, which is exactly the mismatch the runbook observed.
 
+### Resident Mac awake preference
+
+Settings → Resident Mac stores optional `daemon.keepAwake` (off by default).
+It is separate from live budget and scheduling caps: saving only updates
+`config.json`. The installed launchd argv and configured value are shown
+separately, and a mismatch calls for a confirmed native resident restart (or
+`phm authority resident start` in the operator's Terminal). That start
+regenerates the plist through the same signed-grant, Stop, and service-install
+admission checks. On macOS, the installed service runs through
+`caffeinate -i -s` while it is running, requesting idle and system sleep
+prevention on AC power. Stopping the service ends the request. Closing the
+lid, choosing Sleep, or running on battery can still sleep the Mac. The
+desktop app and remote phone gateway have their own availability requirements.
+
 ### `ashlr authority setup`, resident step
 
 - `already`: all of the following hold:

@@ -42,7 +42,7 @@ import { verseBootstrapQuery } from '../verse-queries.js';
 import { AccountCard } from '../usage/AccountCard.js';
 import { AccountDetail } from '../usage/AccountDetail.js';
 import { CapacityFacts } from '../usage/CapacityFacts.js';
-import { CapacityStrip, useCapacityData } from '../usage/CapacityStrip.js';
+import { CapacityStrip, useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
 import { EfficiencyPanel } from '../usage/EfficiencyPanel.js';
 import { seatEfficiency } from '../usage/context-model.js';
 import { LimitsPanel } from '../usage/LimitsPanel.js';
@@ -234,16 +234,17 @@ export function UsageSection(): ReactNode {
   // The real roster when owner T's route answered; otherwise the same card
   // model built from the coarser pre-V2 sources, with a banner saying so.
   const usingFallbackRoster = accountsSnapshot === null;
+  const now = useCapacityClock(undefined, accountsSnapshot?.accounts ?? []);
   const cards = useMemo(
     () =>
       accountsSnapshot
-        ? buildAccountCards(accountsSnapshot)
+        ? buildAccountCards(accountsSnapshot, now)
         : buildFallbackAccountCards({
             bootstrap: bootstrap.data,
             control: control.data,
             frontier: frontier.data,
           }),
-    [accountsSnapshot, bootstrap.data, control.data, frontier.data],
+    [accountsSnapshot, bootstrap.data, control.data, frontier.data, now],
   );
 
   const localView = useMemo(() => buildLocalModelsView(localSnapshot), [localSnapshot]);
@@ -271,8 +272,8 @@ export function UsageSection(): ReactNode {
   // The two-second answer, over the same card models the grid renders — so
   // the strip and the cards can never disagree about a seat's state.
   const capacity = useMemo(
-    () => buildCapacityOverview({ cards, localCard, localView }),
-    [cards, localCard, localView],
+    () => buildCapacityOverview({ cards, localCard, localView, nowMs: now }),
+    [cards, localCard, localView, now],
   );
 
   const localStale = useMemo(() => localStaleness(localView?.runtimes ?? []), [localView]);
