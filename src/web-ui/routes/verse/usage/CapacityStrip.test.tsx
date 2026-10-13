@@ -23,6 +23,9 @@ import {
   GROK_SEAT,
   LOCAL_SEAT_V2,
   UNREAD_SEAT,
+  capacity,
+  nativeSeat,
+  seatWindow,
 } from '../seat-fixtures.test-support.js';
 import { CapacityStrip, useCapacityData } from './CapacityStrip.js';
 import { buildCapacityRows } from './capacity-strip-model.js';
@@ -80,13 +83,31 @@ describe('CapacityStrip', () => {
     expect(container.querySelectorAll('[class*="reserve"]')).toHaveLength(1);
   });
 
+  it('retains gray original values at a non-aligned expiry and removes current forecasts',()=>{
+    vi.useFakeTimers();const t=Date.parse('2026-10-12T12:00:00.000Z');vi.setSystemTime(t+10_000);
+    const window=seatWindow({id:'weekly',usedPercent:43,resetsAt:new Date(t+3600_000).toISOString()});
+    const seats=[nativeSeat(capacity({windows:[window],binding:window,usability:'ready',observedAt:new Date(t).toISOString(),quotaExpiresAt:new Date(t+60_000).toISOString()}),{engine:'codex'})];
+    try {
+      render(<CapacityStrip seats={seats} />);
+      expect(screen.getByText('1 of 1 account with current usage')).toBeInTheDocument();
+      act(()=>{vi.advanceTimersByTime(49_999);});
+      expect(screen.getByText('1 of 1 account with current usage')).toBeInTheDocument();
+      act(()=>{vi.advanceTimersByTime(1);});
+      expect(screen.getByText('43% used · last')).toHaveAttribute('data-level','unknown');
+      expect(screen.getByText('0 of 1 account with current usage · 1 usage unconfirmed')).toBeInTheDocument();
+      expect(screen.queryByText(/^resets /)).toBeNull();
+    } finally {vi.useRealTimers();}
+  });
+
   it('shows credits as a separate fact, never folded into the window', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-20T20:00:00.000Z'));
     render(<CapacityStrip seats={[CODEX_CREDITS_SEAT]} />);
     expect(screen.getByText('2,000 credits available')).toHaveAttribute('title', 'Provider balance: 2,000 credits.');
     expect(screen.getByText('limit reached')).toBeInTheDocument();
   });
 
   it('rounds separate account titles while preserving the raw provider balances', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-20T20:00:00.000Z'));
     const seats = ['412.8921985000', '62497.7860000000', '0.000001'].map((balance, index) => ({
       ...CODEX_CREDITS_SEAT, id: `codex-readable-${index}`, accountId: `codex-readable-${index}`,
       label: `Codex ${index}`, capacity: { ...CODEX_CREDITS_SEAT.capacity!,
@@ -107,7 +128,10 @@ describe('CapacityStrip', () => {
     vi.setSystemTime(now);
     const expiresAt = new Date(now + 60_000).toISOString();
     const seats = [{ ...CODEX_CREDITS_SEAT,
-      capacity: { ...CODEX_CREDITS_SEAT.capacity!, creditsExpiresAt: expiresAt },
+      capacity: { ...CODEX_CREDITS_SEAT.capacity!, creditsExpiresAt: expiresAt,
+        observedAt: new Date(now).toISOString(), quotaExpiresAt: new Date(now+120_000).toISOString(),
+        windows: CODEX_CREDITS_SEAT.capacity!.windows.map(window => ({...window,resetsAt:new Date(now+86_400_000).toISOString()})),
+      },
       lastKnownUsage: { source: 'native-account-checked-history' as const, identitySource: 'native-account-checked' as const,
         observedAt: new Date(now).toISOString(), expiresAt, windows: [],
         creditHistory: { reading: CODEX_CREDITS_SEAT.capacity!.credits!, observedAt: new Date(now).toISOString(), expiresAt, planType: 'pro' },

@@ -7,8 +7,9 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readResourceJson } from './pool-runtime.js';
 import { validateResourceObservations, validateResourcePool, type ResourceObservation, type ResourcePool } from './pool-policy.js';
 import { validateResourceBindings, type ResourceBinding } from './worker.js';
-import { RESOURCE_QUOTA_REFRESH_TTL_MS, validateResourceQuotaRefreshConfig, type ResourceQuotaRefreshConfig } from './quota-refresh.js';
+import { RESOURCE_QUOTA_REFRESH_TTL_MS, validateResourceQuotaRefreshConfig, type ResourceQuotaRefreshConfig } from './quota-refresh-config.js';
 import { inspectResourceQuotaRefreshOwner, type ResourceQuotaRefreshLease } from './quota-refresh-lease.js';
+import { captureResourceCommissioningObservations } from './pool-commissioning-evidence.js';
 import { expandResourceQuotaDenials, resourceQuotaBuckets } from './quota-scope.js';
 
 export const RESOURCE_SHARED_QUOTA_EVIDENCE_TTL_MS = 5_000;
@@ -39,6 +40,14 @@ function checkedEvidence(value: unknown, checked: ReturnType<typeof scope>, now:
   if (observations.some((row) => !ids.has(row.workerId)) || !Array.isArray(input.unavailableWorkerIds) ||
     input.unavailableWorkerIds.length > ids.size || input.unavailableWorkerIds.some((id) => !ids.has(id)) ||
     new Set(input.unavailableWorkerIds).size !== input.unavailableWorkerIds.length) throw new Error();
+  const captures = captureResourceCommissioningObservations(checked.root, checked.pool, checked.bindings, checked.config, observations.map(row => row.workerId));
+  for (const row of observations) {
+    const expected = captures.get(row.workerId);
+    if (expected && canonical(row.commissioning) !== canonical(expected)) throw new Error();
+    // This Codex quota producer does not implement native billing attestation.
+    // A generic observation import cannot stand in for a supported same-account source port.
+    if (row.commissioning?.subscriptionOnlyBoundary !== undefined) throw new Error();
+  }
   const unavailable = new Set(input.unavailableWorkerIds);
   const quotaIds = input.quotaUnavailableWorkerIds === undefined ? [] : input.quotaUnavailableWorkerIds;
   if (!Array.isArray(quotaIds) || quotaIds.length > ids.size || quotaIds.some((id) => !ids.has(id)) ||

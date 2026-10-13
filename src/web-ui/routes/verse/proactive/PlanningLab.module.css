@@ -1,0 +1,27 @@
+.section { margin-top: var(--space-8); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle); }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+.header h2 { margin: 0; font-family: var(--font-display); font-size: var(--text-lg-size); }
+.header p, .note { color: var(--text-secondary); font-size: var(--text-sm-size); line-height: 1.5; max-width: 80ch; }
+.header p { margin: var(--space-1) 0; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.panel { padding-block: var(--space-4); border-top: 1px solid var(--border-subtle); }
+.panel h3 { margin: 0 0 var(--space-2); font-size: var(--text-md-size); }
+.panel h4 { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); }
+.list { list-style: none; padding: 0; margin: var(--space-3) 0; }
+.item { padding-block: var(--space-3); border-top: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.item p { margin-block: var(--space-1); }
+.evidence { margin-top: var(--space-2); font-size: var(--text-sm-size); }
+.evidence summary { cursor: pointer; color: var(--text-secondary); width: fit-content; }
+.evidence summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.facts { margin-block: var(--space-3); display: grid; gap: var(--space-2); font-size: var(--text-sm-size); }
+.facts > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: var(--space-3); }
+.facts dt { color: var(--text-secondary); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd ul { padding-left: var(--space-4); margin: 0; }
+.state { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.error { color: var(--status-danger-fg); font-size: var(--text-sm-size); line-height: 1.5; }
+.form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 72ch; margin-block: var(--space-3); }
+.form label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm-size); }
+.form fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.simulated { border-left: 2px solid var(--border-focus); padding-left: var(--space-3); }
+@media (max-width: 600px) { .header { flex-direction: column; } .facts > div { grid-template-columns: 1fr; } }

@@ -58,6 +58,7 @@ describe('saved Grok Bot resource metadata', () => {
     id, version: 1, identity: { provider: 'grok-bot', accountId, agentId: id }, displayName: id,
     responsibility: '', avatar: { color: '#6554ff', variant: 'classic' }, computer: { kind: 'unknown', label: '', providerComputerId: null },
     services: [], fundingReference: null, enabled, connection: 'configured', lastRun: null,
+    capabilityIds: [], capabilityVerification: 'declared-unverified', preferences: { priority: 50, maxConcurrent: 1, projectBindingIds: [] },
     createdAt: new Date(NOW).toISOString(), updatedAt: new Date(NOW).toISOString(),
     operations: { dispatch: { state: 'unverified', verifiedAt: null, note: 'No qualified connection.' },
       status: { state: 'unsupported', verifiedAt: null, note: '' }, cancel: { state: 'unsupported', verifiedAt: null, note: '' },

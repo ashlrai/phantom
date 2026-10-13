@@ -13,6 +13,7 @@ export const OPERATOR_DOCUMENTATION = Object.freeze([
   'docs/ASHLR-UNIVERSE.md', 'docs/RESOURCE-POOLS.md', 'docs/NORTH-STAR.md', 'docs/MISSION-OS.md',
   'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/AUTOMATIC-OUTCOMES.md',
   'docs/RESIDENT-RUNTIME.md',
+  'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
   'docs/AUTHORITY.md',
   'docs/STANDING-AUTHORITY.md',
   'docs/CLOUD.md',
