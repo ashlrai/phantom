@@ -6,6 +6,45 @@ preferences and goals; provider adapters establish what can actually run.
 Personal assistant names and observed strengths are configuration, not fixed
 product roles or authority. Multiple agents may share a provider or account.
 
+## Product acceptance direction
+
+The north star is a unified self-improving engineering workspace and service,
+with Ashlr dogfooding its service delivery toward SaaS and autonomous operations.
+**Work with me** and **Work for me** must share task identity, context, resources
+and evidence. Users can inspect, interject, approve, take over and return work to
+agents. This direction is an aspiration, not evidence of a completed product or
+measured autonomous performance.
+
+Acceptance for subsequent milestones:
+
+- Ownership changes preserve criteria, context/artifact revisions, budget,
+  attempt history and unresolved effects. Human takeover does not silently
+  redispatch potentially active work or reset a deadline.
+- Priorities and outcome criteria remain inspectable. Allocation across
+  subscriptions, CLI/API/cloud/local resources targets verified value, quality,
+  time and cost, with exclusion reasons; tokens and activity are diagnostics.
+- Independent evaluations pin inputs, evaluator and policy versions. Learned
+  routing changes are explainable and reversible; self-reports and synthetic
+  routing tests cannot establish production quality or expand authority.
+- Operating windows, spending and escalation stay bounded. Agreement across
+  task and resource views includes source, identity, observation time, coverage
+  and unknown/stale/conflicting values, rather than replacing unknowns with zero.
+- Release autonomy retains exact target/artifact evidence, current authority,
+  post-release checks and channel-specific recovery. The
+  [release evaluator](../src/core/proactive/release-readiness.ts) is a local
+  readiness mechanism, not a publisher or proof of successful rollback.
+- Team contributions require membership, resource control and explicit
+  project/task/source/destination consent. Matching providers or accounts never
+  grants sharing rights.
+
+Current [coordination](../src/core/proactive/coordination.ts),
+[packets](../src/core/proactive/packets.ts),
+[resource projections](../src/core/proactive/resource-evidence.ts) and
+[routing lab](../src/core/proactive/routing-lab.ts) implement local evidence and
+manual/offline workflows. They do not establish deployed personal-agent
+transport, distributed human membership, credit-funded dispatch, provider API
+availability, zero-cash execution qualification or measured live improvement.
+
 ## Review basis and milestone boundary
 
 This engineering backlog was reviewed on 2026-10-12 in
@@ -60,6 +99,35 @@ fallback reasons and local duration. It has no TypeSafe client, model calls,
 production preference writes or dispatch consumer. Preference proposals can be
 withdrawn as local records. Simulated results stay outside production priors;
 verified live outcomes and account/model cohorts remain future work.
+
+### Local resource-display follow-up
+
+This bounded next slice is local and unreleased. A source version of 3.29.14 is
+not evidence of a final release, publication, installation or live acceptance.
+Team backend proposals and transport/funding qualification remain separate
+backlog work.
+
+Operator/source acceptance:
+
+- Keep resource count, current-reading count and configured-reference count
+  separate. Connections and declared Bot references do not establish distinct
+  provider/human identities or control. The qualified independent-account count
+  and complete account denominator remain unknown without genuine source-owned
+  identity/equivalence evidence; aliases cannot manufacture independent capacity.
+- Native quota retains its original `observedAt` and `quotaExpiresAt`; credits
+  retain their own observation and original `creditsExpiresAt`. Connection and
+  admission stamps are independent. A failed check, health reply, policy change
+  or reread cannot restamp a retained observation.
+- Recheck at the exact original expiry/reset boundary and when focus returns.
+  Display policy may impose a stricter age limit, never extend source TTL.
+  Expiry/focus callbacks reevaluate cached evidence without fetching, admitting
+  work or spending. Test delayed timers, focus return and quota/credit expiry
+  independently, preserving source timestamps and bytes.
+- The resource bar, cards, provider groups and usage view must agree on current
+  versus retained evidence. Current credit does not refresh expired quota;
+  source-qualified pool grouping does not prove account identity or entitlement.
+  Missing or conflicting identity evidence stays unknown and effect flags stay
+  false. Synthetic acceptance does not qualify a provider or autonomous dispatch.
 
 ### 1. Finish local coordination and an honest operator preview
 
@@ -248,6 +316,46 @@ Unknown provider state is reconciled before another write. A shared notification
 reports each channel's actual state without announcing global completion early.
 
 ## Authorization and delivery boundaries
+
+### Offline team contract proposal
+
+Start with a separate pure evaluator and synthetic fixture, preserving immutable
+v1 packet/ledger schemas and existing false effect flags. This is proposed work;
+no membership service or team authentication is implemented by these documents.
+
+| Proposed sidecar contract | Required binding |
+|---|---|
+| `TeamPolicySnapshotV1` | Team, revision/digest, active member IDs, exact tenant/project bindings and explicit operation permissions. The host supplies the actor principal; labels and role names cannot grant rights. |
+| `TeamResourceBindingV1` | Opaque resource reference, exact provider/account/agent identity where applicable, controlling principal or scoped delegation, contributing members and unconfirmed/verified/disputed control evidence. Declared capabilities and funding remain separate. |
+| `TeamSharingScopeV1` | Exact task/project, source account/object/revision, recipient member and destination identity, permitted brief/artifact/result disclosure, expiry and revocation revision. Source-controller consent is separate from task assignment or team administration. |
+| `TeamDecisionReceiptV1` | Actor/member, operation, command/request digest, policy revision, exact task/packet/result/artifact bindings, decision and bounded reasons. Local hash integrity is not independently protected team audit custody. |
+
+Feed eligible declared candidates into the existing
+[planning preview](../src/core/proactive/planning.ts); assignments remain
+configurable. A fixture may exercise existing local coordinator commands through
+injected principals and policy snapshots, but keeps `executionAuthorized`,
+`contextShared` and `effectsExecuted` false. Publish only explicitly approved
+resource descriptors to teammates. Conflicting control claims hold; team
+membership and connected accounts do not establish ownership or entitlement.
+
+Acceptance uses two fictional members and generic resources without credentials,
+private histories, financial observations or real account data. Test revoked or
+removed membership, wrong tenant/task/source/destination, expiry, denied external
+sharing, exact/conflicting replay, concurrent ownership, stale results and
+timeout/cancellation ambiguity. An independent human review cannot be satisfied
+by a second agent controlled by the producing member. Record one notification
+owner and preserve acknowledgement on duplicate events; removal needs an
+explicit fallback policy. Offline success remains simulated.
+
+Human decisions precede a live architecture: shared coordinator versus local
+synchronization; principal identity issuer; membership administration versus
+source-disclosure approval; permitted external recipients; reviewer independence;
+notification ownership; audit visibility/retention; and separately commissioned
+spending/release authority. Existing `ownerId`/`operatorId` are local labels,
+not authenticated membership. The local ledger demonstrates one-host CAS, not
+distributed leases. A shared implementation must atomically recheck membership
+revocation and command admission; separate local stores cannot promise that.
+Account control remains explicit and unconfirmed until independently qualified.
 
 ### Integration qualification observations (2026-10-12)
 

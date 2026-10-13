@@ -10,8 +10,8 @@
  *            it a grid track, so the surface shrinks rather than hides).
  *            Not modal — no trap, no backdrop, Esc is the surface's.
  *
- * 3.15 — ONE TIER MODEL, ONE CARD ANATOMY. Cards are grouped by tier
- * (routing/tiers.ts), never by provider or by when a provider was added:
+ * 3.15 — ONE TIER MODEL, ONE CARD ANATOMY. The default view groups cards by
+ * tier (routing/tiers.ts); an optional provider view drills into exact accounts:
  *
  *   Elite         Claude Code, every Codex account, Devin (cloud + CLI),
  *                 Claude cloud credits — and the local runtime when it runs
@@ -33,7 +33,7 @@
  * Terminal, Check again requests only this account’s native usage metadata.
  */
 import { getAuthSnapshot, getMutationToken, subscribeAuth } from '../../../data/auth-store.js';
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IconButton } from '../../../components/primitives/Button.js';
 import { useFocusTrap } from '../../../components/primitives/focus-trap.js';
@@ -50,7 +50,7 @@ import { findCommand, formatChord } from '../shell/command-catalog.js';
 import { isGuardOpen, requestGuarded } from '../shell/guarded-action.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { ACCOUNT_CLOCK_MS, useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
-import { accountStatus, accountStatusRank, buildCapacityRows, capacityHeadline, type CapacityRow } from '../usage/capacity-strip-model.js';
+import { accountStatus, accountStatusRank, buildCapacityRows, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { COST_BASIS_RANK, costBasisOf, engineTier, TIER_BLURBS, TIER_LABELS, type ResourceTier } from '../../../../core/routing/tiers.js';
 import { refreshAccountReading, refreshSeats } from '../useSeatsRefresh.js';
 import { budgetQuery } from '../budget/budget-queries.js';
@@ -68,6 +68,9 @@ import { cloudCreditsQuery, resourceReadinessQuery, RESOURCES_POLL_MS } from './
 import { costBases, groupByTier, mergedFacts, readinessStatusRank, seatFacts, type ResourceFactsView, type TierEntry } from './resources-model.js';
 import { closeResources, setResourcesBar, setResourcesPinned, useResourcesUi } from './resources-store.js';
 import styles from './ResourcesDrawer.module.css';
+import { projectResourceDisplay } from './resource-display-model.js';
+import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
+import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
 import { refreshDevinConsumption } from '../devin/devin-queries.js';
 import { collectionNotice } from './collection-notice.js';
 const ResetSpendingControl = lazy(() => import('../budget/ResetSpendingControl.js').then(module => ({ default: module.ResetSpendingControl })));
@@ -107,9 +110,9 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
   const panelRef = useRef<HTMLDivElement>(null);
   const overlay = mode === 'overlay';
   const data = useCapacityData();
-  const [, setTick] = useState(() => Date.now());
   const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
   const healthRead = data.health !== null;
+  const [grouping, setGrouping] = useState<'tier' | 'provider'>('tier');
   const [busy, setBusy] = useState<{ seatId: string; kind: AccountAction['kind'] } | null>(null);
   const [note, setNote] = useState<Note>(null);
   const actionGeneration = useRef(0);
@@ -177,6 +180,17 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
   const devinRows = useMemo(() => rows.filter((r) => r.engine === 'devin'), [rows]);
   const localRow = rows.find((r) => r.kind === 'local') ?? null;
   const mode_ = data.budget?.mode ?? null;
+  const displayById = new Map(rows.map(row => [row.seatId, projectResourceDisplay(row, { nowMs: now, healthRead, maxAgeMs: data.budget?.readingMaxAgeMs })]));
+  const usageHeadline = rows.filter(row => row.kind === 'subscription');
+  const currentUsageCount = usageHeadline.filter(row => displayById.get(row.seatId)?.usage.current).length;
+  const headerParts = usageHeadline.length === 0 ? ['No accounts connected']
+    : [`${currentUsageCount} of ${usageHeadline.length} ${usageHeadline.length === 1 ? 'resource' : 'resources'} with current usage readings`,
+      ...(currentUsageCount < usageHeadline.length ? [`${usageHeadline.length - currentUsageCount} usage unconfirmed`] : [])];
+  const retainedCount = usageHeadline.filter(row => displayById.get(row.seatId)?.usage.state === 'retained').length;
+  if (retainedCount) headerParts.push(`${retainedCount} last ${retainedCount === 1 ? 'reading' : 'readings'}`);
+  if (rows.some(row => row.kind === 'local' && row.cls === 'ready')) headerParts.push('local models ready');
+  else if (rows.some(row => row.kind === 'local')) headerParts.push('local models not ready');
+  const headerSummary = headerParts.join(' · ');
 
   const sections = useMemo(() => {
     const seats = data.seats;
@@ -315,13 +329,82 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
     refetchCloud();
     refreshAccounts();
     refreshReadiness();
-    setTick(Date.now());
   };
 
   const chord = findCommand('resources.toggle')?.keys[0];
   const shortcut = chord ? formatChord(chord) : undefined;
   const canPin = !compact;
   const pinned = mode === 'docked';
+
+  const providerOf = (entry: DrawerEntry) => entry.kind === 'account' ? entry.row.engine === 'codex' ? 'openai' : entry.row.engine === 'claude' ? 'anthropic' : 'xai'
+    : entry.kind === 'local' ? 'local' : entry.kind === 'devin' ? 'devin' : 'anthropic';
+  const allEntries = sections.flatMap(section => section.entries);
+  const descriptors: ProviderResourceDescriptor[] = allEntries.map(entry => {
+    const seat = entry.kind === 'account' ? data.seats.find(seat => seat.id === entry.row.seatId) : undefined;
+    const display = entry.kind === 'account' ? displayById.get(entry.row.seatId) : undefined;
+    return { resourceId: entry.key, provider: providerOf(entry), accountId: seat?.accountId ?? null,
+      label: entry.kind === 'account' ? entry.row.label : entry.kind === 'local' ? 'Local models' : entry.kind === 'devin' ? 'Devin' : 'Cloud estimate',
+      resourceKind: entry.kind === 'account' ? 'native-account' : entry.kind === 'local' ? 'local-readiness' : 'funding-or-budget',
+      readingState: display?.usage.current ? 'current' : display?.usage.freshness === 'stale' ? 'stale' : 'unknown',
+      observedAt: display?.usage.observedAt ?? null };
+  });
+  const entryByKey = new Map(allEntries.map(entry => [entry.key, entry]));
+  function renderEntry(entry: DrawerEntry): ReactNode {
+    switch (entry.kind) {
+      case 'account': {
+        const row = entry.row;
+        if (data.loading) return null;
+        const display = displayById.get(row.seatId)!;
+        const settled = display.status;
+        const checking = busy?.seatId === row.seatId && busy.kind === 'check-again';
+        const status = checking ? accountStatus(row, { healthRead, now, checking: true }) : settled;
+        return (
+          <ResourceCard
+            key={entry.key}
+            row={row}
+            status={status}
+            display={display}
+            settled={settled}
+            mode={mode_}
+            busy={busy}
+            onAction={onAction}
+            readiness={readinessById.get(row.seatId) ?? null}
+            facts={entry.facts}
+            scheduling={schedulingEvidence(data.budget, row, now)}
+            resetBudget={data.budget}
+            resetNowMs={now}
+            onReviewGrant={() => go('fleet', 'authority-grant')}
+          />
+        );
+      }
+      case 'devin':
+        return <DevinResource key={entry.key} facts={entry.facts} bases={entry.bases} />;
+      case 'cloud':
+        return (
+          <CloudCredits
+            key={entry.key}
+            facts={entry.facts}
+            readiness={readinessById.get('cloud') ?? null}
+            onReadinessAction={onReadinessAction}
+            readinessBusy={busy !== null && busy.seatId === readinessById.get('cloud')?.chat.fix?.seatId}
+          />
+        );
+      case 'local':
+        return (
+          <LocalResources
+            key={entry.key}
+            facts={entry.facts}
+            readinessRetained={data.localReadFailed}
+            status={localRow ? accountStatus(localRow, { healthRead, now }) : null}
+            onOpenUsage={() => go('usage')}
+            now={fixedNow}
+            readiness={readinessById.get('local') ?? null}
+          />
+        );
+      default:
+        return null;
+    }
+  }
 
   const panel = (
     <div
@@ -337,7 +420,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
       <header className={styles.head}>
         <div className={styles.headText}>
           <h2 id={titleId} className={styles.title}>Resources</h2>
-          {!data.loading && rows.length > 0 ? <p className={styles.headline}>{capacityHeadline(rows)}</p> : null}
+          {!data.loading && rows.length > 0 ? <p className={styles.headline}>{headerSummary}</p> : null}
         </div>
         <div className={styles.headActions}>
           <Tooltip label="Read everything again" placement="bottom">
@@ -367,7 +450,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
           <ResetSpendingControl view={data.budget} nowMs={now} onReviewGrant={() => go('fleet', 'authority-grant')} />
         </Suspense>
         {data.refreshing ? <p className={styles.subtle} role="status">Updating readings…</p> : null}
-        {data.readFailed ? <p className={styles.subtle} role="status">Refresh unavailable{data.rosterUnavailable ? '.' : ' · showing last readings.'}</p> : null}
+        {data.readFailed ? <p className={styles.subtle} role="status">Refresh unavailable{data.rosterUnavailable ? ' · resource roster unavailable.' : ' · each reading keeps its own observation time and freshness.'}</p> : null}
         {readinessNotice ? <p className={styles.subtle} role="status">{readinessNotice}</p> : null}
         {collectionStatus ? <p className={styles.subtle} role="status">{collectionStatus}</p> : null}
         {data.loading ? (
@@ -376,65 +459,21 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
           <p className={styles.subtle}>{RESOURCES_EMPTY_TEXT}</p>
         ) : null}
         <CreditPools accountNames={new Map(data.seats.map(seat => [seat.id, seat.label]))} />
-        {sections.map((section) => (
+        <div className={styles.groupingControls} role="group" aria-label="Resource grouping">
+          <button type="button" aria-pressed={grouping === 'tier'} onClick={() => setGrouping('tier')}>By tier</button>
+          <button type="button" aria-pressed={grouping === 'provider'} onClick={() => setGrouping('provider')}>By provider</button>
+        </div>
+        {readinessCurrent && readinessRead.data?.value?.checkedAt ? <p className={styles.subtle}>Admission checked <time dateTime={readinessRead.data.value.checkedAt} title={readinessRead.data.value.checkedAt}>{new Date(readinessRead.data.value.checkedAt).toLocaleString()}</time> · separate from usage observations.</p> : null}
+        {grouping === 'provider' ? <Suspense fallback={<p role="status" className={styles.subtle}>Reading provider groups…</p>}>
+          <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="drawer"
+            classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.subtle, cards: styles.cards }}
+            renderResource={resource => { const entry = entryByKey.get(resource.resourceId); return entry ? renderEntry(entry) : null; }} />
+        </Suspense> : sections.map((section) => (
           <section key={section.tier} className={styles.group} aria-labelledby={`${titleId}-${section.tier}`} data-tier-section={section.tier}>
             <h3 id={`${titleId}-${section.tier}`} className={styles.groupTitle}>{TIER_LABELS[section.tier]}</h3>
             <p className={styles.groupBlurb}>{TIER_BLURBS[section.tier]}</p>
             <ul className={styles.cards}>
-              {section.entries.map((entry) => {
-                switch (entry.kind) {
-                  case 'account': {
-                    const row = entry.row;
-                    if (data.loading) return null;
-                    const settled = accountStatus(row, { healthRead, now });
-                    const checking = busy?.seatId === row.seatId && busy.kind === 'check-again';
-                    const status = checking ? accountStatus(row, { healthRead, now, checking: true }) : settled;
-                    return (
-                      <ResourceCard
-                        key={entry.key}
-                        row={row}
-                        status={status}
-                        settled={settled}
-                        mode={mode_}
-                        busy={busy}
-                        onAction={onAction}
-                        readiness={readinessById.get(row.seatId) ?? null}
-                        facts={entry.facts}
-                        scheduling={schedulingEvidence(data.budget, row, now)}
-                        resetBudget={data.budget}
-                        resetNowMs={now}
-                        onReviewGrant={() => go('fleet', 'authority-grant')}
-                      />
-                    );
-                  }
-                  case 'devin':
-                    return <DevinResource key={entry.key} facts={entry.facts} bases={entry.bases} />;
-                  case 'cloud':
-                    return (
-                      <CloudCredits
-                        key={entry.key}
-                        facts={entry.facts}
-                        readiness={readinessById.get('cloud') ?? null}
-                        onReadinessAction={onReadinessAction}
-                        readinessBusy={busy !== null && busy.seatId === readinessById.get('cloud')?.chat.fix?.seatId}
-                      />
-                    );
-                  case 'local':
-                    return (
-                      <LocalResources
-                        key={entry.key}
-                        facts={entry.facts}
-                        readinessRetained={data.localReadFailed}
-                        status={localRow ? accountStatus(localRow, { healthRead, now }) : null}
-                        onOpenUsage={() => go('usage')}
-                        now={fixedNow}
-                        readiness={readinessById.get('local') ?? null}
-                      />
-                    );
-                  default:
-                    return null;
-                }
-              })}
+              {section.entries.map(renderEntry)}
             </ul>
           </section>
         ))}
