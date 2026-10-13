@@ -58,9 +58,9 @@ describe('ecosystem docs inventory', () => {
     const index = readIndex();
     const directories = index.repositories.map((repo) => repo.directory);
 
-    expect(index.source.includedRepoCount).toBe(21);
-    expect(index.repositories).toHaveLength(21);
-    expect(new Set(directories).size).toBe(21);
+    expect(index.source.includedRepoCount).toBe(23);
+    expect(index.repositories).toHaveLength(23);
+    expect(new Set(directories).size).toBe(23);
     expect(directories).not.toContain('binshield-internal-backup');
     expect(index.source.excluded.some((entry) => entry.directory === 'binshield-internal-backup')).toBe(true);
     expect(directories).toEqual([
@@ -79,6 +79,8 @@ describe('ecosystem docs inventory', () => {
       'binshield',
       'homebrew-ashlr',
       'homebrew-phantom',
+      'lexicon',
+      'locus',
       'morphkit',
       'openclaw-setup',
       'phantom-secrets',
@@ -127,6 +129,8 @@ describe('ecosystem docs inventory', () => {
       'ashlr-pulse',
       'ashlrcode',
       'ashlr-workbench',
+      'lexicon',
+      'locus',
     ];
 
     expect(index.strategicFocus.coreFleetRepos).toEqual(coreFleetRepos);
@@ -146,7 +150,7 @@ describe('ecosystem docs inventory', () => {
     );
 
     expect(map).toContain('### Strategic focus tiers');
-    expect(map).toContain('| **Core fleet spine** | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench |');
+    expect(map).toContain('| **Core fleet spine** | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench, lexicon, locus |');
     expect(map).toContain('| **Core-adjacent candidate** | ashlr-mux |');
   });
 

@@ -325,6 +325,8 @@
     "src/core/ecosystem/doctor.ts",
     "src/core/ecosystem/focus.ts",
     "src/core/ecosystem/map.ts",
+    "src/core/ecosystem/onboard-deps.ts",
+    "src/core/ecosystem/onboard.ts",
     "src/core/effective-config.ts",
     "src/core/env-bridge.ts",
     "src/core/eval/swe-bench.ts",

@@ -104,6 +104,12 @@ export const NAV_GROUPS: NavGroup[] = [
         implemented: true,
       },
       {
+        path: '/control/ecosystem',
+        label: 'Ecosystem',
+        description: 'Per-repo autonomy readiness for the Ashlr ecosystem, with one Enable autonomy button.',
+        implemented: true,
+      },
+      {
         path: '/control/fleet',
         label: 'Fleet',
         description: 'Queue depth, lease health, and the kill switch.',

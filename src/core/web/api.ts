@@ -1757,6 +1757,33 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/ecosystem ── read-only onboarding readiness per repo
+    // (src/core/ecosystem/onboard.ts, statusOnly — writes nothing).
+    if (path === '/api/ecosystem' && method === 'GET') {
+      const { runEcosystemUp } = await import('../ecosystem/onboard.js');
+      const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
+      sendJson(res, 200, await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { statusOnly: true }));
+      return true;
+    }
+
+    // ── POST /api/ecosystem/up ── the console's "Enable autonomy" button.
+    // Dispatch-gated + mutation token. Clones, enrolls and turns the steward
+    // schedule on; it can NEVER sign the standing grant (allowGrant:false) —
+    // the response names the terminal command (Touch ID) instead.
+    if (path === '/api/ecosystem/up' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) {
+        return true;
+      }
+      const { runEcosystemUp } = await import('../ecosystem/onboard.js');
+      const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
+      sendJson(res, 200, await runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { allowGrant: false }));
+      return true;
+    }
+
     // ── POST /api/daemon/service/repair ────────────────────────────────────
     // The web mutation token is not daemon install/repair authority. Keep the
     // legacy route fail-closed until a distinct signed, scoped repair contract

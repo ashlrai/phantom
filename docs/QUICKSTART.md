@@ -22,6 +22,10 @@ does not establish installed fleet or hosted-service readiness.
 
 <a id="open-verse"></a>
 
+## One command for the whole ecosystem
+
+`phm ecosystem up` — see [ECOSYSTEM-ONBOARDING.md](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-ONBOARDING.md).
+
 ## Open Phantom
 
 ### CLI on macOS, Linux or Windows
