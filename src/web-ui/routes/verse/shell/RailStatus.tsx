@@ -22,7 +22,7 @@ import type {
   VerseCapacityBadge,
 } from '../../../../core/verse/workbench-types.js';
 import { buildCapacityRows, scarcestSeat, type CapacityRow } from '../usage/capacity-strip-model.js';
-import { useCapacityData } from '../usage/CapacityStrip.js';
+import { useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 import styles from './RailStatus.module.css';
 import { usedPercentText } from '../percent-text.js';
@@ -152,9 +152,10 @@ export function describeRailCapacity(c: RailCapacity): string {
  */
 export function useRailCapacity(): RailCapacity | null {
   const data = useCapacityData({ withBudget: false });
+  const now = useCapacityClock(undefined, data.seats.map(seat => seat.capacity));
   return useMemo(
-    () => railCapacityFromRow(scarcestSeat(buildCapacityRows(data.seats, { health: data.health, local: 'hide' }))),
-    [data.seats, data.health],
+    () => railCapacityFromRow(scarcestSeat(buildCapacityRows(data.seats, { health: data.health, local: 'hide', now }))),
+    [data.seats, data.health, now],
   );
 }
 

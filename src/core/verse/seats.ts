@@ -591,6 +591,7 @@ function telemetryOf(record: VerseAccountRecord, evidenceSource: VerseSeatEviden
       // Structurally identical to `VerseCodexCredits`; this assignment is the
       // compile-time drift guard between core and the browser-safe contract.
       credits: record.credits,
+      quotaExpiresAt: record.expiresAt,
       creditsExpiresAt: record.credits === null ? null : record.expiresAt,
       usability: seatUsability(record),
       observedAt: record.observedAt,

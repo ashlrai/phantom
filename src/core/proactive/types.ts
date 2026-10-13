@@ -1,12 +1,18 @@
-/** Personal agents are persistent counterparts, not model/API execution seats. */
+/** Display suggestions only; providers are extensible stable slugs, not a closed registry. */
 export const PROACTIVE_PROVIDERS = ['openai-dot', 'grok-bot', 'meta-muse', 'other'] as const;
-export type ProactiveProvider = typeof PROACTIVE_PROVIDERS[number];
+export type ProactiveProvider = string;
 export interface ProactiveIdentity { provider: ProactiveProvider; accountId: string; agentId: string }
 export interface ProactiveAvatar { color: string; variant: 'classic' | 'round' | 'pixel' }
 export interface ProactiveComputer { kind: 'hosted' | 'connected-local' | 'unknown'; label: string; providerComputerId: string | null }
 export interface ProactiveService { id: string; label: string }
 /** A reference only: no balance, expiry, credential or spending permission is inferred. */
 export interface ProactiveFundingReference { kind: 'subscription' | 'promotional-api' | 'unknown'; accountId: string; poolId: string | null }
+/** Declared planning preferences never grant project access, transport or spending authority. */
+export interface ProactivePreferences {
+  priority: number; maxConcurrent: number;
+  /** Empty means no declared preference restriction; actual authorization is always checked separately. */
+  projectBindingIds: string[];
+}
 export type ProactiveOperation = 'dispatch' | 'status' | 'cancel' | 'result';
 export interface ProactiveOperationReadiness {
   state: 'unverified' | 'unsupported'; verifiedAt: null; note: string;
@@ -20,13 +26,15 @@ export interface ProactiveRunObservation {
 export interface ProactiveProfileInput {
   identity: ProactiveIdentity; displayName: string; avatar?: ProactiveAvatar; responsibility?: string;
   computer?: ProactiveComputer; services?: ProactiveService[]; fundingReference?: ProactiveFundingReference | null;
-  /** Saved preference for future planning; current planners do not consume profiles. */
+  capabilityIds?: string[]; preferences?: Partial<ProactivePreferences>;
+  /** Used by local assignment previews; never enables transport or autonomous dispatch. */
   enabled?: boolean;
 }
 export type ProactiveProfilePatch = Partial<Omit<ProactiveProfileInput, 'identity'>> & { expectedVersion: number };
 export interface ProactiveProfile {
   id: string; version: number; identity: ProactiveIdentity; displayName: string; avatar: ProactiveAvatar;
   responsibility: string; computer: ProactiveComputer; services: ProactiveService[];
+  capabilityIds: string[]; capabilityVerification: 'declared-unverified'; preferences: ProactivePreferences;
   fundingReference: ProactiveFundingReference | null; enabled: boolean; connection: 'configured';
   operations: Record<ProactiveOperation, ProactiveOperationReadiness>;
   /** No qualified adapter supplies run evidence in this implementation. */

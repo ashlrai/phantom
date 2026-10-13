@@ -46,6 +46,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -227,11 +229,13 @@ import {
   parseTaskList,
   planGoal,
   runGoal,
+  loadRun,
   foldBrowserVerify,
   TITRR_MAX_ATTEMPTS,
   titrrTestRun,
 } from '../src/core/run/orchestrator.js';
 import { getActiveClient } from '../src/core/run/provider-client.js';
+import { endStreamSink } from '../src/core/run/streaming.js';
 import { runTask } from '../src/core/run/agent-loop.js';
 import { verifyTaskStructured } from '../src/core/run/verify.js';
 import { isWebApp, verifyInBrowser } from '../src/core/run/browser-verify.js';
@@ -1222,6 +1226,140 @@ describe('M199 runGoal — never-throws: runTask throws → task marked failed, 
     expect(t1?.status).toBe('failed');
     expect(t1?.error).toMatch(/model crashed|Unexpected orchestrator/);
   });
+});
+
+describe('runGoal — incomplete task graphs cannot report success', () => {
+  it.each([false, true])('fails a dependency-blocked graph with independent success=%s', async (independentSuccess) => {
+    const tasks = [
+      { id: 'failed', goal: 'Required prerequisite', deps: [] },
+      { id: 'blocked', goal: 'Depends on prerequisite', deps: ['failed'] },
+      { id: 'transitively-blocked', goal: 'Depends on blocked task', deps: ['blocked'] },
+      ...(independentSuccess ? [{ id: 'success', goal: 'Independent work', deps: [] }] : []),
+    ];
+    const client = makeClient('ollama');
+    vi.mocked(client.chat)
+      .mockResolvedValueOnce({ content: JSON.stringify(tasks), usage: { tokensIn: 5, tokensOut: 10 } })
+      .mockResolvedValue({ content: 'Independent result summary', usage: { tokensIn: 2, tokensOut: 5 } });
+    vi.mocked(getActiveClient).mockResolvedValue(client as any);
+    vi.mocked(runTask).mockImplementation(async (task: any) => {
+      if (task.id === 'success') {
+        task.status = 'done';
+        task.result = 'Independent work completed';
+      } else {
+        task.status = 'failed';
+        task.error = 'Required work failed';
+      }
+    });
+    vi.mocked(verifyTaskStructured).mockResolvedValue({ ok: true, reason: 'ok' } as any);
+
+    const state = await runGoal('Complete every required task', makeConfig(), makeOpts());
+
+    expect(state.tasks.map((task) => task.status)).toEqual([
+      'failed', 'skipped', 'skipped', ...(independentSuccess ? ['done'] : []),
+    ]);
+    expect(runTask).toHaveBeenCalledTimes(independentSuccess ? 2 : 1);
+    expect(state.status).toBe('failed');
+    expect(loadRun(state.id)?.status).toBe('failed');
+    expect(loadRun(state.id)?.runEventSummary?.status).toBe('failed');
+    if (independentSuccess) {
+      expect(state.result).toContain('Independent result summary');
+      expect(state.result).toContain('Partial results');
+      expect(state.result).toContain('[blocked] skipped');
+      expect(state.result).toContain('[failed] failed');
+      const [synthesisMessages] = vi.mocked(client.chat).mock.calls[1] as unknown as [{ content: string }[]];
+      expect(synthesisMessages[1].content).toContain('[blocked] skipped');
+    } else {
+      expect(client.chat).toHaveBeenCalledTimes(1);
+      expect(state.result).toContain('No tasks completed successfully');
+    }
+  });
+});
+
+describe('runGoal — durable output precedes terminal state', () => {
+  it.each(['done', 'failed', 'cancel-task', 'cancel-synthesis', 'budget', 'redacted', 'engine-done', 'engine-failed', 'engine-cancelled'] as const)(
+    'closes the real file sink before terminal publication: %s', async (outcome) => {
+      const streaming = await vi.importActual<typeof import('../src/core/run/streaming.js')>('../src/core/run/streaming.js');
+      vi.mocked(endStreamSink).mockImplementation(streaming.endStreamSink);
+      const runId = `stream-order-${outcome}`;
+      const durableSink = streaming.fileSink(runId);
+      const end = vi.fn(durableSink.end);
+      durableSink.end = end;
+      const controller = new AbortController();
+      const client = makeClient('ollama');
+      vi.mocked(client.chat)
+        .mockResolvedValueOnce({ content: '[{"id":"t1","goal":"task one","deps":[]}]', usage: { tokensIn: 5, tokensOut: 5 } })
+        .mockImplementation(async () => {
+          if (outcome === 'cancel-synthesis') controller.abort();
+          return { content: 'Final answer', usage: { tokensIn: 1, tokensOut: 1 } };
+        });
+      vi.mocked(getActiveClient).mockResolvedValue(client as any);
+      vi.mocked(verifyTaskStructured).mockResolvedValue({ ok: true, reason: 'ok' } as any);
+      vi.mocked(runTask).mockImplementationOnce(async (task: any) => {
+        task.status = outcome === 'failed' ? 'failed' : 'done';
+        task.result = 'Task result';
+        if (outcome === 'redacted') {
+          streaming.emitSinkEvent(durableSink, { kind: 'model-delta', text: 'client_' });
+          streaming.emitSinkEvent(durableSink, { kind: 'model-delta', text: 'secret=private-value' });
+        } else {
+          streaming.emitSinkEvent(durableSink, { kind: 'model-delta', text: 'Final buffered suffix.' });
+        }
+        if (outcome === 'cancel-task') controller.abort();
+      });
+      const external = outcome.startsWith('engine-');
+      if (external) {
+        vi.mocked(engineInstalled).mockReturnValue(true);
+        vi.mocked(buildEngineCommand).mockReturnValue({ bin: 'claude', args: [], cwd: '/tmp' } as any);
+        vi.mocked(spawnEngine).mockImplementationOnce(async () => {
+          streaming.emitSinkEvent(durableSink, { kind: 'model-delta', text: 'Final buffered suffix.' });
+          if (outcome === 'engine-cancelled') controller.abort();
+          return { ok: outcome === 'engine-done', output: 'Engine output', usage: null } as any;
+        });
+      }
+      if (outcome === 'budget') {
+        streaming.emitSinkEvent(durableSink, { kind: 'log', text: 'Final buffered suffix.' });
+      }
+
+      const terminalSnapshots: { status: string; text: string; ends: number }[] = [];
+      const renameSync = fs.renameSync;
+      const rename = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+        renameSync(from, to);
+        if (String(to) !== join(process.env.HOME!, '.ashlr', 'runs', `${runId}.json`)) return;
+        const persisted = loadRun(runId);
+        if (!persisted || persisted.status === 'running') return;
+        const streamPath = streaming.runStreamFilePath(runId)!;
+        terminalSnapshots.push({
+          status: persisted.status,
+          text: fs.existsSync(streamPath) ? fs.readFileSync(streamPath, 'utf8') : '',
+          ends: end.mock.calls.length,
+        });
+      });
+      syncBuiltinESMExports();
+      try {
+        const state = await runGoal('goal', makeConfig(), makeOpts({
+          runId, __sink: durableSink, signal: controller.signal,
+          ...(external ? { engine: 'claude' } : {}),
+          ...(outcome === 'budget' ? { budget: { maxTokens: 1, maxSteps: 1 } } : {}),
+        }));
+        expect(state.status).toBe(
+          outcome.includes('cancel') || outcome === 'budget' ? 'aborted'
+            : outcome.includes('failed') ? 'failed' : 'done',
+        );
+        expect(terminalSnapshots).toHaveLength(1);
+        expect(terminalSnapshots[0].status).toBe(state.status);
+        expect(terminalSnapshots[0].ends).toBe(1);
+        expect(end).toHaveBeenCalledTimes(1);
+        if (outcome === 'redacted') {
+          expect(terminalSnapshots[0].text).toContain('[REDACTED]');
+          expect(terminalSnapshots[0].text).not.toContain('private-value');
+        } else {
+          expect(terminalSnapshots[0].text).toContain('Final buffered suffix.');
+        }
+      } finally {
+        rename.mockRestore();
+        syncBuiltinESMExports();
+      }
+    },
+  );
 });
 
 describe('M199 runGoal — governance block returns failed state (no throw)', () => {

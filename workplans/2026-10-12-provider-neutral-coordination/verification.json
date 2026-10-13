@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "kind": "local-verification-summary",
+  "observedAt": "2026-10-12T20:19:47Z",
+  "worktree": "/Users/masonwyatt/Documents/Codex/2026-10-12/task/phantom-coordination",
+  "branch": "codex/provider-neutral-companions-20261012",
+  "baseRevision": "ea5f9ac2e6f66b8cece71b91fd9f663c513599f7",
+  "sourceUncommitted": true,
+  "sourceFileHashes": {
+    "docs/JEV-INTEGRATION.md": "c5519337c29d1d1c3ce054d7c85d6fb85d90cf51c04482d751bc25f101df62b9",
+    "docs/PROACTIVE-COORDINATION-BACKLOG.md": "286adc9278e4cb5e53af2d39271c459e59cbb66b587c01ba094efea3dccaefc1",
+    "docs/PROACTIVE-COORDINATION.md": "894ce1b2199b522e959c1ee1278c20e7ba7a9dbeabce18bad1d72085a4fd05e4",
+    "docs/VERSE.md": "f1e7e6ea8b8562b63e65e97993d7ee75b13a4af363f8b8951fa3f178b61c43b8",
+    "src/core/classify/typesafe-client.ts": "1c81e18e956d4e3717049418fc8560467a33e19a185e07e98baf452c9cb06909",
+    "src/core/mcp-native.ts": "47eb5670d15b24876cbdcc2dd19c4e411e7ac75ccaf6ff6dc8e18230e461eb33",
+    "src/core/proactive/coordination-store.ts": "d73beedb72825331418a8fbfb1ce5bc5943365da92b023bdc964f34e7b2d2c6d",
+    "src/core/proactive/coordination-types.ts": "d2fd4af33eb08e5737b986ac0d4d7328c2fb331d8aa5f1110830eaa6591bf533",
+    "src/core/proactive/coordination-wire.ts": "ea9d52748188834c4bf9f674c9bc04ef40a7fa6dbf92c03c44caec56c43db0ef",
+    "src/core/proactive/coordination.ts": "8061e78f746e97e50395215bbe614146128a724bbf0c60e6c8883163e95c6e2a",
+    "src/core/proactive/packet-store.ts": "18b0033f02adc3fee030846418108a7c473c92b4112a3d68d974b5f81128d9c0",
+    "src/core/proactive/packet-types.ts": "632da004a71a50cf29d629e43e2c4230d95260f3cf206678421e782033c1ca6b",
+    "src/core/proactive/packets.ts": "5148570b4c55f875092050686c6f86dd72bac9c22dd808dd51beb7416325075f",
+    "src/core/proactive/planning.ts": "35c1dd9f19e35134c66522a765d1274275d7b9e1cd157054cbc9159866c0a8ba",
+    "src/core/proactive/profiles.ts": "03ae0a04a890fbe68f5b103e8cda0dd5dbd8913385d92d704337b741be0c3ce7",
+    "src/core/proactive/schema.ts": "ff5bd23d0935ca4492d8ae56137c34f9a836be80a66e269ec0b65ad05a0f0dd0",
+    "src/core/proactive/tools.ts": "1bbbda13520c9f8be14ae810c6233b0171e195e2661a82ab55f3b35964037510",
+    "src/core/proactive/types.ts": "7518f619a4d20c24c436e493644268b8bc9b47526ae011f02bc534e1873fbc38",
+    "src/core/verse/proactive-agents-api.ts": "b7564e82dcce29fb896d2736f2bafeae54bfc5ce72500c6cac42254fd4a597e1",
+    "src/core/verse/proactive-coordination-api.ts": "79d7a1f4e7330ca0f1c689b909f223c94b8aa9c1db47bb22abd0a145d553bd7d",
+    "src/web-ui/routes/verse/proactive/ProactiveAgents.module.css": "a49235b7d5ea8a8297cae984e4bdf433a5f4c974077decf50da6e441a2fc11c1",
+    "src/web-ui/routes/verse/proactive/ProactiveAgents.test.tsx": "94ed3ace0be1395715e375d9521f699437178270cf259cb3be85d026fe4a6782",
+    "src/web-ui/routes/verse/proactive/ProactiveAgents.tsx": "b11229c454603d7f86fabc09c77ed68a1893fc2f29d6070af84e136a02939980",
+    "src/web-ui/routes/verse/proactive/proactive-queries.ts": "887a2bd74536c2ff38455be015d24a8d07eecbc7e0d246c10f90ec0b7f63837a",
+    "src/web-ui/routes/verse/resources/ResourcesBar.test.tsx": "20fc9e6ebb94186f8ff0d1dbe2256bc36665b6c56c705c4527ce914ae4bc3e7a",
+    "test/proactive-coordination-api.test.ts": "021d33fe448b3fb69acabf7f9798a847d318f4cb6dd10390febe33781d0da159",
+    "test/proactive-coordination.test.ts": "923b756faa32e80125d1dbd775b92b4f43e009b5a39f8edfd533f2acbeca744b",
+    "test/proactive-packets.test.ts": "1a3b7c18fb9cb0fc4c5fc127bb66b1e0fe25eacc833c68a0f6754972cd817157",
+    "test/proactive-profiles.test.ts": "581e84d2257a11228c1ae8d7bd6e293ea2734041bd4b4c60c5c38c79938ec501"
+  },
+  "tests": {
+    "unit": {
+      "files": 4,
+      "passed": 57
+    },
+    "profilesRealIo": {
+      "files": 1,
+      "passed": 15
+    },
+    "web": {
+      "files": 2,
+      "passed": 78
+    },
+    "totalPassed": 150
+  },
+  "checks": {
+    "fullBuild": "passed",
+    "coreTypes": "passed via full build",
+    "webTypes": "passed",
+    "scopedEslint": "passed",
+    "documentation": "passed; zero external requests",
+    "realIoMembership": "passed; existing soft warnings",
+    "verseSyncIo": "passed",
+    "whitespace": "passed",
+    "independentIntegrationReview": "no remaining correctness blocker for local milestone"
+  },
+  "buildIdentity": {
+    "schemaVersion": 1,
+    "packageVersion": "3.29.13",
+    "revision": "ea5f9ac2e6f66b8cece71b91fd9f663c513599f7",
+    "dirty": true,
+    "provenance": "git"
+  },
+  "releaseDependencyInventorySha256": "f0a885708ef446491d246c7c992f0073c100a298811d84e5650df5b836a88bd1",
+  "boundaries": {
+    "providerContact": false,
+    "liveAccountAccess": false,
+    "paidCalls": false,
+    "liveServiceChanges": false,
+    "installedAppChanges": false,
+    "publishing": false,
+    "merging": false,
+    "deployment": false,
+    "dispatchAuthorized": false
+  },
+  "notes": [
+    "This summary is not a signed provider or release attestation.",
+    "Offline runtime dependencies were copied into this worktree and reconciled to the lockfile; release checks were not weakened.",
+    "Configured profiles, declared capabilities, manual reports and operator reviews are not qualified provider execution.",
+    "Transport/OAuth, cross-client sharing, usage/cost evidence, autonomous goal consumption and commissioned release targets remain follow-on work.",
+    "The installed app remains version 3.29.12; source base is 3.29.13."
+  ]
+}
