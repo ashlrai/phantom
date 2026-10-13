@@ -20,6 +20,16 @@ function exec(bin: string, args: readonly string[], cwd?: string, timeoutMs = 12
   });
 }
 
+/**
+ * The authority CLI is loaded untyped so the web console's type graph (which
+ * reaches this module through mcp-native) does not pull in the whole CLI.
+ */
+interface AuthorityCliModule {
+  realDaemonService(cached?: boolean): Promise<'running' | 'loaded' | 'not-loaded' | 'absent' | 'unknown'>;
+  runAuthorityCli(args: string[], injected?: { out(l: string): void; err(l: string): void }): Promise<number>;
+}
+const loadAuthorityCli = (): Promise<AuthorityCliModule> => import('../../cli/authority.js' as unknown as string) as Promise<AuthorityCliModule>;
+
 /** Read-only argv guard: probes may only be `gh auth status` and `gh api` GETs. */
 export function isReadOnlyProbe(bin: 'gh' | 'git', args: readonly string[]): boolean {
   if (bin !== 'gh') return false;
@@ -64,12 +74,12 @@ export async function realEcosystemDeps(opts: { withGrant: boolean; confirm?: (q
       },
       enable: async (id) => { await automations.enableAutomation(id); },
     },
-    residentState: async () => (await import('../../cli/authority.js')).realDaemonService(true),
+    residentState: async () => (await loadAuthorityCli()).realDaemonService(true),
   };
   if (opts.withGrant) {
     if (opts.confirm) deps.confirm = opts.confirm;
     deps.signGrant = async ({ eliteDirect }) => {
-      const { runAuthorityCli } = await import('../../cli/authority.js');
+      const { runAuthorityCli } = await loadAuthorityCli();
       const lines: string[] = [];
       const code = await runAuthorityCli(['grant', '--yes', eliteDirect ? '--elite-direct' : '--no-elite-direct'], {
         out: (l: string) => { lines.push(l); process.stdout.write(`    ${l}\n`); },
