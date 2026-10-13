@@ -27,10 +27,11 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
   const handoffs = new Map<string, Handoff>();
   const approvals = new Map<string, Approval>();
   const messages: TeamState['messages'] = [];
+  let foundingHumanJoined = false;
   const touch = (a: TeamActor, ts: string) => {
     const m = members.get(a.id);
     if (m) { m.lastSeen = ts; return m; }
-    const created: Member = { id: a.id, kind: a.kind, role: a.kind === 'agent' ? 'agent' : (members.size === 0 ? 'owner' : 'member'), provider: a.provider, onBehalfOf: a.onBehalfOf, capabilities: [], lastSeen: ts, online: false };
+    const created: Member = { id: a.id, kind: a.kind, role: a.kind === 'agent' ? 'agent' : 'member', provider: a.provider, onBehalfOf: a.onBehalfOf, capabilities: [], lastSeen: ts, online: false };
     members.set(a.id, created);
     return created;
   };
@@ -41,9 +42,17 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       case 'member.joined': {
         const target = str(p.memberId, ev.actor.id);
         const role = p.role as TeamRole | undefined;
+        // Presence, claims and declared caller aliases cannot found ownership.
+        // The CLI derives the joining human locally; raw logs retain their
+        // documented same-OS-user trust boundary.
+        if (ev.actor.kind === 'human' && target === ev.actor.id && !foundingHumanJoined) {
+          if (![...members.values()].some(member => member.kind === 'human' && ['owner', 'admin'].includes(member.role))) m.role = 'owner';
+          foundingHumanJoined = true;
+        }
         const existing = members.get(target);
-        if (existing && role && (ev.actor.id === target ? existing.role === role : ['owner', 'admin'].includes(m.role))) existing.role = role;
-        else if (!existing && role && ['owner', 'admin'].includes(m.role)) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
+        const humanRole = role && ['owner', 'admin', 'member'].includes(role);
+        if (existing?.kind === 'human' && humanRole && (ev.actor.id === target ? existing.role === role : ['owner', 'admin'].includes(m.role))) existing.role = role;
+        else if (!existing && target.startsWith('human:') && humanRole && ['owner', 'admin'].includes(m.role)) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
         break;
       }
       case 'agent.registered':
