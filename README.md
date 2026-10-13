@@ -422,7 +422,7 @@ ID).
 npm i -g @ashlr/phantom && phm ecosystem up
 ```
 
-It finds or clones every ecosystem repo, enrolls them, checks GitHub auth, auto-merge and CI gates (printing the exact fix for anything missing), shows the grant scope once, signs it with Touch ID and turns on the steward schedule. Rerun any time; see [docs/ECOSYSTEM-ONBOARDING.md](docs/ECOSYSTEM-ONBOARDING.md).
+It finds or clones every ecosystem repo, enrolls them, checks GitHub auth, auto-merge and CI gates (printing the exact fix for anything missing), shows the grant scope once, signs it with Touch ID and turns on the steward schedule. Rerun any time; see [docs/ECOSYSTEM-ONBOARDING.md](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-ONBOARDING.md).
 
 1. **Install** the desktop app or the CLI (above), and open Phantom.
 2. **Sign in your seats** (above). Start `ollama serve` for local seats.
