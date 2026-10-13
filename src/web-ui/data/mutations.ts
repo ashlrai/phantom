@@ -70,3 +70,10 @@ export interface OpenTargetRequest {
 export async function openTarget(req: OpenTargetRequest): Promise<void> {
   await post('/api/open', req);
 }
+
+/** "Enable autonomy": clone + enroll + steward schedule. Never signs the grant. */
+export async function enableEcosystemAutonomy(): Promise<import('../../core/ecosystem/onboard.js').EcosystemReportV1> {
+  const report = await post<import('../../core/ecosystem/onboard.js').EcosystemReportV1>('/api/ecosystem/up', {});
+  invalidate('ecosystem-status');
+  return report;
+}

@@ -66,9 +66,11 @@ function parseArgs(args: string[]): ParsedEcosystemArgs {
 function printHelp(): void {
   const { bold, cyan, dim } = makeColors(isTty());
   process.stdout.write('\n');
-  process.stdout.write(bold('  ashlr ecosystem') + dim(' — read-only sibling repo diagnostics') + '\n');
+  process.stdout.write(bold('  ashlr ecosystem') + dim(' — onboard and diagnose the Ashlr ecosystem') + '\n');
   process.stdout.write('\n');
   process.stdout.write('  ' + bold('Usage:') + '\n');
+  process.stdout.write(`    ${cyan('ashlr ecosystem up')} [--yes] [--dry-run] [--json]   one-command autonomous onboarding\n`);
+  process.stdout.write(`    ${cyan('ashlr ecosystem status')} [--json]                   read-only readiness per repo\n`);
   process.stdout.write(`    ${cyan('ashlr ecosystem doctor')} [--json] [--root <dir>] [--deep]\n`);
   process.stdout.write('\n');
   process.stdout.write('  ' + bold('Options:') + '\n');
@@ -160,6 +162,10 @@ function printHuman(report: EcosystemDoctorReport): void {
 }
 
 export async function cmdEcosystem(args: string[]): Promise<number> {
+  if (args[0] === 'up' || args[0] === 'status') {
+    const { cmdEcosystemUp } = await import('./ecosystem-up.js');
+    return cmdEcosystemUp(args);
+  }
   const parsed = parseArgs(args);
   if (parsed.help) {
     printHelp();

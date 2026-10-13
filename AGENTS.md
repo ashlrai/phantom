@@ -18,3 +18,11 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 - Keep diffs small and reviewable, with one concern per PR.
 - Never commit secrets. Use Phantom Secrets placeholders.
 - Never force-push to the default branch.
+
+## Onboarding the ecosystem (agents)
+
+1. Call MCP `ashlr_ecosystem_status` (or `ashlr ecosystem status --json`). If `ready` is true, start work.
+2. Otherwise call `ashlr_ecosystem_up` (or `ashlr ecosystem up --json --no-clone` if you must not clone). It clones, enrolls and enables the steward schedule.
+3. If `steps[].grant` is `waiting-on-you`, stop and tell the human to run `nextCommand` (`ashlr ecosystem up`) in their own terminal. Never try to sign, edit or work around the standing grant.
+4. Apply each `repos[].fixes[].command` only if it is within your grant; CI-gate and ruleset fixes are reserved for the human.
+See docs/ECOSYSTEM-ONBOARDING.md.

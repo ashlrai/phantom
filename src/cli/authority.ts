@@ -122,7 +122,7 @@ export type DaemonServiceState = 'running' | 'loaded' | 'not-loaded' | 'absent' 
 // Loaded lazily: `authority stop` and friends must never depend on the daemon
 // service module being importable.
 // `cached` (the Verse probe) reuses a launchd read up to 15 s old.
-async function realDaemonService(cached = false): Promise<DaemonServiceState> {
+export async function realDaemonService(cached = false): Promise<DaemonServiceState> {
   const { serviceStatus, serviceStatusCached } = await import('../core/daemon/service.js');
   // The strict launchd contract includes the service's configured budget and
   // interval. Querying with serviceStatus() defaults reports a healthy custom

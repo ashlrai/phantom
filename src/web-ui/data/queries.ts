@@ -368,3 +368,9 @@ export const portfolioQuery: QueryDef<PortfolioSummary | null> = {
   key: 'portfolio',
   fetch: (signal) => apiGet<PortfolioSummary | null>('/api/portfolio', signal),
 };
+
+/** GET /api/ecosystem — `ashlr ecosystem status` as JSON (read-only). */
+export const ecosystemStatusQuery: QueryDef<import('../../core/ecosystem/onboard.js').EcosystemReportV1> = {
+  key: 'ecosystem-status',
+  fetch: (signal) => apiGet<import('../../core/ecosystem/onboard.js').EcosystemReportV1>('/api/ecosystem', signal),
+};

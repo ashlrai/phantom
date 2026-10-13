@@ -34,6 +34,7 @@ import { RunDetailView } from '../routes/work/runs/RunDetailView.js';
 import { SwarmsView } from '../routes/work/swarms/SwarmsView.js';
 import { SwarmDetailView } from '../routes/work/swarms/SwarmDetailView.js';
 import { DaemonView } from '../routes/control/daemon/DaemonView.js';
+import { EcosystemView } from '../routes/control/ecosystem/EcosystemView.js';
 import { FleetView } from '../routes/control/fleet/FleetView.js';
 import { SecurityView } from '../routes/control/security/SecurityView.js';
 import { GoalsView } from '../routes/goals/GoalsView.js';
@@ -69,6 +70,7 @@ export function AppRoutes() {
         <Route path="/work/swarms" element={<SwarmsView />} />
         <Route path="/work/swarms/:id" element={<SwarmDetailView />} />
         <Route path="/control/daemon" element={<DaemonView />} />
+        <Route path="/control/ecosystem" element={<EcosystemView />} />
         <Route path="/control/fleet" element={<FleetView />} />
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
