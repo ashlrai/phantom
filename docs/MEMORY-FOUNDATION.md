@@ -53,6 +53,29 @@ A claimed source digest is not recomputed against an original archive by this
 kernel. IDs, snapshot revision and watermark are supplied by the caller; they
 are not signed receipts or a verified live-store revision.
 
+## Selected-note preview — source candidate
+
+`buildMemoryNotePreview` in `src/core/memory/note-preview.ts` checks an explicitly
+selected note and its ordered citations against one existing fact in a supplied
+snapshot, then delegates the complete history and query to the memory kernel.
+It creates no fact event, review decision, identity, timestamp, or source digest.
+The selected text and every citation field must match; a matching source ID alone
+is insufficient.
+
+Read `noteState` separately from `pack.status`: a pack may contain other eligible
+facts while the selected note is excluded. Existing scope, time, conflict,
+lineage, withdrawal, deletion, and complete framed-byte limits still apply.
+The adapter does not reduce history to the selected note or replace any of those
+checks.
+
+All review, scope, and history-completeness labels remain caller declarations.
+Internal correspondence does not authenticate the reviewer or original source.
+Actual execution, task quality, elapsed time, and provider cost stay unknown;
+execution, automatic injection, and authority remain disabled. This source-only
+adapter has no UI, import, store, file-reader, or Send caller. Preview bytes are
+not a composer budget or dispatch permission. Live integration still requires
+qualified reference-reader, authenticated scope, review, and session ports.
+
 ## Scope and time
 
 The caller must supply admitted canonical project IDs and authenticated owner
