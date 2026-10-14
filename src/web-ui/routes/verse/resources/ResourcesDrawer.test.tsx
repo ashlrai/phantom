@@ -24,7 +24,9 @@ import { budgetQuery } from '../budget/budget-queries.js';
 import { ResourcesBar } from './ResourcesBar.js';
 import { ResourcesDrawer } from './ResourcesDrawer.js';
 import { verseAccountsQuery, verseLocalModelsQuery } from '../usage/usage-queries.js';
+import { verseHealthQuery } from '../health/health-queries.js';
 import { resourceReadinessQuery } from './resources-queries.js';
+import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { getResourcesUi, openResources, reloadResourcesUiForTest } from './resources-store.js';
 
 const TOKEN = 'test-token';
@@ -39,7 +41,7 @@ const PERSONAL = nativeSeat(capacity({ planType: 'plus', windows: [spentWindow],
 const okWindow = seatWindow({ id: 'codex_codex_primary', usedPercent: 31, resetsAt: RESET });
 const CMP = nativeSeat(capacity({ planType: 'pro', windows: [okWindow], binding: okWindow, usability: 'ready', observedAt: CHECKED }),
   { id: 'codex-cmp', engine: 'codex', label: 'Cash Margin Partners', accountId: 'codex-cmp' });
-const CLAUDE = { ...CLAUDE_TIGHT_SEAT, id: 'claude-a', accountId: 'claude-a', label: 'Claude Max' };
+const CLAUDE = { ...CLAUDE_TIGHT_SEAT, capacity: { ...CLAUDE_TIGHT_SEAT.capacity!, observedAt: CHECKED }, id: 'claude-a', accountId: 'claude-a', label: 'Claude Max' };
 const ROSTER = [PERSONAL, GROK_SEAT, CLAUDE, CMP, LOCAL_SEAT_V2];
 
 function report(seatId: string, over: Partial<SeatHealthReport> = {}): SeatHealthReport {
@@ -346,11 +348,11 @@ describe('ResourcesDrawer — accounts', () => {
     roster = [unknown, LOCAL_SEAT_V2];
     readiness = READINESS;
     render(<ResourcesDrawer mode="docked" now={NOW} />);
-    expect(await screen.findByText('0 of 1 account with current usage · 1 usage unconfirmed · local models ready')).toBeInTheDocument();
+    expect(await screen.findByText('0 of 1 resource with current usage readings · 1 usage unconfirmed · local models ready')).toBeInTheDocument();
     const status = await screen.findByRole('group', { name: 'Cash Margin Partners: readiness' });
     expect(within(status).getByText('Ready')).toBeInTheDocument();
     expect(within(status).getByText('Not in this stage')).toBeInTheDocument();
-    expect(within(cardOf('Cash Margin Partners')).getByText('· no usage reading yet')).toBeInTheDocument();
+    expect(within(cardOf('Cash Margin Partners')).getByText('No current usage reading')).toBeInTheDocument();
     expect(calls.every(call => call.method === 'GET')).toBe(true);
     expect(unknown.capacity.windows).toEqual([]);
   });
@@ -533,6 +535,30 @@ describe('ResourcesDrawer — accounts', () => {
     expect(calls.some(c => c.method === 'POST' && c.url === '/api/verse/health/refresh')).toBe(false);
   });
 
+  it('confirms an independently current credit-only account reading without claiming current subscription usage', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    try {
+      const observedAt = new Date(NOW).toISOString();
+      const expiresAt = new Date(NOW + 60_000).toISOString();
+      const creditOnly = nativeSeat(capacity({ windows: [], binding: null, observedAt, quotaExpiresAt: null,
+        credits: { hasCredits: true, unlimited: false, balance: '42' }, creditsExpiresAt: expiresAt }),
+        { id: 'codex-personal', engine: 'codex', label: 'Personal Codex', accountId: 'codex-personal' });
+      const ordinary = globalThis.fetch;
+      vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/verse/seats/refresh') {
+          roster = [creditOnly];
+          return Promise.resolve(json({ seatId: 'codex-personal', state: 'completed', reading: 'current',
+            reason: 'observed', observedAt, expiresAt, nextCheckAt: null, joined: false }));
+        }
+        return ordinary(input, init);
+      }));
+      render(<ResourcesDrawer mode="docked" now={NOW} />);
+      await userEvent.setup().click(await screen.findByRole('button', { name: 'Check again: Personal Codex' }));
+      expect(await screen.findByText('Confirmed Personal Codex’s current account reading.')).toBeInTheDocument();
+      expect(screen.queryByText(/Confirmed Personal Codex’s current usage reading/)).toBeNull();
+    } finally { clock.mockRestore(); }
+  });
+
   it('does not announce a late selected check after auth loss and re-hold', async () => {
     const ordinary = globalThis.fetch;
     let release!: (value: Response) => void;
@@ -575,6 +601,226 @@ describe('ResourcesDrawer — accounts', () => {
     }));
     render(<ResourcesDrawer mode="docked" now={NOW} />);
     expect(await screen.findByText(/No accounts connected yet/)).toBeInTheDocument();
+  });
+});
+
+describe('shared resource observation clock', () => {
+  function syntheticSeat(id = 'synthetic-alpha', label = 'Synthetic Alpha', history = false) {
+    const observedAt = new Date(NOW - 300_000).toISOString();
+    const window = seatWindow({ id: 'synthetic_week', usedPercent: 43, resetsAt: null });
+    return nativeSeat(capacity({ observedAt: history ? null : observedAt, windows: history ? [] : [window], binding: history ? null : window, usability: history ? 'unknown' : 'ready' }), {
+      id, accountId: `${id}-account`, label, engine: 'codex',
+      ...(history ? { lastKnownUsage: { source: 'native-account-checked-history' as const, identitySource: 'native-account-checked' as const,
+        observedAt, expiresAt: new Date(NOW - 240_000).toISOString(), windows: [{ id: 'synthetic_week', usedPercent: 61, resetsAt: null }] } } : {}),
+    });
+  }
+  async function syntheticHealth(ids: string[]) {
+    await act(async () => { await runQuery(verseHealthQuery.key, async () => ({ checkedAt: CHECKED, seats: ids.map(id => report(id)) })); });
+  }
+  function pair() { return render(<><ResourcesBar expanded now={NOW} /><ResourcesDrawer mode="docked" now={NOW} /></>); }
+  function evidence(id: string) {
+    const bar = screen.getByRole('group', { name: 'Resources at a glance' }).querySelector(`[data-resource-id="account:${id}"] button[data-account-row]`)!;
+    const card = document.querySelector(`[data-seat="${id}"]`)!;
+    return { bar: [bar.getAttribute('data-usage-state'), bar.getAttribute('data-usage-observed-at')],
+      card: [card.getAttribute('data-usage-state'), card.getAttribute('data-usage-observed-at')] };
+  }
+  async function cachedExpiringPair() {
+    const observedAt = new Date(NOW - 14_000).toISOString();
+    const quotaExpiresAt = new Date(NOW + 46_000).toISOString();
+    const seat = syntheticSeat();
+    roster = [{ ...seat, capacity: { ...seat.capacity!, observedAt, quotaExpiresAt,
+      creditsExpiresAt: new Date(NOW + 120_000).toISOString(),
+      credits: { hasCredits: true, unlimited: false, balance: '7.0000', spendControlReached: false } } }];
+    const warm = pair();
+    await screen.findByRole('heading', { name: 'Synthetic Alpha' });
+    await syntheticHealth(['synthetic-alpha']);
+    warm.unmount();
+    return { observedAt, quotaExpiresAt, source: JSON.stringify(roster[0]) };
+  }
+  const clockedPair = (visible = true) => <SectionVisibilityProvider visible={visible}><ResourcesBar expanded /><ResourcesDrawer mode="docked" /></SectionVisibilityProvider>;
+  const expectRetained = (observedAt: string) => {
+    expect(evidence('synthetic-alpha')).toEqual({ bar: ['retained', observedAt], card: ['retained', observedAt] });
+    expect(within(cardOf('Synthetic Alpha')).getByText('43% · last')).toBeInTheDocument();
+    expect(screen.getByText('0 of 1 resource with current usage readings · 1 usage unconfirmed · 1 last reading')).toBeInTheDocument();
+    expect(within(cardOf('Synthetic Alpha')).getAllByText('7 credits available').length).toBeGreaterThan(0);
+    expect(within(cardOf('Synthetic Alpha')).getByText('Credits available')).toBeInTheDocument();
+  };
+  it('expires a native 60-second reading between clock polls in both surfaces without fetching or restamping', async () => {
+    const fixture = await cachedExpiringPair();
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    try {
+      render(clockedPair());
+      expect(evidence('synthetic-alpha').bar[0]).toBe('current');
+      await act(async () => { await vi.advanceTimersByTimeAsync(45_999); });
+      expect(evidence('synthetic-alpha').card[0]).toBe('current');
+      const readsBeforeDeadline = calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expectRetained(fixture.observedAt);
+      expect(calls).toHaveLength(readsBeforeDeadline);
+      expect(JSON.stringify(roster[0])).toBe(fixture.source);
+      expect(getQuerySnapshot(verseBootstrapQuery.key).data).toBeDefined();
+    } finally { vi.useRealTimers(); }
+  });
+  it('reassesses retained cached quota on focus without a new query or granting valid credits quota freshness', async () => {
+    const fixture = await cachedExpiringPair();
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    try {
+      render(clockedPair());
+      const readsBeforeFocus = calls.length;
+      vi.setSystemTime(NOW + 46_000);
+      await act(async () => { window.dispatchEvent(new Event('focus')); });
+      expectRetained(fixture.observedAt);
+      expect(calls).toHaveLength(readsBeforeFocus);
+      expect(JSON.stringify(roster[0])).toBe(fixture.source);
+    } finally { vi.useRealTimers(); }
+  });
+  it('expires native credits independently on focus while retaining the recorded quota percentage', async () => {
+    const fixture = await cachedExpiringPair();
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    try {
+      render(clockedPair());
+      vi.setSystemTime(NOW + 46_000);
+      await act(async () => { window.dispatchEvent(new Event('focus')); });
+      expectRetained(fixture.observedAt);
+      const readsBeforeFocus = calls.length;
+      vi.setSystemTime(NOW + 120_000);
+      await act(async () => { window.dispatchEvent(new Event('focus')); });
+      expect(evidence('synthetic-alpha')).toEqual({ bar: ['retained', fixture.observedAt], card: ['retained', fixture.observedAt] });
+      const card = within(cardOf('Synthetic Alpha'));
+      expect(card.getByText('43% · last')).toBeInTheDocument();
+      expect(card.queryByText('Credits available')).toBeNull();
+      expect(card.queryByText('7 credits available')).toBeNull();
+      expect(card.queryByText(/Native balance/)).toBeNull();
+      const button = screen.getByRole('group', { name: 'Resources at a glance' }).querySelector('button[data-account-row]')!;
+      expect(button).not.toHaveAttribute('title', 'Provider balance: 7 credits.');
+      expect(button).not.toHaveTextContent(/Credits ≈/);
+      expect(calls).toHaveLength(readsBeforeFocus);
+      expect(JSON.stringify(roster[0])).toBe(fixture.source);
+    } finally { vi.useRealTimers(); }
+  });
+  it('reassesses cached quota when the section resumes after expiry while keeping its original observation time', async () => {
+    const fixture = await cachedExpiringPair();
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    try {
+      const view = render(clockedPair(false));
+      vi.setSystemTime(NOW + 46_000);
+      view.rerender(clockedPair());
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expectRetained(fixture.observedAt);
+      expect(JSON.stringify(roster[0])).toBe(fixture.source);
+      expect(calls.every(call => call.method === 'GET')).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('uses the same usage asOf across both surfaces and keeps the later connection check separate', async () => {
+    roster = [syntheticSeat()]; pair();
+    await screen.findByRole('heading', { name: 'Synthetic Alpha' }); await syntheticHealth(['synthetic-alpha']);
+    const observedAt = new Date(NOW - 300_000).toISOString();
+    expect(evidence('synthetic-alpha')).toEqual({ bar: ['current', observedAt], card: ['current', observedAt] });
+    const card = within(cardOf('Synthetic Alpha'));
+    expect(card.getByText('Current usage')).toBeInTheDocument();
+    expect(card.getByText('43%')).toBeInTheDocument();
+    expect(card.getByText('checked 2m ago')).toBeInTheDocument();
+    expect(card.getByTitle(observedAt)).toBeInTheDocument();
+    expect(cardOf('Synthetic Alpha').textContent).toContain('Connection checked 2m ago');
+    expect(screen.getByText('1 of 1 resource with current usage readings')).toBeInTheDocument();
+  });
+  it('keeps successful usage unchanged through readiness failure, pending retry and recovery', async () => {
+    roster = [syntheticSeat()];
+    const fixtureReadiness = { ...READINESS, resources: [{ ...READINESS.resources[1], id: 'synthetic-alpha', label: 'Synthetic Alpha',
+      reading: { state: 'live', at: new Date(NOW - 300_000).toISOString(), ageMs: 300_000, note: null } }] };
+    readiness = fixtureReadiness; pair(); await screen.findByRole('group', { name: 'Synthetic Alpha: readiness' });
+    const original = evidence('synthetic-alpha');
+    const unchanged = () => {
+      expect(evidence('synthetic-alpha')).toEqual(original);
+      expect(within(cardOf('Synthetic Alpha')).getByText('43%')).toBeInTheDocument();
+      expect(within(cardOf('Synthetic Alpha')).getByText('Current usage')).toBeInTheDocument();
+      expect(screen.getByText('1 of 1 resource with current usage readings')).toBeInTheDocument();
+    };
+    readinessResponse = async () => json({ error: 'unavailable' }, 503);
+    await act(async () => { await runQuery(resourceReadinessQuery.key, () => resourceReadinessQuery.fetch()); });
+    expect(screen.getByText('Readiness unavailable · last result is unverified.')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Synthetic Alpha: readiness' })).toBeNull(); unchanged();
+    let complete!: (response: Response) => void;
+    readinessResponse = () => new Promise(resolve => { complete = resolve; });
+    act(() => { void runQuery(resourceReadinessQuery.key, () => resourceReadinessQuery.fetch()); });
+    await waitFor(() => expect(getQuerySnapshot(resourceReadinessQuery.key).status).toBe('refreshing'));
+    expect(screen.queryByRole('group', { name: 'Synthetic Alpha: readiness' })).toBeNull(); unchanged();
+    await act(async () => { complete(json(fixtureReadiness)); });
+    expect(await screen.findByRole('group', { name: 'Synthetic Alpha: readiness' })).toBeInTheDocument(); unchanged();
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
+  });
+  it('offers collapsed provider/account drilldown with qualitative coverage and no summed quota', async () => {
+    roster = [syntheticSeat(), syntheticSeat('synthetic-beta', 'Synthetic Beta', true)]; pair();
+    await screen.findByRole('heading', { name: 'Synthetic Beta' }); await syntheticHealth(['synthetic-alpha', 'synthetic-beta']);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by provider' }));
+    fireEvent.click(screen.getByRole('button', { name: 'By provider' }));
+    await waitFor(() => expect(document.querySelectorAll('[data-provider-group="openai"]')).toHaveLength(2));
+    const groups = [...document.querySelectorAll('[data-provider-group="openai"]')];
+    for (const group of groups) {
+      expect(group).not.toHaveAttribute('open');
+      expect(group.querySelector('summary')).toHaveTextContent('1 current readings · 0 stale readings · 1 unconfirmed resources');
+      fireEvent.click(group.querySelector('summary')!);
+      expect(group.textContent).toContain('synthetic-alpha-account'); expect(group.textContent).toContain('synthetic-beta-account');
+      const alpha = [...group.querySelectorAll('details')].find(detail => detail.querySelector('summary')?.textContent?.includes('synthetic-alpha-account'))!;
+      const beta = [...group.querySelectorAll('details')].find(detail => detail.querySelector('summary')?.textContent?.includes('synthetic-beta-account'))!;
+      fireEvent.click(alpha.querySelector('summary')!); fireEvent.click(beta.querySelector('summary')!);
+      expect(alpha.textContent).toContain('43%'); expect(beta.textContent).toContain('61%');
+      expect(group.textContent).not.toMatch(/104%|52%|total quota|total balance/i);
+    }
+    expect(evidence('synthetic-alpha')).toEqual({ bar: ['current', new Date(NOW - 300_000).toISOString()], card: ['current', new Date(NOW - 300_000).toISOString()] });
+    expect(evidence('synthetic-beta').bar[0]).toBe('historical'); expect(evidence('synthetic-beta').card[0]).toBe('historical');
+    expect(screen.getAllByText(/Provider coverage only · quotas, credit balances and currencies are not combined/)).toHaveLength(2);
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
+  });
+  it('qualifies retained reset text and accessibility as recorded evidence instead of a current forecast', async () => {
+    const pastReset = new Date(NOW - 60_000).toISOString();
+    const seat = syntheticSeat(); const staleWindow = seatWindow({ id: 'synthetic_week', usedPercent: 43, resetsAt: pastReset });
+    roster = [{ ...seat, capacity: { ...seat.capacity!, windows: [staleWindow], binding: staleWindow } }]; pair();
+    await screen.findByRole('heading', { name: 'Synthetic Alpha' });
+    const card = within(cardOf('Synthetic Alpha'));
+    expect(card.getByRole('img', { name: /Recorded reset.*last reading, current usage unconfirmed/ })).toBeInTheDocument();
+    expect(card.getByTitle(/Recorded reset/)).toBeInTheDocument();
+    expect(card.queryByTitle(/^resets /)).toBeNull();
+    expect(evidence('synthetic-alpha').bar[0]).toBe('retained');
+    expect(evidence('synthetic-alpha').card[0]).toBe('retained');
+    const bar = screen.getByRole('group', { name: 'Resources at a glance' });
+    const button = within(bar).getByRole('button', { name: /Synthetic Alpha: Last reading/ });
+    fireEvent.focus(button);
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent(/Usable again|Usable now|running low/i);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/recorded reset/);
+  });
+  it('keeps signed-out native usage unconfirmed and gray on both surfaces', async () => {
+    roster = [{ ...syntheticSeat(), capacity: { ...syntheticSeat().capacity!, usability: 'signed-out' } }]; pair();
+    await screen.findByRole('heading', { name: 'Synthetic Alpha' });
+    expect(evidence('synthetic-alpha')).toEqual({ bar: ['signed-out', null], card: ['signed-out', null] });
+    const bar = screen.getByRole('group', { name: 'Resources at a glance' }).querySelector('[data-resource-id="account:synthetic-alpha"] button[data-account-row]')!;
+    expect(bar).toHaveAttribute('data-level', 'unknown');
+    expect(within(cardOf('Synthetic Alpha')).getByText('Signed out · current usage unconfirmed')).toBeInTheDocument();
+    expect(screen.getByText('0 of 1 resource with current usage readings · 1 usage unconfirmed')).toBeInTheDocument();
+  });
+  it('accepts the same post-mount native history in the sidebar and drawer before the timer ticks', async () => {
+    let clock = NOW;
+    const clockSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    roster = [];
+    try {
+      render(<><ResourcesBar expanded /><ResourcesDrawer mode="docked" /></>);
+      await screen.findByText(/No accounts connected yet/);
+      clock += 2_000;
+      const observedAt = new Date(clock - 500).toISOString();
+      const window = seatWindow({ id: 'synthetic_week', usedPercent: 43, resetsAt: null });
+      roster = [nativeSeat(capacity({ windows: [], binding: null, observedAt: null }), {
+        id: 'synthetic-account', accountId: 'synthetic-account', label: 'Synthetic account', engine: 'codex',
+        lastKnownUsage: { source: 'native-account-checked-history', identitySource: 'native-account-checked',
+          observedAt, expiresAt: new Date(clock + 59_500).toISOString(),
+          windows: [{ id: window.id, usedPercent: 43, resetsAt: null }] },
+      })];
+      await act(async () => { await runQuery(verseBootstrapQuery.key, () => verseBootstrapQuery.fetch()); });
+      expect(await screen.findByRole('button', { name: /Synthetic account: Last reading/ })).toHaveTextContent('43% used · last');
+      const card = within(cardOf('Synthetic account'));
+      expect(card.getByText('Last known usage · current availability unconfirmed.')).toBeInTheDocument();
+      expect(card.getByText('synthetic_week: 43% used')).toBeInTheDocument();
+      expect(card.getByTitle(observedAt)).toBeInTheDocument();
+    } finally { clockSpy.mockRestore(); }
   });
 });
 

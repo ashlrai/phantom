@@ -65,9 +65,7 @@ fn install_deny<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(
     window
         .with_webview(|platform| {
             let pointer = platform.inner() as *const objc2_web_kit::WKWebView;
-            // SAFETY: on macOS `PlatformWebview::inner()` is the live WKWebView
-            // wry created for this window, and `with_webview` runs this closure
-            // on the main thread while the window exists.
+            // SAFETY: with_webview runs on the main thread with a live WKWebView.
             if let Some(webview) = unsafe { pointer.as_ref() } {
                 if let Err(e) = unsafe { mac::install(webview) } {
                     eprintln!("[ashlr-desktop] could not install the media-capture guard: {e}");
@@ -75,6 +73,39 @@ fn install_deny<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(
             }
         })
         .map_err(|e| e.to_string())
+}
+
+/// External account views are created on worker threads and require positive
+/// confirmation that the native deny proxy is installed before they remain
+/// visible. Existing browser-pane timing is deliberately unchanged.
+#[cfg(target_os = "macos")]
+pub fn apply_confirmed<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    window
+        .with_webview(move |platform| {
+            let pointer = platform.inner() as *const objc2_web_kit::WKWebView;
+            // SAFETY: on macOS `PlatformWebview::inner()` is the live WKWebView
+            // wry created for this window, and `with_webview` runs this closure
+            // on the main thread while the window exists.
+            let result = unsafe { pointer.as_ref() }
+                .ok_or("missing-webview")
+                .and_then(|webview| unsafe { mac::install(webview) });
+            let _ = send.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+    // This reader builds its external window on a worker. wry may dispatch this
+    // closure to AppKit asynchronously; wait briefly for a definite result.
+    // A missing result destroys the external window rather than exposing the
+    // microphone while the guard is still pending.
+    receive
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .map_err(|_| "media guard did not finish installing".to_string())?
+        .map_err(str::to_string)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn apply_confirmed<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    apply(window)
 }
 
 #[cfg(not(target_os = "macos"))]

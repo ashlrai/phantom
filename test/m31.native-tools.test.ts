@@ -87,6 +87,13 @@ describe('native tool registry', () => {
         'phm_proactive_agents_update',
         'phm_proactive_agents_delete',
         'phm_task_context',
+        'phm_team_claim',
+        'phm_team_context_add',
+        'phm_team_context_get',
+        'phm_team_handoff',
+        'phm_team_publish',
+        'phm_team_register',
+        'phm_team_view',
       ].sort(),
     );
   });
