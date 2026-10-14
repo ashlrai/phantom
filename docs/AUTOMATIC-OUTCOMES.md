@@ -65,6 +65,10 @@ window cannot make a smaller model fit. The current chat's recorded local window
 or runtime clamp is retained. Model variants share the same account allowance.
 An eligible current binding stays first among otherwise equal choices.
 
+Auto holds repeated account IDs instead of combining their model or capacity
+records. An Auto pin or current-chat preference does not bypass that hold; other
+eligible accounts can still be chosen.
+
 A model or context-mode change on the same account creates a continuation through
 the existing handoff flow. The returned account, model and mode must match before
 the first turn is sent. Privacy checks or routing still loading, all resources
