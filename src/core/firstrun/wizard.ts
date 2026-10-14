@@ -47,11 +47,10 @@ export function buildWizard(eco: EcosystemReportV1, settings: SettingsV1, mem: F
 }
 
 export async function loadWizard(): Promise<WizardV1> {
-  const { runEcosystemUp } = await import('../ecosystem/onboard.js');
-  const { realEcosystemDeps } = await import('../ecosystem/onboard-deps.js');
+  const { cachedEcosystemStatus } = await import('../ecosystem/status-cache.js');
   const { realSettingsBackend } = await import('../settings/backend.js');
   const [eco, settings] = await Promise.all([
-    runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { statusOnly: true }),
+    cachedEcosystemStatus(),
     (await realSettingsBackend('welcome')).read(),
   ]);
   return buildWizard(eco, settings, readFirstRun());
