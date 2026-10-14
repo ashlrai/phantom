@@ -26,19 +26,29 @@ that every integration, provider or autonomous effect is active.
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
+| Navigate registered workbench controls using optional keyboard labels | [Keyboard hints](KEYBOARD-HINTS.md) |
+| Review model-aware Automatic planning, execution and offline evaluation proposals | [Automatic routing research — source guide](https://github.com/ashlrai/phantom/blob/master/docs/AUTOMATIC-ROUTING-RESEARCH.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
+| Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](ECOSYSTEM-RELEASE-CONTRACTS.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
+| Explore Phantom supervising Codex and Claude desktop sessions | [Desktop app orchestration research — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-APP-ORCHESTRATION-RESEARCH.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
+| Use Grok Build, prepare a reviewed Grok Bot task, and distinguish Heavy access from verified model availability | [Grok companions — source guide](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
+| Review selected local exports and keep references separate from saved project memory | [Context import](CONTEXT-IMPORT.md) |
+| Understand current memory research and the proposed evaluation criteria | [Memory research](MEMORY-RESEARCH.md) |
+| Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
+| Run bounded synthetic memory evaluations without model credentials | [Offline memory evaluation](MEMORY-EVALUATION.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
+| Keep paid cash disabled while admitting proven included work | [Included work without paid cash](NO-PAID-CASH.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
@@ -55,6 +65,16 @@ the command surface in the exact binary you are running. A source guide may
 describe features not present in an older registry or desktop release.
 
 ## For coding agents
+
+Public installation and setup guides are at [phm.dev/docs](https://phm.dev/docs),
+with [workbench agent setup](https://phm.dev/docs/workbench-agents), a
+[raw Markdown manifest](https://phm.dev/docs/manifest.json), and separate
+[compact](https://phm.dev/workbench/llms.txt) and
+[full](https://phm.dev/workbench/llms-full.txt) workbench references.
+Source builds containing `docs --online` can print these URLs offline with
+`phm docs --online --json`. This discovery output does not open a browser or
+establish provider readiness. The installed command registry remains the
+authority for the binary's supported commands.
 
 Start with the selected command registry from the binary you intend to use:
 

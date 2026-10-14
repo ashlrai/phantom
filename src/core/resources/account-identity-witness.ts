@@ -2,7 +2,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
-import { resolveNativeSeatLaunch } from './native-profile.js';
+import { resolveNativeSeatLaunch, type NativeSeatLaunch } from './native-profile.js';
 import { readResourceJson } from './pool-runtime.js';
 import type { ResourceConnectionConfig } from './connection-monitor.js';
 
@@ -51,13 +51,24 @@ export function resourceAccountProfileDigest(account: ResourceConnectionConfig['
 /** No credential contents are read. Only an unchanged, private file epoch paired with a
  * prior successful native account check can witness historical identity across restart.
  * Claude's pinned .claude.json supplies local OAuth account metadata, not keychain
- * authentication. Matching it qualifies historical display only, never a current login. */
-export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number]): ResourceAccountLocalEpoch | null {
+ * authentication. Matching it qualifies historical display only, never a current login.
+ * An expected launch only tightens this independently fresh resolution; it never
+ * replaces the OS/profile inspection or either private auth-file stat read. */
+export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number],
+  expectedLaunch?: NativeSeatLaunch): ResourceAccountLocalEpoch | null {
   try {
     const result = resolveNativeSeatLaunch({ accountsRoot, provider: account.provider, seatId: account.id });
-    if (!result.ok || canonical(result.launch.command) !== canonical(account.command)) return null;
-    inspectPrivateDirectory(result.launch.nativeStatePath);
-    const file = join(result.launch.nativeStatePath, account.provider === 'claude' ? '.claude.json' : 'auth.json');
+    if (!result.ok || canonical(result.launch.command) !== canonical(account.command) ||
+      expectedLaunch !== undefined && canonical(result.launch) !== canonical(expectedLaunch)) return null;
+    return readLocalEpochFromLaunch(account, result.launch);
+  } catch { return null; }
+}
+
+/** Fixed local metadata read; callers never supply an OS tuple or cached identity. */
+function readLocalEpochFromLaunch(account: ResourceConnectionConfig['accounts'][number], launch: NativeSeatLaunch): ResourceAccountLocalEpoch | null {
+  try {
+    inspectPrivateDirectory(launch.nativeStatePath);
+    const file = join(launch.nativeStatePath, account.provider === 'claude' ? '.claude.json' : 'auth.json');
     const stat = lstatSync(file, { bigint: true });
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || (stat.mode & 511n) !== 384n ||
       stat.size < 2n || stat.size > 2n * 1024n * 1024n || realpathSync(file) !== file ||
@@ -94,5 +105,32 @@ export function recheckResourceAccountIdentitySnapshot(accountsRoot: string, acc
     const current = readResourceAccountLocalEpoch(accountsRoot, account);
     return current && canonical(current) === canonical(captured) &&
       (current.accountDigest === undefined || current.accountDigest === w.accountDigest) ? structuredClone(w) : null;
+  } catch { return null; }
+}
+
+
+/** Same-call local snapshot only. Native auth/usage still owns login and billing proof. */
+export interface ClaudeAccountLocalBinding {
+  launch: NativeSeatLaunch;
+  localEpoch: ResourceAccountLocalEpoch | null;
+  nativeStateIdentity: string;
+}
+/** Fresh late native resolution selected by source, never by a caller witness. */
+export function readClaudeAccountLocalBinding(accountsRoot: string,
+  account: ResourceConnectionConfig['accounts'][number]): ClaudeAccountLocalBinding | null {
+  try {
+    if (account.provider !== 'claude') return null;
+    const result = resolveNativeSeatLaunch({ accountsRoot, provider: 'claude', seatId: account.id, requireClaudeBrokerSafety: true });
+    if (!result.ok || result.launch.provider !== 'claude' || result.launch.seatId !== account.id ||
+      canonical(result.launch.command) !== canonical(account.command)) return null;
+    inspectPrivateDirectory(result.launch.nativeStatePath);
+    const state = lstatSync(result.launch.nativeStatePath, { bigint: true });
+    const nativeStateIdentity = canonical([state.dev, state.ino, state.birthtimeNs, state.mode, state.uid].map(String));
+    const localEpoch = readLocalEpochFromLaunch(account, result.launch);
+    if (localEpoch === null) {
+      try { lstatSync(join(result.launch.nativeStatePath, '.claude.json')); return null; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null; }
+    }
+    return { launch: result.launch, localEpoch, nativeStateIdentity };
   } catch { return null; }
 }

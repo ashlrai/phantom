@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, symlinkSync, mkdirSync, renameSync, linkSync, chmodSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { parseDocument, stringify } from 'yaml';
 import * as privateStorage from '../src/core/util/private-storage.js';
 import * as preferences from '../src/core/verse/preferences.js';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +14,222 @@ import { configureReleaseArticles, importProposedRelease, publicArticleDraft, re
 import { parseProposedRelease, RELEASE_CI_JOBS, releaseRequiredSteps, releaseRequiredLabels, verifyPublishedRelease, verifyLatestWorkbenchRelease, publicWorkbenchRelease, defaultReleasePublicReader, type ReleasePublicReader } from '../src/core/release-public-facts.js';
 import { runReleaseArticlesCli } from '../src/cli/release-articles.js';
 import { syncWebsiteReleaseMetadata, websiteReleaseMetadataPath, type WebsiteReleaseMetadataDeps } from '../src/core/website/release-metadata.js';
+
+
+// Literal reviewed CI decision/job bytes keep historical qualification inspectable
+// even after the local checkout advances to the documentation topology.
+const LEGACY_GATE_DECISION = "node <<'NODE'\nconst jobs = JSON.parse(process.env.GATE_NEEDS || 'null');\nconst full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];\nconst expected = ['classify', 'site', ...full];\nif (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||\n    expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {\n  throw new Error('CI dependency inventory is incomplete');\n}\nconst outcome = (name) => jobs[name]?.result;\nif (outcome('classify') !== 'success') throw new Error('CI classification did not pass');\nconst lane = jobs.classify.outputs?.lane;\nif (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');\nconst selected = lane === 'site' ? ['site'] : full;\nconst excluded = lane === 'site' ? full : ['site'];\nfor (const name of selected) {\n  if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nfor (const name of excluded) {\n  if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nconsole.log(`Merge Gate passed: ${lane} CI`);\nNODE\n";
+const DOCUMENTATION_GATE_DECISION = "node <<'NODE'\nconst jobs = JSON.parse(process.env.GATE_NEEDS || 'null');\nconst full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];\nconst expected = ['classify', 'site', 'documentation', ...full];\nif (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||\n    expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {\n  throw new Error('CI dependency inventory is incomplete');\n}\nconst outcome = (name) => jobs[name]?.result;\nif (outcome('classify') !== 'success') throw new Error('CI classification did not pass');\nconst lane = jobs.classify.outputs?.lane;\nif (!['site', 'documentation', 'full'].includes(lane)) throw new Error('CI lane is missing or unknown');\nconst selected = lane === 'full' ? full : [lane];\nconst excluded = ['site', 'documentation', ...full].filter((name) => !selected.includes(name));\nif (lane === 'documentation' && jobs.documentation.outputs?.release_eligible !== 'false') {\n  throw new Error('Documentation PR is not marked ineligible for package admission');\n}\nfor (const name of selected) {\n  if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nfor (const name of excluded) {\n  if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nconsole.log(`Merge Gate passed: ${lane} CI`);\nNODE\n";
+const REVIEWED_DOCUMENTATION_JOB = {
+  "name": "Documentation PR (reviewed prose)",
+  "needs": "classify",
+  "if": "needs.classify.outputs.lane == 'documentation'",
+  "runs-on": "ubuntu-latest",
+  "timeout-minutes": 10,
+  "outputs": {
+    "release_eligible": "${{ steps.documentation.outputs.release_eligible }}"
+  },
+  "steps": [
+    {
+      "name": "Checkout",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "fetch-depth": 0,
+        "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Bind candidate source",
+      "env": {
+        "ASHLR_CANDIDATE_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+      },
+      "run": "node .github/scripts/ci-source-binding.mjs"
+    },
+    {
+      "name": "Set up Node.js 22",
+      "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      "with": {
+        "node-version": "22.22.3",
+        "cache": "npm"
+      }
+    },
+    {
+      "name": "Install documentation test dependencies",
+      "run": "npm ci --ignore-scripts"
+    },
+    {
+      "name": "Test reviewed PR classification and receipt refusals",
+      "run": "node --test .github/tests/ci-site-lane.test.mjs .github/tests/ci-docs-lane.test.mjs"
+    },
+    {
+      "name": "Check reviewed documentation contracts (PR only)",
+      "id": "documentation",
+      "env": {
+        "ASHLR_CI_BASE_SHA": "${{ github.event.pull_request.base.sha }}"
+      },
+      "run": "node .github/scripts/ci-docs-lane.mjs"
+    },
+    {
+      "name": "Upload documentation PR receipt (PR only)",
+      "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "with": {
+        "name": "phantom-documentation-pr-${{ github.run_id }}-${{ github.run_attempt }}",
+        "path": "${{ steps.documentation.outputs.lane_dir }}",
+        "if-no-files-found": "error",
+        "retention-days": 7
+      }
+    }
+  ]
+};
+
+// Literal frozen faaa10 topology; fixture source stays independent of local CI advancement.
+const FRONTEND_GATE_DECISION = "node <<'NODE'\nconst jobs = JSON.parse(process.env.GATE_NEEDS || 'null');\nconst full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];\nconst expected = ['classify', 'site', 'documentation', 'frontend', ...full];\nif (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||\n    expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {\n  throw new Error('CI dependency inventory is incomplete');\n}\nconst outcome = (name) => jobs[name]?.result;\nif (outcome('classify') !== 'success') throw new Error('CI classification did not pass');\nconst lane = jobs.classify.outputs?.lane;\nif (!['site', 'documentation', 'frontend', 'full'].includes(lane)) throw new Error('CI lane is missing or unknown');\nconst selected = lane === 'full' ? full : [lane];\nconst excluded = ['site', 'documentation', 'frontend', ...full].filter((name) => !selected.includes(name));\nif (['documentation', 'frontend'].includes(lane) && jobs[lane].outputs?.release_eligible !== 'false') {\n  throw new Error('PR feedback is not marked ineligible for package admission');\n}\nfor (const name of selected) {\n  if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nfor (const name of excluded) {\n  if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);\n}\nconsole.log(`Merge Gate passed: ${lane} CI`);\nNODE\n";
+const REVIEWED_FRONTEND_CLASSIFIER = {
+  "name": "Classify PR site lane",
+  "runs-on": "ubuntu-latest",
+  "timeout-minutes": 5,
+  "outputs": {
+    "lane": "${{ steps.lane.outputs.lane }}"
+  },
+  "steps": [
+    {
+      "name": "Checkout",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "fetch-depth": 0,
+        "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Bind candidate source",
+      "env": {
+        "ASHLR_CANDIDATE_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+      },
+      "run": "node .github/scripts/ci-source-binding.mjs"
+    },
+    {
+      "name": "Detect reviewed frontend dependency candidate",
+      "id": "frontend_candidate",
+      "env": {
+        "ASHLR_CI_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "ASHLR_CI_HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+      },
+      "run": "node .github/scripts/ci-site-lane.mjs --frontend-candidate"
+    },
+    {
+      "name": "Node for frontend classification",
+      "if": "steps.frontend_candidate.outputs.frontend_candidate == 'true'",
+      "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      "with": {
+        "node-version": "22.22.3",
+        "cache": "npm"
+      }
+    },
+    {
+      "name": "Install frontend classifier parser dependencies",
+      "if": "steps.frontend_candidate.outputs.frontend_candidate == 'true'",
+      "run": "npm ci --ignore-scripts"
+    },
+    {
+      "name": "Classify exact reviewed PR lane",
+      "id": "lane",
+      "env": {
+        "ASHLR_CI_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "ASHLR_CI_HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+      },
+      "run": "node .github/scripts/ci-site-lane.mjs"
+    }
+  ]
+};
+const REVIEWED_FRONTEND_JOB = {
+  "name": "Frontend PR (reviewed presentation)",
+  "needs": "classify",
+  "if": "needs.classify.outputs.lane == 'frontend'",
+  "runs-on": "ubuntu-latest",
+  "timeout-minutes": 10,
+  "outputs": {
+    "release_eligible": "${{ steps.frontend.outputs.release_eligible }}"
+  },
+  "steps": [
+    {
+      "name": "Checkout",
+      "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "with": {
+        "fetch-depth": 0,
+        "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
+        "persist-credentials": false
+      }
+    },
+    {
+      "name": "Bind candidate source",
+      "env": {
+        "ASHLR_CANDIDATE_SHA": "${{ github.event.pull_request.head.sha || github.sha }}"
+      },
+      "run": "node .github/scripts/ci-source-binding.mjs"
+    },
+    {
+      "name": "Set up Node.js 22",
+      "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      "with": {
+        "node-version": "22.22.3",
+        "cache": "npm"
+      }
+    },
+    {
+      "name": "Install frontend test dependencies",
+      "run": "npm ci --ignore-scripts"
+    },
+    {
+      "name": "Test reviewed PR classification and receipt refusals",
+      "run": "node --test .github/tests/ci-site-lane.test.mjs .github/tests/ci-frontend-lane.test.mjs"
+    },
+    {
+      "name": "Check complete frontend and boundary contracts (PR only)",
+      "id": "frontend",
+      "env": {
+        "ASHLR_CI_BASE_SHA": "${{ github.event.pull_request.base.sha }}"
+      },
+      "run": "node .github/scripts/ci-frontend-lane.mjs"
+    },
+    {
+      "name": "Upload frontend PR receipt (PR only)",
+      "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "with": {
+        "name": "phantom-frontend-pr-${{ github.run_id }}-${{ github.run_attempt }}",
+        "path": "${{ steps.frontend.outputs.lane_dir }}",
+        "if-no-files-found": "error",
+        "retention-days": 7
+      }
+    }
+  ]
+};
+function qualificationWorkflow(documentation = false, frontend = false): Record<string, unknown> {
+  const workflow = parseDocument(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8')).toJS() as Record<string, unknown>;
+  const jobs = workflow['jobs'] as Record<string, Record<string, unknown>>;
+  delete jobs['documentation']; delete jobs['frontend'];
+  if (frontend) documentation = true;
+  jobs['classify']!['steps'] = (jobs['classify']!['steps'] as Record<string, unknown>[]).filter(step => ![
+    'Detect reviewed frontend dependency candidate', 'Node for frontend classification', 'Install frontend classifier parser dependencies',
+  ].includes(String(step['name'])));
+  const classifier = jobs['classify']!['steps'] as Record<string, unknown>[];
+  const select = classifier.find(step => step['run'] === 'node .github/scripts/ci-site-lane.mjs')!;
+  select['name'] = documentation ? 'Classify exact reviewed PR lane' : 'Classify exact ecosystem-only PR';
+  const gate = jobs['merge-gate']!;
+  gate['needs'] = ['classify', 'site', ...(documentation ? ['documentation'] : []), 'ci', 'ci-shared-macos',
+    'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+  (gate['steps'] as Record<string, unknown>[])[0]!['run'] = documentation ? DOCUMENTATION_GATE_DECISION : LEGACY_GATE_DECISION;
+  if (documentation) jobs['documentation'] = structuredClone(REVIEWED_DOCUMENTATION_JOB);
+  if (frontend) {
+    jobs['classify'] = structuredClone(REVIEWED_FRONTEND_CLASSIFIER);
+    jobs['frontend'] = structuredClone(REVIEWED_FRONTEND_JOB);
+    (gate['needs'] as string[]).splice(3, 0, 'frontend');
+    (gate['steps'] as Record<string, unknown>[])[0]!['run'] = FRONTEND_GATE_DECISION;
+  }
+  return workflow;
+}
+function qualificationWorkflowBytes(documentation = false, frontend = false): Buffer { return Buffer.from(stringify(qualificationWorkflow(documentation, frontend))); }
 
 const home = useTmpHome();
 const NOW = Date.parse('2026-10-07T06:00:00Z');
@@ -296,13 +513,14 @@ describe('fresh public facts are data, not saved release authority', () => {
     return value;
   }
   it('binds the current source classifier/site pair without replacing any of the 15 required gates', async () => {
-    const previousSiteSource = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8').split('\n  merge-gate:\n')[0]!;
+    const historicalSite = qualificationWorkflow(); delete (historicalSite['jobs'] as Record<string, unknown>)['merge-gate'];
+    const previousSiteSource = stringify(historicalSite);
     const reader = fixtureReader(withAncillaryJobs, { workflowBytes: Buffer.from(previousSiteSource) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
     expect(reader.github).toHaveBeenCalledWith(`repos/${REPO}/contents/.github/workflows/ci.yml?ref=${SOURCE}`, undefined);
   });
   it('binds the new source Merge Gate while retaining all fifteen full qualification jobs', async () => {
-    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: qualificationWorkflowBytes() });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
   it.each(['missing', 'failure', 'skipped-step', 'wrong-runner'])('withholds release facts for Merge Gate %s', async (kind) => {
@@ -318,7 +536,7 @@ describe('fresh public facts are data, not saved release authority', () => {
         value['total_count'] = jobs.length;
       }
       return value;
-    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    }, { workflowBytes: qualificationWorkflowBytes() });
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each(['unknown', 'duplicate-id', 'duplicate-name', 'required-failed', 'required-missing', 'classifier-failed',
@@ -347,14 +565,160 @@ describe('fresh public facts are data, not saved release authority', () => {
         value['total_count'] = jobs.length;
       }
       return value;
-    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    }, { workflowBytes: qualificationWorkflowBytes() });
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
+  function withDocumentationJobs(endpoint: string, raw: unknown): unknown {
+    const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+    if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+      const jobs = value['jobs'] as Record<string, unknown>[];
+      const classifier = jobs.find(job => job['name'] === 'Classify PR site lane')!;
+      (classifier['steps'] as Record<string, unknown>[])[1]!['name'] = 'Classify exact reviewed PR lane';
+      jobs.push({ id: 903, name: 'Documentation PR (reviewed prose)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
+      value['total_count'] = jobs.length;
+    }
+    return value;
+  }
+  it('inspects exact reviewed documentation source with skipped PR feedback and all fifteen full gates', async () => {
+    const reader = fixtureReader(withDocumentationJobs, { workflowBytes: qualificationWorkflowBytes(true) });
+    expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    expect(reader.github).toHaveBeenCalledWith(`repos/${REPO}/contents/.github/workflows/ci.yml?ref=${SOURCE}`, undefined);
+  });
+  it.each(['success', 'cancelled', 'missing', 'steps', 'wrong-run', 'wrong-head', 'wrong-runner', 'duplicate',
+    'full-skipped', 'full-cancelled', 'full-missing', 'full-step-skipped', 'wrong-classifier', 'rerun'])('documentation feedback cannot replace exact full qualification: %s', async kind => {
+      const reader = fixtureReader((endpoint, raw) => {
+        const value = withDocumentationJobs(endpoint, raw) as Record<string, unknown>;
+        if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+          const jobs = value['jobs'] as Record<string, unknown>[];
+          const doc = jobs.find(job => job['name'] === 'Documentation PR (reviewed prose)')!;
+          if (kind === 'success' || kind === 'cancelled') doc['conclusion'] = kind;
+          if (kind === 'missing') jobs.splice(jobs.indexOf(doc), 1);
+          if (kind === 'steps') doc['steps'] = [{ name: 'docs', status: 'completed', conclusion: 'success' }];
+          if (kind === 'wrong-run') doc['run_id'] = 99;
+          if (kind === 'wrong-head') doc['head_sha'] = 'e'.repeat(40);
+          if (kind === 'wrong-runner') doc['labels'] = ['self-hosted'];
+          if (kind === 'duplicate') jobs.push({ ...doc });
+          if (kind === 'full-skipped' || kind === 'full-cancelled') jobs[0]!['conclusion'] = kind.slice(5);
+          if (kind === 'full-missing') jobs.shift();
+          if (kind === 'full-step-skipped') (jobs[0]!['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
+          if (kind === 'wrong-classifier') {
+            const c = jobs.find(job => job['name'] === 'Classify PR site lane')!;
+            (c['steps'] as Record<string, unknown>[])[1]!['name'] = 'Classify exact ecosystem-only PR';
+          }
+          value['total_count'] = jobs.length;
+        }
+        if (kind === 'rerun' && endpoint.endsWith('/actions/runs/20')) value['run_attempt'] = 2;
+        return value;
+      }, { workflowBytes: qualificationWorkflowBytes(true) });
+      await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+      expect(reader.npm).not.toHaveBeenCalled();
+    });
+  it.each(['comment-lookalike', 'success-guard', 'excluded-guard', 'docs-marker', 'dependency', 'docs-runner',
+    'docs-condition', 'docs-command', 'docs-artifact', 'missing-gate', 'mixed-classifier', 'blob-mismatch'])('rejects altered original documentation CI decision bytes: %s', async kind => {
+      const workflow = qualificationWorkflow(true); const jobs = workflow['jobs'] as Record<string, Record<string, unknown>>;
+      const gate = jobs['merge-gate']!; const decision = (gate['steps'] as Record<string, unknown>[])[0]!;
+      if (kind === 'comment-lookalike') decision['run'] = `echo permitted\n# ${DOCUMENTATION_GATE_DECISION.replace(/\n/g, '\n# ')}`;
+      if (kind === 'success-guard') decision['run'] = DOCUMENTATION_GATE_DECISION.replace("outcome(name) !== 'success'", 'false');
+      if (kind === 'excluded-guard') decision['run'] = DOCUMENTATION_GATE_DECISION.replace("outcome(name) !== 'skipped'", 'false');
+      if (kind === 'docs-marker') decision['run'] = DOCUMENTATION_GATE_DECISION.replace("release_eligible !== 'false'", "release_eligible !== 'true'");
+      if (kind === 'dependency') gate['needs'] = (gate['needs'] as string[]).filter(name => name !== 'documentation');
+      if (kind === 'docs-runner') jobs['documentation']!['runs-on'] = 'self-hosted';
+      if (kind === 'docs-condition') jobs['documentation']!['if'] = 'always()';
+      if (kind === 'docs-command') (jobs['documentation']!['steps'] as Record<string, unknown>[])[5]!['run'] = 'echo docs';
+      if (kind === 'docs-artifact') ((jobs['documentation']!['steps'] as Record<string, unknown>[])[6]!['with'] as Record<string, unknown>)['name'] = 'ashlr-build-${{ github.run_id }}-${{ github.run_attempt }}';
+      if (kind === 'missing-gate') delete jobs['merge-gate'];
+      if (kind === 'mixed-classifier') (jobs['classify']!['steps'] as Record<string, unknown>[]).push({ name: 'Classify exact ecosystem-only PR', run: 'node .github/scripts/ci-site-lane.mjs' });
+      const reader = fixtureReader((endpoint, raw) => {
+        const value = withDocumentationJobs(endpoint, raw) as Record<string, unknown>;
+        if (kind === 'blob-mismatch' && endpoint.includes('/contents/.github/workflows/ci.yml?')) value['sha'] = 'e'.repeat(40);
+        return value;
+      }, { workflowBytes: Buffer.from(stringify(workflow)) });
+      await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(); expect(reader.npm).not.toHaveBeenCalled();
+    });
+  function withFrontendJobs(endpoint: string, raw: unknown): unknown {
+    const value = withDocumentationJobs(endpoint, raw) as Record<string, unknown>;
+    if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+      const jobs = value['jobs'] as Record<string, unknown>[];
+      const classifier = jobs.find(job => job['name'] === 'Classify PR site lane')!;
+      classifier['steps'] = REVIEWED_FRONTEND_CLASSIFIER.steps.map(step => ({ name: step.name, status: 'completed',
+        conclusion: ['Node for frontend classification', 'Install frontend classifier parser dependencies'].includes(step.name) ? 'skipped' : 'success' }));
+      jobs.push({ id: 904, name: 'Frontend PR (reviewed presentation)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
+      value['total_count'] = jobs.length;
+    }
+    return value;
+  }
+  it('binds frozen frontend topology with dependency install skipped and all fifteen full jobs successful', async () => {
+    const reader = fixtureReader(withFrontendJobs, { workflowBytes: qualificationWorkflowBytes(true, true) });
+    expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    expect(reader.github).toHaveBeenCalledWith(`repos/${REPO}/contents/.github/workflows/ci.yml?ref=${SOURCE}`, undefined);
+  });
+  it.each(['success', 'cancelled', 'missing', 'steps', 'wrong-run', 'wrong-head', 'wrong-runner', 'duplicate',
+    'full-skipped', 'full-cancelled', 'full-missing', 'full-step-skipped', 'detect-skipped', 'detect-missing', 'detect-duplicate',
+    'node-success', 'node-missing', 'install-success', 'install-cancelled', 'install-missing', 'install-duplicate', 'rerun'])('frontend feedback cannot replace full release qualification: %s', async kind => {
+      const reader = fixtureReader((endpoint, raw) => {
+        const value = withFrontendJobs(endpoint, raw) as Record<string, unknown>;
+        if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+          const jobs = value['jobs'] as Record<string, unknown>[];
+          const frontend = jobs.find(job => job['name'] === 'Frontend PR (reviewed presentation)')!;
+          if (kind === 'success' || kind === 'cancelled') frontend['conclusion'] = kind;
+          if (kind === 'missing') jobs.splice(jobs.indexOf(frontend), 1);
+          if (kind === 'steps') frontend['steps'] = [{ name: 'frontend', status: 'completed', conclusion: 'success' }];
+          if (kind === 'wrong-run') frontend['run_id'] = 99;
+          if (kind === 'wrong-head') frontend['head_sha'] = 'e'.repeat(40);
+          if (kind === 'wrong-runner') frontend['labels'] = ['self-hosted'];
+          if (kind === 'duplicate') jobs.push({ ...frontend });
+          if (kind === 'full-skipped' || kind === 'full-cancelled') jobs[0]!['conclusion'] = kind.slice(5);
+          if (kind === 'full-missing') jobs.shift();
+          if (kind === 'full-step-skipped') (jobs[0]!['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
+          for (const [prefix, name] of [['detect', 'Detect reviewed frontend dependency candidate'], ['node', 'Node for frontend classification'], ['install', 'Install frontend classifier parser dependencies']]) {
+            const classifier = jobs.find(job => job['name'] === 'Classify PR site lane')!;
+            const steps = classifier['steps'] as Record<string, unknown>[]; const step = steps.find(s => s['name'] === name)!;
+            if (kind === `${prefix}-missing`) steps.splice(steps.indexOf(step), 1);
+            if (kind === `${prefix}-duplicate`) steps.push({ ...step });
+            for (const outcome of ['success', 'cancelled', 'skipped']) if (kind === `${prefix}-${outcome}`) step['conclusion'] = outcome;
+          }
+          value['total_count'] = jobs.length;
+        }
+        if (kind === 'rerun' && endpoint.endsWith('/actions/runs/20')) value['run_attempt'] = 2;
+        return value;
+      }, { workflowBytes: qualificationWorkflowBytes(true, true) });
+      await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(); expect(reader.npm).not.toHaveBeenCalled();
+    });
+  it.each(['classifier-condition', 'classifier-install', 'classifier-pin', 'classifier-detect', 'classifier-extra',
+    'frontend-condition', 'frontend-command', 'frontend-artifact', 'gate-comment', 'gate-marker', 'gate-needs', 'gate-env',
+    'missing-docs', 'missing-gate', 'blob-mismatch'])('rejects unreviewed original frontend workflow bytes: %s', async kind => {
+      const workflow = qualificationWorkflow(true, true); const jobs = workflow['jobs'] as Record<string, Record<string, unknown>>;
+      const classifierSteps = jobs['classify']!['steps'] as Record<string, unknown>[];
+      const install = classifierSteps.find(step => step['name'] === 'Install frontend classifier parser dependencies')!;
+      if (kind === 'classifier-condition') install['if'] = 'always()';
+      if (kind === 'classifier-install') install['run'] = 'npm ci';
+      if (kind === 'classifier-pin') classifierSteps.find(step => step['name'] === 'Node for frontend classification')!['uses'] = 'actions/setup-node@main';
+      if (kind === 'classifier-detect') classifierSteps.find(step => step['name'] === 'Detect reviewed frontend dependency candidate')!['run'] = 'echo frontend_candidate=false';
+      if (kind === 'classifier-extra') classifierSteps.push({ name: 'Unexpected source step', run: 'echo permitted' });
+      if (kind === 'frontend-condition') jobs['frontend']!['if'] = 'always()';
+      if (kind === 'frontend-command') (jobs['frontend']!['steps'] as Record<string, unknown>[])[5]!['run'] = 'echo frontend';
+      if (kind === 'frontend-artifact') ((jobs['frontend']!['steps'] as Record<string, unknown>[])[6]!['with'] as Record<string, unknown>)['name'] = 'ashlr-build-${{ github.run_id }}-${{ github.run_attempt }}';
+      const gate = jobs['merge-gate']!; const decision = (gate['steps'] as Record<string, unknown>[])[0]!;
+      if (kind === 'gate-comment') decision['run'] = `echo permitted\n# ${FRONTEND_GATE_DECISION.replace(/\n/g, '\n# ')}`;
+      if (kind === 'gate-marker') decision['run'] = FRONTEND_GATE_DECISION.replace("release_eligible !== 'false'", "release_eligible !== 'true'");
+      if (kind === 'gate-needs') gate['needs'] = (gate['needs'] as string[]).filter(name => name !== 'frontend');
+      if (kind === 'gate-env') decision['env'] = { GATE_NEEDS: '${{ toJSON(needs) }}', NODE_OPTIONS: '--require ./unreviewed.js' };
+      if (kind === 'missing-docs') delete jobs['documentation'];
+      if (kind === 'missing-gate') delete jobs['merge-gate'];
+      const reader = fixtureReader((endpoint, raw) => {
+        const value = withFrontendJobs(endpoint, raw) as Record<string, unknown>;
+        if (kind === 'blob-mismatch' && endpoint.includes('/contents/.github/workflows/ci.yml?')) value['sha'] = 'e'.repeat(40);
+        return value;
+      }, { workflowBytes: Buffer.from(stringify(workflow)) });
+      await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(); expect(reader.npm).not.toHaveBeenCalled();
+    });
   it('refuses ancillary jobs when the exact historical source does not declare them', async () => {
     await expect(verifyPublishedRelease(proposed, fixtureReader(withAncillaryJobs), NOW)).rejects.toThrow('Unexpected qualification job inventory');
   });
   it.each(['path', 'type', 'size', 'base64', 'digest', 'utf8', 'duplicate-key', 'incomplete-pair', 'site-condition', 'classifier-command'])('refuses unbound or incompatible source workflow %s', async (kind) => {
-      const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'));
+      const current = qualificationWorkflowBytes();
       let workflowBytes = current;
       if (kind === 'utf8') workflowBytes = Buffer.from([0xff]);
       if (kind === 'duplicate-key') workflowBytes = Buffer.from('name: CI\nname: Other\njobs: {}\n');

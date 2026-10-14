@@ -68,6 +68,14 @@ function request(
 }
 
 describe('effective config snapshot', () => {
+  it('projects cash disabled only after explicit mode selection, preserving an absent legacy ceiling', () => {
+    const cfg = makeCfg({ daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 50 } });
+    const snapshot = buildEffectiveConfigSnapshot(cfg);
+    expect(snapshot.daemon.fundingMode.value).toBe('no-paid-cash');
+    expect(snapshot.daemon.dailyBudgetUsd.value).toBe(0);
+    expect(buildEffectiveConfigSnapshot(makeCfg({ daemon: { dailyBudgetUsd: 50 } })).daemon.dailyBudgetUsd.value).toBe(50);
+  });
+
   it('does not create a config file when reading effective defaults', () => {
     const configPath = join(fx.ashlrDir, 'config.json');
     expect(existsSync(configPath)).toBe(false);

@@ -725,7 +725,7 @@ function parseSpendGuard(raw: string): DaemonSpendGuard | null {
         Date.parse(obj['daemonStartedAt']) > Date.parse(obj['armedAt'])) ||
       !canonicalBudgetDay(obj['budgetDay']) || obj['budgetDay'] !== obj['armedAt'].slice(0, 10) ||
       typeof obj['dailyBudgetUsd'] !== 'number' || !Number.isFinite(obj['dailyBudgetUsd']) ||
-      obj['dailyBudgetUsd'] <= 0 ||
+      (obj['dailyBudgetUsd'] < 0 || (obj['dailyBudgetUsd'] === 0 && !zeroCostOnly)) ||
       typeof obj['spentUsdAtArm'] !== 'number' || !Number.isFinite(obj['spentUsdAtArm']) ||
       obj['spentUsdAtArm'] < 0 || (!zeroCostOnly && obj['spentUsdAtArm'] > obj['dailyBudgetUsd']) ||
       typeof obj['reservedUsd'] !== 'number' || !Number.isFinite(obj['reservedUsd']) || obj['reservedUsd'] < 0 ||

@@ -1,3 +1,4 @@
+import { daemonCashBudget } from '../src/core/daemon/funding.js';
 /**
  * Tests for the Verse V2 caps/scope primitives (src/core/verse/control-api.ts)
  * and the single subscriptionMaxPercent clamp (src/core/config.ts).
@@ -79,6 +80,13 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('readVerseCaps', () => {
+  it('projects an explicit cash refusal without saying zero has paused included work, and refuses a USD-only override', () => {
+    const cfg = baseConfig({ daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 50 } });
+    expect(readVerseCaps(cfg)).toMatchObject({ fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 });
+    expect(() => applyVerseCapsUpdate(cfg, { dailyBudgetUsd: 50 })).toThrow(/Paid cash is disabled/);
+    expect(readVerseCaps(baseConfig({ daemon: { dailyBudgetUsd: 0 } }))).toMatchObject({ fundingMode: 'legacy-usd', dailyBudgetUsd: 0 });
+  });
+
   it('reports the daemon defaults and names every key that fell back to one', () => {
     const caps = readVerseCaps(baseConfig());
 
@@ -187,26 +195,15 @@ describe('readVerseCaps', () => {
    * the loop was stopped. The existing sync test above only compares DEFAULTS
    * against VERSE_CAPS_DEFAULTS; it never looked at the guard.
    *
-   * Asserted against the SOURCE for the same reason the test above is:
-   * importing daemon/loop.ts here would drag the whole dispatch chain into the
-   * unit lane.
+   * Exercise the actual pure budget resolver; the heavy dispatch chain stays
+   * outside this unit test.
    */
   it('lets the daemon read a configured dailyBudgetUsd of 0 as a real 0', () => {
-    const loopSource = fs.readFileSync(
-      path.join(process.cwd(), 'src', 'core', 'daemon', 'loop.ts'),
-      'utf8',
-    );
-    const guard = /dailyBudgetUsd:\s*\n?\s*typeof o\.dailyBudgetUsd === 'number'([\s\S]{0,200}?)\?\s*o\.dailyBudgetUsd/.exec(
-      loopSource,
-    );
-    expect(guard, 'resolveCfg dailyBudgetUsd guard not found in daemon/loop.ts').not.toBeNull();
-    const condition = guard?.[1] ?? '';
-    // A stored 0 must survive into DaemonConfig...
-    expect(condition).toContain('o.dailyBudgetUsd >= 0');
-    // ...and the `> 0` spelling that discarded it must be gone.
-    expect(condition).not.toMatch(/o\.dailyBudgetUsd\s*>\s*0/);
-    // Garbage still falls back.
-    expect(condition).toContain('Number.isFinite(o.dailyBudgetUsd)');
+    expect(daemonCashBudget({ dailyBudgetUsd: 0 }, 1)).toBe(0);
+    expect(daemonCashBudget({ dailyBudgetUsd: 0.005 }, 1)).toBe(0.005);
+    for (const dailyBudgetUsd of [-1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(daemonCashBudget({ dailyBudgetUsd }, 1)).toBe(1);
+    }
 
     // And the bound the route accepts still admits 0, so the two agree.
     expect(VERSE_CAPS_BOUNDS.dailyBudgetUsd.min).toBe(0);

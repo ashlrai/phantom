@@ -1,3 +1,6 @@
+import { issueIncludedNativeContact } from './included-native-contact.js';
+import { readCapacitySnapshot } from '../routing/budget-store.js';
+import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
 /** Host-owned native role completions. Account/model authority is rechecked
  * before contact and throughout the owned process. No global CLI login, API
  * credential fallback or model-authored transport configuration is accepted. */
@@ -20,7 +23,7 @@ import { spawnEngine, type SpawnEngineResult } from './engines.js';
 import { compileArgv, GROK_CLI_HEADLESS_ARGV, extractGrokStreamText } from './engine-registry.js';
 import { codexAdapter } from '../verse/adapters/codex.js';
 import { refreshDevinCliExecutionBinding, devinCliBindingCurrent, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
-import { enginePermitted } from '../policy/local-only.js';
+import { nativeIncludedCandidatePermitted, noPaidCashContactPolicy } from '../policy/local-only.js';
 import { observeRoleAccount, roleAccountEpoch, nativeLaunchEpoch } from './role-account.js';
 import { assertHostNativeAccountContext } from '../integrations/locus-job-env.js';
 
@@ -94,7 +97,7 @@ export function nativeRoleCompletion(req: RoleCompletionRequest, record?: (metri
   return async (system,user) => {
     assertHostNativeAccountContext();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(req.model) || !Number.isFinite(req.timeoutMs) || req.timeoutMs <= 0 ||
-        !enginePermitted(grantEngine[req.engine],req.cfg).permitted) throw new Error('Selected native role unavailable');
+        !nativeIncludedCandidatePermitted(grantEngine[req.engine],req.cfg).permitted) throw new Error('Selected native role unavailable');
     const initialPolicy=policyEpoch(req);
     if (initialPolicy === null || req.signal?.aborted) throw new Error('Selected native role authority unavailable');
     if (req.engine !== 'devin' && (!req.accountHint || !/^[a-f0-9]{64}$/.test(req.accountHint))) throw new Error('Selected native account allowance unbound');
@@ -110,6 +113,10 @@ export function nativeRoleCompletion(req: RoleCompletionRequest, record?: (metri
     const current=():boolean => {
       try {
         if (stop.signal.aborted || req.signal?.aborted || lease?.signal.aborted || policyEpoch(req) !== initialPolicy) return false;
+        if (noPaidCashContactPolicy(req.cfg) && req.engine === 'codex') {
+          const seats = readCapacitySnapshot()?.seats.filter(s => s.engine === 'codex' && s.seatId === req.seatId);
+          if (seats?.length !== 1 || seats[0]!.accountHint !== req.accountHint || !subscriptionOnlyCurrent(seats[0]!, Date.now())) return false;
+        }
         if (native) {
           const fresh=resolveNativeSeatLaunch({accountsRoot:resolveAccountsRoot(req.cfg),provider:native.provider,seatId:req.seatId,
             ...(native.provider === 'claude' ? {requireClaudeBrokerSafety:true} : {})});
@@ -185,7 +192,7 @@ export function nativeRoleCompletion(req: RoleCompletionRequest, record?: (metri
         }
         if(!current() || owned.evidence?.ready !== true)throw new Error('Native role confinement or account continuity unavailable');
         result=await spawnEngine(command,req.cfg,{env:owned.env,launcher:owned.launcher,signal,timeoutMs:req.timeoutMs,
-          selectedOutcomeAdmission:current,...(req.engine === 'codex' ? {stdin:prompt} : {}),onSpawn:()=>{contacted=true;}});
+          selectedOutcomeAdmission:current,...(req.engine === 'codex' ? {stdin:prompt,nativeEngine:'codex' as const,includedFunding:issueIncludedNativeContact('codex',command,current)} : req.engine === 'devin' ? {nativeEngine:'devin-cli' as const,includedFunding:issueIncludedNativeContact('devin-cli',command,current)} : {}),onSpawn:()=>{contacted=true;}});
         if(cleanupUnconfirmed(result)){retained=true;outcome='unknown';throw new Error('Native role process cleanup unconfirmed');}
         if(!current())throw new Error('Selected native role admission changed');
         const finish=finishAutonomousSpawn(owned,{output:result.output});owned=null;

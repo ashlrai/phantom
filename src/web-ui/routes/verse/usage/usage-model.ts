@@ -459,6 +459,7 @@ export interface VerseControlProjection {
   available: boolean;
   reason: string | null;
   dailyBudgetUsd: number | null;
+  fundingMode?: 'legacy-usd' | 'no-paid-cash' | null;
   subscriptionMaxPercent: number | null;
   todaySpentUsd: number | null;
   /**
@@ -537,6 +538,7 @@ export function projectVerseControl(raw: unknown, reason: string | null = null):
     available: true,
     reason,
     dailyBudgetUsd: readNumber(caps, ['dailyBudgetUsd']),
+    fundingMode: caps?.fundingMode === 'no-paid-cash' ? 'no-paid-cash' : caps?.fundingMode === 'legacy-usd' ? 'legacy-usd' : null,
     subscriptionMaxPercent: readNumber(caps, ['subscriptionMaxPercent']),
     // Contract path first: VerseControlSnapshot.spend.todayUsd is the one the
     // server actually sends, and it is null (not 0) when the ledger is

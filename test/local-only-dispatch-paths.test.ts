@@ -48,6 +48,9 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const pluginSeam = vi.hoisted(() => ({ providers: vi.fn(async () => [] as unknown[]), create: vi.fn(), chat: vi.fn(), stream: vi.fn() }));
+vi.mock('../src/core/plugins/registry.js', () => ({ getPluginProviders: pluginSeam.providers }));
+
 // The injected children are inert; launcher metadata must not probe the host CLI.
 vi.mock('../src/core/verse/local-harness.js', () => ({
   LOCAL_HARNESS_UNAVAILABLE: 'Claude Code is required to run local tool sessions. Install it or refresh Apps & Accounts after updating your PATH.',
@@ -64,6 +67,7 @@ vi.mock('../src/core/sandbox/policy.js', async (importOriginal) => {
 });
 
 vi.mock('../src/core/providers.js', () => ({
+  LLAMA_SERVER_PROVIDER_ID: 'llama-server',
   getProviderRegistry: vi.fn(async (cfg: { models: { providerChain: string[] } }) => ({
     providers: [
       { id: 'ollama', url: 'http://localhost:11434', up: true, models: ['qwen3.8:27b-ctx64k'] },
@@ -79,6 +83,7 @@ import type { AshlrConfig, EngineId, WorkItem, WorkSource } from '../src/core/ty
 import {
   __resetLocalOnlyLatchForTests,
   engineLocality,
+  enginePermitted,
   isLocalOnlyRefusal,
 } from '../src/core/policy/local-only.js';
 import {
@@ -168,6 +173,8 @@ const ALL_ENGINES_CTX = {
 
 beforeEach(() => {
   __resetLocalOnlyLatchForTests();
+  for (const mock of Object.values(pluginSeam)) mock.mockReset();
+  pluginSeam.providers.mockResolvedValue([]);
   _seq = 0;
   delete process.env['ASHLR_LOCAL_ONLY'];
 });
@@ -1000,5 +1007,84 @@ describe('§H verse interactive sessions', () => {
     );
     expect(spawned).toEqual([]);
     expect(outcome.errors[0] ?? '').toContain('local-only');
+  });
+});
+
+
+describe('explicit no-paid-cash contact refusals', () => {
+  it('rechecks a raw no-capability launch after setup selects cash refusal', async () => {
+    const legacy = openCfg();
+    const selected = { ...legacy, daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } } as AshlrConfig;
+    let admissionCalls = 0;
+    const result = await spawnEngine({ bin: '/unknown/must-never-execute', args: [], cwd: tmpdir() }, legacy, {
+      selectedOutcomeAdmission: () => { admissionCalls++; enginePermitted('codex', selected); return true; },
+    });
+    expect(admissionCalls).toBe(1);
+    expect(result).toMatchObject({ ok: false, output: '', error: expect.stringContaining('no-paid-cash') });
+  });
+
+  it.each(['no-paid-cash', 'local-only'] as const)('a checked loopback cannot redirect outside %s, including cached streaming clients', async mode => {
+    const client = buildOpenAICompatibleClient('http://127.0.0.1:11434/v1', '', 'fixture', true,
+      undefined, undefined, { redirect: 'follow' });
+    const streamClient = buildOpenAICompatibleClient('http://127.0.0.1:11434/v1', '', 'fixture', true);
+    if (mode === 'no-paid-cash') enginePermitted('codex', { ...openCfg(), daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } } as AshlrConfig);
+    else enginePermitted('codex', lockedCfg());
+    let remoteContacts = 0;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      // Inert redirecting transport: following the checked local request would
+      // contact a distinct unqualified endpoint. Never perform actual I/O.
+      if (init?.redirect !== 'error') remoteContacts++;
+      throw new Error('redirect refused');
+    });
+    try {
+      await expect(client.chat([{ role: 'user', content: 'inert' }])).rejects.toThrow(/redirect refused/);
+      await expect(streamClient.chatStream!([{ role: 'user', content: 'inert' }], undefined, () => {})).rejects.toThrow();
+      expect(fetch).toHaveBeenCalled();
+      expect(fetch.mock.calls.every(([, init]) => init?.redirect === 'error')).toBe(true);
+      expect(remoteContacts).toBe(0);
+    } finally { fetch.mockRestore(); }
+  });
+
+  it('holds plugin fallback before activation and gates a previously built plugin client after selection', async () => {
+    const result = { content: 'inert', toolCalls: [], usage: { tokensIn: 0, tokensOut: 0 } };
+    pluginSeam.chat.mockResolvedValue(result); pluginSeam.stream.mockResolvedValue(result);
+    pluginSeam.create.mockResolvedValue({ id: 'inert-plugin', supportsTools: false, chat: pluginSeam.chat, chatStream: pluginSeam.stream });
+    pluginSeam.providers.mockResolvedValue([{ id: 'inert-plugin', tier: 'local', createClient: pluginSeam.create }]);
+    const selected = { ...openCfg(), daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } } as AshlrConfig;
+    await expect(getActiveClient(selected, { allowCloud: true, provider: 'inert-plugin' })).rejects.toThrow(/no-paid-cash/);
+    expect(pluginSeam.providers).not.toHaveBeenCalled(); expect(pluginSeam.create).not.toHaveBeenCalled();
+    __resetLocalOnlyLatchForTests();
+    const legacy = { ...openCfg(), daemon: { fundingMode: 'legacy-usd', dailyBudgetUsd: 50 } } as AshlrConfig;
+    const client = await getActiveClient(legacy, { allowCloud: true, provider: 'inert-plugin' });
+    expect(await client.chat([{ role: 'user', content: 'inert' }])).toEqual(result);
+    expect(pluginSeam.providers).toHaveBeenCalledOnce(); expect(pluginSeam.create).toHaveBeenCalledOnce();
+    await expect(getActiveClient(selected, { allowCloud: true, provider: 'inert-plugin' })).rejects.toThrow(/no-paid-cash/);
+    await expect(client.chat([{ role: 'user', content: 'inert' }])).rejects.toThrow(/no-paid-cash/);
+    await expect(client.chatStream!([{ role: 'user', content: 'inert' }], undefined, () => {})).rejects.toThrow(/no-paid-cash/);
+    expect(pluginSeam.chat).toHaveBeenCalledOnce(); expect(pluginSeam.stream).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a previously built cloud client before each chat/stream contact', async () => {
+    const client = buildOpenAICompatibleClient('https://paid.example.invalid/v1', '', 'fixture', true);
+    const cfg = { ...openCfg(), daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } } as AshlrConfig;
+    await expect(getActiveClient(cfg, { allowCloud: true, provider: 'anthropic' })).rejects.toThrow(/no-paid-cash/);
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('must not contact'));
+    try {
+      await expect(client.chat([{ role: 'user', content: 'inert' }])).rejects.toThrow(/no-paid-cash/);
+      const stream = client.chatStream?.([{ role: 'user', content: 'inert' }], undefined, () => {});
+      expect(stream).toBeDefined();
+      if (stream) await expect(stream).rejects.toThrow(/no-paid-cash/);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
+  });
+
+  it('denies raw cloud transport and generic CLI contact while selection alone is not permission', async () => {
+    const cfg = { ...lockedCfg(), foundry: { ...lockedCfg().foundry, localOnly: false }, daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 50 } } as AshlrConfig;
+    await expect(getActiveClient(cfg, { allowCloud: true, provider: 'anthropic' })).rejects.toThrow(/no-paid-cash/);
+    const result = await spawnEngine({ bin: 'codex', args: ['exec', 'inert'], cwd: tmpdir() }, cfg);
+    expect(result).toMatchObject({ ok: false, output: '' });
+    expect(result.error).toContain('no-paid-cash');
+    const unknown = await spawnEngine({ bin: '/unknown/paid-wrapper', args: [], cwd: tmpdir() }, cfg);
+    expect(unknown.error).toContain('no-paid-cash');
   });
 });

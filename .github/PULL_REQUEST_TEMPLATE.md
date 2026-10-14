@@ -6,11 +6,22 @@
 
 ## How it was verified
 
-- [ ] `npm run typecheck` clean
-- [ ] `npm run lint` clean
-- [ ] `npm run build` succeeds
-- [ ] Hermetic test suite green: `HOME=$(mktemp -d) npx vitest run --no-file-parallelism` (no decrease in test count; new behavior has tests)
-- [ ] `ashlr verify-safety` still passes (5/5) if any safety-relevant code changed
+<!-- List commands actually run, exact source, results/report references, and affected coverage.
+Use the existing fast gate for local feedback; do not repeat unrelated full suites.
+Include failures, skips, untested paths and source-binding unknowns honestly.
+Local feedback does not replace exact-source hosted CI or full release qualification. -->
+
+## Reviewer handoff
+
+<!-- Optional local context generator, using the existing project dependency:
+node --import tsx scripts/reviewer-handoff.ts --base <intended-base> --head HEAD
+Add --evidence <report.json> for existing test reports, or --json for structured context.
+The generator executes no checks and does not approve, merge, publish or inspect other repos.
+Keep private client details and sensitive evidence out of public PR text. -->
+
+- Agent/peer review: reviewer, reviewed source, findings and unresolved questions (if performed).
+- Human review: actual reviewer and findings (if performed); an agent review is not a human review.
+- Existing CODEOWNERS and standing authority apply. This handoff adds no required human approval or approval count to routine qualified automated changes.
 
 ## Safety checklist (for anything touching the autonomous path)
 

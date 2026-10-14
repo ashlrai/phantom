@@ -10,6 +10,7 @@
  */
 
 import { runDoctor } from '../core/doctor.js';
+import { includedWorkFundingDefaults } from '../core/daemon/funding.js';
 import { loadConfig } from '../core/config.js';
 import type { AshlrConfig, DoctorCheck, DoctorReport, FixAction, OnboardResult } from '../core/types.js';
 
@@ -324,6 +325,7 @@ async function _legacyOnboard(
   const configExisted = existsSync(CONFIG_PATH);
   if (!configExisted) {
     const defaults = defaultConfig();
+    defaults.daemon = { ...defaults.daemon, ...includedWorkFundingDefaults() };
     Object.assign(cfg, defaults);
     saveConfig(cfg);
     steps.push({ name: 'config', status: 'ok', detail: `Created ${CONFIG_PATH}` });

@@ -257,6 +257,17 @@ function successfulServiceCommands() {
 }
 
 describe('daemonServiceInstallOptions', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)('serializes explicit cash-zero funding on %s without rewriting legacy argv', platform => {
+    const selected = daemonServiceInstallOptions({ daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 50 } }, { budget: 99 });
+    expect(selected).toMatchObject({ fundingMode: 'no-paid-cash', budget: 0 });
+    const def = generateServiceDefinition({ ...selected, platform, nodePath: '/safe/node', binPath: '/safe/cli', homeDir: '/safe/home' });
+    expect(def.content).toContain('no-paid-cash');
+    if (platform === 'darwin') expect(def.launchdRuntime?.arguments).toEqual(expect.arrayContaining(['--budget','0','--funding-mode','no-paid-cash']));
+    else expect(def.content).toContain('--budget 0 --funding-mode no-paid-cash');
+    expect(generateServiceDefinition({ platform, budget: 50, nodePath: '/safe/node', binPath: '/safe/cli', homeDir: '/safe/home' }).content).not.toContain('--funding-mode');
+    expect(daemonServiceInstallOptions({ daemon: { dailyBudgetUsd: 0 } })).toMatchObject({ budget: 0 });
+  });
+
   it('maps the optional awake preference without enabling it by default', () => {
     expect(daemonServiceInstallOptions({ daemon: {} }).keepAwake).toBe(false);
     expect(daemonServiceInstallOptions({ daemon: { keepAwake: true } }).keepAwake).toBe(true);

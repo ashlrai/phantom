@@ -332,6 +332,57 @@ describe('assessSeat — autonomy headroom', () => {
     expect(a.spentReasons[0]).toContain('weekly window is spent — 100% used');
   });
 
+  it.each([1, 24 * H])('holds a quota observation %s ms in the future without inventing a reopening', offset => {
+    const a = assessSeat(claude(10, 10, { observedAt: iso(offset) }), claudePolicy, opts);
+    expect(a.headroom).toMatchObject({ eligibleForAutonomy: false, sessionUsedPercent: 10, weeklyUsedPercent: 10 });
+    expect(a.unknownUsage).toBe(true);
+    expect(a.exhausted).toBe(false);
+    expect(a.reopensAt).toBeNull();
+    expect(a.details).toContainEqual({ kind: 'unknown-usage', text: 'The usage reading is dated in the future — too uncertain to spend against.' });
+  });
+
+  it.each([Number.NaN, Infinity, -Infinity])('holds paid quota with an unavailable clock (%s) and routes only to eligible alternatives', nowMs => {
+    const a = assessSeat(claude(10, 10), claudePolicy, { nowMs });
+    expect(a.headroom.eligibleForAutonomy).toBe(false);
+    expect(a.unknownUsage).toBe(true);
+    expect(a.reopensAt).toBeNull();
+    expect(a.details).toContainEqual({ kind: 'unknown-usage', text: 'The current clock is unavailable — usage freshness cannot be checked, so autonomy stays off this seat.' });
+    const decision = routeSeat(auto('code', 'medium'), [claude(10, 10), local()], balanced(), { nowMs });
+    expect(decision.seatId).toBe(local().seatId);
+    expect(decision.exclusions).toContainEqual(expect.objectContaining({ seatId: 'claude', nextEligibleAt: null,
+      details: expect.arrayContaining([expect.objectContaining({ kind: 'unknown-usage' })]) }));
+  });
+
+  it.each([
+    [-HEADROOM_READING_MAX_AGE_MS - 1, false],
+    [-HEADROOM_READING_MAX_AGE_MS, true],
+    [-1, true],
+    [0, true],
+  ] as const)('preserves the exact freshness boundary at age offset %s ms', (offset, eligible) => {
+    const a = assessSeat(claude(10, 10, { observedAt: iso(offset) }), claudePolicy, opts);
+    expect(a.headroom.eligibleForAutonomy).toBe(eligible);
+    expect(a.unknownUsage).toBe(!eligible);
+  });
+
+  it('preserves known exhaustion while refusing future evidence and an inferred reopening', () => {
+    const spent = { ...codexSpent('codex-personal', 30), observedAt: iso(1) };
+    const a = assessSeat(spent, { seatId: spent.seatId, enabled: true, reservePercent: 0 }, opts);
+    expect(a.exhausted).toBe(true);
+    expect(a.unknownUsage).toBe(true);
+    expect(a.headroom.eligibleForAutonomy).toBe(false);
+    expect(a.spentDetails).toContainEqual(expect.objectContaining({ kind: 'spent' }));
+    expect(a.reopensAt).toBeNull();
+  });
+
+  it('keeps interactive unknown-usage policy while autonomous routing excludes future quota', () => {
+    const future = claude(10, 10, { observedAt: iso(1) });
+    const interactive = routeSeat({ task: 'code', difficulty: 'medium', autonomous: false }, [future], balanced(), opts);
+    expect(interactive.seatId).toBe('claude');
+    const autonomous = routeSeat(auto('code', 'medium'), [future], balanced(), opts);
+    expect(autonomous.seatId).toBeNull();
+    expect(autonomous.exclusions[0]?.details).toContainEqual(expect.objectContaining({ kind: 'unknown-usage' }));
+  });
+
   it('a flagged limit is reported as "limit reached", not a percentage', () => {
     const s = seat('codex-cmp', 'codex', [win('codex_codex_primary', 100, { limitReached: true, resetsAt: iso(H) })]);
     const a = assessSeat(s, { seatId: 'codex-cmp', enabled: true, reservePercent: 0 }, opts);

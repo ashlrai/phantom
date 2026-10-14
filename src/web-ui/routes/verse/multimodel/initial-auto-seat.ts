@@ -1,18 +1,20 @@
 /** Initial chats use the same classifier/adviser as an existing Auto composer. */
-import type { VerseSeat } from '../../../data/api-types.js';
+import type { VersePreferences, VerseSeat } from '../../../data/api-types.js';
 import type { BudgetPolicy } from '../../../../core/routing/types.js';
 import { adviseSeat } from '../../../../core/verse/multimodel/advisor.js';
 import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
 import type { PromptLabelRequest, PromptLabelResponse, SeatAdviceOption } from '../../../../core/verse/multimodel/types.js';
 import { budgetQuery } from '../budget/budget-queries.js';
 import { multimodelContextQuery } from './multimodel-queries.js';
-import { toAdvisorSeats } from './useAutoSeat.js';
+import { toAdvisorSeats } from './advisor-seats.js';
 
 export async function initialAutoSeat(input: {
   text: string;
   roots: readonly string[];
   seats: readonly VerseSeat[];
   signal: AbortSignal;
+  /** Already-read preferences; unread defaults are explicitly standard. */
+  preferences?: VersePreferences | null;
   label(request: PromptLabelRequest): Promise<PromptLabelResponse | null>;
 }): Promise<SeatAdviceOption | null> {
   if (input.roots.length === 0) throw new Error('Choose a project first.');
@@ -40,7 +42,7 @@ export async function initialAutoSeat(input: {
     : { mode: 'balanced', seats: {}, updatedAt: new Date(0).toISOString() };
   const primary = contexts[0]!;
   const advice = adviseSeat({
-    classification, seats: toAdvisorSeats(input.seats, primary.local), policy,
+    classification, seats: toAdvisorSeats(input.seats, primary.local, { preferences: input.preferences }), policy,
     mode: 'auto', nowMs: Date.now(), currentSeatId: null, turnCount: 0, contextTokens: 0,
     localOnly, learned: primary.learned, roi: primary.roi, pinnedSeatId: null,
   });

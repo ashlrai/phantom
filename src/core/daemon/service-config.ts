@@ -1,5 +1,6 @@
 import type { DaemonConfig } from '../types.js';
 import type { ServiceInstallOptions } from './service.js';
+import { daemonCashBudget, noPaidCash } from './funding.js';
 
 const DEFAULT_SERVICE_BUDGET_USD = 5;
 const DEFAULT_SERVICE_INTERVAL_MS = 5 * 60_000;
@@ -17,10 +18,12 @@ export function daemonServiceInstallOptions(
 ): ServiceInstallOptions {
   const daemon: Partial<DaemonConfig> = cfg?.daemon ?? {};
   return {
-    budget: typeof daemon.dailyBudgetUsd === 'number' ? daemon.dailyBudgetUsd : DEFAULT_SERVICE_BUDGET_USD,
+    budget: daemonCashBudget(daemon, DEFAULT_SERVICE_BUDGET_USD),
     intervalMs: typeof daemon.intervalMs === 'number' ? daemon.intervalMs : DEFAULT_SERVICE_INTERVAL_MS,
     parallel: typeof daemon.parallel === 'number' ? daemon.parallel : DEFAULT_SERVICE_PARALLEL,
     keepAwake: daemon.keepAwake === true,
     ...extras,
+    // A service repair/override must not silently turn a cash refusal into a ceiling.
+    ...(noPaidCash(daemon) ? { fundingMode: 'no-paid-cash' as const, budget: 0 } : {}),
   };
 }

@@ -95,7 +95,9 @@ export interface VerseCapsConcurrency {
  * show a cap next to the usage burning against it.
  */
 export interface VerseCaps {
-  /** HARD daily spend ceiling (USD). 0 means the daemon is stopped by budget. */
+  /** Read-only funding projection; selection is through the supported owner config flow. */
+  fundingMode?: 'legacy-usd' | 'no-paid-cash';
+  /** Legacy USD ceiling. Zero pauses legacy work; explicit no-paid mode disables cash only. */
   dailyBudgetUsd: number;
   /** Backlog items processed per tick. */
   perTickItems: number | null;

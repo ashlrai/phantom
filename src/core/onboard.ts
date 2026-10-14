@@ -17,6 +17,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
+import { includedWorkFundingDefaults } from './daemon/funding.js';
 import { saveConfig, defaultConfig } from './config.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
@@ -49,7 +50,7 @@ function step(
 // ---------------------------------------------------------------------------
 
 /** Step 1: ensure ~/.ashlr/config.json exists. */
-async function stepConfig(): Promise<OnboardStep> {
+async function stepConfig(cfg: AshlrConfig): Promise<OnboardStep> {
   try {
     // Resolve the config path from homedir() at call time so a moving HOME is
     // honored and matches the path saveConfig()/runDoctor() actually use. The
@@ -62,6 +63,8 @@ async function stepConfig(): Promise<OnboardStep> {
     // Create from defaults via saveConfig (loadConfig already does this, but we
     // want explicit ensure-only semantics here — never overwrite existing).
     const defaults = defaultConfig();
+    defaults.daemon = { ...defaults.daemon, ...includedWorkFundingDefaults() };
+    cfg.daemon = { ...cfg.daemon, ...includedWorkFundingDefaults() };
     saveConfig(defaults);
     return step('config', 'ok', `Created default config at ${configPath}`);
   } catch (err) {
@@ -637,7 +640,7 @@ export async function onboard(
   // Steps that are independent in principle are still sequential here to avoid
   // interleaved output and to keep the order deterministic and predictable.
 
-  const configStep = await stepConfig();
+  const configStep = await stepConfig(cfg);
   const modelsStep = await stepModels(cfg);
   const editorsStep = await stepEditors(opts);
   const symlinkStep = await stepSymlink();

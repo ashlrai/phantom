@@ -45,6 +45,7 @@ import { ENFORCED_PROVIDER_AUTHORITY } from './model-call-authority.js';
 import {
   assertPermitted,
   cloudSubjectPermitted,
+  noPaidCashContactPolicy,
   endpointPermitted,
   providerPermitted,
   resolveLocalOnlyMode,
@@ -306,7 +307,10 @@ async function fetchWithTimeout(
     removeAbortListener();
   };
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    assertPermitted(endpointPermitted(url));
+    const response = await fetch(url, { ...init,
+      ...(noPaidCashContactPolicy() || resolveLocalOnlyMode().enabled ? { redirect: 'error' as const } : {}),
+      signal: controller.signal });
     return { response, cleanup };
   } catch (err) {
     cleanup();
@@ -377,7 +381,10 @@ async function fetchStream(
     }
   };
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    assertPermitted(endpointPermitted(url));
+    const response = await fetch(url, { ...init,
+      ...(noPaidCashContactPolicy() || resolveLocalOnlyMode().enabled ? { redirect: 'error' as const } : {}),
+      signal: controller.signal });
     return { response, controller, clearConnectTimer, cleanup: removeAbortListener };
   } catch (err) {
     clearConnectTimer();
@@ -981,6 +988,7 @@ async function strictTextStream(options: {
   };
   try {
     throwIfAborted(controller.signal);
+    assertPermitted(endpointPermitted(options.url));
     options.onRequestStart?.();
     const response = await wait(fetch(options.url, { method: 'POST', headers: options.headers,
       body: options.body, redirect: 'error', signal: controller.signal }));
@@ -1569,6 +1577,7 @@ export async function getActiveClient(
   cfg: AshlrConfig,
   opts: { allowCloud: boolean; provider?: string; model?: string },
 ): Promise<ProviderClient> {
+  noPaidCashContactPolicy(cfg);
   const registry = await getProviderRegistry(cfg);
   // Honor an explicitly-requested provider (router decision) over the chain's
   // first-up provider. This is what makes a cloud escalation actually route to
@@ -1711,6 +1720,10 @@ export async function getActiveClient(
     return { ...client, id: LLAMA_SERVER_PROVIDER_ID };
   }
 
+  if (noPaidCashContactPolicy(cfg)) {
+    throw new Error('no-paid-cash: plugin inference has no qualified included-funding contact proof');
+  }
+
   // ---- M33: plugin-contributed provider ----
   // Strictly additive: this branch is reachable ONLY when the resolved id
   // matches an enabled plugin provider — builtin routing above is untouched.
@@ -1745,7 +1758,24 @@ export async function getActiveClient(
       if (!client || typeof client.chat !== 'function' || typeof client.id !== 'string') {
         throw new Error(`plugin provider '${activeId}' returned an invalid client (missing id/chat).`);
       }
-      return client;
+      // Cached plugin clients still pass the host gate before invoking any
+      // plugin method. This governs source-owned calls, not arbitrary plugin JS.
+      const permitted = () => {
+        if (noPaidCashContactPolicy(cfg)) throw new Error('no-paid-cash: cached plugin inference is unqualified');
+      };
+      return {
+        ...client,
+        chat: async (...args) => { permitted(); return client.chat(...args); },
+        ...(client.chatStream ? { chatStream: async (...args: Parameters<NonNullable<ProviderClient['chatStream']>>) => {
+          permitted(); return client.chatStream!(...args);
+        } } : {}),
+        ...(client.getContextWindowTokens ? { getContextWindowTokens: async (signal?: AbortSignal) => {
+          permitted(); return client.getContextWindowTokens!(signal);
+        } } : {}),
+        ...(client.getApiBillingSummary ? { getApiBillingSummary: () => {
+          permitted(); return client.getApiBillingSummary!();
+        } } : {}),
+      };
     }
   } catch (err) {
     // A real gate/validation error must surface; only a missing plugin layer

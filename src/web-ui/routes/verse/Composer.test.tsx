@@ -90,7 +90,7 @@ describe('Composer', () => {
 });
 
 describe('Composer — depth for a long day', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => { localStorage.clear(); localStorage.setItem('ashlr.verse.multimodel.v1', JSON.stringify({ '*': 'off' })); });
   afterEach(() => localStorage.clear());
 
   it('keeps an unsent draft across unmounts and clears it once sent', async () => {
@@ -256,7 +256,7 @@ describe('Composer — depth for a long day', () => {
 });
 
 describe('Composer — V3.9 cost hint on the compaction point', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => { localStorage.clear(); localStorage.setItem('ashlr.verse.multimodel.v1', JSON.stringify({ '*': 'off' })); });
   afterEach(() => localStorage.clear());
 
   it('warns against the compaction point, not the window, and says how much is left', async () => {

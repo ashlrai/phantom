@@ -600,6 +600,7 @@ export function UsageSection(): ReactNode {
               todaySpentUsd={todaySpentUsd}
               todaySpentDate={todaySpentDate}
               dailyBudgetUsd={caps.dailyBudgetUsd}
+              fundingMode={caps.fundingMode}
               // The real per-day spend chart lives in the series panel above.
               // The daemon tick ledger is only worth drawing when that series
               // could not be read at all — otherwise it is a narrower, capped

@@ -48,6 +48,69 @@ afterEach(async () => {
   vi.useRealTimers(); vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true });
 });
 
+describe('closed identity refusals avoid unnecessary local epoch reads', () => {
+  it.each(['codex', 'grok', 'claude'] as const)('retains the strict %s epoch check without reading an impossible display fallback', async provider => {
+    const a = account(`${provider}-a`, provider);
+    const first = cache([a]);
+    first.remember(a, reading(a), HINT, local(a)); await first.flush();
+    const readEpoch = vi.fn(() => ({ ...local(a), epochDigest: 'c'.repeat(64) }));
+    const next = cache([a], readEpoch);
+    expect(next.lastKnown(a)).toBeNull();
+    // The first read is required to reject the changed strict identity. There
+    // is no paired Claude display identity that could justify a second read.
+    expect(readEpoch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a persisted null strict epoch with no native witness before reading a local identity', async () => {
+    const a = account(); const first = cache([a], () => null);
+    first.remember(a, reading(a), HINT, null); await first.flush();
+    const readEpoch = vi.fn(() => local(a)); const next = cache([a], readEpoch);
+    expect(next.witness(a)).toBeNull(); expect(next.lastKnown(a)).toBeNull();
+    expect(readEpoch).not.toHaveBeenCalled();
+  });
+
+  it('preserves the epoch check and original expiry of a live native witness with a null strict epoch', async () => {
+    const a = account(); const readEpoch = vi.fn(() => null); const first = cache([a], readEpoch);
+    first.remember(a, reading(a), HINT, null); await first.flush(); readEpoch.mockClear();
+    expect(first.witness(a)?.source).toBe('native-account-checked');
+    expect(readEpoch).toHaveBeenCalledTimes(1);
+    vi.mocked(Date.now).mockReturnValue(Date.parse(EXPIRES)); readEpoch.mockClear();
+    expect(first.witness(a)).toBeNull(); expect(first.lastKnown(a)).toBeNull();
+    expect(readEpoch).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a strict epoch even while the original same-generation native witness is valid', async () => {
+    const a = account(); const readEpoch = vi.fn(() => local(a)); const first = cache([a], readEpoch);
+    first.remember(a, reading(a), HINT, local(a)); await first.flush();
+    readEpoch.mockReturnValue({ ...local(a), epochDigest: 'c'.repeat(64) }); readEpoch.mockClear();
+    expect(first.witness(a)).toBeNull(); expect(readEpoch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reads and validates a paired Claude display fallback after the strict witness is unavailable', async () => {
+    const a = account('claude-a', 'claude'); const before = { ...local(a), accountDigest: HINT };
+    const current = { ...before, epochDigest: 'c'.repeat(64) }; const first = cache([a], () => current);
+    first.remember(a, reading(a), HINT, before); await first.flush();
+    const readEpoch = vi.fn(() => current); const next = cache([a], readEpoch);
+    expect(next.lastKnown(a)).toMatchObject({ observedAt: NOW, expiresAt: EXPIRES,
+      identitySource: 'native-account-checked-display-identity' });
+    expect(readEpoch).toHaveBeenCalledTimes(1);
+    readEpoch.mockReturnValue({ ...current, accountDigest: 'd'.repeat(64) }); readEpoch.mockClear();
+    expect(next.lastKnown(a)).toBeNull(); expect(readEpoch).toHaveBeenCalledTimes(1);
+    expect(next.identityWitnessesSnapshot()).toEqual([]);
+  });
+
+  it('retains expired quota history and freshly validates its strict local identity without restamping it', async () => {
+    const a = account(); const first = cache([a]);
+    first.remember(a, reading(a), HINT, local(a)); await first.flush();
+    const file = join(root, RESOURCE_READING_CACHE_FILENAME); const saved = readFileSync(file, 'utf8');
+    vi.mocked(Date.now).mockReturnValue(Date.parse(EXPIRES) + 1);
+    const readEpoch = vi.fn(() => local(a)); const next = cache([a], readEpoch);
+    expect(next.lastKnown(a)).toMatchObject({ observedAt: NOW, expiresAt: EXPIRES,
+      identitySource: 'native-account-checked-local-epoch' });
+    expect(readEpoch).toHaveBeenCalledTimes(1); expect(readFileSync(file, 'utf8')).toBe(saved);
+  });
+});
+
 describe('display-only historical reading storage', () => {
   it('hydrates original usage and credit history after restart, never current credits or state', async () => {
     const a = account(); const first = cache(); first.remember(a, reading(a), HINT, local(a)); await first.flush();

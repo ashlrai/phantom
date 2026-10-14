@@ -146,6 +146,12 @@ a remote agent stopped, and no route contacts a provider. See
 [the coordination contract](PROACTIVE-COORDINATION.md) and
 [the remaining-work backlog](PROACTIVE-COORDINATION-BACKLOG.md).
 
+In source builds containing **Review Grok Bot brief**, prepare handoff intent,
+review the locally supplied task text and recipient, and copy after a fresh
+binding check. Paste into your Bot in its app. No provider connection or
+automatic report import is started; returned reports still need a separate
+review. See [the manual brief flow](PROACTIVE-COORDINATION.md#review-a-grok-bot-brief).
+
 The local **Planning lab** shows declared or injected cached resource evidence,
 durable deterministic shadow evaluations, synthetic routing benchmarks and
 inspectable preference proposals. Usage, credits, costs and entitlement remain
@@ -1957,3 +1963,35 @@ gate ordinary dispatch.
 Single-producer spend accounting uses the admitted concrete engine, rather than trusting a
 subscription-like tier on a custom engine. An unaccounted interrupted zero-dollar batch or unexpected execution identity
 keeps its journal armed for reconciliation.
+
+## Saved native conversation binding
+
+Source builds containing this milestone expose
+`phm verse native-binding --id SESSION_ID [--json]` and authenticated
+`GET /api/verse/sessions/:id/native-binding`. The endpoint accepts no query
+parameters and uses the existing read-session boundary. Invalid IDs, absent,
+unsafe, oversized or malformed metadata return a generic 404; the CLI returns
+1 for unavailable and 2 for invalid arguments.
+
+The reader loads exactly one Phantom session metadata file, capped at 1 MiB,
+through the existing stable owned-file reader. It creates no session store or
+engine, reconciles no saved state, reads no launch/event log or vendor session
+file, lists no directory, and writes or repairs nothing. Windows retains the
+stable reader's bounded read-only ACL assurance helper; unavailable assurance
+refuses the read. No engine, provider, worker, model request or desktop action
+is launched.
+
+The version-1 `native-session-binding` response contains only the Phantom session
+ID, engine, seat ID, safe recorded native ID (or null), `nativeIdState`,
+`savedStatus` and `savedUpdatedAt`. Codex and Claude IDs are opaque bounded
+ASCII tokens, never interpreted as a path, URL or command. Other engines return
+`unsupported` with a null native ID; malformed native tokens return `invalid`
+with null. Metadata seat IDs and UTC timestamps are validated before projection.
+Titles, project paths, models, account fields, private launchers, errors and
+conversation contents are omitted.
+
+Every response keeps `liveOwnerState:unverified`,
+`desktopAttachment:unverified` and `controlEnabled:false`. A saved `running`
+status or recently saved timestamp does not establish a live process, active
+turn, desktop attachment, ownership lease or permission to resume. Native
+continuation, desktop handoff and UI operation remain separate milestones.

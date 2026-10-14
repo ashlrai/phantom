@@ -661,3 +661,23 @@ describe('daemon install authority boundary', () => {
     expect(fs.readdirSync(tmpHome)).toEqual([]);
   });
 });
+
+
+describe('explicit daemon funding selection', () => {
+  it('roundtrips cash-zero service argv into mode and loop config', async () => {
+    const result = await capture(['start', '--dry-run', '--once', '--budget', '0', '--funding-mode', 'no-paid-cash']);
+    expect(result.code).toBe(0);
+    expect(effects.runDaemon.mock.calls[0]?.[0]).toMatchObject({ daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } });
+    expect(fs.readdirSync(tmpHome)).toEqual([]);
+  });
+  it.each([
+    ['start', '--budget', '0'],
+    ['start', '--budget', '50', '--funding-mode', 'no-paid-cash'],
+    ['start', '--funding-mode', 'gifted'],
+    ['start', '--funding-mode', 'no-paid-cash', '--funding-mode', 'legacy-usd'],
+  ])('refuses ambiguous funding argv %j before loading effect modules', async (...args: string[]) => {
+    const result = await capture(args);
+    expect(result.code).toBe(2);
+    expectNoEffectModulesOrCalls();
+  });
+});

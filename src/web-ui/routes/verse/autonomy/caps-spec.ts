@@ -59,7 +59,7 @@ export const CAP_FIELDS: readonly CapFieldSpec[] = [
     max: VERSE_CAPS_BOUNDS.dailyBudgetUsd.max,
     integer: false,
     step: 1,
-    help: 'Secondary USD ceiling for the resident loop. Eligible subscription and local work can continue after a positive ceiling is reached; metered work also needs signed authority. Setting 0 stops all work, including free work.',
+    help: 'Secondary USD ceiling for the resident loop. Eligible subscription and local work can continue after a positive ceiling is reached; metered work also needs signed authority. In legacy mode, setting 0 stops all work. Explicit no-paid-cash mode instead disables cash and retains proven included work.',
     toDisplay: identity,
     fromDisplay: identity,
   },

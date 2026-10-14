@@ -8,7 +8,7 @@
  *
  * Subcommands:
  *   daemon start [--once] [--dry-run] [--drain diagnostic-reslices] [--limit <n>]
- *                [--budget <usd>] [--interval <ms>] [--parallel <n>]
+ *                [--budget <usd>] [--funding-mode legacy-usd|no-paid-cash] [--interval <ms>] [--parallel <n>]
  *       Load cfg, merge flags over cfg.daemon defaults into a DaemonConfig,
  *       call runDaemon. --dry-run => plan only (which items WOULD be worked;
  *       NO swarm/proposal). REFUSES (nonzero, clear message) when
@@ -32,6 +32,7 @@ import { makeColors } from './ui.js';
 import { DEFAULT_DIAGNOSTIC_RESLICE_DRAIN_LIMIT } from '../core/types.js';
 import type { AshlrConfig, DaemonConfig, DaemonDrainMode, DaemonState } from '../core/types.js';
 import type { ServiceInstallOptions, ServiceStatusResult } from '../core/daemon/service.js';
+import { daemonCashBudget, daemonFundingMode } from '../core/daemon/funding.js';
 import { serviceActivity } from '../core/daemon/service-activity.js';
 import { assertResidentServiceInstallAuthorized } from '../core/daemon/service-install-authority.js';
 import type { PolicyMutationResult } from '../core/sandbox/policy.js';
@@ -172,7 +173,7 @@ const RESOLVE_STATE_VALUE_FLAGS = new Set([
 
 const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   start:
-    'Usage: ashlr daemon start [--once] [--dry-run] [--drain diagnostic-reslices] [--limit <n>] [--budget <usd>] [--interval <ms>] [--parallel <n>]\n' +
+    'Usage: ashlr daemon start [--once] [--dry-run] [--drain diagnostic-reslices] [--limit <n>] [--budget <usd>] [--funding-mode legacy-usd|no-paid-cash] [--interval <ms>] [--parallel <n>]\n' +
     '                          [--until <HH:MM|ISO instant> | --iterations <n> | --until-paused]\n' +
     '  --until / --iterations / --until-paused bound an unattended run: it ends by PAUSING (never the kill switch),\n' +
     '  and the post-merge guard is on for it.',
@@ -351,6 +352,7 @@ interface StartFlags {
   drain?: DaemonDrainMode;
   limit?: number;
   budgetUsd?: number;
+  fundingMode?: DaemonConfig['fundingMode'];
   intervalMs?: number;
   parallel?: number;
   /** V3.10 (U5): a bounded run's stop rule (--until / --iterations / --until-paused). */
@@ -437,9 +439,17 @@ function parseStartFlags(args: string[]): { flags: StartFlags; err?: string } {
         break;
       }
       case '--budget': {
-        const v = parseNum(args[++i]);
-        if (v === undefined) return { flags, err: '--budget requires a positive number (USD)' };
+        const raw = args[++i];
+        const v = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+        if (!Number.isFinite(v) || v < 0 || v > Number.MAX_SAFE_INTEGER) return { flags, err: '--budget requires a non-negative number (USD)' };
         flags.budgetUsd = v;
+        break;
+      }
+      case '--funding-mode': {
+        const mode = args[++i];
+        if (mode !== 'legacy-usd' && mode !== 'no-paid-cash') return { flags, err: '--funding-mode requires legacy-usd or no-paid-cash' };
+        if (flags.fundingMode !== undefined) return { flags, err: '--funding-mode may be specified once' };
+        flags.fundingMode = mode;
         break;
       }
       case '--interval': {
@@ -480,6 +490,8 @@ function parseStartFlags(args: string[]): { flags: StartFlags; err?: string } {
         return { flags, err: `Unexpected argument: ${a}` };
     }
   }
+  if (flags.budgetUsd === 0 && flags.fundingMode !== 'no-paid-cash') return { flags, err: '--budget 0 requires explicit --funding-mode no-paid-cash; legacy zero pause is configured separately' };
+  if (flags.fundingMode === 'no-paid-cash' && flags.budgetUsd !== undefined && flags.budgetUsd !== 0) return { flags, err: 'no-paid-cash requires --budget 0' };
   if (flags.limit !== undefined && flags.drain === undefined) {
     return { flags, err: '--limit requires --drain' };
   }
@@ -661,7 +673,9 @@ function parseActivationFlags(args: string[]): { flags: ActivationFlags; err?: s
 function mergeDaemonConfig(cfg: AshlrConfig, flags: StartFlags): AshlrConfig {
   const existing: Partial<DaemonConfig> = cfg.daemon ?? {};
   const merged: Partial<DaemonConfig> = { ...existing };
+  if (flags.fundingMode !== undefined) merged.fundingMode = flags.fundingMode;
   if (flags.budgetUsd !== undefined) merged.dailyBudgetUsd = flags.budgetUsd;
+  if (daemonFundingMode(merged) === 'no-paid-cash') merged.dailyBudgetUsd = 0;
   if (flags.intervalMs !== undefined) merged.intervalMs = flags.intervalMs;
   if (flags.parallel !== undefined) merged.parallel = flags.parallel;
   return { ...cfg, daemon: merged };
@@ -970,10 +984,13 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
 
   // Resolve the configured daily cap for display (best-effort).
   let dailyCap: number | undefined;
+  let fundingMode: DaemonConfig['fundingMode'];
   const loadConfig = await importConfig();
   if (loadConfig) {
     try {
-      dailyCap = loadConfig().daemon?.dailyBudgetUsd;
+      const daemon = loadConfig().daemon;
+      fundingMode = daemonFundingMode(daemon);
+      dailyCap = daemonCashBudget(daemon, 1);
     } catch {
       dailyCap = undefined;
     }
@@ -1023,6 +1040,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
           todayDate: stateKnown ? state.todayDate : null,
           todaySpentUsd: stateKnown ? state.todaySpentUsd : null,
           dailyBudgetUsd: dailyCap ?? null,
+          fundingMode: fundingMode ?? null,
           itemsProcessed: stateKnown ? state.itemsProcessed : null,
           pendingProposals: pending,
           stateSource,
@@ -1065,7 +1083,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
   if (tickProgress) {
     console.log('  ' + col.bold('now:            ') + col.cyan(tickProgress.summary));
   }
-  const capStr = dailyCap !== undefined ? ` / $${dailyCap}` : '';
+  const capStr = fundingMode === 'no-paid-cash' ? ' (paid cash disabled; included account/billing proof required)' : dailyCap !== undefined ? ` / $${dailyCap}` : '';
   console.log(
     '  ' + col.bold("today's spend:  ") +
       col.dim(stateKnown ? `$${state.todaySpentUsd.toFixed(4)}${capStr}` : 'unknown'),
@@ -1336,7 +1354,9 @@ async function cmdDaemonResolveState(flags: ResolveStateFlags): Promise<number> 
     return 1;
   }
   const configuredDailyBudgetUsd = (): number => {
-    const configured = loadConfig().daemon?.dailyBudgetUsd;
+    const daemon = loadConfig().daemon;
+    if (daemonFundingMode(daemon) === 'no-paid-cash') return 0;
+    const configured = daemon?.dailyBudgetUsd;
     if (configured !== undefined &&
       (typeof configured !== 'number' || !Number.isFinite(configured) || configured <= 0)) {
       throw new Error('daemon.dailyBudgetUsd must be a finite positive number');

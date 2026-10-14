@@ -113,11 +113,29 @@ not treat a saved receipt or an unfinished CI run as a passing gate.
 
 ## Fast development feedback
 
+For an agent-readable preview before expensive work, run
+`node scripts/gate.mjs --plan --json --base <ref>` (or
+`npm run gate -- --plan --json --base <ref>`). This needs only Node and Git:
+it reads source identity, the merge base, staged/unstaged changes and untracked
+paths, and returns the existing planner's backend/web selectors with advisory
+change categories. It does not build, load Vitest, run checks or write gate
+logs/caches. `--plan --full` previews full local selection against HEAD without
+requiring a remote base. A successful preview means planning completed;
+`checksExecuted` and `releaseAdmission` remain false.
+
+Selectors are input paths for related-test discovery, not a verified list of
+collected tests. Run whole modules for contracts that read files as text and
+for native changes; consult each preview's limitations. The preview's HEAD/tree
+and dirty flag describe an observed checkout, not immutable qualification of
+uncommitted bytes. Use the selected local checks for development feedback and
+the complete exact-source hosted release gates for shipping.
+
 Run the whole test modules affected by a change first. Use `npm run check:release`
 for source-only publication, CLI and documentation contracts before a build.
 After your normal local build, run `npm run check:release:fast` before pushing a
-release candidate. It runs the eight whole workflow and packaging Node modules,
-then the existing fourteen Vitest contract modules. The Node suite requires
+release candidate. It runs the ten whole workflow and packaging Node modules,
+including documentation and frontend PR-lane guards, then the existing fourteen
+Vitest contract modules. The Node suite requires
 existing `dist` output; the source-only check does not. This catches workflow
 contracts that import-based related selection cannot discover. Hosted CI keeps
 the Node suite once in its original post-build capture step; its gate order and

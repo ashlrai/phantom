@@ -413,6 +413,32 @@ export function residentPlistState(installed: string | null | undefined, expecte
   return installed === expected ? 'current' : 'drifted';
 }
 
+/** PURE: funding mode from installed argv, never from expected config. */
+export function plistFundingMode(content: string | null): 'legacy-usd' | 'no-paid-cash' | null {
+  if (!content || content.includes('<!--') || (content.match(/<key>ProgramArguments<\/key>/gu)?.length ?? 0) !== 1) return null;
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/u.exec(content)?.[1];
+  if (!array || array.replace(/<string>[^<]*<\/string>/gu, '').trim() !== '') return null;
+  const argv = [...array.matchAll(/<string>([^<]*)<\/string>/gu)].map(match => match[1]!);
+  const offset = argv[0] === 'caffeinate' ? 5 : 2;
+  if (offset === 5 && (argv[1] !== '-i' || argv[2] !== '-s')) return null;
+  if (argv[offset] !== 'daemon' || argv[offset + 1] !== 'start') return null;
+  const flags = new Map<string, string>();
+  for (let i = offset + 2; i < argv.length; i += 2) {
+    const key = argv[i]!, value = argv[i + 1];
+    if (!['--budget', '--interval', '--parallel', '--funding-mode'].includes(key) || value === undefined || flags.has(key)) return null;
+    flags.set(key, value);
+  }
+  const budget = flags.get('--budget');
+  if (budget === undefined || !/^[0-9]+(?:\.[0-9]+)?$/u.test(budget) || !Number.isFinite(Number(budget))) return null;
+  for (const key of ['--interval', '--parallel']) {
+    const value = flags.get(key);
+    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) <= 0)) return null;
+  }
+  const mode = flags.get('--funding-mode');
+  if (mode === undefined || mode === 'legacy-usd') return 'legacy-usd';
+  return mode === 'no-paid-cash' && Number(budget) === 0 ? 'no-paid-cash' : null;
+}
+
 /** PURE: the `--budget` a generated launchd plist passes (null when absent/unparsable). */
 export function plistBudgetUsd(content: string | null): number | null {
   if (!content) return null;

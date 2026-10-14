@@ -16,6 +16,8 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from '../src/core/fleet/
 import * as ownership from '../src/core/fleet/local-store-lock.js';
 import * as bundle from '../src/core/resources/engineering-preparation.js';
 import * as deliveredSource from '../src/core/resources/engineering-delivered-source.js';
+import * as setupEvidence from '../src/core/resources/engineering-autonomous-setup.js';
+import { checkResourceEngineeringPredecessor } from '../src/core/resources/engineering-predecessor-check.js';
 import { setResourcePoolAllocation, readResourceJson } from '../src/core/resources/pool-runtime.js';
 import { validateResourcePool } from '../src/core/resources/pool-policy.js';
 import { validateResourceBindings } from '../src/core/resources/worker.js';
@@ -87,6 +89,26 @@ describe('offline autonomous setup', () => {
     expect(() => prepare({ ...f.options, expectedPlanDigest }, { isExecutionStopped: () => true })).toThrow('Host setup publication stopped');
     expect(evidence(f.base)).toBe(before);
   });
+  it('refuses a mismatched real prepared receipt without filesystem changes or deep evidence reads', () => {
+    const f = fixture(); const plan = check(f.options);
+    prepare({ ...f.options, expectedPlanDigest: plan.planDigest });
+    // Real private receipt and signed registration. A different plan is only a
+    // refusal shortcut; it must neither scan deep evidence nor change this tree.
+    const persisted = evidence(f.base);
+    const deepRead = vi.spyOn(setupEvidence, 'readResourceEngineeringAutonomousSetupEvidence');
+    const expectedDeadlineAt = '2025-01-01T00:01:00.000Z';
+    const mismatch = checkResourceEngineeringPredecessor({ setup: f.options,
+      expectedPlanDigest: plan.planDigest === '0'.repeat(64) ? '1'.repeat(64) : '0'.repeat(64), expectedDeadlineAt });
+    expect(mismatch).toMatchObject({ status: 'held', reasons: ['setup-evidence-unavailable'], evidenceDigest: null,
+      tip: null, continuation: null, executionAuthorized: false, effectsExecuted: false, providerContacted: false });
+    expect(deepRead).not.toHaveBeenCalled(); expect(evidence(f.base)).toBe(persisted);
+    // This preparation fixture has no completed delivery. Matching the receipt
+    // delegates the original checker and cannot turn preparation into acceptance.
+    const matching = checkResourceEngineeringPredecessor({ setup: f.options, expectedPlanDigest: plan.planDigest, expectedDeadlineAt });
+    expect(matching.status).toBe('held'); expect(matching.evidenceDigest).toBeNull();
+    expect(deepRead).toHaveBeenCalledTimes(1); expect(evidence(f.base)).toBe(persisted);
+    deepRead.mockRestore();
+  }, 60_000);
   it('checks the host at owned registration publication and retains incomplete output after refusal', () => {
     const f = fixture(); const expectedPlanDigest = check(f.options).planDigest;
     const accounting = readFileSync(join(f.ledger, 'pool-state.json'));
@@ -148,6 +170,7 @@ describe('offline autonomous setup', () => {
     expect(evidence(f.base)).toBe(before);
     const result = prepare({ ...f.options, expectedPlanDigest: plan.planDigest });
     expect(result).toMatchObject({ status: 'prepared', disposition: 'created', planDigest: plan.planDigest });
+
     expect(result.consoleArguments).toContain('--engineering-preparation'); expect(result.consoleArguments).not.toContain('--engineering');
     const registrations = readResourceEngineeringPreparationRegistrations(f.ledger);
     expect(registrations).toHaveLength(1); expect(registrations[0]).toMatchObject({ request: { id: 'repair', profileId: 'fixed' }, enrollmentDigest: result.initialEnrollmentDigest });

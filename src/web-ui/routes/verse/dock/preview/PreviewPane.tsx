@@ -510,6 +510,7 @@ export function PreviewPane({ sessionId, roots, request, onOpenTerminal, visible
                   type="button"
                   role="tab"
                   id={`preview-tab-${tab.id}`}
+                  data-phantom-hint={`preview.tab.${tab.id}`} data-phantom-hint-action="press"
                   aria-selected={selected}
                   aria-controls="preview-panel"
                   tabIndex={selected ? 0 : -1}
@@ -543,6 +544,7 @@ export function PreviewPane({ sessionId, roots, request, onOpenTerminal, visible
         </div>
         <form className={styles.addressForm} onSubmit={submitAddress} role="search" aria-label="Preview address">
           <input
+            data-phantom-hint="preview.address" data-phantom-hint-action="focus"
             ref={addressRef}
             className={styles.address}
             value={address}

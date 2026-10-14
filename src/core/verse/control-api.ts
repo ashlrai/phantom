@@ -1,3 +1,4 @@
+import { daemonFundingMode, noPaidCash } from '../daemon/funding.js';
 import { parseLeaderPreferences, resolveLeaderPreferences, unavailableLeaderPreferences } from '../vision/leader-preferences.js';
 import { resolveLeaderCadence } from '../vision/leader-cadence.js';
 import { goalFocusModeEnabled, goalFocusActiveThreshold } from '../goals/focus.js';
@@ -450,7 +451,7 @@ export function readVerseCaps(cfg: AshlrConfig): VerseCaps {
     if (configured === null && !key.startsWith('concurrency.')) defaulted.push(key as VerseCapKey);
     return configured ?? fallback;
   };
-  const dailyBudgetUsd = scalar('dailyBudgetUsd');
+  const dailyBudgetUsd = noPaidCash(daemon) ? 0 : scalar('dailyBudgetUsd');
   const perTickItems = count('perTickItems', daemon.perTickItems, VERSE_CAPS_DEFAULTS.perTickItems);
   const parallel = count('parallel', daemon.parallel, VERSE_CAPS_DEFAULTS.parallel);
   const intervalMs = scalar('intervalMs');
@@ -483,6 +484,7 @@ export function readVerseCaps(cfg: AshlrConfig): VerseCaps {
   if (!Number.isSafeInteger(cfg.foundry?.goalFocusActiveThreshold) || (cfg.foundry?.goalFocusActiveThreshold ?? 0) <= 0) defaulted.push('goalFocusActiveThreshold');
   defaulted.sort();
   return {
+    fundingMode: daemonFundingMode(daemon),
     dailyBudgetUsd,
     perTickItems,
     supportsUncappedCounts: true,
@@ -717,6 +719,9 @@ export function applyVerseCapsUpdate(
   cfg: AshlrConfig,
   update: VerseCapsUpdate,
 ): { cfg: AshlrConfig; applied: VerseCapKey[] } {
+  if (noPaidCash(cfg.daemon) && update.dailyBudgetUsd !== undefined && update.dailyBudgetUsd !== 0) {
+    throw new Error('Paid cash is disabled; change funding mode through the supported owner config flow before selecting a legacy ceiling');
+  }
   const before = readVerseCaps(cfg);
   const daemon: Partial<DaemonConfig> = { ...(cfg.daemon ?? {}) };
   const applied: VerseCapKey[] = [];
@@ -1675,7 +1680,7 @@ export async function handleVerseControlApi(
           sendInvalid(res, parsed.error);
           return true;
         }
-        const strictCapsUpdate = parsed.update.goalPreferences !== undefined || parsed.update.goalFocusMode !== undefined ||
+        const strictCapsUpdate = parsed.update.dailyBudgetUsd !== undefined || parsed.update.goalPreferences !== undefined || parsed.update.goalFocusMode !== undefined ||
           parsed.update.leaderPreferences !== undefined || parsed.update.perTickItems !== undefined ||
           parsed.update.parallel !== undefined || parsed.update.maxConcurrent !== undefined || parsed.update.concurrency !== undefined;
         let current: AshlrConfig;
@@ -1692,6 +1697,10 @@ export async function handleVerseControlApi(
         }
         if (parsed.update.leaderPreferences !== undefined && resolveLeaderPreferences(current).sourceState !== 'ready') {
           sendError(res, 'VERSE_UNAVAILABLE', 'Existing Leader preference configuration is invalid; partial update was not saved.');
+          return true;
+        }
+        if (noPaidCash(current.daemon) && parsed.update.dailyBudgetUsd !== undefined && parsed.update.dailyBudgetUsd !== 0) {
+          sendInvalid(res, 'Paid cash is disabled; select legacy funding through the supported owner config flow before changing the USD ceiling.');
           return true;
         }
         const { cfg: next, applied } = applyVerseCapsUpdate(current, parsed.update);

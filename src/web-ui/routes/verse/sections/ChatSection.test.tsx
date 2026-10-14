@@ -257,7 +257,29 @@ describe('ChatSection sessions', () => {
     expect(MockEventSource.forSession(created.id).withCredentials).toBe(true);
   });
 
+  it('default Automatic preserves an existing-chat draft when project privacy advice is unavailable', async () => {
+    // The ordinary API fixture has no multimodel privacy endpoint. Default
+    // Automatic must hold here before a native turn or remote label is sent.
+    const { fetch, state } = verseFetch();
+    vi.stubGlobal('fetch', fetch);
+    setMutationToken(TOKEN);
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole('button', { name: /Fix the login bug/ }));
+    await screen.findByRole('heading', { name: 'Fix the login bug' });
+    expect(await screen.findByRole('combobox', { name: 'Routing mode' })).toHaveDisplayValue('Automatic');
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(box, 'Preserve the original draft{Enter}');
+    await screen.findByText('Routing is not ready. Your draft is preserved; send again after the chat and project privacy checks load.');
+    expect(box).toHaveValue('Preserve the original draft');
+    expect(loadAutoPref('vs_1')).toBe('auto');
+    expect(state.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/turns'))).toHaveLength(0);
+    expect(state.calls.filter((call) => call.path === '/api/verse/multimodel/label')).toHaveLength(0);
+  });
+
   it('sends a turn, appends the user message, streams deltas, then replaces them with the final message', async () => {
+    // This case exercises the ordinary native send boundary, independent of Auto advice.
+    saveAutoPref('vs_1', 'off');
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     setMutationToken(TOKEN);
@@ -353,6 +375,8 @@ describe('ChatSection sessions', () => {
   });
 
   it('asks for the mutation token first and runs the send once unlocked', async () => {
+    // This case exercises the ordinary native send boundary, independent of Auto advice.
+    saveAutoPref('vs_1', 'off');
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     const user = userEvent.setup();
@@ -391,6 +415,8 @@ describe('ChatSection refusals', () => {
   });
 
   it('shows the model-unavailable reason when a send is refused, and leaves the chat idle', async () => {
+    // This case exercises the ordinary native send boundary, independent of Auto advice.
+    saveAutoPref('vs_1', 'off');
     const { fetch, state } = verseFetch();
     const refusing = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = typeof input === 'string' ? input : input.toString();

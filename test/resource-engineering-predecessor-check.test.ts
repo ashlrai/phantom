@@ -102,7 +102,7 @@ function fixture() {
   hooks.outcomes.mockReturnValue({ sourceState: 'healthy', campaigns: [{ sourceState: 'healthy', reasons: [] }], usage: { attempts: 1, joinedAttempts: 1 } });
   const options = { setup: { recipe: {}, policy: {}, output: '/fixture/setup', resourceRuntime: '/fixture/runtime.json',
     workspace: '/fixture/project', projectsFile: '/fixture/projects.json' }, expectedPlanDigest: plan.planDigest, expectedDeadlineAt: deadline } as ResourceEngineeringPredecessorCheckOptions;
-  return { options, plan, rows, attempts, registrations, sources, queue, add, link, runtime };
+  return { options, plan, rows, attempts, registrations, sources, queue, add, link, runtime, documents };
 }
 beforeEach(() => { vi.resetAllMocks(); });
 const held = (options: ResourceEngineeringPredecessorCheckOptions, stage?: string) => {
@@ -114,6 +114,42 @@ const held = (options: ResourceEngineeringPredecessorCheckOptions, stage?: strin
 };
 
 describe('predecessor completion joins over mocked host evidence', () => {
+  it('refuses an explicitly different persisted plan before reconstructing deep evidence', () => {
+    const f = fixture(); f.documents.set('/fixture/setup/setup-receipt.json', { planDigest: h('another-plan') });
+    held(f.options, 'setup');
+    expect(hooks.json.mock.calls).toEqual([['/fixture/setup/setup-receipt.json', 256 * 1024]]);
+    for (const reader of [hooks.setup, hooks.queue, hooks.outcomes, hooks.journal]) expect(reader).not.toHaveBeenCalled();
+  });
+  it.each([['missing', undefined], ['null', null], ['array', []], ['no-digest', {}], ['non-string', { planDigest: 1 }],
+    ['invalid-digest', { planDigest: 'different' }], ['uppercase-digest', { planDigest: 'A'.repeat(64) }]])(
+    'retains both complete samples for %s receipts', (_label, receipt) => {
+      const f = fixture();
+      if (receipt !== undefined) f.documents.set('/fixture/setup/setup-receipt.json', receipt);
+      expect(checkResourceEngineeringPredecessor(f.options).status).toBe('verified');
+      expect(hooks.setup).toHaveBeenCalledTimes(2); expect(hooks.outcomes).toHaveBeenCalledTimes(4);
+      expect(hooks.seed).toHaveBeenCalledTimes(4); expect(hooks.capture).toHaveBeenCalledTimes(4); expect(hooks.builtin).toHaveBeenCalledTimes(4);
+    });
+  it('freshly reads the receipt on each invocation rather than caching a previous refusal', () => {
+    const f = fixture(); f.documents.set('/fixture/setup/setup-receipt.json', { planDigest: h('another-plan') });
+    held(f.options, 'setup'); expect(hooks.setup).not.toHaveBeenCalled();
+    f.documents.set('/fixture/setup/setup-receipt.json', { planDigest: f.options.expectedPlanDigest });
+    expect(checkResourceEngineeringPredecessor(f.options).status).toBe('verified');
+    expect(hooks.json.mock.calls.filter(([file]) => file === '/fixture/setup/setup-receipt.json')).toHaveLength(2);
+    expect(hooks.setup).toHaveBeenCalledTimes(2);
+  });
+  it('retains two fresh samples and detects drift for a matching receipt', () => {
+    const f = fixture(); f.documents.set('/fixture/setup/setup-receipt.json', { planDigest: f.options.expectedPlanDigest });
+    let calls = 0; hooks.queue.mockImplementation(() => ({ ...structuredClone(f.queue), stateDigest: h('sample-' + ++calls) }));
+    held(f.options, 'stability'); expect(hooks.setup).toHaveBeenCalledTimes(2);
+  });
+  it('validates inputs and owned lock capabilities before even reading a mismatched receipt', () => {
+    const f = fixture(); f.documents.set('/fixture/setup/setup-receipt.json', { planDigest: h('another-plan') });
+    held({ ...f.options, expectedDeadlineAt: 'invalid' }, 'inputs');
+    expect(checkResourceEngineeringPredecessor(f.options, [{ path: '/fixture/ledger/.pool.lock', token: 'forged', dev: 1n, ino: 2n }]))
+      .toMatchObject({ status: 'held', reasons: ['inputs-evidence-unavailable'] });
+    expect(hooks.json).not.toHaveBeenCalled(); expect(hooks.setup).not.toHaveBeenCalled();
+  });
+
   it.each(['invalid-source', 'oversized-projection'])('does not publish a partial verified proof after %s failure', failure => {
     const f = fixture();
     if (failure === 'invalid-source') f.sources.get('child')!.source.expectedDeliveryDigest = 'invalid';

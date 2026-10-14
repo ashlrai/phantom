@@ -375,8 +375,11 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
 
   // Evidence quality.
   const observedMs = capacity.observedAt ? Date.parse(capacity.observedAt) : NaN;
-  const ageMs = Number.isFinite(observedMs) ? nowMs - observedMs : null;
-  const stale = ageMs === null || ageMs > maxAge;
+  const invalidClock = !Number.isFinite(nowMs);
+  const ageMs = !invalidClock && Number.isFinite(observedMs) ? nowMs - observedMs : null;
+  // A future observation cannot establish current quota, even when its negative age fits the TTL.
+  const future = ageMs !== null && ageMs < 0;
+  const stale = ageMs === null || future || ageMs > maxAge;
   const hasReading = sessionUsed !== null || weeklyUsed !== null;
   const nullWindow = account.find((row) => row.window.usedPercent === null && !row.window.limitReached);
 
@@ -437,7 +440,11 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
   } else if (stale) {
     details.push({
       kind: 'unknown-usage',
-      text: ageMs === null
+      text: invalidClock
+        ? 'The current clock is unavailable — usage freshness cannot be checked, so autonomy stays off this seat.'
+        : future
+        ? 'The usage reading is dated in the future — too uncertain to spend against.'
+        : ageMs === null
         ? 'The usage reading has no timestamp — too uncertain to spend against.'
         : `The usage reading is ${formatAge(ageMs)} old — too stale to spend against (limit ${formatAge(maxAge)}).`,
     });

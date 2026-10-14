@@ -19,7 +19,7 @@
  *
  * LOCAL-ONLY (policy/local-only.ts): M15's three gates make cloud OPT-IN.
  * Local-only makes it IMPOSSIBLE. Every exported routing surface in this file
- * consults `enginePermitted()` — the one predicate — and, when it refuses:
+ * consults `nativeIncludedCandidatePermitted()` — the one predicate — and, when it refuses:
  *
  *   routeTask / routeTaskCascade — narrow the candidate set to permitted engines
  *                                  and, as a backstop that no internal branch can
@@ -63,7 +63,7 @@ import {
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
 import {
   ALWAYS_PERMITTED_ENGINE,
-  enginePermitted,
+  nativeIncludedCandidatePermitted,
   filterPermittedEngines,
   localOnlyReasonTag,
   permittedEnginesAtTier,
@@ -486,7 +486,7 @@ function enforceLocalOnlyTaskDecision(
   decision: TaskRouteDecision,
   cfg: AshlrConfig,
 ): TaskRouteDecision {
-  const verdict = enginePermitted(decision.engine, cfg);
+  const verdict = nativeIncludedCandidatePermitted(decision.engine, cfg);
   if (verdict.permitted) return decision;
   return {
     engine: ALWAYS_PERMITTED_ENGINE,
@@ -1161,7 +1161,7 @@ export interface TaskResult {
  * On those paths the property "escalation never re-dispatches into a tier
  * local-only refuses" holds for a DIFFERENT and stronger reason: `availableFrom`
  * (src/core/fleet/router.ts) filters every candidate list through
- * `enginePermitted`, so a refused engine is ABSENT from routing rather than
+ * `nativeIncludedCandidatePermitted`, so a refused engine is ABSENT from routing rather than
  * selected and then blocked. There is nothing to escalate into. That is what
  * test/local-only-dispatch-paths.test.ts §D pins, on the entry points that run.
  *

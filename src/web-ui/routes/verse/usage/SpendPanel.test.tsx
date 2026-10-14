@@ -41,3 +41,14 @@ describe('SpendPanel — the per-day spend line', () => {
     cleanup();
   }));
 });
+
+
+describe('cash-disabled spend projection', () => {
+  it('labels the configured financial hold without claiming resident adoption or a stopped loop', () => {
+    render(<SpendPanel series={{ available: true, tickCount: 0, caveat: 'Autonomous loop only.', days: [] }} todaySpentUsd={null} todaySpentDate={null} dailyBudgetUsd={0} fundingMode="no-paid-cash" />);
+    expect(screen.getByText('Configured: paid cash disabled; current resident policy is unconfirmed here. Included work requires current account and billing proof')).toBeInTheDocument();
+    expect(screen.queryByText('Paid cash disabled', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('Daily budget is 0 — the loop is stopped')).not.toBeInTheDocument();
+    cleanup();
+  });
+});

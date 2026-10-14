@@ -19,9 +19,10 @@
  *   startReview    A cross-family reviewer asked about the last answer.
  *   escalate       Cheap-first: a weak local draft moves to a frontier seat.
  */
-import type { VerseCreateSessionRequest, VerseHandoffPreview, VerseHandoffPreviewRequest, VerseSession, VerseTurnResponse } from '../../../../core/verse/types.js';
+import type { VerseContextMode, VerseCreateSessionRequest, VerseHandoffPreview, VerseHandoffPreviewRequest, VerseSession, VerseTurnResponse } from '../../../../core/verse/types.js';
 import { comparePrompt, fanOut, reviewPrompt, type CompareTarget, type FanOutEntry } from '../../../../core/verse/multimodel/compare.js';
 import { escalationPrompt, type DraftVerdict } from '../../../../core/verse/multimodel/escalation.js';
+import { sameAdviceBinding } from '../../../../core/verse/multimodel/advisor.js';
 import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
 import { compareOutcomes } from '../../../../core/verse/multimodel/learning.js';
 import type { PromptKind, SeatOutcomeRequest, ThreadLinkRequest } from '../../../../core/verse/multimodel/types.js';
@@ -58,6 +59,8 @@ export const DEFAULT_FLOW_API: FlowApi = {
 export interface FlowTarget {
   seatId: string;
   model: string | null;
+  contextMode?: VerseContextMode;
+  contextWindow?: number | null;
   label: string;
   engine: string;
 }
@@ -72,6 +75,7 @@ export function siblingRequest(source: VerseSession, target: FlowTarget, title?:
   const extras = (source.extraRoots ?? []).filter((r) => typeof r === 'string' && r.length > 0 && r !== source.projectPath);
   if (extras.length > 0) req.extraRoots = extras;
   if (target.model) req.model = target.model;
+  if (target.contextMode) req.contextMode = target.contextMode;
   const t = title?.trim();
   if (t) req.title = t.slice(0, 120);
   return req;
@@ -81,7 +85,7 @@ export function siblingRequest(source: VerseSession, target: FlowTarget, title?:
 async function continuation(api: FlowApi, source: VerseSession, target: FlowTarget, title?: string): Promise<{ session: VerseSession; note: string | null }> {
   if (source.turnCount > 0) {
     const preview = await api.fetchHandoffPreview(source.id);
-    const session = await api.createHandoffSession({ source, seatId: target.seatId, ...(target.model ? { model: target.model } : {}), ...(title ? { title } : {}) });
+    const session = await api.createHandoffSession({ source, seatId: target.seatId, ...(target.model ? { model: target.model } : {}), ...(target.contextMode ? { contextMode: target.contextMode } : {}), ...(title ? { title } : {}) });
     return { session, note: preview.text };
   }
   return { session: await api.createSession(siblingRequest(source, target, title)), note: null };
@@ -89,9 +93,16 @@ async function continuation(api: FlowApi, source: VerseSession, target: FlowTarg
 
 export async function routeMessage(
   api: FlowApi,
-  input: { source: VerseSession; target: FlowTarget; text: string; kind: PromptKind; overridden?: { seatId: string } | null },
+  input: { source: VerseSession; target: FlowTarget; text: string; kind: PromptKind; overridden?: { seatId: string } | null; beforeSend?: () => boolean },
 ): Promise<VerseSession> {
   const { session, note } = await continuation(api, input.source, input.target);
+  // A successful create is not evidence that the requested binding was used.
+  // Check before the first turn, including same-account model/mode switches.
+  if (session.seatId !== input.target.seatId || (input.target.contextMode && session.contextMode !== input.target.contextMode)
+    || (input.target.model !== null && (typeof session.model !== 'string' || !sameAdviceBinding(input.target, session)))) {
+    throw new Error('The created chat did not match the requested model and context mode.');
+  }
+  if (input.beforeSend && !input.beforeSend()) throw new Error('The chat or routing choice changed. Send again to use the current choice.');
   await api.sendTurn(session.id, comparePrompt(input.text, note));
   void api.outcome({ seatId: input.target.seatId, kind: input.kind, signal: input.overridden ? 'switch-to' : 'auto-followed', sessionId: session.id });
   if (input.overridden) void api.outcome({ seatId: input.overridden.seatId, kind: input.kind, signal: 'auto-overridden' });

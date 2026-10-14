@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { daemonFundingMode } from '../core/daemon/funding.js';
 /**
  * ashlr CLI — main entry point.
  *
@@ -958,6 +959,9 @@ function setConfigValue(cfg: AshlrConfig, key: string, rawValue: string): void {
     if (!isNaN(num) && rawValue.trim() !== '') value = num;
   }
   setByPath(cfg, key, value);
+  if (key === 'daemon.fundingMode') {
+    if (daemonFundingMode(cfg.daemon) === 'no-paid-cash') cfg.daemon = { ...cfg.daemon, dailyBudgetUsd: 0 };
+  }
 }
 
 function persistConfigSet(
@@ -1577,7 +1581,9 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
   lines.push(`  kill flag:  ${formatEffectiveValue(snapshot.autonomy.killSwitch)}`);
   lines.push('');
   lines.push('Daemon');
-  lines.push(`  budget:     $${snapshot.daemon.dailyBudgetUsd.value.toFixed(2)} ${dim(`(${snapshot.daemon.dailyBudgetUsd.source})`)}`);
+  lines.push(snapshot.daemon.fundingMode.value === 'no-paid-cash'
+    ? '  funding:    Paid cash disabled; included work requires current account and billing proof'
+    : `  budget:     $${snapshot.daemon.dailyBudgetUsd.value.toFixed(2)} ${dim(`(${snapshot.daemon.dailyBudgetUsd.source})`)}`);
   lines.push(`  per tick:   ${formatEffectiveValue(snapshot.daemon.perTickItems)}`);
   lines.push(`  parallel:   ${formatEffectiveValue(snapshot.daemon.parallel)}`);
   lines.push(`  interval:   ${formatEffectiveValue(snapshot.daemon.intervalMs)}ms`);

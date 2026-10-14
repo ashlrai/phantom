@@ -30,6 +30,7 @@ export function SpendPanel({
   todaySpentUsd,
   todaySpentDate,
   dailyBudgetUsd,
+  fundingMode,
   showSeries = true,
 }: {
   series: SpendSeries;
@@ -43,6 +44,7 @@ export function SpendPanel({
    */
   todaySpentDate: string | null;
   dailyBudgetUsd: number | null;
+  fundingMode?: 'legacy-usd' | 'no-paid-cash' | null;
   /**
    * False when the real per-day series (GET /api/verse/usage-series) is on
    * screen already. The daemon tick ledger covers the autonomous loop only and
@@ -55,6 +57,8 @@ export function SpendPanel({
   const spentToday = stale ? null : todaySpentUsd;
   const budgetCaption = stale
     ? `Nothing recorded today — the last ledger day is ${chartFormat.formatDayLabel(todaySpentDate)}`
+    : fundingMode === 'no-paid-cash'
+      ? 'Configured: paid cash disabled; current resident policy is unconfirmed here. Included work requires current account and billing proof'
     : dailyBudgetUsd === null
       ? 'Configured daily budget unavailable'
       : dailyBudgetUsd === 0

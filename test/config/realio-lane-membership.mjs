@@ -43,6 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/reviewer-handoff.test.ts', // Real private Git repos and bounded subprocess fixtures; explicit original 5s test/hook limits remain.
+  'test/verse-native-session-binding.test.ts', // bounded exact metadata and authenticated loopback HTTP
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
@@ -138,6 +140,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-profile-repin.test.ts', // private profiles, inert native execve through repinned launchers
   'test/universe-resource-runtime-check.test.ts', // explicit private runtime and sterile Git workspace reads
   'test/resource-launcher-compatibility.test.ts', // bounded inert CLI help/version subprocesses
+  'test/resource-launcher-capabilities.test.ts', // fixed help/version Node fixtures; no provider or session access
   'test/resource-commissioning-integration.test.ts', // built public CLI with private inert multi-account fixtures
   'test/resource-pool-supervisor.test.ts', // durable queues, verified locks, native and loopback tasks
   'test/resource-console-worker.test.ts', // fixed-scope worker threads and private evidence files

@@ -213,6 +213,9 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
   const witness = (a: Account, nowMs = Date.now()): ResourceAccountIdentityWitness | null => {
     if (!Number.isFinite(nowMs) || nowMs < 0 || nowMs > Date.now() || !belongs(a)) return null;
     const row = rows.get(a.id); if (!row || Date.parse(row.observedAt) > nowMs || row.profileDigest !== resourceAccountProfileDigest(a) || row.provider !== a.provider) return null;
+    // With neither a strict local epoch nor a live native witness, a local
+    // profile read cannot establish this row's identity.
+    if (row.epochDigest === null && !validResourceAccountIdentityWitness(native.get(a.id), nowMs)) return null;
     const local = epoch(a);
     if (row.epochDigest !== null && (!local || local.epochDigest !== row.epochDigest ||
       local.accountDigest !== undefined && local.accountDigest !== row.accountDigest)) return null;
@@ -287,6 +290,7 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
       if (!row || Date.parse(row.observedAt) > Date.now() || !belongs(a) ||
         row.profileDigest !== resourceAccountProfileDigest(a)) return null;
       // Never expose this fallback through witness() or financial snapshots.
+      if (!current && (row.provider !== 'claude' || row.displayIdentityDigest === undefined)) return null;
       if (!current && !displayIdentityMatches(row, epoch(a))) return null;
       return { observedAt: row.observedAt, expiresAt: row.expiresAt, windows: structuredClone(row.windows),
         source: 'native-account-checked-history', identitySource: current?.source ?? 'native-account-checked-display-identity',

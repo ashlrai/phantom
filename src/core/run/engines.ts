@@ -48,7 +48,8 @@ import { recordClaudeRateLimitEventLine } from '../fabric/claude-rate-limit-even
 // strategist, goal-loop and sandboxed-engine all land here — so gating it is
 // what makes "no cloud spend is possible" true rather than true-for-the-paths-
 // we-remembered. See src/core/policy/local-only.ts.
-import { binPermitted } from '../policy/local-only.js';
+import { binPermitted, noPaidCashContactPolicy, resolveLocalOnlyMode } from '../policy/local-only.js';
+import { includedNativeContactCurrent, type IncludedNativeContact } from './included-native-contact.js';
 
 // ---------------------------------------------------------------------------
 // RunEvent — normalised event emitted by a streaming engine subprocess
@@ -370,7 +371,9 @@ export interface SpawnEngineOptions {
   /** Source-owned bounded prompt/request; absent preserves closed stdin. */
   stdin?: string;
   /** Native profiles retain their host-selected Claude/Codex protocol identity. */
-  nativeEngine?: 'claude' | 'codex';
+  nativeEngine?: 'claude' | 'codex' | 'devin-cli';
+  /** Opaque selected native financial proof; never reconstructed from config. */
+  includedFunding?: IncludedNativeContact;
   /** Caller-owned revision fence, evaluated at each actual spawn including recovery. */
   selectedOutcomeAdmission?: () => boolean;
   env?: NodeJS.ProcessEnv;
@@ -471,7 +474,9 @@ export async function spawnEngine(
     // know about the mode still surface a named reason instead of a mystery.
     // No-op when the mode is off; no-op for binaries no engine claims.
     const localOnly = binPermitted(cmd.bin, cfg);
-    if (!localOnly.permitted) {
+    const included = noPaidCashContactPolicy(cfg) && !resolveLocalOnlyMode(cfg).enabled &&
+      includedNativeContactCurrent(opts?.includedFunding, opts?.nativeEngine, cmd);
+    if (!localOnly.permitted && !included) {
       return {
         ok: false,
         output: '',
@@ -929,6 +934,15 @@ async function spawnEngineInner(
 
     if (!selectedOutcomeAdmissionCurrent(opts?.selectedOutcomeAdmission)) {
       resolve(cancelledEngineResult());
+      return;
+    }
+    // Setup and admission callbacks can select a stricter process policy. Recheck
+    // every actual contact, including raw requests with no native capability.
+    const contact = binPermitted(cmd.bin, cfg);
+    const included = noPaidCashContactPolicy(cfg) && !resolveLocalOnlyMode(cfg).enabled &&
+      includedNativeContactCurrent(opts?.includedFunding, opts?.nativeEngine, cmd);
+    if (!contact.permitted && !included) {
+      resolve({ ok: false, output: '', error: contact.reason ?? 'contact refused', terminationReason: 'error-exit' });
       return;
     }
     const child = spawn(spawnBin, spawnArgs, {

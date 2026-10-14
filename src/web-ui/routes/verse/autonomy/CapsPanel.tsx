@@ -53,6 +53,7 @@ function usageFor(key: CapKey, caps: VerseCaps, snapshot: VerseControlSnapshot):
   switch (key) {
     case 'dailyBudgetUsd': {
       const cap = caps.dailyBudgetUsd;
+      if (caps.fundingMode === 'no-paid-cash') return 'Configured: paid cash disabled. Current resident policy is unconfirmed here; included work still needs current account and billing proof.';
       if (cap === 0) return 'Loop stopped ($0 budget).';
       // Same honesty rule as the status header: `todayUsd` belongs to
       // `todayDate`, and a ledger day that is not today says nothing about
@@ -155,7 +156,7 @@ export function CapsPanel({ caps, snapshot, guard, dispatchEnabled }: CapsPanelP
             automatic={isUncappedCount(caps, spec.key)}
             supportsAutomatic={supportsAutomatic && isCountCapKey(spec.key)}
             usage={usageFor(spec.key, caps, snapshot)}
-            disabled={locked || (busyKey !== null && busyKey !== spec.key)}
+            disabled={locked || (caps.fundingMode === 'no-paid-cash' && spec.key === 'dailyBudgetUsd') || (busyKey !== null && busyKey !== spec.key)}
             busy={busyKey === spec.key}
             applied={appliedKey === spec.key}
             error={activeKey === spec.key ? guard.error : null}

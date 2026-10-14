@@ -35,12 +35,109 @@ jobs:
         env:
           ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-source-binding.mjs
-      - name: Classify exact ecosystem-only PR
+      - name: Detect reviewed frontend dependency candidate
+        id: frontend_candidate
+        env:
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-site-lane.mjs --frontend-candidate
+      - name: Node for frontend classification
+        if: steps.frontend_candidate.outputs.frontend_candidate == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install frontend classifier parser dependencies
+        if: steps.frontend_candidate.outputs.frontend_candidate == 'true'
+        run: npm ci --ignore-scripts
+      - name: Classify exact reviewed PR lane
         id: lane
         env:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+
+  documentation:
+    name: Documentation PR (reviewed prose)
+    needs: classify
+    if: needs.classify.outputs.lane == 'documentation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_eligible: ${{ steps.documentation.outputs.release_eligible }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install documentation test dependencies
+        run: npm ci --ignore-scripts
+      - name: Test reviewed PR classification and receipt refusals
+        run: node --test .github/tests/ci-site-lane.test.mjs .github/tests/ci-docs-lane.test.mjs
+      - name: Check reviewed documentation contracts (PR only)
+        id: documentation
+        env:
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/ci-docs-lane.mjs
+      - name: Upload documentation PR receipt (PR only)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phantom-documentation-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.documentation.outputs.lane_dir }}
+          if-no-files-found: error
+          retention-days: 7
+
+  frontend:
+    name: Frontend PR (reviewed presentation)
+    needs: classify
+    if: needs.classify.outputs.lane == 'frontend'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_eligible: ${{ steps.frontend.outputs.release_eligible }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install frontend test dependencies
+        run: npm ci --ignore-scripts
+      - name: Test reviewed PR classification and receipt refusals
+        run: node --test .github/tests/ci-site-lane.test.mjs .github/tests/ci-frontend-lane.test.mjs
+      - name: Check complete frontend and boundary contracts (PR only)
+        id: frontend
+        env:
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/ci-frontend-lane.mjs
+      - name: Upload frontend PR receipt (PR only)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phantom-frontend-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.frontend.outputs.lane_dir }}
+          if-no-files-found: error
+          retention-days: 7
 
   site:
     name: Site PR (ecosystem)
@@ -792,7 +889,7 @@ jobs:
     # matrix job must settle before this job can report a result. A skipped or
     # failed selected lane is a failure, including when classification failed.
     name: Merge Gate
-    needs: [classify, site, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    needs: [classify, site, documentation, frontend, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -804,7 +901,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const expected = ['classify', 'site', ...full];
+          const expected = ['classify', 'site', 'documentation', 'frontend', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -812,9 +909,12 @@ jobs:
           const outcome = (name) => jobs[name]?.result;
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
-          if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'site' ? ['site'] : full;
-          const excluded = lane === 'site' ? full : ['site'];
+          if (!['site', 'documentation', 'frontend', 'full'].includes(lane)) throw new Error('CI lane is missing or unknown');
+          const selected = lane === 'full' ? full : [lane];
+          const excluded = ['site', 'documentation', 'frontend', ...full].filter((name) => !selected.includes(name));
+          if (['documentation', 'frontend'].includes(lane) && jobs[lane].outputs?.release_eligible !== 'false') {
+            throw new Error('PR feedback is not marked ineligible for package admission');
+          }
           for (const name of selected) {
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }

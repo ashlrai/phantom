@@ -1,0 +1,5 @@
+.overlay { position: fixed; inset: 0; z-index: var(--z-toast); pointer-events: none; outline: none; }
+.hint { position: fixed; padding: 1px 5px; border: 1px solid var(--accent-500); border-radius: var(--radius-sm); background: var(--bg-surface-raised); color: var(--text-primary); font: bold var(--text-xs-size)/var(--text-xs-line) var(--font-mono); box-shadow: var(--shadow-sm); }
+.status { position: fixed; bottom: var(--space-5); left: 50%; transform: translateX(-50%); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-surface-raised); color: var(--text-primary); font: var(--text-xs-size)/var(--text-xs-line) var(--font-ui); box-shadow: var(--shadow-toast); }
+
+.prefix { display: inline-block; font-family: var(--font-mono); white-space: nowrap; }

@@ -413,7 +413,8 @@ describe('overlays and keys', () => {
     await screen.findByRole('navigation', { name: 'Chats' });
     key(',', {}, 'Comma');
     key('k', {}, 'KeyK');
-    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toHaveFocus();
+    const search = await screen.findByRole('combobox', { name: 'Search commands' });
+    await waitFor(() => expect(search).toHaveFocus());
     expect(getVerseUiState().section).toBe('settings');
   });
 
@@ -460,6 +461,19 @@ describe('overlays and keys', () => {
     await user.keyboard('{Enter}');
     expect(getVerseUiState().section).toBe('usage');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('offers an opt-in local hint setting and a configurable explicit chord in the gear tray', async () => {
+    const user = userEvent.setup(); mount();
+    await screen.findByRole('navigation', { name: 'Chats' });
+    await user.click(within(rail()).getByRole('button', { name: 'Settings and more' }));
+    const menu = await screen.findByRole('menu', { name: 'Settings and more' });
+    const toggle = within(menu).getByRole('menuitemcheckbox', { name: 'Phantom keyboard hints (experimental)' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle); expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(within(menu).getByRole('menuitemradio', { name: 'Hint shortcut: Ctrl+Shift+H' }));
+    expect(JSON.parse(localStorage.getItem('phantom.keyboard-hints.v1')!)).toEqual({ enabled: true, chord: 'ctrl-shift-h' });
+    expect(within(menu).getByRole('menuitemradio', { name: 'Hint shortcut: Ctrl+Shift+H' })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('keys pressed before the next frame keep the gear tray’s focus on the tab stop, and a reopen starts at the top', async () => {

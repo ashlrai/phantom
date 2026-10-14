@@ -53,7 +53,10 @@ export function StatusHeader({ snapshot }: { snapshot: VerseControlSnapshot }) {
   // day as today's spend. When only the legacy daemon observation exists there
   // is no date to check, so it is passed as null and the meter behaves as before.
   const spend = snapshot.spend;
-  const budget = spend
+  // Caps observe configuration, not the installed/running resident's argv.
+  const budget = snapshot.caps?.fundingMode === 'no-paid-cash'
+    ? { label: 'Configured: paid cash disabled', note: 'Current resident policy is unconfirmed here. Included work requires current account and billing proof.', state: 'unknown' as const, percent: null }
+    : spend
     ? budgetMeter(spend.todayUsd, snapshot.caps?.dailyBudgetUsd ?? null, spend.todayDate)
     : budgetMeter(daemon?.todaySpentUsd ?? null, snapshot.caps?.dailyBudgetUsd ?? null, null);
 

@@ -197,9 +197,9 @@ test('overlapping short Mac gates cannot qualify a release before all fifteen so
   assert.equal(required.length, 15);
   // Lane selection and the stable merge result are ancillary to release
   // authority. All fifteen source-owned qualification jobs remain required.
-  const laneNames = ['Classify PR site lane', 'Site PR (ecosystem)', 'Merge Gate'];
-  assert.equal(names.length, 18);
-  assert.equal(new Set(names).size, 18);
+  const laneNames = ['Classify PR site lane', 'Site PR (ecosystem)', 'Documentation PR (reviewed prose)', 'Frontend PR (reviewed presentation)', 'Merge Gate'];
+  assert.equal(names.length, 20);
+  assert.equal(new Set(names).size, 20);
   assert.deepEqual([...required.map((job) => job.name), ...laneNames].sort(), names.sort());
   const f = official();
   const completed = required.map((job, index) => ({ ...f.job, id: index + 10, name: job.name, labels: job.labels,
@@ -211,14 +211,22 @@ test('overlapping short Mac gates cannot qualify a release before all fifteen so
   // Even a completed-success run summary and successful short gates cannot
   // substitute for each general lane, or for any other required named gate.
   for (const job of completed) {
-    for (const state of ['queued', 'failure', 'missing']) {
+    for (const state of ['queued', 'failure', 'skipped', 'missing']) {
       observed = state === 'missing' ? completed.filter((entry) => entry !== job)
         : completed.map((entry) => entry !== job ? entry : { ...entry,
-          status: state === 'queued' ? 'queued' : 'completed', conclusion: state === 'queued' ? null : 'failure' });
+          status: state === 'queued' ? 'queued' : 'completed', conclusion: state === 'queued' ? null : state });
       assert.throws(() => auditGithub(input), state === 'missing' ? /required job missing or ambiguous/
         : state === 'queued' ? /completed/ : /success/, `${job.name}: ${state}`);
     }
   }
+  observed = [
+    ...completed.map((job) => ({ ...job, conclusion: 'skipped' })),
+    { ...f.job, name: 'Documentation PR (reviewed prose)', conclusion: 'success' },
+  ];
+  assert.throws(() => auditGithub(input), /success/, 'successful documentation feedback cannot substitute for full release coverage');
+  observed = [...completed.map((job) => ({ ...job, conclusion: 'skipped' })),
+    { ...f.job, name: 'Frontend PR (reviewed presentation)', conclusion: 'success' }];
+  assert.throws(() => auditGithub(input), /success/, 'successful frontend feedback cannot substitute for full release coverage');
 });
 test('GitHub audit uses exact official run attempt, merge-tree and required successful job/step', () => {
   const f = official(); assert.equal(auditGithub(f.input).jobs[0].id, 5);

@@ -218,6 +218,8 @@ export function NewChatDialog({ open, onClose, projects, seats, workspaces = [],
   const [savedNote, setSavedNote] = useState<string | null>(null);
   /** The operator's standing choices; null until read (or when the read failed — then every seat defaults to Standard). */
   const [prefs, setPrefs] = useState<VersePreferences | null>(null);
+  const latestAutoInputs = useRef({ seats, prefs });
+  latestAutoInputs.current = { seats, prefs };
   const [prefsError, setPrefsError] = useState<string | null>(null);
   /** An explicit mode pick for the chosen model; null = follow the seat's saved default. */
   const [modeChoice, setModeChoice] = useState<VerseContextMode | null>(null);
@@ -270,6 +272,7 @@ export function NewChatDialog({ open, onClose, projects, seats, workspaces = [],
     if (!open) return undefined;
     let cancelled = false;
     setPrefsError(null);
+    setPrefs(null);
     fetchPreferences()
       .then((next) => {
         if (!cancelled) setPrefs(next);
@@ -512,11 +515,15 @@ export function NewChatDialog({ open, onClose, projects, seats, workspaces = [],
     setLocalError(null);
     setRouting(!manual);
     try {
+      const decision = latestAutoInputs.current;
       const choice = manual ? seat : await initialAutoSeat({
-        text: firstMessage.trim(), roots, seats, signal: controller.signal,
+        text: firstMessage.trim(), roots, seats, preferences: prefs, signal: controller.signal,
         label: (request) => runMutation('Choosing a resource for your message with the decision adviser.', () => labelPromptRemote(request)),
       });
       controller.signal.throwIfAborted();
+      if (!manual && (JSON.stringify(latestAutoInputs.current.seats) !== JSON.stringify(decision.seats) || latestAutoInputs.current.prefs !== decision.prefs)) {
+        throw new Error('Resources or context preferences changed. Your draft is preserved; start again to use the current choice.');
+      }
       if (choice === null) return;
       if (choice.model === null) throw new Error('No runnable model is available for this resource.');
       const selectedSeat = seats.find((candidate) => candidate.id === choice.seatId);
@@ -533,7 +540,7 @@ export function NewChatDialog({ open, onClose, projects, seats, workspaces = [],
       const named = title.trim();
       if (named) req.title = named;
       const preferred = seatPreferredMode(prefs, choice.seatId);
-      const mode = requestContextMode(option, manual ? chatMode : resolveContextMode(option, preferred), preferred);
+      const mode = manual ? requestContextMode(option, chatMode, preferred) : ('contextMode' in choice ? choice.contextMode ?? 'standard' : 'standard');
       if (mode !== null) req.contextMode = mode;
       if (isolate) await createIsolated(roots[0]!, req, firstMessage.trim() || undefined, { automatic: !manual }, controller.signal);
       else await onCreate(req, firstMessage.trim() || undefined, { automatic: !manual });

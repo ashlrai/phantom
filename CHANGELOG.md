@@ -5,11 +5,40 @@ All notable changes to Phantom are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 **2.0.0** = v2 "Autonomous Engineering Organization" (M21–M30), **1.0.0** = v1
-hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
+hub (M1–M20). Published release dates are recorded where verified.
 
 ---
 
-## [3.29.15] — Unreleased
+## [3.29.16] — Unreleased
+
+### Added
+- Add explicit no-paid-cash funding for new configurations and an owner-selectable
+  migration for existing configurations. Proven included work can continue outside
+  a cash ceiling; selected native accounts still require current identity and
+  subscription-only billing evidence. Gifted API capacity remains separately admitted.
+- Add narrow documentation and frontend PR feedback lanes with exact source,
+  reader/import inventories, actual fresh tests and separate receipts. Full original
+  release coverage, protected merge and artifact provenance remain required.
+- Add optional workbench keyboard hints, exact saved native-conversation bindings,
+  reviewed context import and scoped pure memory/evaluation tools.
+- Add exact-model and context-mode Automatic chat routing with one shared allowance
+  per account, preserved drafts during loading and late binding/privacy checks.
+- Add local reviewer handoffs and ecosystem release dependency planning. These
+  report source, ownership and evidence gaps without approving or publishing work.
+
+### Fixed
+- Refuse unknown or paid inference at actual contact, including cached clients,
+  retries, late subprocess admission and redirects. Preserve explicit legacy zero
+  pauses, historical spend and unresolved accounting.
+- Avoid unnecessary resource-epoch reads on closed refusal paths while retaining
+  native expiry, account continuity and before/after publication checks.
+- Keep copied Grok briefs free of recognized private home locators. Apply memory
+  deletion targets individually and prevent unusable corrections from restoring
+  stale predecessors across an admitted scope.
+- Disable automatic Git maintenance only in disposable test fixtures to avoid
+  snapshot races; preserve production Git behavior and original verification cases.
+
+## [3.29.15] — 2026-10-14
 
 ### Added
 - Group resource displays by provider while keeping configured references,
@@ -40,7 +69,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   unverified GitHub evidence, and scrub public titles consistently. Proposals
   remain drafts; automatic merging requires the existing protected process.
 
-## [3.29.14] — Unreleased
+## [3.29.14] — 2026-10-13
 
 ### Added
 - Add an optional desktop-only Devin dashboard observation. In a separate

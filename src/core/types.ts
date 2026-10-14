@@ -4650,6 +4650,8 @@ export interface ApplyResult {
  * merged over conservative hard-coded defaults.
  */
 export interface DaemonConfig {
+  /** Explicit paid-cash policy. Absent preserves legacy ceilings, including a zero-budget pause. */
+  fundingMode?: 'legacy-usd' | 'no-paid-cash';
   /** Request macOS idle/system sleep inhibition on AC while the resident launchd service runs. Requires a confirmed service restart. */
   keepAwake?: boolean;
   /** HARD daily spend ceiling (USD). When today's spend reaches it, the daemon

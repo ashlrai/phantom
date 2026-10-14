@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { AshlrConfig, EngineCommand } from '../types.js';
 import { DEFAULT_LOCAL_MODEL_TAG } from '../run/model-catalog.js';
 import { buildGrokCliHeadlessCommand, extractGrokStreamText, restrictClaudeCommand } from '../run/engine-registry.js';
-import { assertPermitted, endpointPermitted, enginePermitted } from '../policy/local-only.js';
+import { assertPermitted, endpointPermitted, enginePermitted, nativeIncludedCandidatePermitted, noPaidCashContactPolicy, binPermitted } from '../policy/local-only.js';
 import type { BudgetPolicy, RoutingRequest, SeatDecision } from '../routing/types.js';
 import type { SeatCapacity } from '../routing/headroom.js';
 import { seatTier } from '../routing/tiers.js';
@@ -271,7 +271,7 @@ function buildSeat(deps: LeaderSeatDeps, chosen: LeaderSeatCandidate, opts: { mo
       complete = deps.transports.local(chosen.ollamaBaseUrl, model, budget);
     }
   } else {
-    const verdict = enginePermitted(engine, deps.cfg);
+    const verdict = nativeIncludedCandidatePermitted(engine, deps.cfg);
     if (!verdict.permitted) return { ok: false, reason: `Local-only mode refuses ${engine}.` };
     if (!deps.transports.native && (!chosen.launcher || chosen.launcher.length === 0)) return { ok: false, reason: `Seat ${chosen.seat.id} has no launcher.` };
     const admitted=():boolean => {
@@ -397,6 +397,8 @@ export function runCliCompletion(
       reject(new Error('empty command'));
       return;
     }
+    const permission = binPermitted(cmd);
+    if (!permission.permitted) { reject(new Error(permission.reason ?? 'Inference contact refused')); return; }
     // An empty scratch directory: even a read tool sees nothing of the repo.
     const ownCwd = opts.cwd === undefined;
     const cwd = opts.cwd ?? mkdtempSync(join(tmpdir(), 'ashlr-leader-'));
@@ -667,6 +669,7 @@ export function defaultLeaderTransports(cfg: AshlrConfig): LeaderTransports {
       }
     },
     claude: (launcher, model, credential, opts) => async (system, user) => {
+      if (noPaidCashContactPolicy(cfg)) throw new Error('no-paid-cash: generic Claude completion has no selected native billing proof');
       const cmd = claudeLeaderCommand(launcher, model, system);
       if (!cmd) throw new Error('The Claude Leader command could not be restricted.');
       const env = await credential(cmd);

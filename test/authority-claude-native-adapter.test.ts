@@ -1,5 +1,6 @@
 /** Real inert native process + HTTP + OS jail seams. No vendor executable or credential is used. */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,8 +21,11 @@ const identity = {email:'native-fixture@example.invalid',orgId:'fixture-org'};
 const accountDigest = createHash('sha256').update(JSON.stringify(['claude-native-auth-v1',identity.email,identity.orgId])).digest('hex');
 function fixture() {
   const executable=join(base,'inert-native');
-  writeFileSync(executable, `#!${realpathSync(process.execPath)}
-const fs=require('node:fs'),path=require('node:path');
+  // A shebang cannot represent the qualified Node path containing spaces;
+  // /bin/sh may exec its unadmitted bash variant inside the native outer jail.
+  // This inert binary preserves the original JS payload/argv/stdin without
+  // introducing another interpreter or changing any production jail rule.
+  const script = `const fs=require('node:fs'),path=require('node:path');
 const args=process.argv.slice(2),state=process.env.CLAUDE_CONFIG_DIR;
 const data=JSON.parse(fs.readFileSync(path.join(state,'fixture.json'),'utf8'));
 if(args[0]==='auth') {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',subscriptionType:'max',email:data.email,orgId:data.orgId}));process.exit(0);}
@@ -55,7 +59,10 @@ let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>promp
  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'native fixture complete',usage:{input_tokens:9,output_tokens:4}}));
  }catch{process.exitCode=15;}
 });
-`,{mode:0o700});
+`;
+  const code = '#include <unistd.h>\n#include <stdlib.h>\nint main(int argc,char **argv){if(argc>1024)return 126;char **a=calloc(argc+4,sizeof(char*));if(!a)return 125;a[0]='+JSON.stringify(realpathSync(process.execPath))+';a[1]="-e";a[2]='+JSON.stringify(script)+';a[3]="fixture";for(int i=1;i<argc;i++)a[i+3]=argv[i];execv(a[0],a);return 127;}\n';
+  execFileSync('/usr/bin/clang',['-x','c','-O0','-o',executable,'-'],{input:code,timeout:4000});
+  chmodSync(executable,0o700);
   const profile=prepareResourceNativeProfile({provider:'claude',directory:join(base,'profile'),executable});
   writeFileSync(join(profile.nativeStatePath,'fixture.json'),JSON.stringify({...identity,credits:false}),{mode:0o600});
   const accountsRoot=join(base,'accounts');mkdirSync(accountsRoot,{mode:0o700});

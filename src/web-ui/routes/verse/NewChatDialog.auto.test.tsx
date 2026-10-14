@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VerseCreateSessionRequest } from '../../data/api-types.js';
-import { bootstrap, CLAUDE_SEAT, LOCAL_SEAT } from './fixtures.test-support.js';
+import { bootstrap, CLAUDE_1M_SEAT, CLAUDE_SEAT, LOCAL_SEAT } from './fixtures.test-support.js';
 import { NewChatDialog } from './NewChatDialog.js';
 
 const route = vi.hoisted(() => vi.fn());
@@ -33,7 +33,7 @@ describe('Automatic first chat', () => {
     await user.type(screen.getByLabelText('What would you like to work on?'), PROMPT);
     await user.click(screen.getByRole('button', { name: 'Start chat' }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledExactlyOnceWith(
-      { projectPath: '/Users/mason/dev/hub', seatId: LOCAL_SEAT.id, model: 'qwen3-coder' }, PROMPT, { automatic: true }));
+      { projectPath: '/Users/mason/dev/hub', seatId: LOCAL_SEAT.id, model: 'qwen3-coder', contextMode: 'standard' }, PROMPT, { automatic: true }));
     expect(route.mock.calls[0]![0].roots).toEqual(['/Users/mason/dev/hub']);
   });
   it('respects an explicit manual choice and never asks the automatic adviser', async () => {
@@ -57,7 +57,7 @@ describe('Automatic first chat', () => {
     await user.click(screen.getByRole('button', { name: 'Start chat' }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(route.mock.calls[0]![0].roots).toEqual(['/repo', '/private']);
-    expect(onCreate.mock.calls[0]![0]).toEqual({ workspaceId: 'workspace-1', seatId: LOCAL_SEAT.id, model: 'qwen3-coder' });
+    expect(onCreate.mock.calls[0]![0]).toEqual({ workspaceId: 'workspace-1', seatId: LOCAL_SEAT.id, model: 'qwen3-coder', contextMode: 'standard' });
   });
   it('disables repeat submits during selection, preserves the prompt on failure, and allows retry', async () => {
     let reject!: (error: Error) => void;
@@ -99,4 +99,16 @@ describe('Automatic first chat', () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
+});
+
+
+it('carries the selected expansive mode unchanged into the initial Automatic create request', async () => {
+  route.mockResolvedValue({ seatId: CLAUDE_1M_SEAT.id, model: CLAUDE_1M_SEAT.models[0]!.id, contextMode: 'expansive' });
+  const { onCreate } = mount(vi.fn(), { seats: [CLAUDE_1M_SEAT] });
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('What would you like to work on?'), PROMPT);
+  await user.click(screen.getByRole('button', { name: 'Start chat' }));
+  await waitFor(() => expect(onCreate).toHaveBeenCalledExactlyOnceWith(
+    { projectPath: '/Users/mason/dev/hub', seatId: CLAUDE_1M_SEAT.id, model: CLAUDE_1M_SEAT.models[0]!.id, contextMode: 'expansive' }, PROMPT, { automatic: true }));
+  expect(route.mock.calls[0]![0].preferences.seats).toEqual({});
 });

@@ -384,6 +384,24 @@ describe('positive USD exhaustion preserves only proven zero-dollar standing pro
     },
   );
 
+  it('explicit no-paid-cash runs eligible zero-dollar work at cash zero without erasing realized spend', async () => {
+    const { cfg, hooks } = prepare('local-coder', { dailyBudgetUsd: 0, fundingMode: 'no-paid-cash', perTickItems: 1 });
+    seedMidTickSpend({ spentUsd: 2, running: false });
+    const result = await tick(cfg, { dryRun: false, activationCapability: STANDING, hooks });
+    expect(mockRunGoal).toHaveBeenCalledOnce();
+    expect(result.spentUsd).toBe(0);
+    expect(loadDaemonState().todaySpentUsd).toBe(2);
+    expect(readDaemonSpendGuard().exists).toBe(false);
+  });
+
+  it('the legacy explicit zero still pauses included work', async () => {
+    const { cfg, hooks } = prepare('local-coder', { dailyBudgetUsd: 0, perTickItems: 1 });
+    seedMidTickSpend({ spentUsd: 0, running: false });
+    const result = await tick(cfg, { dryRun: false, activationCapability: STANDING, hooks });
+    expect(mockRunGoal).not.toHaveBeenCalled();
+    expect(result.reason).toBe('budget-exhausted');
+  });
+
   it('counts a positive local cost estimate as zero cash only for its exact free engine', async () => {
     const { cfg, hooks } = prepare('local-coder', { perTickItems: 1 });
     seedMidTickSpend({ spentUsd: 1, running: false });
