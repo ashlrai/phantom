@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { SettingsView } from './SettingsView.js';
 import { evictAll } from '../../data/cache.js';
 
-const S = { schemaVersion: 1, kind: 'ashlr-settings', autonomy: { level: 'propose', grantActive: false, maxLevel: 'propose' }, repos: { enrolled: [] }, schedules: [], models: { allowedEngines: null }, budget: { dailyUsd: 5, perItemMaxTokens: null, maxConcurrent: null }, notifications: { desktop: false, proactive: false, slack: false, discord: false }, constitution: { path: null, versions: [] } };
+const S = { schemaVersion: 1, kind: 'ashlr-settings', autonomy: { level: 'propose', grantActive: false, maxLevel: 'propose' }, repos: { enrolled: [] }, schedules: [], models: { allowedEngines: null, available: ['claude', 'codex'] }, budget: { dailyUsd: 5, perItemMaxTokens: null, maxConcurrent: null }, notifications: { desktop: false, proactive: false, slack: false, discord: false }, constitution: { path: null, versions: [] } };
 
 describe('SettingsView', () => {
   beforeEach(() => evictAll());

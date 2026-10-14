@@ -41,7 +41,7 @@ describe('UI ⇄ CLI ⇄ MCP parity', () => {
   });
 
   it('CLI --json equals the shared core output (settings, home, ecosystem)', async () => {
-    const s = { schemaVersion: 1, kind: 'ashlr-settings', autonomy: { level: 'off', grantActive: false, maxLevel: 'propose' }, repos: { enrolled: [] }, schedules: [], models: { allowedEngines: null }, budget: { dailyUsd: 1, perItemMaxTokens: null, maxConcurrent: null }, notifications: { desktop: false, proactive: false, slack: false, discord: false }, constitution: { path: null, versions: [] } } satisfies SettingsV1;
+    const s = { schemaVersion: 1, kind: 'ashlr-settings', autonomy: { level: 'off', grantActive: false, maxLevel: 'propose' }, repos: { enrolled: [] }, schedules: [], models: { allowedEngines: null, available: [] }, budget: { dailyUsd: 1, perItemMaxTokens: null, maxConcurrent: null }, notifications: { desktop: false, proactive: false, slack: false, discord: false }, constitution: { path: null, versions: [] } } satisfies SettingsV1;
     const be: SettingsBackend = { read: async () => s, apply: async () => ({ ok: true, detail: 'saved' }) };
     const { cmdSettings } = await import('../src/cli/settings.js');
     expect(JSON.parse((await capture(() => cmdSettings(['--json'], be))).out)).toEqual(await be.read());

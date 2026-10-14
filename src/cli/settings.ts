@@ -18,6 +18,7 @@ export const SETTINGS_USAGE = [
 export function cliValue(key: string, raw: string): unknown {
   if (key === 'models.allowedEngines') return raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (key.startsWith('budget.')) return Number(raw);
+  if (key.endsWith('Webhook')) return raw === '""' || raw === 'none' || raw === 'off' ? '' : raw;
   if (key.startsWith('notifications.')) return raw === 'true' || raw === 'on' ? true : raw === 'false' || raw === 'off' ? false : raw;
   return raw;
 }

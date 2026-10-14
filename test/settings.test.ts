@@ -12,7 +12,7 @@ function backend(over: Partial<SettingsV1> = {}) {
     schemaVersion: 1, kind: 'ashlr-settings',
     autonomy: { level: 'propose', grantActive: true, maxLevel: 'autonomous' },
     repos: { enrolled: ['/r/locus'] }, schedules: [{ id: 'a1', name: 'x', enabled: true }],
-    models: { allowedEngines: ['claude', 'codex'] }, budget: { dailyUsd: 5, perItemMaxTokens: 200000, maxConcurrent: 4 },
+    models: { allowedEngines: ['claude', 'codex'], available: ['claude', 'codex', 'devin-cli'] }, budget: { dailyUsd: 5, perItemMaxTokens: 200000, maxConcurrent: 4 },
     notifications: { desktop: false, proactive: false, slack: false, discord: false },
     constitution: { path: '/r/AGENTS.md', versions: [] }, ...over,
   };
@@ -44,6 +44,15 @@ describe('settings', () => {
       expect(await applySettingsChange(be, raw, 'agent')).toMatchObject({ ok: false, status: 'needs-human', direction: 'widening', command });
     }
     expect(applied).toHaveLength(5);
+  });
+
+  it('webhooks: agents may remove but never add or change; values are validated and never read back', async () => {
+    const { be, applied } = backend({ notifications: { desktop: false, proactive: false, slack: true, discord: false } });
+    expect((await applySettingsChange(be, { key: 'notifications.slackWebhook', value: '' }, 'agent')).status).toBe('applied');
+    expect(await applySettingsChange(be, { key: 'notifications.discordWebhook', value: 'https://discord.com/api/webhooks/123456/abcdefghijklmnopqrstuvwxyz' }, 'agent')).toMatchObject({ status: 'needs-human', command: 'ashlr settings set notifications.discordWebhook <webhook-url>' });
+    expect((await applySettingsChange(be, { key: 'notifications.slackWebhook', value: 'https://evil.example/hook' }, 'human')).status).toBe('invalid');
+    expect((await applySettingsChange(be, { key: 'notifications.slackWebhook', value: 'https://hooks.slack.com/services/T000/B000/XXXXXXXX' }, 'human')).status).toBe('applied');
+    expect(applied).toHaveLength(2);
   });
 
   it('the grant caps autonomy for everyone', async () => {
