@@ -256,6 +256,12 @@ const loadStackCmd = lazyCmd(
   'stack command requires src/cli/stack.ts (M73 module not yet built).',
 );
 
+const loadSettingsCmd = lazyCmd(
+  () => import('./settings.js' as unknown as string),
+  (m) => m.cmdSettings as Cmd,
+  'settings command requires src/cli/settings.ts.',
+);
+
 const loadHomeCmd = lazyCmd(
   () => import('./home.js' as unknown as string),
   (m) => m.cmdHome as Cmd,
@@ -2194,6 +2200,12 @@ async function main(): Promise<void> {
         // confirm-gated add/apply (real provisioning).
         const cmdStack = await loadStackCmd();
         process.exitCode = await cmdStack(rest);
+        break;
+      }
+
+      case 'settings': {
+        const cmdSettings = await loadSettingsCmd();
+        process.exitCode = await cmdSettings(rest);
         break;
       }
 

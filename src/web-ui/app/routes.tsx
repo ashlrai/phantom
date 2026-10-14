@@ -34,6 +34,7 @@ import { RunDetailView } from '../routes/work/runs/RunDetailView.js';
 import { SwarmsView } from '../routes/work/swarms/SwarmsView.js';
 import { SwarmDetailView } from '../routes/work/swarms/SwarmDetailView.js';
 import { DaemonView } from '../routes/control/daemon/DaemonView.js';
+import { SettingsView } from '../routes/settings/SettingsView.js';
 import { HomeView } from '../routes/home/HomeView.js';
 import { EcosystemView } from '../routes/control/ecosystem/EcosystemView.js';
 import { FleetView } from '../routes/control/fleet/FleetView.js';
@@ -59,6 +60,7 @@ export function AppRoutes() {
           ),
         )}
         <Route path="/home" element={<HomeView />} />
+        <Route path="/control/settings" element={<SettingsView />} />
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />

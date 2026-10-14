@@ -380,3 +380,9 @@ export const homeDashboardQuery: QueryDef<import('../../core/home/dashboard.js')
   key: 'home-dashboard',
   fetch: (signal) => apiGet<import('../../core/home/dashboard.js').HomeDashboardV1>('/api/home', signal),
 };
+
+/** GET /api/settings — `ashlr settings --json`. */
+export const settingsQuery: QueryDef<import('../../core/settings/settings.js').SettingsV1> = {
+  key: 'settings',
+  fetch: (signal) => apiGet<import('../../core/settings/settings.js').SettingsV1>('/api/settings', signal),
+};
