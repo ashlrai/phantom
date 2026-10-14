@@ -116,6 +116,34 @@ function abortGate(): {
   };
 }
 
+async function withAnyRepoAllowed<T>(fixture: () => Promise<T>): Promise<T> {
+  const previous = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+  process.env.ASHLR_TEST_ALLOW_ANY_REPO = '1';
+  try {
+    return await fixture();
+  } finally {
+    // Setup and run cleanup can both fail; neither may leak this test-only flag.
+    if (previous === undefined) delete process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+    else process.env.ASHLR_TEST_ALLOW_ANY_REPO = previous;
+  }
+}
+
+async function awaitProducerEntry(
+  gate: ReturnType<typeof abortGate>,
+  running: Promise<SandboxedEngineResult>,
+): Promise<void> {
+  // A producer can refuse before reaching its inert mock. Report that boundary
+  // immediately instead of leaving the entry gate pending until the test timeout.
+  // Fixed messages avoid copying raw producer errors or private fixture paths.
+  await Promise.race([
+    gate.entered,
+    running.then(
+      () => { throw new Error('producer completed before mock entry'); },
+      () => { throw new Error('producer rejected before mock entry'); },
+    ),
+  ]);
+}
+
 const spawnEngineMock = vi.mocked(spawnEngine);
 const runTaskMock = vi.mocked(runTask);
 
@@ -176,20 +204,18 @@ describe('M409 engine execution outward mutation fence', () => {
   // removes its OWN throwaway worktree under KILL (a removal right minted at
   // admission, while KILL was off); nothing else is cleaned up under KILL.
   it.each(cases)('$label: kill cannot quiesce while its execution lease is live, and it files nothing', async ({ start }) => {
-    await withTmpHome(async (fx) => {
-      const previousAllowAnyRepo = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
-      process.env.ASHLR_TEST_ALLOW_ANY_REPO = '1';
-      prepareAuthorityRoots();
-      const repo = fx.makeRepo();
-      repo.enroll();
-      const before = sourceSnapshot(repo);
+    await withTmpHome(async (fx) => withAnyRepoAllowed(async () => {
       const controller = new AbortController();
       const gate = abortGate();
       let running: Promise<SandboxedEngineResult> | undefined;
 
       try {
+        prepareAuthorityRoots();
+        const repo = fx.makeRepo();
+        repo.enroll();
+        const before = sourceSnapshot(repo);
         running = start(repo, makeConfig(), controller, gate);
-        await gate.entered;
+        await awaitProducerEntry(gate, running);
 
         expect(listSandboxes()).toHaveLength(1);
         expect(listProposals()).toEqual([]);
@@ -236,9 +262,53 @@ describe('M409 engine execution outward mutation fence', () => {
         controller.abort();
         await running?.catch(() => undefined);
         setKill(false, { waitMs: 500 });
-        if (previousAllowAnyRepo === undefined) delete process.env.ASHLR_TEST_ALLOW_ANY_REPO;
-        else process.env.ASHLR_TEST_ALLOW_ANY_REPO = previousAllowAnyRepo;
       }
+    }));
+  }, 15_000);
+
+  it('reports actual producer cancellation before mock entry and restores the fixture flag', async () => {
+    const previous = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+    await withTmpHome(async (fx) => {
+      const controller = new AbortController();
+      controller.abort();
+      let running: Promise<SandboxedEngineResult> | undefined;
+      await expect(withAnyRepoAllowed(async () => {
+        try {
+          running = runEngineSandboxed('claude', 'remain blocked until cancelled', makeConfig(), {
+            sourceRepo: fx.home,
+            propose: true,
+            signal: controller.signal,
+          });
+          await awaitProducerEntry(abortGate(), running);
+        } finally {
+          controller.abort();
+          await running?.catch(() => undefined);
+        }
+      })).rejects.toThrow('producer completed before mock entry');
+      expect((await running!).state).toMatchObject({ status: 'aborted', terminationReason: 'cancelled' });
+      expect(spawnEngineMock).not.toHaveBeenCalled();
+      expect(countLiveExecutionLeases()).toBe(0);
+      expect(listSandboxes()).toEqual([]);
+      expect(listProposals()).toEqual([]);
+      expect(process.env.ASHLR_TEST_ALLOW_ANY_REPO).toBe(previous);
+      await expect(awaitProducerEntry(abortGate(), Promise.reject(new Error('fixture rejection'))))
+        .rejects.toThrow('producer rejected before mock entry');
     });
   }, 15_000);
+
+  it.each([undefined, 'fixture-previous'])('restores prior fixture flag %s when setup throws', async (previous) => {
+    const original = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+    try {
+      if (previous === undefined) delete process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+      else process.env.ASHLR_TEST_ALLOW_ANY_REPO = previous;
+      await expect(withAnyRepoAllowed(async () => {
+        expect(process.env.ASHLR_TEST_ALLOW_ANY_REPO).toBe('1');
+        throw new Error('fixture setup refused');
+      })).rejects.toThrow('fixture setup refused');
+      expect(process.env.ASHLR_TEST_ALLOW_ANY_REPO).toBe(previous);
+    } finally {
+      if (original === undefined) delete process.env.ASHLR_TEST_ALLOW_ANY_REPO;
+      else process.env.ASHLR_TEST_ALLOW_ANY_REPO = original;
+    }
+  });
 });
