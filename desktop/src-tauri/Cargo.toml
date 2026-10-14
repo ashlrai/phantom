@@ -2,7 +2,7 @@
 name = "ashlr-desktop"
 version = "3.29.15"
 description = "Phantom — engineering agent workbench"
-authors = ["Mason Wyatt <mason@evero-consulting.com>"]
+authors = ["Mason Wyatt <mason@ashlr.ai>"]
 license = "MIT"
 repository = "https://github.com/ashlrai/phantom"
 edition = "2021"

@@ -1561,9 +1561,9 @@ export interface AshlrConfig {
    * pulse attributes are omitted, and all existing behavior is unchanged.
    *
    * Example (Mason's machine):
-   *   "user": { "id": "mason@evero-consulting.com", "name": "Mason" }
+   *   "user": { "id": "mason@ashlr.ai", "name": "Mason" }
    * Example (cofounder's machine):
-   *   "user": { "id": "cofounder@evero-consulting.com", "name": "Alex" }
+   *   "user": { "id": "cofounder@ashlr.ai", "name": "Alex" }
    */
   user?: {
     /** Stable identifier — email recommended (matches pulse peer_share user_id). */
