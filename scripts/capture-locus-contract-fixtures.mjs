@@ -2,7 +2,13 @@
 // Capture real `locus` CLI output for test/locus-producer-contract.test.ts.
 //
 //   node scripts/capture-locus-contract-fixtures.mjs --locus-bin /abs/path/to/locus \
-//     --source-commit <locus git sha> [--out test/fixtures/locus-contract/0.5.0]
+//     --locus-src /abs/path/to/locus/checkout --source-commit <locus git sha> \
+//     [--out test/fixtures/locus-contract/<version>]
+//
+// The binary must be built from --source-commit; the published schemas are
+// copied from that commit of --locus-src. Per-run values (timestamps, session
+// ids, seals, worker dirs) are replaced with placeholders so a re-capture of
+// the same commit is byte-identical.
 //
 // Every scenario runs in a throwaway LOCUS_HOME and cwd with a scrubbed
 // environment: no provider credentials, no network, no Phantom on PATH. The
@@ -11,7 +17,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -19,11 +26,15 @@ function arg(name) {
 }
 
 const locusBin = arg('--locus-bin');
+const locusSrc = arg('--locus-src');
 const sourceCommit = arg('--source-commit');
-if (!locusBin || !isAbsolute(locusBin) || !/^[0-9a-f]{40}$/u.test(sourceCommit ?? '')) {
-  console.error('usage: --locus-bin <absolute path> --source-commit <40-hex sha> [--out <dir>]');
+if (!locusBin || !isAbsolute(locusBin) || !locusSrc || !isAbsolute(locusSrc) || !/^[0-9a-f]{40}$/u.test(sourceCommit ?? '')) {
+  console.error('usage: --locus-bin <absolute path> --locus-src <absolute checkout> --source-commit <40-hex sha> [--out <dir>]');
   process.exit(2);
 }
+const SCHEMAS = ['agent-report.schema.json', 'doctor.schema.json'];
+const VOLATILE_KEYS = ['expires_at', 'ts', 'session_id', 'seal', 'worker_home'];
+const volatile = new RegExp(`"(${VOLATILE_KEYS.join('|')})": "[^"]*"`, 'gu');
 
 const PROBES = [
   ['agent-report.json', ['agent', 'report', '--json']],
@@ -42,12 +53,18 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), 'locus-contract-')));
 const versionOut = spawnSync(locusBin, ['--version'], { encoding: 'utf8' }).stdout.trim();
 const version = versionOut.match(/^locus\s+(\S+)$/u)?.[1];
 if (!version) throw new Error(`unexpected locus --version output: ${versionOut}`);
-const out = resolve(arg('--out') ?? join('test', 'fixtures', 'locus-contract', version));
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const out = resolve(arg('--out') ?? join(repoRoot, 'test', 'fixtures', 'locus-contract', version));
 mkdirSync(out, { recursive: true });
 
 try {
-  const manifest = { producer: 'locus', version, sourceCommit, capturedAt: new Date().toISOString().slice(0, 10), scenarios: {} };
+  const manifest = { producer: 'locus', version, sourceCommit, normalizedKeys: VOLATILE_KEYS, scenarios: {} };
   const baseEnv = { PATH: '/usr/bin:/bin', LANG: 'C', NO_COLOR: '1' };
+  for (const schema of SCHEMAS) {
+    const r = spawnSync('git', ['-C', locusSrc, 'show', `${sourceCommit}:schema/${schema}`], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`cannot read schema/${schema} at ${sourceCommit}`);
+    writeFileSync(join(out, schema), r.stdout);
+  }
   writeFileSync(join(out, 'version.txt'), `${versionOut}\n`);
   writeFileSync(join(out, 'help.txt'), spawnSync(locusBin, ['--help'], { encoding: 'utf8', env: baseEnv }).stdout);
 
@@ -81,7 +98,8 @@ try {
     try { capability = readFileSync(join(home, 'control_capability'), 'utf8').trim(); } catch { /* none */ }
     const exits = {};
     for (const [file] of PROBES) {
-      const text = readFileSync(join(raw, file), 'utf8').split(home).join('<LOCUS_HOME>').split(cwd).join('<CWD>');
+      const text = readFileSync(join(raw, file), 'utf8').split(home).join('<LOCUS_HOME>').split(cwd).join('<CWD>')
+        .replace(volatile, (_, key) => `"${key}": "<${key.toUpperCase()}>"`);
       if (capability && text.includes(capability)) throw new Error(`${scenario.name}: capability value leaked into ${file}`);
       if (text.includes(root)) throw new Error(`${scenario.name}: sandbox path left in ${file}`);
       writeFileSync(join(dir, file), text);

@@ -4,7 +4,8 @@
  * Fixtures under test/fixtures/locus-contract/<version>/ are captured from the exact Locus
  * release Phantom pins in companion-inventory.ts (see manifest.json for the source commit),
  * by scripts/capture-locus-contract-fixtures.mjs in a throwaway LOCUS_HOME with sample
- * bindings and no credentials. The published schemas are copied from that same commit.
+ * bindings and no credentials. The published schemas are copied from that same commit,
+ * and per-run values (timestamps, session ids, seals) are normalized to placeholders.
  * Hand-written fixtures in locus.probe.test.ts describe what Phantom expects; these describe
  * what Locus actually emits.
  */
@@ -37,9 +38,19 @@ interface Manifest {
 const manifest = JSON.parse(read('manifest.json')) as Manifest;
 const scenarios = Object.keys(manifest.scenarios);
 
+/** The keywords Locus's published schemas use (draft 2020-12 subset). */
 interface JsonSchema {
+  $ref?: string;
+  $defs?: Record<string, JsonSchema>;
+  type?: string | string[];
+  enum?: unknown[];
+  const?: unknown;
   required?: string[];
-  properties?: Record<string, { type?: string | string[]; enum?: unknown[]; required?: string[] }>;
+  properties?: Record<string, JsonSchema>;
+  additionalProperties?: boolean | JsonSchema;
+  items?: JsonSchema;
+  minItems?: number;
+  minimum?: number;
 }
 const agentReportSchema = JSON.parse(read('agent-report.schema.json')) as JsonSchema;
 const doctorSchema = JSON.parse(read('doctor.schema.json')) as JsonSchema;
@@ -51,26 +62,52 @@ function typeOf(value: unknown): string {
   return typeof value;
 }
 
-/** Required keys, scalar types and enums of the published top-level schema. */
-function schemaViolations(schema: JsonSchema, value: Record<string, unknown>): string[] {
+/** Validate `value` against `schema`; returns `path: problem` strings, empty when valid. */
+function schemaViolations(schema: JsonSchema, value: unknown, root: JsonSchema = schema, at = '$'): string[] {
+  if (schema.$ref) {
+    const name = /^#\/\$defs\/(.+)$/u.exec(schema.$ref)?.[1];
+    const target = name === undefined ? undefined : root.$defs?.[name];
+    return target ? schemaViolations(target, value, root, at) : [`${at}: unresolvable ${schema.$ref}`];
+  }
   const out: string[] = [];
-  for (const key of schema.required ?? []) if (!(key in value)) out.push(`missing ${key}`);
-  for (const [key, prop] of Object.entries(schema.properties ?? {})) {
-    if (!(key in value)) continue;
-    const actual = typeOf(value[key]);
-    const allowed = prop.type === undefined ? [] : [prop.type].flat();
-    if (allowed.length > 0 && !allowed.includes(actual) && !(actual === 'integer' && allowed.includes('number'))) {
-      out.push(`${key}: ${actual} not in ${allowed.join('|')}`);
-    }
-    if (prop.enum && !prop.enum.includes(value[key])) out.push(`${key}: ${JSON.stringify(value[key])} not in enum`);
-    if (prop.required && actual === 'object') {
-      for (const nested of prop.required) {
-        if (!(nested in (value[key] as Record<string, unknown>))) out.push(`missing ${key}.${nested}`);
+  const actual = typeOf(value);
+  const allowed = schema.type === undefined ? [] : [schema.type].flat();
+  if (allowed.length > 0 && !allowed.includes(actual) && !(actual === 'integer' && allowed.includes('number'))) {
+    return [`${at}: ${actual} not in ${allowed.join('|')}`];
+  }
+  if (schema.enum && !schema.enum.includes(value)) out.push(`${at}: ${JSON.stringify(value)} not in enum`);
+  if ('const' in schema && schema.const !== value) out.push(`${at}: ${JSON.stringify(value)} is not const`);
+  if (schema.minimum !== undefined && typeof value === 'number' && value < schema.minimum) out.push(`${at}: below minimum`);
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) out.push(`${at}: fewer than ${schema.minItems} items`);
+    if (schema.items) value.forEach((item, i) => out.push(...schemaViolations(schema.items!, item, root, `${at}[${i}]`)));
+  }
+  if (actual === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) if (!(key in obj)) out.push(`${at}.${key}: missing`);
+    for (const [key, item] of Object.entries(obj)) {
+      const prop = schema.properties?.[key];
+      if (prop) out.push(...schemaViolations(prop, item, root, `${at}.${key}`));
+      else if (schema.additionalProperties === false) out.push(`${at}.${key}: not allowed`);
+      else if (typeof schema.additionalProperties === 'object') {
+        out.push(...schemaViolations(schema.additionalProperties, item, root, `${at}.${key}`));
       }
     }
   }
   return out;
 }
+
+/**
+ * Known producer-side drift in Locus 0.5.0 (unchanged on Locus main at 98e7020): doctor
+ * emits `severity: "info"` for `control_capability_persisted`, but doctor.schema.json only
+ * allows "warn" | "unsafe". Phantom does not read severity. Listed exactly so a schema fix,
+ * or any new drift, fails this test and forces a fixture refresh.
+ */
+const KNOWN_DOCTOR_DRIFT: Record<string, string[]> = {
+  'fresh-home': [],
+  'pinned-capability-not-exported': ['$.findings[4].severity: "info" not in enum'],
+  'pinned-capability-exported': ['$.findings[2].severity: "info" not in enum'],
+};
 
 describe('locus producer contract fixtures', () => {
   it('match the Locus release Phantom pins', () => {
@@ -92,9 +129,9 @@ describe.each(scenarios)('locus %s output', scenario => {
   const rawReport = read(scenario, 'agent-report.json');
   const json = JSON.parse(rawReport) as Record<string, unknown>;
 
-  it('agent report satisfies the published schemas and parses with no missing keys', () => {
+  it('agent report satisfies the published schemas (apart from known drift) and parses with no missing keys', () => {
     expect(schemaViolations(agentReportSchema, json)).toEqual([]);
-    expect(schemaViolations(doctorSchema, json.doctor as Record<string, unknown>)).toEqual([]);
+    expect(schemaViolations(doctorSchema, json.doctor)).toEqual(KNOWN_DOCTOR_DRIFT[scenario]);
     expect(missingAgentReportKeys(json)).toEqual([]);
     const report = parseAgentReportJson(rawReport);
     expect(report.version).toBe(locusRelease.version);

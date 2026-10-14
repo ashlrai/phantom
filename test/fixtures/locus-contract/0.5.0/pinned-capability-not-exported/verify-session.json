@@ -11,7 +11,7 @@
       "alias": "personal",
       "tenant": "personal",
       "binding_id": "bnd_personal",
-      "expires_at": "2026-10-14T19:23:52.287170942+00:00",
+      "expires_at": "<EXPIRES_AT>",
       "expires_in_secs": 43199,
       "seal_ok": true,
       "authority_anchor_verified": false,
@@ -33,7 +33,7 @@
       "providers_match": true,
       "frozen": false,
       "expired": false,
-      "session_id": "ses_282dbb1724c8c88f007ef953",
+      "session_id": "<SESSION_ID>",
       "binding_alias": "personal",
       "binding_id_session": "bnd_personal",
       "binding_id_file": "bnd_personal",
@@ -139,14 +139,14 @@
       "total": 1,
       "last": [
         {
-          "ts": "2026-10-14T07:23:52.319893329+00:00",
+          "ts": "<TS>",
           "op": "session.pin",
           "binding": "personal",
           "detail": {
             "cwd": "<CWD>",
             "mode": "exclusive",
             "namespaces": [],
-            "session_id": "ses_282dbb1724c8c88f007ef953",
+            "session_id": "<SESSION_ID>",
             "tenant": "personal",
             "ttl_secs": 43200,
             "ttl_source": "max_ttl"

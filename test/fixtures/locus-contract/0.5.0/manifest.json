@@ -2,7 +2,13 @@
   "producer": "locus",
   "version": "0.5.0",
   "sourceCommit": "e7bced3cd4cb4adf08bbba020f2e05f163b55941",
-  "capturedAt": "2026-10-14",
+  "normalizedKeys": [
+    "expires_at",
+    "ts",
+    "session_id",
+    "seal",
+    "worker_home"
+  ],
   "scenarios": {
     "fresh-home": {
       "setup": [],
