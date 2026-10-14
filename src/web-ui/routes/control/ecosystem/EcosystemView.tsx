@@ -10,6 +10,7 @@ import { useQuery, useMutationHold } from '../../../data/hooks.js';
 import { enableEcosystemAutonomy } from '../../../data/mutations.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import type { EcosystemReportV1, EcosystemStep } from '../../../../core/ecosystem/onboard.js';
+import { ErrorState } from '../../../components/states/States.js';
 import styles from './EcosystemView.module.css';
 
 function yn(v: boolean | null): string {
@@ -60,7 +61,7 @@ export function EcosystemView() {
         </button>
       </header>
       {error ? <p role="alert" className={styles.bad}>{error}</p> : null}
-      {!report ? <p>{query.error ? 'Ecosystem status is unavailable. Run `ashlr ecosystem status` in a terminal to see why, or restart `ashlr web`.' : 'Loading…'}</p> : (
+      {!report ? (query.error ? <ErrorState what="Ecosystem status" error={query.error} fix="ashlr ecosystem status" /> : <p>Loading…</p>) : (
         <>
           <ul className={styles.steps} aria-label="Onboarding steps">
             {report.steps.map((s) => (

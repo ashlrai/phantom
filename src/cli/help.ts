@@ -356,6 +356,7 @@ export function agentDocsText(): string {
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
   lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('Welcome: ashlr_welcome_status is the first-run wizard (ashlr welcome --json).');
   lines.push('Settings: ashlr_settings_get reads; ashlr_settings_set applies narrowing changes');
   lines.push('only (widening returns needs-human + command). CLI: ashlr settings [set k v] --json.');
   lines.push('Home: ashlr_home is the daily dashboard (merged PRs, spend, value per $/token/s,');
@@ -471,6 +472,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status',                       desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'welcome', desc: 'First-run wizard: GitHub, repos, budget, notifications, autonomy (--json).', topic: 'core' },
   { cmd: 'settings', desc: 'View or change autonomy, repos, schedules, models, budget, notifications, constitution (--json).', topic: 'core' },
   { cmd: 'home', desc: 'Daily dashboard: shipped PRs, value per $/token/s, running now, needs you (--json).', topic: 'core' },
   { cmd: 'today', desc: 'Alias of `home`.', topic: 'core' },

@@ -84,3 +84,9 @@ export async function changeSetting(key: string, value: unknown): Promise<import
   invalidate('settings');
   return r;
 }
+
+/** Mark a first-run step done/skipped (or 'dismiss' the guide). */
+export async function markWelcome(step: string, how: 'finished' | 'skipped'): Promise<void> {
+  await post('/api/welcome', { step, how });
+  invalidate('welcome');
+}

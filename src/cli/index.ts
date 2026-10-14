@@ -2203,6 +2203,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'welcome': {
+        const { cmdWelcome } = await import('./welcome.js');
+        process.exitCode = await cmdWelcome(rest);
+        break;
+      }
+
       case 'settings': {
         const cmdSettings = await loadSettingsCmd();
         process.exitCode = await cmdSettings(rest);

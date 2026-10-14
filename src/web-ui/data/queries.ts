@@ -386,3 +386,9 @@ export const settingsQuery: QueryDef<import('../../core/settings/settings.js').S
   key: 'settings',
   fetch: (signal) => apiGet<import('../../core/settings/settings.js').SettingsV1>('/api/settings', signal),
 };
+
+/** GET /api/welcome — `ashlr welcome --json`. */
+export const welcomeQuery: QueryDef<import('../../core/firstrun/wizard.js').WizardV1> = {
+  key: 'welcome',
+  fetch: (signal) => apiGet<import('../../core/firstrun/wizard.js').WizardV1>('/api/welcome', signal),
+};

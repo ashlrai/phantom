@@ -85,6 +85,7 @@ describe('native tool registry', () => {
         'ashlr_status',
         'ashlr_website_publish',
         'ashlr_website_status',
+        'ashlr_welcome_status',
         'ashlr_ecosystem_status',
         'ashlr_ecosystem_up',
         'phm_proactive_agents_list',

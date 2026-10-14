@@ -24,7 +24,7 @@
  * safety gates.
  */
 import { ALL_NAV_LEAVES } from '../../app/nav-config.js';
-import { pauseFleet, resumeFleet, approveProposal, rejectProposal } from '../../data/mutations.js';
+import { pauseFleet, resumeFleet, approveProposal, rejectProposal, enableEcosystemAutonomy, changeSetting } from '../../data/mutations.js';
 import { openPanel as openNotificationPanel } from '../notifications/notification-store.js';
 import { getQuerySnapshot, runQuery } from '../../data/cache.js';
 import { runsQuery, goalsQuery, inboxListQuery, type GoalSummary, type InboxListResponse } from '../../data/queries.js';
@@ -129,6 +129,44 @@ const actionCommands: Command[] = [
     run: (nav) => {
       nav('/journal', { state: { windowToday: true } });
     },
+  },
+  {
+    id: 'action:enable-ecosystem-autonomy',
+    title: 'Enable ecosystem autonomy',
+    subtitle: 'Clone, enroll and schedule every Ashlr repo (the grant is signed in a terminal)',
+    group: 'Actions',
+    keywords: ['onboard', 'ecosystem', 'up', 'setup'],
+    requiresConfirm: { title: 'Enable ecosystem autonomy?', body: 'Clones missing ecosystem repos, enrolls them and turns on the steward schedule. The standing grant still needs `ashlr ecosystem up` with Touch ID.', confirmLabel: 'Enable' },
+    requiresMutationToken: true,
+    run: async (nav) => { await enableEcosystemAutonomy(); nav('/control/ecosystem'); },
+  },
+  {
+    id: 'action:autonomy-propose',
+    title: 'Autonomy: propose only',
+    subtitle: 'Agents open PRs but never merge',
+    group: 'Actions',
+    keywords: ['autonomy', 'safe', 'lower'],
+    requiresConfirm: { title: 'Switch to propose-only?', body: 'Agents keep working but nothing merges until you raise it again.', confirmLabel: 'Switch', destructive: true },
+    requiresMutationToken: true,
+    run: async (nav) => { await changeSetting('autonomy.level', 'propose'); nav('/control/settings'); },
+  },
+  {
+    id: 'action:autonomy-autonomous',
+    title: 'Autonomy: autonomous',
+    subtitle: 'Agents merge green PRs inside the standing grant',
+    group: 'Actions',
+    keywords: ['autonomy', 'raise', 'on'],
+    requiresConfirm: { title: 'Switch to autonomous?', body: 'Agents may merge PRs whose required checks are green, within the signed grant.', confirmLabel: 'Switch' },
+    requiresMutationToken: true,
+    run: async (nav) => { await changeSetting('autonomy.level', 'autonomous'); nav('/control/settings'); },
+  },
+  {
+    id: 'action:welcome',
+    title: 'Open the first-run guide',
+    subtitle: 'GitHub, repos, budget, notifications, autonomy',
+    group: 'Actions',
+    keywords: ['welcome', 'wizard', 'start', 'setup'],
+    run: (nav) => nav('/home'),
   },
 ];
 

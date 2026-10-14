@@ -9,6 +9,7 @@ import { settingsQuery } from '../../data/queries.js';
 import { useQuery, useMutationHold } from '../../data/hooks.js';
 import { changeSetting } from '../../data/mutations.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
+import { ErrorState } from '../../components/states/States.js';
 import styles from './SettingsView.module.css';
 
 function Section({ title, children, hint }: { title: string; children: ReactNode; hint?: string }) {
@@ -45,7 +46,7 @@ export function SettingsView() {
   const s = q.data;
   if (!s) {
     return <div className={styles.view}><h1 className={styles.title}>Settings</h1>{q.error
-      ? <div role="alert" className={styles.error}>Settings could not load. Run <code>ashlr settings --json</code> to see the error.</div>
+      ? <ErrorState what="Settings" error={q.error} fix="ashlr settings --json" />
       : <p className={styles.hint}>Loading settings…</p>}</div>;
   }
   return (
