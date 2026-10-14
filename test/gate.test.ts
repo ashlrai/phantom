@@ -75,6 +75,11 @@ describe('read-only gate plan', () => {
       for (const path of ['scripts/gate.mjs', 'scripts/gate-smoke.json', '.github/scripts/ci-impact-policy.mjs']) cpSync(join(repoRoot, path), join(root, path));
       writeFileSync(join(root, 'package.json'), '{"type":"module","version":"1.0.0"}\n');
       git('init', '--quiet');
+      // A fixture commit may detach Git maintenance that outlives the commit
+      // and races the byte/mtime snapshot. Keep this temporary repo quiescent;
+      // do not ignore lock files or weaken the read-only planner assertion.
+      git('config', '--local', 'maintenance.auto', 'false');
+      git('config', '--local', 'gc.auto', '0');
       git('add', '.');
       git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${join(root, 'absent-hooks')}`, 'commit', '--quiet', '-m', 'fixture');
       run(root, git);
@@ -96,6 +101,8 @@ describe('read-only gate plan', () => {
 
   it('previews clean source with no dependencies, build, tests, cache, or index writes', () => {
     fixture((root, git) => {
+      expect(git('config', '--local', '--get', 'maintenance.auto')).toBe('false');
+      expect(git('config', '--local', '--get', 'gc.auto')).toBe('0');
       const before = snapshot(root);
       const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--json', '--base', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
       expect(result.status, result.stderr).toBe(0);
