@@ -402,6 +402,7 @@
 /test/locus-firm-onboard.test.ts @masonwyatt23
 /test/locus-job-env.test.ts @masonwyatt23
 /test/locus-job-secrets-wrapper.test.ts @masonwyatt23
+/test/locus-producer-contract.test.ts @masonwyatt23
 /test/locus-provider-scope.test.ts @masonwyatt23
 /test/locus-readiness.test.ts @masonwyatt23
 /test/locus-session-authority.test.ts @masonwyatt23
