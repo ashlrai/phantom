@@ -97,7 +97,9 @@ its predecessors in the same scope and slot are excluded as `conflict`.
 A `withdrawn` fact event is an append-only durable reviewed revocation revision,
 with a review decision, review date and known effective `validFrom`. It never
 enters a pack. Once effective and known, it retires explicit predecessors and
-older revisions of the same fact in the exact original scope. Preserve the
+older revisions of the same fact within the same project and owner, whenever
+the withdrawal is visible to the querying audience, even if its audience list
+differs from the fact's. Preserve the
 prior approved events to reconstruct their earlier approved intervals; changing
 a previous event's label in place loses that history. Equal-revision approval
 and withdrawal decisions conflict and select neither. A genuinely higher
@@ -158,7 +160,9 @@ Pack status distinguishes `ready` from `none` (no selected eligible evidence),
 unavailable. `none` may reflect irrelevant evidence or budget omissions; inspect
 the receipt rather than interpreting it as proof that memory does not exist.
 Receipts record scope, policy version, snapshot claims, temporal axes, selected
-IDs and finite exclusion reasons. They do not attest execution authority or
+IDs and finite exclusion reasons for in-scope events. Events outside the
+admitted project, owner or audience are neither identified nor counted.
+Receipts do not attest execution authority or
 replace authentication and output authorization in an eventual adapter.
 
 ## Minimal pure example

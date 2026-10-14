@@ -64,7 +64,7 @@ describe('pure governed memory foundation', () => {
       const hidden = event({ eventId: 'hidden', factId: 'hidden', revision: 2, text: 'build build build', supersedes: ['ev_a'],
         ...{ [field]: field === 'audienceIds' ? ['other'] : 'other' } });
       const result = buildMemoryContextPack(snapshot([hidden, event()]), query());
-      expect(ids(result)).toEqual(['ev_a']); expect(result.receipt.exclusions).toContainEqual({ eventId: 'hidden', reason: 'scope' });
+      expect(ids(result)).toEqual(['ev_a']); expect(result.receipt.exclusions).not.toContainEqual({ eventId: 'hidden', reason: 'scope' });
     }
   });
   it('conflicts when independently admitted audience sets overlap one visible slot', () => {
@@ -108,8 +108,9 @@ describe('pure governed memory foundation', () => {
     expect(conflict.receipt.exclusions).toEqual([{ eventId: 'ev_a', reason: 'revision-conflict' }, { eventId: 'withdrawal', reason: 'revision-conflict' }]);
     const renewal = event({ eventId: 'renewal', revision: 2, text: 'Build decision approved again.', validFrom: late, recordedAt: late, reviewedAt: late });
     expect(ids(buildMemoryContextPack(snapshot([event(), withdrawal, renewal]), query()))).toEqual(['renewal']);
-    const hidden = { ...withdrawal, audienceIds: ['team_a', 'team_b'] };
-    expect(ids(buildMemoryContextPack(snapshot([event(), hidden]), query()))).toEqual(['ev_a']);
+    // A visible reviewed withdrawal of the same fact is honored even when its audience list differs.
+    const wider = { ...withdrawal, revision: 2, audienceIds: ['team_a', 'team_b'] };
+    expect(ids(buildMemoryContextPack(snapshot([event(), wider]), query()))).toEqual([]);
   });
   it('propagates tombstones to descendants even for historical queries', () => {
     const child = event({ eventId: 'child', factId: 'child', slotKey: 'derived', derivedFrom: ['ev_a'] });
