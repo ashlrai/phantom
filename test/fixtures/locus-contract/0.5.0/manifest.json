@@ -1,0 +1,49 @@
+{
+  "producer": "locus",
+  "version": "0.5.0",
+  "sourceCommit": "e7bced3cd4cb4adf08bbba020f2e05f163b55941",
+  "capturedAt": "2026-10-14",
+  "scenarios": {
+    "fresh-home": {
+      "setup": [],
+      "setupExits": [],
+      "capabilityExported": false,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 0
+      }
+    },
+    "pinned-capability-not-exported": {
+      "setup": [
+        "locus quickstart"
+      ],
+      "setupExits": [
+        0
+      ],
+      "capabilityExported": false,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 1
+      }
+    },
+    "pinned-capability-exported": {
+      "setup": [
+        "locus quickstart"
+      ],
+      "setupExits": [
+        0
+      ],
+      "capabilityExported": true,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 1
+      }
+    }
+  }
+}

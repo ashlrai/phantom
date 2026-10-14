@@ -1,0 +1,257 @@
+{
+  "kind": "session",
+  "version": "0.5.0",
+  "whoami": {
+    "session_id": "ses_e3bf8a8b5fb9b5885d5e5130",
+    "binding_alias": "personal",
+    "binding_id": "bnd_personal",
+    "tenant": "personal",
+    "principal": null,
+    "providers": [
+      {
+        "provider": "supabase",
+        "account": "personal",
+        "credential": {
+          "present": true,
+          "source": "phantom"
+        },
+        "project_ref": "personal_ref_replace_me",
+        "team_id": null,
+        "account_id": null,
+        "read_only": false,
+        "orgs": []
+      },
+      {
+        "provider": "github",
+        "account": "personal",
+        "credential": {
+          "present": true,
+          "source": "phantom"
+        },
+        "project_ref": null,
+        "team_id": null,
+        "account_id": null,
+        "read_only": null,
+        "orgs": []
+      },
+      {
+        "provider": "vercel",
+        "account": "personal",
+        "credential": {
+          "present": true,
+          "source": "phantom"
+        },
+        "project_ref": null,
+        "team_id": "team_personal_replace_me",
+        "account_id": null,
+        "read_only": null,
+        "orgs": []
+      }
+    ],
+    "expires_at": "2026-10-14T19:24:00.917745241+00:00",
+    "expires_in_secs": 43199,
+    "worker_home": "<LOCUS_HOME>/workers/ses_e3bf8a8b5fb9b5885d5e5130",
+    "seal_ok": true,
+    "seal": "hmac-sha256:fb969c51540849f0a6d12d25f6ae5e744d07fb0c669da9a91425582f8ddc6f85",
+    "authority": "local_control",
+    "authority_anchor_ok": true,
+    "backing_type": "active",
+    "backing_path": "<LOCUS_HOME>/sessions/active.json",
+    "frozen": false,
+    "mode": "exclusive"
+  },
+  "doctor": {
+    "version": "0.5.0",
+    "home": "<LOCUS_HOME>",
+    "seal_ok": true,
+    "bindings": 2,
+    "pinned": "personal",
+    "pin": {
+      "alias": "personal",
+      "tenant": "personal",
+      "binding_id": "bnd_personal",
+      "expires_at": "2026-10-14T19:24:00.917745241+00:00",
+      "expires_in_secs": 43199,
+      "seal_ok": true,
+      "authority_anchor_verified": true,
+      "client": "cli",
+      "expired": false
+    },
+    "pin_seal_ok": true,
+    "runtime": {
+      "pinned": true,
+      "seal_ok": true,
+      "authority_anchor_ok": true,
+      "backing_ok": true,
+      "backing_type": "active",
+      "backing_path": "<LOCUS_HOME>/sessions/active.json",
+      "authority": "local_control",
+      "binding_present": true,
+      "binding_id_match": true,
+      "tenant_match": true,
+      "providers_match": true,
+      "frozen": false,
+      "expired": false,
+      "session_id": "ses_e3bf8a8b5fb9b5885d5e5130",
+      "binding_alias": "personal",
+      "binding_id_session": "bnd_personal",
+      "binding_id_file": "bnd_personal",
+      "tenant_session": "personal",
+      "tenant_file": "personal",
+      "providers": [
+        {
+          "provider": "supabase",
+          "account": "personal",
+          "credential": {
+            "present": true,
+            "source": "phantom"
+          },
+          "project_ref": "personal_ref_replace_me",
+          "team_id": null,
+          "account_id": null,
+          "read_only": false,
+          "orgs": []
+        },
+        {
+          "provider": "github",
+          "account": "personal",
+          "credential": {
+            "present": true,
+            "source": "phantom"
+          },
+          "project_ref": null,
+          "team_id": null,
+          "account_id": null,
+          "read_only": null,
+          "orgs": []
+        },
+        {
+          "provider": "vercel",
+          "account": "personal",
+          "credential": {
+            "present": true,
+            "source": "phantom"
+          },
+          "project_ref": null,
+          "team_id": "team_personal_replace_me",
+          "account_id": null,
+          "read_only": null,
+          "orgs": []
+        }
+      ],
+      "issues": [],
+      "ok": true
+    },
+    "approvals": {
+      "dir": "<LOCUS_HOME>/approvals",
+      "exists": true,
+      "writable": true,
+      "total": 0,
+      "pending": 0,
+      "approved_valid": 0,
+      "untrusted_approved": 0,
+      "expired_grants": 0,
+      "denied": 0,
+      "corrupt": 0,
+      "approval_authority": "local_advisory",
+      "authoritative_path_enabled": false,
+      "ok": true
+    },
+    "pending_approvals": 0,
+    "dual_control_waiting": 0,
+    "phantom_on_path": false,
+    "unresolved_phm": [
+      {
+        "provider": "github",
+        "source": "phantom",
+        "code": "unavailable"
+      },
+      {
+        "provider": "supabase",
+        "source": "phantom",
+        "code": "unavailable"
+      },
+      {
+        "provider": "vercel",
+        "source": "phantom",
+        "code": "unavailable"
+      }
+    ],
+    "autopin": {
+      "path": "<LOCUS_HOME>/config.toml",
+      "present": true,
+      "remote_autopin_enabled": false,
+      "remote_rules": 0,
+      "ok": true,
+      "note": "auto_pin unset (manual pin only)"
+    },
+    "workspace": {
+      "found": false,
+      "valid": true,
+      "allowed_bindings": [],
+      "require_pin": false
+    },
+    "audit": {
+      "path": "<LOCUS_HOME>/audit/events.jsonl",
+      "total": 1,
+      "last": [
+        {
+          "ts": "2026-10-14T07:24:00.948220496+00:00",
+          "op": "session.pin",
+          "binding": "personal",
+          "detail": {
+            "cwd": "<CWD>",
+            "mode": "exclusive",
+            "namespaces": [],
+            "session_id": "ses_e3bf8a8b5fb9b5885d5e5130",
+            "tenant": "personal",
+            "ttl_secs": 43200,
+            "ttl_source": "max_ttl"
+          }
+        }
+      ],
+      "scope_freeze": 0,
+      "deny": 0
+    },
+    "near_miss_count": 0,
+    "near_miss": {
+      "window_hours": 24,
+      "count": 0,
+      "scope_freeze": 0,
+      "require_approval": 0
+    },
+    "findings": [
+      {
+        "severity": "warn",
+        "code": "phantom_missing",
+        "message": "phantom not on PATH (install Phantom Secrets for Phantom credential references)"
+      },
+      {
+        "severity": "warn",
+        "code": "unresolved_phm",
+        "message": "unavailable credentials: provider=github source=phantom code=unavailable, provider=supabase source=phantom code=unavailable, provider=vercel source=phantom code=unavailable"
+      },
+      {
+        "severity": "info",
+        "code": "control_capability_persisted",
+        "message": "control capability persisted — same-user processes can run control commands; use locus capability unpersist + shell export for strict posture"
+      }
+    ],
+    "issues": [
+      "phantom not on PATH (install Phantom Secrets for Phantom credential references)",
+      "unavailable credentials: provider=github source=phantom code=unavailable, provider=supabase source=phantom code=unavailable, provider=vercel source=phantom code=unavailable",
+      "control capability persisted — same-user processes can run control commands; use locus capability unpersist + shell export for strict posture"
+    ],
+    "verdict": "WARN",
+    "ok": false
+  },
+  "safe_next": {
+    "action": "ready",
+    "agent_tool": "locus_whoami",
+    "message": "Identity plane ready under pin `personal` (tenant `personal`). Proceed with provider tools; do not invent alternate scopes.",
+    "ready": true,
+    "binding": "personal",
+    "tenant": "personal"
+  },
+  "session_ok": false
+}
