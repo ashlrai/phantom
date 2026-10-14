@@ -18,7 +18,9 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
   }
   const links = new Map<string, string[]>();
   for (const event of scoped.values()) {
-    const edges = [...event.supersedes, ...event.derivedFrom, ...event.tombstones];
+    // Deletion is not ancestry: tombstone targets are applied one by one below and never
+    // void the whole deletion because another named target is missing, foreign or unreviewed.
+    const edges = [...event.supersedes, ...event.derivedFrom];
     links.set(event.eventId, edges);
     if (edges.some(id => {
       const target = scoped.get(id);
@@ -47,7 +49,10 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
   // Tombstones are retained deletion decisions, not historical facts; asOf cannot resurrect them.
   for (const event of scoped.values()) {
     if (event.kind === 'tombstone' && !excluded.has(event.eventId)) {
-      event.tombstones.forEach(id => excluded.set(id, 'tombstoned'));
+      event.tombstones.forEach(id => {
+        const target = scoped.get(id);
+        if (target?.kind === 'fact' && sameMemoryScope(event, target)) excluded.set(id, 'tombstoned');
+      });
       excluded.set(event.eventId, 'tombstone-event');
     }
   }
@@ -61,10 +66,12 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
   for (const event of scoped.values()) {
     // A retired, expired or tombstoned successor never resurrects its predecessor.
     // Historical queries before the successor's effective date still admit the predecessor.
-    if (event.kind === 'fact' && event.validFrom !== null && event.validFrom <= query.time.at
-      && !['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(event.eventId) ?? '')) event.supersedes.forEach(id => {
-      if (!excluded.has(id)) excluded.set(id, 'superseded');
-    });
+    // An admitted, effective correction whose lineage is unusable is an unresolved reviewed
+    // objection: its in-scope predecessors are refused rather than served as the stale value.
+    if (event.kind === 'fact' && event.validFrom !== null && event.validFrom <= query.time.at) {
+      const reason = ['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(event.eventId) ?? '') ? 'conflict' : 'superseded';
+      event.supersedes.forEach(id => { if (scoped.has(id) && !excluded.has(id)) excluded.set(id, reason); });
+    }
   }
   // A durable reviewed revocation never silently falls back to an older same-fact answer.
   // Future/unseen revocations do not alter an earlier valid-time or knowledge-time view.
