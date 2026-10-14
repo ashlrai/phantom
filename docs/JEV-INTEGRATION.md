@@ -58,9 +58,9 @@ comparison is not operational learning credit, production acceptance, merge
 permission, or proof of a complete success-rate denominator. The existing
 post-merge learning release remains disabled; ratings do not change routing,
 skill promotion, budgets, credentials, or merge policy. Source and implementation:
-[`pr-ratings.ts`](../src/core/fleet/pr-ratings.ts),
-[`scorecard.ts`](../src/core/fleet/scorecard.ts), and
-[`pr-ratings.test.ts`](../test/pr-ratings.test.ts).
+[`pr-ratings.ts`](https://github.com/ashlrai/phantom/blob/master/src/core/fleet/pr-ratings.ts),
+[`scorecard.ts`](https://github.com/ashlrai/phantom/blob/master/src/core/fleet/scorecard.ts), and
+[`pr-ratings.test.ts`](https://github.com/ashlrai/phantom/blob/master/test/pr-ratings.test.ts).
 
 Jev is a "System One" decision model: you send state plus typed questions and get back a label, a
 probability distribution over the options, and a **separate confidence value**. Their framing is the

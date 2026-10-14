@@ -403,6 +403,7 @@
     "src/core/fleet/post-merge-stability.ts",
     "src/core/fleet/post-merge-watch.ts",
     "src/core/fleet/post-merge-window.ts",
+    "src/core/fleet/pr-ratings.ts",
     "src/core/fleet/proposal-funnel-observability.ts",
     "src/core/fleet/proposal-matching.ts",
     "src/core/fleet/proposal-repair-identity.ts",
