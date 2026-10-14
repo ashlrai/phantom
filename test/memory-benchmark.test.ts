@@ -1,7 +1,9 @@
 /** Offline memory quality benchmark: fixture validity, determinism, gold self-consistency and governed floors. */
 import { describe, expect, it } from 'vitest';
 import { benchmarkMemoryCli, parseMemoryBenchmarkArgs } from '../scripts/benchmark-memory.js';
-import { MEMORY_BENCHMARK_DIMENSIONS, memoryBenchmarkCases, runMemoryBenchmark, type MemoryBenchmarkBuilder } from '../src/core/local-eval/memory-benchmark.js';
+import { MEMORY_BENCHMARK_DIMENSIONS, benchEvent, benchQuery, benchSnapshot, memoryBenchmarkCases, runMemoryBenchmark,
+  type MemoryBenchmarkBuilder } from '../src/core/local-eval/memory-benchmark.js';
+import { buildMemoryContextPack } from '../src/core/memory/pack.js';
 import { validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
 import type { MemoryContextPack } from '../src/core/memory/types.js';
 
@@ -49,6 +51,43 @@ describe('memory quality benchmark', () => {
     expect(governed!.overall.forbiddenLeaks).toBe(0);
     for (const dimension of ['contradiction', 'temporal', 'withdrawal'] as const) expect(governed!.byDimension[dimension].passRate).toBe(1);
     expect(governed!.pendingDecisions.map(entry => entry.id)).toEqual(['withdrawal:audience-mismatch']);
+  });
+  it('holds the measured governed floors so ranking or pack changes cannot silently regress', () => {
+    const governed = runMemoryBenchmark().arms[0]!;
+    expect(governed.retrievalByDifficulty.lexical.passed).toBe(20);
+    expect(governed.retrievalByDifficulty.inflected.passed).toBe(20);
+    expect(governed.retrievalByDifficulty.absent.passed).toBeGreaterThanOrEqual(3);
+    expect(governed.byDimension.task.passed).toBeGreaterThanOrEqual(7);
+    expect(governed.overall.conflictsSurfaced).toBe(governed.overall.conflictsTotal);
+    expect(governed.overall.payloadRatio).toBeGreaterThan(0.045);
+  });
+  it('names a contested slot the query touches without quoting either claim, and stays quiet for unrelated queries', () => {
+    const a = 'Deployment target is the staging cluster.'; const b = 'Deployment target is the canary cluster.';
+    const snapshot = benchSnapshot('notice', [benchEvent({ id: 'a', subject: 'deploy', slot: 'target', text: a }),
+      benchEvent({ id: 'b', subject: 'deploy', slot: 'target', text: b }), benchEvent({ id: 'c', subject: 'lint', slot: 'rule', text: 'Lint must pass.' })]);
+    const touched = buildMemoryContextPack(snapshot, benchQuery('what is the deployment target'));
+    expect(touched.status).toBe('none');
+    expect(touched.text).toContain('Unresolved conflict: subject deploy, slot target (2 withheld).');
+    expect(touched.text).not.toContain('staging'); expect(touched.text).not.toContain('canary');
+    expect(touched.bytes).toBe(Buffer.byteLength(touched.text));
+    const unrelated = buildMemoryContextPack(snapshot, benchQuery('what does lint require'));
+    expect(unrelated.status).toBe('ready'); expect(unrelated.text).not.toContain('conflict');
+    const tight = buildMemoryContextPack(snapshot, benchQuery('deployment target', { maxBytes: 256 }));
+    expect(tight.text).toBe(''); expect(tight.receipt.stopReasons).toContain('conflict-notice-budget');
+  });
+  it('ignores function words, folds simple suffixes, keeps other scripts exact and states the view once', () => {
+    const snapshot = benchSnapshot('rank', [benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build the workspace with npm run build.' }),
+      benchEvent({ id: 'b', subject: 'docs', slot: 'site', text: 'The docs are where the site is.' }),
+      benchEvent({ id: 'c', subject: 'deploy', slot: 'note', text: '部署 は 金曜 に 停止 します。' })]);
+    expect(buildMemoryContextPack(snapshot, benchQuery('how are builds produced')).receipt.selectedEventIds).toEqual(['a']);
+    expect(buildMemoryContextPack(snapshot, benchQuery('what is the office parking')).status).toBe('none');
+    expect(buildMemoryContextPack(snapshot, benchQuery('金曜')).receipt.selectedEventIds).toEqual(['c']);
+    // A query of only function words still ranks by them rather than giving every fact equal score.
+    expect(buildMemoryContextPack(snapshot, benchQuery('where is the')).receipt.selectedEventIds).toEqual(['b', 'a']);
+    const pack = buildMemoryContextPack(snapshot, benchQuery('build', { knownAt: '2026-09-20T00:00:00.000Z' }));
+    expect(pack.text.split('\n')[1]).toBe('<phantom-memory-evidence authority="false" review="caller-recorded-approval-not-truth-proof" '
+      + 'time-mode="current" time-at="2026-09-30T00:00:00.000Z" known-at="2026-09-20T00:00:00.000Z">');
+    expect(pack.text.match(/known-?at/gi)).toHaveLength(1);
   });
   it('the CLI accepts only its two flags and reports source identity without gating', () => {
     expect(parseMemoryBenchmarkArgs([])).toEqual({ cases: false });

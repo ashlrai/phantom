@@ -140,12 +140,25 @@ This shared screening is not exhaustive private-data detection. A successful
 pack says `contentSafety: 'screened-with-shared-patterns'`, not that all content
 is safe to publish or send to a provider.
 
-After eligibility checks, ranking counts unique lexical query matches in the
-subject, slot and text; an empty query gives each eligible event equal score.
-Ties use event ID order. Each complete fact and its citations are canonical JSON
+After eligibility checks, ranking counts unique query terms that match the
+subject, slot and text. Common function words (`the`, `how`, `what` ...) are
+ignored unless the query has nothing else, and ASCII words are folded by a small
+fixed suffix list, so `builds`, `building` and `build` match. Other scripts are
+compared exactly. An empty query gives each eligible event equal score. Ties go
+to the event whose matched terms are rarer among eligible facts, then to event
+ID order. There are no synonyms: a query that shares no word stem with a fact
+does not find it. Each complete fact and its citations are canonical JSON
 inside a fixed evidence boundary, with angle brackets escaped so quoted text
-cannot close that boundary. Quoted instructions remain data;
-`authority: false` never grants tool use, deployment or account access.
+cannot close that boundary. The view (time mode, time, knowledge cutoff) and the
+review disclaimer are stated once on the boundary tag rather than in every fact.
+Quoted instructions remain data; `authority: false` never grants tool use,
+deployment or account access.
+
+When the query touches a slot whose claims were withheld as a `conflict` or
+`revision-conflict`, the pack adds one line naming the subject, slot and number
+of withheld claims, and asks the reader to check before relying on it. The
+contested text itself never appears. These lines count toward the byte budget;
+if one does not fit, the receipt records `conflict-notice-budget`.
 
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt
@@ -153,7 +166,8 @@ and item metadata are separate bounded outputs, not included in that text
 budget. The token estimate is explicitly UTF8 bytes divided by four, rounded
 up; it is not an exact model tokenizer count.
 
-Pack status distinguishes `ready` from `none` (no selected eligible evidence),
+Pack status distinguishes `ready` from `none` (no selected eligible evidence;
+the text may still carry conflict lines),
 `unknown`, `unavailable` and `refused`. An incomplete available snapshot is
 unavailable. `none` may reflect irrelevant evidence or budget omissions; inspect
 the receipt rather than interpreting it as proof that memory does not exist.
