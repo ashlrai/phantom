@@ -34,6 +34,7 @@ that every integration, provider or autonomous effect is active.
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
+| Explore Phantom supervising Codex and Claude desktop sessions | [Desktop app orchestration research](DESKTOP-APP-ORCHESTRATION-RESEARCH.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
@@ -55,6 +56,16 @@ the command surface in the exact binary you are running. A source guide may
 describe features not present in an older registry or desktop release.
 
 ## For coding agents
+
+Public installation and setup guides are at [phm.dev/docs](https://phm.dev/docs),
+with [workbench agent setup](https://phm.dev/docs/workbench-agents), a
+[raw Markdown manifest](https://phm.dev/docs/manifest.json), and separate
+[compact](https://phm.dev/workbench/llms.txt) and
+[full](https://phm.dev/workbench/llms-full.txt) workbench references.
+Source builds containing `docs --online` can print these URLs offline with
+`phm docs --online --json`. This discovery output does not open a browser or
+establish provider readiness. The installed command registry remains the
+authority for the binary's supported commands.
 
 Start with the selected command registry from the binary you intend to use:
 

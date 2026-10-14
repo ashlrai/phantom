@@ -3,12 +3,16 @@
  * test selection, and how a vitest run becomes PASS / FAIL. Plus the two data
  * files it reads, which must only name test files that exist.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   GATE_BUILD_ASSET_SCRIPTS,
   buildCommands,
+  classifyPlanPath,
+  createPlanReport,
   evaluateVitest,
   formatDuration,
   loadKnownFailures,
@@ -25,13 +29,14 @@ const smoke = { backend: ['test/smoke-a.test.ts'], web: ['src/web-ui/smoke-b.tes
 
 describe('parseArgs', () => {
   it('defaults to related mode against the default base', () => {
-    expect(parseArgs([])).toEqual({ full: false, base: null, json: false, failFast: false, help: false });
+    expect(parseArgs([])).toEqual({ full: false, base: null, json: false, plan: false, failFast: false, help: false });
   });
 
   it('accepts --base in both spellings, --json, --fail-fast, --full', () => {
     expect(parseArgs(['--base', 'v3.11.0', '--json']).base).toBe('v3.11.0');
     expect(parseArgs(['--base=HEAD~3']).base).toBe('HEAD~3');
     expect(parseArgs(['--full', '--fail-fast'])).toMatchObject({ full: true, failFast: true });
+    expect(parseArgs(['--plan', '--json'])).toMatchObject({ plan: true, json: true });
   });
 
   it('rejects unknown flags, a missing ref, and --full with --base', () => {
@@ -39,6 +44,124 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--base'])).toThrow(/needs a ref/);
     expect(() => parseArgs(['--base', '--json'])).toThrow(/needs a ref/);
     expect(() => parseArgs(['--full', '--base', 'x'])).toThrow(/no effect/);
+  });
+});
+
+describe('read-only gate plan', () => {
+  it('reuses qualification domains without treating the complement as safe', () => {
+    expect(classifyPlanPath('src/core/fleet/merge.ts')).toMatchObject({ category: 'backend-or-authority-change', qualificationReason: 'backend-or-authority-change' });
+    expect(classifyPlanPath('.github/workflows/ci.yml')).toMatchObject({ category: 'workflow-or-policy-or-tool-change', importSelection: 'not-import-selected' });
+    expect(classifyPlanPath('desktop/src-tauri/src/main.rs').qualificationReason).toBe('native-or-tool-change');
+    expect(classifyPlanPath('docs/QUICKSTART.md')).toMatchObject({ category: 'documentation-change', qualificationReason: null, importSelection: 'not-import-selected' });
+    expect(classifyPlanPath('surprise.unknown')).toMatchObject({ category: 'unclassified-change', qualificationReason: null });
+  });
+
+  it('reports proposed selectors without claiming test collection or release admission', () => {
+    const changes = { mergeBase: 'a'.repeat(40), changed: ['docs/QUICKSTART.md'], dependencyKeys: [], lockfileChanged: false };
+    const selection = planTests({ ...changes, full: false, smoke });
+    const report = createPlanReport({ source: { revision: 'b'.repeat(40), tree: 'c'.repeat(40), dirty: true }, baseRef: 'HEAD~1', changes, selection, full: false });
+    expect(report).toMatchObject({ schema: 'phantom-gate-plan/v1', checksExecuted: false, releaseAdmission: false, source: { dirty: true }, selection });
+    expect(report).not.toHaveProperty('ok');
+    expect(report.limitations.join(' ')).toMatch(/collection has not been observed/);
+    expect(report.limitations.join(' ')).toMatch(/complete exact-source hosted CI/);
+  });
+
+  function fixture(run: (root: string, git: (...args: string[]) => string) => void) {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'phantom-gate-plan-')));
+    const git = (...args: string[]) => execFileSync('git', ['--no-optional-locks', ...args], { cwd: root, encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      mkdirSync(join(root, 'scripts'));
+      mkdirSync(join(root, '.github', 'scripts'), { recursive: true });
+      for (const path of ['scripts/gate.mjs', 'scripts/gate-smoke.json', '.github/scripts/ci-impact-policy.mjs']) cpSync(join(repoRoot, path), join(root, path));
+      writeFileSync(join(root, 'package.json'), '{"type":"module","version":"1.0.0"}\n');
+      git('init', '--quiet');
+      git('add', '.');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${join(root, 'absent-hooks')}`, 'commit', '--quiet', '-m', 'fixture');
+      run(root, git);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+
+  function snapshot(root: string) {
+    const files: Array<{ path: string; bytes: string; mtimeMs: number }> = [];
+    const visit = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) visit(path);
+        else files.push({ path: relative(root, path), bytes: readFileSync(path).toString('hex'), mtimeMs: statSync(path).mtimeMs });
+      }
+    };
+    visit(root);
+    return files.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  it('previews clean source with no dependencies, build, tests, cache, or index writes', () => {
+    fixture((root, git) => {
+      const before = snapshot(root);
+      const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--json', '--base', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.source).toEqual({ revision: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}'), dirty: false });
+      expect(report.changedPaths).toEqual([]);
+      expect(report.selection.backend.mode).toBe('smoke');
+      expect(snapshot(root)).toEqual(before);
+      expect(existsSync(join(root, '.ashlr-gate'))).toBe(false);
+      expect(existsSync(join(root, 'dist'))).toBe(false);
+    });
+  });
+
+  it('preserves staged, unstaged and untracked paths verbatim, including a newline', () => {
+    fixture((root, git) => {
+      writeFileSync(join(root, 'package.json'), '{"type":"module","version":"1.0.1"}\n');
+      git('add', 'package.json');
+      writeFileSync(join(root, 'scripts/gate-smoke.json'), readFileSync(join(root, 'scripts/gate-smoke.json'), 'utf8') + '\n');
+      const unusual = ' docs with space\nand newline.md';
+      writeFileSync(join(root, unusual), 'documentation\n');
+      // A stale cache must survive planning even when dist is absent.
+      mkdirSync(join(root, '.ashlr-gate'));
+      writeFileSync(join(root, '.ashlr-gate/tsc.tsbuildinfo'), 'sentinel');
+      const before = snapshot(root);
+      const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--json', '--base', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.source.dirty).toBe(true);
+      expect(report.changedPaths.map((row: { path: string }) => row.path)).toEqual(expect.arrayContaining(['package.json', 'scripts/gate-smoke.json', unusual]));
+      expect(report.dependencyKeys).toEqual([]);
+      expect(snapshot(root)).toEqual(before);
+    });
+  });
+
+  it('previews full selection without requiring a remote base', () => {
+    fixture((root) => {
+      const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--full', '--json'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ base: { ref: 'HEAD', changedPathScope: 'working-tree-vs-head' }, selection: { backend: { mode: 'full' }, web: { mode: 'full' } }, checksExecuted: false });
+    });
+  });
+
+  it.skipIf(process.platform === 'win32')('does not invoke a configured external Git fsmonitor hook', () => {
+    fixture((root, git) => {
+      const hook = join(root, '.git', 'test-fsmonitor');
+      writeFileSync(hook, '#!/bin/sh\nprintf sentinel > fsmonitor-was-run\nprintf "\\0"\n');
+      chmodSync(hook, 0o755);
+      git('config', 'core.fsmonitor', hook);
+      const before = snapshot(root);
+      const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--json', '--base', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).checksExecuted).toBe(false);
+      expect(existsSync(join(root, 'fsmonitor-was-run'))).toBe(false);
+      expect(snapshot(root)).toEqual(before);
+    });
+  });
+
+  it('refuses an unresolved base without creating output or running checks', () => {
+    fixture((root) => {
+      const before = snapshot(root);
+      const result = spawnSync(process.execPath, [join(root, 'scripts/gate.mjs'), '--plan', '--json', '--base', 'missing-ref'], { cwd: root, encoding: 'utf8', timeout: 5_000 });
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toMatch(/cannot find a merge-base/);
+      expect(snapshot(root)).toEqual(before);
+    });
   });
 });
 
