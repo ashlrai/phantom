@@ -50,7 +50,8 @@ describe('memory quality benchmark', () => {
     expect(flat!.overall.forbiddenLeaks).toBeGreaterThan(0);
     expect(governed!.overall.forbiddenLeaks).toBe(0);
     for (const dimension of ['contradiction', 'temporal', 'withdrawal'] as const) expect(governed!.byDimension[dimension].passRate).toBe(1);
-    expect(governed!.pendingDecisions.map(entry => entry.id)).toEqual(['withdrawal:audience-mismatch']);
+    expect(governed!.pendingDecisions).toEqual([]);
+    expect(governed!.overall.receiptForeignEventIds).toBe(0);
   });
   it('holds the measured governed floors so ranking or pack changes cannot silently regress', () => {
     const governed = runMemoryBenchmark().arms[0]!;

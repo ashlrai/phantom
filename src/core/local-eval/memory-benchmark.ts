@@ -190,9 +190,8 @@ function withdrawalCases(): MemoryBenchmarkCase[] {
     one('other-fact', 'Withdrawing one fact leaves another fact in the same subject alone.',
       [base, withdraw(), benchEvent({ id: 'w:window', subject: 'deploy', slot: 'window', text: fact('deploy', 'window').text })],
       benchQuery('deployment target and when deploys are frozen'), { required: [fact('deploy', 'window').text], forbidden: [text] }),
-    one('audience-mismatch', 'A visible withdrawal whose audience list differs from the fact\'s.',
-      [base, withdraw({ audiences: [AUDIENCE, 'audience:human'] })], benchQuery(q), { required: [], forbidden: [text] },
-      'PR #725 open question: should a withdrawal with a different audience list retire or conflict the fact?'),
+    one('audience-mismatch', 'A visible reviewed withdrawal retires the fact even when its audience list differs (decided in #744).',
+      [base, withdraw({ audiences: [AUDIENCE, 'audience:human'] })], benchQuery(q), { status: 'none', required: [], forbidden: [text] }),
   ];
 }
 function taskCases(): MemoryBenchmarkCase[] {
