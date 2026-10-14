@@ -170,6 +170,31 @@ work within explicit authority. Its optimization target is measured useful
 delivery, latency and verified quality; app activity or critic ambition alone
 does not establish successful delivery.
 
+## Additive capability discovery in source
+
+`phm resources launcher capabilities --provider codex|claude --command ABS_JSON
+--cwd ABS_PRIVATE_DIR --json` is a help/version-only discovery surface in source
+builds containing this command. It uses the existing trusted launcher input and
+bounded runner, separates upstream advertised capabilities from implemented
+Phantom transports, and inspects no sessions. `runtimeReadiness` is
+`not-inspected`; `sessionsInspected` and `controlEnabled` remain false.
+Vendor startup/cache side effects are not attested. Source availability does not
+establish a published or installed release. See the
+[resource-pool discovery contract](RESOURCE-POOLS.md#discover-advertised-native-session-surfaces).
+
+The proposed session observation and ownership phases below remain unimplemented
+by this addition. App-server protocol methods, daemon lifecycle, desktop transfer
+and permission changes require their separate qualification.
+
+## Parallel delivery tracks
+
+Develop native background sessions with desktop handoff and direct desktop
+operation together, keeping Phantom as the single user surface. The desktop
+track extends the existing computer relay and preserves its Phantom-window
+polling invariant. It needs app-specific grants, target binding, stale-state
+refusal and verified readback before any controls can be enabled. Capability
+discovery alone enables neither track.
+
 ## Proposed phases and acceptance criteria
 
 1. **Inventory and observe.** Version-qualified capability reports, scoped

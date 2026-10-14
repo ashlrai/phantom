@@ -75,7 +75,7 @@ function configuration(options: ResourceLauncherCompatibilityOptions) {
 }
 
 /** Only declaration lines in a conventional Options section count, never prose or examples. */
-function advertisedFlags(output: string, required: readonly string[]): string[] {
+export function resourceLauncherDeclaredFlags(output: string, required: readonly string[]): string[] {
   let options = false;
   const flags = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
@@ -87,17 +87,23 @@ function advertisedFlags(output: string, required: readonly string[]): string[] 
   }
   return required.filter((flag) => flags.has(flag));
 }
-function advertisedCommand(output: string, command: 'agent' | 'stdio'): boolean {
+/** Command declarations only; descriptions, examples and prefix matches earn no evidence. */
+export function resourceLauncherDeclaredCommands(output: string): string[] {
   let commands = false;
+  const observed = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
     if (/^Commands:\s*$/.test(line)) { commands = true; continue; }
     if (!commands) continue;
     if (/^\S/.test(line)) { commands = false; continue; }
-    if (new RegExp(`^\\s+${command}(?:\\s{2,}|\\s*$)`).test(line)) return true;
+    const name = /^\s+([a-z][a-z0-9-]*)(?:\s{2,}|\s*$)/.exec(line)?.[1];
+    if (name) observed.add(name);
   }
-  return false;
+  return [...observed];
 }
-function versionNumber(provider: ResourceLauncherProvider, output: string): string | null {
+function advertisedCommand(output: string, command: 'agent' | 'stdio'): boolean {
+  return resourceLauncherDeclaredCommands(output).includes(command);
+}
+export function resourceLauncherVersion(provider: ResourceLauncherProvider, output: string): string | null {
   const number = '(\\d{1,6}\\.\\d{1,6}\\.\\d{1,6})';
   const pattern = provider === 'codex' ? `^codex-cli ${number}(?:-[a-z0-9.-]{1,32})?$`
     : provider === 'claude' ? `^${number} \\(Claude Code\\)$`
@@ -114,32 +120,33 @@ function olderClaude(version: string | null): boolean {
   return false;
 }
 
-/**
- * At most four sequential help/version invocations under one shared deadline.
- * Trusted wrappers/native startup may maintain their own configuration; this is
- * not a sandbox or account/billing check. No auth command, ACP initialization,
- * prompt, model request, credential selection, update or installation is requested.
- */
-export async function checkResourceLauncherCompatibility(
-  options: ResourceLauncherCompatibilityOptions,
-): Promise<ResourceLauncherCompatibilityResult> {
+export type ResourceLauncherHelpTopic = 'version' | 'global' | 'codex-exec' | 'codex-app-server' |
+  'claude-agents' | 'grok-agent' | 'grok-stdio';
+
+function helpTopicArguments(provider: ResourceLauncherProvider, topic: ResourceLauncherHelpTopic): string[] {
+  if (topic === 'version') return ['--version'];
+  if (topic === 'global') return ['--help'];
+  if (provider === 'codex' && topic === 'codex-exec') return ['exec', '--help'];
+  if (provider === 'codex' && topic === 'codex-app-server') return ['app-server', '--help'];
+  if (provider === 'claude' && topic === 'claude-agents') return ['agents', '--help'];
+  if (provider === 'grok' && topic === 'grok-agent') return ['agent', '--help'];
+  if (provider === 'grok' && topic === 'grok-stdio') return ['agent', 'stdio', '--help'];
+  throw new Error('Unsupported launcher help topic');
+}
+
+/** Shared trusted-launcher probe: four fixed help/version requests under one deadline. */
+export function createResourceLauncherHelpProbe(options: ResourceLauncherCompatibilityOptions) {
   let pinned: ReturnType<typeof configuration>;
   try { pinned = configuration(options); } catch { throw new Error('Invalid resource launcher compatibility configuration'); }
-  const started = performance.now(); const startedAt = new Date().toISOString();
-  const required = [...REQUIRED[pinned.provider]];
-  let version: string | null = null;
-  const result = (status: ResourceLauncherCompatibilityResult['status'], reason: ResourceLauncherCompatibilityReason,
-    observed: string[] = [], advertised = false): ResourceLauncherCompatibilityResult => ({
-    schemaVersion: 1, scope: 'native-cli-help', provider: pinned.provider, status, reason, version,
-    requiredFlags: [...required], observedFlags: [...observed], missingFlags: required.filter((flag) => !observed.includes(flag)),
-    hubTransport: pinned.provider === 'grok' ? 'not-implemented' : 'native-cli',
-    upstreamTransport: pinned.provider === 'grok' ? 'acp' : 'native-cli',
-    upstreamCapability: advertised ? 'advertised' : 'unverified', startedAt, finishedAt: new Date().toISOString(),
-  });
-  if (pinned.signal?.aborted) return result('unavailable', 'launcher-cancelled');
-  if (process.platform === 'win32') return result('unavailable', 'launcher-platform-unsupported');
+  const started = performance.now();
+  const startedAt = new Date().toISOString();
   let failure: ResourceLauncherCompatibilityReason | undefined;
-  const invoke = async (suffix: string[]): Promise<string | null> => {
+  let calls = 0;
+  const invoke = async (topic: ResourceLauncherHelpTopic): Promise<string | null> => {
+    const suffix = helpTopicArguments(pinned.provider, topic);
+    if (++calls > 4) throw new Error('Help probe invocation limit');
+    if (failure) return null;
+    if (process.platform === 'win32') { failure = 'launcher-platform-unsupported'; return null; }
     if (pinned.signal?.aborted) { failure = 'launcher-cancelled'; return null; }
     const remaining = Math.floor(pinned.timeoutMs - (performance.now() - started));
     if (remaining < 1) { failure = 'launcher-timed-out'; return null; }
@@ -160,24 +167,50 @@ export async function checkResourceLauncherCompatibility(
       return failure ? null : processResult.stdout;
     } catch { failure = 'launcher-process-failed'; return null; }
   };
-  const versionOutput = await invoke(['--version']);
-  if (versionOutput === null) return result('unavailable', failure!);
-  version = versionNumber(pinned.provider, versionOutput);
-  let help = await invoke(pinned.provider === 'codex' ? ['exec', '--help'] : ['--help']);
-  if (help === null) return result('unavailable', failure!);
-  if (pinned.provider === 'grok') {
+  return { provider: pinned.provider, startedAt, invoke, failure: () => failure };
+}
+
+/**
+ * At most four sequential help/version invocations under one shared deadline.
+ * Trusted wrappers/native startup may maintain their own configuration; this is
+ * not a sandbox or account/billing check. No auth command, ACP initialization,
+ * prompt, model request, credential selection, update or installation is requested.
+ */
+export async function checkResourceLauncherCompatibility(
+  options: ResourceLauncherCompatibilityOptions,
+): Promise<ResourceLauncherCompatibilityResult> {
+  const probe = createResourceLauncherHelpProbe(options);
+  const provider = probe.provider;
+  const required = [...REQUIRED[provider]];
+  let version: string | null = null;
+  const result = (status: ResourceLauncherCompatibilityResult['status'], reason: ResourceLauncherCompatibilityReason,
+    observed: string[] = [], advertised = false): ResourceLauncherCompatibilityResult => ({
+    schemaVersion: 1, scope: 'native-cli-help', provider, status, reason, version,
+    requiredFlags: [...required], observedFlags: [...observed], missingFlags: required.filter((flag) => !observed.includes(flag)),
+    hubTransport: provider === 'grok' ? 'not-implemented' : 'native-cli',
+    upstreamTransport: provider === 'grok' ? 'acp' : 'native-cli',
+    upstreamCapability: advertised ? 'advertised' : 'unverified', startedAt: probe.startedAt, finishedAt: new Date().toISOString(),
+  });
+  if (options.signal?.aborted) return result('unavailable', 'launcher-cancelled');
+  if (process.platform === 'win32') return result('unavailable', 'launcher-platform-unsupported');
+  const versionOutput = await probe.invoke('version');
+  if (versionOutput === null) return result('unavailable', probe.failure()!);
+  version = resourceLauncherVersion(provider, versionOutput);
+  let help = await probe.invoke(provider === 'codex' ? 'codex-exec' : 'global');
+  if (help === null) return result('unavailable', probe.failure()!);
+  if (provider === 'grok') {
     if (!advertisedCommand(help, 'agent')) return result('incompatible', 'launcher-upstream-capability-unverified');
-    help = await invoke(['agent', '--help']);
-    if (help === null) return result('unavailable', failure!);
+    help = await probe.invoke('grok-agent');
+    if (help === null) return result('unavailable', probe.failure()!);
     if (!advertisedCommand(help, 'stdio')) return result('incompatible', 'launcher-upstream-capability-unverified');
-    help = await invoke(['agent', 'stdio', '--help']);
-    if (help === null) return result('unavailable', failure!);
-    const flags = advertisedFlags(help, required);
+    help = await probe.invoke('grok-stdio');
+    if (help === null) return result('unavailable', probe.failure()!);
+    const flags = resourceLauncherDeclaredFlags(help, required);
     const advertised = /^Usage: grok agent stdio(?: \[OPTIONS\])?\s*$/m.test(help) && flags.length === required.length;
     return result('incompatible', advertised ? 'launcher-hub-transport-not-implemented' : 'launcher-upstream-capability-unverified', flags, advertised);
   }
-  const flags = advertisedFlags(help, required);
+  const flags = resourceLauncherDeclaredFlags(help, required);
   if (flags.length !== required.length) return result('incompatible', 'launcher-required-flags-missing', flags);
-  if (pinned.provider === 'claude' && olderClaude(version)) return result('incompatible', 'launcher-version-incompatible', flags);
+  if (provider === 'claude' && olderClaude(version)) return result('incompatible', 'launcher-version-incompatible', flags);
   return result('supported', 'launcher-flags-advertised', flags, true);
 }

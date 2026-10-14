@@ -1821,6 +1821,53 @@ Reports omit raw native output, commands, paths and account identifiers. Finish
 commissioning with native identity/billing verification, quota evidence and an
 explicit allowance-consuming canary as described above.
 
+### Discover advertised native session surfaces
+
+Source builds containing `launcher capabilities` can inspect one explicitly
+selected Codex or Claude launcher before choosing an integration path:
+
+```sh
+phm resources launcher capabilities --provider codex \
+  --command /absolute/private/codex-command.json \
+  --cwd /absolute/private/launcher-check --json
+```
+
+Use the same operator-owned command JSON and private directory contract as
+`launcher check`; repeat deliberately for each distinct launcher. This requests
+only `--version`, global `--help`, and fixed subcommand `--help` when the global
+help advertises that command. At most four invocations share one deadline
+(default 10 seconds, maximum 30 seconds), with accepted stdout and stderr
+each capped at 64 KiB per invocation, and the existing
+cancellation and process-group settlement checks. No auth command, model prompt,
+app-server connection, daemon command, session listing, resume, desktop opening
+or private socket access is requested. Trusted launcher and vendor startup/cache
+side effects are not attested; this is not an execution sandbox.
+
+The version-1 `native-launcher-capability-discovery` report separates each
+upstream surface's `advertised`, `not-advertised` or `unverified` evidence from
+Phantom's implemented transport. `runtimeReadiness` remains `not-inspected`,
+`sessionsInspected` and `controlEnabled` remain false, and existing permissions
+are unchanged. Exit 0 means the help inspection completed, even if an individual
+capability is unverified; exit 1 means unavailable, 2 invalid usage and 130
+cancellation. Raw help, stderr, launch argv and private paths never enter this
+report. Existing `launcher check` keeps its version-1 shape and behavior.
+
+Codex app-server help can advertise a transport without qualifying any
+`thread/list` or `thread/read` method. [Official App Server documentation](https://learn.chatgpt.com/docs/app-server)
+requires schemas from the exact selected binary for protocol review. The
+current CLI adapters remain separate from a general desktop session controller.
+Claude agents help can advertise JSON observation; no `agents --json` request is
+made. [Claude agent-view documentation](https://code.claude.com/docs/en/agent-view)
+describes supervisor startup behavior, which still needs installed-version
+qualification before automatic observation. Claude desktop handoff additionally
+requires advertised flags and the documented CLI minimum 2.1.285, and remains
+unimplemented and unqualified here.
+
+This inventory cannot grant ownership of a native conversation, enable a fleet,
+change billing or permissions, or turn a capability declaration into successful
+delivery. See [desktop orchestration research](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-APP-ORCHESTRATION-RESEARCH.md)
+for the separately proposed observation, ownership and control phases.
+
 ### Grok Build integration status
 
 `--provider grok` checks native `agent stdio` help with auto-updates disabled.

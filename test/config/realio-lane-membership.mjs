@@ -138,6 +138,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-profile-repin.test.ts', // private profiles, inert native execve through repinned launchers
   'test/universe-resource-runtime-check.test.ts', // explicit private runtime and sterile Git workspace reads
   'test/resource-launcher-compatibility.test.ts', // bounded inert CLI help/version subprocesses
+  'test/resource-launcher-capabilities.test.ts', // fixed help/version Node fixtures; no provider or session access
   'test/resource-commissioning-integration.test.ts', // built public CLI with private inert multi-account fixtures
   'test/resource-pool-supervisor.test.ts', // durable queues, verified locks, native and loopback tasks
   'test/resource-console-worker.test.ts', // fixed-scope worker threads and private evidence files
