@@ -301,6 +301,7 @@
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
+/test/goal-conductor-stale-lane.test.ts @masonwyatt23
 /test/goal-loop.result.test.ts @masonwyatt23
 /test/goal-loop.runner.test.ts @masonwyatt23
 /test/goal-preferences.test.ts @masonwyatt23
