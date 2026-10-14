@@ -102,14 +102,25 @@ describe('local Grok Bot handoff projection', () => {
     const unsafe = fixture(); unsafe.profile.identity = { ...identity, accountId: 'xai-' + 'Ab12'.repeat(8) };
     unsafe.read.task!.attempts[0]!.assignee = unsafe.profile.identity; unsafe.packet.allowedDestination = unsafe.profile.identity; held(unsafe);
   });
-  // Review of PR #721: the home-path screen is the shared GENERIC_HOME_ROOT
-  // (src/core/util/scrub-secrets.ts, Tier-1). It catches /Users, /home and
-  // C:\\Users, but a WSL mount, an rpm-ostree home or root's home pass through
-  // into a brief meant for an external Bot. `it.fails` pins today's gap; drop
-  // `.fails` once the owner widens the shared screen.
-  it.fails.each(['/mnt/c/Users/example/private', '/var/home/example/private', '/root/private'])(
+  // Independent review vectors now assert refusal, rather than expected
+  // failure. The external-brief screen does not change shared local redaction.
+  it.each(['/mnt/c/Users/example/private', '/var/home/example/private', '/root/private',
+    'file:///root/private', '/mnt/d/Users/example/private', 'cwd=/var/home/example/private',
+    '/var/home/Shared/private', '/var/home/SHARED/private', '/mnt/c/Users/例/private',
+    '/var/home/例/private', '/mnt/c/Users/Shared例/private'])(
     'refuses the home-directory locator %s in a copied leaf', ownerId => {
       const unsafe = fixture(); unsafe.read.task!.attempts[0]!.ownerId = ownerId; held(unsafe);
+    });
+  it.each(['Review https://docs.example/root/guide', 'Review /root-tools/README.md',
+    'Review /var/homework/README.md', 'Review /mnt/c/Users/Shared/README.md'])(
+    'preserves public references and neighboring paths: %s', goal => {
+      const input = fixture({ goal });
+      expect(JSON.parse(buildGrokHandoffPreview(input).briefText).goal).toBe(goal);
+    });
+  it.each(['/mnt/c/Users/example/private', '/var/home/example/private', '/root/private'])(
+    'refuses %s in task text without rewriting or truncating it', locator => {
+      held(fixture({ goal: `Review ${locator}` }));
+      held(fixture({ acceptance: [`Inspect ${locator}`] }));
     });
   it('refuses an over-cap rendered brief instead of truncating its goal or acceptance criteria', () => {
     const criteria = (length: number) => Array.from({ length: 24 }, (_, i) => `Criterion ${i}: ` + '界'.repeat(Math.floor(length / 3)));
