@@ -259,6 +259,8 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [dragging, setDragging] = useState(false);
   /** Registered by the multi-model line; consulted before every non-queued send. */
   const sendInterceptor = useRef<SendInterceptor | null>(null);
+  const activeSessionId = useRef(sessionId);
+  activeSessionId.current = sessionId;
   const [managerMode, setManagerMode] = useState(false);
   const registerInterceptor = useCallback((fn: SendInterceptor | null) => {
     const wasManager = sendInterceptor.current?.handlesRunning === true;
@@ -702,6 +704,18 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     setSending(true);
     setNote(null);
     try {
+      // Keep the advisor lazy, but never interpret its loading gap as Manual.
+      // Running Automatic follow-ups keep the existing native queue; Delegate
+      // messages must wait for their own interceptor rather than enter it.
+      if (!sendInterceptor.current && sessionId) {
+        const { loadAutoPref } = await import('./multimodel/useAutoSeat.js');
+        if (activeSessionId.current !== sessionId) return;
+        const pref = loadAutoPref(sessionId);
+        if (!sendInterceptor.current && (managerMode || pref === 'manager' || (!running && pref !== 'off'))) {
+          setNote({ text: 'Routing is still loading. Your draft is preserved; send again when it is ready.', error: false });
+          return;
+        }
+      }
       if (sendInterceptor.current?.handlesRunning) {
         if (attachments.drafts.length) {
           setNote({ text: 'Manager messages currently use text and project files. Remove these attachments or switch routing mode to send them in a native turn.', error: true });
@@ -724,8 +738,6 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
         return;
       }
       if (running) return; // older server: no queue, the box just keeps the draft
-      // Auto may send this to another seat (a handoff) — or hold it to show a
-      // changed choice first. Its absence (still loading, Auto off) = send here.
       const route = sendInterceptor.current ? await sendInterceptor.current(value) : 'send-here';
       if (route === 'handled') {
         clearAfterSend(value);
@@ -738,7 +750,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setSending(false);
       textarea.current?.focus();
     }
-  }, [disabled, sending, tooLong, text, blockedByUpload, running, queueAvailable, queueFull, followUps, clearAfterSend, onSend, attachments.drafts.length]);
+  }, [disabled, sending, tooLong, text, blockedByUpload, running, queueAvailable, queueFull, followUps, clearAfterSend, onSend, attachments.drafts.length, sessionId, managerMode]);
 
   async function editQueued(queueId: string, queuedText: string) {
     const ok = await followUps.remove(queueId);

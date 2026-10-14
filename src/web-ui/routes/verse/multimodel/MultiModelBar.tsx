@@ -28,6 +28,8 @@
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VerseSeat } from '../../../data/api-types.js';
+import { sameAdviceBinding } from '../../../../core/verse/multimodel/advisor.js';
+import { getVerseSessionHead } from '../verse-store.js';
 import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
 import { crossFamilyReviewer } from '../../../../core/verse/multimodel/compare.js';
 import { assessDraft } from '../../../../core/verse/multimodel/escalation.js';
@@ -90,7 +92,7 @@ function Thumb({ down = false }: { down?: boolean }) {
 }
 
 function target(o: SeatAdviceOption): FlowTarget {
-  return { seatId: o.seatId, model: o.model, label: o.label, engine: o.engine };
+  return { seatId: o.seatId, model: o.model, contextMode: o.contextMode ?? 'standard', contextWindow: o.contextWindow, label: o.label, engine: o.engine };
 }
 
 function money(usd: number): string {
@@ -174,7 +176,15 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
   }, [last, running, session, sessionId, auto]);
 
   // ---- the send interceptor ------------------------------------------------
-  const shownChoice = advice?.choice?.seatId ?? null;
+  const shownChoice = advice?.choice ?? null;
+  // Compare values: session creation refreshes bootstrap and may replace
+  // identical catalog arrays. Reads after awaits use the latest snapshot. Keep
+  // notice-only renders from invalidating a decision, but invalidate mode,
+  // model, preference and per-message pin changes even on the same account.
+  const latestDecision = useRef({ sessionId, pref, pinned, seats: JSON.stringify(auto.advisorSeats), context: JSON.stringify(context) });
+  latestDecision.current = { sessionId, pref, pinned, seats: JSON.stringify(auto.advisorSeats), context: JSON.stringify(context) };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const intercept = useCallback<SendInterceptor>(async (message) => {
     if (pref === 'manager') {
       try {
@@ -187,27 +197,45 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
         return 'held';
       }
     }
-    if (pref === 'off' || !session) return 'send-here';
+    if (pref === 'off') return 'send-here';
+    if (!session || context === null) {
+      setNotice({ text: 'Routing is not ready. Your draft is preserved; send again after the chat and project privacy checks load.', error: true });
+      return 'held';
+    }
+    const decision = latestDecision.current;
+    const isCurrent = () => {
+      const latest = latestDecision.current;
+      const current = getVerseSessionHead(sessionId).session;
+      return mounted.current && latest.sessionId === sessionId && latest.pref === pref && latest.pinned === pinned
+        && latest.seats === decision.seats && latest.context === decision.context
+        && current !== null && sameAdviceBinding(session, current);
+    };
     const rules = classifyPrompt(message, { contextTokens: session.usage?.contextTokens ?? 0 });
     let cls: PromptClassification = rules;
-    try {
-      cls = (await labelPromptRemote({ text: message, sessionId: session.id, contextTokens: session.usage?.contextTokens ?? 0 })).classification;
-    } catch { /* rules it is — labelling never blocks a send */ }
+    if (!context.localOnly.on) {
+      try {
+        cls = (await labelPromptRemote({ text: message, sessionId: session.id, contextTokens: session.usage?.contextTokens ?? 0 })).classification;
+      } catch { /* Known privacy, unavailable label: deterministic rules remain usable. */ }
+    }
+    if (!isCurrent()) {
+      setNotice({ text: 'The chat or routing choice changed. Your draft is preserved; send again to use the current choice.', error: true });
+      return 'held';
+    }
     const unpinned = auto.adviseWith(cls, null);
     const final = pinned ? auto.adviseWith(cls, pinned) : unpinned;
     const choice = final?.choice ?? null;
     if (!choice) {
-      if (final) setNotice({ text: final.why, error: false });
-      return 'send-here';
+      setNotice({ text: final?.why || 'No connected resource can run this message. Your draft is preserved.', error: true });
+      return 'held';
     }
-    if (!pinned && choice.seatId !== shownChoice && choice.seatId === session.seatId) {
+    if (!pinned && (!shownChoice || !sameAdviceBinding(choice, shownChoice)) && sameAdviceBinding(choice, session)) {
       // Read differently, but the answer is "stay": the safe direction — no move, no handoff. Said, then sent.
       if (shownChoice !== null) setNotice({ text: `Read as ${cls.label}${cls.decidedBy === 'jev' ? ' (Jev)' : ''}, so it stays on ${choice.label}.`, error: false });
       if (pref === 'cheap-first' && choice.local) pendingDrafts.set(session.id, { text: message, cls, localLabel: choice.label });
       return 'send-here';
     }
     const overridden = pinned && unpinned?.choice && unpinned.choice.seatId !== pinned ? { seatId: unpinned.choice.seatId } : null;
-    if (choice.seatId === session.seatId) {
+    if (sameAdviceBinding(choice, session)) {
       if (overridden) void recordOutcome({ seatId: overridden.seatId, kind: cls.kind, signal: 'auto-overridden' });
       if (pref === 'cheap-first' && choice.local) pendingDrafts.set(session.id, { text: message, cls, localLabel: choice.label });
       return 'send-here';
@@ -216,7 +244,7 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
       ? `Continuing on ${choice.label} with a handoff note…`
       : `Sending to ${choice.label}…`, error: false });
     try {
-      const created = await routeMessage(DEFAULT_FLOW_API, { source: session, target: target(choice), text: message, kind: cls.kind, overridden });
+      const created = await routeMessage(DEFAULT_FLOW_API, { source: session, target: target(choice), text: message, kind: cls.kind, overridden, beforeSend: isCurrent });
       if (pref === 'cheap-first' && choice.local) pendingDrafts.set(created.id, { text: message, cls, localLabel: choice.label });
       saveAutoPref(created.id, pref);
       return 'handled';
@@ -224,7 +252,7 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
       setNotice({ text: `Could not move this to ${choice.label}: ${err instanceof Error ? err.message : 'request failed'}. Your message is still here.`, error: true });
       return 'held';
     }
-  }, [pref, session, sessionId, auto, pinned, shownChoice]);
+  }, [pref, session, sessionId, auto, pinned, shownChoice, context]);
   intercept.handlesRunning = pref === 'manager';
 
   useEffect(() => {

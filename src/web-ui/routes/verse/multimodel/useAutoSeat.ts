@@ -9,15 +9,16 @@
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { VerseSeat, VerseSession } from '../../../data/api-types.js';
-import { capacityFromSeat } from '../../../../core/routing/headroom.js';
 import type { BudgetPolicy } from '../../../../core/routing/types.js';
 import { adviseSeat, type AdvisorSeat } from '../../../../core/verse/multimodel/advisor.js';
 import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
-import type { AutoMode, LocalModelBadge, MultimodelContext, PromptClassification, SeatAdvice } from '../../../../core/verse/multimodel/types.js';
+import type { AutoMode, MultimodelContext, PromptClassification, SeatAdvice } from '../../../../core/verse/multimodel/types.js';
 import { useQuery } from '../../../data/hooks.js';
 import { budgetQuery } from '../budget/budget-queries.js';
 import { getVerseSessionHead, subscribeVerseSession } from '../verse-store.js';
-import { firstRunnableModel } from '../verse-model.js';
+import { versePreferencesQuery } from '../context/context-queries.js';
+import { toAdvisorSeats } from './advisor-seats.js';
+export { toAdvisorSeats } from './advisor-seats.js';
 import { multimodelContextQuery } from './multimodel-queries.js';
 
 export type AutoPref = 'off' | 'manager' | AutoMode;
@@ -66,33 +67,6 @@ export function useSessionRecord(sessionId: string | null): VerseSession | null 
   );
 }
 
-function isLoopback(seat: VerseSeat, badges: readonly LocalModelBadge[] | undefined): boolean {
-  // The server is the authority on the endpoint; without its badge a local
-  // seat is still local, and "private" is claimed only when it said so.
-  return badges?.find((b) => b.seatId === seat.id)?.private === true;
-}
-
-/** Project the polled seats into what the advisor ranks. Every chat engine, Devin included. */
-export function toAdvisorSeats(seats: readonly VerseSeat[], badges?: readonly LocalModelBadge[]): AdvisorSeat[] {
-  return seats.flatMap((seat) => {
-    if (seat.health.state === 'unavailable') return [];
-    const model = firstRunnableModel(seat);
-    if (!model) return [];
-    const local = seat.engine === 'local';
-    const badge = badges?.find((b) => b.seatId === seat.id);
-    return [{
-      seatId: seat.id,
-      engine: seat.engine,
-      label: seat.label,
-      model: model.id,
-      local,
-      private: local && isLoopback(seat, badges),
-      supportsTools: badge?.supportsTools ?? null,
-      capacity: capacityFromSeat(seat, undefined, model.id),
-    }];
-  });
-}
-
 function useDebounced<T>(value: T, ms: number): T {
   const [out, setOut] = useState(value);
   useEffect(() => {
@@ -126,10 +100,11 @@ export function useAutoSeat(input: {
   // By chat id: the server checks EVERY root the chat reaches, not just the primary.
   const context = useQuery(multimodelContextQuery(input.sessionId ? { sessionId: input.sessionId } : { projectPath: null })).data ?? null;
   const budget = useQuery(budgetQuery).data ?? null;
+  const preferences = useQuery(versePreferencesQuery).data ?? null;
   const policy: BudgetPolicy | null = budget ? { mode: budget.mode, seats: budget.seats, updatedAt: budget.updatedAt } : null;
   const draft = useDebounced(input.text.trim(), CLASSIFY_DEBOUNCE_MS);
   const contextTokens = session?.usage?.contextTokens ?? 0;
-  const advisorSeats = useMemo(() => toAdvisorSeats(input.seats, context?.local), [input.seats, context?.local]);
+  const advisorSeats = useMemo(() => toAdvisorSeats(input.seats, context?.local, { session, preferences }), [input.seats, context?.local, session, preferences]);
 
   const classification = useMemo(
     () => (draft && input.pref !== 'off' && input.pref !== 'manager' ? classifyPrompt(draft, { contextTokens }) : null),
@@ -147,6 +122,8 @@ export function useAutoSeat(input: {
       mode: input.pref,
       nowMs: Date.now(),
       currentSeatId: session?.seatId ?? null,
+      currentModel: session?.model ?? null,
+      currentContextMode: session?.contextMode ?? 'standard',
       turnCount: session?.turnCount ?? 0,
       contextTokens,
       localOnly: context?.localOnly ?? null,

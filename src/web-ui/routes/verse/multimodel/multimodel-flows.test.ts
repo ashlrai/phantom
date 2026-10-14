@@ -27,13 +27,13 @@ function fakeApi(opts: { failSeat?: string } = {}) {
       calls.push(`create:${req.seatId}`);
       if (req.seatId === opts.failSeat) throw new Error('Signed out — reconnect this account.');
       n += 1;
-      return session({ id: `new${n}`, seatId: req.seatId, turnCount: 0 });
+      return session({ id: `new${n}`, seatId: req.seatId, model: req.model ?? 'claude-opus-5-5', contextMode: req.contextMode ?? 'standard', turnCount: 0 });
     }),
     createHandoffSession: vi.fn(async (input: HandoffSessionInput) => {
       calls.push(`handoff:${input.seatId}`);
       if (input.seatId === opts.failSeat) throw new Error('Signed out — reconnect this account.');
       n += 1;
-      return session({ id: `new${n}`, seatId: input.seatId, turnCount: 0, handoffFrom: { sessionId: input.source.id, title: input.source.title } });
+      return session({ id: `new${n}`, seatId: input.seatId, model: input.model ?? 'claude-opus-5-5', contextMode: input.contextMode ?? 'standard', turnCount: 0, handoffFrom: { sessionId: input.source.id, title: input.source.title } });
     }),
     fetchHandoffPreview: vi.fn(async (id: string, req?: { includeLastAssistant?: boolean }) => {
       calls.push(`preview:${id}${req?.includeLastAssistant ? '+last' : ''}`);
@@ -161,5 +161,40 @@ describe('siblingRequest', () => {
     expect(req).toMatchObject({ projectPath: '/repo', extraRoots: ['/lib'], seatId: 'codex-personal', model: 'gpt-5.5' });
     expect(req).not.toHaveProperty('workspaceId');
     expect(req.title).toHaveLength(120);
+  });
+});
+
+
+describe('exact automatic continuation binding', () => {
+  const target = { ...CODEX, contextMode: 'expansive' as const };
+  it.each([0, 3])('carries exact model/mode and pinned roots at %i source turns', async (turnCount) => {
+    const api = fakeApi();
+    const source = session({ seatId: CODEX.seatId, model: 'old-model', turnCount });
+    await routeMessage(api, { source, target, text: 'Continue', kind: 'code' });
+    const create = turnCount ? api.createHandoffSession : api.createSession;
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ seatId: target.seatId, model: target.model, contextMode: 'expansive' }));
+    if (turnCount) expect(api.createHandoffSession).toHaveBeenCalledWith(expect.objectContaining({ source }));
+    else expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({ projectPath: '/repo', extraRoots: ['/lib'] }));
+    expect(api.sendTurn).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { seatId: 'wrong-account' }, { model: 'wrong-model' }, { model: undefined },
+    { contextMode: 'standard' as const }, { contextMode: undefined },
+  ])('refuses a returned binding mismatch %o before its first turn', async (mismatch) => {
+    const api = fakeApi();
+    api.createHandoffSession = vi.fn(async () => session({ seatId: target.seatId, model: target.model, contextMode: target.contextMode, ...mismatch }));
+    await expect(routeMessage(api, { source: session(), target, text: 'Preserve me', kind: 'code' })).rejects.toThrow('did not match');
+    expect(api.sendTurn).not.toHaveBeenCalled();
+    expect(api.open).not.toHaveBeenCalled();
+    expect(api.outcome).not.toHaveBeenCalled();
+  });
+  it('refuses a decision invalidated while continuation creation was pending', async () => {
+    const api = fakeApi();
+    let valid = true;
+    const create = api.createHandoffSession;
+    api.createHandoffSession = async (input) => { const result = await create(input); valid = false; return result; };
+    await expect(routeMessage(api, { source: session(), target, text: 'Preserve me', kind: 'code', beforeSend: () => valid })).rejects.toThrow('routing choice changed');
+    expect(api.sendTurn).not.toHaveBeenCalled();
+    expect(api.open).not.toHaveBeenCalled();
   });
 });
