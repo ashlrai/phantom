@@ -222,3 +222,18 @@ discovery alone enables neither track.
 The first decision is which sessions Phantom may **own**, which it may only
 **observe**, and which native desktop actions need a human handoff. Resolve
 those boundaries and the installed-version gaps before implementing control.
+
+## Source milestone: exact saved native binding
+
+`phm verse native-binding --id SESSION_ID [--json]` and the authenticated
+`GET /api/verse/sessions/:id/native-binding` project one bounded Phantom-owned
+session metadata record. This is not native session enumeration or transport
+activation. Only saved Codex/Claude native IDs are projected; unsupported or
+invalid IDs remain null. The response retains saved status/time while live owner
+and desktop attachment stay unverified and control remains disabled.
+
+The existing stable-file reader provides one-file bounds, path/identity checks
+and unchanged Windows read-only ACL assurance. No engine or provider launch,
+reconciliation, launch/event/vendor-file read, directory listing, grant or write
+occurs. Source availability remains separate from public release and installation.
+See [saved native binding contract](VERSE.md#saved-native-conversation-binding).

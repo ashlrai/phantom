@@ -900,6 +900,7 @@
     "src/core/verse/mcp-seat-view.ts",
     "src/core/verse/model-display-name.ts",
     "src/core/verse/model-windows.ts",
+    "src/core/verse/native-session-binding-types.ts",
     "src/core/verse/outcome-task-context-output.ts",
     "src/core/verse/outcome-task-context.ts",
     "src/core/verse/outcomes-api-types.ts",

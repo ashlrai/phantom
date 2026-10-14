@@ -52,6 +52,12 @@ export const ONLINE_DOCUMENTATION = Object.freeze({
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm verse native-binding --id SESSION_ID [--json]',
+    description: 'Read one saved Phantom session binding; live owner and desktop attachment stay unverified. No engine/provider launch, session reconciliation, directory listing, control or grant. Existing read-only Windows ACL assurance applies.',
+    safety: 'read',
+    jsonShape: 'VerseNativeSessionBinding (schemaVersion 1); savedStatus and savedUpdatedAt only, liveOwnerState unverified, desktopAttachment unverified, controlEnabled false; exit 0 saved record, 1 unavailable, 2 invalid usage',
+  },
+  {
     usage: 'phm resources launcher capabilities --provider codex|claude --command ABS_JSON --cwd ABS_PRIVATE_DIR [--json]',
     description: 'Explicit trusted-launcher help/version probes only. Separates advertised native surfaces from implemented Phantom transports; reads no sessions and grants no control. Vendor startup/cache effects are not attested.',
     safety: 'read',

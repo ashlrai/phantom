@@ -305,6 +305,10 @@ export async function startVerseBackgroundServices(
 // ---------------------------------------------------------------------------
 
 export async function cmdVerse(args: string[]): Promise<number> {
+  if (args[0] === 'native-binding') {
+    const { cmdVerseNativeBinding } = await import('./verse-native-binding.js');
+    return cmdVerseNativeBinding(args.slice(1));
+  }
   if (args[0] === 'remote') {
     const { cmdVerseRemote } = await import('./verse-remote.js');
     return cmdVerseRemote(args.slice(1));
