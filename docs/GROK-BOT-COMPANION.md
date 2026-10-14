@@ -37,8 +37,10 @@ service; create the dedicated Bot there and enter its actual identity.
 
 Start from an existing enabled Grok Bot proactive profile and an existing local task, prepared packet and current handoff intent. The saved profile records responsibilities and preferences; it does not prove account login, entitlement or Bot execution.
 
+Name the review target before you record the task. Put the repository, PR number, exact full head SHA and the evidence you require in the task's goal or acceptance criteria. The brief carries only the saved goal and criteria. It leaves out the packet's artifact fields, and Phantom does not resolve or add those identifiers. A task's goal and criteria cannot be edited after it is created, so record a new task to change them. Do not add or correct the target in the Bot conversation after pasting: that text sits outside the reviewed, digest-bound brief.
+
 1. Open the current handoff's review dialog in Phantom.
-2. Read the exact brief and its intended Bot recipient. Put the repository, PR number, exact head SHA and required evidence explicitly in the task goal/acceptance criteria when needed. Phantom does not invent or independently resolve those identifiers for the brief.
+2. Read the exact brief and its intended Bot recipient. Check that the brief itself names the repository, PR and exact head SHA. If it does not, close the dialog and record a new task instead of copying.
 3. Acknowledge the displayed preview.
 4. Choose **Recheck and copy brief**. Phantom rechecks the current server state and acknowledged digest, then copies only if the returned text matches exactly. If ownership, revision, recipient, profile, lease or deadline changed, review the new state before retrying.
 5. In the chosen Grok Bot conversation, paste and send the brief yourself when ready. Copying it is not sending it.
@@ -57,7 +59,7 @@ Use a Bot's persistent cloud context for a narrowly scoped recurring research or
 
 A practical review instruction is:
 
-> Review the supplied PR and exact head SHA. Rank findings by verified impact and confidence. Suggest a bounded ambitious experiment with a measurable outcome. Separate source checks, publication, installation and live deployment evidence. Return proposals and missing evidence; do not publish, merge or change billing.
+> Review the PR and exact head SHA named in this task's goal. Rank findings by verified impact and confidence. Suggest a bounded ambitious experiment with a measurable outcome. Separate source checks, publication, installation and live deployment evidence. Return proposals and missing evidence; do not publish, merge or change billing.
 
 Judge improvements by independently verified fixes, resolved defects, accepted task outcomes and complete attributable usage—not confident prose or more agent activity. Preserve negative and incomplete outcomes. A Bot can propose a lesson or procedure, but it does not promote itself into Phantom policy, durable memory or execution authority. The [offline memory evaluation](https://github.com/ashlrai/phantom/blob/master/docs/MEMORY-EVALUATION.md) checks evidence contracts; it does not prove model task success or autonomous self-improvement.
 
