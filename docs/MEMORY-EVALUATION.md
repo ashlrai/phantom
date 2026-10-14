@@ -50,3 +50,35 @@ The CLI also reports a separate raw-versus-prepared paired profile, protocol `ph
 Paired profiles report one-time preparation cost separately. Both arms receive the same complete seeded 128/1024-event history and query, with ten calls per arm. Pair order alternates raw-first and prepared-first, retaining every sample without a selective warmup. Every result must have an identical full pack/receipt digest, framing bytes and selected/omitted counts. Tests also compare all 72 semantic outcomes for raw and module-prepared snapshots. The raw profile remains a separate protocol. Historical receipts retain their original source/configuration; timing variation is reported rather than erased. Preparation reuse is an in-process optimization, not a production latency guarantee, privacy admission, signed artifact or execution permission.
 
 The current foundation screens known credential and generic home-path shapes using shared refusal patterns. That screening is not a complete privacy guarantee. Evidence remains quoted data with `authority: false`; integration, user review, execution authority, hosted CI, package provenance, publication and installed acceptance are separate gates. The larger retrieval benchmark, paired multi-session coding pilot and active-recall experiments described in the research plan remain proposed and unexecuted.
+
+## Quality benchmark
+
+The 72-case corpus checks that each governance rule holds. It does not measure how useful a pack is: most of its queries are empty, every case has at most eight events, and nothing ranks. The quality benchmark, protocol `phantom-memory-benchmark-v2`, measures that separately. It is generated in code from an authored CC0-1.0 catalog (`src/core/local-eval/memory-benchmark-catalog.ts`), so it adds no corpus file and does not change the protected v1 gold.
+
+```sh
+npm run --silent bench:memory -- --json            # summaries plus failing case IDs
+npm run --silent bench:memory -- --json --cases    # every step's measurements
+```
+
+It has 100 cases and 109 steps in five dimensions:
+
+| Dimension | Cases | What it measures |
+| --- | --- | --- |
+| Retrieval | 66 | Find one of 20 facts in a 26-event history with a top-3 budget. Each fact is asked three ways: sharing exact words (lexical), sharing only word stems (inflected), and sharing no content word (paraphrase). Six more queries have no answer and should return an empty pack. |
+| Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
+| Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
+| Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
+| Task | 8 | Multi-step scripted sessions (fix CI, ship a release, onboard, migrate a database, audit, cross-project work, tight budget, paraphrase). A task passes only when every step's pack has every required fact and no forbidden one. No model executes the task. |
+
+Each step passes when the expected status matches, every required fact text appears in the model-facing pack text, no forbidden text (stale, withdrawn, contested, deleted or foreign) appears, and the budget holds. The report also gives recall, rank-1 rate and mean reciprocal rank, extraneous facts per step, whether a contested slot is mentioned in the pack text, the payload ratio (required fact bytes over pack bytes) and the number of out-of-scope event IDs in receipts. The audience-mismatch withdrawal case depends on an open owner decision, so it is reported under `pendingDecisions` and left out of the scores.
+
+Baseline at `285f7d9d` (PR #725 head), source checkout:
+
+| Arm | Cases passed | Forbidden leaks | Retrieval lexical / inflected / paraphrase / absent | Tasks | Conflicts mentioned | Payload ratio |
+| --- | --- | --- | --- | --- | --- | --- |
+| Governed | 58/99 | 0 | 19/20, 8/20, 1/20, 1/6 | 4/8 | 0/4 | 3.9% |
+| Flat latest-record diagnostic | 22/99 | 12 | 3/20, 3/20, 3/20, 0/6 | 0/8 | 0/4 | 7.3% |
+
+Governed memory passes every contradiction, temporal and withdrawal case and never leaks forbidden text. Its weak points are ranking (word forms and stopwords), filler on unanswerable queries, pack size (about 600 bytes of framing per 55-byte fact, so two facts do not fit a 1 KiB budget) and contested slots that silently disappear from the pack. Receipts expose 437 out-of-scope event IDs across the run, which is the open receipt-scope question on PR #725.
+
+The catalog, queries and expected outcomes were written by the same author as any later ranking change, so they are not an independent held-out set. Paraphrase retrieval needs synonyms or semantics that this benchmark does not supply. Payload ratio is a byte measure, not a tokenizer count.
