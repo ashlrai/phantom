@@ -4954,7 +4954,8 @@ export async function tick(
               routeAllowed: () => false,
             // Only the singleton lock holder can prove a crashed daemon's stage has no live owner.
             }), { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
-            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) });
+            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) },
+              { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
             materializeOutcomeIntents(outcome.id, { stillAuthorized: authorized, cfg: routingCfg });
             const fresh = new OutcomeStore(outcomeDirectory(outcome.id)).read();
             if (fresh.sourceState === 'healthy' && authorized()) {
