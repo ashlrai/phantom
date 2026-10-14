@@ -70,6 +70,9 @@ import { fileURLToPath } from 'node:url';
  * are also Tier-1 protected paths, so the fleet itself can never change them.
  */
 export const AUTHORITY_SURFACE_ROOTS = Object.freeze([
+  // Reviewed external briefs stay scope-bound if the server import graph changes.
+  'dist/core/proactive/handoff-preview.js',
+  'dist/core/proactive/coordination-wire.js',
   'dist/core/authority/',
   'dist/core/website/',
   'dist/cli/website.js',

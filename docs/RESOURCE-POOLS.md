@@ -2756,17 +2756,19 @@ Provider rules and models can change.
   [Grok Build scripting](https://docs.x.ai/build/cli/headless-scripting),
   [sandbox limits](https://docs.x.ai/build/features/sandbox).
 - Grok Bot is an external cloud-computer product, not this console's local
-  desktop-control worker. Its included allowance and reset are independent of
-  Grok Build. A Phantom-qualified dispatch connection, current Bot quota and
+  desktop-control worker. Legacy linked subscriptions can have a separate Bot
+  allowance; the unified X Subscription shares weekly usage across Grok, Bot
+  and Cursor. A Phantom-qualified dispatch connection, current Bot quota and
   this user's exact entitlement remain unverified; a linked subscription does
-  not establish them. See [separate Bot usage and billing](RESOURCE-EVIDENCE.md#grok-build-and-grok-bot).
+  not establish them. See [Bot usage and billing scope](RESOURCE-EVIDENCE.md#grok-build-and-grok-bot)
+  and [the unified subscription](https://docs.x.ai/x-subscription/grok-bot).
   [Grok Bot plan announcement](https://x.ai/news/grok-bot-more-plans),
   [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq). For an evidence-gated companion
   workflow using its documented plugins and optional one-way routine webhook,
   see [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md).
 - Consumer access, native Build access, and an xAI API-key billing account are
   distinct integration choices. The documented API route uses API credentials
-  and metered billing; confirm any account-specific included credits, overage,
+  and account-bound billing; confirm any account-specific included usage, credits, overage,
   or auto-top-up before use. Phantom does not fall back to a paid xAI endpoint.
   [xAI API quickstart](https://docs.x.ai/developers/quickstart),
   [API billing](https://docs.x.ai/developers/faq/billing).

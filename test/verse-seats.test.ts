@@ -26,6 +26,7 @@ import {
   resolveOllamaBaseUrl,
   nativeSeatModels,
   readSeatProfile,
+  VERSE_CATALOG_EMPTY_NOTE,
   VERSE_CATALOG_PENDING_NOTE,
   VERSE_NATIVE_MODELS,
   VERSE_REPIN_COMMAND,
@@ -809,6 +810,29 @@ describe('verse seats — per-seat catalogs and pinned binaries (V3.9)', () => {
     expect(seat.models.map((m) => m.id)).toEqual(VERSE_NATIVE_MODELS.codex.map((m) => m.id));
     expect(seat.models.every((m) => m.windowSource === 'documented')).toBe(true);
     expect(seat.notes).toEqual([VERSE_CATALOG_PENDING_NOTE]);
+  });
+
+  it('explains a grok seat whose own catalog offers no selectable model instead of implying a CLI re-pin', () => {
+    // PR #720 keeps a present-but-empty catalog empty (no documented fallback).
+    // The seat must then say why it has no models: readiness shows notes[0],
+    // and its fallback wording blames the pinned CLI.
+    for (const [name, models] of Object.entries({
+      empty: {},
+      hidden: { x: { info: { id: 'grok-hidden-test', hidden: true }, api_key: GROK_SECRET } },
+      nonselectable: { x: { info: { id: 'grok-blocked-test', user_selectable: false }, api_key: GROK_SECRET } },
+    })) {
+      const grok = makeProfile(tmpRoot, `grok-${name}`, 'grok');
+      fs.writeFileSync(path.join(grok.nativeState, 'models_cache.json'), JSON.stringify({ models }));
+      const built = nativeSeatModels('grok', readSeatProfile(grok.command, 'grok'));
+      expect(built.models, name).toEqual([]);
+      expect(built.notes, name).toEqual([VERSE_CATALOG_EMPTY_NOTE]);
+      expect(JSON.stringify(built), name).not.toContain(GROK_SECRET);
+    }
+    // A missing catalog still reads as pending with the documented list.
+    const pending = makeProfile(tmpRoot, 'grok-pending', 'grok');
+    const built = nativeSeatModels('grok', readSeatProfile(pending.command, 'grok'));
+    expect(built.notes).toEqual([VERSE_CATALOG_PENDING_NOTE]);
+    expect(built.models.length).toBeGreaterThan(0);
   });
 
   it('ignores a profile whose provider disagrees with the account', async () => {
