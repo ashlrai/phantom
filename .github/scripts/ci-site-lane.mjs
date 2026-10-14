@@ -33,7 +33,7 @@ export const DOCUMENTATION_POLICY_INPUTS = Object.freeze([
 // Audited composed 3.29.16 source inputs, not historical test results.
 // Sealing the remaining tracked tree also catches new generic/computed readers.
 // Changed inputs require explicit reader requalification before another fast PR.
-export const DOCUMENTATION_READER_INVENTORY_DIGEST = 'a4a9157dfbb528a6848688ecdc465d2fc581534d50217c0dc28bc366f168cefe';
+export const DOCUMENTATION_READER_INVENTORY_DIGEST = '435c6eacd90fea68c6a0492c0b1e644551d851c7526fd50d08bdd23cd300958e';
 
 // Exact reviewed presentation paths. This is PR feedback, not an authority policy
 // or a general dependency graph; new/control/auth/data/config paths stay full.
@@ -122,7 +122,7 @@ export const FRONTEND_ONLY_PATHS = Object.freeze([
   "src/web-ui/design/tokens.css"
 ]);
 export const FRONTEND_POLICY_INPUTS = DOCUMENTATION_POLICY_INPUTS;
-export const FRONTEND_READER_INVENTORY_DIGEST = '257da6783618cf2dfdacd652ece5facd9465d7d7faa04349530f2aa9f6307ee8';
+export const FRONTEND_READER_INVENTORY_DIGEST = '49cdc49ef15b0d02bf493a9bf2173cdcd1a647f23f4468d6f9b0fb1950c6780c';
 export const FRONTEND_IMPORT_INVENTORY_DIGEST = 'a603dae17723f5641f5a12845559571960f9b7148089b0342af14129635dc6f5';
 const frontend = new Set(FRONTEND_ONLY_PATHS);
 const require = createRequire(import.meta.url);

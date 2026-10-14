@@ -27,6 +27,9 @@ hub (M1–M20). Published release dates are recorded where verified.
   report source, ownership and evidence gaps without approving or publishing work.
 
 ### Fixed
+- Pin Rustls 0.23.46 for the native TLS clients to include the upstream fixes for
+  RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349.
+  Keep the existing TLS features and all other locked dependency records unchanged.
 - Refuse unknown or paid inference at actual contact, including cached clients,
   retries, late subprocess admission and redirects. Preserve explicit legacy zero
   pauses, historical spend and unresolved accounting.
