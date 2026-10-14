@@ -1,6 +1,6 @@
 ---
 constitution: phantom
-version: 2
+version: 3
 changes: reviewed pull request only
 ---
 
@@ -57,9 +57,23 @@ change to this file.
 
 ## Self-improvement loop
 
-Phantom may open draft PRs that propose improvements. The proposal loop
-cannot authorize auto-merge; merges use the existing protected approval process
-with every required check green on the exact head and required review satisfied.
-Proposals never carry private context. Evidence links are published only after
+Phantom may open draft PRs that propose improvements. Opening a proposal
+cannot request auto-merge. A self-improvement PR may be promoted without a
+person only through `phm improve promote --queue-merge`, and only when all of
+these hold:
+
+- its branch is owned by the improvement loop (`improve/*`, `ashlr-cloud/*`),
+  it targets the default branch, and it is not from a fork;
+- every check reported on its exact head commit is green;
+- its declared metric was measured deterministically at the PR's current merge
+  base and at that exact head, and improved. Unmeasured, failed or
+  non-reproducible measurements are unknown and never promote.
+
+Promotion only queues GitHub auto-merge pinned to that head
+(`--match-head-commit`). Branch protection, required checks and required
+reviews still decide the merge, never an admin bypass, and deploys happen only
+through the merge-triggered CI described above. Every other PR uses the
+existing protected approval process with every required check green on the
+exact head and required review satisfied. Proposals never carry private context. Evidence links are published only after
 repository visibility is verified as public. The "Always ask" list above still
 applies to everything they do.

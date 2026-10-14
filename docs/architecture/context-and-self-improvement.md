@@ -93,10 +93,8 @@ A proposal earns credit only from a metric it declares up front:
   (`--squash --auto --match-head-commit <head>`), so branch protection and
   required checks still decide the merge; it never uses `--admin`. Anything
   else is refused with reasons, and every decision is recorded in the ledger.
-  Without `--queue-merge` it only reports the decision. Queuing merges from
-  this gate on a schedule needs CONSTITUTION.md's self-improvement section to
-  be amended to admit it; until then the existing protected merge process
-  applies.
+  Without `--queue-merge` it only reports the decision. CONSTITUTION.md v3's
+  self-improvement section admits exactly this gate and nothing wider.
 
 ## 5. Roadmap
 
