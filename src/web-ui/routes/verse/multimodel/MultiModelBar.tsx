@@ -28,6 +28,8 @@
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VerseSeat } from '../../../data/api-types.js';
+import { composeAutomaticDecisionReceipt } from '../../../../core/routing/automatic-decision.js';
+import { AutomaticAdviceDetails } from './AutomaticAdviceDetails.js';
 import { sameAdviceBinding } from '../../../../core/verse/multimodel/advisor.js';
 import { getVerseSessionHead } from '../verse-store.js';
 import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
@@ -293,6 +295,24 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
   const typing = text.trim().length > 0;
   const showFeedback = !typing && !running && last?.done?.ok === true && last.answer.length > 0;
   const options: SeatAdviceOption[] = advice ? [...(advice.choice ? [advice.choice] : []), ...advice.alternatives] : [];
+  const detailReceipt = typing && (pref === 'auto' || pref === 'cheap-first') && !pinned && session
+    && auto.contextReady && auto.classificationCurrent && advice
+    ? composeAutomaticDecisionReceipt({
+      baseline: advice,
+      phase: advice.classification.task === 'plan' ? 'plan' : advice.classification.task === 'review' ? 'review' : 'execute',
+      phaseBasis: { kind: 'prompt-intent', declaredManagerIntent: null },
+      eligibilitySurface: { kind: 'interactive-chat-advice', declaredRole: null },
+      observedAtMs: Date.now(),
+    }) : null;
+  // Reset transient disclosure by meaningful values, never clocks, prose or
+  // advice identity. A source binding change matters even if the pick stays.
+  const detailKey = detailReceipt && session ? JSON.stringify([
+    sessionId, session.seatId, session.model, session.contextMode, pref,
+    detailReceipt.recommendedBinding, detailReceipt.alternatives, detailReceipt.exclusions,
+    detailReceipt.status, detailReceipt.baseline.localOnly,
+    detailReceipt.classification.kind, detailReceipt.classification.task,
+    detailReceipt.classification.difficulty, detailReceipt.classification.decidedBy,
+  ]) : undefined;
 
   return (
     <div className={styles.bar} role="group" aria-label="Models">
@@ -309,6 +329,9 @@ export function MultiModelBar({ sessionId, seats, text, running, registerInterce
         <AdviceLine advice={advice} pinned={pinned} options={options} held={advice?.held ?? []}
           waiting={context === null} onPin={(id) => setPinned(id === 'auto' ? null : id)} />
       ) : null}
+
+      {detailReceipt ? <AutomaticAdviceDetails key={detailKey} receipt={detailReceipt}
+        accountLabels={Object.fromEntries(seats.map((seat) => [seat.id, seat.label]))} /> : null}
 
       {showFeedback && session ? (
         <span className={`${styles.group} ${styles.grow}`}>

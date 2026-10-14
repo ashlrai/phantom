@@ -12,13 +12,14 @@ import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
 import type { MultimodelContext, PromptClassification } from '../../../../core/verse/multimodel/types.js';
 import { setMutationToken, clearMutationToken, markCheckComplete } from '../../../data/auth-store.js';
 import { versePreferencesQuery } from '../context/context-queries.js';
-import { evictAll, runQuery } from '../../../data/cache.js';
+import { evictAll, getQuerySnapshot, refetchQuery, runQuery } from '../../../data/cache.js';
 import { CLAUDE_SEAT, LOCAL_SEAT, session, ev, MockEventSource } from '../fixtures.test-support.js';
 import { acquireVerseSessionStream, closeAllVerseSessionStreams, setVerseFrameScheduler } from '../session-stream.js';
 import { resetVerseStore, seedVerseSession } from '../verse-store.js';
 import { MultiModelBar, resetPendingDraftsForTest, type SendInterceptor } from './MultiModelBar.js';
 import { saveAutoPref, loadAutoPref, toAdvisorSeats } from './useAutoSeat.js';
 import { DEFAULT_FLOW_API } from './multimodel-flows.js';
+import { multimodelContextQuery } from './multimodel-queries.js';
 
 const CONTEXT: MultimodelContext = {
   learned: {},
@@ -76,8 +77,124 @@ beforeEach(() => {
   vi.stubGlobal('EventSource', class { close() {} addEventListener() {} removeEventListener() {} } as unknown as typeof EventSource);
 });
 afterEach(() => {
+  vi.useRealTimers();
   clearMutationToken();
   vi.unstubAllGlobals();
+});
+
+describe('Automatic current draft details', () => {
+  function mount(text = 'explain this', seats = [CLAUDE_SEAT, LOCAL_SEAT]) {
+    seedVerseSession('vs_1', session({ id: 'vs_1' }), []);
+    const props = { sessionId: 'vs_1', seats, text, running: false, registerInterceptor: vi.fn(), onConsumeDraft: vi.fn() };
+    const view = render(<MultiModelBar {...props} />);
+    return { ...view, props };
+  }
+  function details() { return screen.getByText('Automatic details').closest('details')!; }
+
+  it('toggles locally without label, network, flow or outcome actions', async () => {
+    stubFetch({ ...CONTEXT, localOnly: { on: true, reason: 'private-reason' } });
+    const flow = stubFlow();
+    mount();
+    const summary = await screen.findByText('Automatic details');
+    const reads = (fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    await userEvent.setup().click(summary);
+    await userEvent.setup().click(summary);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(reads);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes('/multimodel/label'))).toBe(false);
+    expect(flow.send).not.toHaveBeenCalled(); expect(flow.create).not.toHaveBeenCalled(); expect(flow.outcome).not.toHaveBeenCalled();
+    expect(details().textContent).not.toContain('private-reason');
+  });
+  it('hides immediately for an edited same-kind draft until the existing debounce matches', async () => {
+    stubFetch();
+    const view = mount('explain this');
+    await screen.findByText('Automatic details');
+    vi.useFakeTimers();
+    view.rerender(<MultiModelBar {...view.props} text="explain that" />);
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(249); });
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    view.rerender(<MultiModelBar {...view.props} text="explain the other thing" />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(249); });
+    expect(details()).not.toHaveAttribute('open');
+    view.rerender(<MultiModelBar {...view.props} text="" />);
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+  });
+  it('accepts matching trimmed rebound text without a second freshness state', async () => {
+    stubFetch();
+    const view = mount();
+    await screen.findByText('Automatic details');
+    view.rerender(<MultiModelBar {...view.props} text="other text" />);
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    view.rerender(<MultiModelBar {...view.props} text="  explain this  " />);
+    expect(details()).not.toHaveAttribute('open');
+  });
+  it('hides cached privacy during refresh and error, then remounts folded on success', async () => {
+    stubFetch();
+    mount();
+    await userEvent.setup().click(await screen.findByText('Automatic details'));
+    const key = multimodelContextQuery({ sessionId: 'vs_1' }).key;
+    let answer!: (value: MultimodelContext) => void;
+    let pending!: Promise<void>;
+    act(() => { pending = refetchQuery(key, () => new Promise<MultimodelContext>((resolve) => { answer = resolve; }), true); });
+    expect(getQuerySnapshot(key).data).toBeDefined();
+    expect(getQuerySnapshot(key).status).toBe('refreshing');
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await act(async () => { answer(CONTEXT); await pending; });
+    expect(details()).not.toHaveAttribute('open');
+    await act(async () => { await refetchQuery(key, async () => { throw new Error('private-refresh-error'); }, true); });
+    expect(getQuerySnapshot(key).data).toBeDefined();
+    expect(getQuerySnapshot(key).status).toBe('error');
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await act(async () => { await refetchQuery(key, async () => CONTEXT, true); });
+    expect(details()).not.toHaveAttribute('open');
+  });
+  it('keeps native open state and focus for an identical cloned catalog', async () => {
+    stubFetch();
+    const view = mount();
+    const summary = await screen.findByText('Automatic details');
+    await userEvent.setup().click(summary);
+    summary.focus();
+    view.rerender(<MultiModelBar {...view.props} seats={structuredClone(view.props.seats)} />);
+    expect(screen.getByText('Automatic details')).toBe(summary);
+    expect(summary).toHaveFocus();
+    expect(details()).toHaveAttribute('open');
+  });
+  it.each(['model', 'mode'] as const)('resets for source %s even when the recommended local binding stays the same', async (change) => {
+    stubFetch();
+    mount();
+    await userEvent.setup().click(await screen.findByText('Automatic details'));
+    const originalPick = screen.getByText('qwen3-coder · standard · 65,536 tokens context');
+    act(() => seedVerseSession('vs_1', session({ id: 'vs_1', ...(change === 'model' ? { model: 'claude-sonnet-5' } : { contextMode: 'expansive' }) }), []));
+    expect(details()).not.toHaveAttribute('open');
+    expect(screen.getByText(originalPick.textContent!)).toBeInTheDocument();
+  });
+  it('suppresses pins, Manual and Delegate, then returns folded when Automatic resumes', async () => {
+    stubFetch();
+    mount();
+    await screen.findByText('Automatic details');
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Send this message to' }), CLAUDE_SEAT.id);
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Send this message to' }), 'auto');
+    expect(details()).not.toHaveAttribute('open');
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Routing mode' }), 'off');
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Routing mode' }), 'manager');
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Routing mode' }), 'auto');
+    expect(details()).not.toHaveAttribute('open');
+  });
+  it('resets when another ready session has the same recommendation', async () => {
+    stubFetch();
+    const view = mount();
+    await userEvent.setup().click(await screen.findByText('Automatic details'));
+    seedVerseSession('vs_2', session({ id: 'vs_2' }), []);
+    view.rerender(<MultiModelBar {...view.props} sessionId="vs_2" />);
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
+    await screen.findByText('Automatic details');
+    expect(details()).not.toHaveAttribute('open');
+  });
 });
 
 describe('MultiModelBar', () => {
@@ -97,6 +214,7 @@ describe('MultiModelBar', () => {
     stubFetch(null);
     renderBar('what does this regex match?');
     expect(await screen.findByText('Checking whether this repo may leave this Mac…')).toBeInTheDocument();
+    expect(screen.queryByText('Automatic details')).not.toBeInTheDocument();
   });
 
   it('Auto off: every message is sent where the chat is', async () => {
@@ -396,6 +514,7 @@ describe('Automatic binding and held drafts', () => {
     const bar = mount([{ ...CLAUDE_SEAT, models: [{ id: 'tiny', label: 'Tiny', contextWindow: 100 }] }],
       session({ id: 'vs_1', model: 'tiny', usage: { ...session().usage, contextWindow: 100 } }));
     await screen.findByRole('option', { name: /Claude Max —/ });
+    expect(await screen.findByText('No recommendation is available for this draft.')).toBeInTheDocument();
     await act(async () => { expect(await bar.intercept()).toBe('held'); });
     expect(flow.send).not.toHaveBeenCalled();
     expect(flow.create).not.toHaveBeenCalled();

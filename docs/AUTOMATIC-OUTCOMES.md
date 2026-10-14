@@ -77,6 +77,21 @@ silently enqueue a native follow-up. Jev remains bounded advice with local rules
 fallback after privacy is known. These checks improve binding correctness; model
 quality, realized cost and time to a verified result need separate evaluation.
 
+### Automatic draft details — source candidate
+
+This panel requires release-owner integration and installed-release qualification.
+In an existing **Automatic** or **Local-first** chat, expand **Automatic details**
+while drafting to see the recommended resource, exact model and context, task
+classification, and alternatives in their existing advice order. Missing model
+or context readings remain unknown.
+
+The panel describes the current draft; the recommendation may change when you
+send. Opening it makes no additional model request. It closes or disappears when
+the draft or source binding changes, when you pin a resource or change routing
+mode, or while project privacy is loading, refreshing, or unavailable. The
+preview does not establish the actual model used, a verified result, quality,
+time, or cost. Read the completed turn and its evidence separately.
+
 ### One conversation with the Manager
 
 In an existing chat, choose **Manager** in the **Auto seat** menu. **One

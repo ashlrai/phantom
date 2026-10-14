@@ -82,6 +82,9 @@ export interface AutoSeatState {
   policy: BudgetPolicy | null;
   classification: PromptClassification | null;
   advice: SeatAdvice | null;
+  /** Display freshness only; neither flag changes advice or send admission. */
+  classificationCurrent: boolean;
+  contextReady: boolean;
   advisorSeats: AdvisorSeat[];
   /** Re-advise with a label from the decision layer (once per send). */
   adviseWith(classification: PromptClassification, pinnedSeatId?: string | null): SeatAdvice | null;
@@ -98,11 +101,15 @@ export function useAutoSeat(input: {
 }): AutoSeatState {
   const session = useSessionRecord(input.sessionId);
   // By chat id: the server checks EVERY root the chat reaches, not just the primary.
-  const context = useQuery(multimodelContextQuery(input.sessionId ? { sessionId: input.sessionId } : { projectPath: null })).data ?? null;
+  const contextQuery = useQuery(multimodelContextQuery(input.sessionId ? { sessionId: input.sessionId } : { projectPath: null }));
+  const context = contextQuery.data ?? null;
+  const contextReady = contextQuery.status === 'success' && context !== null;
   const budget = useQuery(budgetQuery).data ?? null;
   const preferences = useQuery(versePreferencesQuery).data ?? null;
   const policy: BudgetPolicy | null = budget ? { mode: budget.mode, seats: budget.seats, updatedAt: budget.updatedAt } : null;
-  const draft = useDebounced(input.text.trim(), CLASSIFY_DEBOUNCE_MS);
+  const currentDraft = input.text.trim();
+  const draft = useDebounced(currentDraft, CLASSIFY_DEBOUNCE_MS);
+  const classificationCurrent = draft === currentDraft;
   const contextTokens = session?.usage?.contextTokens ?? 0;
   const advisorSeats = useMemo(() => toAdvisorSeats(input.seats, context?.local, { session, preferences }), [input.seats, context?.local, session, preferences]);
 
@@ -136,5 +143,5 @@ export function useAutoSeat(input: {
   // Recomputed per render on purpose: capacity readings age, and the advisor
   // is cheap (a sort over a handful of seats).
   const advice = classification ? adviseWith(classification) : null;
-  return { session, context, policy, classification, advice, advisorSeats, adviseWith };
+  return { session, context, policy, classification, advice, classificationCurrent, contextReady, advisorSeats, adviseWith };
 }

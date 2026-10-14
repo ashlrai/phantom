@@ -75,6 +75,17 @@ button.chip:disabled { opacity: 0.5; cursor: not-allowed; }
 .notice { flex-basis: 100%; color: var(--text-secondary); }
 .noticeError { color: var(--status-danger-fg); }
 
+.automaticDetails { flex-basis: 100%; min-width: 0; color: var(--text-secondary); }
+.automaticDetails > summary { cursor: pointer; width: fit-content; padding: var(--space-1) 0; }
+.automaticDetails > summary:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; border-radius: var(--radius-xs); }
+.automaticBody { padding: var(--space-2); border-left: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.automaticBody p { margin: 0 0 var(--space-2); }
+.automaticBody p:last-child { margin-bottom: 0; color: var(--text-tertiary); }
+.automaticBody dl { display: grid; grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); gap: var(--space-1) var(--space-2); margin: 0 0 var(--space-2); }
+.automaticBody dt { color: var(--text-tertiary); }
+.automaticBody dd { margin: 0; min-width: 0; }
+.automaticBody ol { margin: 0 0 var(--space-2); padding-left: var(--space-4); }
+
 /* ---- Compare dialog ------------------------------------------------------- */
 .dialog { width: min(96vw, 72rem); }
 
