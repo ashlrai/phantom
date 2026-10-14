@@ -21,7 +21,9 @@ export function readFixedMemoryEvaluationFile(root: string, relative: string, ma
     || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1024 * 1024) throw new Error('MEMORY_EVAL_INPUT');
   const physicalRoot = realpathSync(root); const path = join(physicalRoot, relative); const before = lstatSync(path);
   if (!before.isFile() || before.isSymbolicLink() || !realpathSync(path).startsWith(physicalRoot + sep)) throw new Error('MEMORY_EVAL_INPUT');
-  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  // A regular path can become a FIFO after stat; reach fstat without waiting for a writer.
+  const nonBlock = typeof constants.O_NONBLOCK === 'number' ? constants.O_NONBLOCK : 0;
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | nonBlock);
   try {
     const first = fstatSync(fd);
     if (!first.isFile() || first.size > maxBytes || first.dev !== before.dev || first.ino !== before.ino) throw new Error('MEMORY_EVAL_INPUT');
