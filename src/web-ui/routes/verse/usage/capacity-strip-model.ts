@@ -100,6 +100,9 @@ export interface CapacityRow {
   creditSpendControlReached?: boolean | null;
   creditBalance?: string | null;
   creditState?: 'available' | 'held' | 'none' | 'unknown';
+  /** Original native credit observation and deadline, independent of quota resets. */
+  creditObservedAt?: string | null;
+  creditsExpiresAt?: string | null;
   reserve: CapacityReserve | null;
   notes: string[];
   /** Reviewed Claude native-check code; only relevant while its usage meter is absent. */
@@ -108,6 +111,10 @@ export interface CapacityRow {
   localCount: number;
   /** When this seat was last checked (health sweep, else the usage reading), ISO; null when never. */
   checkedAt: string | null;
+  /** Usage observation time; a later connection check must never replace it. */
+  usageObservedAt?: string | null;
+  /** Connection-only check time, independent of usage and dispatch readiness. */
+  connectionCheckedAt?: string | null;
   /** The instant a spent seat becomes usable again (ISO), when one is known. */
   resetAt: string | null;
   /** The account is signed out — by the health sweep or by its own capacity record. */
@@ -229,6 +236,7 @@ function seatRow(
   }
   const report = health.get(seat.id);
   const connection = connectionOf(report, now);
+  const connectionCheckedAt = parseable(report?.checkedAt) ? report!.checkedAt : null;
   // A seat A2 found signed out or out of usage cannot run a turn, whatever
   // its last window reading says (the engine's readiness gate refuses it —
   // seat-readiness.ts SEAT_BLOCKING_CONNECTIONS). Counting it "usable"
@@ -252,13 +260,19 @@ function seatRow(
     creditBalance: view.creditBalance ?? null,
     creditState: view.creditState ?? 'unknown',
     creditSpendControlReached: view.creditSpendControlReached ?? null,
+    creditObservedAt: seat.engine === 'codex' && parseable(seat.capacity?.observedAt) ? seat.capacity!.observedAt : null,
+    creditsExpiresAt: seat.engine === 'codex' && parseable(seat.capacity?.creditsExpiresAt) ? seat.capacity!.creditsExpiresAt! : null,
     reserve: reserveOf(budget.get(seat.id)),
     notes: [...view.notes],
     quotaCurrent: view.quotaCurrent,
     quotaExpiresAt: view.quotaExpiresAt,
     quotaReadReason: windows.length === 0 && seat.engine === 'claude' ? seat.capacity?.quotaReadReason ?? null : null,
     localCount: 1,
-    checkedAt: parseable(report?.checkedAt) ? report!.checkedAt : parseable(view.observedAt) ? view.observedAt : null,
+    checkedAt: connectionCheckedAt ?? (parseable(view.observedAt) ? view.observedAt : null),
+    usageObservedAt: view.kind !== 'subscription' ? null : view.extended
+      ? parseable(seat.capacity?.observedAt) ? seat.capacity!.observedAt : null
+      : parseable(view.observedAt) ? view.observedAt : null,
+    connectionCheckedAt,
     // The LATEST reset among ALL the spent windows (not only the ones this row
     // has room to draw) — seat-subscription `seatReopensAt`, which Fleet's
     // "eligible again" and the health banner agree with.
@@ -275,6 +289,7 @@ function collapsedLocal(seats: readonly VerseSeat[], health: ReadonlyMap<string,
   const cls: SeatCapacityClass = ready > 0 ? 'ready' : blocked === rows.length ? 'blocked' : 'unread';
   // One runtime behind every tag: the first report that says anything speaks for it.
   const report = seats.map((s) => health.get(s.id)).find((r) => r !== undefined);
+  const connectionCheckedAt = parseable(report?.checkedAt) ? report!.checkedAt : null;
   const count = seats.length;
   return {
     seatId: 'local',
@@ -296,10 +311,10 @@ function collapsedLocal(seats: readonly VerseSeat[], health: ReadonlyMap<string,
     reserve: null,
     notes: [],
     localCount: count,
-    checkedAt: parseable(report?.checkedAt)
-      ? report!.checkedAt
-      : rows.map((r) => r.observedAt).filter(parseable).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null,
+    checkedAt: connectionCheckedAt ?? rows.map((r) => r.observedAt).filter(parseable).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null,
     resetAt: null,
+    usageObservedAt: null,
+    connectionCheckedAt,
     signedOut: false,
   };
 }

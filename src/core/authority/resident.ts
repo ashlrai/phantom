@@ -48,6 +48,8 @@ import {
   type StandingEvaluation,
 } from './effective-config.js';
 import { runningPackageRoot } from './surface.js';
+import { NON_OPERATOR_ENV_MARKERS } from './operator-context-markers.js';
+export { NON_OPERATOR_ENV_MARKERS } from './operator-context-markers.js';
 
 /** The one command that installs or restarts the resident service. */
 export const RESIDENT_START_COMMAND = 'ashlr authority resident start';
@@ -175,15 +177,6 @@ export function observeResidentAdmission(opts: { nowMs?: number } = {}): { admis
  * the markers agent harnesses set on the shells they drive (Claude Code sets
  * CLAUDECODE and AI_AGENT; Codex sets CODEX_SANDBOX*).
  */
-export const NON_OPERATOR_ENV_MARKERS: readonly string[] = Object.freeze([
-  'ASHLR_IN_DAEMON',
-  'ASHLR_IN_SWARM',
-  'CLAUDECODE',
-  'AI_AGENT',
-  'CODEX_SANDBOX',
-  'CODEX_SANDBOX_NETWORK_DISABLED',
-]);
-
 export interface OperatorContext {
   stdinTTY: boolean;
   stdoutTTY: boolean;

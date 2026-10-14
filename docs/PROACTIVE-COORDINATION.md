@@ -4,6 +4,31 @@ This milestone adds provider-neutral planning and a durable operator workflow.
 It does not connect personal agents or execute provider work. Every command
 reply contains `dispatchAuthorized: false`; configured profiles remain unqualified.
 
+## Product direction
+
+The intended product is one self-improving engineering workspace and service.
+Ashlr's own service work provides the dogfooding path toward SaaS and autonomous
+operations. Users configure goals, assignments and resources across providers:
+coding subscriptions, CLI accounts, APIs, cloud funding and local models.
+Allocation should improve independently verified outcome value, quality and
+time within cost and authority limits; token consumption and activity counts
+are not success criteria.
+
+**Work with me** and **Work for me** are a continuum over the same tasks,
+context, resources and evidence. A human should inspect priorities and criteria,
+interject, approve where required, take ownership and resume delegated work
+without losing history or creating duplicate attempts. Moving toward autonomy
+does not expand permissions or spending limits. Resource and task views should
+agree on identity, observation time, coverage and uncertainty.
+
+These are product acceptance goals, not measured capabilities or completion
+claims. The local mechanisms below support planning, manual coordination and
+evidence inspection; seamless human takeover, qualified dispatch, independent
+live evaluation and multi-user operation remain backlog work. See
+[product acceptance](PROACTIVE-COORDINATION-BACKLOG.md#product-acceptance-direction)
+and the proposed
+[offline team contract](PROACTIVE-COORDINATION-BACKLOG.md#offline-team-contract-proposal).
+
 ## Operator workflow
 
 In Proactive agents, add a provider/account/agent identity and declare the
@@ -107,6 +132,31 @@ funding, connection and actual cost are unknown until a host supplies already
 captured public snapshots. It never calls a collector, refreshes an account,
 reads an assistant session or silently probes a provider. A refresh in this view
 means rereading this local projection.
+
+Configured connections and declared Bot account references are locators, not
+verified distinct provider accounts, human identities or account control.
+Resource count, current-reading count and distinct configured-reference count
+describe different coverage. Aliases may point to one login; matching references
+do not prove equivalence, independent capacity, ownership or sharing authority.
+The qualified independent-account count stays unknown without genuine
+source-owned identity and equivalence evidence. The
+[provider grouping contract](../src/core/resources/provider-aggregation-types.ts)
+keeps these counts separate and leaves verified account coverage unknown.
+
+The local resource-display follow-up must retain native quota `observedAt` with
+its original `quotaExpiresAt`, and credit observation time with its original
+`creditsExpiresAt`. Connection checks and admission checks have independent
+stamps; neither refreshes usage or credit evidence. Display-age policy can
+shorten validity but cannot extend the original source TTL. Exact expiry
+wakeups and focus rechecks only reevaluate retained evidence: they do not fetch,
+restamp, admit work or spend. Expired readings remain visibly retained with
+current availability unconfirmed; a current credit reading does not refresh an
+expired subscription reading. See the
+[source-expiry guard](../src/core/verse/quota-freshness.ts) and
+[follow-up acceptance](PROACTIVE-COORDINATION-BACKLOG.md#local-resource-display-follow-up).
+This source candidate includes the resource-display slice for 3.29.15. Verify
+matching published artifacts before installation; the source version alone
+does not establish publication, installed behavior or provider qualification.
 
 [Routing lab](../src/core/proactive/routing-lab.ts) saves a deterministic shadow
 evaluation of one exact saved task/brief, or runs a synthetic offline benchmark.
