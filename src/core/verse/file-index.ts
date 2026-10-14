@@ -140,23 +140,26 @@ const WORD_BREAK = new Set(['/', '-', '_', '.', ' ']);
 export function fuzzyScore(path: string, query: string): number | null {
   if (query.length === 0) return 0;
   const lower = path.toLowerCase();
-  const baseStart = lower.lastIndexOf('/') + 1;
-  const base = lower.slice(baseStart);
   let score = 0;
-  let qi = 0;
   let prev = -2;
   let firstMatch = -1;
-  for (let i = 0; i < lower.length && qi < query.length; i += 1) {
-    if (lower[i] !== query[qi]) continue;
+  let next = 0;
+  // Skip nonmatching code units in native search, preserving the same greedy
+  // leftmost match and original-path bonuses for every matched character.
+  for (let qi = 0; qi < query.length; qi += 1) {
+    const i = lower.indexOf(query[qi]!, next);
+    if (i < 0) return null;
     if (firstMatch < 0) firstMatch = i;
     const before = i === 0 ? '/' : path[i - 1]!;
     const hump = i > 0 && path[i] !== lower[i] && path[i - 1] === lower[i - 1];
     if (WORD_BREAK.has(before) || hump) score += 8;
     if (prev === i - 1) score += 5;
     prev = i;
-    qi += 1;
+    next = i + 1;
   }
-  if (qi < query.length) return null;
+  // Rejected paths need no basename scan or allocation.
+  const baseStart = lower.lastIndexOf('/') + 1;
+  const base = lower.slice(baseStart);
   if (firstMatch >= baseStart) score += 12;
   if (base.startsWith(query)) score += 20;
   if (base === query || base.replace(/\.[^.]+$/, '') === query) score += 30;
