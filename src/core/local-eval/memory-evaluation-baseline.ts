@@ -9,7 +9,7 @@ export function buildFlatLatestMemoryDiagnostic(snapshot: unknown, query: unknow
   const result: MemoryContextPack = { schemaVersion: 1, status: 'refused', text: '', bytes: 0,
     tokenEstimate: { method: 'utf8-bytes-divided-by-4', value: 0 }, items: [], authority: false, contentSafety: 'screened-with-shared-patterns',
     receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null,
-      scope: null, time: null, knownAt: null, selectedEventIds: [], exclusions: [], stopReasons: ['flat-latest-record-diagnostic'] } };
+      scope: null, time: null, knownAt: null, selectedEventIds: [], exclusions: [], outOfScopeEvents: 0, stopReasons: ['flat-latest-record-diagnostic'] } };
   if (!validMemorySnapshot(snapshot) || !validMemoryPackQuery(query)) return result;
   Object.assign(result.receipt, { snapshotId: snapshot.snapshotId, snapshotRevision: snapshot.revision,
     recordedThrough: snapshot.recordedThrough, scope: { projectId: query.projectId, ownerId: query.ownerId, audienceId: query.audienceId },
@@ -18,6 +18,7 @@ export function buildFlatLatestMemoryDiagnostic(snapshot: unknown, query: unknow
   if (snapshot.sourceState !== 'available') { result.status = snapshot.sourceState; return result; }
   if (!snapshot.complete) { result.status = 'unavailable'; return result; }
   const newest = new Map<string, MemoryFactEvent>();
+  result.receipt.outOfScopeEvents = snapshot.events.filter(event => !memoryScopeVisible(event, query)).length;
   for (const event of snapshot.events) {
     if (event.kind !== 'fact' || event.reviewState !== 'approved' || !memoryScopeVisible(event, query)
       || event.recordedAt > (query.knownAt ?? snapshot.recordedThrough)) continue;

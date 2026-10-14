@@ -83,7 +83,8 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
   // Future/unseen revocations do not alter an earlier valid-time or knowledge-time view.
   const revocationRevision = new Map<string, number>();
   const revocations = new Map<string, Map<number, string[]>>();
-  const factKey = (event: MemoryFactEvent): string => canonicalJson([event.projectId, event.ownerId, [...event.audienceIds].sort(), event.factId]);
+  // Keyed like revision grouping below: a visible reviewed withdrawal is honored even when its audience list differs.
+  const factKey = (event: MemoryFactEvent): string => canonicalJson([event.projectId, event.ownerId, event.factId]);
   for (const event of scoped.values()) {
     if (event.reviewState !== 'withdrawn' || event.validFrom === null || event.validFrom > query.time.at
       || ['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(event.eventId) ?? '')) continue;
