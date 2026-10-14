@@ -76,3 +76,24 @@ describe('deletion never turns unusable lineage into a valid decision', () => {
     expect(selected([event(), withdrawal, tombstone(['ev_w'])])).toEqual(['ev_a']);
   });
 });
+
+describe('a linked decision on the same fact is never weaker than an unlinked one', () => {
+  it('a withdrawal or correction of the same fact with a different audience list does not leave the stale value served', () => {
+    const withdrawal = event({ eventId: 'ev_w', revision: 2, reviewState: 'withdrawn', audienceIds: ['team_a', 'team_b'],
+      validFrom: mid, recordedAt: mid, reviewedAt: mid });
+    expect(selected([event(), withdrawal])).toEqual([]);
+    expect(selected([event(), { ...withdrawal, supersedes: ['ev_a'] }])).toEqual([]);
+    const correction = event({ eventId: 'ev_fix', revision: 2, text: 'Deploy to us-west-2.', audienceIds: ['team_a', 'team_b'],
+      validFrom: mid, recordedAt: mid, reviewedAt: mid, supersedes: ['ev_a'] });
+    expect(selected([event(), correction])).not.toContain('ev_a');
+  });
+});
+
+describe('receipts never identify or count other scopes', () => {
+  it('omits out-of-scope events from exclusions and adds no count', () => {
+    const foreign = event({ eventId: 'ev_foreign', factId: 'foreign', projectId: 'project_b' });
+    const pack = buildMemoryContextPack(snapshot([event(), foreign]), query());
+    expect(JSON.stringify(pack)).not.toContain('ev_foreign');
+    expect(Object.keys(pack.receipt)).not.toContain('outOfScopeEvents');
+  });
+});

@@ -27,7 +27,7 @@ export interface MemoryContextPack {
   tokenEstimate: { method: 'utf8-bytes-divided-by-4'; value: number }; items: MemoryPackItem[];
   receipt: { policyVersion: 1; snapshotId: string | null; snapshotRevision: number | null; recordedThrough: string | null;
     scope: { projectId: string; ownerId: string; audienceId: string } | null; time: MemoryTime | null; knownAt: string | null; selectedEventIds: string[];
-    /** In-scope exclusions only. Events outside the admitted scope are counted, never identified. */
-    exclusions: MemoryExclusion[]; outOfScopeEvents: number; stopReasons: string[] };
+    /** In-scope exclusions only. Events outside the admitted scope are neither identified nor counted. */
+    exclusions: MemoryExclusion[]; stopReasons: string[] };
   authority: false;
 }

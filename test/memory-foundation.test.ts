@@ -64,7 +64,7 @@ describe('pure governed memory foundation', () => {
       const hidden = event({ eventId: 'hidden', factId: 'hidden', revision: 2, text: 'build build build', supersedes: ['ev_a'],
         ...{ [field]: field === 'audienceIds' ? ['other'] : 'other' } });
       const result = buildMemoryContextPack(snapshot([hidden, event()]), query());
-      expect(ids(result)).toEqual(['ev_a']); expect(result.receipt.exclusions).not.toContainEqual({ eventId: 'hidden', reason: 'scope' }); expect(result.receipt.outOfScopeEvents).toBe(1);
+      expect(ids(result)).toEqual(['ev_a']); expect(result.receipt.exclusions).not.toContainEqual({ eventId: 'hidden', reason: 'scope' });
     }
   });
   it('conflicts when independently admitted audience sets overlap one visible slot', () => {

@@ -161,8 +161,8 @@ unavailable. `none` may reflect irrelevant evidence or budget omissions; inspect
 the receipt rather than interpreting it as proof that memory does not exist.
 Receipts record scope, policy version, snapshot claims, temporal axes, selected
 IDs and finite exclusion reasons for in-scope events. Events outside the
-admitted project, owner or audience appear only as an `outOfScopeEvents` count,
-never by ID. Receipts do not attest execution authority or
+admitted project, owner or audience are neither identified nor counted.
+Receipts do not attest execution authority or
 replace authentication and output authorization in an eventual adapter.
 
 ## Minimal pure example

@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { canonicalJson } from '../authority/canonical-json.js';
 import { buildMemoryContextPack } from '../memory/pack.js';
 import { memoryUtf8Bytes, validMemoryPackQuery } from '../memory/validate.js';
-import type { MemoryContextPack, MemoryFactEvent } from '../memory/types.js';
+import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery } from '../memory/types.js';
 import { buildFlatLatestMemoryDiagnostic } from './memory-evaluation-baseline.js';
 import { MEMORY_EVAL_FAMILIES, type MemoryEvalArmResult, type MemoryEvalCase, type MemoryEvalCaseResult,
   type MemoryEvalCorpus, type MemoryEvalDistribution, type MemoryEvalReport, type MemoryEvalSourceBinding } from './memory-evaluation-types.js';
@@ -99,16 +99,18 @@ function judge(entry: MemoryEvalCase, pack: MemoryContextPack): string[] {
     expect(Boolean(expected) && expected!.text === row.text, 'emitted-fact-text');
     expect(Boolean(expected) && canonicalJson(expected!.sourceRefs) === canonicalJson(row.sourceRefs), 'emitted-citation-payload');
   }
-  // Receipts may count, but never identify, events outside the admitted scope. Checked against literal fixture fields.
-  if (validMemoryPackQuery(entry.query)) {
-    const q = entry.query;
-    const visible = (event: MemoryFactEvent) => event.projectId === q.projectId && event.ownerId === q.ownerId
-      && Array.isArray(event.audienceIds) && event.audienceIds.includes(q.audienceId);
-    const named = [...pack.receipt.exclusions.map(item => item.eventId), ...pack.receipt.selectedEventIds];
-    expect(named.every(eventId => events.some(event => event.eventId === eventId && visible(event))), 'receipt-scope-leak');
-    if (pack.status === 'ready' || pack.status === 'none')
-      expect(pack.receipt.outOfScopeEvents === events.filter(event => !visible(event)).length, 'out-of-scope-count');
-  }
+  // Nothing in the pack may identify an event outside the admitted scope. Checked against literal fixture fields,
+  // even for invalid queries (then no fixture event counts as visible).
+  const q = (entry.query ?? {}) as Partial<MemoryPackQuery>;
+  const visible = (event: MemoryFactEvent) => validMemoryPackQuery(entry.query) && event.projectId === q.projectId && event.ownerId === q.ownerId
+    && Array.isArray(event.audienceIds) && event.audienceIds.includes(q.audienceId!);
+  const named = [...pack.receipt.exclusions.map(item => item.eventId), ...pack.receipt.selectedEventIds];
+  expect(named.every(eventId => events.some(event => event.eventId === eventId && visible(event))), 'receipt-scope-leak');
+  const hidden = events.filter(event => !visible(event) && !events.some(other => other !== event && other.eventId === event.eventId && visible(other)));
+  const surfaces = [pack.text, ...pack.receipt.stopReasons];
+  expect(!hidden.some(event => surfaces.some(surface => (typeof event.eventId === 'string' && surface.includes(event.eventId))
+    || (typeof event.text === 'string' && event.text.trim().length > 0 && surface.includes(event.text)
+      && !events.some(other => visible(other) && typeof other.text === 'string' && other.text.includes(event.text))))), 'out-of-scope-content');
   for (const expected of entry.gold.exclusions) expect(pack.receipt.exclusions.some(actual => actual.eventId === expected.eventId && actual.reason === expected.reason), 'exclusion:' + expected.eventId);
   const quoted = (text: string) => JSON.stringify(text).slice(1, -1).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   for (const text of entry.gold.mustContain) expect(pack.text.includes(quoted(text)), 'missing-gold-text');

@@ -74,8 +74,9 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
       const reason = ['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(event.eventId) ?? '') ? 'conflict' : 'superseded';
       event.supersedes.forEach(id => {
         const target = scoped.get(id);
-        // Like deletion, refusal never reaches another scope or slot.
-        if (target && !excluded.has(id) && (reason === 'superseded' || sameMemorySlot(event, target))) excluded.set(id, reason);
+        // Like deletion, refusal never reaches an unrelated slot: only the same slot or the same fact.
+        const sameFact = target !== undefined && target.projectId === event.projectId && target.ownerId === event.ownerId && target.factId === event.factId;
+        if (target && !excluded.has(id) && (reason === 'superseded' || sameMemorySlot(event, target) || sameFact)) excluded.set(id, reason);
       });
     }
   }

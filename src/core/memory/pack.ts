@@ -22,7 +22,7 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   const output: MemoryContextPack = { schemaVersion: 1, contentSafety: 'screened-with-shared-patterns', status: 'refused', text: '', bytes: 0,
     tokenEstimate: { method: 'utf8-bytes-divided-by-4', value: 0 }, items: [],
     receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
-      selectedEventIds: [], exclusions: [], outOfScopeEvents: 0, stopReasons: [] }, authority: false };
+      selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false };
   let query: MemoryPackQuery;
   try {
     if (!validMemoryPackQuery(queryInput)) { output.receipt.stopReasons.push('invalid-query'); return output; }
@@ -40,9 +40,8 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   if (snapshot.sourceState !== 'available') { output.status = snapshot.sourceState; output.receipt.stopReasons.push('source-' + snapshot.sourceState); return output; }
   if (!snapshot.complete) { output.status = 'unavailable'; output.receipt.stopReasons.push('incomplete-snapshot'); return output; }
   const view = projectMemoryTemporal(snapshot, query);
-  // Receipts never identify another project's, owner's or audience's events.
+  // Receipts never identify or count another project's, owner's or audience's events.
   output.receipt.exclusions = view.exclusions.filter(item => item.reason !== 'scope');
-  output.receipt.outOfScopeEvents = view.exclusions.length - output.receipt.exclusions.length;
   const search = terms(query.query);
   const ranked = view.eligible.map(event => {
     const words = terms(`${event.subjectKey} ${event.slotKey} ${event.text}`);
