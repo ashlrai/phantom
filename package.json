@@ -1,12 +1,12 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.29.13",
+  "version": "3.29.15",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
   },
   "license": "MIT",
-  "author": "Mason Wyatt <mason@evero-consulting.com>",
+  "author": "Mason Wyatt <mason@ashlr.ai>",
   "homepage": "https://phm.dev",
   "repository": {
     "type": "git",
@@ -51,6 +51,8 @@
     "docs/QUICKSTART.md",
     "docs/AUTOMATIC-OUTCOMES.md",
     "docs/VERSE.md",
+    "docs/PROACTIVE-COORDINATION.md",
+    "docs/PROACTIVE-COORDINATION-BACKLOG.md",
     "docs/AUTONOMY-SETUP.md",
     "docs/RESIDENT-RUNTIME.md",
     "docs/AUTHORITY.md",
@@ -70,6 +72,7 @@
     "docs/UNIVERSE-RESEARCH.md",
     "docs/UNIVERSE-AUTONOMY-RESEARCH.md",
     "docs/RESOURCE-POOLS.md",
+    "docs/RESOURCE-POOL-COMMISSIONING-CHECK.md",
     "docs/NORTH-STAR.md",
     "docs/ELITE-AGENT-EFFICIENCY.md",
     "docs/OPENAI-AGENTS-INTEGRATION.md",

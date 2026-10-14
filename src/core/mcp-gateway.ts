@@ -178,6 +178,12 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 /** Namespacing separator: gateway tool name = `<server>__<tool>`. */
 const NS = '__';
 
+// A discovery is one bounded snapshot, not an unbounded series of page requests.
+const MAX_DISCOVERY_PAGES = 64;
+const MAX_DISCOVERY_TOOLS = 4_096;
+const MAX_DISCOVERY_BYTES = 4 * 1024 * 1024;
+const MAX_CURSOR_BYTES = 4_096;
+
 /**
  * Env var set on every downstream child the gateway spawns. A downstream that
  * is itself an ashlr gateway can read this to refuse re-aggregation, providing
@@ -321,6 +327,45 @@ async function connectDownstream(spec: McpServerSpec, timeoutMs: number, cfg?: R
   return client;
 }
 
+/** Read every page before replacing an inventory; reject incomplete/ambiguous snapshots. */
+async function discoverTools(client: Client, serverName: string, timeoutMs: number): Promise<DownstreamTool[]> {
+  const deadline = performance.now() + timeoutMs;
+  const tools: DownstreamTool[] = [];
+  const names = new Set<string>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  let bytes = 0;
+  for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
+    const remaining = Math.ceil(deadline - performance.now());
+    if (remaining <= 0) throw new Error(`tools/list(${serverName}) discovery timed out after ${timeoutMs}ms`);
+    const listed = await withDeadline(
+      client.listTools(cursor === undefined ? {} : { cursor }, { timeout: remaining }),
+      remaining, `tools/list(${serverName})`,
+    );
+    if (!listed || !Array.isArray(listed.tools)) throw new Error('Invalid downstream tools inventory');
+    // The SDK has already parsed the response. This bounds the inventory we
+    // retain/publish, including schemas and descriptions, across all pages.
+    if (tools.length + listed.tools.length > MAX_DISCOVERY_TOOLS) throw new Error('Downstream tools inventory exceeds tool limit');
+    bytes += Buffer.byteLength(JSON.stringify(listed), 'utf8');
+    if (bytes > MAX_DISCOVERY_BYTES) throw new Error('Downstream tools inventory exceeds byte limit');
+    for (const tool of listed.tools) {
+      if (!tool || typeof tool.name !== 'string' || !tool.name.trim()) throw new Error('Invalid downstream tool name');
+      if (names.has(tool.name)) throw new Error('Duplicate downstream tool name');
+      names.add(tool.name);
+      tools.push({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema });
+    }
+    if (performance.now() >= deadline) throw new Error(`tools/list(${serverName}) discovery timed out after ${timeoutMs}ms`);
+    if (listed.nextCursor === undefined) return tools;
+    if (typeof listed.nextCursor !== 'string' || !listed.nextCursor || Buffer.byteLength(listed.nextCursor, 'utf8') > MAX_CURSOR_BYTES) {
+      throw new Error('Invalid downstream tools cursor');
+    }
+    if (cursors.has(listed.nextCursor)) throw new Error('Downstream tools cursor cycle');
+    cursors.add(listed.nextCursor);
+    cursor = listed.nextCursor;
+  }
+  throw new Error('Downstream tools discovery exceeds page limit');
+}
+
 // ---------------------------------------------------------------------------
 // probeServer
 // ---------------------------------------------------------------------------
@@ -345,11 +390,7 @@ export async function probeServer(
   try {
     client = await connectDownstream(spec, timeoutMs, cfgForProbe);
 
-    const listed = await withDeadline(
-      client.listTools({}, { timeout: timeoutMs }), timeoutMs, `tools/list(${spec.name})`,
-    );
-
-    const tools = (listed.tools ?? []).map((t) => t.name);
+    const tools = (await discoverTools(client, spec.name, timeoutMs)).map((tool) => tool.name);
     return {
       name: spec.name,
       ok: true,
@@ -388,6 +429,8 @@ interface Downstream {
   env: Record<string, string>;
   client: Client | null;
   tools: DownstreamTool[];
+  hasInventory: boolean;
+  discoveryError?: string;
   generation: number;
   failures: number;
   retryAfter: number;
@@ -398,6 +441,11 @@ interface Downstream {
  * Persistent stdio aggregation. Read-only tools/list may reconnect a failed
  * configured server once after bounded backoff; effectful calls are never
  * retried. Recovery preserves the captured command, args and child environment.
+ * Inventories are replaced only after bounded, complete pagination. Failed
+ * refreshes retain the last inventory for collision reservation and diagnosis,
+ * revoke its routes, and report stale/unavailable state in tools/list _meta.
+ * Ambiguous namespace keys are omitted from both inventory and dispatch.
+ * The serialized-byte limit applies after SDK parsing, not transport allocation.
  */
 export async function startGateway(
   registry: McpRegistry,
@@ -416,21 +464,31 @@ export async function startGateway(
     Object.freeze(spec.args);
     if (spec.env) Object.freeze(spec.env);
     Object.freeze(spec);
-    return { spec, env: downstreamEnv(spec, gatewayCfg), client: null, tools: [], generation: 0, failures: 0, retryAfter: 0 };
+    return { spec, env: downstreamEnv(spec, gatewayCfg), client: null, tools: [], hasInventory: false, generation: 0, failures: 0, retryAfter: 0 };
   });
   interface Route { downstream: Downstream; client: Client; original: string }
   const routes = new Map<string, Route>();
+  const rejectedRoutes = new Set<string>();
   let closed = false;
   const noHeal = process.env['ASHLR_NO_HEAL'] === '1';
 
   const rebuildRoutes = (): void => {
     routes.clear();
+    rejectedRoutes.clear();
     if (closed) return;
+    const owners = new Map<string, Downstream>();
+    // Retained stale inventories reserve their names too: a failed peer must
+    // not silently redirect its previously advertised name to a different peer.
+    for (const d of downstreams) for (const tool of d.tools) {
+      const key = `${d.spec.name}${NS}${tool.name}`;
+      if (isNativeTool(key) || owners.has(key)) rejectedRoutes.add(key);
+      else owners.set(key, d);
+    }
     for (const d of downstreams) {
-      if (!d.client) continue;
+      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
-        if (isNativeTool(key)) continue;
+        if (rejectedRoutes.has(key)) continue;
         routes.set(key, { downstream: d, client: d.client, original: tool.name });
       }
     }
@@ -442,7 +500,7 @@ export async function startGateway(
     if (client && d.client !== client) return; // an old peer cannot revoke its replacement
     d.generation++;
     d.client = null;
-    d.tools = [];
+    d.discoveryError ??= 'Downstream connection closed';
     d.failures++;
     d.retryAfter = Date.now() + Math.min(30_000, 500 * 2 ** Math.min(d.failures - 1, 6));
     rebuildRoutes(); // revoke before awaiting cleanup
@@ -469,18 +527,17 @@ export async function startGateway(
           const connected = client;
           client.onclose = () => { if (!closed && d.client === connected) void drop(d, connected); };
         }
-        const listed = await withDeadline(client.listTools({}, { timeout: timeoutMs }), timeoutMs, `tools/list(${d.spec.name})`);
-        const tools = (listed.tools ?? []).map((tool) => {
-          if (!tool || typeof tool.name !== 'string' || !tool.name) throw new Error('Invalid downstream tool name');
-          return { name: tool.name, description: tool.description, inputSchema: tool.inputSchema };
-        });
+        const tools = await discoverTools(client, d.spec.name, timeoutMs);
         if (closed || generation !== d.generation || d.client !== client) return;
         d.tools = tools;
+        d.hasInventory = true;
+        d.discoveryError = undefined;
         d.failures = 0;
         d.retryAfter = 0;
         rebuildRoutes(); // replace the complete inventory, including deleted tools
       } catch (err) {
         if (closed || generation !== d.generation) return;
+        d.discoveryError = safeErrorMessage(err);
         await drop(d, client);
         process.stderr.write(`[ashlr mcp] WARN tools/list("${d.spec.name}") failed: ${safeErrorMessage(err)}\n`);
       }
@@ -509,17 +566,32 @@ export async function startGateway(
     assertUsable();
     // Completion order never changes route precedence or response order.
     for (const d of downstreams) {
-      if (!d.client) continue;
+      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
-        if (isNativeTool(key)) {
-          process.stderr.write(`[ashlr mcp] WARN downstream "${key}" collides with a native ashlr tool — skipped\n`);
+        if (rejectedRoutes.has(key)) {
+          process.stderr.write(`[ashlr mcp] WARN downstream "${key}" has an ambiguous or native tool route — skipped\n`);
           continue;
         }
+        const route = routes.get(key);
+        if (!route || route.downstream !== d || route.client !== d.client) continue;
         tools.push({ name: key, description: `[${d.spec.name}] ${tool.description ?? tool.name}`, inputSchema: tool.inputSchema ?? { type: 'object' } });
       }
     }
-    return { tools } as { tools: { name: string; description?: string; inputSchema: object }[] };
+    return {
+      tools,
+      _meta: {
+        'ashlr/discovery': {
+          servers: downstreams.map((d) => ({
+            name: d.spec.name,
+            status: d.discoveryError !== undefined ? (d.hasInventory ? 'stale' : 'unavailable') : 'ready',
+            lastKnownToolCount: d.tools.length,
+            ...(d.discoveryError !== undefined ? { error: d.discoveryError } : {}),
+          })),
+          rejectedRoutes: [...rejectedRoutes],
+        },
+      },
+    } as { tools: { name: string; description?: string; inputSchema: object }[]; _meta: Record<string, unknown> };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

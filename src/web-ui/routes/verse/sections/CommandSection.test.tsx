@@ -195,7 +195,7 @@ describe('CommandSection — seat capacity and metered spend', () => {
     // The roster is read from the cache the console loads at startup — never fetched here.
     await runQuery(VERSE_BOOTSTRAP_KEY, async () => ({
       seats: [{ id: 'claude-a', engine: 'claude', label: 'Claude Max', health: { state: 'ready', summary: null, windows: [], observedAt: null }, capacity: {
-        planType: 'max', usability: 'tight', observedAt: null, evidenceSource: 'collector', notes: [], credits: null,
+        planType: 'max', usability: 'tight', observedAt: new Date(now).toISOString(), quotaExpiresAt: new Date(now + 60_000).toISOString(), evidenceSource: 'collector', notes: [], credits: null,
         binding: { id: 'five_hour', usedPercent: 74, resetsAt: null, resetDescription: 'Sep 24 at 5pm (America/New_York)', limitReached: false, measured: true },
         windows: [
           { id: 'five_hour', usedPercent: 74, resetsAt: null, resetDescription: 'Sep 24 at 5pm (America/New_York)', limitReached: false, measured: true },
