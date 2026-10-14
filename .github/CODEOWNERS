@@ -258,6 +258,7 @@
 /test/authority-standing-grant-310b.test.ts @masonwyatt23
 /test/authority-surface-310b.test.ts @masonwyatt23
 /test/authority-tier1-closure-310b.test.ts @masonwyatt23
+/test/automatic-decision-receipt.test.ts @masonwyatt23
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
