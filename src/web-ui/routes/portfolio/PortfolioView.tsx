@@ -5,6 +5,7 @@
  * and is rendered as an honest "not available" state, never as a zeroed
  * chart pretending to be real data.
  */
+import { ErrorState } from '../../components/states/States.js';
 import { dashboardSnapshotQuery, portfolioQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
@@ -56,9 +57,7 @@ export function PortfolioView() {
       {query.status === 'loading' ? (
         <SkeletonCardGrid count={6} />
       ) : query.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {query.error?.message ?? 'Failed to load portfolio.'}
-        </div>
+        <ErrorState what="Portfolio" error={query.error?.message ?? 'Failed to load portfolio.'} fix="ashlr portfolio --json" />
       ) : query.data === null ? (
         <p className={styles.notAvailable}>
           No portfolio roll-up available — either this server has no enrolled repos, or it predates the portfolio

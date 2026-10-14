@@ -12,6 +12,7 @@
  * `Record<string, unknown>`), so that section is wrapped in <Epistemic/>
  * per-source rather than shown as one blended status.
  */
+import { ErrorState } from '../../components/states/States.js';
 import { useRef } from 'react';
 import { goalsQuery, visionMissionQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
@@ -92,9 +93,7 @@ export function GoalsView() {
           <SkeletonLine width="70%" />
         </div>
       ) : goalsResult.status === 'error' ? (
-        <p className={styles.error} role="alert">
-          {goalsResult.error?.message ?? 'Failed to load goals.'}
-        </p>
+        <ErrorState what="Goals" error={goalsResult.error?.message ?? 'Failed to load goals.'} fix="ashlr goals --json" />
       ) : goals.length === 0 ? (
         <p className={styles.empty}>No active goals.</p>
       ) : (

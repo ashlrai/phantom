@@ -7,6 +7,7 @@
  * list traversal + open + batch-select (the old UI had 3 key handlers in
  * 7,901 lines; run detail was entirely unreachable by keyboard).
  */
+import { ErrorState } from '../../components/states/States.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Proposal, ProposalStatus } from '../../data/api-types.js';
@@ -232,9 +233,7 @@ export function ProposalList({ selectedId, onDispatchDisabled }: { selectedId: s
           <SkeletonRow />
         </div>
       ) : query.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {query.error?.message ?? 'Failed to load proposals.'}
-        </div>
+        <ErrorState what="Proposals" error={query.error?.message ?? 'Failed to load proposals.'} fix="ashlr inbox --json" />
       ) : rows.length === 0 ? (
         <p className={styles.empty}>
           No {status === 'all' ? '' : status + ' '}proposals match{search || repoFilter ? ' this filter' : ''}.

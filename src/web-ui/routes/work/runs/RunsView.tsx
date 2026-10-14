@@ -1,4 +1,5 @@
 import { formatMetric } from '../../../components/charts/format-metric.js';
+import { ErrorState } from '../../../components/states/States.js';
 import { tokenEvidenceLabel } from '../../../../core/run/token-evidence.js';
 /**
  * routes/work/runs/RunsView.tsx — dispatched goal runs (GET /api/runs).
@@ -252,9 +253,7 @@ export function RunsView() {
           <SkeletonRow />
         </div>
       ) : runsResult.status === 'error' ? (
-        <div className={styles.error} role="alert">
-          {runsResult.error?.message ?? 'Failed to load runs.'}
-        </div>
+        <ErrorState what="Runs" error={runsResult.error?.message ?? 'Failed to load runs.'} fix="ashlr runs --json" />
       ) : filtered.length === 0 ? (
         <p className={styles.empty}>No runs match the current filters.</p>
       ) : (

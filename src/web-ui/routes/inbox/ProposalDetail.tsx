@@ -10,6 +10,7 @@
  * judgment, and is rendered with its own distinct label/tone — never folded
  * into a genuine judge-review (see JUDGE_REASON_DISPLAY below).
  */
+import { ErrorState } from '../../components/states/States.js';
 import { useState } from 'react';
 import type { DecisionEntry, JudgeDecisionReasonCode } from '../../data/api-types.js';
 import { proposalDetailQuery } from '../../data/queries.js';
@@ -146,9 +147,7 @@ export function ProposalDetail({ id, onDispatchDisabled }: { id: string; onDispa
 
   if (query.status === 'error' || !query.data) {
     return (
-      <div className={styles.error} role="alert">
-        {query.error?.message ?? 'Failed to load this proposal.'}
-      </div>
+      <ErrorState what="This proposal" error={query.error?.message ?? 'Failed to load this proposal.'} fix="ashlr inbox show <id> --json" />
     );
   }
 

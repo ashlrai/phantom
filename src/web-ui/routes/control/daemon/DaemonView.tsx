@@ -20,6 +20,7 @@
  * undiscoverable — the old UI had no daemon page at all, only a compact
  * dashboard panel with no failure-mode guidance.
  */
+import { ErrorState } from '../../../components/states/States.js';
 import { useRef } from 'react';
 import { controlSnapshotQuery, daemonObservationQuery } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -103,9 +104,7 @@ export function DaemonView() {
       {controlQuery.status === 'loading' ? (
         <SkeletonLine width="60%" />
       ) : controlQuery.status === 'error' || !daemon ? (
-        <p className={styles.error} role="alert">
-          {controlQuery.error?.message ?? 'Failed to load control snapshot.'}
-        </p>
+        <ErrorState what="Control snapshot" error={controlQuery.error?.message ?? 'Failed to load control snapshot.'} fix="ashlr status --json" />
       ) : (
         <>
           {!isKnown(daemon.sourceQuality) ? <RecoveryCallout quality={daemon.sourceQuality} /> : null}
