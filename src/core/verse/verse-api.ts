@@ -1973,6 +1973,15 @@ export async function handleVerseApi(
   path: string,
   method: string,
 ): Promise<boolean> {
+  const contextImportPath = `${VERSE_API_PREFIX}/context-imports`;
+  const rawContextPath = (req.url ?? path).split(/[?#]/, 1)[0] ?? '';
+  if (rawContextPath.startsWith(contextImportPath) || path.startsWith(contextImportPath)) {
+    if (rawContextPath !== path || path !== contextImportPath && !path.startsWith(contextImportPath + '/')) {
+      sendJson(res, 404, { code: 'CONTEXT_IMPORT_NOT_FOUND', error: 'Imported reference unavailable.' }); return true;
+    }
+    try { return await (await import('./context-import-api.js')).handleContextImportApi(ctx, req, res, path, method); }
+    catch { sendJson(res, 503, { code: 'CONTEXT_IMPORT_REFUSED', error: 'Imported reference unavailable.' }); return true; }
+  }
   if (!isVerseApiPath(path)) return false;
 
   try {

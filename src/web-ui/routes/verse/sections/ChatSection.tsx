@@ -40,7 +40,6 @@ import { ApiError, DispatchDisabledError } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefresh } from '../../../data/hooks.js';
 import type { NewChatRoutingOptions } from '../NewChatDialog.js';
 import type { DeleteChatDialog as DeleteChatDialogComponent } from '../chat/DeleteChatDialog.js';
-import { insertIntoComposer } from '../chat/composer-bridge.js';
 import { forgetComposerMemory } from '../chat/composer-memory.js';
 import type { ChatTask } from '../chat/tasks-model.js';
 import { requestTranscriptFind, requestTranscriptStep } from '../chat/transcript-jump.js';
@@ -125,6 +124,8 @@ const DERIVATIONS = preloadedModule(() => Promise.all([import('../chat/tasks-mod
   .then(([tasks, files]) => ({ otherRunningChats: tasks.otherRunningChats, lastTurnFiles: files.lastTurnFiles })));
 /** Seat lookups for ⌘N "New chat on…" — the only first-paint-path use of verse-model (5.6 KB). */
 const SEAT_MODEL = preloadedModule(() => import('../verse-model.js').then((m) => ({ firstRunnableModel: m.firstRunnableModel, seatById: m.seatById })));
+// Dock insertions happen after interaction; keep the bridge outside static first-paint imports.
+const COMPOSER_BRIDGE = preloadedModule(() => import('../chat/composer-bridge.js').then((m) => m.insertIntoComposer));
 /**
  * The pane registry, for panes that bring their OWN shortcut (a unit's
  * `registerPane({ shortcut })`): loaded just after first paint, never on it.
@@ -141,7 +142,7 @@ const NO_TURN_FILES: TurnFileChange[] = [];
  */
 export function preloadChatSurface(): Promise<unknown> {
   return Promise.all([
-    WorkspaceModule.ready(), SidebarModule.ready(), ResizerModule.ready(), DeleteDialogModule.ready(), TokenDialogModule.ready(), DERIVATIONS.ready(), SEAT_MODEL.ready(),
+    WorkspaceModule.ready(), SidebarModule.ready(), ResizerModule.ready(), DeleteDialogModule.ready(), TokenDialogModule.ready(), DERIVATIONS.ready(), SEAT_MODEL.ready(), COMPOSER_BRIDGE.ready(),
   ]);
 }
 
@@ -775,12 +776,15 @@ export function ChatSection() {
   // ---- dock data ------------------------------------------------------------------
   // Stable across renders: every pane gets these through one memoized `host`,
   // so a chat-surface render does not re-render every mounted pane.
+  const composerInsert = COMPOSER_BRIDGE.useLoaded();
   const sendToChat = useCallback((text: string) => {
-    if (!selectedId || !insertIntoComposer(selectedId, text)) toast.show('Open a chat to send this to it.', 'neutral');
-  }, [selectedId, toast]);
+    if (selectedId && !composerInsert) toast.show('Message controls are still loading. Try again.', 'neutral');
+    else if (!selectedId || !composerInsert?.(selectedId, text)) toast.show('Open a chat to send this to it.', 'neutral');
+  }, [selectedId, toast, composerInsert]);
   const addToMessage = useCallback((text: string) => {
-    if (!selectedId || !insertIntoComposer(selectedId, text)) toast.show('Open a chat to add this to its message.', 'neutral');
-  }, [selectedId, toast]);
+    if (selectedId && !composerInsert) toast.show('Message controls are still loading. Try again.', 'neutral');
+    else if (!selectedId || !composerInsert?.(selectedId, text)) toast.show('Open a chat to add this to its message.', 'neutral');
+  }, [selectedId, toast, composerInsert]);
   // Accounts & capacity live in Apps & Accounts (C6) since 3.10.
   const openAccounts = useCallback(() => setVerseSection('apps'), []);
   const derive = DERIVATIONS.useLoaded();

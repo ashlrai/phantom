@@ -16,6 +16,7 @@ import { relativePhrase } from '../context/context-model.js';
 import { replayOnboarding } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
 import { FirstResultGuide } from './FirstResultGuide.js';
+import { WorkspaceSetupLauncher } from './WorkspaceSetupLauncher.js';
 import styles from './onboarding.module.css';
 
 /**
@@ -44,6 +45,9 @@ export function OnboardingPanel() {
         <Button variant="subtle" size="sm" onClick={replayOnboarding} disabled={open}>
           {open ? 'Showing' : 'Replay'}
         </Button>
+      </SettingRow>
+      <SettingRow label="Developer tools and your context" description="Set up Phantom's companion tools and bring selected reference documents. Review rewritten facts before saving them as project memory.">
+        <WorkspaceSetupLauncher />
       </SettingRow>
       <FirstResultGuide />
       <details className={styles.guide}>

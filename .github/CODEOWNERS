@@ -129,6 +129,10 @@
 /docs/**/*AUTHORITY* @masonwyatt23
 /docs/**/*authority* @masonwyatt23
 # tier1-authority-code: Tier-1 authority code: the fleet may never change the code that decides what the fleet may do
+/src/core/verse/context-import-api.ts @masonwyatt23
+/src/core/verse/context-import-store.ts @masonwyatt23
+/src/core/verse/context-import-types.ts @masonwyatt23
+/src/core/util/scrub-secrets.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
 /src/core/integrations/locus.ts @masonwyatt23
 /src/core/vision/leader-display-text.ts @masonwyatt23
@@ -264,6 +268,9 @@
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
 /test/confine-autonomous-310b.test.ts @masonwyatt23
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
+/test/context-import-api.test.ts @masonwyatt23
+/test/context-import-preview.test.ts @masonwyatt23
+/test/context-import-store.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23

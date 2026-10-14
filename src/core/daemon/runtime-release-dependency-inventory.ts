@@ -493,6 +493,8 @@ function rootPackageIsPortable(
     'docs/README.md',
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
+    'docs/CONTEXT-IMPORT.md',
+    'docs/MEMORY-RESEARCH.md',
     'docs/QUICKSTART.md',
     'docs/AUTOMATIC-OUTCOMES.md',
     'docs/VERSE.md',

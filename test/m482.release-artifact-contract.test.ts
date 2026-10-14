@@ -1003,6 +1003,7 @@ describe('release artifact contract v1', () => {
 
   it.each([
     { name: 'explicit companion inventory guide', guides: ['docs/COMPANIONS.md'], sibling: 'docs/COMPANIONS-PRIVATE.md' },
+    { name: 'explicit context import and memory research guides', guides: ['docs/CONTEXT-IMPORT.md', 'docs/MEMORY-RESEARCH.md'], sibling: 'docs/MEMORY-PRIVATE.md' },
     { name: 'three explicit Agents guides', guides: ['docs/OPENAI-AGENTS-INTEGRATION.md', 'docs/DOTS-COMPANION.md', 'docs/AGENT-HARNESS-EVOLUTION.md'], sibling: 'docs/OPENAI-AGENTS-PRIVATE.md' },
     { name: 'explicit reset-aware scheduling guide', guides: ['docs/RESET-AWARE-SCHEDULING.md'], sibling: 'docs/RESET-AWARE-PRIVATE.md' },
     { name: 'explicit execution feedback guide', guides: ['docs/EXECUTION-FEEDBACK.md'], sibling: 'docs/EXECUTION-FEEDBACK-PRIVATE.md' },
