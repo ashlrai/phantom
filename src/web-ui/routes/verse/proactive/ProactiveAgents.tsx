@@ -1,6 +1,6 @@
 import type { CompanionCandidate } from '../../../../core/proactive/planning.js';
 import type { CompanionTask, CompanionCommand, CompanionTaskInput } from '../../../../core/proactive/coordination-types.js';
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ProactiveAvatar, ProactiveProfile, ProactiveProfileInput, ProactiveProvider, ProactiveService } from '../../../../core/proactive/types.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { Button } from '../../../components/primitives/Button.js';
@@ -17,6 +17,8 @@ import { createProactiveProfile, deleteProactiveProfile, editProactiveProfile, p
 import styles from './ProactiveAgents.module.css';
 import { PlanningLab } from './PlanningLab.js';
 
+const GrokBotHandoff = lazy(() => import('./GrokBotHandoff.js').then(module => ({ default: module.GrokBotHandoff })));
+
 const PROVIDERS: Record<ProactiveProvider, string> = { 'openai-dot': 'OpenAI Dot', 'grok-bot': 'Grok Bot', 'meta-muse': 'Meta Muse', other: 'Other agent' };
 const OPERATION_LABEL = { dispatch: 'Send work', status: 'Read status', cancel: 'Cancel work', result: 'Read results' };
 function SetupHelp({ provider }: { provider: ProactiveProvider }) {
@@ -28,7 +30,7 @@ function SetupHelp({ provider }: { provider: ProactiveProvider }) {
       : provider === 'meta-muse' ? 'A supported personal-Muse connection has not been verified. Meta Model API funding does not connect your personal Muse.'
         : 'Record your existing agent identity. A supported account connection and result path are needed before Phantom can send work.';
   return <div className={styles.setup}><p>{guidance}</p>{link ? <a href={link.href} target="_blank" rel="noopener noreferrer">{link.label} ↗</a> : null}
-    {provider === 'grok-bot' ? <p>Grok Bot's weekly allowance is separate from Grok Build's consumer allowance. Verify its billing account, balance, reset and on-demand billing separately. Cursor and SuperGrok eligibility does not identify the account behind this meter. <a href="https://cursor.com/help/grok-bot/plans" target="_blank" rel="noopener noreferrer">Bot usage and billing ↗</a></p> : null}
+    {provider === 'grok-bot' ? <p>Legacy plans may have a separate Bot meter; unified X subscriptions share their allowance across Grok chat, Build and Bot. Verify the actual billing account, balance, reset and on-demand setting. A Bot meter alone does not establish Build capacity or API access. <a href="https://cursor.com/help/grok-bot/plans" target="_blank" rel="noopener noreferrer">Legacy Bot billing ↗</a> · <a href="https://docs.x.ai/x-subscription/grok-bot" target="_blank" rel="noopener noreferrer">Unified X billing ↗</a></p> : null}
   </div>;
 }
 type Draft = Required<Pick<ProactiveProfileInput, 'identity' | 'displayName' | 'avatar' | 'responsibility' | 'computer' | 'services' | 'enabled'>> & { capabilityIds: string; priority: number; maxConcurrent: number; projectBindingIds: string; fundingKind: 'unknown' | 'subscription' | 'promotional-api'; poolId: string };
@@ -90,6 +92,13 @@ export function ProactiveAgents() {
   const stale = !!editor?.saved && (editor.conflict || !latest || latest.version !== editor.saved.version);
 
   function open(profile?: ProactiveProfile) { setError(null); setNotice(null); setEditor({ saved: profile ?? null, draft: draftOf(profile), conflict: false }); }
+  function openGrokReviewer() {
+    const draft = draftOf();
+    draft.identity.provider = 'grok-bot'; draft.displayName = 'Phantom improvement reviewer';
+    draft.capabilityIds = 'research, code-review';
+    draft.responsibility = 'Independently research Phantom improvements and review exact PR evidence. Recommend high-leverage fixes with source links and explicit unknowns. Do not post, merge, deploy, change permissions or treat a proposal as verified.';
+    setError(null); setNotice(null); setEditor({ saved: null, draft, conflict: false });
+  }
   function patch(patch: Partial<Draft>) { setEditor(current => current ? { ...current, draft: { ...current.draft, ...patch } } : null); }
   async function mutate(reason: string, action: () => Promise<unknown>, done: () => void) {
     if (flight.current) return;
@@ -121,6 +130,7 @@ export function ProactiveAgents() {
     <header className={styles.header}>
       <div><h2>Proactive agents</h2><p>Your persistent agents, their responsibilities and their recorded apps.</p></div>
       <div className={styles.actions}><Button size="sm" variant="ghost" onClick={refetch} disabled={busy}>Refresh agents</Button>
+        <Button size="sm" variant="subtle" disabled={unavailable || busy} onClick={openGrokReviewer}>Add Grok reviewer profile</Button>
         <Button size="sm" variant="primary" disabled={unavailable || busy} onClick={() => open()}>Add agent</Button></div>
     </header>
     <p className={styles.note}>Save your agents and planning preferences for local coordination; connections, execution and funding are verified separately.</p>
@@ -134,7 +144,7 @@ export function ProactiveAgents() {
     {read.status !== 'error' ? <ul className={styles.list}>{profiles.map(profile => <li key={profile.id} className={styles.row}>
       <div className={styles.identity}><Avatar avatar={profile.avatar} /><div><h3>{profile.displayName}</h3><p>{PROVIDERS[profile.identity.provider] ?? profile.identity.provider}</p></div></div>
       <p className={styles.responsibility}>{profile.responsibility || 'No responsibility added yet.'}</p>
-      {profile.identity.provider === 'grok-bot' ? <p className={styles.note}>Bot allowance and reset unknown · separate from Grok Build.</p> : null}
+      {profile.identity.provider === 'grok-bot' ? <p className={styles.note}>Bot allowance and reset unknown · verify the billing account and product.</p> : null}
       <div className={styles.rowActions}><span className={styles.state}>{profile.enabled ? 'Planning preference on' : 'Planning preference off'}</span>
         <Button size="sm" variant="subtle" onClick={() => open(profile)} disabled={busy}>Edit {profile.displayName}</Button></div>
       <details className={styles.evidence}><summary>Connection and capabilities</summary>
@@ -307,7 +317,7 @@ function CoordinationBoard({ profiles, profilesAvailable }: { profiles: Proactiv
           : read.data.tasks.length === 0 ? <p className={styles.note}>No local tasks recorded.</p> : null}
     <ul className={styles.taskList}>{read.data?.tasks.map(task => <li key={task.id} className={styles.task}>
       <div className={styles.header}><div><h3>{task.goal}</h3><p>{task.tenantId} / {task.projectBindingId} · {task.taskKey}</p></div><span className={styles.state}>{task.state === 'verified' ? 'verified · recorded review' : task.state}</span></div>
-      <TaskControls task={task} destination={read.data?.packetDestinations.find(item => item.taskId === task.id)?.identity} candidates={read.data?.routing?.find(row => row.taskId === task.id)?.candidates} profiles={profiles} disabled={disabled} profilesAvailable={profilesAvailable} record={record} />
+      <TaskControls task={task} revision={revision} destination={read.data?.packetDestinations.find(item => item.taskId === task.id)?.identity} candidates={read.data?.routing?.find(row => row.taskId === task.id)?.candidates} profiles={profiles} disabled={disabled} profilesAvailable={profilesAvailable} record={record} />
       <details className={styles.taskEvidence}><summary>Scope and recorded evidence</summary>
         <dl><div><dt>Task</dt><dd>{task.id}</dd></div><div><dt>Packet digest</dt><dd>{task.packetDigest}</dd></div>
           <div><dt>Acceptance criteria</dt><dd><ul>{task.acceptance.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul></dd></div>
@@ -348,7 +358,7 @@ function CoordinationBoard({ profiles, profilesAvailable }: { profiles: Proactiv
   </section>;
 }
 
-function TaskControls({ task, destination, candidates, profiles, profilesAvailable, disabled, record }: { task: CompanionTask; destination?: ProactiveProfile['identity']; candidates?: CompanionCandidate[]; profiles: ProactiveProfile[]; profilesAvailable: boolean; disabled: boolean; record: (action: LocalAction, done?: () => void) => void }) {
+function TaskControls({ task, revision, destination, candidates, profiles, profilesAvailable, disabled, record }: { task: CompanionTask; revision: number | null | undefined; destination?: ProactiveProfile['identity']; candidates?: CompanionCandidate[]; profiles: ProactiveProfile[]; profilesAvailable: boolean; disabled: boolean; record: (action: LocalAction, done?: () => void) => void }) {
   const [profileId, setProfileId] = useState('');
   const [ownerId, setOwnerId] = useState('local-operator');
   const [leaseMinutes, setLeaseMinutes] = useState('30');
@@ -358,12 +368,31 @@ function TaskControls({ task, destination, candidates, profiles, profilesAvailab
   const [reviewerId, setReviewerId] = useState('');
   const [reviewedReportId, setReviewedReportId] = useState<string | null>(null);
   const [acceptanceMet, setAcceptanceMet] = useState('no');
+  const [reviewingKey, setReviewingKey] = useState<string | null>(null);
   const attempt = task.attempts.at(-1);
   const latestReport = task.reports.at(-1);
   const reviewed = !!latestReport && reviewedReportId === latestReport.id;
   const matching = profiles.filter(profile => profile.enabled && (candidates === undefined || candidates.some(candidate => candidate.profileId === profile.id && candidate.localAssignmentEligible)) && !!destination && profile.identity.provider === destination.provider && profile.identity.accountId === destination.accountId && profile.identity.agentId === destination.agentId && task.capabilityIds.every(id => profile.capabilityIds.includes(id))
     && (!profile.preferences.projectBindingIds.length || profile.preferences.projectBindingIds.includes(task.projectBindingId)));
   const selected = matching.find(profile => profile.id === profileId);
+  const handoffProfile = profiles.find(profile => attempt && profile.identity.provider === 'grok-bot'
+    && profile.identity.provider === attempt.assignee.provider && profile.identity.accountId === attempt.assignee.accountId
+    && profile.identity.agentId === attempt.assignee.agentId && profile.enabled
+    && task.capabilityIds.every(id => profile.capabilityIds.includes(id))
+    && (!profile.preferences.projectBindingIds.length || profile.preferences.projectBindingIds.includes(task.projectBindingId)));
+  const handoffKey = JSON.stringify([task.id, task.packetDigest, task.state, attempt, revision,
+    handoffProfile?.id, handoffProfile?.version, disabled, profilesAvailable]);
+  const now = Date.now();
+  const profileDates = handoffProfile ? [Date.parse(handoffProfile.createdAt), Date.parse(handoffProfile.updatedAt)] : [];
+  const canReview = !disabled && profilesAvailable && !!attempt && !!handoffProfile && revision !== undefined && revision !== null
+    && task.state === 'handoff-intent' && attempt.contact === 'intent' && attempt.cancelRequestedAt === null
+    && attempt.packetDigest === task.packetDigest && Number.isSafeInteger(attempt.epoch) && attempt.epoch > 0
+    && Number.isFinite(Date.parse(attempt.leaseExpiresAt)) && Date.parse(attempt.leaseExpiresAt) > now
+    && (task.deadline === null || Number.isFinite(Date.parse(task.deadline)) && Date.parse(task.deadline) > now)
+    && profileDates.every(value => Number.isFinite(value) && value <= now) && profileDates[1]! >= profileDates[0]!;
+  // Discard an old review on any independent ledger/profile/availability change.
+  // The render guard below also hides it before effect cleanup can run.
+  useEffect(() => { setReviewingKey(null); }, [handoffKey]);
   return <div className={styles.taskControls}>
     {attempt ? <p className={styles.note}>Assigned to {attempt.assignee.provider} / {attempt.assignee.accountId} / {attempt.assignee.agentId} · owner {attempt.ownerId} · epoch {attempt.epoch}<br />
       Contact observation: {attempt.contact}. Lease expires {attempt.leaseExpiresAt}. Expiry does not prove remote work stopped.</p> : null}
@@ -383,6 +412,14 @@ function TaskControls({ task, destination, candidates, profiles, profilesAvailab
       {task.state !== 'verified' && task.state !== 'cancel-requested' ? <Button size="sm" variant="ghost" disabled={disabled} onClick={() => record({ kind: 'cancel', taskId: task.id, attemptId: attempt.id })}>Record cancellation intent</Button> : null}
     </div> : null}
     {task.state === 'handoff-intent' ? <p className={styles.note}>Handoff intent recorded locally. Transport unavailable; no provider acceptance or completion is proven.</p> : null}
+    {attempt?.assignee.provider === 'grok-bot' && task.state === 'handoff-intent' ? <Button size="sm" variant="subtle" disabled={!canReview}
+      onClick={() => setReviewingKey(handoffKey)}>Review Grok Bot brief</Button> : null}
+    {reviewingKey === handoffKey && canReview && attempt && handoffProfile && revision !== undefined && revision !== null ?
+      <Suspense fallback={<p role="status">Loading Grok Bot brief controls…</p>}><GrokBotHandoff
+        request={{ taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, expectedRevision: revision,
+          profileId: handoffProfile.id, expectedProfileVersion: handoffProfile.version }} packetDigest={task.packetDigest}
+        leaseExpiresAt={attempt.leaseExpiresAt} deadline={task.deadline} disabled={disabled || !profilesAvailable}
+        onClose={() => setReviewingKey(null)} /></Suspense> : null}
     {task.state === 'cancel-requested' ? <p className={styles.note}>Cancellation requested locally. Provider cancellation is unconfirmed.</p> : null}
     {attempt && task.state !== 'verified' ? <details><summary>Record a manual report</summary><form className={styles.editor} onSubmit={event => { event.preventDefault();
       if (result.trim() && report.trim() && sourceReference.trim()) record({ kind: 'report', taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, packetDigest: attempt.packetDigest, result, report, sourceReference: sourceReference.trim() }, () => { setResult(''); setReport(''); setSourceReference(''); }); }}>

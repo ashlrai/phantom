@@ -149,7 +149,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
         ...(exactCreditBalance === undefined ? {} : { exactCreditBalance }),
         summary: `${row.label}${surfaceLabel}: last known usage · current usage unconfirmed${creditSummary}`,
         detail: [`Recorded ${new Date(history.observedAt).toLocaleString()}`, 'Historical reading; current availability and resets are unconfirmed.',
-          ...(row.engine === 'grok' ? ['Grok Build · native CLI; Grok Bot has a separate allowance.'] : []),
+          ...(row.engine === 'grok' ? ['Grok Build · native CLI; Bot billing scope needs its own account evidence.'] : []),
           ...history.windows.map(window => `${window.id}: ${window.limitReached ? 'limit was flagged' : window.usedPercent === null ? 'usage unknown' : `${usedPercentText(window.usedPercent)} used`}${window.resetsAt ? ` · recorded reset ${new Date(window.resetsAt).toLocaleString()}` : ''}`), ...creditDetail],
       });
       continue;
@@ -178,7 +178,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${row.quotaCurrent === false ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
     });
     detail.push(...creditDetail);
-    if (row.engine === 'grok') detail.push('Grok Build · native CLI; Grok Bot has a separate allowance.');
+    if (row.engine === 'grok') detail.push('Grok Build · native CLI; Bot billing scope needs its own account evidence.');
     if (row.windows.length === 0) detail.push('Usage is not reported by this resource.');
     if (row.lastReading) detail.push('Last known usage · latest check failed.');
     if (row.reserve) detail.push(row.reserve.label);

@@ -14,6 +14,9 @@ import { decodeCompanionWire, projectCompanionWire } from '../proactive/coordina
 import { rankCompanionCandidates } from '../proactive/planning.js';
 import { companionDigestToReference } from '../proactive/coordination-wire.js';
 import { companionDigest } from '../proactive/coordination-types.js';
+import { buildGrokHandoffPreview, GrokHandoffPreviewError } from '../proactive/handoff-preview.js';
+import { validGrokHandoffPreviewRequest } from '../proactive/handoff-preview-types.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { taskContextTimestamp } from '../context/task-temporal-context.js';
 
 export const PROACTIVE_COORDINATION_PATH = `${VERSE_PROACTIVE_AGENTS_PATH}/coordination`;
@@ -30,11 +33,11 @@ export function createProactiveCoordinationApi(deps: Dependencies = {}): ApiModu
   const coordinator = deps.coordinator ?? (() => createCompanionCoordinator({ directory: join(ashlrHome(), 'proactive-coordination') }));
   const now = deps.now ?? (() => new Date());
   return async (ctx, req, res, path, method) => {
-    if (path !== PROACTIVE_COORDINATION_PATH && path !== `${PROACTIVE_COORDINATION_PATH}/packet`) return false;
+    if (path !== PROACTIVE_COORDINATION_PATH && path !== `${PROACTIVE_COORDINATION_PATH}/packet` && path !== `${PROACTIVE_COORDINATION_PATH}/handoff-preview`) return false;
     const reply = (status: number, value: unknown) => sendJson(res, status, projectCompanionWire(value));
     try {
       if (new URL(req.url ?? path, 'http://localhost').search) { reply(400, { error: 'Query parameters are not supported.' }); return true; }
-      if (!['GET', 'POST'].includes(method) || method === 'GET' && path.endsWith('/packet')) { reply(404, { error: 'not found' }); return true; }
+      if (!['GET', 'POST'].includes(method) || method === 'GET' && path !== PROACTIVE_COORDINATION_PATH) { reply(404, { error: 'not found' }); return true; }
       if (method === 'POST') {
         if (!ctx.allowDispatch) { reply(404, { error: 'not found' }); return true; }
         if (!passesMutationGate(req, res, ctx.token)) return true;
@@ -58,6 +61,25 @@ export function createProactiveCoordinationApi(deps: Dependencies = {}): ApiModu
       try { value = decodeCompanionWire(JSON.parse(raw)); }
       catch { reply(400, { error: 'Use a JSON object.' }); return true; }
       if (!object(value)) { reply(400, { error: 'Use a JSON object.' }); return true; }
+      if (path.endsWith('/handoff-preview')) {
+        if (!validGrokHandoffPreviewRequest(value)) throw new GrokHandoffPreviewError('INVALID_INPUT');
+        const read = host.read(value.taskId);
+        const first = (await profiles().list()).profiles.find(profile => profile.id === value.profileId) ?? null;
+        const packet = read.task ? readPreparedCompanionPacket(root(), read.task.packetDigest) : null;
+        const preview = buildGrokHandoffPreview({ request: value, read, profile: first, packet, asOf: now().toISOString() });
+        // Separate profile and ledger stores can change during awaits: repeat the exact final bindings.
+        const latest = (await profiles().list()).profiles.find(profile => profile.id === value.profileId) ?? null;
+        const finalRead = host.read(value.taskId), listing = host.list();
+        if (listing.sourceState !== 'healthy') throw new GrokHandoffPreviewError('UNAVAILABLE');
+        if (listing.revision !== value.expectedRevision) throw new GrokHandoffPreviewError('HELD');
+        const finalPacket = finalRead.task ? readPreparedCompanionPacket(root(), finalRead.task.packetDigest) : null;
+        const finalPreview = buildGrokHandoffPreview({ request: value, read: finalRead, profile: latest, packet: finalPacket, asOf: now().toISOString() });
+        if (finalPreview.previewDigest !== preview.previewDigest || finalPreview.briefText !== preview.briefText) throw new GrokHandoffPreviewError('HELD');
+        // Keep the shared public sanitizer intact; refuse rather than claim a digest over changed output.
+        const wire = projectCompanionWire(finalPreview);
+        if (JSON.stringify(sanitizePublicJson(wire)) !== JSON.stringify(wire)) throw new GrokHandoffPreviewError('HELD');
+        reply(200, finalPreview); return true;
+      }
       if (path.endsWith('/packet')) {
         const keys = ['tenantId', 'projectBindingId', 'taskKey', 'goal', 'acceptance', 'capabilityIds', 'profileId', 'deadline', 'maxCostUsd', 'maxAttempts'];
         if (Object.keys(value).some(key => !keys.includes(key)) || typeof value.profileId !== 'string'
@@ -126,6 +148,9 @@ export function createProactiveCoordinationApi(deps: Dependencies = {}): ApiModu
       reply(result.ok ? 200 : result.reason === 'invalid' ? 400 : result.reason === 'unavailable' ? 503 : 409, result);
       return true;
     } catch (error) {
+      if (error instanceof GrokHandoffPreviewError) {
+        reply(error.code === 'INVALID_INPUT' ? 400 : error.code === 'HELD' ? 409 : 503, { code: error.code, error: error.message }); return true;
+      }
       if (error instanceof Error && ['Invalid companion evidence packet.', 'Companion packet scope is not authorized.',
         'Companion packet scope is no longer authorized.'].includes(error.message)) {
         reply(400, { error: 'Use a valid local goal, acceptance criteria, scope and planning limits.' }); return true;

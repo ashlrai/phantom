@@ -129,6 +129,10 @@
 /docs/**/*AUTHORITY* @masonwyatt23
 /docs/**/*authority* @masonwyatt23
 # tier1-authority-code: Tier-1 authority code: the fleet may never change the code that decides what the fleet may do
+/src/core/proactive/handoff-preview*.ts @masonwyatt23
+/src/core/proactive/handoff-preview.ts @masonwyatt23
+/src/core/proactive/coordination-wire.ts @masonwyatt23
+/src/core/verse/proactive-coordination-api.ts @masonwyatt23
 /src/core/memory/** @masonwyatt23
 /src/core/local-eval/memory-*.ts @masonwyatt23
 /scripts/evaluate-memory.ts @masonwyatt23
@@ -780,6 +784,10 @@
 /test/post-merge-watch-suite-310b.test.ts @masonwyatt23
 /test/pr-ratings.test.ts @masonwyatt23
 /test/preparation-harness-custody.test.ts @masonwyatt23
+/test/proactive-coordination-api.test.ts @masonwyatt23
+/test/proactive-handoff-preview-api.test.ts @masonwyatt23
+/test/proactive-handoff-preview.test.ts @masonwyatt23
+/test/proactive-planning-api.test.ts @masonwyatt23
 /test/proactive-routing-lab.test.ts @masonwyatt23
 /test/projection-authority-architecture-contract.test.ts @masonwyatt23
 /test/proposal-spans.test.ts @masonwyatt23

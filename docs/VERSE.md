@@ -146,6 +146,12 @@ a remote agent stopped, and no route contacts a provider. See
 [the coordination contract](PROACTIVE-COORDINATION.md) and
 [the remaining-work backlog](PROACTIVE-COORDINATION-BACKLOG.md).
 
+In source builds containing **Review Grok Bot brief**, prepare handoff intent,
+review the locally supplied task text and recipient, and copy after a fresh
+binding check. Paste into your Bot in its app. No provider connection or
+automatic report import is started; returned reports still need a separate
+review. See [the manual brief flow](PROACTIVE-COORDINATION.md#review-a-grok-bot-brief).
+
 The local **Planning lab** shows declared or injected cached resource evidence,
 durable deterministic shadow evaluations, synthetic routing benchmarks and
 inspectable preference proposals. Usage, credits, costs and entitlement remain
