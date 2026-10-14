@@ -4952,7 +4952,8 @@ export async function tick(
               routeCurrent: managerRouteCurrent,
               // Recovery cannot admit another provider contact or start a new stage.
               routeAllowed: () => false,
-            }));
+            // Only the singleton lock holder can prove a crashed daemon's stage has no live owner.
+            }), { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
             reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) });
             materializeOutcomeIntents(outcome.id, { stillAuthorized: authorized, cfg: routingCfg });
             const fresh = new OutcomeStore(outcomeDirectory(outcome.id)).read();
