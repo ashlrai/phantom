@@ -92,7 +92,7 @@ Updates retain earlier events and append a higher reviewed revision with
 explicit valid-time supersession links. A replacement's expiry or deletion does
 not automatically restore its obsolete predecessor. An admitted, effective
 replacement whose own lineage is invalid or cyclic does not restore it either:
-its in-scope predecessors are excluded as `conflict`.
+its predecessors in the same scope and slot are excluded as `conflict`.
 
 A `withdrawn` fact event is an append-only durable reviewed revocation revision,
 with a review decision, review date and known effective `validFrom`. It never

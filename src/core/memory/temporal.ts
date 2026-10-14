@@ -51,7 +51,9 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
     if (event.kind === 'tombstone' && !excluded.has(event.eventId)) {
       event.tombstones.forEach(id => {
         const target = scoped.get(id);
-        if (target?.kind === 'fact' && sameMemoryScope(event, target)) excluded.set(id, 'tombstoned');
+        // Never relabel unusable lineage: a tombstoned invalid withdrawal must not become a valid revocation.
+        if (target?.kind === 'fact' && sameMemoryScope(event, target)
+          && !['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(id) ?? '')) excluded.set(id, 'tombstoned');
       });
       excluded.set(event.eventId, 'tombstone-event');
     }
@@ -70,7 +72,11 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
     // objection: its in-scope predecessors are refused rather than served as the stale value.
     if (event.kind === 'fact' && event.validFrom !== null && event.validFrom <= query.time.at) {
       const reason = ['invalid-lineage', 'cyclic-lineage'].includes(excluded.get(event.eventId) ?? '') ? 'conflict' : 'superseded';
-      event.supersedes.forEach(id => { if (scoped.has(id) && !excluded.has(id)) excluded.set(id, reason); });
+      event.supersedes.forEach(id => {
+        const target = scoped.get(id);
+        // Like deletion, refusal never reaches another scope or slot.
+        if (target && !excluded.has(id) && (reason === 'superseded' || sameMemorySlot(event, target))) excluded.set(id, reason);
+      });
     }
   }
   // A durable reviewed revocation never silently falls back to an older same-fact answer.

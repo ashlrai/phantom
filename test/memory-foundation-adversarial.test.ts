@@ -60,5 +60,19 @@ describe('an admitted but unusable correction never falls back to the value it r
       supersedes: ['ev_a'] });
     expect(selected([original, backdated])).not.toContain('ev_a');
   });
+  it('an invalid correction from another slot or audience cannot suppress an unrelated fact', () => {
+    const otherSlot = event({ eventId: 'ev_x', factId: 'other', revision: 2, subjectKey: 'billing', slotKey: 'plan', text: 'Plan is team.',
+      validFrom: mid, recordedAt: mid, reviewedAt: mid, supersedes: ['ev_a'] });
+    expect(selected([event(), otherSlot])).toContain('ev_a');
+    expect(selected([event(), { ...otherSlot, audienceIds: ['team_a', 'team_b'] }])).toContain('ev_a');
+  });
 });
 
+describe('deletion never turns unusable lineage into a valid decision', () => {
+  it('tombstoning an invalid withdrawal does not revoke the fact it named', () => {
+    const withdrawal = event({ eventId: 'ev_w', revision: 2, reviewState: 'withdrawn', validFrom: mid, recordedAt: mid, reviewedAt: mid,
+      derivedFrom: ['ev_missing'] });
+    expect(selected([event(), withdrawal])).toEqual(['ev_a']);
+    expect(selected([event(), withdrawal, tombstone(['ev_w'])])).toEqual(['ev_a']);
+  });
+});
