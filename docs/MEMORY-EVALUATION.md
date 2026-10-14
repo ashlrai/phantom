@@ -28,10 +28,10 @@ The harness records every assigned case in each arm. Correctness failures and ru
 Clone the source repository and use its existing development dependencies. The source-only runner uses the repository's installed `tsx`; it never installs dependencies, builds an application or calls a model automatically. It reads only the bundled synthetic corpus and fixed source files, and does not accept a user export path. This command is not included in the npm product package initially.
 
 ```sh
-npm run eval:memory -- --json
+npm run --silent eval:memory -- --json
 ```
 
-The command emits JSON and exits zero only when all 72 governed cases pass, one when governed cases fail or have runner exceptions, and two for unsupported arguments, missing source/dependencies or observed source drift. It executes source modules, captures the Git SHA/tree/dirty state and exact relevant source/corpus hashes before and after the run, and refuses a changed observation. This is source observation, not signed provenance or an installed-build attestation.
+The silent npm invocation keeps npm banners out of the JSON stream. The runner exits zero only when all 72 governed cases pass, one when governed cases fail or have runner exceptions, and two for unsupported arguments, missing source/dependencies or observed source drift. It executes source modules, captures the Git SHA/tree/dirty state and exact relevant source/corpus hashes before and after the run, and refuses a changed observation. This is source observation, not signed provenance or an installed-build attestation.
 
 Run the offline regression suite from the checkout:
 
