@@ -187,8 +187,17 @@ export function adviseSeat(input: AdviseInput): SeatAdvice {
   const context = Math.max(0, input.contextTokens ?? 0) + cls.estTokens;
   const request = { task: cls.task, difficulty: (cls.needsFrontier ?? 0) >= 0.7 && cls.difficulty !== 'high' ? 'high' as const : cls.difficulty,
     contextTokens: context, autonomous: false };
+  // Eligibility returns account IDs, so every ID must resolve to one binding.
+  // Count all rows before filtering: an unavailable duplicate still makes the
+  // account ambiguous. Model variants belong inside its single account row.
+  const accountIds = new Set<string>();
+  const ambiguousIds = new Set<string>();
+  for (const seat of input.seats) {
+    if (accountIds.has(seat.seatId)) ambiguousIds.add(seat.seatId);
+    else accountIds.add(seat.seatId);
+  }
   const known = input.seats
-    .filter((s) => (ROUTABLE_ENGINES as readonly string[]).includes(s.engine) && s.model !== null)
+    .filter((s) => !ambiguousIds.has(s.seatId) && (ROUTABLE_ENGINES as readonly string[]).includes(s.engine) && s.model !== null)
     .map((original) => {
       const seat = forMessage(original, cheap);
       // Preserve independently qualified legacy cheaper variants. The new
@@ -227,14 +236,19 @@ export function adviseSeat(input: AdviseInput): SeatAdvice {
     { nowMs, weights },
   );
 
-  const held = decision.exclusions.map((e) => ({
-    seatId: e.seatId,
-    label: byId.get(e.seatId)?.label ?? e.seatId,
-    // Codex selection here uses subscription windows, without authorizing credit spending.
-    reason: byId.get(e.seatId)?.engine === 'codex' && e.details?.[0]?.kind === 'spent'
-      ? 'Subscription window spent; Auto does not select Codex credit-funded turns. Credit balance and manual access are separate.'
-      : (e.details?.[0]?.text ?? e.reasons[0] ?? 'Not available right now.').replace(/\s+$/, ''),
-  }));
+  const held = [
+    ...[...ambiguousIds].sort((a, b) => a < b ? -1 : a > b ? 1 : 0).map((seatId) => ({
+      seatId, label: 'Ambiguous account', reason: 'Multiple entries share this account ID; Auto is holding it.',
+    })),
+    ...decision.exclusions.map((e) => ({
+      seatId: e.seatId,
+      label: byId.get(e.seatId)?.label ?? e.seatId,
+      // Codex selection here uses subscription windows, without authorizing credit spending.
+      reason: byId.get(e.seatId)?.engine === 'codex' && e.details?.[0]?.kind === 'spent'
+        ? 'Subscription window spent; Auto does not select Codex credit-funded turns. Credit balance and manual access are separate.'
+        : (e.details?.[0]?.text ?? e.reasons[0] ?? 'Not available right now.').replace(/\s+$/, ''),
+    })),
+  ];
 
   const midChat = (input.turnCount ?? 0) > 0 && typeof input.currentSeatId === 'string';
   const stickiness = mode === 'cheap-first' || hard ? STICKINESS_WEAK : STICKINESS;

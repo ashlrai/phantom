@@ -446,3 +446,121 @@ describe('Automatic exact model/context binding', () => {
     expect(sameAdviceBinding({ seatId: 'one', model: null }, { seatId: 'one', model: null })).toBe(false);
   });
 });
+
+describe('Automatic account identity before eligibility', () => {
+  const cls: PromptClassification = { ...classifyPrompt('explain this'), estTokens: 1 };
+  const heldA = { seatId: 'A', label: 'Ambiguous account', reason: 'Multiple entries share this account ID; Auto is holding it.' };
+  function account(id: string, model: string, window = 128_000): AdvisorSeat {
+    return { ...local(id, model, { window, tools: true }), model, contextMode: 'standard' };
+  }
+  const choose = (seats: AdvisorSeat[], extra: Partial<Parameters<typeof adviseSeat>[0]> = {}) => adviseSeat({
+    classification: cls, seats, policy: POLICY, mode: 'auto', nowMs: NOW, contextTokens: 20_000, ...extra,
+  });
+  const large = () => account('A', 'large');
+  const small = () => account('A', 'small', 10_000);
+  const safe = () => account('B', 'safe');
+
+  it.each(['large-first', 'small-first'])('holds conflicting exact bindings in %s order', (order) => {
+    const seats = order === 'large-first' ? [large(), small()] : [small(), large()];
+    const result = choose(seats);
+    expect(result).toMatchObject({ choice: null, alternatives: [], stay: false, held: [heldA] });
+    expect(choose([large()]).choice).toMatchObject({ seatId: 'A', model: 'large', contextMode: 'standard', contextWindow: 128_000 });
+    expect(choose([small()]).choice).toBeNull();
+  });
+
+  it('holds repeated identical rows once without inventing another account', () => {
+    const row = large();
+    expect(choose([row, row, { ...row }])).toMatchObject({ choice: null, alternatives: [], stay: false, held: [heldA] });
+  });
+
+  it('counts a null-model duplicate before dropping unrunnable models', () => {
+    expect(choose([large(), { ...small(), model: null }])).toMatchObject({ choice: null, alternatives: [], held: [heldA] });
+  });
+
+  it('counts an unsupported-engine duplicate before routable filtering', () => {
+    expect(choose([large(), { ...small(), engine: 'unsupported' }])).toMatchObject({ choice: null, alternatives: [], held: [heldA] });
+  });
+
+  it('retains an unrelated eligible exact binding', () => {
+    const result = choose([large(), small(), safe()]);
+    expect(result.choice).toMatchObject({ seatId: 'B', model: 'safe', contextMode: 'standard', contextWindow: 128_000 });
+    expect(result.alternatives).toEqual([]); expect(result.held).toEqual([heldA]);
+  });
+
+  it('cannot pin an ambiguous account back into eligibility', () => {
+    const result = choose([large(), small(), safe()], { pinnedSeatId: 'A' });
+    expect(result.choice?.seatId).toBe('B'); expect(result.held).toEqual([heldA]);
+  });
+
+  it('cannot revive an ambiguous current binding through stickiness', () => {
+    const result = choose([large(), small(), safe()], {
+      currentSeatId: 'A', currentModel: 'large', currentContextMode: 'standard', turnCount: 20,
+    });
+    expect(result.choice?.seatId).toBe('B'); expect(result.stay).toBe(false); expect(result.held).toEqual([heldA]);
+  });
+
+  it('cannot revive an ambiguous account through learned preference', () => {
+    const learned = aggregateOutcomes(Array.from({ length: 8 }, () => outcome('A', 'local', cls.kind, 'up', NOW)), NOW);
+    const result = choose([large(), small(), safe()], { learned });
+    expect(result.choice?.seatId).toBe('B'); expect(result.held).toEqual([heldA]);
+  });
+
+  it('holds contradictory sign-in facts without borrowing the usable row', () => {
+    const signedOut = large(); signedOut.capacity.signedOut = true;
+    for (const seats of [[large(), signedOut, safe()], [signedOut, large(), safe()]]) {
+      const result = choose(seats);
+      expect(result.choice?.seatId).toBe('B'); expect(result.held).toEqual([heldA]);
+    }
+  });
+
+  it('counts a nonprivate duplicate before the local-only filter', () => {
+    const result = choose([large(), { ...large(), private: false }, safe()], { localOnly: { on: true, reason: null } });
+    expect(result.choice?.seatId).toBe('B'); expect(result.alternatives).toEqual([]); expect(result.held).toEqual([heldA]);
+  });
+
+  it('sorts ambiguous IDs with fixed metadata independently of row order', () => {
+    const seats = [account('Z', 'PRIVATE_FIRST'), account('A', 'PRIVATE_A'), account('Z', 'PRIVATE_LAST'), account('A', 'PRIVATE_B'), safe()];
+    const expected = [heldA, { seatId: 'Z', label: 'Ambiguous account', reason: 'Multiple entries share this account ID; Auto is holding it.' }];
+    for (const rows of [seats, [...seats].reverse()]) {
+      const result = choose(rows);
+      expect(result.choice?.seatId).toBe('B'); expect(result.held).toEqual(expected);
+      expect(JSON.stringify(result.held)).not.toContain('PRIVATE');
+    }
+  });
+
+  it('prepends ambiguity without changing an unrelated context exclusion', () => {
+    const result = choose([large(), small(), account('B', 'small', 10_000)]);
+    expect(result).toMatchObject({ choice: null, alternatives: [], stay: false, held: [heldA, {
+      seatId: 'B', label: 'small',
+      reason: "Needs about 20k tokens of context; this seat's window is 10k (at most 80% is used for a task).",
+    }] });
+  });
+
+  it('retains legitimate model variants within one real account row', () => {
+    const row = small(); row.modelVariants = [
+      { model: 'small', contextMode: 'standard', contextWindow: 10_000 },
+      { model: 'large', contextMode: 'standard', contextWindow: 128_000 },
+    ];
+    const result = choose([row]);
+    expect(result.choice).toMatchObject({ seatId: 'A', model: 'large', contextMode: 'standard', contextWindow: 128_000 });
+    expect(result.held).toEqual([]); expect(result.alternatives).toEqual([]);
+  });
+
+  it('preserves unique discovery order and treats differently cased IDs as distinct', () => {
+    const result = choose([safe(), account('C', 'other')]);
+    expect(result.choice).toMatchObject({ seatId: 'B', model: 'safe', contextMode: 'standard', contextWindow: 128_000 });
+    expect(result.alternatives).toMatchObject([{ seatId: 'C', model: 'other', contextMode: 'standard', contextWindow: 128_000 }]);
+    expect(result.held).toEqual([]);
+    const exactIds = choose([large(), account('a', 'lower-case')]);
+    expect(exactIds.choice?.seatId).toBe('A'); expect(exactIds.alternatives.map(row => row.seatId)).toEqual(['a']);
+    expect(exactIds.held).toEqual([]);
+  });
+
+  it('holds before inspecting cheaper funding or model variants in cheap-first mode', () => {
+    const row = large(); const inspect = () => { throw new Error('Ambiguous row was inspected'); };
+    Object.defineProperty(row, 'cheaper', { get: inspect });
+    Object.defineProperty(row, 'modelVariants', { get: inspect });
+    const result = choose([row, small(), safe()], { mode: 'cheap-first' });
+    expect(result.choice?.seatId).toBe('B'); expect(result.held).toEqual([heldA]);
+  });
+});
