@@ -366,6 +366,15 @@ export const VERSE_CATALOG_PENDING_NOTE =
   "Model list is Phantom's built-in list until this seat's first turn fetches its own catalog.";
 
 /**
+ * A grok seat whose OWN catalog was read but offers nothing selectable (empty,
+ * or every row hidden / `user_selectable: false`). No built-in list is
+ * substituted, so without this note readiness would fall back to its pinned-CLI
+ * wording and point the operator at a re-pin that cannot help.
+ */
+export const VERSE_CATALOG_EMPTY_NOTE =
+  "This seat's own catalog lists no selectable models, so Phantom offers none. Sign in to this account again or check its plan.";
+
+/**
  * One native seat's models, pinned CLI version and notes.
  *
  * Every source is the SEAT's: its own catalog file under its profile's
@@ -420,8 +429,10 @@ export function nativeSeatModels(
   }
 
   const catalog = statePath ? readGrokCatalog(statePath) : null;
+  const models = runnableFirst(grokModelOptions(catalog));
   if (catalog === null) notes.push(VERSE_CATALOG_PENDING_NOTE);
-  return { models: runnableFirst(grokModelOptions(catalog)), cliVersion, notes };
+  else if (models.length === 0) notes.push(VERSE_CATALOG_EMPTY_NOTE);
+  return { models, cliVersion, notes };
 }
 
 // ---------------------------------------------------------------------------
