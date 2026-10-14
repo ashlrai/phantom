@@ -286,7 +286,9 @@ export function readStableRegularFile(
     if (pathBefore.size > BigInt(remainingBytes)) return { ok: false, reason: 'byte-limit' };
 
     const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
-    fd = openSync(resolvedFilePath, fsConstants.O_RDONLY | noFollow);
+    // A regular inode may become a FIFO after stat; refuse at fstat without blocking open.
+    const nonBlock = typeof fsConstants.O_NONBLOCK === 'number' ? fsConstants.O_NONBLOCK : 0;
+    fd = openSync(resolvedFilePath, fsConstants.O_RDONLY | noFollow | nonBlock);
     const openedBefore = fstatSync(fd, { bigint: true });
     if (!sameIdentity(pathBefore, openedBefore)) return { ok: false, reason: 'changed-during-read' };
     if (!safeFile(openedBefore)) return { ok: false, reason: 'unsafe-file' };

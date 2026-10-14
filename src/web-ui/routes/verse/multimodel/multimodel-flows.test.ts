@@ -198,3 +198,56 @@ describe('exact automatic continuation binding', () => {
     expect(api.open).not.toHaveBeenCalled();
   });
 });
+
+
+describe('selected context mode across Compare and draft handoff', () => {
+  const selected = { ...CODEX, contextMode: 'expansive' as const };
+  it('carries the explicit mode into a history Compare before sending', async () => {
+    const api = fakeApi();
+    const entries = await startCompare(api, { source: session(), targets: [selected], text: 'compare this' });
+    expect(api.createHandoffSession).toHaveBeenCalledWith(expect.objectContaining({ contextMode: 'expansive' }));
+    expect(entries[0]?.ok).toBe(true); expect(api.sendTurn).toHaveBeenCalledTimes(1);
+  });
+  it.each([{ seatId: 'other' }, { model: 'other' }, { contextMode: 'standard' as const }, { contextMode: undefined }])(
+    'refuses a returned binding mismatch before Compare contact: %j', async (mismatch) => {
+    const api = fakeApi();
+    api.createHandoffSession = vi.fn(async () => session({ seatId: selected.seatId, model: selected.model, contextMode: selected.contextMode, ...mismatch }));
+    const entries = await startCompare(api, { source: session(), targets: [selected], text: 'keep me' });
+    expect(entries[0]).toMatchObject({ ok: false }); expect(api.sendTurn).not.toHaveBeenCalled();
+  });
+  it('preserves legacy server preference when no target mode was selected', async () => {
+    const api = fakeApi();
+    api.createHandoffSession = vi.fn(async () => session({ seatId: CODEX.seatId, model: CODEX.model, contextMode: 'expansive' }));
+    const entries = await startCompare(api, { source: session(), targets: [CODEX], text: 'legacy' });
+    expect(entries[0]?.ok).toBe(true); expect(api.sendTurn).toHaveBeenCalledTimes(1);
+  });
+  it('carries draft-only handoff mode without sending a turn', async () => {
+    const api = fakeApi();
+    await quickHandoff(api, { source: session(), target: selected, kind: 'question' });
+    expect(api.createHandoffSession).toHaveBeenCalledWith(expect.objectContaining({ contextMode: 'expansive' }));
+    expect(api.saveDraft).toHaveBeenCalledTimes(1); expect(api.sendTurn).not.toHaveBeenCalled();
+  });
+  it('does not open or overwrite a draft when returned handoff mode disagrees', async () => {
+    const api = fakeApi();
+    api.createHandoffSession = vi.fn(async () => session({ seatId: selected.seatId, model: selected.model, contextMode: 'standard' }));
+    await expect(quickHandoff(api, { source: session(), target: selected, kind: 'question' })).rejects.toThrow('requested model and context mode');
+    expect(api.saveDraft).not.toHaveBeenCalled(); expect(api.open).not.toHaveBeenCalled(); expect(api.sendTurn).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('target binding before Review and escalation contact', () => {
+  it.each(['review', 'escalate'] as const)('%s holds returned wrong model before link, send or outcome', async (flow) => {
+    const api = fakeApi();
+    const target = { ...CODEX, contextMode: 'expansive' as const };
+    const returned = session({ seatId: target.seatId, model: 'unexpected', contextMode: target.contextMode });
+    api.createSession = vi.fn(async () => returned);
+    api.createHandoffSession = vi.fn(async () => returned);
+    const promise = flow === 'review'
+      ? startReview(api, { source: session(), reviewer: target, question: 'question', answer: 'answer', authorLabel: 'author' })
+      : escalate(api, { source: session(), target, question: 'question', draft: 'draft', draftLabel: 'synthetic', kind: 'code',
+        verdict: { escalate: true, confidence: 0.3, reasons: ['synthetic'] } });
+    await expect(promise).rejects.toThrow('requested model and context mode');
+    expect(api.link).not.toHaveBeenCalled(); expect(api.sendTurn).not.toHaveBeenCalled(); expect(api.outcome).not.toHaveBeenCalled();
+  });
+});

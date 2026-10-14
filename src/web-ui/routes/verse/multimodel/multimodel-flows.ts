@@ -65,6 +65,17 @@ export interface FlowTarget {
   engine: string;
 }
 
+/** Creation alone does not prove the selected account/model/mode. A legacy
+ * target without a mode retains the server preference; explicit modes must
+ * match before draft/link/contact effects. The server still owns admission. */
+function requireTargetBinding(session: VerseSession, target: FlowTarget): void {
+  if (session.seatId !== target.seatId || (target.contextMode !== undefined && session.contextMode !== target.contextMode)
+    || (target.model !== null && (typeof session.model !== 'string' || !sameAdviceBinding(
+      { ...target, contextMode: target.contextMode ?? session.contextMode ?? 'standard' }, session)))) {
+    throw new Error('The created chat did not match the requested model and context mode.');
+  }
+}
+
 /**
  * A new chat on the SAME pinned roots as `source`, with no handoff: the
  * source's own `projectPath` + `extraRoots` (never its workspace id — see
@@ -125,7 +136,8 @@ export async function quickHandoff(
   // sections list files and asks, but not the plan the agent just wrote.
   const carryPlan = looksLikePlan(input.lastAssistant);
   const preview = await api.fetchHandoffPreview(input.source.id, carryPlan ? { includeLastAssistant: true } : {});
-  const session = await api.createHandoffSession({ source: input.source, seatId: input.target.seatId, ...(input.target.model ? { model: input.target.model } : {}) });
+  const session = await api.createHandoffSession({ source: input.source, seatId: input.target.seatId, ...(input.target.model ? { model: input.target.model } : {}), ...(input.target.contextMode ? { contextMode: input.target.contextMode } : {}) });
+  requireTargetBinding(session, input.target);
   api.saveDraft(session.id, preview.text);
   void api.outcome({ seatId: input.source.seatId, kind: input.kind, signal: 'switch-away', sessionId: input.source.id });
   void api.outcome({ seatId: input.target.seatId, kind: input.kind, signal: 'switch-to', sessionId: session.id });
@@ -161,9 +173,15 @@ export async function startCompare(
   const note = input.source.turnCount > 0 ? (await api.fetchHandoffPreview(input.source.id)).text : null;
   const title = (label: string) => `${input.source.title.slice(0, 80)} · ${label}`;
   return fanOut(input.targets as readonly CompareTarget[], comparePrompt(input.text, note), {
-    createSession: (t) => (input.source.turnCount > 0
-      ? api.createHandoffSession({ source: input.source, seatId: t.seatId, ...(t.model ? { model: t.model } : {}), title: title(t.label) })
-      : api.createSession(siblingRequest(input.source, t, title(t.label)))),
+    createSession: async (t) => {
+      const target = t as FlowTarget;
+      const session = input.source.turnCount > 0
+        ? await api.createHandoffSession({ source: input.source, seatId: target.seatId, ...(target.model ? { model: target.model } : {}),
+          ...(target.contextMode ? { contextMode: target.contextMode } : {}), title: title(target.label) })
+        : await api.createSession(siblingRequest(input.source, target, title(target.label)));
+      requireTargetBinding(session, target);
+      return session;
+    },
     sendTurn: (id, text) => api.sendTurn(id, text),
     link: (child) => api.link({ parentSessionId: input.source.id, childSessionId: child, relation: 'compare' }),
   });
@@ -183,6 +201,7 @@ export async function startReview(
   input: { source: VerseSession; reviewer: FlowTarget; question: string | null; answer: string; authorLabel: string },
 ): Promise<VerseSession> {
   const session = await api.createSession(siblingRequest(input.source, input.reviewer, `Review · ${input.source.title.slice(0, 80)}`));
+  requireTargetBinding(session, input.reviewer);
   void api.link({ parentSessionId: input.source.id, childSessionId: session.id, relation: 'review' });
   await api.sendTurn(session.id, reviewPrompt({ question: input.question, answer: input.answer, authorLabel: input.authorLabel }));
   return session;
@@ -193,6 +212,7 @@ export async function escalate(
   input: { source: VerseSession; target: FlowTarget; question: string; draft: string; verdict: DraftVerdict; draftLabel: string; kind: PromptKind },
 ): Promise<VerseSession> {
   const { session, note } = await continuation(api, input.source, input.target);
+  requireTargetBinding(session, input.target);
   void api.link({ parentSessionId: input.source.id, childSessionId: session.id, relation: 'escalate' });
   await api.sendTurn(session.id, comparePrompt(escalationPrompt(input.question, input.draft, input.verdict, input.draftLabel), note));
   void api.outcome({ seatId: input.source.seatId, kind: input.kind, signal: 'escalated', sessionId: input.source.id });
