@@ -78,6 +78,12 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // External handoff projections and their scope/digest admission remain owner-controlled.
+  'src/core/proactive/handoff-preview*.ts',
+  // Pin the shipped compiled root explicitly as well as later companion helpers.
+  'src/core/proactive/handoff-preview.ts',
+  'src/core/proactive/coordination-wire.ts',
+  'src/core/verse/proactive-coordination-api.ts',
   // Reviewed-memory eligibility and its offline yardstick cannot grade themselves.
   'src/core/memory/**',
   'src/core/local-eval/memory-*.ts',

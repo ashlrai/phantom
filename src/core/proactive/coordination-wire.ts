@@ -1,5 +1,5 @@
 /** Typed digest references preserve public redaction without exempting arbitrary hex secrets. */
-const DIGEST_FIELDS = new Set(['packetDigest', 'resultDigest', 'reportDigest', 'checkedResultDigest',
+const DIGEST_FIELDS = new Set(['packetDigest', 'previewDigest', 'expectedPreviewDigest', 'resultDigest', 'reportDigest', 'checkedResultDigest',
   'id', 'attemptId', 'reportId', 'eventId', 'inputDigest', 'snapshotDigest', 'taskDigest',
   'evaluationId', 'proposalId', 'artifactDigest', 'previousSignedInstallerDigest']);
 export function companionDigestToReference(value: string): string {
