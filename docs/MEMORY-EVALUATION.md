@@ -33,6 +33,8 @@ npm run --silent eval:memory -- --json
 
 The silent npm invocation keeps npm banners out of the JSON stream. The runner exits zero only when all 72 governed cases pass, one when governed cases fail or have runner exceptions, and two for unsupported arguments, missing source/dependencies or observed source drift. It executes source modules, captures the Git SHA/tree/dirty state and exact relevant source/corpus hashes before and after the run, and refuses a changed observation. This is source observation, not signed provenance or an installed-build attestation.
 
+Fixed files must remain regular and keep their checked identity through the read. Where supported, descriptor open uses a nonblocking flag so a regular file replaced by a FIFO after the path check can be refused before reading data. The regression runs only on disposable child fixtures with a 1500ms deadline and 100ms process-group kill grace; those are test cleanup budgets, not a latency guarantee. POSIX exercises an actual FIFO, while Windows exercises a nonregular directory replacement. This source-only check does not establish a filesystem sandbox, installed-reader qualification or immunity to every filesystem race.
+
 Run the offline regression suite from the checkout:
 
 ```sh
