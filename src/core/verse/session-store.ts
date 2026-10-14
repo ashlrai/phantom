@@ -60,6 +60,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { validNativeBindingId, validNativeBindingSeatId, validNativeBindingSavedDate, type VerseNativeSessionBinding } from './native-session-binding-types.js';
 import { basename, dirname, join } from 'node:path';
 import { isPersistedManagerEvent } from './manager-conversation.js';
 
@@ -1059,5 +1060,35 @@ export function readOutcomeManagerSessionMetadata(id: string, root = join(homedi
     if (!isSession(session) || session.id !== id) return null;
     return { id, roots: verseSessionRoots(session), seatId: session.seatId, model: session.model,
       engine: session.engine, status: session.status };
+  } catch { return null; }
+}
+
+/**
+ * Read one exact Phantom-owned metadata record without creating a store/engine,
+ * reconciling saved state, or reading launches/events/native files. Saved status
+ * and timestamp never establish live process ownership or desktop attachment.
+ * Preserves the stable reader's bounded read-only Windows ACL assurance.
+ * No session/provider/worker launch, write, repair or directory listing occurs.
+ */
+export function readVerseNativeSessionBinding(id: string, root = join(homedir(), '.ashlr', 'verse')): VerseNativeSessionBinding | null {
+  if (typeof id !== 'string' || !isValidSessionId(id)) return null;
+  const read = readStableRegularFile(join(root, 'sessions', `${id}${SESSION_SUFFIX}`), {
+    anchorPath: root, maxFileBytes: 1024 * 1024, remainingBytes: 1024 * 1024,
+  });
+  if (!read.ok) return null;
+  try {
+    const session: unknown = JSON.parse(read.text);
+    if (!isSession(session) || session.id !== id || !validNativeBindingSeatId(session.seatId) ||
+      !validNativeBindingSavedDate(session.updatedAt)) return null;
+    const supported = session.engine === 'claude' || session.engine === 'codex';
+    const nativeIdState: VerseNativeSessionBinding['nativeIdState'] = !supported ? 'unsupported'
+      : session.nativeSessionId === null ? 'not-created' : validNativeBindingId(session.nativeSessionId) ? 'recorded' : 'invalid';
+    return {
+      schemaVersion: 1, scope: 'native-session-binding', source: 'phantom-session-metadata',
+      sessionId: session.id, engine: session.engine, seatId: session.seatId,
+      nativeSessionId: nativeIdState === 'recorded' ? session.nativeSessionId : null, nativeIdState,
+      savedStatus: session.status, savedUpdatedAt: session.updatedAt,
+      liveOwnerState: 'unverified', desktopAttachment: 'unverified', controlEnabled: false,
+    };
   } catch { return null; }
 }

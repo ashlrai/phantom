@@ -1957,3 +1957,35 @@ gate ordinary dispatch.
 Single-producer spend accounting uses the admitted concrete engine, rather than trusting a
 subscription-like tier on a custom engine. An unaccounted interrupted zero-dollar batch or unexpected execution identity
 keeps its journal armed for reconciliation.
+
+## Saved native conversation binding
+
+Source builds containing this milestone expose
+`phm verse native-binding --id SESSION_ID [--json]` and authenticated
+`GET /api/verse/sessions/:id/native-binding`. The endpoint accepts no query
+parameters and uses the existing read-session boundary. Invalid IDs, absent,
+unsafe, oversized or malformed metadata return a generic 404; the CLI returns
+1 for unavailable and 2 for invalid arguments.
+
+The reader loads exactly one Phantom session metadata file, capped at 1 MiB,
+through the existing stable owned-file reader. It creates no session store or
+engine, reconciles no saved state, reads no launch/event log or vendor session
+file, lists no directory, and writes or repairs nothing. Windows retains the
+stable reader's bounded read-only ACL assurance helper; unavailable assurance
+refuses the read. No engine, provider, worker, model request or desktop action
+is launched.
+
+The version-1 `native-session-binding` response contains only the Phantom session
+ID, engine, seat ID, safe recorded native ID (or null), `nativeIdState`,
+`savedStatus` and `savedUpdatedAt`. Codex and Claude IDs are opaque bounded
+ASCII tokens, never interpreted as a path, URL or command. Other engines return
+`unsupported` with a null native ID; malformed native tokens return `invalid`
+with null. Metadata seat IDs and UTC timestamps are validated before projection.
+Titles, project paths, models, account fields, private launchers, errors and
+conversation contents are omitted.
+
+Every response keeps `liveOwnerState:unverified`,
+`desktopAttachment:unverified` and `controlEnabled:false`. A saved `running`
+status or recently saved timestamp does not establish a live process, active
+turn, desktop attachment, ownership lease or permission to resume. Native
+continuation, desktop handoff and UI operation remain separate milestones.

@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/verse-native-session-binding.test.ts', // bounded exact metadata and authenticated loopback HTTP
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal

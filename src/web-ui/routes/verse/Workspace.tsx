@@ -107,6 +107,7 @@ const HandoffDialog = lazy(() => import('./context/HandoffDialog.js').then((m) =
 // 3.15 agent tools: the sheet and the strip above the composer load after first paint.
 const AgentToolsSheet = lazy(() => import('./agent-tools/AgentToolsSheet.js').then((m) => ({ default: m.AgentToolsSheet })));
 const AgentToolsStrip = lazy(() => import('./agent-tools/AgentToolsStrip.js').then((m) => ({ default: m.AgentToolsStrip })));
+const NativeConversationSheet = lazy(() => import('./native-binding/NativeConversationSheet.js').then((m) => ({ default: m.NativeConversationSheet })));
 const NO_ROOTS: readonly string[] = [];
 
 export interface WorkspaceProps {
@@ -159,6 +160,7 @@ export function Workspace(props: WorkspaceProps) {
   const [menu, setMenu] = useState<{ anchor: { x: number; y: number }; from: HTMLElement } | null>(null);
   const [copied, setCopied] = useState(false);
   const [agentToolsOpen, setAgentToolsOpen] = useState(false);
+  const [nativeConversationSessionId, setNativeConversationSessionId] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
   /** Text another pane drafted in (Review "Add to message", Terminal "Send selection to chat"). */
@@ -184,6 +186,7 @@ export function Workspace(props: WorkspaceProps) {
     setMenu(null);
     setInsertRequest(null);
     setHandoffTarget(null);
+    setNativeConversationSessionId(null);
   }, [view.sessionId]);
 
   // The composer bridge (chat/composer-bridge.ts): while THIS chat's composer
@@ -422,6 +425,12 @@ export function Workspace(props: WorkspaceProps) {
       onSelect: () => { setDraftTitle(session.title); setEditing(true); },
     });
     menuItems.push({
+      id: 'native-conversation',
+      label: 'Native conversation…',
+      description: 'Saved conversation ID and connection details for this chat.',
+      onSelect: () => setNativeConversationSessionId(session.id),
+    });
+    menuItems.push({
       id: 'copy-id',
       label: copied ? 'Copied' : 'Copy chat id',
       icon: <CopyGlyph size={14} />,
@@ -629,6 +638,12 @@ export function Workspace(props: WorkspaceProps) {
       {session && agentToolsOpen ? (
         <Suspense fallback={null}>
           <AgentToolsSheet sessionId={session.id} open onClose={() => setAgentToolsOpen(false)} />
+        </Suspense>
+      ) : null}
+      {session && nativeConversationSessionId === session.id ? (
+        <Suspense fallback={null}>
+          <NativeConversationSheet key={`native-conversation:${session.id}`} sessionId={session.id} open
+            onClose={() => setNativeConversationSessionId(null)} />
         </Suspense>
       ) : null}
       <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token ashlr verse printed" />
