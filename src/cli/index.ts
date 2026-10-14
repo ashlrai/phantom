@@ -256,6 +256,12 @@ const loadStackCmd = lazyCmd(
   'stack command requires src/cli/stack.ts (M73 module not yet built).',
 );
 
+const loadHomeCmd = lazyCmd(
+  () => import('./home.js' as unknown as string),
+  (m) => m.cmdHome as Cmd,
+  'home command requires src/cli/home.ts.',
+);
+
 const loadEcosystemCmd = lazyCmd(
   () => import('./ecosystem.js' as unknown as string),
   (m) => m.cmdEcosystem as Cmd,
@@ -2188,6 +2194,13 @@ async function main(): Promise<void> {
         // confirm-gated add/apply (real provisioning).
         const cmdStack = await loadStackCmd();
         process.exitCode = await cmdStack(rest);
+        break;
+      }
+
+      case 'home':
+      case 'today': {
+        const cmdHome = await loadHomeCmd();
+        process.exitCode = await cmdHome(rest);
         break;
       }
 

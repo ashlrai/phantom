@@ -66,6 +66,7 @@ describe('native tool registry', () => {
         'ashlr_desktop_open',
         'ashlr_fleet_status',
         'ashlr_health',
+        'ashlr_home',
         'ashlr_impact',
         'ashlr_inbox_list',
         'ashlr_inbox_propose',

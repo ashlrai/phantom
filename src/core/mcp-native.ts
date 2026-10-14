@@ -216,6 +216,18 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('./website/host-release.js')).websiteStatus(),
   },
   {
+    name: 'ashlr_home',
+    description: 'Daily home dashboard (same as `ashlr home --json` and the console Home page): PRs merged across the ecosystem, spend (USD, tokens, agent seconds), value per dollar/token/second, runs in progress, and what needs the human with the exact command. Read-only.',
+    inputSchema: { type: 'object', properties: { hours: { type: 'number', minimum: 1, maximum: 168 } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { buildHomeDashboard } = await import('./home/dashboard.js');
+      const { realHomeSources } = await import('./home/dashboard-sources.js');
+      const h = typeof args['hours'] === 'number' && args['hours'] >= 1 && args['hours'] <= 168 ? Math.floor(args['hours']) : 24;
+      return buildHomeDashboard(realHomeSources(), { windowHours: h });
+    },
+  },
+  {
     name: 'ashlr_ecosystem_status',
     description: 'Ashlr ecosystem onboarding readiness: per repo (phantom, phantom-secrets, lexicon, locus, ashlr-stack, ashlr-md, ashlr-plugin) whether it is on disk, enrolled, auto-merge on, CI-gated and in the standing grant, plus the exact fix commands and the one next command. Read-only.',
     inputSchema: { type: 'object', properties: { workspace: { type: 'string', description: 'Workspace root (default $ASHLR_ECOSYSTEM_ROOT or ~/ashlr).' } }, additionalProperties: false },

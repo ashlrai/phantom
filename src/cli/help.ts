@@ -356,6 +356,8 @@ export function agentDocsText(): string {
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
   lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('Home: ashlr_home is the daily dashboard (merged PRs, spend, value per $/token/s,');
+  lines.push('running now, needs-you with commands). CLI: ashlr home --json.');
   lines.push('Ecosystem onboarding: ashlr_ecosystem_status reads per-repo readiness (disk,');
   lines.push('enrolled, auto-merge, CI gate, grant) with exact fixes; ashlr_ecosystem_up clones,');
   lines.push('enrolls and enables the steward schedule but never signs the grant: the human');
@@ -467,6 +469,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status',                       desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'home', desc: 'Daily dashboard: shipped PRs, value per $/token/s, running now, needs you (--json).', topic: 'core' },
+  { cmd: 'today', desc: 'Alias of `home`.', topic: 'core' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },

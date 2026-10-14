@@ -34,6 +34,7 @@ import { RunDetailView } from '../routes/work/runs/RunDetailView.js';
 import { SwarmsView } from '../routes/work/swarms/SwarmsView.js';
 import { SwarmDetailView } from '../routes/work/swarms/SwarmDetailView.js';
 import { DaemonView } from '../routes/control/daemon/DaemonView.js';
+import { HomeView } from '../routes/home/HomeView.js';
 import { EcosystemView } from '../routes/control/ecosystem/EcosystemView.js';
 import { FleetView } from '../routes/control/fleet/FleetView.js';
 import { SecurityView } from '../routes/control/security/SecurityView.js';
@@ -47,7 +48,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route element={<Shell />}>
-        <Route index element={<Navigate to="/overview" replace />} />
+        <Route index element={<Navigate to="/home" replace />} />
         {ALL_NAV_LEAVES.map((leaf) =>
           leaf.implemented ? null : (
             <Route
@@ -57,6 +58,7 @@ export function AppRoutes() {
             />
           ),
         )}
+        <Route path="/home" element={<HomeView />} />
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />

@@ -374,3 +374,9 @@ export const ecosystemStatusQuery: QueryDef<import('../../core/ecosystem/onboard
   key: 'ecosystem-status',
   fetch: (signal) => apiGet<import('../../core/ecosystem/onboard.js').EcosystemReportV1>('/api/ecosystem', signal),
 };
+
+/** GET /api/home — `ashlr home --json` (read-only). */
+export const homeDashboardQuery: QueryDef<import('../../core/home/dashboard.js').HomeDashboardV1> = {
+  key: 'home-dashboard',
+  fetch: (signal) => apiGet<import('../../core/home/dashboard.js').HomeDashboardV1>('/api/home', signal),
+};

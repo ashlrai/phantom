@@ -31,6 +31,12 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Overview',
     leaves: [
       {
+        path: '/home',
+        label: 'Today',
+        description: 'What agents shipped, value per dollar/token/second, what is running, and what needs you.',
+        implemented: true,
+      },
+      {
         path: '/overview',
         label: 'Fleet Dashboard',
         description: 'Repos, activity, runs, swarms, MCP health, genome, and daemon status at a glance.',
