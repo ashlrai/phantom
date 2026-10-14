@@ -7,7 +7,8 @@ import { ashlrHome } from '../cloud/store.js';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { writePrivateFileAtomicallyAsync } from '../util/private-file-write.js';
-import { PROACTIVE_PROVIDERS, type ProactiveProfile, type ProactiveProfileInput,
+import { scrubSecrets } from '../util/scrub.js';
+import { type ProactiveProfile, type ProactiveProfileInput,
   type ProactiveProfilePatch, type ProactiveOperationReadiness, type ProactiveProfilesResponse } from './types.js';
 
 export class ProactiveProfileError extends Error {
@@ -16,7 +17,7 @@ export class ProactiveProfileError extends Error {
   }
 }
 const MAX_BYTES = 1024 * 1024;
-const EDITABLE = ['displayName', 'avatar', 'responsibility', 'computer', 'services', 'fundingReference', 'enabled'];
+const EDITABLE = ['displayName', 'avatar', 'responsibility', 'computer', 'services', 'fundingReference', 'enabled', 'capabilityIds', 'preferences'];
 const ID = /^pa_[a-f0-9]{24}$/;
 function invalid(message = 'Invalid proactive agent profile.'): never { throw new ProactiveProfileError('INVALID_INPUT', message); }
 function unavailable(): never { throw new ProactiveProfileError('UNAVAILABLE', 'Proactive agent profiles are unavailable; existing data was preserved.'); }
@@ -37,6 +38,26 @@ function choice<T extends string>(value: unknown, options: readonly T[]): T {
   if (!options.includes(value as T)) invalid(); return value as T;
 }
 function nullableId(value: unknown): string | null { return value === null ? null : text(value, 256); }
+function reference(value: unknown): string {
+  const result = text(value, 256);
+  if (scrubSecrets(result) !== result) invalid('Use a metadata reference, never a credential.');
+  return result;
+}
+export function parseProactiveSlug(value: unknown): string {
+  const result = text(value, 64);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(result) || scrubSecrets(result) !== result) invalid('Use a lowercase stable slug with letters, numbers and single hyphens.');
+  return result;
+}
+function uniqueList(value: unknown, parse: (value: unknown) => string): string[] {
+  if (!Array.isArray(value) || value.length > 32) invalid();
+  const result = value.map(parse);
+  if (new Set(result).size !== result.length) invalid('Metadata IDs must be unique.');
+  return result;
+}
+function boundedInteger(value: unknown, min: number, max: number): number {
+  if (!Number.isSafeInteger(value) || Number(value) < min || Number(value) > max) invalid();
+  return Number(value);
+}
 function avatar(value: unknown): ProactiveProfile['avatar'] {
   const raw = object(value, ['color', 'variant']);
   if (typeof raw['color'] !== 'string' || !/^#[a-f0-9]{6}$/iu.test(raw['color'])) invalid('Use a six-digit avatar color.');
@@ -46,11 +67,21 @@ export function parseProactiveProfileInput(value: unknown): ProactiveProfileInpu
   const raw = object(value, ['identity', ...EDITABLE]);
   const identity = object(raw['identity'], ['provider', 'accountId', 'agentId']);
   const result: ProactiveProfileInput = {
-    identity: { provider: choice(identity['provider'], PROACTIVE_PROVIDERS), accountId: text(identity['accountId'], 256), agentId: text(identity['agentId'], 256) },
+    // Keep existing account/agent reference syntax (including provider hash IDs) stable across v1 migration.
+    identity: { provider: parseProactiveSlug(identity['provider']), accountId: text(identity['accountId'], 256), agentId: text(identity['agentId'], 256) },
     displayName: text(raw['displayName'], 120),
   };
   if ('avatar' in raw) result.avatar = avatar(raw['avatar']);
   if ('responsibility' in raw) result.responsibility = text(raw['responsibility'], 4000, true, true);
+  if ('capabilityIds' in raw) result.capabilityIds = uniqueList(raw['capabilityIds'], parseProactiveSlug);
+  if ('preferences' in raw) {
+    const preferences = object(raw['preferences'], ['priority', 'maxConcurrent', 'projectBindingIds']);
+    result.preferences = {
+      priority: 'priority' in preferences ? boundedInteger(preferences['priority'], 0, 100) : 50,
+      maxConcurrent: 'maxConcurrent' in preferences ? boundedInteger(preferences['maxConcurrent'], 1, 32) : 1,
+      projectBindingIds: 'projectBindingIds' in preferences ? uniqueList(preferences['projectBindingIds'], reference) : [],
+    };
+  }
   if ('computer' in raw) {
     const computer = object(raw['computer'], ['kind', 'label', 'providerComputerId']);
     result.computer = { kind: choice(computer['kind'], ['hosted', 'connected-local', 'unknown']), label: text(computer['label'], 120, true), providerComputerId: nullableId(computer['providerComputerId']) };
@@ -89,12 +120,16 @@ function materialize(input: ProactiveProfileInput, version: number, createdAt: s
   return { id: profileId(input), version, identity: input.identity, displayName: input.displayName,
     avatar: input.avatar ?? { color: '#6554ff', variant: 'classic' }, responsibility: input.responsibility ?? '',
     computer: input.computer ?? { kind: 'unknown', label: '', providerComputerId: null }, services: input.services ?? [],
+    capabilityIds: input.capabilityIds ?? [], capabilityVerification: 'declared-unverified',
+    preferences: { priority: 50, maxConcurrent: 1, projectBindingIds: [], ...input.preferences },
     fundingReference: input.fundingReference ?? null, enabled: input.enabled ?? true, connection: 'configured',
     operations: readiness(input.identity.provider), lastRun: null, createdAt, updatedAt };
 }
 function parseSaved(value: unknown): ProactiveProfile {
-  const raw = object(value, ['id', 'version', 'identity', ...EDITABLE, 'connection', 'operations', 'lastRun', 'createdAt', 'updatedAt']);
-  const input = parseProactiveProfileInput(Object.fromEntries(['identity', ...EDITABLE].map(key => [key, raw[key]])));
+  const raw = object(value, ['id', 'version', 'identity', ...EDITABLE, 'capabilityVerification', 'connection', 'operations', 'lastRun', 'createdAt', 'updatedAt']);
+  // Existing v1 records omit new metadata. Hydrate defaults without changing identity/version or rewriting on read.
+  const input = parseProactiveProfileInput(Object.fromEntries(['identity', ...EDITABLE].filter(key => key in raw).map(key => [key, raw[key]])));
+  if ('capabilityVerification' in raw && raw['capabilityVerification'] !== 'declared-unverified') invalid();
   if (!Number.isSafeInteger(raw['version']) || Number(raw['version']) < 1 || raw['id'] !== profileId(input) || raw['connection'] !== 'configured' || raw['lastRun'] !== null) invalid();
   const createdAt = text(raw['createdAt'], 32), updatedAt = text(raw['updatedAt'], 32);
   if (!Number.isFinite(Date.parse(createdAt)) || !Number.isFinite(Date.parse(updatedAt)) || Date.parse(updatedAt) < Date.parse(createdAt)) invalid();

@@ -1561,9 +1561,9 @@ export interface AshlrConfig {
    * pulse attributes are omitted, and all existing behavior is unchanged.
    *
    * Example (Mason's machine):
-   *   "user": { "id": "mason@evero-consulting.com", "name": "Mason" }
+   *   "user": { "id": "mason@ashlr.ai", "name": "Mason" }
    * Example (cofounder's machine):
-   *   "user": { "id": "cofounder@evero-consulting.com", "name": "Alex" }
+   *   "user": { "id": "cofounder@ashlr.ai", "name": "Alex" }
    */
   user?: {
     /** Stable identifier — email recommended (matches pulse peer_share user_id). */
@@ -4650,6 +4650,8 @@ export interface ApplyResult {
  * merged over conservative hard-coded defaults.
  */
 export interface DaemonConfig {
+  /** Request macOS idle/system sleep inhibition on AC while the resident launchd service runs. Requires a confirmed service restart. */
+  keepAwake?: boolean;
   /** HARD daily spend ceiling (USD). When today's spend reaches it, the daemon
    *  idles/stops. Resets per calendar day. Default modest. */
   dailyBudgetUsd: number;

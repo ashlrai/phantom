@@ -21,6 +21,7 @@ import { AppearancePanel } from './AppearancePanel.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
 import { ConnectionPanel } from './ConnectionPanel.js';
 import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
+import { ResidentAwakePanel } from './ResidentAwakePanel.js';
 import { ShortcutsPanel } from './ShortcutsPanel.js';
 import styles from './SettingsSection.module.css';
 
@@ -39,6 +40,7 @@ export function SettingsSection() {
           <AppearancePanel appearance={appearance} onChange={set} onReset={reset} />
           <ChatSettingsPanel />
           <DesktopSettingsPanel />
+          <ResidentAwakePanel />
           <ConnectionPanel />
           <ShortcutsPanel />
           <OnboardingPanel />

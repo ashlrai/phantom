@@ -23,7 +23,7 @@ The whole inventory matters, but it should not receive equal attention. Ashlr wi
 
 | Tier | Repos | Operating directive |
 |---|---|---|
-| **Core fleet spine** | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench | Keep these moving first. They are the product, execution harness, trust layer, review surface, observability plane, secrets layer, and infra layer that make the autonomous engineering fleet useful. |
+| **Core fleet spine** | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench, lexicon, locus | Keep these moving first. They are the product, execution harness, trust layer, review surface, observability plane, secrets layer, and infra layer that make the autonomous engineering fleet useful. |
 | **Core-adjacent candidate** | ashlr-mux | Not present in the local 21-repo inventory yet. Track as cofounder-owned and evaluate as core once the repo is available locally or via GitHub. |
 | **Force multipliers** | @ashlr/core-efficiency, morphkit, webfetch, prompt-trackr | Develop when they compound the core fleet: cheaper context, product-building leverage, retrieval/building blocks, or prompt-quality feedback. |
 | **Supporting substrate + distribution** | ashlr-auth, ashlr-cli-common, ashlr-config, ashlr-cost, ashlr-mcp-kit, homebrew-ashlr, homebrew-phantom, openclaw-setup | Maintain quality, package boundaries, and distribution. Do not let these pull focus from the core spine unless they are blocking it. |
@@ -34,7 +34,7 @@ Ownership is the routing boundary for fleet work. Local Ashlr repos can receive 
 
 | Boundary | Owner | Repos | Operating directive |
 |---|---|---|---|
-| Local core fleet spine | mason | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench | Hub can coordinate proposal-only work across these repos when they are locally enrolled; keep human approval gates intact. |
+| Local core fleet spine | mason | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench, lexicon, locus | Hub can coordinate proposal-only work across these repos when they are locally enrolled; keep human approval gates intact. |
 | Local force multipliers | mason | @ashlr/core-efficiency, morphkit, webfetch | Develop as compounding capabilities for the fleet, not replacements for core orchestration ownership. |
 | Local supporting substrate and distribution | mason | ashlr-auth, ashlr-cli-common, ashlr-config, ashlr-cost, ashlr-mcp-kit, homebrew-ashlr, homebrew-phantom, openclaw-setup | Maintain as enabling packages and taps; change them when they unblock or simplify the core fleet. |
 | Standalone consumer product | mason | prompt-trackr | Keep architecturally independent from ashlr-hub and ashlr-plugin internals; compose through the public SDK/API and shared infrastructure. |
@@ -52,6 +52,8 @@ Ownership is the routing boundary for fleet work. Local Ashlr repos can receive 
 | ashlr-hub | core-fleet | conductor / autonomous fleet | expanded |
 | ashlr-mcp-kit | supporting | shared MCP scaffolding package | inventory-only |
 | ashlr-md | core-fleet | Markdown review surface | expanded |
+| lexicon | core-fleet | agent vocabulary / glossary MCP | inventory-only |
+| locus | core-fleet | local context hub / MCP | inventory-only |
 | ashlr-plugin | core-fleet | token-efficient MCP tool layer | expanded |
 | ashlr-pulse | core-fleet | observability / fleet dashboard | expanded |
 | ashlr-workbench | core-fleet | local executor fleet | expanded |
@@ -67,6 +69,8 @@ Ownership is the routing boundary for fleet work. Local Ashlr repos can receive 
 | webfetch | force-multiplier | license-first web/image fetch tool | composition-only |
 
 `binshield-internal-backup` exists beside these repos locally but is intentionally excluded from the active 21-repo inventory.
+
+October 2026: `lexicon` and `locus` were added to the machine-readable index as core-fleet repos (23 entries) so Phantom's improve/steward loop prioritizes them alongside the rest of the ecosystem.
 
 ## The composition flywheel — who provides / consumes what
 

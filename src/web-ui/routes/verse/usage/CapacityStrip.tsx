@@ -29,7 +29,7 @@
  *   useCapacityRows()                           the rows, for a custom layout
  *                                               (the rail ring, the seat chip).
  */
-import { useId, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useId, useMemo, type CSSProperties, type ReactNode } from 'react';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { SeatHealthReport } from '../../../../core/verse/health-types.js';
 import type { VerseBootstrap, VerseSeat } from '../../../data/api-types.js';
@@ -61,7 +61,8 @@ import styles from './CapacityStrip.module.css';
 const TIGHT_AT = 90;
 
 /** How often an accounts strip re-reads the clock ("usable again in 7h", "checked 2m ago"). */
-export const ACCOUNT_CLOCK_MS = 30_000;
+export { ACCOUNT_CLOCK_MS, useCapacityClock } from '../seat-subscription.js';
+import { useCapacityClock } from '../seat-subscription.js';
 
 /**
  * Apps & Accounts mode: every row leads with a sentence-case status
@@ -126,7 +127,10 @@ function WindowBar({
   const ceiling = w.binding && reservePercent !== null && reservePercent > 0 ? 100 - pct(reservePercent) : null;
   let track: ReactNode;
   let value: ReactNode;
-  if (w.limitReached) {
+  if (row.quotaCurrent === false) {
+    track = <span className={styles.trackUnknown} role="img" aria-label={sentence} />;
+    value = <span className={styles.value} data-level="unknown">{w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : `${percentText(w.usedPercent)} used`} · last</span>;
+  } else if (w.limitReached) {
     track = (
       <span className={styles.track} role="img" aria-label={sentence}>
         <span className={styles.used} data-level="limit" style={{ width: '100%' }} />
@@ -156,7 +160,7 @@ function WindowBar({
       <span className={styles.barLabel} title={w.label}>{w.label.replace(/ window$/, '')}</span>
       {track}
       {value}
-      {!compact && w.resetText !== null ? <span className={styles.reset} title={w.resetText}>{w.resetText}</span> : null}
+      {!compact && row.quotaCurrent !== false && w.resetText !== null ? <span className={styles.reset} title={w.resetText}>{w.resetText}</span> : null}
     </div>
   );
 }
@@ -290,9 +294,7 @@ export function CapacityStrip({
   accounts,
 }: CapacityStripProps) {
   const headingId = useId();
-  const [, setTick] = useState(() => Date.now());
-  usePollWhileVisible(() => setTick(Date.now()), ACCOUNT_CLOCK_MS, { enabled: accounts?.now === undefined });
-  const now = accounts?.now ?? Date.now();
+  const now = useCapacityClock(accounts?.now, seats.map(seat => seat.capacity));
   const healthRead = accounts?.healthRead ?? false;
   const accountsMode = accounts !== undefined;
   // Accounts mode words every window reset and reason against the SAME clock
@@ -401,10 +403,11 @@ export function useCapacityData(opts: { withBudget?: boolean; withHealth?: boole
 /** The rows for a custom layout (the rail's capacity ring, the composer's seat chip). */
 export function useCapacityRows(inputs: Omit<CapacityInputs, 'health' | 'budget'> = {}): CapacityRow[] {
   const data = useCapacityData();
+  const now = useCapacityClock(inputs.now, data.seats.map(seat => seat.capacity));
   return useMemo(
-    () => buildCapacityRows(data.seats, { health: data.health, budget: data.budget, ...inputs }),
+    () => buildCapacityRows(data.seats, { health: data.health, budget: data.budget, ...inputs, now }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inputs is a small literal; its fields are the identity.
-    [data.seats, data.health, data.budget, inputs.local, inputs.seatIds],
+    [data.seats, data.health, data.budget, inputs.local, inputs.seatIds, now],
   );
 }
 
