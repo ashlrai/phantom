@@ -52,6 +52,12 @@ export const ONLINE_DOCUMENTATION = Object.freeze({
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm resources launcher capabilities --provider codex|claude --command ABS_JSON --cwd ABS_PRIVATE_DIR [--json]',
+    description: 'Explicit trusted-launcher help/version probes only. Separates advertised native surfaces from implemented Phantom transports; reads no sessions and grants no control. Vendor startup/cache effects are not attested.',
+    safety: 'read',
+    jsonShape: 'NativeLauncherCapabilities (schemaVersion 1); runtimeReadiness not-inspected, sessionsInspected false, controlEnabled false; exit 0 observed, 1 unavailable, 2 usage, 130 cancelled',
+  },
+  {
     usage: 'phm docs --online [--json]',
     description: 'Print public workbench setup, raw Markdown manifest and agent documentation URLs without opening a browser or making a network request. Installed command metadata remains available through --agent.',
     safety: 'read',
