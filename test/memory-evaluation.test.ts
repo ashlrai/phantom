@@ -78,6 +78,27 @@ describe('offline memory semantic corpus and evaluator', () => {
     } });
     expect(report.arms[0]!.cases.some(result => result.failures.includes(mode.startsWith('text-') ? 'emitted-citation-payload' : 'citation-payload'))).toBe(true);
   });
+  it('fails a builder whose receipt identifies events outside the admitted scope', () => {
+    const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
+      const pack = buildMemoryContextPack(snapshot, query);
+      const events = (snapshot as { events?: Array<{ eventId: string; projectId: string }> }).events ?? [];
+      const hidden = events.find(event => event.projectId !== (query as { projectId?: string }).projectId);
+      if (hidden) pack.receipt.exclusions.push({ eventId: hidden.eventId, reason: 'scope' });
+      return pack;
+    } });
+    expect(report.arms[0]!.cases.some(result => result.failures.includes('receipt-scope-leak'))).toBe(true);
+  });
+  it.each(['stop-reason', 'text-line'])('fails a builder that leaks an out-of-scope event through its %s', mode => {
+    const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
+      const pack = buildMemoryContextPack(snapshot, query);
+      const events = (snapshot as { events?: Array<{ eventId: string; projectId: string }> }).events ?? [];
+      const hidden = events.find(event => event.projectId !== (query as { projectId?: string }).projectId);
+      if (hidden && mode === 'stop-reason') pack.receipt.stopReasons.push('saw:' + hidden.eventId);
+      if (hidden && mode === 'text-line' && pack.text) { pack.text = pack.text.replace('\n', '\nhidden ' + hidden.eventId + '\n'); pack.bytes = new TextEncoder().encode(pack.text).byteLength; }
+      return pack;
+    } });
+    expect(report.arms[0]!.cases.some(result => result.failures.includes('out-of-scope-content'))).toBe(true);
+  });
   it.each(['duplicate', 'family', 'oversize', 'depth', 'extra', 'missing'])('refuses malformed or unbounded corpus %s before either arm is invoked', mode => {
     const invalid = JSON.parse(text);
     if (mode === 'duplicate') invalid.cases[1].id = invalid.cases[0].id;

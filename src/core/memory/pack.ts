@@ -64,7 +64,8 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   if (snapshot.sourceState !== 'available') { output.status = snapshot.sourceState; output.receipt.stopReasons.push('source-' + snapshot.sourceState); return output; }
   if (!snapshot.complete) { output.status = 'unavailable'; output.receipt.stopReasons.push('incomplete-snapshot'); return output; }
   const view = projectMemoryTemporal(snapshot, query);
-  output.receipt.exclusions = view.exclusions;
+  // Receipts never identify or count another project's, owner's or audience's events.
+  output.receipt.exclusions = view.exclusions.filter(item => item.reason !== 'scope');
   const search = terms(query.query);
   const words = (event: MemoryFactEvent): Set<string> => terms(`${event.subjectKey} ${event.slotKey} ${event.text}`, false);
   const eligibleWords = view.eligible.map(event => ({ event, words: words(event) }));

@@ -2190,12 +2190,7 @@
         "mustNotContain": [
           "Build command: run check-1982."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:1:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2272,12 +2267,7 @@
         "mustNotContain": [
           "Build command: run check-8328."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:2:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2354,12 +2344,7 @@
         "mustNotContain": [
           "Build command: run check-6147."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:3:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2436,12 +2421,7 @@
         "mustNotContain": [
           "Build command: run check-9245."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:4:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2518,12 +2498,7 @@
         "mustNotContain": [
           "Build command: run check-7601."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:5:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2600,12 +2575,7 @@
         "mustNotContain": [
           "Build command: run check-6152."
         ],
-        "exclusions": [
-          {
-            "eventId": "project-scope:6:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2682,12 +2652,7 @@
         "mustNotContain": [
           "Build command: run check-5318."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:1:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2764,12 +2729,7 @@
         "mustNotContain": [
           "Build command: run check-7913."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:2:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2846,12 +2806,7 @@
         "mustNotContain": [
           "Build command: run check-4289."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:3:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -2928,12 +2883,7 @@
         "mustNotContain": [
           "Build command: run check-2218."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:4:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -3010,12 +2960,7 @@
         "mustNotContain": [
           "Build command: run check-6499."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:5:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {
@@ -3093,12 +3038,7 @@
         "mustNotContain": [
           "Build command: run check-4532."
         ],
-        "exclusions": [
-          {
-            "eventId": "owner-audience:6:a",
-            "reason": "scope"
-          }
-        ]
+        "exclusions": []
       }
     },
     {

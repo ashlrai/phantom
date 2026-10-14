@@ -26,6 +26,8 @@ export interface MemoryContextPack {
   schemaVersion: 1; contentSafety: 'screened-with-shared-patterns'; status: 'ready' | 'none' | 'unknown' | 'unavailable' | 'refused'; text: string; bytes: number;
   tokenEstimate: { method: 'utf8-bytes-divided-by-4'; value: number }; items: MemoryPackItem[];
   receipt: { policyVersion: 1; snapshotId: string | null; snapshotRevision: number | null; recordedThrough: string | null;
-    scope: { projectId: string; ownerId: string; audienceId: string } | null; time: MemoryTime | null; knownAt: string | null; selectedEventIds: string[]; exclusions: MemoryExclusion[]; stopReasons: string[] };
+    scope: { projectId: string; ownerId: string; audienceId: string } | null; time: MemoryTime | null; knownAt: string | null; selectedEventIds: string[];
+    /** In-scope exclusions only. Events outside the admitted scope are neither identified nor counted. */
+    exclusions: MemoryExclusion[]; stopReasons: string[] };
   authority: false;
 }
