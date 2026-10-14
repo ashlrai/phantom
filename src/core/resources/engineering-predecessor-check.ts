@@ -71,6 +71,18 @@ export function checkResourceEngineeringPredecessor(input: ResourceEngineeringPr
       typeof options.expectedPlanDigest === 'string' && /^[a-f0-9]{64}$/.test(options.expectedPlanDigest) &&
       typeof options.expectedDeadlineAt === 'string' && Number.isFinite(Date.parse(options.expectedDeadlineAt)) &&
       new Date(options.expectedDeadlineAt).toISOString() === options.expectedDeadlineAt);
+    // A different persisted setup cannot prove this requested plan. This fresh,
+    // bounded read only accelerates refusal; uncertain or matching receipts still
+    // require both complete samples below, including every custody check.
+    let receipt: unknown;
+    try { receipt = readResourceJson(join(options.setup.output, 'setup-receipt.json'), 256 * 1024); }
+    catch { /* Missing or unreadable receipts retain the full evidence check. */ }
+    if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)) {
+      const planDigest = (receipt as Record<string, unknown>).planDigest;
+      if (typeof planDigest === 'string' && /^[a-f0-9]{64}$/.test(planDigest) && planDigest !== options.expectedPlanDigest) {
+        stage = 'setup'; requireEvidence(false);
+      }
+    }
     const sample = () => {
       stage = 'setup';
       const setupEvidence = readResourceEngineeringAutonomousSetupEvidence(options.setup);
