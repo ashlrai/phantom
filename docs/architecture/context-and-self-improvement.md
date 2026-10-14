@@ -45,29 +45,67 @@ provenance and dates on every line.
 
 ```
 evidence (team log, steward, tagged feedback) → proposals (why, evidence, eval, metric)
-  → draft PR from an isolated worktree → CI + evals → human approves merge/deploy
-  → usage/success metrics flow back as evidence
+  → ranked by realized leverage of their kind → draft PR from an isolated worktree
+  → register hypothesis + deterministic metric → measure at exact merge base and head
+  → promotion gate (green checks + measured improvement) → merge
+  → outcomes feed the next ranking and the proposer-vs-baseline comparison
 ```
 
-Phase 1 signals: repeated declined handoffs, steward over-quota roots, and
-context tagged `feedback` / `bug` / `feature-request`. `phm improve propose`
-prints proposals; `--open-pr --repo <dir>` opens each as a **draft** PR
-(`workplans/proposals/<id>.md`) on an `improve/*` branch. It never merges,
-never pushes to the default branch and never deploys. `--auto-merge` is refused
-before proposal effects: this loop cannot supply the existing protected merge
-process's authority and verification evidence. GitHub evidence links require a
-fresh public-repository visibility check; private or unknown links and local
-measurements remain withheld. Each proposal uses a unique owned worktree;
-uncertain acquisition or cleanup is retained for explicit inspection.
+Signals: repeated declined handoffs, steward over-quota roots, and context
+tagged `feedback` / `bug` / `feature-request`. `phm improve propose` prints
+proposals, ordered by the realized leverage of their kind (proven kinds first,
+unmeasured kinds next, kinds with a zero or negative record last).
+`--open-pr --repo <dir>` opens each as a **draft** PR
+(`workplans/proposals/<id>.md`) on an `improve/*` branch and never pushes to
+the default branch. `--auto-merge` is refused on proposals. GitHub evidence
+links require a fresh public-repository visibility check; private or unknown
+links and local measurements remain withheld.
+
+### Measured outcomes (`src/core/improve/outcomes.ts`, `measure.ts`, `promote.ts`)
+
+A proposal earns credit only from a metric it declares up front:
+
+```json
+{ "id": "0123456789", "title": "...", "kind": "team-feedback", "predictedDelta": 0.05,
+  "source": { "kind": "model", "engine": "claude", "model": "<exact model id>" },
+  "metric": { "name": "eval-pass-rate", "direction": "increase",
+              "runner": { "kind": "npm", "script": "eval:memory" } },
+  "pr": { "repository": "ashlrai/phantom", "number": 123 } }
+```
+
+* `phm improve register <file>` appends it to the digest-chained ledger
+  `$ASHLR_HOME/improve/outcomes.jsonl` (public fields only).
+* `phm improve measure <id> --repo <dir>` runs the metric in private detached
+  worktrees at the PR's exact merge base and head (twice each by default). The
+  command's last stdout line must be `{"metric": "<name>", "value": <number>}`.
+  It runs with a minimal environment (no tokens or API keys). A failed run, a
+  missing script, or two runs of one commit that disagree make the outcome
+  **unknown**, never zero.
+* `phm improve outcomes` lists outcomes and compares proposers. Proposals
+  chosen by the deterministic rules are the baseline; each exact engine/model
+  pair is a fixed-model group. A rate or comparison needs at least three
+  measured outcomes on each side, otherwise it is reported as unknown.
+* `phm improve promote <id> --repo <dir> [--queue-merge]` evaluates the promotion
+  gate: the PR is on an improvement-owned branch (`improve/*`, `ashlr-cloud/*`),
+  targets the default branch, is not from a fork, has every reported check
+  green on its exact head, and its metric improved between the current merge
+  base and that head. With `--queue-merge` and an admitted gate it queues GitHub auto-merge
+  (`--squash --auto --match-head-commit <head>`), so branch protection and
+  required checks still decide the merge; it never uses `--admin`. Anything
+  else is refused with reasons, and every decision is recorded in the ledger.
+  Without `--queue-merge` it only reports the decision. Queuing merges from
+  this gate on a schedule needs CONSTITUTION.md's self-improvement section to
+  be amended to admit it; until then the existing protected merge process
+  applies.
 
 ## 5. Roadmap
 
-* Phase 2: proposals implement code (agent run in the worktree), eval sets per
-  proposal, metrics ingestion (usage, success rate, users) as evidence,
-  hierarchical summaries with automatic supersession, generated AGENTS.md/CLAUDE.md.
-* Phase 3: trust ledger: once a class of change has a clean record (e.g. docs
-  fixes with green evals), a reviewed constitution amendment may let Phantom
-  auto-merge that class. Deploys stay always-ask until the operator changes it.
+* Proposals implement code (agent run in the worktree) and register their own
+  metric; cloud backlog items and goal-loop milestones register through the
+  same ledger so all autonomous work shares one outcome record.
+* Post-merge re-measurement and revert/regression observations
+  (`src/core/fleet/post-merge-observations.ts`) subtract credit.
+* Leverage per unit of cost once usage receipts can be joined to proposals.
 
 ## 6. Decisions for the operator
 
