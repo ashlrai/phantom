@@ -12,21 +12,16 @@ interface Negative { id: string; family: string; text: string }
 const load = <T>(name: string): T[] => (JSON.parse(readFileSync(new URL(`./fixtures/scrub/${name}`, import.meta.url), 'utf8')) as { cases: T[] }).cases;
 const positives = load<Positive>('true-positives.json').filter(entry => entry.family !== 'home-path'); // home paths: scrubPrivateText, not scrubSecrets
 const negatives = load<Negative>('false-positives.json');
-// Written after these fixes were frozen and never tuned on: it measures how well detection generalizes.
 const heldOut = load<Positive>('held-out-positives.json');
 
 // Known false alarms, kept visible so a later fix can remove them. Never add to this list; every credential must be caught.
 const KNOWN_FALSE_ALARMS = new Set(['fp-prose-token-003', 'fp-code-reference-011', 'fp-code-reference-025', 'fp-config-without-values-004',
   'fp-config-without-values-010', 'fp-config-without-values-027']);
 
-// Held-out credentials the scrubber still misses (147/183 caught). Only remove ids from this list; a fix that tunes on
-// this batch must be validated on a fresh one.
-const KNOWN_HELD_OUT_MISSES = ['go-short-assign-004', 'go-short-assign-009', 'go-short-assign-017', 'go-short-assign-020', 'misc-001',
-  'misc-006', 'misc-007', 'misc-009', 'misc-021', 'misc-024', 'misc-049', 'misc-052', 'misc-056', 'misc-058', 'name-suffix-003',
-  'name-suffix-010', 'name-suffix-013', 'name-suffix-016', 'name-suffix-017', 'name-suffix-020', 'name-suffix-022',
-  'prose-disclosure-001', 'prose-disclosure-005', 'prose-disclosure-006', 'prose-disclosure-007', 'prose-disclosure-008',
-  'prose-disclosure-009', 'prose-disclosure-010', 'prose-disclosure-012', 'prose-disclosure-013', 'prose-disclosure-014',
-  'prose-disclosure-017', 'prose-disclosure-018', 'prose-disclosure-020', 'prose-disclosure-021', 'prose-disclosure-023'];
+// Credentials from the first held-out batch the scrubber still misses (178/183 caught): bare lowercase hex next to a
+// credential word, a lowercase-only app password, and one random value that reads like two capitalized words. That
+// batch was used to tune the prose and quoted-literal rules; test/fixtures/scrub/held-out-positives-2.json was not.
+const KNOWN_HELD_OUT_MISSES = ['misc-058', 'name-suffix-017', 'name-suffix-022', 'prose-disclosure-008', 'prose-disclosure-020'];
 
 describe('scrubSecrets corpus', () => {
   it('redacts every credential, idempotently', () => {

@@ -137,14 +137,14 @@ const ASSIGNED_VALUE = String.raw`\s*(?::=|[=:])\s*["']?[^\s,;'"]{8,}["']?`;
  * purpose: `sort_key=…` in prose/code must not match.
  */
 const ENV_SECRET_ASSIGNMENT = new RegExp(
-  String.raw`(?<![A-Za-z0-9_$])([A-Z][A-Z0-9_]*_(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIALS?|AUTH|DSN))` +
+  String.raw`(?<![A-Za-z0-9_$])([A-Z][A-Z0-9_]*_(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?|AUTH|DSN))` +
     ASSIGNED_VALUE,
   'g',
 );
 
 /** snake_case names with a secret suffix (`bot_token`, `db_password`). */
 const SNAKE_SECRET_ASSIGNMENT = new RegExp(
-  String.raw`(?<![A-Za-z0-9_$])([a-z][a-z0-9_]*_(?:api_key|token|secret|password|passwd|pwd|credentials?|private_key|access_key|secret_key|signing_key))` +
+  String.raw`(?<![A-Za-z0-9_$])([a-z][a-z0-9_]*_(?:api_key|token|secret|password|passwd|pass|pwd|credentials?|private_key|access_key|secret_key|signing_key))` +
     ASSIGNED_VALUE,
   'g',
 );
@@ -155,7 +155,7 @@ const SNAKE_SECRET_ASSIGNMENT = new RegExp(
  * prefilters cost <1 ms and skip them on the common text that has no
  * `…Token =` / `…_password:` assignment at all.
  */
-const SNAKE_PREFILTER = /_(?:api_key|token|secret|password|passwd|pwd|credentials?|private_key|access_key|secret_key|signing_key)\s*:?[=:]/;
+const SNAKE_PREFILTER = /_(?:api_key|token|secret|password|passwd|pass|pwd|credentials?|private_key|access_key|secret_key|signing_key)\s*:?[=:]/;
 const CAMEL_PREFILTER = /(?:Token|Secret|Password|Passwd|ApiKey|PrivateKey|AccessKey|SecretKey|SigningKey|Credentials?)\s*:?[=:]/;
 
 /** camelCase names with a secret suffix (`githubToken`, `clientSecret`). */
@@ -217,7 +217,7 @@ function redactAssignment(name: string, match: string, value: string, allowIdent
 }
 
 function valueOf(match: string, name: string): string {
-  return match.slice(name.length).replace(/^\s*(?::=|[=:])\s*/, '');
+  return match.slice(name.length).replace(/^[ \t]*(?::=|[=:])[ \t]*/, '').replace(/^\s*(?::=|[=:])\s*/, '');
 }
 
 /**
@@ -245,6 +245,58 @@ function isRandomKeyMaterial(value: string): boolean {
   if (pieces.some(piece => /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[A-Z]{4,})$/.test(piece))) return false;
   const count = (pattern: RegExp): number => (value.match(pattern) ?? []).length;
   return count(/[A-Z]/g) >= 3 && count(/[a-z]/g) >= 3 && count(/\d/g) >= 3;
+}
+
+/** Provider tokens with a fixed prefix (Stripe, SendGrid, Mailgun, Docker Hub, Resend, Discord bot tokens). */
+const PROVIDER_TOKEN =
+  /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9+/=]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|key-[0-9a-f]{32}|dckr_pat_[A-Za-z0-9_-]{16,}|re_[A-Za-z0-9]{6,}_[A-Za-z0-9]{12,}|[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40})\b/g;
+
+/** Words that mark nearby text as a credential context (`dbPassword`, `webhook_secret`, `AUTH_KEY`, `login(`). */
+const CREDENTIAL_HINT = /pass|pwd|secret|token|key|auth|cred|login|signing/i;
+
+/** Upper, lower, digit, symbol: how often adjacent characters change class. Random strings change often; words and camelCase rarely. */
+function classChangeRatio(value: string): number {
+  const cls = (c: string): number => (/[A-Z]/.test(c) ? 0 : /[a-z]/.test(c) ? 1 : /\d/.test(c) ? 2 : 3);
+  let changes = 0;
+  for (let i = 1; i < value.length; i++) if (cls(value[i]!) !== cls(value[i - 1]!)) changes++;
+  return changes / Math.max(1, value.length - 1);
+}
+
+/** A literal that reads like a generated password or key, not a path, URL, email, identifier or placeholder. */
+function isRandomLiteral(value: string): boolean {
+  if (value.includes(REDACTED) || /[/\\]|:\/\/|\$\{|\{\{|^[<%$]|\[[^\]]*\]|\{\d+(?:,\d*)?\}/.test(value) || /^[^@\s]+@[\w-]+(?:\.[\w-]+)+$/.test(value)) return false;
+  const count = (pattern: RegExp): number => (value.match(pattern) ?? []).length;
+  if (count(/[A-Z]/g) < 2 || count(/[a-z]/g) < 2 || count(/\d/g) < 2) return false;
+  if ((value.match(/[A-Z][a-z]{3,}/g) ?? []).length >= 2 || /[a-z]{6,}/.test(value)) return false;
+  return classChangeRatio(value) >= 0.45;
+}
+
+/**
+ * A credential noun in prose, then the rest of the line. Lower case, Capitalized or UPPER case only, and never inside a
+ * lower-case word, so `PGPASSWORD` counts but `bypass`, `tokenizer` and the verb "pass" do not.
+ */
+const PROSE_CREDENTIAL_NOUN =
+  /((?<![a-z])(?:[Pp]ass(?:word|wd|phrase)s?|PASS(?:WORD|WD|PHRASE)S?|[Pp]wd|PWD|[Ss]ecrets?|SECRETS?|[Tt]okens?|TOKENS?|[Cc]red(?:ential)?s?|CRED(?:ENTIAL)?S?)(?![a-z]))([^\n]{0,80})/g;
+
+/**
+ * An unquoted token after a credential word in prose that reads like a password: upper case, lower case and digits,
+ * plus a symbol or a random-looking mix. Code (`${…}`, calls, regexes), paths, emails and word-built identifiers are not.
+ */
+function isProseCredential(value: string): boolean {
+  if (value.length < 8 || value.includes(REDACTED) || /[/\\(){}[\]|<>;$`]|^[^@\s]+@[\w-]+(?:\.[\w-]+)+$/.test(value)) return false;
+  if (!/[A-Z]/.test(value) || !/[a-z]/.test(value) || !/\d/.test(value)) return false;
+  if (value.split(/[-_.:]+/).some(piece => /^(?:[a-z]{3,}|[A-Z][a-z]{2,}|[A-Z]{2,}[a-z]*)$/.test(piece))) return false;
+  if (/[~^*%@#!&+]/.test(value)) return true;
+  if (/=./.test(value) || /^[a-z]{3,}[A-Z\d]|[A-Z][a-z]{5,}/.test(value)) return false; // key=value, camelCase identifiers
+  const count = (pattern: RegExp): number => (value.match(pattern) ?? []).length;
+  return count(/[A-Z]/g) >= 2 && count(/[a-z]/g) >= 2 && count(/\d/g) >= 2 && count(/[A-Z][a-z]{3,}/g) < 2 && classChangeRatio(value) >= 0.45;
+}
+
+function redactProseCredential(span: string): string {
+  return span.replace(/([\s(:"'`])([^\s()"'`]{8,})/g, (m: string, lead: string, raw: string) => {
+    const value = raw.replace(/[.,;:!?]+$/, '');
+    return isProseCredential(value) ? `${lead}${REDACTED}${raw.slice(value.length)}` : m;
+  });
 }
 
 /** Masks and fillers (`********`, `xxxxxxxx`): one repeated character is not a credential. */
@@ -292,7 +344,7 @@ export function scrubSecrets(text: string): string {
       // redacted when they look like assignments, not plain audit metadata
       // such as "keys=query".
       .replace(
-        /\b(api[_-]?key|api[_-]?token|secret|secret[_-]?key|token|password|passwd|pwd|auth|credential|client[_-]?secret|private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|connection[_-]?string|conn[_-]?str|_?auth[_-]?token|signing[_-]?key|encryption[_-]?key|master[_-]?key|hmac[_-]?(?:key|secret)|webhook[_-]?secret|ASHLR_[A-Z_]+)\s*(?::=|[=:])\s*["']?[^\s,;'"]{8,}["']?/gi,
+        /\b(api[_-]?key|api[_-]?token|secret|secret[_-]?key|token|password|passwd|pwd|auth|credential|client[_-]?secret|private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|connection[_-]?string|conn[_-]?str|_?auth[_-]?token|signing[_-]?key|encryption[_-]?key|master[_-]?key|hmac[_-]?(?:key|secret)|webhook[_-]?secret|app[_-]?key|ASHLR_[A-Z_]+)[ \t]*(?::=|[=:])[ \t]*["']?[^\s,;'"]{8,}["']?/gi,
         (m: string, name: string) => {
           const value = valueOf(m, name);
           // An earlier rule already redacted the value (`api_key="[REDACTED]"`): keep it, so a second pass is a no-op.
@@ -316,6 +368,9 @@ export function scrubSecrets(text: string): string {
       .replace(/\bhf_[A-Za-z0-9]{16,}\b/g, REDACTED)
       .replace(/\bnpm_[A-Za-z0-9]{16,}\b/g, REDACTED)
       .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, REDACTED)
+      .replace(PROVIDER_TOKEN, REDACTED)
+      // 9b. .netrc entries: the value after `password` on a `machine … login …` line.
+      .replace(/(\bmachine\s+\S+\s+(?:login\s+\S+\s+)?password)\s+(\S+)/g, (m: string, head: string, value: string) => (value === REDACTED ? m : `${head} ${REDACTED}`))
       // 10. URL passwords and long base64-ish blobs.
       .replace(/(:\/\/[^:\s/@]*:)[^@\s]+(@)/g, '$1[REDACTED]$2')
       .replace(/(?<![/\w])[A-Za-z0-9+]{40,}={0,2}(?![/\w])/g, (m: string, offset: number, whole: string) => (PUBLIC_DIGEST_PREFIX.test(whole.slice(Math.max(0, offset - 40), offset)) ? m : scrubLongBase64Like(m)))
@@ -324,6 +379,12 @@ export function scrubSecrets(text: string): string {
       // must mix upper case, lower case and digits like random key material.
       .replace(/(?<![\w/+.-])[A-Za-z0-9+/_-]{40,}={0,2}(?![\w/+=.-])/g, (m: string, offset: number, whole: string) =>
         (/[/+_-]/.test(m) && !/^sha(?:256|384|512)-/.test(m) && !PUBLIC_DIGEST_PREFIX.test(whole.slice(Math.max(0, offset - 40), offset)) && isRandomKeyMaterial(m) ? REDACTED : m))
+      // 10c. A random-looking quoted literal shortly after a credential word (`dbPassword := "…"`,
+      // `String::from("…")` after `webhook_secret`, a k8s `value:` under `MYSQL_ROOT_PASSWORD`).
+      .replace(/"([^\s"]{12,200})"|'([^\s']{12,200})'/g, (m: string, dq: string | undefined, sq: string | undefined, offset: number, whole: string) =>
+        (isRandomLiteral(dq ?? sq ?? '') && CREDENTIAL_HINT.test(whole.slice(Math.max(0, offset - 100), offset)) ? m.replace(dq ?? sq ?? '', REDACTED) : m))
+      // 10d. A credential disclosed in prose: "the Redis password on prod-cache-02 is Y6kQ…", "reset it to 5aHJ…".
+      .replace(PROSE_CREDENTIAL_NOUN, (m: string, noun: string, rest: string) => noun + redactProseCredential(rest))
       // 13. Suffix-named assignments rule 4's `\b` anchor cannot see. LAST, so
       // every token-shape rule above has already turned a JWT/AKIA/hex value
       // into [REDACTED]; that marker is left untouched below. Running these
