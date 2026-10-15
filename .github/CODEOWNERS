@@ -752,6 +752,7 @@
 /test/mcp-firm-resources.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
+/test/memory-benchmark.test.ts @masonwyatt23
 /test/memory-evaluation-cli.test.ts @masonwyatt23
 /test/memory-evaluation-performance.test.ts @masonwyatt23
 /test/memory-evaluation.test.ts @masonwyatt23

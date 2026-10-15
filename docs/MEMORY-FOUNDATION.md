@@ -136,18 +136,77 @@ Snapshot bytes are counted incrementally before allocating a whole over-cap
 canonical encoding.
 
 The existing pure `scrubSecrets` and `redactGenericHomePaths` patterns screen
-free text and opaque IDs. If screening would change a value, the kernel refuses
-it rather than silently rewriting a fact, quotation, locator or source claim.
+free text and opaque IDs. If screening would change a value, the kernel never
+silently rewrites it into the pack. A query, ID or key that fails screening
+refuses the whole call. A fact event whose text, source locator or quote fails
+is withheld on its own as `screened`, and the rest of the snapshot is still
+served. The screened event keeps its lineage effects: it still supersedes its
+predecessor and its tombstones still delete, it never contests a slot, and facts
+derived from it are withheld. When it touches the query, the pack says how many
+facts were withheld for credential-shaped text or a private path.
 This shared screening is not exhaustive private-data detection. A successful
 pack says `contentSafety: 'screened-with-shared-patterns'`, not that all content
 is safe to publish or send to a provider.
 
-After eligibility checks, ranking counts unique lexical query matches in the
-subject, slot and text; an empty query gives each eligible event equal score.
-Ties use event ID order. Each complete fact and its citations are canonical JSON
-inside a fixed evidence boundary, with angle brackets escaped so quoted text
-cannot close that boundary. Quoted instructions remain data;
-`authority: false` never grants tool use, deployment or account access.
+After eligibility checks, ranking counts unique query terms that match the
+subject, slot and text. Common function words (`the`, `how`, `what` ...) are
+ignored unless the query has nothing else, and ASCII words are folded by a small
+fixed suffix list, so `builds`, `building` and `build` match. Other scripts are
+compared exactly. An empty query gives each eligible event equal score. Ties go
+to the event whose matched terms are rarer among eligible facts, then to more
+exact-word matches, then to event ID order. A fixed vocabulary of
+engineering synonym groups (`src/core/memory/vocabulary.ts`) lets `compile`
+match build and `credentials` match secrets; there is no model or embedding,
+so wording outside those groups still has to share a stem. Each fact is
+canonical JSON whose citations are references: source ID and digest, plus the
+quote only when it differs from the fact text. The complete source records stay
+on `items[].sourceRefs`. Facts are placed inside a fixed evidence boundary, with angle brackets escaped so quoted text
+cannot close that boundary. The view (time mode, time, knowledge cutoff) and the
+review disclaimer are stated once on the boundary tag rather than in every fact.
+The tag also declares `omitted="observedAt=validFrom validUntil=null"`: a fact
+leaves out `observedAt` when it equals `validFrom` and `validUntil` when it is
+null, and states either field whenever it differs.
+Quoted instructions remain data; `authority: false` never grants tool use,
+deployment or account access.
+
+When the query touches a slot whose claims were withheld as a `conflict` or
+`revision-conflict`, the pack adds one line naming the subject, slot and number
+of withheld claims, and asks the reader to check before relying on it. The
+contested text itself never appears. These lines count toward the byte budget;
+if one does not fit, the receipt records `conflict-notice-budget`.
+
+### Facts written by independent agents
+
+Agents write memory without coordinating. They pick their own subject and slot
+keys, restate each other, cite weak evidence and leave facts behind when code
+changes. The pack applies three rules after ranking:
+
+- **Checkable evidence first.** A source is checkable when its locator starts
+  with `file:`, `commit:` or `command-output:` and its quote is more than the
+  fact restated. Any other source is unverified, such as `chat:`,
+  `inference:` or a self-quote. Among relevant facts, checkable ones rank
+  first. An unverified fact is withheld as `weaker-evidence` when a checkable
+  fact scores at least as well, and it is still served when nothing checkable
+  does.
+- **One copy of a fact.** A candidate is withheld as `duplicate` of an
+  already selected fact in two cases. Either both cite the same source
+  (locator and digest) and share a topic stem, or at least half of the smaller
+  fact's topic stems appear in the other and one fact's value tokens (numbers,
+  versions, paths, dotted or slashed identifiers) are a subset of the other's.
+- **Changed sources.** `buildMemoryContextPack(snapshot, query, { changedSourceIds })`
+  takes the source IDs whose quote the caller no longer finds at their locator.
+  Facts citing such a source are withheld as `source-changed`. When any of them
+  touch the query, the pack adds one line saying how many were withheld. The
+  argument defaults to `{ changedSourceIds: [] }`. Any other shape is refused
+  with `invalid-options`. The pack itself reads no files; the caller does the
+  check, and `memorySourceQuotePresent(quote, currentLine)` in
+  `src/core/memory/source.ts` is the comparison to use. It ignores whitespace
+  next to punctuation, runs of spaces and trailing `//`, `#`, `--` or `/* */`
+  comments, so reformatting a line does not withhold a true fact. A quote that
+  is only a comment is compared as written.
+
+A contradiction between facts written under different keys is not detected:
+nothing in the history connects them.
 
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt
@@ -155,7 +214,8 @@ and item metadata are separate bounded outputs, not included in that text
 budget. The token estimate is explicitly UTF8 bytes divided by four, rounded
 up; it is not an exact model tokenizer count.
 
-Pack status distinguishes `ready` from `none` (no selected eligible evidence),
+Pack status distinguishes `ready` from `none` (no selected eligible evidence;
+the text may still carry conflict lines),
 `unknown`, `unavailable` and `refused`. An incomplete available snapshot is
 unavailable. `none` may reflect irrelevant evidence or budget omissions; inspect
 the receipt rather than interpreting it as proof that memory does not exist.

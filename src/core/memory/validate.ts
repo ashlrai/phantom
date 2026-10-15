@@ -111,3 +111,35 @@ export function immutableMemorySnapshot(value: unknown): MemorySnapshot | null {
     return copy;
   } catch { return null; }
 }
+/** Replaces content that failed screening. Never served: the event is kept only for its lineage effects. */
+export const SCREENED_MEMORY_CONTENT = '[screened]';
+/**
+ * One write with credential-shaped text or a private path must not refuse every other fact. Events whose only defect is
+ * screened content (fact text, source locator or quote) get that content replaced and are named in `screened`; every
+ * other defect, and screened IDs or keys, still refuse the whole snapshot. The result is a strictly revalidated copy.
+ */
+export function screenedMemorySnapshot(value: unknown): { snapshot: MemorySnapshot; screened: string[] } | null {
+  try {
+    const strict = immutableMemorySnapshot(value);
+    if (strict) return { snapshot: strict, screened: [] };
+    if (value === null || typeof value !== 'object') return null;
+    // Detach once so the checks below and the copy that is revalidated read the same bytes.
+    const copy = JSON.parse(canonicalJson(value)) as Record<string, unknown>;
+    if (!Array.isArray(copy.events)) return null;
+    const unsafe = (field: unknown): boolean => typeof field === 'string' && !memoryContentUnchanged(field);
+    const screened: string[] = [];
+    const events = (copy.events as unknown[]).map(entry => {
+      if (!entry || typeof entry !== 'object' || validMemoryFactEvent(entry)) return entry;
+      const event = entry as Record<string, unknown>;
+      if (!Array.isArray(event.sourceRefs)) return entry;
+      const refs = (event.sourceRefs as unknown[]).map(ref => !ref || typeof ref !== 'object' ? ref : Object.fromEntries(Object.entries(ref)
+        .map(([key, field]) => [key, (key === 'locator' || key === 'quote') && unsafe(field) ? SCREENED_MEMORY_CONTENT : field])));
+      const clean = { ...event, text: unsafe(event.text) ? SCREENED_MEMORY_CONTENT : event.text, sourceRefs: refs };
+      if (canonicalJson(clean) === canonicalJson(event) || !validMemoryFactEvent(clean)) return entry;
+      screened.push(clean.eventId as string);
+      return clean;
+    });
+    const snapshot = screened.length ? immutableMemorySnapshot({ ...copy, events }) : null;
+    return snapshot ? { snapshot, screened } : null;
+  } catch { return null; }
+}

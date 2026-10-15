@@ -68,8 +68,9 @@ describe('offline memory semantic corpus and evaluator', () => {
         if (mode.startsWith('text-')) pack.text = pack.text.split('\n').map(line => {
           if (!line.startsWith('{')) return line;
           const row = JSON.parse(line);
-          if (mode === 'text-omission') row.sourceRefs = [];
-          else row.sourceRefs[0].digest = 'sha256_' + 'd'.repeat(64);
+          const citations = row.sources ? 'sources' : 'sourceRefs';
+          if (mode === 'text-omission') row[citations] = [];
+          else row[citations][0].digest = 'sha256_' + 'd'.repeat(64);
           return JSON.stringify(row);
         }).join('\n');
         pack.bytes = new TextEncoder().encode(pack.text).byteLength;
@@ -77,6 +78,16 @@ describe('offline memory semantic corpus and evaluator', () => {
       return pack;
     } });
     expect(report.arms[0]!.cases.some(result => result.failures.includes(mode.startsWith('text-') ? 'emitted-citation-payload' : 'citation-payload'))).toBe(true);
+  });
+  it.each(['drop-declaration', 'shift-valid-from'] as const)('fails a builder whose emitted time fields do not restore to the fixture (%s)', mode => {
+    const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
+      const pack = buildMemoryContextPack(snapshot, query);
+      if (mode === 'drop-declaration') pack.text = pack.text.replace(' omitted="observedAt=validFrom validUntil=null"', '');
+      else pack.text = pack.text.split('\n').map(line => line.startsWith('{') ? JSON.stringify({ ...JSON.parse(line), validFrom: '2020-01-01T00:00:00.000Z' }) : line).join('\n');
+      pack.bytes = new TextEncoder().encode(pack.text).byteLength;
+      return pack;
+    } });
+    expect(report.arms[0]!.cases.some(result => result.failures.includes('emitted-time-fields'))).toBe(true);
   });
   it('fails a builder whose receipt identifies events outside the admitted scope', () => {
     const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
