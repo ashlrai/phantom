@@ -748,7 +748,7 @@ export const tools: VerseMcpTool[] = [
     name: 'terminal_interrupt',
     scope: 'terminal',
     desktopOnly: true,
-    description: 'Press Ctrl-C in a terminal tab (stop the running command).',
+    description: 'Press Ctrl-C in one of your own terminal tabs (stop the running command). Shared operator tabs and tabs the operator has taken over are refused.',
     annotations: ann('Interrupt', {}),
     inputSchema: { type: 'object', properties: { tab_id: TAB_ID }, required: ['tab_id'], additionalProperties: false },
     handler: terminalInterrupt,

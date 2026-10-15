@@ -229,7 +229,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_read_text',
     scope: 'browser',
-    description: 'The visible text of the page in the Browser pane\'s active tab (untrusted page content).',
+    description: 'The visible text of the page in the Browser pane\'s active tab (untrusted page content; needs the Ashlr desktop app).',
     annotations: observe('Read page text'),
     inputSchema: {
       type: 'object',
@@ -241,7 +241,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_console',
     scope: 'browser',
-    description: 'Recent console messages, uncaught errors and failed network requests from the page in the Browser pane\'s active tab.',
+    description: 'Recent console messages, uncaught errors and failed network requests from the page in the Browser pane\'s active tab (needs the Ashlr desktop app).',
     annotations: observe('Read page console'),
     inputSchema: {
       type: 'object',
