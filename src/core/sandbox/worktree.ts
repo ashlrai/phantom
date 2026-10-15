@@ -643,6 +643,42 @@ try {
 } catch { /* exclude registration is best effort */ }
 `;
 
+/**
+ * One read of a created worktree's state: HEAD's commit, HEAD's symbolic ref
+ * (`refs/heads/<branch>`, or `HEAD` when detached), and the absolute Git
+ * common directory, in that order. It answers what `rev-parse HEAD`,
+ * `branch --show-current` and `rev-parse --git-common-dir` answered, from one
+ * git process (and, in the pinned runner, one supervisor) instead of three.
+ * Each Node supervisor costs ~50 ms of process start while the creator holds
+ * the repo lease and the machine-wide outward-mutation fence.
+ *
+ * Equivalence: the branch check compares the full ref `refs/heads/<branch>`
+ * (a detached HEAD prints `HEAD`, a non-branch symref prints its own full
+ * name, so neither can match). An unborn HEAD makes rev-parse exit non-zero,
+ * which the separate calls also rejected through the HEAD comparison.
+ */
+const WORKTREE_STATE_ARGS: readonly string[] = Object.freeze([
+  'rev-parse',
+  'HEAD',
+  '--symbolic-full-name',
+  'HEAD',
+  '--path-format=absolute',
+  '--git-common-dir',
+]);
+
+function parseWorktreeState(
+  stdout: string | null,
+): { head: string; headRef: string; commonPath: string } | null {
+  if (stdout === null) return null;
+  const lines = stdout.trim().split(/\r?\n/u);
+  if (lines.length < 3) return null;
+  const head = lines[0]!.trim();
+  const headRef = lines[1]!.trim();
+  // The path is last so an embedded newline stays part of it.
+  const commonPath = lines.slice(2).join('\n').trim();
+  return head && headRef && commonPath ? { head, headRef, commonPath } : null;
+}
+
 const PINNED_WORKTREE_RUNNER = String.raw`
 const { spawn, spawnSync } = require('node:child_process');
 const { lstatSync, realpathSync } = require('node:fs');
@@ -812,6 +848,20 @@ function sameCanonicalPath(left, right) {
   return fold(path.resolve(left)) === fold(path.resolve(right));
 }
 
+const worktreeStateArgs = ${JSON.stringify(WORKTREE_STATE_ARGS)};
+
+// Split a multi-value rev-parse result. The LAST value is a path and keeps any
+// embedded newline; the earlier ones (object ids, ref names) cannot hold one.
+function revParseLines(entry, count) {
+  if (!entry || entry.status !== 0 || typeof entry.stdout !== 'string') return null;
+  const lines = entry.stdout.trim().split(/\r?\n/);
+  if (lines.length < count) return null;
+  return [
+    ...lines.slice(0, count - 1).map((line) => line.trim()),
+    lines.slice(count - 1).join('\n').trim(),
+  ];
+}
+
 function runPinned(args, options = {}) {
   return run('.', args, { ...options, pinnedRepository: true });
 }
@@ -896,11 +946,14 @@ async function retainedSourceMatchesDiscovery() {
   try {
     if (!sameDirectoryIdentity(lstatSync('.', { bigint: true }), sourceDev, sourceIno) ||
         !sameCanonicalPath(realpathSync.native('.'), sourceRepo)) return false;
-    const common = await run('.', ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-    const head = await run('.', ['rev-parse', 'HEAD']);
-    if (common.status !== 0 || !common.stdout.trim() ||
-        head.status !== 0 || head.stdout.trim() !== baseHead) return false;
-    const commonPath = realpathSync.native(common.stdout.trim());
+    // One supervised rev-parse answers both questions (HEAD, then the common
+    // directory) instead of two supervisors each paying a Node start.
+    const discovered = revParseLines(
+      await run('.', ['rev-parse', 'HEAD', '--path-format=absolute', '--git-common-dir']),
+      2,
+    );
+    if (discovered === null || discovered[0] !== baseHead || !discovered[1]) return false;
+    const commonPath = realpathSync.native(discovered[1]);
     return sameCanonicalPath(commonPath, expectedCommonPath) &&
       sameDirectoryIdentity(lstatSync(commonPath, { bigint: true }), commonDev, commonIno) &&
       sameDirectoryIdentity(lstatSync('.', { bigint: true }), sourceDev, sourceIno);
@@ -943,21 +996,19 @@ async function validateCreatedWorktree() {
   } catch {
     return { exact: false, reservationChanged: true };
   }
-  const monitor = { monitorDestination: true, worktreePin };
-  const head = await run(worktreePath, ['rev-parse', 'HEAD'], monitor);
-  const currentBranch = await run(worktreePath, ['branch', '--show-current'], monitor);
-  const common = await run(
-    worktreePath,
-    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-    monitor,
-  );
-  const reservationChanged = [head, currentBranch, common].some((entry) =>
-    entry.error && entry.error.includes('sandbox reservation identity changed'));
-  if (head.status !== 0 || head.stdout.trim() !== baseHead ||
-      currentBranch.status !== 0 || currentBranch.stdout.trim() !== branch ||
-      common.status !== 0 || !common.stdout.trim()) return { exact: false, reservationChanged };
+  // HEAD's commit, HEAD's symbolic ref and the common directory from ONE
+  // destination-monitored rev-parse (see WORKTREE_STATE_ARGS).
+  const inspected = await run(worktreePath, worktreeStateArgs, {
+    monitorDestination: true,
+    worktreePin,
+  });
+  const reservationChanged = Boolean(
+    inspected.error && inspected.error.includes('sandbox reservation identity changed'));
+  const state = revParseLines(inspected, 3);
+  if (state === null || state[0] !== baseHead || state[1] !== 'refs/heads/' + branch ||
+      !state[2]) return { exact: false, reservationChanged };
   try {
-    const commonPath = realpathSync.native(common.stdout.trim());
+    const commonPath = realpathSync.native(state[2]);
     return {
       exact: sameCanonicalPath(commonPath, expectedCommonPath) &&
         sameDirectoryIdentity(lstatSync(commonPath, { bigint: true }), commonDev, commonIno),
@@ -971,7 +1022,17 @@ async function validateCreatedWorktree() {
 (async () => {
   let result;
   try {
-    if (!await retainedSourceMatchesDiscovery()) {
+    // Both source probes are read-only rev-parses, so they run side by side
+    // (one supervisor start instead of two in sequence). Both are spawned
+    // before the chdir below (the retained probe's cwd is '.', the source
+    // itself; the pathname probe names sourceRepo explicitly), their verdicts
+    // are applied in the original order, and both are still observed before
+    // the add.
+    const [retainedSourceExact, sourcePathPinned] = await Promise.all([
+      retainedSourceMatchesDiscovery(),
+      currentSourceIsPinned(),
+    ]);
+    if (!retainedSourceExact) {
       result = { ok: false, cleanupComplete: true, error: 'source repository discovery identity changed before worktree creation' };
     } else if (!currentDestinationIsPinned()) {
       result = { ok: false, cleanupComplete: false, error: 'sandbox reservation identity changed before worktree creation' };
@@ -979,7 +1040,7 @@ async function validateCreatedWorktree() {
       process.chdir(expectedCommonPath);
       if (!sameCanonicalPath(realpathSync.native('.'), expectedCommonPath) ||
           !sameDirectoryIdentity(lstatSync('.', { bigint: true }), commonDev, commonIno) ||
-          !await currentSourceIsPinned()) {
+          !sourcePathPinned) {
         result = { ok: false, cleanupComplete: true, error: 'repository association changed before worktree creation' };
       } else {
       const added = await runPinned([
@@ -1437,18 +1498,11 @@ function createdWorktreeStillExact(
       destination.home.path;
   if (!authorityStillExact()) return false;
 
-  const head = gitTry(sb.worktreePath, ['rev-parse', 'HEAD']);
-  if (!authorityStillExact()) return false;
-  const branch = gitTry(sb.worktreePath, ['branch', '--show-current']);
-  if (!authorityStillExact()) return false;
-  const commonPath = gitTry(sb.worktreePath, [
-    'rev-parse',
-    '--path-format=absolute',
-    '--git-common-dir',
-  ]);
-  if (!authorityStillExact() || !head || !branch || !commonPath) return false;
-  const currentCommon = pinDirectoryIdentity(commonPath);
-  return head === sb.baseHead && branch === sb.branch && currentCommon !== null &&
+  const state = parseWorktreeState(gitTry(sb.worktreePath, [...WORKTREE_STATE_ARGS]));
+  if (!authorityStillExact() || !state) return false;
+  const currentCommon = pinDirectoryIdentity(state.commonPath);
+  return state.head === sb.baseHead && state.headRef === `refs/heads/${sb.branch}` &&
+    currentCommon !== null &&
     currentCommon.path === repository.commonDirectory.path &&
     currentCommon.dev === repository.commonDirectory.dev &&
     currentCommon.ino === repository.commonDirectory.ino &&
