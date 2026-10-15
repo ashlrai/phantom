@@ -465,7 +465,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
-  { cmd: 'status',                       desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'status [--json]',              desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },
@@ -648,7 +648,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail (newest-first); filter by action/result/since (read-only).', topic: 'observability' },
 
-  { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes 21 native ashlr_* tools).', topic: 'integrations' },
+  { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals; --open-pr opens DRAFT PRs from an isolated worktree, never merges or deploys.', topic: 'integrations' },
@@ -837,6 +837,17 @@ export async function cmdHelp(args: string[]): Promise<number> {
   if (topicArg) {
     if ((TOPICS as string[]).includes(topicArg)) {
       renderTopic(topicArg as HelpTopic);
+      return 0;
+    }
+    // `phm help doctor` names a command, not a topic: show that command's rows.
+    const wanted = topicArg.toLowerCase();
+    const commandHits = HELP_ENTRIES.filter((e) => e.cmd.split(/\s+/)[0]?.toLowerCase() === wanted);
+    if (commandHits.length > 0) {
+      console.log('');
+      console.log(renderEntries(commandHits));
+      console.log('');
+      console.log('  ' + c.dim(`phm help ${commandHits[0]!.topic}`) + '  more commands in this topic');
+      console.log('');
       return 0;
     }
     // Unknown topic is a usage error (exit 2, like an unknown command) so agents can tell a typo from success.
