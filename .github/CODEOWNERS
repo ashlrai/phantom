@@ -744,6 +744,7 @@
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
+/test/mirror-git-bounded.test.ts @masonwyatt23
 /test/mirror-sibling-deps-314.test.ts @masonwyatt23
 /test/mirrors-310b.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
