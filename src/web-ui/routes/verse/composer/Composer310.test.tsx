@@ -426,7 +426,9 @@ describe('queued follow-ups', () => {
     expect(server.posts(/queue\/vs_1$/)).toHaveLength(0);
   });
 
-  it('idle: Enter sends through onSend as before', async () => {
+  it('idle Manual: Enter sends through onSend as before', async () => {
+    const { saveAutoPref } = await import('../multimodel/useAutoSeat.js');
+    saveAutoPref(SID, 'off');
     const user = userEvent.setup();
     const p = props();
     await renderReady(p);

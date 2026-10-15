@@ -68,3 +68,16 @@ describe('initial Automatic resource choice', () => {
     expect(request.label).toHaveBeenCalledTimes(1);
   });
 });
+
+
+it('uses the actual later catalog model and carries the saved supported context mode', async () => {
+  const request = input();
+  request.seats = [{ ...CLAUDE_SEAT, models: [
+    { id: 'small', label: 'Small', contextWindow: 16_000 },
+    { id: 'large', label: 'Large', contextWindow: 32_000, expansive: { contextWindow: 128_000, autoCompactAt: null } },
+  ] }];
+  request.label.mockResolvedValue({ classification: { ...classifyPrompt('review'), estTokens: 80_000 }, fallbackReason: null });
+  const choice = await initialAutoSeat({ ...request, preferences: { version: 1, seats: { [CLAUDE_SEAT.id]: { contextMode: 'expansive' } }, memory: { enabled: true, disabledProjects: [] } } });
+  expect(choice).toMatchObject({ seatId: CLAUDE_SEAT.id, model: 'large', contextMode: 'expansive', contextWindow: 128_000 });
+  await expect(initialAutoSeat(request)).rejects.toThrow(); // unread preferences explicitly mean standard
+});

@@ -29,6 +29,10 @@ export async function startChat(
   saveDraft(session.id, firstMessage);
   try {
     if (routing?.automatic) {
+      const { sameAdviceBinding } = await import('../../../../core/verse/multimodel/advisor.js');
+      if (!req.model || typeof session.model !== 'string' || session.contextMode !== (req.contextMode ?? 'standard') || !sameAdviceBinding({ seatId: req.seatId, model: req.model, contextMode: req.contextMode ?? 'standard' }, session)) {
+        throw new Error('The created chat did not match the requested model and context mode.');
+      }
       // Session creation may resolve workspace roots newer than the dialog's
       // snapshot. Check those authoritative roots before releasing the prompt.
       const { multimodelContextQuery } = await import('../multimodel/multimodel-queries.js');

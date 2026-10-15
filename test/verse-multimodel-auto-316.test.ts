@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { BudgetPolicy } from '../src/core/routing/types.js';
-import { adviseSeat, weightsFor, type AdvisorSeat } from '../src/core/verse/multimodel/advisor.js';
+import { adviseSeat, sameAdviceBinding, weightsFor, type AdvisorSeat } from '../src/core/verse/multimodel/advisor.js';
 import { classifyPrompt, estimateTokens } from '../src/core/verse/multimodel/classify.js';
 import { aggregateOutcomes, compareOutcomes, learnedTilt, LEARNING_HALF_LIFE_MS } from '../src/core/verse/multimodel/learning.js';
 import type { PromptClassification, SeatOutcome } from '../src/core/verse/multimodel/types.js';
@@ -318,5 +318,131 @@ describe('learning', () => {
     ], 'code', new Date(NOW).toISOString());
     expect(rows.map((r) => [r.seatId, r.signal])).toEqual([['claude', 'compare-lost'], ['codex-personal', 'compare-won'], ['local:q', 'compare-lost']]);
     expect(rows[1]?.model).toBe('gpt-5.5');
+  });
+});
+
+describe('Automatic exact model/context binding', () => {
+  const cls: PromptClassification = { ...classifyPrompt('explain this'), estTokens: 1 };
+  function variants(window = 16_000, later: number | null = 128_000): AdvisorSeat {
+    const base = paid('one-account', 'claude', 'One account', 20, { contextWindow: window });
+    return { ...base, model: 'configured', contextMode: 'standard', modelVariants: [
+      { model: 'configured', contextMode: 'standard', contextWindow: window, tier: 'elite' },
+      { model: 'later', contextMode: 'standard', contextWindow: later, tier: 'fast' },
+    ] };
+  }
+  const choose = (seat: AdvisorSeat, extra: Partial<Parameters<typeof adviseSeat>[0]> = {}) => adviseSeat({
+    classification: cls, seats: [seat], policy: POLICY, mode: 'auto', nowMs: NOW, contextTokens: 20_000, ...extra,
+  });
+
+  it('selects a fitting later option without duplicating the account or claiming measured quality', () => {
+    const result = choose(variants(), { seats: [variants(), paid('grok', 'grok', 'Grok', 50)] });
+    expect(result.choice).toMatchObject({ seatId: 'one-account', model: 'later', contextMode: 'standard', contextWindow: 128_000 });
+    expect(result.alternatives.map((o) => o.seatId)).toEqual(['grok']);
+    expect(result.routerWhy).toContain('quality and comparable latency are unmeasured');
+  });
+
+  it('retains catalog default on equal fit rather than model-family display tier', () => {
+    const result = choose(variants(128_000));
+    expect(result.choice?.model).toBe('configured');
+    const original = variants(128_000);
+    const reordered = { ...original, model: 'later', modelVariants: [...original.modelVariants!].reverse() };
+    expect(choose(reordered).choice?.model).toBe('later');
+  });
+
+  it('preserves an eligible current model/mode despite catalog order', () => {
+    const result = choose(variants(128_000), { currentSeatId: 'one-account', currentModel: 'later', currentContextMode: 'standard', turnCount: 3 });
+    expect(result.choice?.model).toBe('later');
+    expect(result.stay).toBe(true);
+  });
+
+  it('a different model on the same account is a continuation, not a stay', () => {
+    const result = choose(variants(), { currentSeatId: 'one-account', currentModel: 'configured', currentContextMode: 'standard', turnCount: 3 });
+    expect(result.choice?.model).toBe('later');
+    expect(result.stay).toBe(false);
+    expect(result.why).not.toContain('Staying');
+  });
+
+  it('cannot rescue known undersize using an unknown option', () => {
+    const result = choose(variants(16_000, null));
+    expect(result.choice).toBeNull();
+    expect(result.held).toHaveLength(1);
+    expect(result.held[0]?.seatId).toBe('one-account');
+  });
+
+  it('cannot rescue known undersize through an unknown different mode of the same model', () => {
+    const seat = variants(16_000, null);
+    seat.modelVariants = [seat.modelVariants![0]!, { model: seat.model!, contextMode: 'expansive', contextWindow: null }];
+    expect(choose(seat).choice).toBeNull();
+  });
+
+  it('retains the existing unknown-window policy only for the exact original binding', () => {
+    const seat = variants();
+    seat.capacity.contextWindow = null;
+    seat.modelVariants = [{ model: seat.model!, contextMode: 'standard', contextWindow: null }];
+    expect(choose(seat).choice).toMatchObject({ model: 'configured', contextMode: 'standard', contextWindow: null });
+  });
+
+  it('all exact options held cannot reopen through a contradictory larger base window', () => {
+    const seat = variants(16_000, 16_000);
+    seat.capacity.contextWindow = 1_000_000;
+    const result = choose(seat);
+    expect(result.choice).toBeNull();
+    expect(result.held).toHaveLength(1);
+    expect(result.held[0]?.reason).toContain('16k');
+  });
+
+  it('no usable declared variant cannot silently use the pre-variant model', () => {
+    const seat = variants(1_000_000);
+    seat.modelVariants = [{ model: 'other', contextMode: 'standard', contextWindow: null }];
+    expect(choose(seat).choice).toBeNull();
+    seat.modelVariants = [];
+    expect(choose(seat).choice).toBeNull();
+  });
+
+  it.each([NaN, Infinity, -Infinity, 0, -1])('invalid declared window %s cannot use a larger pre-variant window', (window) => {
+    const seat = variants(1_000_000);
+    seat.modelVariants = [{ model: seat.model!, contextMode: 'standard', contextWindow: window }];
+    expect(choose(seat).choice).toBeNull();
+  });
+
+  it.each([100, 101])('shared spent account remains held for every model (used %s)', (used) => {
+    const seat = variants();
+    seat.capacity.windows[0] = { ...seat.capacity.windows[0]!, usedPercent: used, limitReached: true };
+    expect(choose(seat, { pinnedSeatId: seat.seatId }).choice).toBeNull();
+  });
+
+  it('shared signed-out account cannot be reopened by a model variant', () => {
+    const seat = variants();
+    seat.capacity.signedOut = true;
+    expect(choose(seat).choice).toBeNull();
+  });
+
+  it('variants carry no independent account funding or usage fields', () => {
+    const seat = variants();
+    const result = choose(seat);
+    expect(result.choice?.note).toBe('80% of its 5-hour window left');
+    expect(result.choice?.local).toBe(false);
+    expect(seat.capacity.free).toBe(false);
+    expect(seat.capacity.windows[0]?.usedPercent).toBe(20);
+  });
+
+  it('does not turn a remote catalog option into a private local resource', () => {
+    expect(choose(variants(), { localOnly: { on: true, reason: 'private project' } }).choice).toBeNull();
+  });
+
+  it('uses the inclusive 80% fit boundary on the exact option', () => {
+    expect(choose(variants(10_000, null), { contextTokens: 7_999 }).choice?.model).toBe('configured');
+    expect(choose(variants(10_000, null), { contextTokens: 8_000 }).choice).toBeNull();
+  });
+
+  it('mode changes are distinct bindings and only existing aliases compare equal', () => {
+    expect(sameAdviceBinding({ seatId: 'one', model: 'claude-opus-5-5', contextMode: 'standard' },
+      { seatId: 'one', model: 'claude-opus-5.5', contextMode: 'standard' })).toBe(true);
+    expect(sameAdviceBinding({ seatId: 'one', model: 'm', contextMode: 'expansive' },
+      { seatId: 'one', model: 'm', contextMode: 'standard' })).toBe(false);
+    expect(sameAdviceBinding({ seatId: 'one', model: 'next', contextMode: 'standard' },
+      { seatId: 'one', model: 'm', contextMode: 'standard' })).toBe(false);
+    expect(sameAdviceBinding({ seatId: 'two', model: 'm' }, { seatId: 'one', model: 'm' })).toBe(false);
+    expect(sameAdviceBinding({ seatId: 'one', model: null }, { seatId: 'one', model: null })).toBe(false);
   });
 });

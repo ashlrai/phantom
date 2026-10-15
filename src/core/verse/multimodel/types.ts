@@ -27,6 +27,7 @@
  * BROWSER-SAFE: type-only imports and plain consts.
  */
 import type { RoutingDifficulty, RoutingTask } from '../../routing/types.js';
+import type { VerseContextMode } from '../types.js';
 
 export const VERSE_MULTIMODEL_PATH = '/api/verse/multimodel';
 export const VERSE_MULTIMODEL_CONTEXT_PATH = `${VERSE_MULTIMODEL_PATH}/context`;
@@ -106,6 +107,9 @@ export interface SeatAdviceOption {
   label: string;
   engine: string;
   model: string | null;
+  /** Exact selected mode and fit window; optional for historical callers. */
+  contextMode?: VerseContextMode;
+  contextWindow?: number | null;
   /** Runs on this Mac: free and private. */
   local: boolean;
   /** One short clause: "free · private", "5-hour 88% used". */
@@ -117,7 +121,7 @@ export interface SeatAdviceOption {
 export interface SeatAdvice {
   /** Null when no seat can take the message (every one blocked, or none allowed). */
   choice: SeatAdviceOption | null;
-  /** True when the choice IS the chat's current seat. */
+  /** True when the choice is the chat's current seat/model/mode binding. */
   stay: boolean;
   /** ONE line, shown under the composer: the choice and its main reason. */
   why: string;

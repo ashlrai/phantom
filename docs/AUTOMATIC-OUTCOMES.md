@@ -54,6 +54,29 @@ Manual selections remain pinned. Local-only projects retain their local-only
 boundary. A failed handoff preserves the draft; it does not send a duplicate
 turn. Unknown project privacy is resolved before remote classification or work.
 
+### Exact model and context selection — source candidate
+
+This source change requires release-owner integration and installed-release
+qualification. It does not establish a live model-quality ranking.
+
+Automatic checks the runnable models and supported context modes on each real
+account. Each option uses its own context allocation; a larger account headline
+window cannot make a smaller model fit. The current chat's recorded local window
+or runtime clamp is retained. Model variants share the same account allowance.
+An eligible current binding stays first among otherwise equal choices.
+
+A model or context-mode change on the same account creates a continuation through
+the existing handoff flow. The returned account, model and mode must match before
+the first turn is sent. Privacy checks or routing still loading, all resources
+held, and choices changed during advice preserve the original draft. Manual
+remains available under the existing controls and server checks.
+
+Follow-ups queued during an active native turn remain with that turn. Explicit
+Manager messages use its separate coordinator flow; a loading Manager cannot
+silently enqueue a native follow-up. Jev remains bounded advice with local rules
+fallback after privacy is known. These checks improve binding correctness; model
+quality, realized cost and time to a verified result need separate evaluation.
+
 ### One conversation with the Manager
 
 In an existing chat, choose **Manager** in the **Auto seat** menu. **One

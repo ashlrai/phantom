@@ -8,9 +8,11 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { classifyPrompt } from '../../../../core/verse/multimodel/classify.js';
 import type { MultimodelContext, PromptClassification } from '../../../../core/verse/multimodel/types.js';
 import { setMutationToken, clearMutationToken, markCheckComplete } from '../../../data/auth-store.js';
-import { evictAll } from '../../../data/cache.js';
+import { versePreferencesQuery } from '../context/context-queries.js';
+import { evictAll, runQuery } from '../../../data/cache.js';
 import { CLAUDE_SEAT, LOCAL_SEAT, session, ev, MockEventSource } from '../fixtures.test-support.js';
 import { acquireVerseSessionStream, closeAllVerseSessionStreams, setVerseFrameScheduler } from '../session-stream.js';
 import { resetVerseStore, seedVerseSession } from '../verse-store.js';
@@ -42,7 +44,7 @@ function stubFetch(context: MultimodelContext | null = CONTEXT) {
 
 /** Exercise the real routeMessage composition with in-memory ordinary routes. */
 function stubFlow(seat = CLAUDE_SEAT) {
-  const created = session({ id: 'vs_auto', seatId: seat.id, engine: seat.engine, model: seat.models[0]!.id, turnCount: 0 });
+  const created = session({ id: 'vs_auto', seatId: seat.id, engine: seat.engine, model: seat.models[0]!.id, contextMode: 'standard', turnCount: 0 });
   return {
     create: vi.spyOn(DEFAULT_FLOW_API, 'createSession').mockResolvedValue(created),
     handoff: vi.spyOn(DEFAULT_FLOW_API, 'createHandoffSession').mockResolvedValue(created),
@@ -142,7 +144,7 @@ describe('MultiModelBar', () => {
     stubFetch();
     const flow = stubFlow();
     const source = session({ id: 'vs_1', seatId: LOCAL_SEAT.id, engine: 'local', model: 'qwen3-coder',
-      turnCount: 3, projectPath: '/repo', extraRoots: ['/repo', '/lib'] });
+      turnCount: 3, projectPath: '/repo', extraRoots: ['/repo', '/lib'], usage: { ...session().usage, contextWindow: 65_536 } });
     seedVerseSession('vs_1', source, []);
     let interceptor: SendInterceptor | null = null;
     render(<MultiModelBar sessionId="vs_1" seats={[CLAUDE_SEAT, LOCAL_SEAT]} text="what does this regex match?" running={false}
@@ -153,7 +155,7 @@ describe('MultiModelBar', () => {
     await act(async () => { expect(await interceptor!('what does this regex match?')).toBe('handled'); });
     expect(flow.create).not.toHaveBeenCalled();
     expect(flow.preview).toHaveBeenCalledExactlyOnceWith('vs_1');
-    expect(flow.handoff).toHaveBeenCalledExactlyOnceWith({ source, seatId: CLAUDE_SEAT.id, model: 'claude-opus-5' });
+    expect(flow.handoff).toHaveBeenCalledExactlyOnceWith({ source, seatId: CLAUDE_SEAT.id, model: 'claude-opus-5', contextMode: 'standard' });
     expect(flow.send).toHaveBeenCalledExactlyOnceWith('vs_auto', 'CONTEXT NOTE\n\n---\n\nThe request to answer now:\n\nwhat does this regex match?');
     expect(flow.open).toHaveBeenCalledExactlyOnceWith('vs_auto');
   });
@@ -367,4 +369,159 @@ it('refreshes local speed after a newly completed turn without remounting or rep
   } finally {
     release(); closeAllVerseSessionStreams(); setVerseFrameScheduler(null); markCheckComplete(false);
   }
+});
+
+
+describe('Automatic binding and held drafts', () => {
+  function mount(seats = [CLAUDE_SEAT, LOCAL_SEAT], source = session({ id: 'vs_1' })) {
+    seedVerseSession('vs_1', source, []);
+    let interceptor: SendInterceptor | null = null;
+    const view = render(<MultiModelBar sessionId="vs_1" seats={seats} text="explain this" running={false}
+      registerInterceptor={(fn) => { interceptor = fn; }} onConsumeDraft={vi.fn()} />);
+    return { ...view, intercept: () => interceptor!('explain this') };
+  }
+  it('holds before labeling when privacy is unavailable', async () => {
+    stubFetch(null);
+    const flow = stubFlow();
+    const bar = mount();
+    await screen.findByText('Checking whether this repo may leave this Mac…');
+    await act(async () => { expect(await bar.intercept()).toBe('held'); });
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes('/multimodel/label'))).toBe(false);
+    expect(flow.send).not.toHaveBeenCalled();
+    expect(flow.create).not.toHaveBeenCalled();
+  });
+  it('holds all-ineligible advice instead of sending to the original chat', async () => {
+    stubFetch();
+    const flow = stubFlow();
+    const bar = mount([{ ...CLAUDE_SEAT, models: [{ id: 'tiny', label: 'Tiny', contextWindow: 100 }] }],
+      session({ id: 'vs_1', model: 'tiny', usage: { ...session().usage, contextWindow: 100 } }));
+    await screen.findByRole('option', { name: /Claude Max —/ });
+    await act(async () => { expect(await bar.intercept()).toBe('held'); });
+    expect(flow.send).not.toHaveBeenCalled();
+    expect(flow.create).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+  });
+  it('holds a missing session even after privacy has answered', async () => {
+    stubFetch();
+    let interceptor: SendInterceptor | null = null;
+    render(<MultiModelBar sessionId="missing" seats={[CLAUDE_SEAT]} text="explain this" running={false}
+      registerInterceptor={(fn) => { interceptor = fn; }} onConsumeDraft={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByText('Checking whether this repo may leave this Mac…')).not.toBeInTheDocument());
+    await act(async () => { expect(await interceptor!('explain this')).toBe('held'); });
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes('/multimodel/label'))).toBe(false);
+  });
+  it.each([0, 3])('reroutes a late same-account model choice at %i source turns', async (turnCount) => {
+    stubFetch();
+    const seat = { ...CLAUDE_SEAT, models: [
+      { id: 'small', label: 'Small', contextWindow: 16_000 },
+      { id: 'large', label: 'Large', contextWindow: 128_000 },
+    ] };
+    const flow = stubFlow(seat);
+    const created = session({ id: 'vs_auto', seatId: seat.id, model: 'large', contextMode: 'standard' });
+    flow.create.mockResolvedValue(created); flow.handoff.mockResolvedValue(created);
+    const source = session({ id: 'vs_1', model: 'small', turnCount,
+      usage: { ...session().usage, contextTokens: 0, contextWindow: 16_000 } });
+    const bar = mount([seat], source);
+    await screen.findByText(/^Staying on Claude Max/);
+    label = { ...classifyPrompt('explain this'), estTokens: 20_000, decidedBy: 'jev' };
+    await act(async () => { expect(await bar.intercept()).toBe('handled'); });
+    const create = turnCount ? flow.handoff : flow.create;
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ seatId: seat.id, model: 'large', contextMode: 'standard' }));
+    expect(flow.send).toHaveBeenCalledTimes(1);
+    expect(flow.open).toHaveBeenCalledWith('vs_auto');
+  });
+  it.each(['model', 'mode', 'pref'] as const)('holds a late %s change during labeling', async (change) => {
+    stubFetch();
+    const original = fetch;
+    let answer!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { answer = resolve; });
+    const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).includes('/multimodel/label') ? pending : original(input, init));
+    vi.stubGlobal('fetch', fetchSpy);
+    const flow = stubFlow();
+    const source = session({ id: 'vs_1' });
+    const bar = mount([CLAUDE_SEAT], source);
+    await screen.findByText(/^Staying on Claude Max/);
+    let sending!: Promise<string>;
+    act(() => { sending = bar.intercept(); });
+    await waitFor(() => expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('/multimodel/label'))).toBe(true));
+    if (change === 'pref') await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Routing mode' }), 'off');
+    else act(() => seedVerseSession('vs_1', { ...source, ...(change === 'model' ? { model: 'claude-sonnet-5' } : { contextMode: 'expansive' }) }, []));
+    await act(async () => { answer(Response.json({ classification: classifyPrompt('explain this'), fallbackReason: null })); expect(await sending).toBe('held'); });
+    expect(flow.send).not.toHaveBeenCalled();
+    expect(flow.create).not.toHaveBeenCalled();
+  });
+  it('holds a source-mode change while continuation creation is pending', async () => {
+    stubFetch();
+    const flow = stubFlow(LOCAL_SEAT);
+    let created!: (value: ReturnType<typeof session>) => void;
+    flow.create.mockReturnValue(new Promise((resolve) => { created = resolve; }));
+    const source = session({ id: 'vs_1', turnCount: 0 });
+    const bar = mount([CLAUDE_SEAT, LOCAL_SEAT], source);
+    await screen.findByText(/no provider token charge on this Mac/);
+    let sending!: Promise<string>;
+    act(() => { sending = bar.intercept(); });
+    await waitFor(() => expect(flow.create).toHaveBeenCalledTimes(1));
+    act(() => seedVerseSession('vs_1', { ...source, contextMode: 'expansive' }, []));
+    await act(async () => {
+      created(session({ id: 'vs_auto', seatId: LOCAL_SEAT.id, model: 'qwen3-coder', contextMode: 'standard' }));
+      expect(await sending).toBe('held');
+    });
+    expect(flow.send).not.toHaveBeenCalled(); expect(flow.open).not.toHaveBeenCalled();
+  });
+  it('honors an in-memory Local first choice when browser storage is denied', async () => {
+    stubFetch();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Denied'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Denied'); });
+    const source = session({ id: 'vs_1', seatId: LOCAL_SEAT.id, model: 'qwen3-coder', engine: 'local' });
+    const bar = mount([LOCAL_SEAT], source);
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Routing mode' }), 'cheap-first');
+    await screen.findByText(/local resource with admitted capacity/);
+    await act(async () => { expect(await bar.intercept()).toBe('send-here'); });
+  });
+});
+
+
+it('continues after an identical catalog clone refresh while create is pending', async () => {
+  stubFetch();
+  const flow = stubFlow(LOCAL_SEAT);
+  let created!: (value: ReturnType<typeof session>) => void;
+  flow.create.mockReturnValue(new Promise((resolve) => { created = resolve; }));
+  seedVerseSession('vs_1', session({ id: 'vs_1', turnCount: 0 }), []);
+  let interceptor: SendInterceptor | null = null;
+  const renderProps = (seats: typeof CLAUDE_SEAT[]) => <MultiModelBar sessionId="vs_1" seats={seats} text="explain this" running={false}
+    registerInterceptor={(fn) => { interceptor = fn; }} onConsumeDraft={vi.fn()} />;
+  const view = render(renderProps([CLAUDE_SEAT, LOCAL_SEAT]));
+  await screen.findByText(/no provider token charge on this Mac/);
+  let sending!: Promise<string>;
+  act(() => { sending = interceptor!('explain this'); });
+  await waitFor(() => expect(flow.create).toHaveBeenCalledTimes(1));
+  view.rerender(renderProps(JSON.parse(JSON.stringify([CLAUDE_SEAT, LOCAL_SEAT])) as typeof CLAUDE_SEAT[]));
+  await act(async () => {
+    created(session({ id: 'vs_auto', seatId: LOCAL_SEAT.id, model: 'qwen3-coder', contextMode: 'standard' }));
+    expect(await sending).toBe('handled');
+  });
+  expect(flow.send).toHaveBeenCalledTimes(1);
+});
+
+it('holds when saved target context preferences change during labeling', async () => {
+  stubFetch();
+  const original = fetch;
+  let answer!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { answer = resolve; });
+  const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).includes('/multimodel/label') ? pending : original(input, init));
+  vi.stubGlobal('fetch', fetchSpy);
+  const flow = stubFlow();
+  const seat = { ...CLAUDE_SEAT, models: [{ id: 'large', label: 'Large', contextWindow: 100_000,
+    expansive: { contextWindow: 200_000, autoCompactAt: null } }] };
+  seedVerseSession('vs_1', session({ id: 'vs_1', model: 'current-not-catalog' }), []);
+  let interceptor: SendInterceptor | null = null;
+  render(<MultiModelBar sessionId="vs_1" seats={[seat]} text="explain this" running={false}
+    registerInterceptor={(fn) => { interceptor = fn; }} onConsumeDraft={vi.fn()} />);
+  await screen.findByText(/Claude Max —/);
+  let sending!: Promise<string>;
+  act(() => { sending = interceptor!('explain this'); });
+  await waitFor(() => expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('/multimodel/label'))).toBe(true));
+  await act(async () => { await runQuery(versePreferencesQuery.key, async () => ({ version: 1, seats: { [seat.id]: { contextMode: 'expansive' } }, memory: { enabled: true, disabledProjects: [] } })); });
+  await act(async () => { answer(Response.json({ classification: classifyPrompt('explain this'), fallbackReason: null })); expect(await sending).toBe('held'); });
+  expect(flow.create).not.toHaveBeenCalled(); expect(flow.send).not.toHaveBeenCalled();
 });
