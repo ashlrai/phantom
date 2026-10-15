@@ -44,10 +44,18 @@ function http(handle: ResourceConsoleServerHandle, path: string, options: {
 async function fixture() {
   const workspace = join(directory, 'workspace'); mkdirSync(workspace, { mode: 0o700 });
   const requests: unknown[] = []; const held: ServerResponse[] = [];
+  // Dispatch is a durable supervisor transaction plus a loopback request; on a
+  // shared runner it has no useful wall-clock bound. Wait for the arrival itself.
+  const arrivals: Array<{ count: number; resolve: () => void }> = [];
   const endpoint = createServer((req, res) => {
     const chunks: Buffer[] = []; req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => { requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8'))); held.push(res); });
+    req.on('end', () => {
+      requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8'))); held.push(res);
+      for (const waiter of arrivals.splice(0)) if (held.length >= waiter.count) waiter.resolve(); else arrivals.push(waiter);
+    });
   });
+  const arrived = (count: number) => held.length >= count ? Promise.resolve()
+    : new Promise<void>((resolve) => { arrivals.push({ count, resolve }); });
   endpoints.push(endpoint); await new Promise<void>((resolve) => endpoint.listen(0, '127.0.0.1', resolve));
   const address = endpoint.address(); if (!address || typeof address === 'string') throw new Error('Fixture listener missing');
   const options: ResourceConsoleServerOptions = { root: join(directory, 'ledger'), poolFile: join(directory, 'pool.json'),
@@ -65,7 +73,7 @@ async function fixture() {
     timeoutMs: 20_000, maxOutputTokens: 100, ...patch });
   const finish = (index = 0, text = 'PRIVATE_HISTORY_OUTPUT') => held[index]!.end(JSON.stringify({
     choices: [{ message: { content: text } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }));
-  return { options, requests, held, start, task, finish };
+  return { options, requests, held, arrived, start, task, finish };
 }
 const submit = (handle: ResourceConsoleServerHandle, task: unknown) => http(handle, '/api/resources/tasks', {
   method: 'POST', headers: controlHeaders(handle), body: task });
@@ -127,7 +135,7 @@ describe('resource console retained history HTTP boundary', () => {
   it('retains exactly opted-in text across restart, deletes it without ledger loss, and never resurrects a retry', async () => {
     const f = await fixture(); const first = await f.start(); const task = f.task({ retainHistory: true });
     const queued = await submit(first, task); expect(queued.status).toBe(202); expect(queued.text).not.toContain(task.prompt);
-    await vi.waitFor(() => expect(f.held).toHaveLength(1)); f.finish(); await settle(first);
+    await f.arrived(1); expect(f.held).toHaveLength(1); f.finish(); await settle(first);
     const read = await http(first, historyPath(), { headers: readHeaders(first) }); expect(read.status).toBe(200);
     expect(read.headers['cache-control']).toBe('no-store'); expect(read.headers['x-content-type-options']).toBe('nosniff');
     expect(JSON.parse(read.text)).toEqual({ id: task.id, prompt: task.prompt,
@@ -160,7 +168,7 @@ describe('resource console retained history HTTP boundary', () => {
   it('keeps omitted/false consent ephemeral and immutable on retry', async () => {
     const f = await fixture(); const handle = await f.start(); const task = f.task();
     expect((await submit(handle, task)).status).toBe(202);
-    await vi.waitFor(() => expect(f.held).toHaveLength(1)); f.finish(); await settle(handle);
+    await f.arrived(1); expect(f.held).toHaveLength(1); f.finish(); await settle(handle);
     expect((await submit(handle, { ...task, retainHistory: false })).status).toBe(202);
     expect((await submit(handle, { ...task, retainHistory: true })).status).toBe(409);
     expect((await http(handle, historyPath(), { headers: readHeaders(handle) })).status).toBe(404);
@@ -176,7 +184,7 @@ describe('resource console retained history HTTP boundary', () => {
     expect((await submit(handle, f.task({ retainHistory: true }))).status).toBe(202);
     expect((await remove(handle)).status).toBe(409); expect(f.requests).toEqual([]);
     expect((await http(handle, '/api/resources/queue', { method: 'POST', headers: controlHeaders(handle), body: { paused: false } })).status).toBe(200);
-    await vi.waitFor(() => expect(f.held).toHaveLength(1)); expect((await remove(handle)).status).toBe(409);
+    await f.arrived(1); expect(f.held).toHaveLength(1); expect((await remove(handle)).status).toBe(409);
     f.finish(); await settle(handle); expect((await remove(handle)).status).toBe(200);
     expect((await http(handle, historyPath(), { headers: readHeaders(handle) })).status).toBe(404);
     expect((await http(handle, '/api/resources/tasks/task-a/output', { headers: readHeaders(handle) })).status).toBe(404);
