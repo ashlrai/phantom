@@ -126,7 +126,7 @@ const READINESS = {
     },
     {
       id: 'personal-last', label: 'Personal Codex', engine: 'codex', kind: 'subscription',
-      reading: { state: 'last', at: new Date(NOW - 3 * 3_600_000).toISOString(), note: 'Polling is paused because nothing has asked for account data recently; it resumes the moment Verse is looked at.' },
+      reading: { state: 'last', at: new Date(NOW - 3 * 3_600_000).toISOString(), note: 'Polling is paused because nothing has asked for account data recently; it resumes the moment Phantom is looked at.' },
       chat: { ready: true, tone: 'warn', word: 'Ready', detail: 'No current usage reading — the provider decides at send time.', fix: { kind: 'check-again', label: 'Check again', seatId: 'codex-personal' } },
       fleet: { ready: false, tone: 'blocked', word: 'No reading', detail: 'No usage reading for this seat — unknown usage is not headroom, so autonomy stays off it.', fix: null, roles: ['producer', 'judge'], reservePercent: 40 },
     },

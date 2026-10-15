@@ -367,7 +367,7 @@ describe('verse store — V3.9 context events', () => {
     expect(getVerseSessionState('vs_1').session!.usage).toMatchObject({ contextWindow: 65_536, autoCompactAt: 32_536, contextWindowSource: 'runtime' });
   });
 
-  it('never lets a reading move a LOCAL window: Verse sets that one itself', () => {
+  it('never lets a reading move a LOCAL window: Phantom sets that one itself', () => {
     const local = session({ engine: 'local', seatId: 'local:qwen3-coder', model: 'qwen3-coder', usage: { ...session().usage, contextWindow: 65_536, autoCompactAt: 32_536 } });
     seedVerseSession('vs_1', local, []);
     applyVerseEvent('vs_1', ev(1, 'context', { turnId: 't1', contextTokens: 30_000, contextWindow: 200_000, exact: true }));

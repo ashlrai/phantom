@@ -334,7 +334,7 @@ describe('NewAgentScreen start', () => {
   it('hides Start and says why when this device cannot act', async () => {
     routes();
     mount({ permissions: permissionsFor('unavailable') });
-    expect(await screen.findByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(await screen.findByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start/ })).not.toBeInTheDocument();
   });
 

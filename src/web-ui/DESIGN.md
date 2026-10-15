@@ -421,9 +421,9 @@ path that resolves without a filename, and this foundation doesn't touch
 
 ---
 
-## 13. Verse workbench (3.10)
+## 13. Phantom workbench (3.10)
 
-The Verse console (`routes/verse/**`) is the product surface in 3.10. This
+The Phantom console (`routes/verse/**`) is the product surface in 3.10. This
 chapter is its design contract. The rules are enforced by tests (§13.10);
 the contract files are owned by unit C0 (SPEC-310C §7). Other units send C0
 a change request rather than editing them.
@@ -661,7 +661,7 @@ rules there shape the UI:
   read-client header, so it needs no query-proof allowance. Only the visible
   tab holds a connection open, because the browser allows about 6 per origin.
 
-### 13.13 Verse on a phone (`/verse/m`, 3.15)
+### 13.13 Phantom on a phone (`/verse/m`, 3.15)
 
 A separate app, not the workbench squeezed: `app/VerseMobileApp.tsx` →
 `routes/verse/mobile/`. `main.tsx` picks it for `/verse/m`, and for `/verse`

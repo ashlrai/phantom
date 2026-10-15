@@ -24,7 +24,7 @@ export function permissionsFor(act: ActPermission): DevicePermissions {
   return {
     read: true,
     act,
-    actReason: act === 'unlocked' ? null : act === 'locked' ? 'Actions ask for the mutation token.' : 'Your Mac started Verse without dispatch.',
+    actReason: act === 'unlocked' ? null : act === 'locked' ? 'Actions ask for the mutation token.' : 'Your Mac started Phantom without dispatch.',
     source: 'session',
     deviceLabel: null,
   };

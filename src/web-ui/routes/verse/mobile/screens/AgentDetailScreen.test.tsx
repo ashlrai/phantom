@@ -263,7 +263,7 @@ describe('AgentDetailScreen — actions', () => {
     await screen.findByText('refactor the loader');
     expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
-    expect(screen.getByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(screen.getByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
   });
 
   it('a Devin chat stops the same way and offers no terminate', async () => {

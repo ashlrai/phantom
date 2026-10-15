@@ -195,7 +195,7 @@ describe('NeedsYouScreen — states', () => {
 
   it('hides every action and says why when the device cannot act', () => {
     renderMobile(<NeedsYouScreen />, { activity: withItems([approval, leaderQuestion]), permissions: permissionsFor('unavailable') });
-    expect(screen.getByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(screen.getByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Reject/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Answer/ })).not.toBeInTheDocument();

@@ -165,7 +165,7 @@ describe('SeatBurnCard', () => {
     expect(text).not.toMatch(/only in words|could not be placed/);
     // The line started watching days into the window. The card does not
     // repeat why: the grid's single tooltip says it once (see SeatBurnDowns).
-    expect(text).not.toContain('Verse opened');
+    expect(text).not.toContain('Phantom opened');
     // The x-domain is the whole window: its start on the left, ONE reset marker
     // on the right — at 320 px both as the kit's short date-only fallback,
     // which fits side by side where "Sep 18, 6:59 PM" + "Resets Sep 25, 6:59 PM" collided.
@@ -221,14 +221,14 @@ describe('SeatBurnCard', () => {
   });
 
   // 3.10.1: recorded history (GET /api/verse/budget/history) fills the line
-  // after a reload. The "since Verse opened" note is the grid tooltip, for a line the
+  // after a reload. The "since Phantom opened" note is the grid tooltip, for a line the
   // page drew alone; a recorded line that still starts late names the gap.
-  it('recorded history that covers the window: the whole line, and no "since Verse opened" note', () => {
+  it('recorded history that covers the window: the whole line, and no "since Phantom opened" note', () => {
     const resetAt = NOW + 2 * 24 * HOUR;
     const start = resetAt - 7 * 24 * HOUR;
     const points = [start + 20 * 60_000, start + 2 * 24 * HOUR, NOW - HOUR, NOW].map((t, i) => ({ t, remaining: 90 - 10 * i }));
     const { container } = render(<SeatBurnCard burn={burn({ start, resetAt, resetFrom: 'provider', recorded: true, points })} now={NOW} width={360} />);
-    expect(container.textContent).not.toMatch(/Verse opened|No readings before/);
+    expect(container.textContent).not.toMatch(/Phantom opened|No readings before/);
     // The line starts at the window's left edge, not at "now".
     const xs = pathXs(container.querySelector('[data-role="remaining"] path:last-child')?.getAttribute('d') ?? '');
     expect(xs.length).toBeGreaterThanOrEqual(4);
@@ -243,7 +243,7 @@ describe('SeatBurnCard', () => {
       <SeatBurnCard burn={burn({ start, resetAt, resetFrom: 'provider', recorded: true, points: [{ t: first, remaining: 70 }, { t: NOW, remaining: 60 }] })} now={NOW} width={360} />,
     );
     expect(container.textContent).toContain(`No readings before ${burnTimeFormat('weekly')(first)}.`);
-    expect(container.textContent).not.toContain('Verse opened');
+    expect(container.textContent).not.toContain('Phantom opened');
   });
 
   it('a trailing window (no reset placed) takes the same note', () => {
@@ -251,7 +251,7 @@ describe('SeatBurnCard', () => {
     expect(late.container.textContent).toContain('No readings before');
     late.unmount();
     const full = render(<SeatBurnCard burn={burn({ recorded: true, points: [{ t: NOW - 7 * 24 * HOUR + HOUR, remaining: 90 }, { t: NOW, remaining: 48 }] })} now={NOW} width={320} />);
-    expect(full.container.textContent).not.toMatch(/No readings before|Verse opened/);
+    expect(full.container.textContent).not.toMatch(/No readings before|Phantom opened/);
   });
 
   it('still says "No usage reading yet" when there is no reading at all', () => {

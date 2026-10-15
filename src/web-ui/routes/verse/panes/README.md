@@ -141,6 +141,6 @@ fails if any two panes, or a pane and a catalog command, share a key.
 
 ## Deep links
 
-`?chat=<sessionId>&pane=<paneId>` on the Verse URL (and the desktop command
+`?chat=<sessionId>&pane=<paneId>` on the Phantom console URL (and the desktop command
 `open-pane:<paneId>`) opens that chat and that pane — see
 `shell/deep-link.ts`.

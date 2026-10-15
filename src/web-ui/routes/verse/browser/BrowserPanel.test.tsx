@@ -163,7 +163,7 @@ describe('web UI fallback (no desktop browser contract)', () => {
     expect(screen.getByRole('button', { name: 'Pick an element' })).toBeDisabled();
   });
 
-  it('refuses Verse itself and non-web schemes in the address bar', async () => {
+  it('refuses Phantom itself and non-web schemes in the address bar', async () => {
     const h = harness();
     render(<BrowserPanel sessionId="s-1" deps={h.deps} />);
     await go('7777');

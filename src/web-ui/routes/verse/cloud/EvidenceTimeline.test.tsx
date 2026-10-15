@@ -104,7 +104,7 @@ describe('EvidenceTimeline', () => {
     expect(await screen.findByRole('note')).toHaveTextContent('Phantom has no evidence for this task');
   });
 
-  it('never requests a path for an id Verse did not issue', async () => {
+  it('never requests a path for an id Phantom did not issue', async () => {
     const stub = stubCloudFetch(null);
     render(<EvidenceTimeline taskId="../../etc" title="Fix" open onClose={() => {}} now={NOW} />);
     expect(await screen.findByRole('note')).toHaveTextContent('That task id is not one Phantom issued.');

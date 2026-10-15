@@ -55,7 +55,7 @@ describe('VerseConsoleApp', () => {
     expect(isScopedConsolePath('/verse/')).toBe(true);
   });
 
-  it('shows the Verse session gate when the probe is unauthenticated', async () => {
+  it('shows the Phantom session gate when the probe is unauthenticated', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(null, { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);
     render(<VerseConsoleApp />);

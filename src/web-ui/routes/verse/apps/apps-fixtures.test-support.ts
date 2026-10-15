@@ -156,11 +156,11 @@ export const MCP: VerseMcpSnapshot = {
     },
     { seatId: 'local', label: 'Local seats (every Ollama tag)', engine: 'local', accountId: 'local', servers: [], reason: 'mcp-seat-isolated-by-adapter', configFile: null, configFormat: null, notes: [] },
   ],
-  machine: { servers: [], configured: true, note: 'These are configured on this machine and read by no Verse seat.' },
+  machine: { servers: [], configured: true, note: 'These are configured on this machine and read by no Phantom seat.' },
   scope: {
     available: true, pinned: true, aliasRef: 'ashlr', tenantRef: 'tenant_abc', principalRef: 'me', bindingRef: 'b', sealOk: true, expired: false, frozen: false,
     expiresAt: 'x', status: 'pinned', statusOneline: 'x', reason: 'mcp-scope-pinned',
   },
-  notes: ['Servers are configured on this machine, and no Verse seat loads any of them.'],
+  notes: ['Servers are configured on this machine, and no Phantom seat loads any of them.'],
 };
 

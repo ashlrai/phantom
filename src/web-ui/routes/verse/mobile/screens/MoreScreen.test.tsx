@@ -79,7 +79,7 @@ describe('MoreScreen — this device', () => {
   it('unavailable: says why, and offers neither lock nor unlock nor New agent', () => {
     mount({ permissions: { ...permissionsFor('unavailable'), source: 'device', deviceLabel: 'Mason’s iPhone' } });
     expect(screen.getByText('Not on this device')).toBeInTheDocument();
-    expect(screen.getByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(screen.getByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
     expect(screen.getByText('Mason’s iPhone')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Lock now|Unlock/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /New agent/ })).not.toBeInTheDocument();

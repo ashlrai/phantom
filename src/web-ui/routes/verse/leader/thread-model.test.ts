@@ -48,7 +48,7 @@ describe('narrowing', () => {
     expect(narrowMessage(null)).toBeNull();
   });
 
-  it('reads an unknown channel or kind from a newer server as a plain Verse message', () => {
+  it('reads an unknown channel or kind from a newer server as a plain Phantom message', () => {
     expect(narrowMessage({ id: 'x', at: iso(NOW), from: 'leader', channel: 'slack', kind: 'poll', text: 'hi' })).toMatchObject({ channel: 'verse', kind: 'message' });
   });
 

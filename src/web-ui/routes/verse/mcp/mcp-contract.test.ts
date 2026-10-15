@@ -68,7 +68,7 @@ describe('projectMcpSnapshot', () => {
       note: 'nobody reads these',
     },
     scope: { available: true, pinned: true, aliasRef: 'acme', tenantRef: 'tenant_1', principalRef: 'p1', reason: 'mcp-scope-pinned' },
-    notes: ['1 MCP server is configured on this machine and no Verse seat loads any of them.'],
+    notes: ['1 MCP server is configured on this machine and no Phantom seat loads any of them.'],
   };
 
   it('keeps the seat/machine split intact', () => {
@@ -76,7 +76,7 @@ describe('projectMcpSnapshot', () => {
     expect(snapshot?.seats[0]!.servers).toEqual([]);
     expect(snapshot?.machine.servers).toHaveLength(1);
     expect(snapshot?.machine.configured).toBe(true);
-    expect(snapshot?.notes[0]).toContain('no Verse seat loads any of them');
+    expect(snapshot?.notes[0]).toContain('no Phantom seat loads any of them');
   });
 
   it('carries Locus references through unchanged', () => {

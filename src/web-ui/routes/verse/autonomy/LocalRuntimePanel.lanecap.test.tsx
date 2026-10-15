@@ -90,14 +90,14 @@ afterEach(() => {
 
 describe('LocalRuntimePanel — lane cap', () => {
   it('says the fleet runs fewer than the runtime could, and why, when a lane cap binds', () => {
-    const fleet = fleetWith({ limit: 2, reason: 'Mason is present (live Verse turn)' });
+    const fleet = fleetWith({ limit: 2, reason: 'Mason is present (live Phantom turn)' });
     render(<LocalRuntimePanel read={ok(RUNTIME)} fleet={ok(fleet)} guard={guard()} dispatchEnabled />);
     // The runtime's own number stays the headline…
     expect(screen.getByText('4 agents in parallel')).toBeInTheDocument();
     // …and the lane cap is named, with a word, beside it.
     const line = screen.getByRole('note');
     expect(line).toHaveTextContent('lane-capped');
-    expect(line).toHaveTextContent('The fleet runs at most 2 local agents this tick, not 4 — a lane cap is tighter than this runtime: Mason is present (live Verse turn).');
+    expect(line).toHaveTextContent('The fleet runs at most 2 local agents this tick, not 4 — a lane cap is tighter than this runtime: Mason is present (live Phantom turn).');
   });
 
   it('says the local lane is off when the cap is zero', () => {

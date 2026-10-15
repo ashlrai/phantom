@@ -136,7 +136,7 @@ describe('reachability', () => {
 function control(partial: { running?: boolean | null; paused?: boolean; kill?: boolean; spend?: number | null } = {}): VerseControlSnapshot {
   return {
     daemon: { running: partial.running ?? true },
-    pause: { state: partial.paused ? 'paused' : 'running', sourceState: 'healthy', reason: partial.paused ? 'Paused from Verse.' : '', pausedAt: null, by: null, note: '' },
+    pause: { state: partial.paused ? 'paused' : 'running', sourceState: 'healthy', reason: partial.paused ? 'Paused from Phantom.' : '', pausedAt: null, by: null, note: '' },
     killSwitch: { state: partial.kill ? 'active' : 'inactive', sourceState: 'healthy', reason: partial.kill ? 'Emergency stop engaged 10:02.' : '', note: 'Stops everything.' },
     spend: { todayUsd: partial.spend ?? 1.5, todayDate: '2026-09-27', dailyBudgetUsd: 20 },
   } as unknown as VerseControlSnapshot;
