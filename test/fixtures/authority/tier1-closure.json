@@ -470,6 +470,7 @@
     "src/core/goals/preferences.ts",
     "src/core/goals/project-match.ts",
     "src/core/goals/store.ts",
+    "src/core/improve/outcomes.ts",
     "src/core/inbox/apply.ts",
     "src/core/inbox/merge.ts",
     "src/core/inbox/notify-proposal.ts",

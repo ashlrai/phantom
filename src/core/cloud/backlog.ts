@@ -10,6 +10,7 @@
  */
 import { join } from 'node:path';
 
+import { kindLeverage, kindOf, readLedger, scoreOutcomes, validateMetricSpec, type MetricSpec } from '../improve/outcomes.js';
 import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from './improvement-backlog.js';
 import { CLOUD_REPO_PATTERN, cloudHome, ensureCloudDirectory, listCloudTasks } from './store.js';
@@ -49,7 +50,11 @@ export function validBacklogItem(value: unknown): CloudBacklogItem | null {
   if (area === '' || area.length > MAX_AREA_CHARS) return null;
   if (priority !== 1 && priority !== 2 && priority !== 3) return null;
   if (repo !== undefined && (typeof repo !== 'string' || !CLOUD_REPO_PATTERN.test(repo))) return null;
-  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}) };
+  let metric: MetricSpec | undefined;
+  if (r['metric'] !== undefined) {
+    try { metric = validateMetricSpec(r['metric']); } catch { return null; }
+  }
+  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}) };
 }
 
 /** Dedupe key for titles: case, punctuation and spacing do not make an item new. */
@@ -135,9 +140,31 @@ function claimOf(task: BacklogClaimTask | undefined, nowMs: number): Claim {
   return { claimedBy: task.id, lastState: state };
 }
 
-function ordered<T extends CloudBacklogItem>(items: readonly T[]): T[] {
-  return items.map((item, index) => ({ item, index }))
-    .sort((a, b) => a.item.priority - b.item.priority || a.index - b.index)
+/**
+ * Realized leverage per area from the improvement outcome ledger. An
+ * unreadable or broken ledger means no evidence, so the static order stands.
+ */
+function areaLeverage(): Map<string, number | null> {
+  try {
+    const read = readLedger();
+    return read.intact ? kindLeverage(scoreOutcomes(read.records)) : new Map();
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Priority first (the operator's intent). Within a priority, areas whose
+ * measured outcomes improved their metric go first, unmeasured areas next,
+ * areas with a zero or negative measured record last; then file order.
+ */
+function ordered<T extends CloudBacklogItem>(items: readonly T[], leverage: Map<string, number | null> = areaLeverage()): T[] {
+  const tier = (area: string) => {
+    const v = leverage.get(kindOf(area)) ?? null;
+    return v === null ? { t: 1, v: 0 } : v > 0 ? { t: 0, v } : { t: 2, v };
+  };
+  return items.map((item, index) => ({ item, index, ...tier(item.area) }))
+    .sort((a, b) => a.item.priority - b.item.priority || a.t - b.t || b.v - a.v || a.index - b.index)
     .map(({ item }) => item);
 }
 

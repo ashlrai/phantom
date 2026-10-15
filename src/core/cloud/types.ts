@@ -31,6 +31,7 @@
  * gates (custody) or by Mason — never by the cloud lane.
  */
 
+import type { MetricSpec } from '../improve/outcomes.js';
 import type { PlaybookRef } from '../playbooks/types.js';
 
 export const CLOUD_TASK_SCHEMA_VERSION = 1 as const;
@@ -266,6 +267,12 @@ export interface CloudBacklogItem {
   priority: 1 | 2 | 3;
   /** Repo the item targets (default: budget.selfImprove.repo). */
   repo?: string;
+  /**
+   * Deterministic metric the item's PR should move. Lets `phm improve
+   * sync-backlog` register the task's PR in the outcome ledger, so it is
+   * measured at its exact merge base and head and credits its `area`.
+   */
+  metric?: MetricSpec;
 }
 
 export interface CloudBacklogView {

@@ -226,6 +226,8 @@ export function scoreOutcomes(records: readonly LedgerRecord[]): ProposalOutcome
 // ---------------------------------------------------------------------------
 
 export const MIN_GROUP_SAMPLES = 3;
+/** Normalize a free-form label (a backlog area) into a proposal kind. */
+export const kindOf = (label: string) => label.toLowerCase().replace(/[^a-z0-9:._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 64) || 'unlabelled';
 export const sourceKey = (s: ProposerSource) => s.kind === 'deterministic' ? 'deterministic' : `model:${s.engine}/${s.model}`;
 
 export interface SourceSummary {

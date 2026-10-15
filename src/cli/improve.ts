@@ -4,6 +4,7 @@
  *   register <proposal.json>                                 record a proposal's hypothesis and deterministic metric
  *   measure  <id> --repo <dir> [--repeat N]                  measure the metric at the PR's exact merge base and head
  *   outcomes [--json]                                        measured outcomes and proposer comparison vs the deterministic baseline
+ *   sync-backlog                                             register cloud backlog PRs whose item declares a metric
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
  */
 import { createHash } from 'node:crypto';
@@ -16,6 +17,7 @@ const USAGE = `Usage:
   phm improve register <proposal.json>
   phm improve measure <id> --repo <dir> [--repeat <1-5>]
   phm improve outcomes [--json]
+  phm improve sync-backlog
   phm improve promote <id> --repo <dir> [--queue-merge] [--json]`;
 
 export async function cmdImprove(argv: string[]): Promise<number> {
@@ -26,6 +28,7 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     case 'register': return register(args[1]);
     case 'measure': return measure(args[1], val('--repo'), val('--repeat'));
     case 'outcomes': return outcomes(args.includes('--json'));
+    case 'sync-backlog': return syncBacklog();
     case 'promote': return promote(args[1], val('--repo'), !args.includes('--queue-merge'), args.includes('--json'));
     default: console.error(USAGE); return 2;
   }
@@ -113,6 +116,23 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
   const after = await outcomeFor(id);
   console.log(`ok ${after.outcome?.status ?? 'unknown'}${after.outcome?.effect != null ? ` (effect ${after.outcome.effect})` : ''}`);
   return 0;
+}
+
+async function syncBacklog(): Promise<number> {
+  const { appendLedger, readLedger } = await import('../core/improve/outcomes.js');
+  const { backlogRegistrations } = await import('../core/improve/backlog-sync.js');
+  const { listCloudTasks } = await import('../core/cloud/store.js');
+  const { readCloudBacklog } = await import('../core/cloud/backlog.js');
+  try {
+    const read = readLedger();
+    if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
+    const tasks = listCloudTasks();
+    const events = backlogRegistrations(tasks, readCloudBacklog(tasks, new Date()).items, read.records);
+    for (const e of events) appendLedger(e);
+    const n = events.filter((e) => e.type === 'registered').length;
+    console.log(n ? `ok registered ${n} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
+    return 0;
+  } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
 }
 
 async function outcomes(json: boolean): Promise<number> {
