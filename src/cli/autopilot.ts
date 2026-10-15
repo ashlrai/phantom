@@ -28,7 +28,7 @@ export function parsePrRef(ref: string | undefined): { number: number; repo: str
   if (!ref) return null;
   const url = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(ref);
   if (url) return { repo: url[1]!, number: Number(url[2]) };
-  return /^\d+$/.test(ref) ? { repo: null, number: Number(ref) } : null;
+  return /^#?\d+$/.test(ref) ? { repo: null, number: Number(ref.replace('#', '')) } : null;
 }
 
 export function repoFromRemote(url: string): string | null {
