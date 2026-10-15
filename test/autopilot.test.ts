@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -188,7 +188,7 @@ describe('autopilot tick (real git, fake GitHub)', () => {
       return f.gh(args);
     };
     const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [['node', '-e', 'process.exit(require("./sum.js")(1,2)===3?0:1)']], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
-    expect(r).toMatchObject({ plan: 'fix-ci', result: 'pushed' });
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'fix-ci', result: 'pushed' });
     const remote = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0];
     expect(remote).toBe(r.newHead);
     expect(git(f.clone, 'merge-base', '--is-ancestor', f.head, r.newHead!) === '').toBe(true);
@@ -202,6 +202,24 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
     const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
     expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('hooks')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
+  });
+
+  it('refuses before any git command runs a filter driver the fixer planted', async () => {
+    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js; echo '* filter=evil' > .gitattributes; git config filter.evil.clean "sh -c 'touch $PWD/../../pwned; cat'"`);
+    const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r.result).toBe('refused');
+    expect(existsSync(join(f.root, 'pwned'))).toBe(false);
+  });
+
+  it('refuses when verify plants commit signing in git config, before committing', async () => {
+    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
+    const evil = ['sh', '-c', `git config gpg.program "touch ${join(f.root, 'pwned')}"; git config commit.gpgsign true`];
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [evil], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('git config')]) });
+    expect(existsSync(join(f.root, 'pwned'))).toBe(false);
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
   });
 

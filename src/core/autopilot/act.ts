@@ -181,7 +181,7 @@ async function stopNow(opts: TickOptions): Promise<string | null> {
 }
 
 /** Git with repository hooks and fsmonitor off: nothing the fixer planted in the tree runs. */
-export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.sshCommand=ssh'];
 
 /**
  * A digest of everything that changes what git runs or where it pushes: the
@@ -334,41 +334,47 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     if (p.action === 'merge-base') {
       const merged = await git(wt, ['merge', '--no-edit', '--no-ff', `refs/remotes/origin/${pr.baseRef}`]);
       if (merged.code !== 0) {
-        const conflicted = (await must(wt, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
+        const conflicted = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (!conflicted.length) return { result: 'error', detail: [`merge failed without conflicts: ${merged.stderr.trim().slice(0, 200)}`], newHead: null };
         if (!opts.fixer) { await git(wt, ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
         const fx = await runFixer(opts, wt, fixBrief(p, pr, { conflicted }), run);
         detail.push(fx);
         const changedGit = tampered();
         if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
-        const left = (await must(wt, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
+        const left = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         const markers = conflicted.filter((f) => { try { return /^(<{7}|>{7}|={7})( |$)/m.test(readFileSync(join(wt, f), 'utf8')); } catch { return false; } });
         if (markers.length) return { result: 'refused', detail: [...detail, `conflict markers remain in ${markers.join(', ')}`], newHead: null };
         await must(wt, ['add', '--', ...new Set([...conflicted, ...left])]);
-        const rest = (await must(wt, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
+        const rest = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (rest.length) return { result: 'refused', detail: [...detail, `unresolved: ${rest.join(', ')}`], newHead: null };
         // The resolution is the fixer's work: scan it like any fix, against the pre-merge head.
-        const resolved = parseDiff(await must(wt, ['diff', '--cached', '--name-status', pr.headSha, '--', ...conflicted]), (await git(wt, ['diff', '--cached', '-U0', pr.headSha, '--', ...conflicted])).stdout);
-        const weak = diffRefusals(opts.repo, resolved, (await git(wt, ['diff', '--cached', pr.headSha, '--', ...conflicted])).stdout);
+        const resolved = parseDiff(await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-status', pr.headSha, '--', ...conflicted]), (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '-U0', pr.headSha, '--', ...conflicted])).stdout);
+        const weak = diffRefusals(opts.repo, resolved, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', pr.headSha, '--', ...conflicted])).stdout);
         if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
         await must(wt, ['commit', '--no-edit', '--no-verify']);
       }
       message = '';
-      const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--name-only', pr.headSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
+      const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', pr.headSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
+      const afterVerify = tampered();
+      if (afterVerify) return { result: 'refused', detail: [...detail, afterVerify], newHead: null };
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
     } else {
       if (!opts.fixer) return { result: 'refused', detail: ['a code fix is needed and no fixer is configured (--fixer)'], newHead: null };
       detail.push(await runFixer(opts, wt, fixBrief(p, pr), run));
+      // Before ANY further git command: a planted filter driver or config would run inside it.
+      const changedGit = tampered();
+      if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
       const head = await must(wt, ['rev-parse', 'HEAD']);
       if (head !== pr.headSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD (commits are the autopilot\'s job); nothing pushed'], newHead: null };
       await must(wt, ['add', '-A']);
-      const changedGit = tampered();
-      if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
-      const files = parseDiff(await must(wt, ['diff', '--cached', '--name-status']), (await git(wt, ['diff', '--cached', '-U0'])).stdout);
+      const files = parseDiff(await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-status']), (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '-U0'])).stdout);
       if (!files.length) return { result: 'no-change', detail: [...detail, 'the fixer changed nothing'], newHead: null };
-      const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--cached'])).stdout);
+      const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached'])).stdout);
       if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
       const verified = await verify(plannedVerify, wt, run, files.filter((f) => f.status !== 'D').map((f) => f.path));
+      // Verify ran the head's own code: nothing it wrote to git config may reach the commit below.
+      const afterVerify = tampered();
+      if (afterVerify) return { result: 'refused', detail: [...detail, afterVerify], newHead: null };
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
       message = p.action === 'fix-ci'
         ? `autopilot: fix ${p.failures.map((f) => f.check.name).join(', ')} on #${pr.number}`
