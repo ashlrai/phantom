@@ -258,6 +258,11 @@ function ownerAlive(sb: Sandbox): boolean {
   return pidAlive(sb.ownerPid);
 }
 
+/** True when metadata carries a well-formed owner pid (liveness is then decidable). */
+function hasRecordedOwnerPid(sb: Sandbox): boolean {
+  return typeof sb.ownerPid === 'number' && Number.isInteger(sb.ownerPid) && sb.ownerPid > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Path helpers (re-resolved at call time so tests can relocate HOME)
 // ---------------------------------------------------------------------------
@@ -2906,9 +2911,14 @@ function sweepOrphanSandboxesDetailedInternal(
     if (ownerAlive(sb)) {
       continue;
     }
-    // GUARD 2 — AGE fallback for a sandbox with no usable ownerPid (owner gone
-    // or older metadata).
-    if (staleMs !== undefined) {
+    // GUARD 2 — AGE fallback ONLY for a sandbox with no usable ownerPid (older
+    // metadata / stripped marker). A recorded owner pid that is provably gone
+    // (ownerAlive() false: ESRCH) is positive evidence of a crash leftover, so
+    // it is reclaimed immediately. Holding it for ORPHAN_STALE_MS bought no
+    // safety (a recycled pid reads ALIVE and is skipped by guard 1 anyway) and
+    // let one or two daemon crashes fill MAX_SANDBOXES with dead-owner homes,
+    // refusing every createSandbox for up to six hours after restart.
+    if (staleMs !== undefined && !hasRecordedOwnerPid(sb)) {
       const createdMs = Date.parse(sb.createdAt);
       // Skip not-yet-stale sandboxes (possibly a live owner whose pid we could
       // not read). An unparseable createdAt is treated as stale=0
