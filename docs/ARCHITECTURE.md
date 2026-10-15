@@ -1,11 +1,36 @@
 # Architecture
 
-Phantom is the local execution and observation kernel for [Phantom](NORTH-STAR.md).
+Phantom by AshlrAI (package `@ashlr/phantom`, formerly Ashlr Verse; see
+[Phantom brand](PHANTOM-BRAND.md)) is the local engineering agent workbench whose
+integrated objective is the [North Star](NORTH-STAR.md).
 It ships a TypeScript/ESM CLI and SDK plus a React web console, with Node 22.15+
-as the package runtime floor. The backend primarily uses Node builtins and bundles
-three declared runtime dependencies: MCP transport (`@modelcontextprotocol/sdk`),
-Markdown analysis (`marked`) and archive handling (`tar`). The manifest and lockfile
-are the canonical inventory, not this overview.
+as the package runtime floor. `phm` and the compatible `ashlr` command share one
+launcher, `bin/ashlr`, which imports the compiled `dist/cli/index.js`. The backend
+primarily uses Node builtins; its declared runtime dependencies (MCP transport via
+`@modelcontextprotocol/sdk`, Markdown via `marked`, archives via `tar`, plus
+`yaml`, `smol-toml`, `jose`, `web-push`, `@simplewebauthn/*` and
+`reflect-metadata`) are all bundled. The manifest and lockfile are the canonical
+inventory, not this overview.
+
+## Source layout
+
+| Path | Contents |
+|------|----------|
+| `bin/ashlr` | Launcher shim for both `phm` and `ashlr` |
+| `src/cli/` | Command handlers; `src/cli/index.ts` is the argv dispatcher and the canonical command list (`phm help`) |
+| `src/core/` | Subsystems (below); `src/core/types.ts` holds shared types and `src/core/config.ts` the `~/.ashlr` path constants |
+| `src/api/` | SDK entrypoints exported as `@ashlr/phantom`, `/core`, `/types` and `/plugin`; `/universe` maps to `src/core/universe/index.ts` |
+| `src/web-ui/` | React console built by Vite (`vite.config.web.ts`) into `dist/core/web/public/next/` |
+| `src/tui/` | Terminal dashboard (`phm tui`, alias `dash`) over `src/core/dashboard.ts` |
+| `src/raycast/` | Separate Raycast extension package |
+| `desktop/` | Tauri v2 app that wraps the `/verse/` console and ships the compiled CLI as a sidecar; see [desktop/README.md](https://github.com/ashlrai/phantom/blob/master/desktop/README.md) |
+| `schema/`, `scripts/`, `test/` | Config JSON schema, build/release/check scripts, Vitest suites |
+
+Build and test: `npm run build` (version check, `tsc`, asset copy, web console
+build and release inventory), `npm test` (Vitest), `npm run test:web` (console
+tests), `npm run lint`, `npm run typecheck` and `npm run check:docs`.
+`npm run gate` runs the local release gate. See
+[CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md).
 
 ## Current runtime map
 
@@ -16,6 +41,7 @@ These are separate executable paths, not one automatically commissioned loop:
 | `universe` → `src/core/universe/` | Generate local candidates, evaluate artifacts, retain diverse winners, run bounded campaigns and deliver an artifact to a new local branch | Fixed evaluator and persisted lineage; operator, direct-local or explicitly bound resource-pool generation. No automatic remote release | [Universe](ASHLR-UNIVERSE.md) |
 | `resources pool` → `src/core/resources/` | Admit explicit native/local workers against quota, rolling task and shared concurrency limits; supervise a foreground queue | Durable assignments, output and reported usage. Worker completion is not verified engineering acceptance | [Resource Pools](RESOURCE-POOLS.md) |
 | `runtime` → `src/core/local-runtime/` | Install, verify, select and roll back trusted exact local packages | A selected unsigned candidate is not npm publication or resident-service qualification; forwarded commands remain explicitly scoped | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
+| `serve` / `verse` → `src/core/web/` + `src/core/verse/` + `src/web-ui/` | Loopback dashboard and JSON API (default port 7777); `verse` starts it with dispatch enabled for the `/verse/` workbench | Authenticated reads; mutations need dispatch enablement plus a separate token | [Verse](VERSE.md) |
 | Scoped consoles → `src/core/web/` + `src/web-ui/` | Observe one Universe store or inspect/control one explicit resource pool | Loopback authentication; Universe console is read-only, resource mutations require execution enablement and separate authority | [Universe console](ASHLR-UNIVERSE.md#observe-one-universe-store), [resource console](RESOURCE-POOLS.md#operate-the-resource-console) |
 | General Phantom / legacy fleet | Shared configuration, enrolled-repository status, proposal and goal workflows | General dashboard is distinct from the scoped consoles; resident dispatch remains dormant as described below | [General Phantom setup](QUICKSTART.md#general-hub-and-legacy-fleet-setup) |
 
@@ -29,7 +55,7 @@ artifact, not merely a successful process or a populated fleet map.
 Ecosystem products retain their repositories and product boundaries. Shared
 contracts connect capabilities; their presence in an architecture map is not proof
 that a provider, desktop controller or cross-product runtime is commissioned.
-See the [source ecosystem design](https://github.com/ashlrai/ashlr-hub/blob/master/docs/AGENT-NATIVE-ECOSYSTEM.md).
+See the [source ecosystem design](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NATIVE-ECOSYSTEM.md).
 
 ## Legacy fleet activation boundary
 
@@ -167,7 +193,7 @@ and evaluator isolation profile. Do not infer one path's confinement from anothe
 |------|---------------|
 | `orchestrator.ts` | Decompose a goal into a `RunTask[]` DAG, fan out independent tasks in waves, synthesize a final answer. Persists `RunState` to `~/.ashlr/runs/<id>.json` atomically after every step. Supports `--resume`. |
 | `sandboxed-engine.ts` | The fleet's containment keystone (M45). `runEngineSandboxed` wraps any external CLI. |
-| `engine-registry.ts` | Declarative engine registry (M50). Drives `buildEngineCommand`, `engineInstalled`, `engineTierOf` — no orphaned hardcoded engine logic. |
+| `engine-registry.ts` | Declarative engine registry (M50). `engines.ts` (`buildEngineCommand`, `engineInstalled`) and `sandboxed-engine.ts` (`engineTierOf`) resolve engines from it. |
 | `router.ts` | Static capability-tiered routing. `learned-router.ts` adds outcome-prior learned routing. |
 | `best-of-n.ts` | M142: generate N candidate diffs, score with Manager judge as critic, prefer test-passing candidates. |
 | `provider-client.ts` | Thin chat layer over Ollama, LM Studio, and OpenAI-compatible APIs (NIMs, Kimi, etc). Local-first; cloud only with `--allow-cloud`. |
@@ -239,14 +265,14 @@ and evaluator isolation profile. Do not infer one path's confinement from anothe
 | `worktree.ts` | Git worktree lifecycle: create, track, remove. |
 | `confine.ts` | `buildSandboxLauncher`: platform dispatch to `sandbox-exec` / `bwrap` / `firejail`. `buildMacosSbplProfile`: generates the SBPL read-jail + egress-deny profile. |
 | `confine-linux.ts` | Linux `bwrap`/`firejail` launcher builder. |
-| `audit.ts` | Append-only confinement audit log. |
+| `audit.ts` | Append-only audit trail for sandbox, confinement and autonomous actions (`~/.ashlr/audit/<YYYY-MM-DD>.jsonl`). |
 | `policy.ts` | Confinement profile resolution from `cfg.foundry.confinement`. |
 
 ### `src/core/genome/` — Shared memory
 
 | File | Responsibility |
 |------|---------------|
-| `store.ts` | `loadGenome`, `appendHubEntry`: aggregate the Phantom store (`~/.ashlr/genome/hub.jsonl`) with every project's `<repo>/.ashlrcode/genome/`. Append-only; never modifies existing entries. |
+| `store.ts` | `loadGenome`, `appendHubEntry`: aggregate the hub store (`~/.ashlr/genome/hub.jsonl`) with every project's `<repo>/.ashlrcode/genome/`. Append-only; never modifies existing entries. |
 | `recall.ts` | `recall`: keyword/TF-IDF ranked retrieval, with optional Ollama embedding rerank. Fully offline. |
 | `consolidate.ts` | Periodic consolidation: cluster related entries, synthesize playbooks. |
 | `playbook.ts` | Build structured playbooks from genome entries. |
@@ -256,7 +282,7 @@ and evaluator isolation profile. Do not infer one path's confinement from anothe
 | File | Responsibility |
 |------|---------------|
 | `scanners.ts` | Portfolio scanners: GitHub issues, TODOs, health checks, dependency stale, failing tests, convention violations, and more. Each scanner returns `WorkItem[]`. |
-| `backlog.ts` | `loadBacklog`, `scoreItems`: aggregate, score (value × effort), and persist the work queue. |
+| `backlog.ts` | `buildBacklog`, `loadBacklog`: aggregate scanner items, score them (`scoreItem` from `scoring.ts`, value / effort with source-tier weighting) and persist the work queue. |
 | `value-filter.ts` | Filter and rank items by value density, dedup, cooldown. |
 | `edv-verify.ts` | EDV (expected diffed value) verification: separate verifier before memory write (V6). |
 
@@ -280,11 +306,23 @@ Transports: `src/core/integrations/telegram.ts` and `src/core/integrations/imess
 | `budget-alert.ts` | Evaluate `telemetry.budget*` caps → ok/warn/over. |
 | `telemetry-sink.ts` | OTLP export (GenAI semantic conventions). |
 
+### MCP server
+
+| File | Responsibility |
+|------|---------------|
+| `src/cli/mcp.ts` | `phm mcp` runs the stdio gateway; `list`, `doctor` and `install` inspect or register it. `phm wire` writes the gateway entry into Claude, Codex or Cursor config. |
+| `src/core/mcp-gateway.ts` | Starts each discovered server as a child, namespaces tools as `<server>__<tool>`, proxies `tools/list` / `tools/call`, and serves Phantom's native tools. It is the only MCP server adapter; the run orchestrator (`src/core/run/orchestrator.ts`) also imports the SDK, as an MCP client. |
+| `src/core/mcp-registry.ts` | Discovers MCP servers from known client config paths (see the home layout) and dedupes them by name. |
+| `src/core/mcp-native.ts` | SDK-free native tool definitions with a structural `read` / `append` / `proposal` safety class; non-read tools refuse while `KILL` is present and every call is audited by argument keys only. |
+
+The Verse workbench separately serves one per-turn authenticated MCP endpoint
+for chat seats (`src/core/verse/verse-mcp-types.ts`).
+
 ### `src/core/web/` — Mission Control web dashboard
 
 | File | Responsibility |
 |------|---------------|
-| `api.ts` | REST API: `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`. |
+| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`; mounts the Verse routes from `src/core/verse/verse-api.ts`. |
 | `server.ts` | Loopback HTTP server plus separate read and mutation capabilities: read header/cookie for content, independent raw token for enabled actions. |
 | `control.ts` | Control endpoints: pause, resume, approve, reject. |
 
@@ -353,7 +391,7 @@ authenticated control requests; it is not a read-only CLI-owned store.
 ├── foundry/
 │   └── provenance.key   # HMAC signing key (0600, per-machine, never transmitted)
 ├── audit/
-│   └── confinement.jsonl  # Append-only sandbox confinement audit
+│   └── <YYYY-MM-DD>.jsonl # Append-only sandbox/autonomy audit trail
 ├── scorecard-history/
 │   └── <YYYY-MM>.jsonl # POSIX-only observational scorecard snapshots
 └── manager/
@@ -373,7 +411,7 @@ scorecard-history writes and reports the source as degraded with
 
 External paths Phantom reads but never writes:
 - `~/.claude/projects/**/*.jsonl` — Claude Code session usage metadata (token counts, model, timestamp; never message content)
-- `~/.claude.json`, `~/.claude/settings.json`, `~/.mcp.json`, `~/.ashlrcode/settings.json` — MCP server discovery
+- `~/.claude.json`, `~/.claude/settings.json`, `~/.mcp.json`, `~/.ashlrcode/settings.json` and the other paths in `src/core/mcp-registry.ts` — MCP server discovery
 - `<repo>/.ashlrcode/genome/` — per-project genomes (aggregated at recall time)
 
 ---
@@ -416,7 +454,7 @@ root; `ashlr loop --dry-run` remains available.
 ## Design invariants
 
 - **Local-first.** Network effects belong to explicitly selected command/provider paths. The scoped Universe evaluator denies network; configured local-model generation and native workers have different documented transports. There is no one flag that authorizes every subsystem.
-- **Privacy.** Usage rollups read only token metadata from Claude transcripts — never message content. Phantom is read-only (names/status, never values).
+- **Privacy.** Usage rollups read only token metadata from Claude transcripts — never message content. The Phantom Secrets integration (`src/core/phantom.ts`) is read-only (names/status, never values).
 - **Preserve evidence.** Append-only logs retain events and provenance; mutable queue, proposal and selection records use their owning subsystem's persistence contract. Do not confuse a current-state record with immutable history.
 - **Fault tolerance.** Scans, probes, and gateway server starts degrade gracefully — one failure never crashes the whole operation.
 - **Portability.** All home paths resolve from `os.homedir()`; no personal absolute paths in source.
