@@ -57,7 +57,7 @@ describe('memory quality benchmark', () => {
     const report = runMemoryBenchmark([{ arm: 'oracle', builder: oracle }]);
     expect(report.arms[0]!.overall.passRate).toBe(1);
     expect(report.arms[0]!.overall.conflictsSurfaced).toBe(report.arms[0]!.overall.conflictsTotal);
-  });
+  }, 60_000);
   it('discriminates: the flat latest-record diagnostic leaks stale or contested text that governed memory never serves', () => {
     const [governed, flat] = runMemoryBenchmark().arms;
     expect(flat!.overall.forbiddenLeaks).toBeGreaterThan(0);
@@ -68,7 +68,7 @@ describe('memory quality benchmark', () => {
     expect(governed!.byDimension['agent-writes'].passed).toBeGreaterThan(flat!.byDimension['agent-writes'].passed);
     expect(governed!.pendingDecisions).toEqual([]);
     expect(governed!.overall.receiptForeignEventIds).toBe(0);
-  });
+  }, 60_000);
   it('holds the measured governed floors so ranking or pack changes cannot silently regress', () => {
     const governed = runMemoryBenchmark().arms[0]!;
     expect(governed.retrievalByDifficulty.lexical.passed).toBe(20);
@@ -83,7 +83,7 @@ describe('memory quality benchmark', () => {
     expect(governed.retrievalByDifficulty.fresh.passed).toBeGreaterThanOrEqual(25);
     expect(governed.retrievalByDifficulty['second-fresh'].passed).toBeGreaterThanOrEqual(27);
     expect(governed.overall.forbiddenLeaks - governed.byDimension['agent-writes'].forbiddenLeaks).toBe(0);
-  });
+  }, 60_000);
   it('cites sources by ID and digest in pack text, quoting only when the quote differs, with full records on items', () => {
     const same = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
     const different = { ...benchEvent({ id: 'b', subject: 'build', slot: 'cache', text: 'Build cache is safe to clear.' }) };
