@@ -36,7 +36,7 @@ import {
   type AgentEngine,
 } from './actions.js';
 import { sessionSpend } from './board.js';
-import { failingCiReport, readAgentChecks, requiredAutoMergeChecks, type AgentChecksRead, type ChecksDeps } from './checks.js';
+import { defaultKillOn, defaultPausedOn, failingCiReport, readAgentChecks, requiredAutoMergeChecks, type AgentChecksRead, type ChecksDeps } from './checks.js';
 import type { ScriptLauncher } from './scripts.js';
 import type { AgentStore } from './store.js';
 import { MAX_AUTO_FIX_ATTEMPTS, SPEND_WARN_FRACTION, type AgentChecksSummary, type AgentRecord } from './types.js';
@@ -221,6 +221,12 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
     if (mergeTried.get(agent.id) === pr.headSha) return agent;
     mergeTried.set(agent.id, pr.headSha);
     try {
+      // The verdict was read before several GitHub round-trips: Stop and Pause are read again at the moment of merging.
+      const [killed, paused] = await Promise.all([(deps.checksDeps?.killOn ?? defaultKillOn)(), (deps.checksDeps?.pausedOn ?? defaultPausedOn)()]);
+      if (killed || paused) {
+        mergeTried.delete(agent.id);
+        return (await note(store, agent.id, `Auto-merge is holding: ${killed ? 'the kill switch is engaged' : 'Phantom is paused'}.`)) ?? agent;
+      }
       const requiredChecks = (deps.checksDeps?.requiredAutoMergeChecks ?? (() => requiredAutoMergeChecks(process.env['ASHLR_VERSE_AUTOMERGE_CHECKS'])))();
       await (deps.merge ?? ((root, input) => mergePullRequest(root, input, deps.ops)))(agent.workspace.path, { number: pr.number, headSha: pr.headSha, requiredChecks });
     } catch (err) {
