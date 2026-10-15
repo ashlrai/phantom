@@ -66,6 +66,13 @@ beforeAll(async () => {
   await Promise.all([
     import('./sections/ChatSection.js').then((module) => module.preloadChatSurface()),
     import('./resources/ResourcesChrome.js').then((module) => module.preloadResourcesDrawer()),
+    // The overlays are their own lazy chunks too. The first test to open one
+    // otherwise pays its cold transform inside findBy's 1 s window, which under
+    // shard load timed out the ⌘K case as if the palette never opened.
+    import('./shell/CommandPalette.js'),
+    import('./shell/NeedsYouDrawer.js'),
+    import('./shell/ShortcutsOverlay.js'),
+    import('./shell/GearTray.js'),
   ]);
 }, 30_000);
 
@@ -413,7 +420,8 @@ describe('overlays and keys', () => {
     await screen.findByRole('navigation', { name: 'Chats' });
     key(',', {}, 'Comma');
     key('k', {}, 'KeyK');
-    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toHaveFocus();
+    const search = await screen.findByRole('combobox', { name: 'Search commands' });
+    await waitFor(() => expect(search).toHaveFocus());
     expect(getVerseUiState().section).toBe('settings');
   });
 
