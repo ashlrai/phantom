@@ -237,3 +237,47 @@ describe('M471 simple-conductor transactional settlement', () => {
     expect(simpleConductorTaskGenerationId({ ...row, instruction: 'new objective' })).not.toBe(generationId);
   });
 });
+
+describe('M471 simple-conductor clock-skew recovery', () => {
+  const HOUR = 60 * 60_000;
+  const now = Date.parse('2026-10-15T12:00:00.000Z');
+
+  it('does not park a task for a year behind a retryAfter written under a forward-skewed clock', () => {
+    // The conductor never writes a retry window more than 64h ahead of its own
+    // clock. A row a year out was settled while the clock was wrong; once the
+    // clock is corrected the task must not cool silently for that whole year.
+    const row = task({ attempts: 3, retryAfter: new Date(now + 365 * 24 * HOUR).toISOString() });
+    writeTasks([row]);
+    expect(claimSimpleConductorTask(row.id, simpleConductorTaskGenerationId(row), now).ok).toBe(true);
+    expect(persisted()[0]).toEqual(expect.objectContaining({ attempts: 4 }));
+  });
+
+  it('still honours a genuine bounded cooldown', () => {
+    const row = task({ attempts: 11, retryAfter: new Date(now + 64 * HOUR).toISOString() });
+    writeTasks([row]);
+    expect(claimSimpleConductorTask(row.id, simpleConductorTaskGenerationId(row), now)).toEqual({
+      ok: false,
+      reason: 'cooling',
+      detail: 'task retry window has not opened',
+    });
+  });
+
+  it('surfaces a skewed dispatch lease for reconciliation instead of a silent year-long busy', () => {
+    const row = task();
+    const generationId = simpleConductorTaskGenerationId(row);
+    writeTasks([row]);
+    // Claimed (then crashed) while the clock read a year ahead.
+    const skewed = claimSimpleConductorTask(row.id, generationId, now + 365 * 24 * HOUR);
+    if (!skewed.ok) throw new Error(skewed.detail);
+    expect(claimSimpleConductorTask(row.id, generationId, now)).toEqual({
+      ok: false,
+      reason: 'reconciliation-required',
+      detail: 'task dispatch lease expired without terminal authority',
+    });
+    // A lease claimed in the real present is still busy.
+    writeTasks([row]);
+    if (!claimSimpleConductorTask(row.id, generationId, now).ok) throw new Error('claim failed');
+    expect(claimSimpleConductorTask(row.id, generationId, now + HOUR))
+      .toEqual(expect.objectContaining({ reason: 'busy' }));
+  });
+});

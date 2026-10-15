@@ -23,6 +23,9 @@ const MAX_TASK_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_TASKS = 10_000;
 const MAX_TEXT_BYTES = 1_000_000;
 const LEASE_DURATION_MS = 24 * 60 * 60_000;
+// The conductor's longest retry window is 15 min * 2^8 = 64 h. A persisted
+// deadline further ahead than these horizons was written under a skewed clock.
+const MAX_RETRY_HORIZON_MS = 72 * 60 * 60_000;
 const LEASE_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ENGINE_IDS = new Set<EngineId>([
   'builtin', 'local-coder', 'ashlrcode', 'aw', 'claude', 'codex',
@@ -244,6 +247,12 @@ export function simpleConductorTaskGenerationId(
   })).digest('hex');
 }
 
+/** A future deadline beyond what this store ever writes cannot hold work after a clock correction. */
+function pendingUntil(at: string, nowMs: number, horizonMs: number): boolean {
+  const remaining = Date.parse(at) - nowMs;
+  return remaining > 0 && remaining <= horizonMs;
+}
+
 export function readSimpleConductorTasks(): TaskStoreReadResult {
   const result = withTaskLock(readTasksUnlocked);
   return result ?? { ok: false, reason: 'task store lock is unavailable' };
@@ -264,11 +273,11 @@ export function claimSimpleConductorTask(
     if (simpleConductorTaskGenerationId(current) !== expectedGenerationId) {
       return { ok: false, reason: 'changed', detail: 'task generation changed before dispatch' };
     }
-    if (current.retryAfter && Date.parse(current.retryAfter) > nowMs) {
+    if (current.retryAfter && pendingUntil(current.retryAfter, nowMs, MAX_RETRY_HORIZON_MS)) {
       return { ok: false, reason: 'cooling', detail: 'task retry window has not opened' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId) {
-      return Date.parse(current.dispatchLease.expiresAt) > nowMs
+      return pendingUntil(current.dispatchLease.expiresAt, nowMs, LEASE_DURATION_MS)
         ? { ok: false, reason: 'busy', detail: 'task has an active dispatch lease' }
         : {
             ok: false,
@@ -371,7 +380,7 @@ export function reconcileSimpleConductorTask(
       return { ok: false, reason: 'changed', detail: 'task generation changed during reconciliation' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId &&
-      Date.parse(current.dispatchLease.expiresAt) > nowMs) {
+      pendingUntil(current.dispatchLease.expiresAt, nowMs, LEASE_DURATION_MS)) {
       return { ok: false, reason: 'changed', detail: 'task has an active dispatch lease' };
     }
     const nextTask: TaskSpec = {
