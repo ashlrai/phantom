@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, join, parse, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
+import { processGroupHasOnlyZombies } from '../util/process-group-liveness.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock,
   canonicalStartEpochSecond, verifiedProcessStartIdentity, type LocalStoreLock } from '../fleet/local-store-lock.js';
 import { canonical, digest, inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
@@ -173,14 +174,22 @@ function activityMatches(activity: ActivityRecord, previous: ReturnType<typeof r
     activity.pending.ino === previous.stat.ino.toString();
 }
 
-/** Signal zero is observation only: a recycled/present group or any non-ESRCH error blocks recovery. */
+/**
+ * Signal zero is observation only: a recycled/present group or any non-ESRCH
+ * error blocks recovery. A group whose remaining members are all unreaped
+ * zombies (Linux /proc, fail closed) has exited and does not block it.
+ */
 function reservationRecoveryBlocker(
   entries: readonly ActivityReservation[],
 ): ResourceCollectorRecoveryDiagnosis['reasonCode'] | null {
   for (const reservation of entries) {
     if (reservation.phase === 'preparing') return 'command-registration-incomplete';
     if (reservation.phase === 'ready') continue;
-    try { process.kill(-reservation.pgid!, 0); return 'process-group-not-confirmed-absent'; }
+    try {
+      process.kill(-reservation.pgid!, 0);
+      if (processGroupHasOnlyZombies(reservation.pgid!)) continue;
+      return 'process-group-not-confirmed-absent';
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return 'process-group-not-confirmed-absent'; }
   }
   return null;
