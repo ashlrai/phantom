@@ -124,7 +124,7 @@ Human CLI: `phm team view | join | approve | deny | claim | release | say`.
 * **Phase 1 (shipped):** protocol, local bus, claims, handoffs + approvals,
   roles, scoped context with compression, 7 MCP tools, `phm team` CLI, tests.
 * **Phase 2:** self-hosted sync service (signed events, per-team ACL, SSE
-  subscription stream + outbound webhooks), Verse UI team panel (one primary
+  subscription stream + outbound webhooks), Phantom console team panel (one primary
   action: "Review approvals"), Pulse bridge emits team events as OTLP, claim
   check wired into Phantom dispatch so fleet runs auto-claim their branch,
   ashlr-core-efficiency compressor.

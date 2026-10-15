@@ -215,7 +215,7 @@ can include generative handlers; it is not a durable wakeup queue or a promise
 that every handler costs zero. Wakeups request reevaluation through normal
 admission, never an unconditional dispatch or new service activation.
 
-**Steering:** Verse already persists follow-ups through
+**Steering:** Phantom already persists follow-ups through
 [turn-queue.ts](https://github.com/ashlrai/ashlr-hub/blob/master/src/core/verse/turn-queue.ts), holding them on failure/Stop.
 Expose adapter capabilities separately: next-turn queue, stop-and-send, or
 genuine mid-turn steering. OpenAI's documented mid-turn steering uses GPT-6
@@ -276,7 +276,7 @@ account requirements.
 
 ## Recorded local qualification — 2026-10-01
 
-The exact Verse 3.19 npm candidate ran one `multi-file-rename` trial through the
+The exact 3.19 npm candidate (then named Verse) ran one `multi-file-rename` trial through the
 installed local Anthropic bridge and Claude CLI. The captured original checker
 passed after all three source files changed. The run took 392.453 seconds and 12
 turns; CLI-reported usage was 2,979 input, 1,638 output and 12,872 cache-read tokens.

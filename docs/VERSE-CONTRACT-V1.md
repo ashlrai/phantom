@@ -1,4 +1,4 @@
-# Ashlr Verse V1 — build contract
+# Phantom console V1 — build contract (formerly Ashlr Verse)
 
 Goal: a Claude-desktop-style operator surface inside ashlr-hub where Mason opens a project, picks a seat
 (Claude Max account, Codex account A/B, Grok, or a local Ollama model), chats with an agent that can edit
@@ -123,7 +123,7 @@ V3.9 adds context-mode, handoff-preview, preferences, context-fit, search and me
 
 ### CLI (`src/cli/verse.ts`)
 `ashlr verse [--port N] [--no-open] [--json]` → `startServer` with `allowDispatch: true`, prints
-`Ashlr Verse  http://127.0.0.1:<port>/verse/` + read token + mutation token (same wording as serve.ts), opens the browser unless `--no-open`.
+`Phantom  http://127.0.0.1:<port>/verse/` + read token + mutation token (same wording as serve.ts), opens the browser unless `--no-open`.
 Register in `src/cli/index.ts` dispatch table + help text.
 
 ## UI spec (`src/web-ui/routes/verse/`)
@@ -132,7 +132,7 @@ Full-bleed console app (pattern: `ResourcePoolConsoleApp.tsx`), pathname `/verse
 `components/primitives`. No new global state library; a small `verse-store.ts` (useSyncExternalStore) is fine.
 
 Layout (three columns, resizable like WorkspaceView):
-1. **Sidebar** (260px): brand "Ashlr Verse"; `+ New chat`; search; sessions grouped by project (project name header, sessions sorted by
+1. **Sidebar** (260px): brand "Phantom"; `+ New chat`; search; sessions grouped by project (project name header, sessions sorted by
    updatedAt, seat badge, running dot); footer: seat health summary chips (one per account) + "Resources" toggle.
 2. **Workspace**: header (session title editable, seat/model badge, project path, context meter); transcript (virtualization not required in V1;
    render Markdown via `marked` + `dompurify` — add `dompurify` as a dependency; code blocks with copy button; tool-use cards collapsed by default
@@ -158,7 +158,7 @@ POSTs the right body; sending a turn appends the user message and renders stream
 context meter thresholds; dictation button fallback when no SpeechRecognition; seat selector disables unavailable seats.
 
 ## Desktop (`desktop/`)
-- `tauri.conf.json`: window `url` → `http://127.0.0.1:7777/verse/`, `devUrl` same, title "Ashlr Verse", width 1280 height 820, min 960×640.
+- `tauri.conf.json`: window `url` → `http://127.0.0.1:7777/verse/`, `devUrl` same, title "Phantom", width 1280 height 820, min 960×640.
 - Generate icons from `icons/icon.svg` via the existing script; stage the sidecar via `prepare-sidecar.mjs` after `npm run build:binary`.
 - Sidecar must start the server on port 7777 with dispatch enabled and hand tokens to the window: document the current mechanism in
   `desktop/README.md`; if the sidecar lacks a way to pass tokens, add `--verse` mode to the sidecar launch that prints `{readToken, token}` JSON and
@@ -249,7 +249,7 @@ Codex implements both (its rollout); claude and grok need neither.
   as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the CLI and the meter always use one number. A local window below
   `LOCAL_MIN_USABLE_WINDOW` (56,000, `context-math.ts`) is listed with an `unavailableReason`.
 - Usage: a runtime window wins (source `runtime`, compaction point recomputed by `reconcileAutoCompactAt`) except on engine
-  `local`, where Verse sets the window itself. Stored sessions whose model is an alias (`claude-opus-5.5`) keep their stored id.
+  `local`, where Phantom sets the window itself. Stored sessions whose model is an alias (`claude-opus-5.5`) keep their stored id.
 
 ### Routes (all under `/api/verse`, same gates as V1: POSTs 404 unless `allowDispatch` — including `handoff-preview`, so a
 read-only server answers 404 there — then `passesMutationGate` + the 64 KiB JSON body cap (`POST /memory` alone: 2 × 64 KiB +
@@ -351,10 +351,10 @@ only mounts them. Each module's header comment lists its own routes and is the a
   editor, and never types into or runs a shell.
 - **preview.** `frame/<ticket>` is the **one path `server.ts` lets past its read boundary**: an `<iframe src>` can carry
   neither the read-client header nor the query proof, so it answers only a live ticket presented with the cookie of the
-  read session that minted it. Every file is served under CSP `sandbox` (an opaque origin), `nosniff`, framable by Verse
+  read session that minted it. Every file is served under CSP `sandbox` (an opaque origin), `nosniff`, framable by the Phantom console
   alone, and only from inside the chat's own roots after symlinks are resolved. The page CSP adds
   `frame-src 'self' http://127.0.0.1:* http://localhost:*`. Read-only: dev-server Start goes through the terminal.
-- **git.** `root` must be a folder the operator already brought into Verse and pass `checkWorkspaceRootPath`; a diff's
+- **git.** `root` must be a folder the operator already brought into Phantom and pass `checkWorkspaceRootPath`; a diff's
   `file` must be one of that scope's changed files. git/gh stderr never reaches a response. A commit is 409 while a chat
   turn runs in the same repository. `/api/verse/github` (the read-only V2 panel) is a different path, not this family.
 - **apps.** Status commands and loopback GETs only. Toggle and Launch open a visible Terminal the operator drives; a
@@ -428,13 +428,13 @@ except the tracker's read-only `gh pr list`.
 | `POST /api/verse/cloud/budget` | `CloudBudgetUpdate` (any subset; numbers ≥ 0, counts whole; the store clamps maxima) | `CloudBudgetView` |
 | `POST /api/verse/cloud/refresh` | `{}` | `{ checked, updated }` — joins a scheduled refresh already running |
 | `POST /api/verse/cloud/improve` | `CloudImproveRequest { count? }` (1–5, default 1) | `CloudImproveResponse` — the operator's button: the launch gate only, not the self-improvement gate |
-| `POST /api/verse/cloud/tasks/<id>/dismiss` | `{}` | `{ ok: true, task }` — marks the local record `closed` with "Dismissed in Verse."; never touches GitHub. 404 unknown id, 409 for a merged task or one still launching |
+| `POST /api/verse/cloud/tasks/<id>/dismiss` | `{}` | `{ ok: true, task }` — marks the local record `closed` with "Dismissed in Phantom."; never touches GitHub. 404 unknown id, 409 for a merged task or one still launching |
 
 - **Gates and input.** GET behind the read session; every POST 404 unless dispatch is allowed, then token + JSON
   `Content-Type`, then the body cap (4 KiB except launch). Unknown keys and query parameters are 400
   `VERSE_INVALID` with a plain sentence. A service error is a bare 500 `cloud request failed` — its text can quote a
   checkout path, so it is never forwarded.
-- **Scheduler.** Starts when the module first loads (the Verse server's first activity poll imports it), never under a
+- **Scheduler.** Starts when the module first loads (the Phantom server's first activity poll imports it), never under a
   test runner; `ASHLR_CLOUD_AUTO=0` disables it. Every 10 min it refreshes tasks from GitHub; 2 min after start and
   then hourly it runs self-improvement (`runSelfImprove({ auto: true })`, which also needs the self-improvement switch
   and gate). Runs never overlap; a failure is logged once per distinct error.

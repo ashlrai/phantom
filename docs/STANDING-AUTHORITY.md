@@ -9,7 +9,7 @@ instant and needs nothing. Raising it past what you signed needs a new grant.
 This page specifies the grant, the ladder and the ledger. For the model,
 custody, Stop and Revoke, setup, and the **residual risks**, see
 [AUTHORITY.md](AUTHORITY.md). The code is `src/core/authority/`, the CLI is
-`ashlr authority`, and the Verse Command bar uses `/api/verse/authority`.
+`ashlr authority`, and the Phantom console Command bar uses `/api/verse/authority`.
 
 ## The pieces
 
@@ -155,7 +155,7 @@ with a computed specifier is listed so a reviewer sees it.
 
 `daemon/loop.ts` and `fleet/tick-hooks-live.ts` are deliberately **not**
 roots: they orchestrate calls into the modules above, but each pulls in the
-whole daemon, the Verse server and Universe (about 590 files), so as roots
+whole daemon, the Phantom server and Universe (about 590 files), so as roots
 they would pause the grant on nearly every deploy. They stay protected paths:
 the fleet can never change them.
 
@@ -200,12 +200,12 @@ ashlr authority setup [--dry-run] [--source <ashlr-hub checkout>]
 Stop arms KILL, aborts running agents (reporting `liveExecutionLeases`)
 and revokes armed host merges. Revoke does all of that too, then burns the
 grant sequence. The CLI waits for agents to drain (up to 30 s); `--no-wait`
-and the Verse route return at once. See AUTHORITY.md §3.
+and the Phantom console route return at once. See AUTHORITY.md §3.
 
 `GET /api/verse/authority` (status), `GET /api/verse/authority/draft`,
 `GET /api/verse/authority/ledger`, and `POST /api/verse/authority` with one
 of `switch`, `stop`, `clear-stop`, `revoke`, `grant`, `re-approve`. Every POST
-passes Verse's dispatch and mutation-token gates. A grant action names the
+passes the Phantom server's dispatch and mutation-token gates. A grant action names the
 digest of a draft the server served; the server signs exactly that draft.
 
 ## Phase 0: `ashlr authority setup`

@@ -59,7 +59,7 @@ export function syncCandidateVersion(root, version, { check = false } = {}) {
   if (main?.length !== 1 || typeof main[0].url !== 'string') throw new Error('Expected exactly one main desktop URL');
   const url = new URL(main[0].url);
   if (url.origin !== 'http://127.0.0.1:7777' || url.pathname !== '/verse/' || url.searchParams.getAll('v').length !== 1) {
-    throw new Error('Expected the existing local Verse URL with one version query');
+    throw new Error('Expected the existing local Phantom console URL with one version query');
   }
   url.searchParams.set('v', version);
   const replacements = new Map();

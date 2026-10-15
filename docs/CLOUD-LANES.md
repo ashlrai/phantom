@@ -4,28 +4,28 @@
 
 ## The cloud lane
 
-New in 3.11. Verse can start **Claude Code cloud sessions** (claude.ai/code) and
+New in 3.11. Phantom can start **Claude Code cloud sessions** (claude.ai/code) and
 track what they deliver. They run on your Claude account, including its cloud
 credits, so they keep working after the subscription window is spent.
 
 - **Start one** from Command (**New cloud task**), from a chat (**Run in cloud**
-  in the composer's ⋯ sheet), or with `ashlr cloud launch "<task>"`. Verse can
-  also work through its own improvement backlog: **Improve Verse** launches the
+  in the composer's ⋯ sheet), or with `ashlr cloud launch "<task>"`. Phantom can
+  also work through its own improvement backlog: **Improve Phantom** launches the
   next item now, and with self-improvement on the server launches at most 4 a
   day on its own.
-- **Each task is instructed to deliver to GitHub.** Verse cannot read a session
+- **Each task is instructed to deliver to GitHub.** Phantom cannot read a session
   back, so it asks the session to push `ashlr-cloud/<taskId>` and open a **draft**
-  PR with a report block. Verse follows a matching PR with `gh` and lists it in
+  PR with a report block. Phantom follows a matching PR with `gh` and lists it in
   Needs you when open. Failed launches and missing PRs remain separate states.
   **Nothing in the lane merges.**
 - **Spend is an estimate, and is labelled as one.** Claude does not expose the
-  credit balance. Verse counts $3 per launched session against $250 by default,
+  credit balance. Phantom counts $3 per launched session against $250 by default,
   and you correct it after checking
   [claude.ai/settings/usage](https://claude.ai/settings/usage). Limits: 4 at
   once, 20 a day, and self-improvement stops at a $40 reserve.
 - **It launches only as the `claude-a` seat**, signed in with a claude.ai
   account. Cloud sessions refuse API keys.
-- **Turn it off:** `ashlr cloud budget --self-improve off` stops launches Verse
+- **Turn it off:** `ashlr cloud budget --self-improve off` stops launches Phantom
   starts itself, and `ASHLR_CLOUD_AUTO=0` stops the background scheduler.
 - **Under a standing grant** (3.13), a cloud PR on a granted repo is taken in by
   the standing merge pass and lands only through G0–G7, from the fleet App's

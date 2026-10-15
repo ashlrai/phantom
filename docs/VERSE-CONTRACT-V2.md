@@ -1,6 +1,6 @@
-# Ashlr Verse V2 — build contract
+# Phantom console V2 — build contract (formerly Ashlr Verse)
 
-Goal: take Verse from "works" to "Mason runs his whole engineering day in it". Two halves:
+Goal: take the Phantom console from "works" to "Mason runs his whole engineering day in it". Two halves:
 a **redesign** to the language in `docs/VERSE-DESIGN-V2.md`, and a **control plane** for the hub's
 existing autonomous fleet so the human can step out of the loop while keeping spend and scope on a leash.
 
@@ -92,7 +92,7 @@ Rebuild against the design language: rail + sidebar + 720px transcript column + 
 Messages without bubbles, tool runs collapsing to summary rows, real Markdown hierarchy, code blocks
 with copy, 2px context line under the header, streaming caret, Space Grotesk numerals. Keep ALL
 existing behavior: seats, models, resume, Stop, dictation, ⌘N, token gate, SSE resume, follow-ups.
-Every existing Verse test must still pass or be updated deliberately, never deleted to go green.
+Every existing console test must still pass or be updated deliberately, never deleted to go green.
 
 ### Autonomy (owner D) — the human-out-of-the-loop cockpit
 - **Status header**: daemon running/stopped, current direction mode, last tick time and outcome,

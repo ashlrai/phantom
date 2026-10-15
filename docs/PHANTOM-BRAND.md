@@ -2,6 +2,13 @@
 
 Phantom is the engineering agent workbench, formerly Ashlr Verse. AshlrAI, Inc. is the company; [ashlr.ai](https://ashlr.ai) remains the company site.
 
+<a id="formerly-verse"></a>
+**Formerly Verse.** The desktop app and web console once called Verse (or Ashlr
+Verse) are now Phantom: the Phantom app and the Phantom console. `phm verse` (or
+the compatible `ashlr verse`) is the command that opens the Phantom console. The
+`/verse/` and `/api/verse/` URLs, `verse_*` MCP tool names and other `verse`
+identifiers keep their names for compatibility.
+
 The canonical repository is `ashlrai/phantom`, package `@ashlr/phantom` and
 project homepage [phm.dev](https://phm.dev). For the published release,
 source-candidate status and installation steps, use the

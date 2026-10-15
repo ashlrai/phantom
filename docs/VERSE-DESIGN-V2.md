@@ -1,4 +1,4 @@
-# Ashlr Verse V2 — design language
+# Phantom console V2 — design language
 
 The target: an app that feels like a precision instrument. Codex-desktop restraint, a Space Grotesk
 edge, and the configurability of a tiling-WM setup — "Linux for agentic engineering". Every rule below
@@ -75,7 +75,7 @@ for micro-labels only.
 from these, never a hardcoded px.
 
 **Elevation.** Only three: `--shadow-menu`, `--shadow-dialog`, `--shadow-toast`. Delete usage of the
-rest in Verse. In dark mode shadows are nearly invisible; separation comes from `--border-default`.
+rest in the Phantom console. In dark mode shadows are nearly invisible; separation comes from `--border-default`.
 
 ## 3. Customization — the "Linux" part
 

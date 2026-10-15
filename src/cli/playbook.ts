@@ -32,7 +32,7 @@ export const PLAYBOOK_USAGE = [
   '       ashlr playbook edit <id> [--file path] [--note "why"]',
   '       ashlr playbook run <id>[@vN] [--repo owner/name] [--lane cloud|devin] [--task "text"] [--title t] [--base branch] [--json]',
   '',
-  'In any task text (Verse composer, goals, `ashlr cloud launch`), `!macro` (e.g. `!fix-bug`) runs under that playbook.',
+  'In any task text (Phantom composer, goals, `ashlr cloud launch`), `!macro` (e.g. `!fix-bug`) runs under that playbook.',
 ].join('\n');
 
 export interface PlaybookCliDeps {
