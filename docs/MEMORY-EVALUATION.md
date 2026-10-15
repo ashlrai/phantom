@@ -154,7 +154,7 @@ Three rules do the work, all after ranking:
 - Facts whose cited source the caller reports as changed are withheld, with a notice line.
 
 What remains:
-- **Cross-key contradictions.** A newer fact under different keys that contradicts an older one is still served next to it in 8 of 18 questions. A value-disagreement detector was tried on the tuning set and gained at most one question, so it was not shipped.
+- **Cross-key contradictions.** A newer fact under different keys that contradicts an older one is still served next to it in 8 of 18 questions. A value-disagreement detector was tried on the tuning set and gained at most one question, so it was not shipped. Evidence links (below) later took this on.
 - **Over-cautious source checks.** A cited line that changes in a way that leaves the fact true still withholds the fact (2 tuning and 2 validation answers lost). The check compares quotes, not meaning.
 - **Screening refusals.** Six histories held a write that trips content screening, for example "authorization request header" or a local database URL, and the pack refused the whole snapshot. That is fixed below. One question still trips screening ("access token") and is refused, because a query is screened as a whole.
 
@@ -175,3 +175,15 @@ The same separate agent wrote two more sets, 24 scenarios each: 12 where one age
 Still open: a fact whose cited comment is reworded with the same meaning is withheld, and a quote-only comment edit that only drops a period still counts as a change. The three W3 credential misses are false alarms in the shared screening patterns: the clean answers ("minted with `kestrelctl token mint --role admin`", "The Slack bot token is read from SLACK_BOT_TOKEN") are withheld because `token` followed by a word reads as a token value. The other W3 miss is a duplicate. W4's misses were not inspected, to keep it unseen for later rounds. Earlier W1 questions that were refused whole now serve: one of them shows a cross-key contradiction that the refusal used to hide.
 
 `--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 5 tuning, 9 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.
+
+### Cross-key evidence links
+
+A later commit diff, a commit message naming the old quote's identifier or file, or a re-read of the same line now retires the older fact (`source-changed`), whatever keys either was written under.
+
+| Silent contradictions | Before | After |
+|---|---|---|
+| Tuning (W1) | 1/8 | 4/8 |
+| W2 validation (seen while building the commit-message rule) | 2/10 | 3/10 |
+| W5, 16 fresh histories by a separate agent, scored once after the rules were frozen | 3/16 | 7/16 |
+
+Steps serving a stale or wrong fact fell from 14 to 10 on the old sets and from 11 to 7 on W5, and no case regressed. W5 joins the validation set (516 cases). What remains is not connected by evidence: stale docs that repeat an old value, and an agent reading the wrong file. A notice for unverified claims that disagree with a cited fact was tried and dropped: 10 of its 11 notices on the tuning side were spurious.

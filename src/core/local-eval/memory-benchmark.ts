@@ -13,7 +13,7 @@ import { buildMemoryContextPack, type MemoryPackOptions } from '../memory/pack.j
 import { memoryScopeVisible } from '../memory/scope.js';
 import { memorySourceQuotePresent } from '../memory/source.js';
 import { memoryUtf8Bytes, validMemoryPackQuery, validMemorySnapshot } from '../memory/validate.js';
-import { expandMemoryBenchmarkPlaceholders, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION,
+import { expandMemoryBenchmarkPlaceholders, MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION,
   MEMORY_BENCHMARK_AGENT_WRITES_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, type MemoryBenchmarkAgentScenario,
   type MemoryBenchmarkAgentWriteKind } from './memory-benchmark-agent-writes.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery, MemorySnapshot } from '../memory/types.js';
@@ -308,7 +308,7 @@ function expandScenario(scenario: MemoryBenchmarkAgentScenario, seed: string): M
       source: { ...write.source, locator: expand(write.source.locator), quote: expand(write.source.quote) } })),
     ...(scenario.codeChanges ? { codeChanges: scenario.codeChanges.map(change => ({ ...change, before: expand(change.before), after: expand(change.after) })) } : {}) };
 }
-function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 'tuning' | 'validation'): MemoryBenchmarkCase[] {
+export function memoryBenchmarkAgentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 'tuning' | 'validation'): MemoryBenchmarkCase[] {
   return set.map(scenario => expandScenario(scenario, `${label}:${scenario.id}`)).flatMap(scenario => scenario.questions.map((question, index): MemoryBenchmarkCase => {
     const writes = scenario.writes.filter(write => write.day <= question.day).sort((a, b) => a.day - b.day || (a.id < b.id ? -1 : 1));
     const events = new Map<string, MemoryFactEvent>();
@@ -339,8 +339,8 @@ function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 't
 }
 export function memoryBenchmarkCases(): MemoryBenchmarkCase[] {
   return [...retrievalCases(), ...contradictionCases(), ...temporalCases(), ...withdrawalCases(), ...taskCases(),
-    ...agentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_TUNING, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING], 'tuning'),
-    ...agentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION], 'validation')];
+    ...memoryBenchmarkAgentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_TUNING, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING], 'tuning'),
+    ...memoryBenchmarkAgentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION], 'validation')];
 }
 
 // ---- scoring ----

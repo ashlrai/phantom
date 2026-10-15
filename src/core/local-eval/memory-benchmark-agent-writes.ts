@@ -1174,6 +1174,163 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION: readonly Memory
     {"query": "which HTTP library does the fetcher use?", "day": 8, "expect": {"anyOf": [["q24-w3"]], "forbidden": [], "duplicates": [], "contradiction": false}},
   ] },
 ] as MemoryBenchmarkAgentScenario[]);
+/** Set W5 (fictional game backend): silent contradictions only, written by a separate agent and scored once after the cross-key evidence fixes were frozen. */
+export const MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
+  {"id": "c1", "kind": "silent-contradiction", "why": "True update: a commit diff raised the simulation tick rate from 30 to 60 Hz; the newer write does not mark that it supersedes the old file-cited fact.", writes: [
+    {"id": "c1-w1", "agent": "agent:builder", "day": 3, "subject": "sim", "slot": "tick-rate", "text": "The authoritative simulation loop runs at 30 ticks per second.", "source": {"kind": "file", "locator": "internal/sim/loop.go:12", "quote": "const TickRate = 30"}, "supersedes": []},
+    {"id": "c1-w2", "agent": "agent:release", "day": 9, "subject": "deploy", "slot": "regions", "text": "Riftline game servers are deployed to us-east, eu-central and ap-southeast.", "source": {"kind": "file", "locator": "deploy/prod/regions.yaml:2", "quote": "regions: [us-east, eu-central, ap-southeast]"}, "supersedes": []},
+    {"id": "c1-w3", "agent": "agent:onboarding", "day": 15, "subject": "logging", "slot": "default-level", "text": "The server logs at info level unless RIFT_LOG_LEVEL is set.", "source": {"kind": "file", "locator": "cmd/riftd/main.go:41", "quote": "level := envOr(\"RIFT_LOG_LEVEL\", \"info\")"}, "supersedes": []},
+    {"id": "c1-w4", "agent": "agent:perf-tuner", "day": 31, "subject": "gameplay", "slot": "server-frequency", "text": "Match simulation now steps 60 times a second.", "source": {"kind": "commit", "locator": "commit 4a9c1e7", "quote": "-const TickRate = 30\n+const TickRate = 60"}, "supersedes": []},
+    {"id": "c1-w5", "agent": "agent:reviewer", "day": 22, "subject": "net", "slot": "transport", "text": "Gameplay traffic uses UDP via the kcp-go library; the lobby uses WebSockets.", "source": {"kind": "file", "locator": "internal/net/transport.go:5", "quote": "import kcp \"github.com/xtaci/kcp-go/v5\""}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many simulation steps per second does a match run on the server right now?", "day": 38, "expect": {"anyOf": [["c1-w4"]], "forbidden": ["c1-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c2", "kind": "silent-contradiction", "why": "True update via re-read: the same config line was read twice and the idle timeout changed from 90 to 45 seconds.", writes: [
+    {"id": "c2-w1", "agent": "agent:builder", "day": 5, "subject": "sessions", "slot": "idle-timeout", "text": "Players idle for 90 seconds are disconnected from the match.", "source": {"kind": "file", "locator": "config/server.toml:22", "quote": "idle_timeout_secs = 90"}, "supersedes": []},
+    {"id": "c2-w2", "agent": "agent:planner", "day": 11, "subject": "matchmaking", "slot": "algorithm", "text": "Matchmaking pairs players with a Glicko-2 rating rather than Elo.", "source": {"kind": "file", "locator": "internal/matchmaking/rating.go:3", "quote": "// Package rating implements Glicko-2 updates for ranked queues."}, "supersedes": []},
+    {"id": "c2-w3", "agent": "agent:ci-fixer", "day": 34, "subject": "afk", "slot": "kick-after", "text": "AFK players get kicked after 45 seconds without input.", "source": {"kind": "file", "locator": "config/server.toml:22", "quote": "idle_timeout_secs = 45"}, "supersedes": []},
+    {"id": "c2-w4", "agent": "agent:onboarding", "day": 19, "subject": "howto", "slot": "local-server", "text": "make dev starts riftd with a local Redis via docker compose.", "source": {"kind": "command-output", "locator": "make dev output", "quote": "[+] Running 2/2 redis started, riftd listening on :7777"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How long can a player sit without pressing anything before the server boots them?", "day": 40, "expect": {"anyOf": [["c2-w3"]], "forbidden": ["c2-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c3", "kind": "silent-contradiction", "why": "Mistake: the newer agent read a test fixture's player cap and reported it as the production match size.", writes: [
+    {"id": "c3-w1", "agent": "agent:builder", "day": 4, "subject": "match", "slot": "max-players", "text": "A match holds at most 64 players.", "source": {"kind": "file", "locator": "internal/match/config.go:10", "quote": "MaxPlayers = 64"}, "supersedes": []},
+    {"id": "c3-w2", "agent": "agent:release", "day": 12, "subject": "builds", "slot": "image", "text": "The riftd container image is built from a distroless static base.", "source": {"kind": "file", "locator": "Dockerfile:14", "quote": "FROM gcr.io/distroless/static-debian12"}, "supersedes": []},
+    {"id": "c3-w3", "agent": "agent:ci-fixer", "day": 29, "subject": "lobby", "slot": "capacity", "text": "Lobbies fill at 8 players and then the match starts.", "source": {"kind": "file", "locator": "internal/match/testdata/fixtures.go:21", "quote": "var smallMatch = Config{MaxPlayers: 8, MapID: \"arena_test\"}"}, "supersedes": []},
+    {"id": "c3-w4", "agent": "agent:reviewer", "day": 17, "subject": "anticheat", "slot": "reporting", "text": "Anti-cheat violations are published to the Kafka topic riftline.anticheat.flags.", "source": {"kind": "file", "locator": "internal/anticheat/publish.go:9", "quote": "const flagTopic = \"riftline.anticheat.flags\""}, "supersedes": []},
+    {"id": "c3-w5", "agent": "agent:onboarding", "day": 23, "subject": "maps", "slot": "rotation", "text": "The default map rotation is harbor, canyon, citadel.", "source": {"kind": "file", "locator": "config/maps.yaml:4", "quote": "rotation: [harbor, canyon, citadel]"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What's the largest number of players that can be in one live match?", "day": 36, "expect": {"anyOf": [["c3-w1"]], "forbidden": ["c3-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c4", "kind": "silent-contradiction", "why": "Stale docs: a commit raised the friend cap to 500, but a later write repeats the README's old 200.", writes: [
+    {"id": "c4-w1", "agent": "agent:builder", "day": 5, "subject": "social", "slot": "friend-limit", "text": "Each account can have up to 200 friends.", "source": {"kind": "file", "locator": "internal/social/friends.go:9", "quote": "const MaxFriends = 200"}, "supersedes": []},
+    {"id": "c4-w2", "agent": "agent:planner", "day": 10, "subject": "store", "slot": "currency", "text": "The in-game store prices items in shards, the premium currency.", "source": {"kind": "file", "locator": "internal/store/catalog.go:15", "quote": "Currency: CurrencyShards,"}, "supersedes": []},
+    {"id": "c4-w3", "agent": "agent:feature-dev", "day": 22, "subject": "friends", "slot": "cap", "text": "The friends list ceiling is 500 entries per player.", "source": {"kind": "commit", "locator": "commit e01b77d", "quote": "-const MaxFriends = 200\n+const MaxFriends = 500"}, "supersedes": []},
+    {"id": "c4-w4", "agent": "agent:onboarding", "day": 30, "subject": "docs", "slot": "friends", "text": "Players may add 200 friends at most.", "source": {"kind": "file", "locator": "README.md:112", "quote": "Each player can have up to 200 friends."}, "supersedes": []},
+    {"id": "c4-w5", "agent": "agent:reviewer", "day": 26, "subject": "db", "slot": "migrations", "text": "Schema migrations are applied with goose from the migrations/ directory.", "source": {"kind": "file", "locator": "Makefile:31", "quote": "\tgoose -dir migrations postgres \"$(DB_URL)\" up"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many friends is a player allowed to have?", "day": 37, "expect": {"anyOf": [["c4-w3"]], "forbidden": ["c4-w1", "c4-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c5", "kind": "silent-contradiction", "why": "True update: only a commit message records that the party size limit went from 4 to 5.", writes: [
+    {"id": "c5-w1", "agent": "agent:planner", "day": 6, "subject": "party", "slot": "max-size", "text": "A party can contain up to 4 players.", "source": {"kind": "file", "locator": "internal/party/party.go:8", "quote": "const MaxPartySize = 4"}, "supersedes": []},
+    {"id": "c5-w2", "agent": "agent:release", "day": 14, "subject": "ci", "slot": "go-test", "text": "CI runs go test with the race detector on every pull request.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:27", "quote": "      - run: go test -race ./..."}, "supersedes": []},
+    {"id": "c5-w3", "agent": "agent:onboarding", "day": 20, "subject": "auth", "slot": "provider", "text": "Player login goes through Steam OpenID and Apple Sign In.", "source": {"kind": "file", "locator": "internal/auth/providers.go:12", "quote": "var enabled = []Provider{SteamOpenID, AppleSignIn}"}, "supersedes": []},
+    {"id": "c5-w4", "agent": "agent:feature-dev", "day": 33, "subject": "squads", "slot": "group-size", "text": "Squads can now queue together with five members.", "source": {"kind": "commit", "locator": "commit 91f3d0a", "quote": "raise MaxPartySize from 4 to 5 for squad mode"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many friends can queue together in one group?", "day": 39, "expect": {"anyOf": [["c5-w4"]], "forbidden": ["c5-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c6", "kind": "silent-contradiction", "why": "True update via re-read: the same anti-cheat limits file, two lines lower after an edit, now shows a higher speed threshold.", writes: [
+    {"id": "c6-w1", "agent": "agent:reviewer", "day": 7, "subject": "anticheat", "slot": "speed-threshold", "text": "Movement faster than 12.5 units per second is flagged as a speed hack.", "source": {"kind": "file", "locator": "internal/anticheat/limits.go:17", "quote": "\tMaxSpeed = 12.5 // units/sec"}, "supersedes": []},
+    {"id": "c6-w2", "agent": "agent:builder", "day": 13, "subject": "persistence", "slot": "player-store", "text": "Player profiles are stored in Postgres in the players table.", "source": {"kind": "file", "locator": "migrations/0003_players.sql:1", "quote": "CREATE TABLE players ("}, "supersedes": []},
+    {"id": "c6-w3", "agent": "agent:perf-tuner", "day": 21, "subject": "sim", "slot": "snapshot-rate", "text": "Clients receive a world snapshot every other tick.", "source": {"kind": "file", "locator": "internal/sim/snapshot.go:22", "quote": "if tick%2 == 0 { broadcastSnapshot(w) }"}, "supersedes": []},
+    {"id": "c6-w4", "agent": "agent:ci-fixer", "day": 35, "subject": "movement", "slot": "speed-cap", "text": "The anti-cheat speed cap is 14.0 units per second, to allow for the new sprint ability.", "source": {"kind": "file", "locator": "internal/anticheat/limits.go:19", "quote": "\tMaxSpeed = 14.0 // units/sec, sprint included"}, "supersedes": []},
+    {"id": "c6-w5", "agent": "agent:onboarding", "day": 27, "subject": "howto", "slot": "lint", "text": "golangci-lint is run with make lint.", "source": {"kind": "command-output", "locator": "make lint output", "quote": "golangci-lint run ./...\n0 issues."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Above what movement speed does anti-cheat flag a player?", "day": 41, "expect": {"anyOf": [["c6-w4"]], "forbidden": ["c6-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c7", "kind": "silent-contradiction", "why": "Unresolved: a chat remark claims the prod game port moved to 7780, against an earlier file-cited 7777; nothing in the evidence settles which is current.", writes: [
+    {"id": "c7-w1", "agent": "agent:release", "day": 8, "subject": "net", "slot": "game-port", "text": "Production game servers accept UDP game traffic on port 7777.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:18", "quote": "gamePort: 7777"}, "supersedes": []},
+    {"id": "c7-w2", "agent": "agent:planner", "day": 15, "subject": "progression", "slot": "xp-curve", "text": "XP required per level grows by 8% each level.", "source": {"kind": "file", "locator": "internal/progression/xp.go:6", "quote": "const levelGrowth = 1.08"}, "supersedes": []},
+    {"id": "c7-w3", "agent": "agent:ops-liaison", "day": 32, "subject": "firewall", "slot": "udp-port", "text": "Prod gameplay traffic now goes to UDP 7780.", "source": {"kind": "chat", "locator": "#riftline-ops thread", "quote": "fyi ops said they moved prod to 7780 last week because of the conflict with the voice relay"}, "supersedes": []},
+    {"id": "c7-w4", "agent": "agent:builder", "day": 24, "subject": "voice", "slot": "codec", "text": "In-game voice chat uses the Opus codec at 24 kbps.", "source": {"kind": "file", "locator": "internal/voice/encoder.go:11", "quote": "enc.SetBitrate(24000)"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Which UDP port do I need to open to reach the production game servers?", "day": 38, "expect": {"anyOf": [["c7-w1"], ["c7-w3"]], "forbidden": [], "duplicates": [], "contradiction": true}},
+  ] },
+  {"id": "c8", "kind": "silent-contradiction", "why": "Stale docs: the chat length limit was re-read at 280 after an edit, but the API docs still say 140.", writes: [
+    {"id": "c8-w1", "agent": "agent:builder", "day": 6, "subject": "chat", "slot": "max-length", "text": "Chat messages are truncated at 140 characters.", "source": {"kind": "file", "locator": "internal/chat/limits.go:4", "quote": "const MaxMessageLen = 140"}, "supersedes": []},
+    {"id": "c8-w2", "agent": "agent:reviewer", "day": 12, "subject": "chat", "slot": "profanity", "text": "The profanity filter loads its word list from assets/filters/en.txt.", "source": {"kind": "file", "locator": "internal/chat/filter.go:18", "quote": "list, err := loadWords(\"assets/filters/en.txt\")"}, "supersedes": []},
+    {"id": "c8-w3", "agent": "agent:feature-dev", "day": 28, "subject": "messaging", "slot": "char-limit", "text": "Players can type up to 280 characters per chat line.", "source": {"kind": "file", "locator": "internal/chat/limits.go:4", "quote": "const MaxMessageLen = 280"}, "supersedes": []},
+    {"id": "c8-w4", "agent": "agent:onboarding", "day": 33, "subject": "docs", "slot": "chat-api", "text": "The chat API rejects messages longer than 140 characters.", "source": {"kind": "file", "locator": "docs/api/chat.md:27", "quote": "Messages longer than 140 characters are rejected with 413."}, "supersedes": []},
+    {"id": "c8-w5", "agent": "agent:release", "day": 19, "subject": "observability", "slot": "tracing", "text": "Traces are exported via OTLP to the collector at otel-collector:4317.", "source": {"kind": "file", "locator": "internal/telemetry/otel.go:23", "quote": "otlptracegrpc.WithEndpoint(\"otel-collector:4317\")"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What's the longest chat message a player can send?", "day": 40, "expect": {"anyOf": [["c8-w3"]], "forbidden": ["c8-w1", "c8-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c9", "kind": "silent-contradiction", "why": "True update: a commit message that names the file says the initial MMR window was tightened from 200 to 150.", writes: [
+    {"id": "c9-w1", "agent": "agent:planner", "day": 4, "subject": "matchmaking", "slot": "mmr-window", "text": "Ranked matchmaking starts by searching within +/-200 MMR.", "source": {"kind": "file", "locator": "internal/matchmaking/window.go:14", "quote": "initialWindow := 200"}, "supersedes": []},
+    {"id": "c9-w2", "agent": "agent:builder", "day": 10, "subject": "cache", "slot": "redis", "text": "Matchmaking queues live in Redis sorted sets keyed mm:queue:<region>.", "source": {"kind": "file", "locator": "internal/matchmaking/queue.go:30", "quote": "key := fmt.Sprintf(\"mm:queue:%s\", region)"}, "supersedes": []},
+    {"id": "c9-w3", "agent": "agent:reviewer", "day": 18, "subject": "security", "slot": "tls", "text": "The lobby WebSocket endpoint requires TLS 1.3.", "source": {"kind": "file", "locator": "internal/lobby/server.go:52", "quote": "MinVersion: tls.VersionTLS13,"}, "supersedes": []},
+    {"id": "c9-w4", "agent": "agent:balance", "day": 30, "subject": "ranked", "slot": "search-radius", "text": "Ranked search begins with a 150 rating band before widening.", "source": {"kind": "commit", "locator": "commit 7d2ab90", "quote": "internal/matchmaking/window.go: tighten initial MMR window from 200 to 150"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How wide is the skill range when ranked matchmaking first looks for opponents?", "day": 37, "expect": {"anyOf": [["c9-w4"]], "forbidden": ["c9-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c10", "kind": "silent-contradiction", "why": "True update via re-read: the season config at the same locator now says 42 days instead of 28.", writes: [
+    {"id": "c10-w1", "agent": "agent:planner", "day": 3, "subject": "leaderboard", "slot": "season-length", "text": "Ranked seasons last 28 days.", "source": {"kind": "file", "locator": "config/seasons.yaml:3", "quote": "length_days: 28"}, "supersedes": []},
+    {"id": "c10-w2", "agent": "agent:release", "day": 9, "subject": "deploy", "slot": "rollout", "text": "Prod rollouts drain matches for up to 10 minutes before a pod is terminated.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:33", "quote": "terminationGracePeriodSeconds: 600"}, "supersedes": []},
+    {"id": "c10-w3", "agent": "agent:onboarding", "day": 16, "subject": "store", "slot": "refunds", "text": "Store purchases can be refunded within 14 days if unused.", "source": {"kind": "file", "locator": "internal/store/refund.go:8", "quote": "const refundWindow = 14 * 24 * time.Hour"}, "supersedes": []},
+    {"id": "c10-w4", "agent": "agent:balance", "day": 36, "subject": "ranked", "slot": "season-duration", "text": "A ranked season now runs six weeks (42 days).", "source": {"kind": "file", "locator": "config/seasons.yaml:3", "quote": "length_days: 42"}, "supersedes": []},
+    {"id": "c10-w5", "agent": "agent:ci-fixer", "day": 25, "subject": "tests", "slot": "integration", "text": "Integration tests need the RIFT_IT=1 env var and a running Redis.", "source": {"kind": "file", "locator": "internal/itest/main_test.go:15", "quote": "if os.Getenv(\"RIFT_IT\") != \"1\" { t.Skip(\"set RIFT_IT=1\") }"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many days does a competitive season run before the leaderboard resets?", "day": 42, "expect": {"anyOf": [["c10-w4"]], "forbidden": ["c10-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c11", "kind": "silent-contradiction", "why": "Mistake: the newer agent read the staging values file and reported its replica count as the game server's replica count.", writes: [
+    {"id": "c11-w1", "agent": "agent:release", "day": 7, "subject": "deploy", "slot": "prod-replicas", "text": "Production runs 12 riftd replicas per region.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:5", "quote": "replicaCount: 12"}, "supersedes": []},
+    {"id": "c11-w2", "agent": "agent:builder", "day": 14, "subject": "sim", "slot": "physics", "text": "Collision detection uses a uniform spatial hash with 4-unit cells.", "source": {"kind": "file", "locator": "internal/sim/broadphase.go:9", "quote": "const cellSize = 4.0"}, "supersedes": []},
+    {"id": "c11-w3", "agent": "agent:ci-fixer", "day": 31, "subject": "kubernetes", "slot": "game-server-pods", "text": "The game server deployment runs only 2 pods.", "source": {"kind": "file", "locator": "deploy/staging/values.yaml:5", "quote": "replicaCount: 2"}, "supersedes": []},
+    {"id": "c11-w4", "agent": "agent:reviewer", "day": 20, "subject": "auth", "slot": "session-store", "text": "Player auth sessions are stored in Redis with the prefix sess:.", "source": {"kind": "file", "locator": "internal/auth/session.go:17", "quote": "const sessionPrefix = \"sess:\""}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many game server instances do we run in each production region?", "day": 39, "expect": {"anyOf": [["c11-w1"]], "forbidden": ["c11-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c12", "kind": "silent-contradiction", "why": "Stale docs: a commit bumped the go directive to 1.23 but a later write copies the README's 'requires Go 1.21'.", writes: [
+    {"id": "c12-w1", "agent": "agent:onboarding", "day": 2, "subject": "toolchain", "slot": "go-version", "text": "Riftline builds with Go 1.21.", "source": {"kind": "file", "locator": "go.mod:3", "quote": "go 1.21"}, "supersedes": []},
+    {"id": "c12-w2", "agent": "agent:builder", "day": 11, "subject": "protocol", "slot": "serialization", "text": "Gameplay packets are serialized with FlatBuffers schemas under schema/.", "source": {"kind": "file", "locator": "Makefile:12", "quote": "\tflatc --go -o internal/proto schema/*.fbs"}, "supersedes": []},
+    {"id": "c12-w3", "agent": "agent:ci-fixer", "day": 26, "subject": "build", "slot": "go-toolchain", "text": "The module now targets Go 1.23 so range-over-func iterators can be used.", "source": {"kind": "commit", "locator": "commit c3e58f2", "quote": "go.mod: bump go directive to 1.23 for range-over-func"}, "supersedes": []},
+    {"id": "c12-w4", "agent": "agent:release", "day": 18, "subject": "release", "slot": "tagging", "text": "Releases are cut by pushing a vX.Y.Z tag, which triggers goreleaser.", "source": {"kind": "file", "locator": ".github/workflows/release.yml:4", "quote": "    tags: ['v*.*.*']"}, "supersedes": []},
+    {"id": "c12-w5", "agent": "agent:docs-writer", "day": 34, "subject": "readme", "slot": "prerequisites", "text": "Contributors need Go 1.21 installed to build the server.", "source": {"kind": "file", "locator": "README.md:20", "quote": "Requires Go 1.21 or later."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Which Go version does the server module require now?", "day": 40, "expect": {"anyOf": [["c12-w3"]], "forbidden": ["c12-w1", "c12-w5"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c13", "kind": "silent-contradiction", "why": "True update twice: the session token TTL went from 24h to 12h (commit diff) and then to 6h (commit message), with no write marking what it replaces.", writes: [
+    {"id": "c13-w1", "agent": "agent:builder", "day": 3, "subject": "auth", "slot": "token-ttl", "text": "Player session tokens expire after 24 hours.", "source": {"kind": "file", "locator": "internal/auth/token.go:21", "quote": "const tokenTTL = 24 * time.Hour"}, "supersedes": []},
+    {"id": "c13-w2", "agent": "agent:security", "day": 17, "subject": "security", "slot": "session-lifetime", "text": "Login sessions are valid for 12 hours.", "source": {"kind": "commit", "locator": "commit 2f7e6b1", "quote": "-const tokenTTL = 24 * time.Hour\n+const tokenTTL = 12 * time.Hour"}, "supersedes": []},
+    {"id": "c13-w3", "agent": "agent:planner", "day": 10, "subject": "store", "slot": "payments", "text": "Real-money purchases are verified server side against the Steam MicroTxn API.", "source": {"kind": "file", "locator": "internal/store/steam.go:40", "quote": "resp, err := c.post(\"/ISteamMicroTxn/FinalizeTxn/v2\", form)"}, "supersedes": []},
+    {"id": "c13-w4", "agent": "agent:onboarding", "day": 24, "subject": "howto", "slot": "seed", "text": "make seed creates 50 bot accounts in the dev database.", "source": {"kind": "command-output", "locator": "make seed output", "quote": "seeded 50 bot players"}, "supersedes": []},
+    {"id": "c13-w5", "agent": "agent:security", "day": 35, "subject": "jwt", "slot": "expiry", "text": "Access tokens are short lived now and expire after 6 hours.", "source": {"kind": "commit", "locator": "commit 88a0c4d", "quote": "auth: cut tokenTTL to 6h after credential-stuffing incident"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How long does a player stay logged in before their token needs refreshing?", "day": 41, "expect": {"anyOf": [["c13-w5"]], "forbidden": ["c13-w1", "c13-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c14", "kind": "silent-contradiction", "why": "True update via re-read, twice: the replay retention line in the prod values file went 14 -> 30 -> 7 days.", writes: [
+    {"id": "c14-w1", "agent": "agent:release", "day": 4, "subject": "replays", "slot": "retention", "text": "Match replays are kept in object storage for 14 days.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:41", "quote": "replayRetentionDays: 14"}, "supersedes": []},
+    {"id": "c14-w2", "agent": "agent:feature-dev", "day": 19, "subject": "storage", "slot": "replay-ttl", "text": "Replays are retained for 30 days so players can share highlights.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:41", "quote": "replayRetentionDays: 30"}, "supersedes": []},
+    {"id": "c14-w3", "agent": "agent:builder", "day": 12, "subject": "sim", "slot": "lag-compensation", "text": "Hit registration rewinds up to 200 ms for lag compensation.", "source": {"kind": "file", "locator": "internal/sim/rewind.go:7", "quote": "const maxRewind = 200 * time.Millisecond"}, "supersedes": []},
+    {"id": "c14-w4", "agent": "agent:cost-optimizer", "day": 36, "subject": "s3", "slot": "lifecycle", "text": "Replay files are deleted after a week to cut storage costs.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:42", "quote": "replayRetentionDays: 7"}, "supersedes": []},
+    {"id": "c14-w5", "agent": "agent:reviewer", "day": 28, "subject": "api", "slot": "pagination", "text": "Match history endpoints paginate with an opaque cursor, 25 items per page.", "source": {"kind": "file", "locator": "internal/api/history.go:33", "quote": "const pageSize = 25"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "If a player wants to download a replay, how old can the match be before it's gone?", "day": 42, "expect": {"anyOf": [["c14-w4"]], "forbidden": ["c14-w1", "c14-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c15", "kind": "silent-contradiction", "why": "Mistake: the newer agent infers the snapshot compression from habit, against an earlier file-cited zstd.", writes: [
+    {"id": "c15-w1", "agent": "agent:perf-tuner", "day": 9, "subject": "net", "slot": "snapshot-compression", "text": "World snapshots are compressed with zstd at level 3 before sending.", "source": {"kind": "file", "locator": "internal/net/compress.go:14", "quote": "enc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))"}, "supersedes": []},
+    {"id": "c15-w2", "agent": "agent:planner", "day": 13, "subject": "events", "slot": "calendar", "text": "Limited-time events are scheduled from config/events.yaml and reload without a restart.", "source": {"kind": "file", "locator": "internal/events/loader.go:25", "quote": "watcher.Add(\"config/events.yaml\")"}, "supersedes": []},
+    {"id": "c15-w3", "agent": "agent:ci-fixer", "day": 33, "subject": "bandwidth", "slot": "codec", "text": "Snapshot payloads are gzip-compressed.", "source": {"kind": "inference", "locator": "own reasoning", "quote": "the rest of the codebase uses compress/gzip for HTTP, so snapshots are probably gzip too"}, "supersedes": []},
+    {"id": "c15-w4", "agent": "agent:onboarding", "day": 21, "subject": "admin", "slot": "console", "text": "The admin console listens on 127.0.0.1:9090 and needs an admin JWT.", "source": {"kind": "file", "locator": "cmd/riftd/admin.go:18", "quote": "adminAddr := \"127.0.0.1:9090\""}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What compression algorithm is applied to the world state we stream to clients?", "day": 38, "expect": {"anyOf": [["c15-w1"]], "forbidden": ["c15-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "c16", "kind": "silent-contradiction", "why": "Stale docs: a commit cut the lobby heartbeat to 5s while the protocol doc, re-read later, still says 15s.", writes: [
+    {"id": "c16-w1", "agent": "agent:builder", "day": 10, "subject": "lobby", "slot": "heartbeat", "text": "The lobby WebSocket expects a client ping every 15 seconds.", "source": {"kind": "file", "locator": "internal/net/heartbeat.go:7", "quote": "const HeartbeatInterval = 15 * time.Second"}, "supersedes": []},
+    {"id": "c16-w2", "agent": "agent:release", "day": 16, "subject": "cdn", "slot": "patches", "text": "Client patch files are served from the patches.riftline.example CDN bucket.", "source": {"kind": "file", "locator": "deploy/prod/values.yaml:60", "quote": "patchBaseURL: https://patches.riftline.example"}, "supersedes": []},
+    {"id": "c16-w3", "agent": "agent:perf-tuner", "day": 24, "subject": "websocket", "slot": "keepalive", "text": "Clients must now send a keepalive every 5 seconds so dead lobbies are detected faster.", "source": {"kind": "commit", "locator": "commit 5b19ce3", "quote": "-const HeartbeatInterval = 15 * time.Second\n+const HeartbeatInterval = 5 * time.Second"}, "supersedes": []},
+    {"id": "c16-w4", "agent": "agent:docs-writer", "day": 37, "subject": "protocol", "slot": "ping", "text": "Per the protocol spec, clients ping the lobby every 15 seconds.", "source": {"kind": "file", "locator": "docs/protocol.md:58", "quote": "Clients MUST send a ping frame every 15 seconds."}, "supersedes": []},
+    {"id": "c16-w5", "agent": "agent:reviewer", "day": 30, "subject": "moderation", "slot": "reports", "text": "Player reports are rate limited to 5 per hour per reporter.", "source": {"kind": "file", "locator": "internal/moderation/report.go:12", "quote": "limiter := rate.NewLimiter(rate.Every(12*time.Minute), 5)"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How often does the game client have to ping the lobby connection to stay alive?", "day": 41, "expect": {"anyOf": [["c16-w3"]], "forbidden": ["c16-w1", "c16-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+] as MemoryBenchmarkAgentScenario[]);
 /**
  * The screening histories mark credentials and private paths with placeholders, so no credential-shaped literal is ever
  * committed. They expand here into deterministic fake values of the real shapes; nothing below is or was a real secret.

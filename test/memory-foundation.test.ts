@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMemoryContextPack } from '../src/core/memory/pack.js';
-import { memorySourceQuotePresent } from '../src/core/memory/source.js';
+import { memoryQuoteRetiredBy, memorySourceQuotePresent } from '../src/core/memory/source.js';
 import { immutableMemorySnapshot, validMemoryFactEvent, validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
 import { MEMORY_LIMITS, type MemoryFactEvent, type MemoryPackQuery, type MemorySnapshot } from '../src/core/memory/types.js';
 const early = '2026-10-01T00:00:00.000Z';
@@ -223,6 +223,36 @@ describe('pure governed memory foundation', () => {
       ['// TODO: drop v1', 'const v1 = null;'], ['color: "#fff"', 'color: "#000"'], ['url = "https://a.example/v1"', 'url = "https://a.example/v2"']];
     for (const [quote, current] of unchanged) expect(memorySourceQuotePresent(quote, current)).toBe(true);
     for (const [quote, current] of changed) expect(memorySourceQuotePresent(quote, current)).toBe(false);
+  });
+  it('retires an older cited quote only on later file or commit evidence about the same statement', () => {
+    const at = (day: number): string => `2026-09-${String(day).padStart(2, '0')}T00:00:00.000Z`;
+    const old = { locator: 'file:src/limits.ts:6', quote: '  max: 100,\n  window: 60,', observedAt: at(4) };
+    const later = (locator: string, quote: string, day = 20) => ({ locator, quote, observedAt: at(day) });
+    expect(memoryQuoteRetiredBy(old, later('commit:commit b7e09f3', '-  max: 100,\n+  max: 300,'))).toBe('diff');
+    expect(memoryQuoteRetiredBy(old, later('commit:commit b7e09f3', '-  max: 100,\n+  max: 300,', 3))).toBe(null); // older evidence
+    expect(memoryQuoteRetiredBy(old, later('commit:commit c1', '-  window: 30,\n+  window: 60,'))).toBe(null); // removes another line
+    expect(memoryQuoteRetiredBy(old, later('file:src/limits.ts:6', '  max: 300,'))).toBe('same-line');
+    expect(memoryQuoteRetiredBy(old, later('file:src/limits.ts:6', 'max:100, window:60, // reviewed'))).toBe(null); // reformatted
+    expect(memoryQuoteRetiredBy(old, later('file:src/limits.ts:6', '/* tuned on March data */'))).toBe(null); // its comment
+    expect(memoryQuoteRetiredBy(old, later('chat:chat with agent:ops', 'max is 300 now'))).toBe(null);
+    const constant = { locator: 'file:app/worker/runner.py:19', quote: 'JOB_TIMEOUT_SECONDS = 30', observedAt: at(5) };
+    expect(memoryQuoteRetiredBy(constant, later('commit:commit 8c41e07', 'worker: raise JOB_TIMEOUT_SECONDS from 30 to 120'))).toBe('message');
+    expect(memoryQuoteRetiredBy(constant, later('commit:commit 8c41e08', 'runner.py: log job ids'))).toBe('file-message');
+    expect(memoryQuoteRetiredBy(constant, later('commit:commit 8c41e09', 'worker: log job ids'))).toBe(null);
+  });
+  it('withholds a fact a later commit replaced under different keys, and keeps it when the commit is about another topic', () => {
+    const cited = (eventId: string, day: number, text: string, locator: string, quote: string, slotKey = eventId): MemoryFactEvent => {
+      const when = `2026-09-${String(day).padStart(2, '0')}T00:00:00.000Z`;
+      return event({ eventId, factId: eventId, subjectKey: eventId, slotKey, text, observedAt: when, validFrom: when, recordedAt: when, reviewedAt: when,
+        sourceRefs: [{ id: eventId + '_src', digest: 'sha256_' + String(day % 10).repeat(64), locator, quote, observedAt: when }] });
+    };
+    const timeout = cited('ev_old', 5, 'Each job has a hard timeout of 30 seconds.', 'file:app/worker/runner.py:19', 'JOB_TIMEOUT_SECONDS = 30');
+    const raised = cited('ev_new', 20, 'Jobs are killed after 120 seconds of runtime.', 'commit:commit 8c41e07', 'raise JOB_TIMEOUT_SECONDS from 30 to 120');
+    const ids = buildMemoryContextPack(snapshot([timeout, raised]), query({ query: 'job timeout seconds' })).receipt;
+    expect(ids.selectedEventIds).toEqual(['ev_new']);
+    expect(ids.exclusions).toContainEqual({ eventId: 'ev_old', reason: 'source-changed' });
+    const unrelated = cited('ev_log', 20, 'The runner logs every job id.', 'commit:commit 8c41e08', 'runner.py: log every id');
+    expect(buildMemoryContextPack(snapshot([timeout, unrelated]), query({ query: 'job timeout seconds' })).receipt.selectedEventIds).toContain('ev_old');
   });
   it('reuses only factory-created snapshots and reruns selection for every changed query', () => {
     const child = event({ eventId: 'child', factId: 'child', slotKey: 'derived', derivedFrom: ['ev_a'] });

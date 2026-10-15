@@ -1,5 +1,6 @@
 import { canonicalJson } from '../authority/canonical-json.js';
 import { projectMemoryTemporal } from './temporal.js';
+import { memoryQuoteRetiredBy, type MemoryEvidenceRef } from './source.js';
 import { memoryVocabulary } from './vocabulary.js';
 import { memoryUtf8Bytes, screenedMemorySnapshot, validMemoryId, validMemoryPackQuery } from './validate.js';
 import { MEMORY_LIMITS, type MemoryContextPack, type MemoryFactEvent, type MemoryPackQuery } from './types.js';
@@ -133,7 +134,21 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   output.receipt.exclusions = view.exclusions.filter(item => item.reason !== 'scope');
   const search = terms(query.query);
   // A fact whose cited source changed after it was observed is withheld until someone re-checks it.
-  const stale = new Set(view.eligible.filter(event => event.sourceRefs.some(ref => changed.has(ref.id))));
+  // So is a fact whose cited quote a later fact in the snapshot shows as replaced, whatever keys either was written under.
+  const evidence = (event: MemoryFactEvent): MemoryEvidenceRef[] => event.sourceRefs.map(ref => ({ locator: ref.locator, quote: ref.quote,
+    observedAt: ref.observedAt ?? event.observedAt ?? event.recordedAt }));
+  // A commit message is looser evidence than a diff: it retires a fact only when the two facts share a topic word.
+  const topic = (event: MemoryFactEvent): Set<string> => terms(event.text.replace(VALUE_TOKEN, ' '));
+  const retired = (event: MemoryFactEvent): boolean => evidence(event).some(ref => view.eligible.some(later => evidence(later).some(newer => {
+    const how = memoryQuoteRetiredBy(ref, newer);
+    if (how === 'message') return [...topic(event)].some(word => topic(later).has(word));
+    if (how === 'file-message') {
+      const said = terms(newer.quote), file = terms(ref.locator.replace(/^file:/i, ''));
+      return [...topic(event)].some(word => said.has(word) && !file.has(word));
+    }
+    return how !== null;
+  })));
+  const stale = new Set(view.eligible.filter(event => event.sourceRefs.some(ref => changed.has(ref.id)) || retired(event)));
   stale.forEach(event => output.receipt.exclusions.push({ eventId: event.eventId, reason: 'source-changed' }));
   const eligibleWords = view.eligible.filter(event => !stale.has(event)).map(event => ({ event, words: factTerms(event) }));
   // Rarer matched terms break ties between equal match counts, then exact-word matches beat vocabulary matches.
