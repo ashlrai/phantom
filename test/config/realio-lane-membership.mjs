@@ -58,6 +58,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
   'test/usage-api-body-stall.test.ts', // actual loopback HTTP server that sends headers and then stalls the body
+  'test/simple-conductor-lease-clear.test.ts', // private HOME task stores plus real live/exited child processes as lease owners
   'test/claude-api-grant.test.ts', // real child processes and private-store financial reservation races
   'test/m54.self-eval.test.ts', // real temporary Git repositories for source-bound legacy/canonical self-target discovery
   'test/authority-claude-native-adapter.test.ts', // real inert native profile, bounded stdin, metadata and separately jailed tools
