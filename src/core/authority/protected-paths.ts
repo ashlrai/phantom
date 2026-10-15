@@ -191,6 +191,13 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   // The control plane that lowers authority (Stop / Revoke) and asks for grants
   'src/core/verse/authority-api.ts',
   'src/cli/authority.ts',
+  // Self-change paths: the promotion gate that may queue a merge of Phantom's
+  // own PRs, and the PR autopilot that pushes and merges them. An agent that
+  // could edit either could rewrite the rules it is judged by.
+  'src/core/improve/**',
+  'src/cli/improve.ts',
+  'src/core/autopilot/**',
+  'src/cli/autopilot.ts',
 ]);
 
 /**
