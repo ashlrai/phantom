@@ -446,3 +446,33 @@ describe('switching projects', () => {
     expect(await screen.findByLabelText('MEMORY.md for site')).toBeInTheDocument();
   });
 });
+
+describe('operator-reviewed draft proposals', () => {
+  it('adds rewritten facts once without a write and retains existing dirty edits', async () => {
+    const user = userEvent.setup(); const { posts } = server();
+    const proposal = { nonce: 1, projectPath: PROJECT, text: 'Operator-rewritten fact: keep updates concise.' };
+    const view = render(<MemoryPanel projectPath={PROJECT} reviewedDraft={proposal} />);
+    const editor = await screen.findByLabelText('Edit MEMORY.md') as HTMLTextAreaElement;
+    expect(editor.value).toContain('# Hub memory'); expect(editor.value).toContain(proposal.text); expect(posts()).toHaveLength(0);
+    view.rerender(<MemoryPanel projectPath={PROJECT} reviewedDraft={{ ...proposal }} />);
+    expect(editor.value.split(proposal.text)).toHaveLength(2);
+    await user.click(editor); await user.keyboard('\nMy unsaved edit.');
+    view.rerender(<MemoryPanel projectPath={PROJECT} reviewedDraft={{ ...proposal, nonce: 2, text: 'A second rewritten fact.' }} />);
+    await waitFor(() => expect(editor.value).toContain('A second rewritten fact.'));
+    expect(editor.value).toContain('My unsaved edit.'); expect(posts()).toHaveLength(0);
+  });
+  it('does not apply a draft for another project', async () => {
+    const { posts } = server();
+    render(<MemoryPanel projectPath={PROJECT} reviewedDraft={{ nonce: 1, projectPath: '/fixture/other', text: 'Wrong project fact.' }} />);
+    await screen.findByLabelText('MEMORY.md for hub');
+    expect(screen.queryByLabelText('Edit MEMORY.md')).not.toBeInTheDocument(); expect(screen.queryByText('Wrong project fact.')).not.toBeInTheDocument(); expect(posts()).toHaveLength(0);
+  });
+  it('preserves the original reread/conflict guard when a proposed draft is explicitly saved', async () => {
+    const user = userEvent.setup(); const { state, posts } = server();
+    render(<MemoryPanel projectPath={PROJECT} reviewedDraft={{ nonce: 1, projectPath: PROJECT, text: 'Reviewed fact.' }} />);
+    await screen.findByLabelText('Edit MEMORY.md'); state.agentWrite = '# Changed by an agent';
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText(/changed/); expect(posts()).toHaveLength(0);
+    expect((screen.getByLabelText('Edit MEMORY.md') as HTMLTextAreaElement).value).toContain('Reviewed fact.');
+  });
+});

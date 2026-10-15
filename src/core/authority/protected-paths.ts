@@ -78,6 +78,11 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // Import admission, private reference custody and redaction remain owner-controlled.
+  'src/core/verse/context-import-api.ts',
+  'src/core/verse/context-import-store.ts',
+  'src/core/verse/context-import-types.ts',
+  'src/core/util/scrub-secrets.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',
