@@ -119,12 +119,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'local-runtime uninstall': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime logs': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime resolve-model': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
-  'cloud launch --help': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'cloud list': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'cloud refresh': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'cloud improve': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'cloud budget': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'cloud backlog': `src/cli/cloud.ts UsageError: ${STRICT_VERB_PARSER}`,
   'devin connect': `src/cli/devin.ts UsageError: ${STRICT_VERB_PARSER}`,
   'devin disconnect': `src/cli/devin.ts UsageError: ${STRICT_VERB_PARSER}`,
   'devin seat': `src/cli/devin.ts UsageError: ${STRICT_VERB_PARSER}`,
@@ -213,7 +207,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'plugins enable': 'exit 1: looks the flag up as a plugin name',
   'plugins disable': 'exit 1: looks the flag up as an enabled plugin',
   version: 'exit 0: prints the version only',
-  'cloud launch -h': 'exit 2: treats -h as the task and resolves the git origin to launch a cloud session',
   'devin launch -h': 'exit 2: treats -h as the task and resolves the git origin to launch a Devin session',
   'jev test': 'exit 0: classifies the flag as an operator message',
   'wiki build --help': 'exit 2: "Not inside an enrolled repo", no usage',
@@ -246,7 +239,6 @@ const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {
   'stack doctor': 'spawns `which stack`',
   'stack add -h': 'spawns `which stack`',
   'stack apply': 'spawns `which stack`',
-  'cloud launch -h': 'runs `git remote get-url origin`',
   'devin launch -h': 'runs `git remote get-url origin`',
 };
 

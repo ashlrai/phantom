@@ -430,6 +430,20 @@ function cmdBacklog(deps: CloudCliDeps, args: string[]): number {
 // Entry point
 // ---------------------------------------------------------------------------
 
+const HELP_VALUE_OPTIONS = new Set([
+  '--count', '--max-concurrent', '--max-per-day', '--per-session', '--reserve', '--self-improve-max',
+  '--self-improve-max-open', '--spent', '--total', '--base', '--repo', '--self-improve', '--title',
+]);
+
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (HELP_VALUE_OPTIONS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export async function runCloudCli(argv: string[], injected?: Partial<CloudCliDeps>): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -443,6 +457,13 @@ export async function runCloudCli(argv: string[], injected?: Partial<CloudCliDep
   if (!known.includes(sub)) {
     printErr(`Unknown cloud command "${sub}".\n\n${USAGE}`);
     return 2;
+  }
+  // `cloud <verb> --help` / `-h` explains itself before any deps load: `cloud
+  // launch -h` took "-h" as the task and resolved the git origin to launch a
+  // session. A value of a value-taking option is an operand.
+  if (wantsHelp(args)) {
+    print(USAGE);
+    return 0;
   }
   // Only a known verb pays for loading the cloud core.
   const deps: CloudCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
