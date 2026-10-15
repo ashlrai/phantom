@@ -24,7 +24,7 @@
  *   2  bad usage
  */
 
-import { parsePositiveInt } from './args.js';
+import { parsePort, serverStartErrorMessage } from './args.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, red, green, cyan, yellow, gray } = makeColors(isTty());
@@ -73,7 +73,7 @@ function parseArgs(args: string[]): ServeOptions | { error: string; code: number
     const arg = args[i];
 
     if (arg === '--port' || arg === '-p') {
-      const result = parsePositiveInt('port', args[++i]);
+      const result = parsePort(args[++i]);
       if ('error' in result) return { error: result.error, code: 2 };
       port = result.n;
 
@@ -166,7 +166,7 @@ export async function cmdServe(args: string[]): Promise<number> {
   try {
     handle = await startServer(cfg, { port, open, allowDispatch });
   } catch (err) {
-    console.error(red('error: ') + 'Failed to start server: ' + String(err));
+    console.error(red('error: ') + serverStartErrorMessage(err, port));
     return 1;
   }
 

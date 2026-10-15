@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 
 import { cmdHelp } from '../src/cli/help.js';
 import { gatewayVersion } from '../src/core/mcp-gateway.js';
+import { parsePort, serverStartErrorMessage } from '../src/cli/args.js';
+import { parseVerseArgs } from '../src/cli/verse.js';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -89,5 +91,24 @@ describe('MCP gateway serverInfo', () => {
     const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string };
     expect(gatewayVersion()).toBe(process.env.ASHLR_VERSION?.trim() || pkg.version);
     expect(gatewayVersion()).not.toBe('0.1.0');
+  });
+});
+
+describe('--port and listen errors', () => {
+  it('accepts 1..65535 and refuses the rest with a usage error', () => {
+    expect(parsePort('8080')).toEqual({ n: 8080 });
+    expect(parsePort('65535')).toEqual({ n: 65535 });
+    for (const bad of ['0', '65536', '99999', '-1', '80x', '1.5', undefined]) {
+      expect(parsePort(bad)).toHaveProperty('error');
+    }
+    expect(parseVerseArgs(['--port', '99999'])).toMatchObject({ code: 2 });
+  });
+
+  it('turns EADDRINUSE and EACCES into one actionable line', () => {
+    const inUse = Object.assign(new Error('listen EADDRINUSE: address already in use'), { code: 'EADDRINUSE' });
+    expect(serverStartErrorMessage(inUse, 7777)).toBe('port 7777 is already in use; pick another with --port N or stop the process using it.');
+    const denied = Object.assign(new Error('listen EACCES'), { code: 'EACCES' });
+    expect(serverStartErrorMessage(denied, 80)).toContain('above 1023');
+    expect(serverStartErrorMessage(new Error('boom'), 1)).toBe('Failed to start server: Error: boom');
   });
 });

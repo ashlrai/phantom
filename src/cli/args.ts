@@ -24,3 +24,21 @@ export function parsePositiveInt(
   }
   return { n };
 }
+
+/** `--port N`: an integer TCP port, 1..65535 (a larger value used to surface as a RangeError at listen time). */
+export function parsePort(raw: string | undefined): { n: number } | { error: string } {
+  const n = raw !== undefined && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    return { error: `--port requires a port number from 1 to 65535, got: ${raw ?? '(missing)'}` };
+  }
+  return { n };
+}
+
+/** One readable line for a local server that failed to start (port taken, no permission). */
+export function serverStartErrorMessage(err: unknown, port: number | undefined): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  const where = port ? `port ${port}` : 'the requested port';
+  if (code === 'EADDRINUSE') return `${where} is already in use; pick another with --port N or stop the process using it.`;
+  if (code === 'EACCES') return `no permission to listen on ${where}; use a port above 1023.`;
+  return 'Failed to start server: ' + String(err);
+}
