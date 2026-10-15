@@ -63,6 +63,16 @@ interface Parsed {
 const VALUE_FLAGS = new Set(['--template', '--name', '--repos', '--lane', '--file', '--repo', '--text', '--title']);
 const BOOL_FLAGS = new Set(['--json', '--enable', '--dry-run']);
 
+/** `--help` / `-h` anywhere after the verb, outside a flag value. */
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (VALUE_FLAGS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 function parse(args: readonly string[]): Parsed {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
@@ -229,6 +239,13 @@ export async function runAutomationsCli(argv: string[], injected: Partial<Automa
   if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
     (sub ? deps.out : deps.err)(AUTOMATIONS_USAGE);
     return sub ? 0 : 2;
+  }
+  // `automations <verb> --help` explains itself before any store is opened:
+  // `enable|disable|remove -h` used to look -h up as an automation and create
+  // the automations directory.
+  if (wantsHelp(rest)) {
+    deps.out(AUTOMATIONS_USAGE);
+    return 0;
   }
   try {
     const p = parse(rest);
