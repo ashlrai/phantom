@@ -58,7 +58,10 @@ The 72-case corpus checks that each governance rule holds. It does not measure h
 ```sh
 npm run --silent bench:memory -- --json            # summaries plus failing case IDs
 npm run --silent bench:memory -- --json --cases    # every step's measurements
+npm run --silent bench:memory -- --check           # regression gate: exit 1 below any floor
 ```
+
+CI runs `--check` on one Linux job. It fails when the governed arm drops below the floors in `src/core/local-eval/memory-benchmark-floors.ts`, which hold the current numbers: cases passed per dimension and per retrieval set (paraphrase recall and unanswerable-left-empty alike), no forbidden text, no out-of-scope receipt IDs, every contested slot mentioned, and no pack over its byte or fact budget. Case counts must match too, so a set cannot be shrunk to pass. Raise a floor in the change that raises the measurement.
 
 It has 296 cases and 305 steps in five dimensions:
 

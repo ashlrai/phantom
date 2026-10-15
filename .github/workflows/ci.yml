@@ -254,6 +254,12 @@ jobs:
         if: matrix.label == 'ubuntu, authority 3/3'
         run: npm run check:docs
 
+      - name: Memory benchmark regression gate
+        if: matrix.label == 'ubuntu, authority 3/3'
+        # Offline and deterministic. Fails when governed memory drops below the floors in
+        # src/core/local-eval/memory-benchmark-floors.ts or any pack goes over its budget.
+        run: npm run --silent bench:memory -- --check > /dev/null
+
       - name: Build
         run: npm run build
 

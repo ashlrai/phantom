@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { benchmarkMemoryCli, parseMemoryBenchmarkArgs } from '../scripts/benchmark-memory.js';
 import { MEMORY_BENCHMARK_DIMENSIONS, benchDay, benchEvent, benchQuery, benchSnapshot, memoryBenchmarkCases, runMemoryBenchmark,
   type MemoryBenchmarkBuilder } from '../src/core/local-eval/memory-benchmark.js';
+import { memoryBenchmarkFloorViolations } from '../src/core/local-eval/memory-benchmark-floors.js';
+import { buildFlatLatestMemoryDiagnostic } from '../src/core/local-eval/memory-evaluation-baseline.js';
 import { buildMemoryContextPack } from '../src/core/memory/pack.js';
 import { validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
 import type { MemoryContextPack } from '../src/core/memory/types.js';
@@ -114,6 +116,19 @@ describe('memory quality benchmark', () => {
       + 'time-mode="current" time-at="2026-09-30T00:00:00.000Z" known-at="2026-09-20T00:00:00.000Z" omitted="observedAt=validFrom validUntil=null">');
     expect(pack.text.match(/known-?at/gi)).toHaveLength(1);
   });
+  it('the regression gate passes the governed arm and names every floor a degraded builder breaks', () => {
+    expect(memoryBenchmarkFloorViolations(runMemoryBenchmark())).toEqual([]);
+    const degraded = runMemoryBenchmark([{ arm: 'governed', builder: (snapshot, query) => {
+      const pack = buildMemoryContextPack(snapshot, query) as MemoryContextPack;
+      // Over budget on every ready pack, and a paraphrase miss: both must be named.
+      return pack.status === 'ready' ? { ...pack, bytes: (query as { maxBytes: number }).maxBytes + 1 } : pack;
+    } }]);
+    const violations = memoryBenchmarkFloorViolations(degraded);
+    expect(violations.some(line => line.startsWith('over budget: '))).toBe(true);
+    expect(violations.some(line => line.startsWith('retrieval paraphrase: '))).toBe(true);
+    const flat = runMemoryBenchmark([{ arm: 'governed', builder: buildFlatLatestMemoryDiagnostic }]);
+    expect(memoryBenchmarkFloorViolations(flat)).toEqual(expect.arrayContaining([expect.stringMatching(/^forbidden text leaked/), expect.stringMatching(/^overall: /)]));
+  });
   it('leaves out only time fields equal to the default the boundary tag declares', () => {
     const plain = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
     const dated = benchEvent({ id: 'b', subject: 'build', slot: 'cache', text: 'Build cache is safe to clear.', recordedAt: benchDay(3), validFrom: benchDay(2),
@@ -125,10 +140,12 @@ describe('memory quality benchmark', () => {
     expect(rows.get('a')).not.toHaveProperty('validUntil');
     expect(rows.get('b')).toMatchObject({ observedAt: dated.observedAt, validFrom: dated.validFrom, validUntil: dated.validUntil });
   });
-  it('the CLI accepts only its two flags and reports source identity without gating', () => {
-    expect(parseMemoryBenchmarkArgs([])).toEqual({ cases: false });
-    expect(parseMemoryBenchmarkArgs(['--json', '--cases'])).toEqual({ cases: true });
+  it('the CLI accepts only its three flags and gates only with --check', () => {
+    expect(parseMemoryBenchmarkArgs([])).toEqual({ cases: false, check: false });
+    expect(parseMemoryBenchmarkArgs(['--json', '--cases', '--check'])).toEqual({ cases: true, check: true });
     for (const args of [['--model', 'x'], ['--cases', '--cases'], ['/tmp/export.json']]) expect(benchmarkMemoryCli(args).exitCode).toBe(2);
+    const gated = benchmarkMemoryCli(['--check']) as { exitCode: number; output: { gate: { pass: boolean; violations: string[] } } };
+    expect(gated.output.gate).toEqual({ pass: true, violations: [] }); expect(gated.exitCode).toBe(0);
     const result = benchmarkMemoryCli(['--json']) as { exitCode: number; output: { protocol: string; source: { observation: string } } };
     expect(result.exitCode).toBe(0);
     expect(result.output.protocol).toBe('phantom-memory-benchmark-v2');
