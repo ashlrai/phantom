@@ -11,6 +11,13 @@ const testTimeoutMs = Number.isFinite(configuredTestTimeoutMs) &&
   configuredTestTimeoutMs >= 1_000 && configuredTestTimeoutMs <= 60_000
   ? Math.floor(configuredTestTimeoutMs)
   : 5_000;
+// The unit lane's fork cap. A single-shard CI qualification run sets 2 so one
+// shard uses the two workers a local full run spreads over two shards.
+const configuredUnitWorkers = Number(process.env['ASHLR_VITEST_UNIT_MAX_WORKERS']);
+const unitMaxWorkers = Number.isInteger(configuredUnitWorkers) &&
+  configuredUnitWorkers >= 1 && configuredUnitWorkers <= 4
+  ? configuredUnitWorkers
+  : 4;
 
 // Shared exclude list: stray scaffolds and build output must never be collected
 // by either lane. See the `projects` comment below for why `test.include` is
@@ -81,7 +88,7 @@ export default defineConfig({
           // heavy git-bound tests flake with timeouts — non-deterministically,
           // and only under load. A small fixed cap keeps meaningful
           // parallelism without the oversubscription.
-          maxWorkers: 4,
+          maxWorkers: unitMaxWorkers,
           // Windows hosted runners execute the same hermetic durability
           // fixtures several times slower than local/POSIX hosts. CI injects a
           // bounded platform-specific default for both test bodies and
