@@ -169,6 +169,37 @@ of withheld claims, and asks the reader to check before relying on it. The
 contested text itself never appears. These lines count toward the byte budget;
 if one does not fit, the receipt records `conflict-notice-budget`.
 
+### Facts written by independent agents
+
+Agents write memory without coordinating. They pick their own subject and slot
+keys, restate each other, cite weak evidence and leave facts behind when code
+changes. The pack applies three rules after ranking:
+
+- **Checkable evidence first.** A source is checkable when its locator starts
+  with `file:`, `commit:` or `command-output:` and its quote is more than the
+  fact restated. Any other source is unverified, such as `chat:`,
+  `inference:` or a self-quote. Among relevant facts, checkable ones rank
+  first. An unverified fact is withheld as `weaker-evidence` when a checkable
+  fact scores at least as well, and it is still served when nothing checkable
+  does.
+- **One copy of a fact.** A candidate is withheld as `duplicate` of an
+  already selected fact in two cases. Either both cite the same source
+  (locator and digest) and share a topic stem, or at least half of the smaller
+  fact's topic stems appear in the other and one fact's value tokens (numbers,
+  versions, paths, dotted or slashed identifiers) are a subset of the other's.
+- **Changed sources.** `buildMemoryContextPack(snapshot, query, { changedSourceIds })`
+  takes the source IDs whose quote the caller no longer finds at their locator.
+  Facts citing such a source are withheld as `source-changed`. When any of them
+  touch the query, the pack adds one line saying how many were withheld. The
+  argument defaults to `{ changedSourceIds: [] }`. Any other shape is refused
+  with `invalid-options`. The pack itself reads no files; the caller does the
+  check.
+
+A contradiction between facts written under different keys is not detected:
+nothing in the history connects them. A write that content screening refuses
+makes the whole snapshot invalid, so the write path should screen each write
+before it is stored.
+
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt
 and item metadata are separate bounded outputs, not included in that text

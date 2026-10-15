@@ -4,12 +4,16 @@
  * corpus by measuring retrieval ranking, contradiction handling, temporal correctness, withdrawal,
  * context-pack token efficiency and multi-step task completion over authored synthetic histories.
  * "Task" means every step of a scripted session got the evidence it needed; no model executes a task.
+ * "Agent writes" replays histories written the way independent agents write memory (restated, unsuperseded, weakly cited,
+ * left behind by code changes) and asks whether the pack serves one well-cited, current answer.
  */
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../authority/canonical-json.js';
-import { buildMemoryContextPack } from '../memory/pack.js';
+import { buildMemoryContextPack, type MemoryPackOptions } from '../memory/pack.js';
 import { memoryScopeVisible } from '../memory/scope.js';
-import { memoryUtf8Bytes } from '../memory/validate.js';
+import { memoryUtf8Bytes, validMemoryPackQuery, validMemorySnapshot } from '../memory/validate.js';
+import { MEMORY_BENCHMARK_AGENT_WRITES_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, type MemoryBenchmarkAgentScenario,
+  type MemoryBenchmarkAgentWriteKind } from './memory-benchmark-agent-writes.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery, MemorySnapshot } from '../memory/types.js';
 import { buildFlatLatestMemoryDiagnostic } from './memory-evaluation-baseline.js';
 import { MEMORY_BENCHMARK_ABSENT_QUERIES, MEMORY_BENCHMARK_FACTS, type MemoryBenchmarkFact } from './memory-benchmark-catalog.js';
@@ -18,10 +22,12 @@ import { MEMORY_BENCHMARK_HELD_OUT, MEMORY_BENCHMARK_HELD_OUT_ABSENT, MEMORY_BEN
   type MemoryBenchmarkHeldOutFact } from './memory-benchmark-heldout.js';
 
 export const MEMORY_BENCHMARK_PROTOCOL = 'phantom-memory-benchmark-v2';
-export const MEMORY_BENCHMARK_DIMENSIONS = ['retrieval', 'contradiction', 'temporal', 'withdrawal', 'task'] as const;
+export const MEMORY_BENCHMARK_DIMENSIONS = ['retrieval', 'contradiction', 'temporal', 'withdrawal', 'task', 'agent-writes'] as const;
+export const MEMORY_BENCHMARK_AGENT_WRITE_KINDS = ['near-duplicate', 'silent-contradiction', 'stale-code', 'weak-evidence'] as const;
 export type MemoryBenchmarkDimension = typeof MEMORY_BENCHMARK_DIMENSIONS[number];
 /** held-out and unseen queries come from separately written sets that ranking must not be tuned against; unseen was written after the vocabulary froze. */
-export type MemoryBenchmarkDifficulty = 'lexical' | 'inflected' | 'paraphrase' | 'absent' | 'held-out' | 'held-out-absent' | 'unseen' | 'unseen-absent' | 'fresh' | 'fresh-absent' | 'second-fresh' | 'second-fresh-absent';
+export type MemoryBenchmarkDifficulty = 'lexical' | 'inflected' | 'paraphrase' | 'absent' | 'held-out' | 'held-out-absent' | 'unseen' | 'unseen-absent' | 'fresh' | 'fresh-absent' | 'second-fresh' | 'second-fresh-absent'
+  | 'writes-tuning' | 'writes-validation';
 export interface MemoryBenchmarkExpectation {
   status?: MemoryContextPack['status'];
   /** Fact texts that must reach the model-facing pack text. */
@@ -30,12 +36,20 @@ export interface MemoryBenchmarkExpectation {
   forbidden: string[];
   /** Same-scope slots with unresolved conflicts the pack should tell the reader about. */
   conflicts?: Array<{ subject: string; slot: string }>;
+  /** Groups of interchangeable fact texts: at least one of each non-empty group must reach the pack. */
+  anyOf?: string[][];
+  /** Groups of fact texts that say the same thing: serving more than one of a group wastes budget and fails the step. */
+  duplicates?: string[][];
+  /** The honest answer must say that recorded facts disagree. */
+  disagreement?: boolean;
 }
-export interface MemoryBenchmarkStep { snapshot: MemorySnapshot; query: MemoryPackQuery; expect: MemoryBenchmarkExpectation }
+export interface MemoryBenchmarkStep { snapshot: MemorySnapshot; query: MemoryPackQuery; options?: MemoryPackOptions; expect: MemoryBenchmarkExpectation }
 export interface MemoryBenchmarkCase {
   id: string; dimension: MemoryBenchmarkDimension; difficulty?: MemoryBenchmarkDifficulty; why: string;
   /** Set when the expected outcome depends on an open owner decision; reported, never scored. */
   pendingDecision?: string;
+  /** Agent-write cases: which write hazard, and whether a write or the question trips content screening (the pack is then refused). */
+  writeKind?: MemoryBenchmarkAgentWriteKind; screened?: boolean;
   steps: MemoryBenchmarkStep[];
 }
 
@@ -279,16 +293,53 @@ function taskCases(): MemoryBenchmarkCase[] {
     ]),
   ];
 }
+/**
+ * Each question sees the writes made up to its day, all approved (the autonomous worst case: nobody reviews agent writes).
+ * Locators carry the source kind as a prefix (file:, commit:, command-output:, chat:, inference:). The caller's source check
+ * is replayed from the scenario's code changes: a cited file line whose quote is gone after the latest change has changed.
+ */
+function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 'tuning' | 'validation'): MemoryBenchmarkCase[] {
+  return set.flatMap(scenario => scenario.questions.map((question, index): MemoryBenchmarkCase => {
+    const writes = scenario.writes.filter(write => write.day <= question.day).sort((a, b) => a.day - b.day || (a.id < b.id ? -1 : 1));
+    const events = new Map<string, MemoryFactEvent>();
+    for (const write of writes) {
+      const at = benchDay(write.day);
+      const target = write.supersedes.map(id => events.get(id)).find(Boolean);
+      events.set(write.id, { schemaVersion: 1, eventId: write.id, factId: target ? target.factId : write.id + ':fact', revision: target ? target.revision + 1 : 1,
+        kind: 'fact', projectId: PROJECT, ownerId: OWNER, audienceIds: [AUDIENCE], subjectKey: write.subject, slotKey: write.slot, text: write.text,
+        sourceRefs: [{ id: write.id + ':source', digest: sha(write.source.quote), locator: `${write.source.kind}:${write.source.locator}`.slice(0, 256),
+          quote: write.source.quote, observedAt: at }],
+        observedAt: at, validFrom: at, validUntil: null, recordedAt: at, reviewState: 'approved', reviewedAt: at, reviewerDecisionId: write.id + ':review',
+        supersedes: write.supersedes.filter(id => events.has(id)), derivedFrom: [], tombstones: [], authority: false });
+    }
+    const latest = new Map<string, string>();
+    for (const change of [...scenario.codeChanges ?? []].filter(change => change.day <= question.day).sort((a, b) => a.day - b.day)) latest.set(change.locator, change.after);
+    const changedSourceIds = writes.filter(write => write.source.kind === 'file' && latest.has(write.source.locator)
+      && !latest.get(write.source.locator)!.includes(write.source.quote.trim())).map(write => write.id + ':source');
+    const text = (id: string): string => events.get(id)?.text ?? scenario.writes.find(write => write.id === id)!.text;
+    const snapshot = benchSnapshot(`${label}:${scenario.id}`, [...events.values()], benchDay(question.day));
+    const query = benchQuery(question.query, { at: benchDay(question.day) });
+    const screened = !validMemorySnapshot(snapshot) || !validMemoryPackQuery(query);
+    return { id: `agent-writes:${label}:${scenario.id}:${index + 1}`, dimension: 'agent-writes', difficulty: `writes-${label}`, writeKind: scenario.kind,
+      ...(screened ? { screened } : {}), why: scenario.why,
+      steps: [{ snapshot, query, options: { changedSourceIds },
+        expect: { required: [], forbidden: question.expect.forbidden.map(text), anyOf: question.expect.anyOf.map(group => group.map(text)),
+          duplicates: question.expect.duplicates.map(group => group.map(text)), disagreement: question.expect.contradiction } }] };
+  }));
+}
 export function memoryBenchmarkCases(): MemoryBenchmarkCase[] {
-  return [...retrievalCases(), ...contradictionCases(), ...temporalCases(), ...withdrawalCases(), ...taskCases()];
+  return [...retrievalCases(), ...contradictionCases(), ...temporalCases(), ...withdrawalCases(), ...taskCases(),
+    ...agentWriteCases(MEMORY_BENCHMARK_AGENT_WRITES_TUNING, 'tuning'), ...agentWriteCases(MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, 'validation')];
 }
 
 // ---- scoring ----
-export type MemoryBenchmarkBuilder = (snapshot: unknown, query: unknown) => MemoryContextPack;
+export type MemoryBenchmarkBuilder = (snapshot: unknown, query: unknown, options?: unknown) => MemoryContextPack;
 export interface MemoryBenchmarkStepResult {
   pass: boolean; failures: string[]; status: MemoryContextPack['status'];
   requiredFound: number; requiredTotal: number; firstRequiredRank: number | null; extraneousItems: number; forbiddenLeaks: number;
   conflictsSurfaced: number; conflictsTotal: number; packBytes: number; requiredTextBytes: number; receiptForeignEventIds: number;
+  /** Facts served beyond the first from a group that says the same thing. */
+  duplicateWaste: number;
 }
 export interface MemoryBenchmarkCaseResult {
   id: string; dimension: MemoryBenchmarkDimension; difficulty: MemoryBenchmarkDifficulty | null; pendingDecision: string | null;
@@ -301,11 +352,15 @@ export interface MemoryBenchmarkSummary {
   extraneousPerStep: number; forbiddenLeaks: number; conflictsSurfaced: number; conflictsTotal: number;
   /** Bytes of required fact text divided by pack bytes, over passing ready steps. Higher is leaner. */
   payloadRatio: number | null; meanPackBytes: number; receiptForeignEventIds: number;
+  /** Agent writes: steps that served a wrong or stale fact, and facts served beyond the first of a duplicate group. */
+  stepsWithForbidden: number; duplicateWaste: number;
 }
 export interface MemoryBenchmarkArmReport {
   arm: string; overall: MemoryBenchmarkSummary;
   byDimension: Record<MemoryBenchmarkDimension, MemoryBenchmarkSummary>;
   retrievalByDifficulty: Record<MemoryBenchmarkDifficulty, MemoryBenchmarkSummary>;
+  /** Agent-write cases by set (tuning was read while choosing fixes; validation was not) and hazard. Screened histories count as failures. */
+  agentWrites: Record<'tuning' | 'validation', Record<MemoryBenchmarkAgentWriteKind | 'screened', MemoryBenchmarkSummary>>;
   pendingDecisions: Array<{ id: string; question: string; observedStatus: string; servedForbidden: boolean }>;
   cases: MemoryBenchmarkCaseResult[];
 }
@@ -317,7 +372,7 @@ const quoted = (text: string): string => JSON.stringify(text).slice(1, -1).repla
 const round = (value: number): number => Math.round(value * 10_000) / 10_000;
 function scoreStep(step: MemoryBenchmarkStep, builder: MemoryBenchmarkBuilder): MemoryBenchmarkStepResult {
   const inputs = JSON.parse(canonicalJson({ snapshot: step.snapshot, query: step.query })) as { snapshot: unknown; query: unknown };
-  const pack = builder(inputs.snapshot, inputs.query);
+  const pack = step.options ? builder(inputs.snapshot, inputs.query, JSON.parse(canonicalJson(step.options))) : builder(inputs.snapshot, inputs.query);
   const failures: string[] = [];
   const has = (text: string): boolean => pack.text.includes(quoted(text));
   const byId = new Map(step.snapshot.events.map(event => [event.eventId, event]));
@@ -332,13 +387,18 @@ function scoreStep(step: MemoryBenchmarkStep, builder: MemoryBenchmarkBuilder): 
   if (found.length < required.length) failures.push('missing-required');
   if (leaks) failures.push('forbidden-text');
   if (pack.bytes > step.query.maxBytes || pack.items.length > step.query.maxFacts) failures.push('budget');
+  if ((step.expect.anyOf ?? []).some(group => group.length > 0 && !group.some(has))) failures.push('missing-any-of');
+  const duplicateWaste = (step.expect.duplicates ?? []).reduce((sum, group) => sum + Math.max(0, group.filter(has).length - 1), 0);
+  if (duplicateWaste) failures.push('duplicate');
+  // A disagreement is surfaced only by a notice line; a cross-key contradiction has no slot to name.
+  if (step.expect.disagreement && !/^(Unresolved conflict|Recorded facts disagree)/m.test(pack.text)) failures.push('disagreement-not-surfaced');
   return { pass: !failures.length, failures, status: pack.status, requiredFound: found.length, requiredTotal: required.length,
     firstRequiredRank: ranks.length ? Math.min(...ranks) : null, extraneousItems: itemTexts.filter(text => !required.includes(text)).length,
     forbiddenLeaks: leaks, conflictsSurfaced: surfaced, conflictsTotal: conflicts.length, packBytes: pack.bytes,
     requiredTextBytes: found.reduce((sum, text) => sum + memoryUtf8Bytes(text), 0),
     receiptForeignEventIds: pack.receipt.exclusions.filter(exclusion => {
       const event = byId.get(exclusion.eventId); return Boolean(event) && !memoryScopeVisible(event!, step.query);
-    }).length };
+    }).length, duplicateWaste };
 }
 function summarize(results: MemoryBenchmarkCaseResult[]): MemoryBenchmarkSummary {
   const scored = results.filter(result => !result.pendingDecision);
@@ -356,11 +416,13 @@ function summarize(results: MemoryBenchmarkCaseResult[]): MemoryBenchmarkSummary
     extraneousPerStep: mean(steps.map(step => step.extraneousItems)), forbiddenLeaks: sum(steps.map(step => step.forbiddenLeaks)),
     conflictsSurfaced: sum(steps.map(step => step.conflictsSurfaced)), conflictsTotal: sum(steps.map(step => step.conflictsTotal)),
     payloadRatio: lean.length ? round(sum(lean.map(step => step.requiredTextBytes)) / sum(lean.map(step => step.packBytes))) : null,
-    meanPackBytes: mean(steps.map(step => step.packBytes)), receiptForeignEventIds: sum(steps.map(step => step.receiptForeignEventIds)) };
+    meanPackBytes: mean(steps.map(step => step.packBytes)), receiptForeignEventIds: sum(steps.map(step => step.receiptForeignEventIds)),
+    stepsWithForbidden: steps.filter(step => step.forbiddenLeaks > 0).length, duplicateWaste: sum(steps.map(step => step.duplicateWaste)) };
 }
 export function runMemoryBenchmark(arms: Array<{ arm: string; builder: MemoryBenchmarkBuilder }> = [
   { arm: 'governed', builder: buildMemoryContextPack }, { arm: 'flat-latest-record-diagnostic', builder: buildFlatLatestMemoryDiagnostic }]): MemoryBenchmarkReport {
   const cases = memoryBenchmarkCases();
+  const byCase = new Map(cases.map(entry => [entry.id, entry]));
   const report: MemoryBenchmarkReport = { schemaVersion: 1, protocol: MEMORY_BENCHMARK_PROTOCOL,
     casesDigest: 'sha256_' + createHash('sha256').update(canonicalJson(cases), 'utf8').digest('hex'), caseCount: cases.length,
     modelTaskSuccess: 'not-evaluated', authority: false, arms: [] };
@@ -373,8 +435,11 @@ export function runMemoryBenchmark(arms: Array<{ arm: string; builder: MemoryBen
     const pick = (filter: (result: MemoryBenchmarkCaseResult) => boolean) => summarize(results.filter(filter));
     report.arms.push({ arm, overall: pick(() => true),
       byDimension: Object.fromEntries(MEMORY_BENCHMARK_DIMENSIONS.map(dimension => [dimension, pick(result => result.dimension === dimension)])) as MemoryBenchmarkArmReport['byDimension'],
-      retrievalByDifficulty: Object.fromEntries((['lexical', 'inflected', 'paraphrase', 'absent', 'held-out', 'held-out-absent', 'unseen', 'unseen-absent', 'fresh', 'fresh-absent', 'second-fresh', 'second-fresh-absent'] as const)
+      retrievalByDifficulty: Object.fromEntries((['lexical', 'inflected', 'paraphrase', 'absent', 'held-out', 'held-out-absent', 'unseen', 'unseen-absent', 'fresh', 'fresh-absent', 'second-fresh', 'second-fresh-absent', 'writes-tuning', 'writes-validation'] as const)
         .map(difficulty => [difficulty, pick(result => result.difficulty === difficulty)])) as MemoryBenchmarkArmReport['retrievalByDifficulty'],
+      agentWrites: Object.fromEntries((['tuning', 'validation'] as const).map(label => [label, Object.fromEntries(
+        [...MEMORY_BENCHMARK_AGENT_WRITE_KINDS, 'screened' as const].map(kind => [kind, pick(result => result.difficulty === `writes-${label}`
+          && (kind === 'screened' ? Boolean(byCase.get(result.id)!.screened) : byCase.get(result.id)!.writeKind === kind))]))])) as MemoryBenchmarkArmReport['agentWrites'],
       pendingDecisions: results.filter(result => result.pendingDecision).map(result => ({ id: result.id, question: result.pendingDecision!,
         observedStatus: result.steps.map(step => step.status).join(','), servedForbidden: result.steps.some(step => step.forbiddenLeaks > 0) })),
       cases: results });

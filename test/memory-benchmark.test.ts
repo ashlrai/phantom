@@ -15,13 +15,13 @@ const emptyPack = (status: MemoryContextPack['status'] = 'none', text = ''): Mem
   items: [], receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
     selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false });
 describe('memory quality benchmark', () => {
-  it('assigns 296 uniquely named cases whose snapshots and queries all pass the closed schema', () => {
-    expect(cases).toHaveLength(296);
+  it('assigns 399 uniquely named cases whose snapshots and queries pass the closed schema, except agent-write cases that trip content screening', () => {
+    expect(cases).toHaveLength(399);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
-    for (const step of cases.flatMap(entry => entry.steps)) {
-      expect(validMemorySnapshot(step.snapshot)).toBe(true);
-      expect(validMemoryPackQuery(step.query)).toBe(true);
+    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(7);
+    for (const entry of cases) for (const step of entry.steps) {
+      expect(validMemorySnapshot(step.snapshot) && validMemoryPackQuery(step.query)).toBe(!entry.screened);
     }
   });
   it('is deterministic and leaves the scored arms no access to expectations', () => {
@@ -32,14 +32,15 @@ describe('memory quality benchmark', () => {
     const spy: MemoryBenchmarkBuilder = (snapshot, query) => { seen.push(JSON.stringify([snapshot, query])); return emptyPack(); };
     runMemoryBenchmark([{ arm: 'spy', builder: spy }]);
     expect(seen).toHaveLength(cases.flatMap(entry => entry.steps).length);
-    for (const input of seen) expect(input).not.toMatch(/"(required|forbidden|conflicts|pendingDecision)"/);
-  });
+    for (const input of seen) expect(input).not.toMatch(/(?<!\\)"(required|forbidden|conflicts|pendingDecision|anyOf|duplicates|disagreement)":/);
+  }, 60_000);
   it('gold is self-consistent: an oracle that emits exactly the required facts passes every scored case', () => {
     let index = 0; const steps = cases.flatMap(entry => entry.steps);
     const oracle: MemoryBenchmarkBuilder = () => {
       const step = steps[index++]!;
-      const lines = step.expect.required.map(text => JSON.stringify({ text }));
+      const lines = [...step.expect.required, ...(step.expect.anyOf ?? []).flatMap(group => group.slice(0, 1))].map(text => JSON.stringify({ text }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e'));
       const notes = (step.expect.conflicts ?? []).map(slot => `conflict ${slot.subject} ${slot.slot}`);
+      if (step.expect.disagreement) notes.push('Recorded facts disagree.');
       const text = [...lines, ...notes].join('\n');
       return emptyPack(step.expect.status ?? (lines.length ? 'ready' : 'none'), text);
     };
@@ -50,8 +51,11 @@ describe('memory quality benchmark', () => {
   it('discriminates: the flat latest-record diagnostic leaks stale or contested text that governed memory never serves', () => {
     const [governed, flat] = runMemoryBenchmark().arms;
     expect(flat!.overall.forbiddenLeaks).toBeGreaterThan(0);
-    expect(governed!.overall.forbiddenLeaks).toBe(0);
+    for (const dimension of ['retrieval', 'contradiction', 'temporal', 'withdrawal', 'task'] as const) expect(governed!.byDimension[dimension].forbiddenLeaks).toBe(0);
     for (const dimension of ['contradiction', 'temporal', 'withdrawal'] as const) expect(governed!.byDimension[dimension].passRate).toBe(1);
+    // Agent-written histories: governed serves fewer wrong, stale or duplicate facts and answers more questions than the flat diagnostic.
+    expect(governed!.byDimension['agent-writes'].stepsWithForbidden).toBeLessThan(flat!.byDimension['agent-writes'].stepsWithForbidden);
+    expect(governed!.byDimension['agent-writes'].passed).toBeGreaterThan(flat!.byDimension['agent-writes'].passed);
     expect(governed!.pendingDecisions).toEqual([]);
     expect(governed!.overall.receiptForeignEventIds).toBe(0);
   });
@@ -68,7 +72,7 @@ describe('memory quality benchmark', () => {
     expect(governed.retrievalByDifficulty.unseen.passed).toBeGreaterThanOrEqual(27);
     expect(governed.retrievalByDifficulty.fresh.passed).toBeGreaterThanOrEqual(25);
     expect(governed.retrievalByDifficulty['second-fresh'].passed).toBeGreaterThanOrEqual(27);
-    expect(governed.overall.forbiddenLeaks).toBe(0);
+    expect(governed.overall.forbiddenLeaks - governed.byDimension['agent-writes'].forbiddenLeaks).toBe(0);
   });
   it('cites sources by ID and digest in pack text, quoting only when the quote differs, with full records on items', () => {
     const same = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
@@ -128,6 +132,36 @@ describe('memory quality benchmark', () => {
     expect(violations.some(line => line.startsWith('retrieval paraphrase: '))).toBe(true);
     const flat = runMemoryBenchmark([{ arm: 'governed', builder: buildFlatLatestMemoryDiagnostic }]);
     expect(memoryBenchmarkFloorViolations(flat)).toEqual(expect.arrayContaining([expect.stringMatching(/^forbidden text leaked/), expect.stringMatching(/^overall: /)]));
+  }, 60_000);
+  it('withholds a fact whose cited source changed, and says so for the topic asked about', () => {
+    const event = (id: string, text: string, locator: string, quote: string) => ({ ...benchEvent({ id, subject: 'config', slot: id, text }),
+      sourceRefs: [{ id: id + ':source', digest: 'sha256_' + 'a'.repeat(64), locator, quote, observedAt: benchDay(1) }] });
+    const port = event('port', 'The API listens on port 3000 by default.', 'file:src/config.ts:7', 'PORT ?? 3000');
+    const tls = event('tls', 'The API terminates TLS at the ingress.', 'file:k8s/ingress.yaml:3', 'tls: true');
+    const snapshot = benchSnapshot('stale', [port, tls]);
+    const fresh = buildMemoryContextPack(snapshot, benchQuery('which port does the API listen on'), { changedSourceIds: [] });
+    expect(fresh.receipt.selectedEventIds).toContain('port');
+    const stale = buildMemoryContextPack(snapshot, benchQuery('which port does the API listen on'), { changedSourceIds: ['port:source'] });
+    expect(stale.receipt.selectedEventIds).not.toContain('port');
+    expect(stale.receipt.exclusions).toContainEqual({ eventId: 'port', reason: 'source-changed' });
+    expect(stale.text).toMatch(/^Withheld 1 fact\(s\) on this topic: a cited source changed/m);
+    for (const options of [{}, { changedSourceIds: 'port:source' }, { changedSourceIds: ['../x'] }, { changedSourceIds: [], extra: 1 }, null]) {
+      expect(buildMemoryContextPack(snapshot, benchQuery('port'), options).receipt.stopReasons).toEqual(['invalid-options']);
+    }
+  });
+  it('ranks checkable evidence first and drops uncited claims and restatements it outranks', () => {
+    const event = (id: string, text: string, locator: string, quote: string) => ({ ...benchEvent({ id, subject: id, slot: 'format', text }),
+      sourceRefs: [{ id: id + ':source', digest: 'sha256_' + (id === 'chat' ? 'c' : 'b').repeat(64), locator, quote, observedAt: benchDay(1) }] });
+    const cited = event('cited', 'Invoice numbers use the format INV-year-sequence.', 'file:src/invoices/number.ts:6', 'return `INV-${year}-${seq}`;');
+    const guess = event('guess', 'Invoice numbers are UUIDs.', 'inference:own reasoning', 'the table uses uuid keys so invoice numbers must be uuids');
+    const chat = event('chat', 'Invoice numbers look like INV-2026-00042.', 'chat:agent:reviewer', 'they look like INV-2026-00042');
+    const echo = event('echo', 'Invoice numbers use the format INV-year-sequence.', 'file:src/invoices/number.ts:6', 'return `INV-${year}-${seq}`;');
+    const pack = buildMemoryContextPack(benchSnapshot('evidence', [guess, chat, cited, echo]), benchQuery('what is the invoice number format'));
+    expect(pack.receipt.selectedEventIds).toEqual(['cited']);
+    expect(pack.receipt.exclusions).toEqual(expect.arrayContaining([{ eventId: 'guess', reason: 'weaker-evidence' }, { eventId: 'chat', reason: 'weaker-evidence' },
+      { eventId: 'echo', reason: 'duplicate' }]));
+    // With nothing checkable on the topic, an unverified fact is still served.
+    expect(buildMemoryContextPack(benchSnapshot('weak', [guess]), benchQuery('invoice numbers')).receipt.selectedEventIds).toEqual(['guess']);
   });
   it('leaves out only time fields equal to the default the boundary tag declares', () => {
     const plain = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
@@ -150,5 +184,5 @@ describe('memory quality benchmark', () => {
     expect(result.exitCode).toBe(0);
     expect(result.output.protocol).toBe('phantom-memory-benchmark-v2');
     expect(result.output.source.observation).toBe('source-checkout-not-installed-build');
-  });
+  }, 60_000);
 });

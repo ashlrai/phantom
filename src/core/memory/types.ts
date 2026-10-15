@@ -18,7 +18,8 @@ export interface MemoryPackQuery { schemaVersion: 1; projectId: string; ownerId:
   time: MemoryTime; knownAt: string | null; query: string; maxBytes: number; maxFacts: number; authority: false }
 export type MemoryExclusionReason = 'scope' | 'unreviewed' | 'not-recorded' | 'unknown-validity' | 'not-yet-valid' | 'expired'
   | 'tombstone-event' | 'tombstoned' | 'superseded' | 'invalid-lineage' | 'cyclic-lineage' | 'revision-conflict'
-  | 'conflict' | 'withdrawn' | 'revoked' | 'dependency-ineligible' | 'irrelevant' | 'byte-budget' | 'fact-budget';
+  | 'conflict' | 'withdrawn' | 'revoked' | 'dependency-ineligible' | 'irrelevant' | 'byte-budget' | 'fact-budget'
+  | 'source-changed' | 'duplicate' | 'weaker-evidence';
 export interface MemoryExclusion { eventId: string; reason: MemoryExclusionReason }
 export interface MemoryTemporalView { eligible: MemoryFactEvent[]; exclusions: MemoryExclusion[] }
 export interface MemoryPackItem { eventId: string; factId: string; revision: number; score: number; sourceRefs: MemorySourceRef[] }

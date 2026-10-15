@@ -148,7 +148,8 @@ describe('pure governed memory foundation', () => {
     expect(JSON.parse(framed.text.split('\n')[2]!).text).toBe(poison.text);
   });
   it('counts framing in exact pack boundaries, reports fact limits and deterministic rank/order/replay', () => {
-    const a = event(); const b = event({ eventId: 'ev_b', factId: 'b', slotKey: 'other', text: 'build project tests' });
+    const a = event(); const b = event({ eventId: 'ev_b', factId: 'b', slotKey: 'other', text: 'build project tests',
+      sourceRefs: [{ id: 'src_b', digest: 'sha256_' + 'b'.repeat(64), locator: 'line:2', quote: 'build project tests', observedAt: early }] });
     const full = buildMemoryContextPack(snapshot([a]), query());
     expect(ids(buildMemoryContextPack(snapshot([a]), query({ maxBytes: full.bytes })))).toEqual(['ev_a']);
     expect(ids(buildMemoryContextPack(snapshot([a]), query({ maxBytes: full.bytes - 1 })))).toEqual([]);

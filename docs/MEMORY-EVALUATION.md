@@ -63,7 +63,7 @@ npm run --silent bench:memory -- --check           # regression gate: exit 1 bel
 
 CI runs `--check` on one Linux job. It fails when the governed arm drops below the floors in `src/core/local-eval/memory-benchmark-floors.ts`, which hold the current numbers: cases passed per dimension and per retrieval set (paraphrase recall and unanswerable-left-empty alike), no forbidden text, no out-of-scope receipt IDs, every contested slot mentioned, and no pack over its byte or fact budget. Case counts must match too, so a set cannot be shrunk to pass. Raise a floor in the change that raises the measurement.
 
-It has 296 cases and 305 steps in five dimensions:
+It has 399 cases and 408 steps in six dimensions:
 
 | Dimension | Cases | What it measures |
 | --- | --- | --- |
@@ -71,6 +71,7 @@ It has 296 cases and 305 steps in five dimensions:
 | Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
 | Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
 | Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
+| Agent writes | 103 | Questions over histories written the way independent agents write memory: near-duplicates under different keys, newer facts that contradict older ones without superseding them, facts whose cited code later changed, and weakly cited claims next to cited ones. Two sets of 32 scenarios were written by separate agents. A step passes when it serves one fact from each group that answers the question, with no wrong or stale fact, no second copy of the same fact, and a notice when the question needs one. |
 | Task | 8 | Multi-step scripted sessions (fix CI, ship a release, onboard, migrate a database, audit, cross-project work, tight budget, paraphrase). A task passes only when every step's pack has every required fact and no forbidden one. No model executes the task. |
 
 Each step passes when the expected status matches, every required fact text appears in the model-facing pack text, no forbidden text (stale, withdrawn, contested, deleted or foreign) appears, and the budget holds. The report also gives recall, rank-1 rate and mean reciprocal rank, extraneous facts per step, whether a contested slot is mentioned in the pack text, the payload ratio (required fact bytes over pack bytes) and the number of out-of-scope event IDs in receipts. A case whose expected outcome depends on an open owner decision is reported under `pendingDecisions` and left out of the scores; none is pending now.
@@ -132,3 +133,29 @@ The protocol was set before measuring: tune thresholds on the authored sets and 
 - A union of the two.
 
 None beat the lexical ranker even on the tuning sets. Static vectors separate answerable from unanswerable questions only weakly (AUC about 0.65), so nothing ships. A real signal needs a contextual encoder through the local Ollama path (for example `all-minilm` or `bge-small`). It would pass the pack precomputed similarities, so the pack stays pure, and CI would read committed vectors keyed by model digest. The same protocol would then be rerun.
+
+### Facts written by agents
+
+Autonomous agents hurt memory most on the write side. Two separate agents each wrote 32 scenarios of agent-authored writes for fictional services, 8 for each hazard. Every write is approved, the worst case where nobody reviews agent writes. The fixes in `pack.ts` were chosen while reading the first set (tuning). The second set (validation) was scored only after they were frozen; the one change made after that kept its numbers identical and only made the same-citation rule stricter (it now also requires a shared topic stem).
+
+| Governed, questions passed | Tuning: before | Tuning: after | Validation: before | Validation: after |
+| --- | --- | --- | --- | --- |
+| Near-duplicates | 1/10 | 5/10 | 6/16 | 8/16 |
+| Silent contradictions | 0/8 | 1/8 | 1/10 | 2/10 |
+| Stale code | 4/14 | 10/14 | 8/14 | 11/14 |
+| Weak evidence | 1/16 | 13/16 | 3/15 | 12/15 |
+| All | 6/48 | 29/48 | 18/55 | 33/55 |
+| Questions served a wrong or stale fact | 24 | 4 | 22 | 9 |
+| Duplicate facts served | 16 | 4 | 15 | 8 |
+
+Three rules do the work, all after ranking:
+- Checkable evidence (`file:`, `commit:` or `command-output:` locators with a real quote) ranks first and withholds unverified claims it outscores.
+- Restatements of a selected fact are withheld as duplicates.
+- Facts whose cited source the caller reports as changed are withheld, with a notice line.
+
+What remains:
+- **Cross-key contradictions.** A newer fact under different keys that contradicts an older one is still served next to it in 8 of 18 questions. A value-disagreement detector was tried on the tuning set and gained at most one question, so it was not shipped.
+- **Over-cautious source checks.** A cited line that changes in a way that leaves the fact true still withholds the fact (2 tuning and 2 validation answers lost). The check compares quotes, not meaning.
+- **Screening refusals.** Six histories hold a write that trips content screening, for example "authorization request header" or a local database URL. One question trips it too ("access token"). The pack refuses all seven, so screening belongs on each write, before it is stored.
+
+`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 4 tuning, 9 validation), or more duplicates (4, 8). Every other dimension must still leak nothing.
