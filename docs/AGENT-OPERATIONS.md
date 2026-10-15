@@ -94,6 +94,12 @@ and `ecosystem [--write]`.
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
 up the target config first and is idempotent.
 
+Use one registration command, not both. `phm mcp install claude` also writes
+`~/.claude.json`, and in 3.29.15 and earlier it registers the gateway as a
+second server, `ashlr`, with an absolute command path. Running both gives the
+agent every gateway tool twice. If that happened, delete one of the two entries
+from `mcpServers`.
+
 | Client | Default config | How `wire` writes it |
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | JSON merge into `mcpServers` |
