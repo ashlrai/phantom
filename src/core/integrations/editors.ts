@@ -23,6 +23,7 @@ import {
   openSync,
   readSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeSync,
   type BigIntStats,
@@ -30,7 +31,7 @@ import {
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { fsyncDirectory } from '../util/durability.js';
 
@@ -711,11 +712,70 @@ function wireJsonEditor(
   };
 }
 
-export function detectEditors(): string[] {
+/** CLI binaries whose presence on PATH means the editor is installed. */
+const EDITOR_BINARIES: Record<EditorTarget, string> = {
+  claude: 'claude',
+  codex: 'codex',
+  cursor: 'cursor',
+};
+
+export interface DetectEditorsOptions {
+  /** Home directory to probe for config paths (defaults to os.homedir()). */
+  home?: string;
+  /** PATH string to scan for editor binaries (defaults to process.env.PATH). */
+  pathEnv?: string;
+  /** Platform used for executable suffixes (defaults to process.platform). */
+  platform?: NodeJS.Platform;
+}
+
+function isRegularFile(candidate: string): boolean {
+  try {
+    return statSync(candidate, { throwIfNoEntry: false })?.isFile() ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Synchronous, spawn-free PATH lookup. Only absolute PATH entries are
+ * considered so detection never depends on the current working directory.
+ */
+function binaryOnPath(binary: string, pathEnv: string, platform: NodeJS.Platform): boolean {
+  const suffixes = platform === 'win32' ? ['', '.cmd', '.exe'] : [''];
+  for (const dir of pathEnv.split(platform === 'win32' ? ';' : ':')) {
+    if (!dir || !isAbsolute(dir)) continue;
+    for (const suffix of suffixes) {
+      if (isRegularFile(join(dir, binary + suffix))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Detect installed editors by config directory/file OR by their CLI binary on
+ * PATH (a fresh `claude` install has no ~/.claude yet). Order is stable
+ * (claude, codex, cursor) and duplicate-free. Detection never writes; callers
+ * that wire go through wireEditor's backup-first path.
+ */
+export function detectEditors(opts: DetectEditorsOptions = {}): string[] {
+  const home = opts.home ?? HOME;
+  const platform = opts.platform ?? process.platform;
+  const pathEnv = opts.pathEnv ?? process.env['PATH'] ?? process.env['Path'] ?? '';
+  const detectionPaths: Record<EditorTarget, string[]> =
+    opts.home === undefined
+      ? DETECTION_PATHS
+      : {
+          claude: [join(home, '.claude'), join(home, '.claude.json')],
+          codex: [join(home, '.codex')],
+          cursor: [join(home, '.cursor')],
+        };
   const detected: string[] = [];
   const targets: EditorTarget[] = ['claude', 'codex', 'cursor'];
   for (const target of targets) {
-    if (DETECTION_PATHS[target].some(configPath => existsSync(configPath))) {
+    if (
+      detectionPaths[target].some(configPath => existsSync(configPath)) ||
+      binaryOnPath(EDITOR_BINARIES[target], pathEnv, platform)
+    ) {
       detected.push(target);
     }
   }
