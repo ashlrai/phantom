@@ -103,3 +103,41 @@ preserved. Registration alone does not initialize a vault or prove a handshake.
 This helper does not register Lexicon. Its project-bound stdio MCP server and the
 desktop's separately configured native voice service have different setup and
 trust requirements; neither is started by companion inventory.
+
+## Check the tools work together
+
+`phm companions` only reads version and help. To check the seams an agent
+actually uses, run the cross-tool smoke from a built Phantom checkout
+(`npm run build`) against the companion binaries you want to test:
+
+```bash
+node scripts/companion-workflow-smoke.mjs --phm bin/ashlr \
+  --secrets-bin /path/to/phantom --secrets-mcp /path/to/phantom-mcp \
+  --locus-bin /path/to/locus --locus-mcp /path/to/locus-mcp \
+  --lexicon-bin /path/to/lexicon --lexicon-mcp /path/to/lexicon/plugin/mcp-server.mjs \
+  --lexicon-hook /path/to/lexicon/plugin/hook.mjs \
+  --stack-bin /path/to/stack --stack-mcp /path/to/stack-mcp \
+  --mdopen /path/to/mdopen --mdopener-mcp /path/to/mdopener-mcp
+```
+
+Every flag is optional; a check whose binary is missing is reported as `skip`.
+Each check runs in a disposable home with a scrubbed environment, so no real
+vault, pin, lexicon or Stack project is read or changed. It checks:
+
+- `phm companions` identifies each given CLI (a newer release than Phantom's
+  reviewed pin is a `warn`).
+- Each MCP server completes the stdio handshake for protocol versions
+  2025-06-18 and 2025-03-26, keeps stdout protocol-only, and lists the tools
+  agents rely on.
+- `stack status --json` and `phm stack status --json` both see a project's
+  services.
+- Lexicon's Claude Code hook exits 0 quickly with JSON or empty output.
+- `mdopen` returns promptly and gives a reason when no viewer can open.
+- A Locus pin made with `quickstart` and the shell hook reads as healthy
+  through Phantom's own Locus parsers, and `ready` is never true while the
+  authority anchor is unverified.
+- A secret stored with `phantom add --stdin` never reaches a child of
+  `phantom exec`, which sees only a `phm_` placeholder and a loopback proxy URL.
+
+Exit 0 means no check failed; exit 1 names the broken seam; `--json` prints
+the `phm.companion-workflow-smoke/v1` report.

@@ -1,0 +1,106 @@
+/**
+ * The cross-tool smoke harness (scripts/companion-workflow-smoke.mjs) must
+ * classify real seams correctly. Fake stdio MCP servers stand in for the
+ * companion binaries; the real ones are exercised by running the script.
+ */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+
+// @ts-expect-error -- plain ESM script without type declarations
+import * as smoke from '../scripts/companion-workflow-smoke.mjs';
+
+const dir = mkdtempSync(join(tmpdir(), 'phm-smoke-test-'));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+function fakeServer(name: string, { tools, answer, noise = false }: { tools: string[]; answer?: string; noise?: boolean }): string {
+  const path = join(dir, `${name}.mjs`);
+  writeFileSync(path, `
+import { createInterface } from 'node:readline';
+${noise ? "process.stdout.write('starting server...\\n');" : ''}
+createInterface({ input: process.stdin }).on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.id === undefined) return;
+  const result = msg.method === 'initialize'
+    ? { protocolVersion: ${answer ? JSON.stringify(answer) : 'msg.params.protocolVersion'}, capabilities: { tools: {} }, serverInfo: { name: ${JSON.stringify(name)}, version: '1.0.0' } }
+    : { tools: ${JSON.stringify(tools)}.map(name => ({ name, inputSchema: { type: 'object' } })) };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');
+});
+`);
+  return path;
+}
+
+const lexicon = smoke.MCP_SERVERS.find((server: { id: string }) => server.id === 'lexicon');
+
+async function handshake(path: string, protocolVersion = '2025-06-18') {
+  const env = smoke.smokeEnv(dir);
+  const result = await smoke.mcpHandshake(path, { env, cwd: dir, protocolVersion, timeoutMs: 10_000 });
+  return smoke.evaluateHandshake(lexicon, protocolVersion, result);
+}
+
+describe('companion workflow smoke', () => {
+  it('passes a server that echoes the client protocol and lists the required tools', async () => {
+    const path = fakeServer('good', { tools: ['normalize_transcript', 'serve_status', 'extra'] });
+    await expect(handshake(path)).resolves.toMatchObject({ status: 'pass' });
+  });
+
+  it('warns, without failing, when a server answers an older accepted protocol', async () => {
+    const path = fakeServer('older', { tools: ['normalize_transcript', 'serve_status'], answer: '2024-11-05' });
+    await expect(handshake(path)).resolves.toMatchObject({ status: 'warn' });
+  });
+
+  it('fails a server that writes non-protocol text to stdout', async () => {
+    const path = fakeServer('noisy', { tools: ['normalize_transcript', 'serve_status'], noise: true });
+    const check = await handshake(path);
+    expect(check.status).toBe('fail');
+    expect(check.detail).toContain('non-JSON');
+  });
+
+  it('fails a server missing a tool agents rely on, or answering an unknown protocol', async () => {
+    const missing = await handshake(fakeServer('missing', { tools: ['normalize_transcript'] }));
+    expect(missing).toMatchObject({ status: 'fail' });
+    expect(missing.detail).toContain('serve_status');
+    const unknown = await handshake(fakeServer('future', { tools: ['normalize_transcript', 'serve_status'], answer: '2099-01-01' }));
+    expect(unknown).toMatchObject({ status: 'fail' });
+  });
+
+  it('reports a server that exits during the handshake instead of hanging', async () => {
+    const path = join(dir, 'crash.mjs');
+    writeFileSync(path, "process.stderr.write('boom'); process.exit(3);\n");
+    await expect(smoke.mcpHandshake(path, { env: smoke.smokeEnv(dir), cwd: dir, protocolVersion: '2025-06-18', timeoutMs: 10_000 }))
+      .rejects.toThrow(/exited 3|boom/u);
+  });
+
+  it('treats a newer companion release as drift, not a broken seam', () => {
+    const reviewedRelease = { version: '0.5.4', sourceCommit: 'x', url: 'u', contract: 'c' };
+    expect(smoke.evaluateCompanion({ status: 'known-interface', version: '0.5.4', reviewedRelease, guidance: '' }).status).toBe('pass');
+    expect(smoke.evaluateCompanion({ status: 'unsupported-version', version: '0.5.5', reviewedRelease, guidance: '' }).status).toBe('warn');
+    expect(smoke.evaluateCompanion({ status: 'wrong-product', version: null, reviewedRelease, guidance: 'g' }).status).toBe('fail');
+  });
+
+  it('runs Node entrypoints under this Node and parses explicit binary flags only', () => {
+    expect(smoke.commandFor('/x/server.mjs', ['a'])).toEqual([process.execPath, ['/x/server.mjs', 'a']]);
+    expect(smoke.commandFor('/x/locus', [])).toEqual(['/x/locus', []]);
+    expect(smoke.parseArgs(['--json', '--locus-bin', '/x/locus'])).toMatchObject({ json: true, locusBin: '/x/locus' });
+    expect(() => smoke.parseArgs(['--nope'])).toThrow('Unknown argument');
+    expect(() => smoke.parseArgs(['--stack-bin'])).toThrow('requires a path');
+  });
+
+  it('never inherits credentials or the real home into companion processes', () => {
+    const env = smoke.smokeEnv(dir);
+    expect(env.HOME).toBe(dir);
+    expect(env.LOCUS_HOME).toBe(join(dir, '.locus'));
+    for (const key of ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'LOCUS_CONTROL_CAPABILITY', 'PHANTOM_VAULT_PASSPHRASE']) {
+      expect(env[key]).toBeUndefined();
+    }
+  });
+
+  it('skips every check, and passes, when no companion binary is given', async () => {
+    const report = await smoke.runSmoke({ json: true });
+    expect(report.schema).toBe('phm.companion-workflow-smoke/v1');
+    expect(report.ok).toBe(true);
+    expect(report.checks.length).toBeGreaterThan(0);
+    expect(report.checks.every((check: { status: string }) => check.status === 'skip')).toBe(true);
+  });
+});
