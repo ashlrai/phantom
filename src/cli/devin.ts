@@ -89,6 +89,8 @@ export interface DevinCliDeps {
   budgetView: (tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: import('../core/devin/types.js').DevinTaskSourceState) => DevinBudgetView;
   /** Hidden terminal input (raw mode, no echo). */
   readSecret: (prompt: string) => Promise<string>;
+  /** Host platform; the Devin key store (core/devin/secret.ts) is macOS Keychain only. */
+  platform?: NodeJS.Platform;
   originRepo: (cwd: string) => string | null;
   cwd: () => string;
   now: () => Date;
@@ -235,6 +237,13 @@ export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: 
 async function cmdConnect(deps: DevinCliDeps, args: string[]): Promise<number> {
   const org = takeOption(args, '--org');
   rejectLeftovers(args);
+  // The key is kept only in the macOS Keychain (core/devin/secret.ts). Refuse
+  // before asking for a secret this machine cannot store.
+  const platform = deps.platform ?? process.platform;
+  if (platform !== 'darwin') {
+    deps.err(`Devin connect stores the API key in the macOS Keychain, which this machine (${platform}) does not have. Connect Devin from a Mac; nothing was asked for or stored.`);
+    return 1;
+  }
   deps.out('Paste your Devin API key (cog_…). It is not shown, never stored in a file, and goes to the macOS Keychain.');
   let key: string;
   try {

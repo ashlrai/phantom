@@ -1,9 +1,11 @@
 # Seams — local-first, cloud-ready (M30)
 
-ashlr-hub is **local-first and self-hostable**. Every v2 store has a clean
+Phantom is **local-first and self-hostable**. Every v2 store has a clean
 **seam interface** so a future team/multi-machine backbone is a **drop-in** — but
 that cloud/team backbone is **GATED**. There is **no config flag and no code
-path** that activates a functional cloud backbone today. Nothing is public.
+path** that activates a functional cloud backbone for these stores today. The
+seams live in `src/core/seams/` (`registry.ts` builds the `ashlr seams` view;
+`phm seams` is the same command).
 
 ## The pattern
 
@@ -39,6 +41,17 @@ export function selectInboxStore(cfg: AshlrConfig): InboxStore {
 | `IdentityProvider` | `core/integrations/identity.ts` | phantom-derived identity (values-free) |
 | `TelemetrySink` *(reference)* | M19 telemetry seam | `LocalFileSink` + opt-in OTLP sink (cited, not rewritten) |
 
+A gated cloud stub is selected only by a non-empty `seams.<id>.endpoint` in
+`~/.ashlr/config.json`, where `<id>` is `runSwarm`, `backlog`, `inbox`,
+`daemonCoordinator`, `genome`, `portfolio` or `identity`.
+
+`WorkQueueCoordinator` (M111, `src/core/seams/work-queue-coordinator.ts`) follows
+a different pattern and is not listed by `ashlr seams`. Its local per-machine
+implementation is the default; a functional multi-machine implementation backed
+by a shared filesystem queue is selected only when `fleet.sharedQueue.mode` is
+`'filesystem'` and `fleet.sharedQueue.path` is set. It is not a cloud backbone
+and has no gated stub.
+
 ## The gate
 
 The cloud/team implementations are **gated on Mason** — explicit opt-in, not
@@ -65,8 +78,8 @@ config and static descriptors — no I/O, no seam impl instantiation, no network
 
 ## Safety invariants
 
-1. **Interfaces + local only** — no functional cloud impl exists; cloud stubs
-   throw.
+1. **Interfaces + local only** — no functional cloud impl exists for the seven
+   gated seams; their cloud stubs throw.
 2. **No activation path** — selectors return local by default; a configured
    endpoint only routes to a throwing stub.
 3. **Non-regression** — wrapped stores are untouched; local adapters delegate
