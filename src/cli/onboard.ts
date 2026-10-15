@@ -345,7 +345,7 @@ export function buildStackStep(repo?: string): string[] {
       const svcs = status.services ?? [];
       if (svcs.length === 0) {
         lines.push(`  ${dim('no services wired yet')}`);
-        lines.push(`    ${cyan('→')} ${dim('run')} ${cyan('stack recommend')} ${dim('to see what fits this repo')}`);
+        lines.push(`    ${cyan('→')} ${dim('run')} ${cyan('stack recommend "<what you\'re building>"')} ${dim('to see what fits')}`);
         lines.push(`    ${cyan('→')} ${dim('or')} ${cyan('stack add <service>')} ${dim('to provision one directly')}`);
       } else {
         lines.push(`  ${green(String(svcs.length))} service(s) wired:`);

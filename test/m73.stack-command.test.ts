@@ -22,16 +22,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ── Hoisted mocks ────────────────────────────────────────────────────────────
-const { stackInstalledSpy, stackStatusSpy, stackRunSpy } = vi.hoisted(() => ({
+const { stackInstalledSpy, stackStatusSpy, stackRunSpy, stackRunInteractiveSpy } = vi.hoisted(() => ({
   stackInstalledSpy: vi.fn(() => false),
   stackStatusSpy: vi.fn(() => ({ ok: false, detail: 'stack not installed' })),
-  stackRunSpy: vi.fn(() => ({ ok: true, stdout: 'mock-output', code: 0 })),
+  stackRunSpy: vi.fn(() => ({ ok: true, stdout: 'mock-output', stderr: '', code: 0 })),
+  stackRunInteractiveSpy: vi.fn((): { ok: boolean; code: number | null } => ({ ok: true, code: 0 })),
 }));
 
 vi.mock('../src/core/integrations/stack.js', () => ({
   stackInstalled: stackInstalledSpy,
   stackStatus: stackStatusSpy,
   stackRun: stackRunSpy,
+  stackRunInteractive: stackRunInteractiveSpy,
   stackProjectConfigured: vi.fn(() => false),
 }));
 
@@ -77,7 +79,8 @@ beforeEach(() => {
   // Default: stack not installed.
   stackInstalledSpy.mockReturnValue(false);
   stackStatusSpy.mockReturnValue({ ok: false, detail: 'stack not installed' });
-  stackRunSpy.mockReturnValue({ ok: true, stdout: '', code: 0 });
+  stackRunSpy.mockReturnValue({ ok: true, stdout: '', stderr: '', code: 0 });
+  stackRunInteractiveSpy.mockReturnValue({ ok: true, code: 0 });
 
   // Default confirm: decline (safe default; tests override per case).
   _stackInternals.confirm = vi.fn(async () => false);
@@ -231,18 +234,66 @@ describe('M73 cmdStack read-only passthroughs', () => {
     it(`${sub}: calls stackRun and does NOT prompt`, async () => {
       expect.hasAssertions();
       stackInstalledSpy.mockReturnValue(true);
-      stackRunSpy.mockReturnValue({ ok: true, stdout: `${sub} output`, code: 0 });
+      stackRunSpy.mockReturnValue({ ok: true, stdout: `${sub} output`, stderr: '', code: 0 });
 
       const code = await cmdStack([sub]);
 
       expect(code).toBe(0);
       // First arg must be [sub, ...rest]; opts is optional so we only check the args array.
       expect(stackRunSpy).toHaveBeenCalled();
-      expect(stackRunSpy.mock.calls[0]![0]).toEqual([sub]);
+      expect(stackRunSpy.mock.calls[0]![0]).toEqual(sub === 'scan' ? ['scan', '--json'] : [sub]);
       // No confirm was called.
       expect(_stackInternals.confirm).not.toHaveBeenCalled();
     });
   }
+});
+
+describe('M73 cmdStack passthrough output and hints', () => {
+  it('scan keeps an explicit --json or --yes and does not add another flag', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(true);
+
+    await cmdStack(['scan', '--yes']);
+    await cmdStack(['scan', '--json']);
+
+    expect(stackRunSpy.mock.calls.map((c) => c[0])).toEqual([['scan', '--yes'], ['scan', '--json']]);
+  });
+
+  it('forwards Stack stderr and its exit code', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(true);
+    stackRunSpy.mockReturnValue({ ok: false, stdout: '', stderr: 'stack: unknown provider "nope"', code: 3 });
+
+    const code = await cmdStack(['providers', 'nope']);
+
+    expect(code).toBe(3);
+    const errOut = (process.stderr.write as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c.map(String).join(''))
+      .join('');
+    expect(errOut).toContain('stack: unknown provider "nope"');
+  });
+
+  it('install hint names @ashlr/stack and stack.ashlr.ai', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(false);
+
+    await cmdStack([]);
+
+    expect(logged()).toContain('npm install -g @ashlr/stack');
+    expect(logged()).toContain('https://stack.ashlr.ai');
+    expect(logged()).not.toMatch(/evero/);
+  });
+
+  it('recommend hints include the required query', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(true);
+    stackStatusSpy.mockReturnValue({ ok: true, services: [], detail: '0 service(s)' });
+
+    await cmdStack(['status']);
+    await cmdStack(['--help']);
+
+    expect(logged()).toContain('ashlr stack recommend "<what you\'re building>"');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -261,7 +312,7 @@ describe('M73 cmdStack mutating — confirmation gate', () => {
 
       expect(code).toBe(2);
       // stackRun must NOT have been called (never provision).
-      expect(stackRunSpy).not.toHaveBeenCalled();
+      expect(stackRunInteractiveSpy).not.toHaveBeenCalled();
     });
 
     it('stack apply refuses in non-TTY without --yes', async () => {
@@ -273,7 +324,7 @@ describe('M73 cmdStack mutating — confirmation gate', () => {
       restoreTty();
 
       expect(code).toBe(2);
-      expect(stackRunSpy).not.toHaveBeenCalled();
+      expect(stackRunInteractiveSpy).not.toHaveBeenCalled();
     });
 
     it('refusal message is clear and actionable', async () => {
@@ -304,7 +355,7 @@ describe('M73 cmdStack mutating — confirmation gate', () => {
       restoreTty();
 
       expect(code).toBe(0); // graceful abort
-      expect(stackRunSpy).not.toHaveBeenCalled();
+      expect(stackRunInteractiveSpy).not.toHaveBeenCalled();
     });
 
     it('stack apply: aborts when user declines', async () => {
@@ -317,62 +368,62 @@ describe('M73 cmdStack mutating — confirmation gate', () => {
       restoreTty();
 
       expect(code).toBe(0);
-      expect(stackRunSpy).not.toHaveBeenCalled();
+      expect(stackRunInteractiveSpy).not.toHaveBeenCalled();
     });
   });
 
-  describe('--yes bypasses prompt and calls stackRun', () => {
-    it('stack add --yes: calls stackRun([add, service]) without prompting', async () => {
+  describe('--yes bypasses prompt and calls stackRunInteractive', () => {
+    it('stack add --yes: calls stackRunInteractive([add, service]) without prompting', async () => {
       expect.hasAssertions();
       stackInstalledSpy.mockReturnValue(true);
-      stackRunSpy.mockReturnValue({ ok: true, stdout: 'wired postgres', code: 0 });
+      stackRunInteractiveSpy.mockReturnValue({ ok: true, code: 0 });
       const restoreTty = patchTty(undefined); // non-TTY + --yes should both work
 
       const code = await cmdStack(['add', 'postgres', '--yes']);
       restoreTty();
 
       expect(code).toBe(0);
-      expect(stackRunSpy).toHaveBeenCalled();
-      expect(stackRunSpy.mock.calls[0]![0]).toEqual(['add', 'postgres']);
+      expect(stackRunInteractiveSpy).toHaveBeenCalled();
+      expect(stackRunInteractiveSpy.mock.calls[0]![0]).toEqual(['add', 'postgres']);
       // confirm was NOT called (bypassed by --yes).
       expect(_stackInternals.confirm).not.toHaveBeenCalled();
     });
 
-    it('stack apply --yes: calls stackRun([apply, recipe]) without prompting', async () => {
+    it('stack apply --yes: calls stackRunInteractive([apply, recipe]) without prompting', async () => {
       expect.hasAssertions();
       stackInstalledSpy.mockReturnValue(true);
-      stackRunSpy.mockReturnValue({ ok: true, stdout: 'applied', code: 0 });
+      stackRunInteractiveSpy.mockReturnValue({ ok: true, code: 0 });
       const restoreTty = patchTty(undefined);
 
       const code = await cmdStack(['apply', 'my-recipe', '--yes']);
       restoreTty();
 
       expect(code).toBe(0);
-      expect(stackRunSpy).toHaveBeenCalled();
-      expect(stackRunSpy.mock.calls[0]![0]).toEqual(['apply', 'my-recipe']);
+      expect(stackRunInteractiveSpy).toHaveBeenCalled();
+      expect(stackRunInteractiveSpy.mock.calls[0]![0]).toEqual(['apply', 'my-recipe']);
       expect(_stackInternals.confirm).not.toHaveBeenCalled();
     });
 
-    it('stack apply --yes (no recipe): calls stackRun([apply]) without prompting', async () => {
+    it('stack apply --yes (no recipe): calls stackRunInteractive([apply]) without prompting', async () => {
       expect.hasAssertions();
       stackInstalledSpy.mockReturnValue(true);
-      stackRunSpy.mockReturnValue({ ok: true, stdout: 'applied default', code: 0 });
+      stackRunInteractiveSpy.mockReturnValue({ ok: true, code: 0 });
       const restoreTty = patchTty(undefined);
 
       const code = await cmdStack(['apply', '--yes']);
       restoreTty();
 
       expect(code).toBe(0);
-      expect(stackRunSpy).toHaveBeenCalled();
-      expect(stackRunSpy.mock.calls[0]![0]).toEqual(['apply']);
+      expect(stackRunInteractiveSpy).toHaveBeenCalled();
+      expect(stackRunInteractiveSpy.mock.calls[0]![0]).toEqual(['apply']);
     });
   });
 
   describe('mutating failure propagates exit code', () => {
-    it('stack add --yes: propagates non-zero exit from stackRun', async () => {
+    it('stack add --yes: propagates non-zero exit from stackRunInteractive', async () => {
       expect.hasAssertions();
       stackInstalledSpy.mockReturnValue(true);
-      stackRunSpy.mockReturnValue({ ok: false, stdout: '', code: 1 });
+      stackRunInteractiveSpy.mockReturnValue({ ok: false, code: 1 });
       const restoreTty = patchTty(undefined);
 
       const code = await cmdStack(['add', 'postgres', '--yes']);
@@ -380,6 +431,20 @@ describe('M73 cmdStack mutating — confirmation gate', () => {
 
       expect(code).not.toBe(0);
     });
+  });
+
+  it('runs a confirmed add attached to the terminal, never through the captured runner', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(true);
+    const restoreTty = patchTty(true);
+    (_stackInternals.confirm as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    const code = await cmdStack(['add', 'supabase']);
+    restoreTty();
+
+    expect(code).toBe(0);
+    expect(stackRunInteractiveSpy).toHaveBeenCalledWith(['add', 'supabase']);
+    expect(stackRunSpy).not.toHaveBeenCalled();
   });
 });
 

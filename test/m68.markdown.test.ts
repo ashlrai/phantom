@@ -12,18 +12,36 @@
  *     guard the real spawn behind ashlrMdInstalled() — when mdopen is absent (all CI),
  *     these paths return ok:false / rendered:false without spawning anything.
  *   - renderToTempMarkdown writes to os.tmpdir() (the temp file is removed after each test).
- *   - No mocks required: the degrade path is the real code path in CI.
+ *   - node:child_process is mocked: mdopen is never really launched, even on a
+ *     developer machine that has it. Resolution (PATH / fixed install paths)
+ *     uses the real filesystem with temp fixtures.
  */
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { describe, it, expect, afterEach } from 'vitest';
+import type { SpawnSyncReturns } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+
+const { spawnSync } = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+vi.mock('node:child_process', () => ({ spawnSync }));
 
 import {
   ashlrMdInstalled,
   openInAshlrMd,
   presentMarkdown,
   renderToTempMarkdown,
+  resolveMdopen,
 } from '../src/core/integrations/markdown.js';
+
+function spawnResult(status: number | null, stderr = '', error?: Error): SpawnSyncReturns<string> {
+  return { pid: 1, output: [], stdout: '', stderr, status, signal: null, error };
+}
+
+beforeEach(() => {
+  // Default: a headless mdopen that cannot open a window.
+  spawnSync.mockReset().mockReturnValue(spawnResult(1, 'mdopen: no display'));
+});
 
 /** Paths written during a test, to clean up in afterEach. */
 const tempPaths: string[] = [];
@@ -224,5 +242,79 @@ describe('presentMarkdown', () => {
       expect(content).toContain(body);
     }
     expect(result.rendered !== undefined).toBe(true);
+  });
+});
+
+// ── mdopen resolution + honest open result ───────────────────────────────────
+
+describe('resolveMdopen / openInAshlrMd with a resolved mdopen', () => {
+  const dirs: string[] = [];
+  let savedPath: string | undefined;
+
+  function binDir(...names: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), 'ashlr-m68-bin-'));
+    dirs.push(dir);
+    for (const name of names) {
+      writeFileSync(join(dir, name), '#!/bin/sh\nexit 0\n', 'utf8');
+      chmodSync(join(dir, name), 0o755);
+    }
+    return dir;
+  }
+
+  beforeEach(() => {
+    savedPath = process.env['PATH'];
+  });
+
+  afterEach(() => {
+    if (savedPath === undefined) delete process.env['PATH'];
+    else process.env['PATH'] = savedPath;
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  // Host path syntax: the ':'-joined POSIX case cannot hold drive-letter paths.
+  it.skipIf(process.platform === 'win32')('searches PATH in-process, with .exe/.cmd on Windows, then fixed install paths', () => {
+    const empty = binDir();
+    const posix = binDir('mdopen');
+    const win = binDir('mdopen.cmd');
+    expect(resolveMdopen({ PATH: `${empty}:${posix}` }, 'linux', [])).toBe(join(posix, 'mdopen'));
+    expect(resolveMdopen({ Path: `${empty};${win}` }, 'win32', [])).toBe(join(win, 'mdopen.cmd'));
+    expect(resolveMdopen({ PATH: empty }, 'linux', [])).toBeNull();
+    // Linux .deb / macOS app bundle install mdopen off PATH.
+    const fixed = join(binDir('mdopen'), 'mdopen');
+    expect(resolveMdopen({ PATH: empty }, 'linux', ['/nonexistent/Ashlr MD/mdopen', fixed])).toBe(fixed);
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it('reports ok:false with exit code and stderr when mdopen exits non-zero', () => {
+    const dir = binDir('mdopen');
+    process.env['PATH'] = dir;
+    const result = openInAshlrMd('/tmp/doc.md');
+    expect(result).toEqual({ ok: false, detail: 'mdopen exit 1: mdopen: no display' });
+    expect(spawnSync).toHaveBeenCalledWith(join(dir, 'mdopen'), ['/tmp/doc.md'], expect.objectContaining({
+      timeout: 15_000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8',
+    }));
+  });
+
+  it('reports ok:true only when mdopen exits 0 (including launched-but-unconfirmed)', () => {
+    process.env['PATH'] = binDir('mdopen');
+    spawnSync.mockReturnValueOnce(spawnResult(0, 'mdopen: launched, not confirmed'));
+    const result = openInAshlrMd('/tmp/doc.md');
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('not confirmed');
+  });
+
+  it('reports a timeout or launch error as ok:false', () => {
+    process.env['PATH'] = binDir('mdopen');
+    spawnSync.mockReturnValueOnce(spawnResult(null, '', Object.assign(new Error('spawnSync mdopen ETIMEDOUT'), { code: 'ETIMEDOUT' })));
+    expect(openInAshlrMd('/tmp/doc.md')).toEqual({ ok: false, detail: 'mdopen failed: spawnSync mdopen ETIMEDOUT' });
+  });
+
+  it('presentMarkdown is rendered:false when mdopen fails, so callers fall back', () => {
+    process.env['PATH'] = binDir('mdopen');
+    const result = presentMarkdown('Headless', 'body');
+    if (result.path) tempPaths.push(result.path);
+    expect(result.rendered).toBe(false);
+    expect(result.detail).toContain('exit 1');
+    expect(result.path && existsSync(result.path)).toBe(true);
   });
 });

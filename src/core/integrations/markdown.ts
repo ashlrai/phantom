@@ -11,63 +11,112 @@
  *     to its own terminal output.
  *   - When ashlr-md IS present, a temp .md file is written to
  *     ~/.ashlr/tmp (or os.tmpdir() as fallback) and opened via `mdopen <file>`.
- *     The spawn is detached and unref()d — it never blocks the hub process.
+ *     mdopen runs bounded and synchronously; only exit 0 counts as rendered.
  *
  * CLI command confirmed from ashlr-md's install.sh:
  *   mdopen <path-to-file.md>
  * Installed to /usr/local/bin/mdopen or ~/.local/bin/mdopen by the ashlr-md
- * installer script.
+ * installer script; the Linux .deb and macOS app put it at a fixed path off PATH.
  *
  * Seam: `ashlr inbox` / `ashlr digest` will call `presentMarkdown(title, body)`
  * and fall back to their existing terminal rendering when rendered === false.
  */
 
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** Timeout (ms) for the `which mdopen` probe. Must be short — it's synchronous. */
-const WHICH_TIMEOUT_MS = 2_000;
+/**
+ * Upper bound (ms) for a blocking `mdopen` call. mdopen itself returns within
+ * ~10s (ashlr-md PR #43); this is the backstop.
+ */
+const MDOPEN_TIMEOUT_MS = 15_000;
 
 /**
- * Returns true when `mdopen` is on PATH (i.e. ashlr-md CLI is installed).
- * Never throws.
+ * Fixed install locations where the ashlr-md packages put `mdopen` without
+ * adding it to PATH (Linux .deb, macOS app bundle).
  */
-export function ashlrMdInstalled(): boolean {
+const MDOPEN_FIXED_PATHS: readonly string[] = [
+  '/usr/lib/Ashlr MD/mdopen',
+  '/Applications/Ashlr MD.app/Contents/Resources/mdopen',
+];
+
+function isFile(p: string): boolean {
   try {
-    execFileSync('which', ['mdopen'], {
-      timeout: WHICH_TIMEOUT_MS,
-      stdio: 'ignore',
-    });
-    return true;
+    return existsSync(p) && statSync(p).isFile();
   } catch {
     return false;
   }
 }
 
 /**
- * Open a .md file in the ashlr-md viewer (detached, non-blocking).
+ * Resolve the `mdopen` binary: PATH first (searched in-process, with
+ * .exe/.cmd on Windows, so no `which`/`where` is needed), then the fixed
+ * install locations. Returns the absolute path, or null. Never throws.
+ */
+export function resolveMdopen(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  fixedPaths: readonly string[] = MDOPEN_FIXED_PATHS,
+): string | null {
+  try {
+    const names = platform === 'win32' ? ['mdopen.exe', 'mdopen.cmd', 'mdopen'] : ['mdopen'];
+    const pathVar = env['PATH'] ?? env['Path'] ?? '';
+    for (const dir of pathVar.split(platform === 'win32' ? ';' : ':')) {
+      if (!dir) continue;
+      for (const name of names) {
+        const candidate = join(dir, name);
+        if (isFile(candidate)) return candidate;
+      }
+    }
+    for (const candidate of fixedPaths) {
+      if (isFile(candidate)) return candidate;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+/**
+ * Returns true when the ashlr-md `mdopen` CLI can be found (PATH or a known
+ * install location). Never throws.
+ */
+export function ashlrMdInstalled(): boolean {
+  return resolveMdopen() !== null;
+}
+
+/**
+ * Open a .md file in the ashlr-md viewer.
  *
- * Returns { ok: true } when the spawn is successfully started, or
- * { ok: false, detail: <reason> } when ashlr-md is not installed or the
- * spawn fails. Never throws.
- *
- * The child process is detached and unref()d: it outlives the hub process
- * (the user sees the GUI window) without keeping the event loop alive.
+ * Runs the resolved `mdopen` synchronously (bounded by MDOPEN_TIMEOUT_MS) and
+ * reports ok:true only when it exits 0, so callers fall back to terminal
+ * output when the viewer cannot open (e.g. headless). mdopen exiting 0 with
+ * "not confirmed" means launched-but-unconfirmed, which counts as opened.
+ * Never throws.
  */
 export function openInAshlrMd(filePath: string): { ok: boolean; detail: string } {
-  if (!ashlrMdInstalled()) {
+  const bin = resolveMdopen();
+  if (bin === null) {
     return { ok: false, detail: 'mdopen not found on PATH — ashlr-md not installed' };
   }
 
   try {
-    const child = spawn('mdopen', [filePath], {
-      detached: true,
-      stdio: 'ignore',
+    const res = spawnSync(bin, [filePath], {
+      timeout: MDOPEN_TIMEOUT_MS,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
     });
-    child.unref();
-    return { ok: true, detail: `opened ${filePath} in ashlr-md` };
+    const stderr = (res.stderr ?? '').trim();
+    if (res.error) {
+      return { ok: false, detail: `mdopen failed: ${res.error.message}${stderr ? ` — ${stderr}` : ''}` };
+    }
+    if (res.status !== 0) {
+      const why = res.status === null ? `killed (${res.signal ?? 'signal'})` : `exit ${res.status}`;
+      return { ok: false, detail: `mdopen ${why}${stderr ? `: ${stderr}` : ''}` };
+    }
+    return { ok: true, detail: `opened ${filePath} in ashlr-md${stderr ? ` (${stderr})` : ''}` };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, detail: `mdopen spawn failed: ${msg}` };

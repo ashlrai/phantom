@@ -530,6 +530,7 @@ async function cmdInboxShow(id: string, jsonMode: boolean, openMd: boolean): Pro
         console.log(col.cyan('  opened in ashlr-md: ') + result.path);
         return 0;
       }
+      process.stderr.write(col.dim(`  ashlr-md: ${result.detail} — showing in terminal`) + '\n');
       // rendered:false → fall through to terminal rendering below
     }
     // markdown module unavailable or viewer not installed → terminal fallback

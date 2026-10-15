@@ -14,11 +14,34 @@ import { join } from 'node:path';
 const { spawnSync } = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawnSync }));
 
-import { stackInstalled, stackProjectConfigured, stackStatus } from '../src/core/integrations/stack.js';
+import {
+  stackConfiguredServices,
+  stackInstalled,
+  stackProjectConfigured,
+  stackRun,
+  stackRunInteractive,
+  stackStatus,
+} from '../src/core/integrations/stack.js';
 
-function result(stdout = '', status: number | null = 0, error?: Error): SpawnSyncReturns<string> {
-  return { pid: 1, output: [], stdout, stderr: '', status, signal: null, error };
+function result(stdout = '', status: number | null = 0, error?: Error, stderr = ''): SpawnSyncReturns<string> {
+  return { pid: 1, output: [], stdout, stderr, status, signal: null, error };
 }
+
+function withRepo<T>(toml: string | null, fn: (dir: string) => T): T {
+  const dir = mkdtempSync(join(tmpdir(), 'ashlr-m69-'));
+  try {
+    if (toml !== null) writeFileSync(join(dir, '.stack.toml'), toml, 'utf8');
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const STACK_TOML = [
+  '[stack]', 'version = "1"', '', '[services]', '[[environments]]', 'name = "dev"', '',
+  '[services.supabase]', 'provider = "supabase"', 'secrets = ["SUPABASE_URL"]', '',
+  '[services."open-ai"]  # quoted key', 'provider = "openai"', '',
+].join('\n');
 
 beforeEach(() => {
   spawnSync.mockReset().mockReturnValue(result('', 1));
@@ -60,9 +83,46 @@ describe('M69 — stack integration', () => {
     expect(spawnSync).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps an unparsable successful status distinct from absence', () => {
-    spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('status ready'));
-    expect(stackStatus()).toEqual({ ok: true, services: [], detail: 'stack reachable (status not JSON-parseable)' });
+  it('falls back to .stack.toml service tables when status is not JSON', () => {
+    withRepo(STACK_TOML, (dir) => {
+      spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('status ready'));
+      expect(stackStatus(dir)).toEqual({
+        ok: true,
+        services: ['supabase', 'open-ai'],
+        detail: '2 service(s) from .stack.toml (stack status not JSON-parseable)',
+      });
+    });
+  });
+
+  it('reports ok:false when status is not JSON and there is no .stack.toml', () => {
+    withRepo(null, (dir) => {
+      spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('status ready'));
+      expect(stackStatus(dir)).toEqual({ ok: false, detail: 'stack status not JSON-parseable and no .stack.toml to read' });
+    });
+  });
+
+  it('stackConfiguredServices reads table headers only and tolerates CRLF', () => {
+    withRepo('[services]\r\n[services.neon]\r\nprovider = "neon"\r\n[servicesx.no]\r\n# [services.commented]\r\n', (dir) => {
+      expect(stackConfiguredServices(dir)).toEqual(['neon']);
+    });
+    withRepo(null, (dir) => expect(stackConfiguredServices(dir)).toBeNull());
+  });
+
+  it('stackRun returns Stack stderr alongside stdout', () => {
+    spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('', 1, undefined, 'stack: no TTY detected\n'));
+    expect(stackRun(['scan'])).toEqual({ ok: false, stdout: '', stderr: 'stack: no TTY detected', code: 1 });
+  });
+
+  it('stackRunInteractive inherits stdio with a long bound and reports the exit code', () => {
+    spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('', 0));
+    expect(stackRunInteractive(['add', 'supabase'])).toEqual({ ok: true, code: 0 });
+    expect(spawnSync).toHaveBeenLastCalledWith('stack', ['add', 'supabase'], expect.objectContaining({
+      stdio: 'inherit', timeout: 600_000,
+    }));
+    spawnSync.mockReturnValueOnce(result()).mockReturnValueOnce(result('', null, Object.assign(new Error('t'), { code: 'ETIMEDOUT' })));
+    expect(stackRunInteractive(['apply'])).toEqual({ ok: false, code: null });
+    spawnSync.mockReturnValueOnce(result('', 1));
+    expect(stackRunInteractive(['apply'])).toEqual({ ok: false, code: null });
   });
 
   it('reports a status launch exception without throwing', () => {
