@@ -254,6 +254,19 @@ describe('pure governed memory foundation', () => {
     const unrelated = cited('ev_log', 20, 'The runner logs every job id.', 'commit:commit 8c41e08', 'runner.py: log every id');
     expect(buildMemoryContextPack(snapshot([timeout, unrelated]), query({ query: 'job timeout seconds' })).receipt.selectedEventIds).toContain('ev_old');
   });
+  it('holds back a docs or test-helper number that disagrees with code, unless the question asks about that source', () => {
+    const cited = (eventId: string, text: string, locator: string): MemoryFactEvent => event({ eventId, factId: eventId, subjectKey: eventId, text,
+      sourceRefs: [{ id: eventId + '_src', digest: 'sha256_' + 'b'.repeat(64), locator, quote: 'quoted ' + eventId, observedAt: early }] });
+    const code = cited('ev_code', 'The API pool allows 20 connections.', 'file:src/db/pool.ts:14');
+    const helper = cited('ev_helper', 'The connection pool allows 50 connections.', 'file:tests/helpers/db.ts:8');
+    const readme = cited('ev_readme', 'The API pool allows 20 connections per process.', 'file:README.md:40');
+    const pack = buildMemoryContextPack(snapshot([code, helper, readme]), query({ query: 'how many pool connections' }));
+    expect(pack.receipt.selectedEventIds).toContain('ev_code');
+    expect(pack.receipt.selectedEventIds).not.toContain('ev_helper');
+    expect(pack.receipt.exclusions).toContainEqual({ eventId: 'ev_helper', reason: 'weaker-evidence' });
+    expect(pack.receipt.exclusions).not.toContainEqual({ eventId: 'ev_readme', reason: 'weaker-evidence' }); // agrees with code
+    expect(buildMemoryContextPack(snapshot([code, helper]), query({ query: 'how many pool connections do the tests use' })).receipt.selectedEventIds).toContain('ev_helper');
+  });
   it('reuses only factory-created snapshots and reruns selection for every changed query', () => {
     const child = event({ eventId: 'child', factId: 'child', slotKey: 'derived', derivedFrom: ['ev_a'] });
     const revoke = event({ eventId: 'revoke', revision: 3, text: 'Build decision withdrawn.', reviewState: 'withdrawn',

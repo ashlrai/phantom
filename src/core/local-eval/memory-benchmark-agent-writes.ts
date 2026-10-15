@@ -1174,6 +1174,202 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION: readonly Memory
     {"query": "which HTTP library does the fetcher use?", "day": 8, "expect": {"anyOf": [["q24-w3"]], "forbidden": [], "duplicates": [], "contradiction": false}},
   ] },
 ] as MemoryBenchmarkAgentScenario[]);
+/** Set W6 (fictional smart-meter telemetry service): stale docs, wrong-file reads, legitimately different values and correct docs, written by a separate agent and scored once after the source-tier rule was frozen. */
+export const MEMORY_BENCHMARK_AGENT_WRITES_SOURCES_VALIDATION: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
+  {"id": "d1", "kind": "silent-contradiction", "why": "Stale docs: a commit raised the ingest batch size from 500 to 1000, but a later write cites the README that still says 500.", writes: [
+    {"id": "d1-w1", "agent": "agent:builder", "day": 4, "subject": "ingest", "slot": "batch-size", "text": "The MQTT ingest batcher flushes after 500 readings per batch.", "source": {"kind": "file", "locator": "internal/ingest/batcher.go:22", "quote": "const MaxBatchSize = 500"}, "supersedes": []},
+    {"id": "d1-w2", "agent": "agent:ci-fixer", "day": 9, "subject": "ci", "slot": "go-lint", "text": "CI runs golangci-lint with the config in .golangci.yml and fails on any finding.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:44", "quote": "      - run: golangci-lint run --config .golangci.yml"}, "supersedes": []},
+    {"id": "d1-w3", "agent": "agent:perf", "day": 21, "subject": "batcher", "slot": "flush-threshold", "text": "Gridpulse now groups up to 1000 meter readings into a single write before flushing to TimescaleDB.", "source": {"kind": "commit", "locator": "commit 3fa91c0", "quote": "-const MaxBatchSize = 500\n+const MaxBatchSize = 1000"}, "supersedes": []},
+    {"id": "d1-w4", "agent": "agent:onboarding", "day": 33, "subject": "overview", "slot": "ingest-pipeline", "text": "Readings arrive over MQTT and are written to TimescaleDB in batches of up to 500.", "source": {"kind": "file", "locator": "README.md:58", "quote": "The ingest path batches up to 500 readings per insert."}, "supersedes": []},
+    {"id": "d1-w5", "agent": "agent:reviewer", "day": 27, "subject": "style", "slot": "errors", "text": "Errors are wrapped with fmt.Errorf and %w, never with pkg/errors.", "source": {"kind": "file", "locator": "internal/ingest/decode.go:61", "quote": "return fmt.Errorf(\"decode reading: %w\", err)"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many readings does the ingester pack into one database insert these days?", "day": 38, "expect": {"anyOf": [["d1-w3"]], "forbidden": ["d1-w1", "d1-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d2", "kind": "silent-contradiction", "why": "Stale docs: raw-reading retention was cut from 30 to 14 days in code, and a later write cites docs/data-lifecycle.md that still says 30.", writes: [
+    {"id": "d2-w1", "agent": "agent:builder", "day": 3, "subject": "retention", "slot": "raw-readings", "text": "Raw meter readings are dropped by the retention job after 30 days.", "source": {"kind": "file", "locator": "internal/retention/policy.go:9", "quote": "RawRetention = 30 * 24 * time.Hour"}, "supersedes": []},
+    {"id": "d2-w2", "agent": "agent:release", "day": 12, "subject": "deploy", "slot": "image-registry", "text": "Release images are pushed to ghcr.io/gridpulse/ingest with the git tag as the image tag.", "source": {"kind": "file", "locator": ".github/workflows/release.yml:28", "quote": "          tags: ghcr.io/gridpulse/ingest:${{ github.ref_name }}"}, "supersedes": []},
+    {"id": "d2-w3", "agent": "agent:cost", "day": 19, "subject": "storage", "slot": "ttl", "text": "Raw readings are now kept for only 14 days before the retention sweeper deletes them; rollups keep the long history.", "source": {"kind": "commit", "locator": "commit a07d5be", "quote": "-RawRetention = 30 * 24 * time.Hour\n+RawRetention = 14 * 24 * time.Hour"}, "supersedes": []},
+    {"id": "d2-w4", "agent": "agent:docs", "day": 30, "subject": "data-lifecycle", "slot": "raw", "text": "Per the data lifecycle doc, raw readings are retained for 30 days.", "source": {"kind": "file", "locator": "docs/data-lifecycle.md:41", "quote": "Raw readings are kept for 30 days, then deleted."}, "supersedes": []},
+    {"id": "d2-w5", "agent": "agent:onboarding", "day": 24, "subject": "howto", "slot": "local-mqtt", "text": "make dev-up starts a local Mosquitto broker on port 1883.", "source": {"kind": "command-output", "locator": "make dev-up output", "quote": "mosquitto-1  | mosquitto version 2.0.18 running on port 1883"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "a customer wants raw readings from 3 weeks ago, do we still have them?", "day": 36, "expect": {"anyOf": [["d2-w3"]], "forbidden": ["d2-w1", "d2-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d3", "kind": "silent-contradiction", "why": "Stale docs: a re-read of ratelimit.go shows 25 rps per device, while a later write cites the OpenAPI description still claiming 10.", writes: [
+    {"id": "d3-w1", "agent": "agent:builder", "day": 6, "subject": "api", "slot": "rate-limit", "text": "Each device is rate limited to 10 requests per second on the HTTP API.", "source": {"kind": "file", "locator": "internal/api/ratelimit.go:15", "quote": "const PerDeviceRPS = 10"}, "supersedes": []},
+    {"id": "d3-w2", "agent": "agent:security", "day": 11, "subject": "tls", "slot": "min-version", "text": "The HTTP API refuses anything older than TLS 1.2.", "source": {"kind": "file", "locator": "internal/server/tls.go:12", "quote": "MinVersion: tls.VersionTLS12,"}, "supersedes": []},
+    {"id": "d3-w3", "agent": "agent:perf", "day": 25, "subject": "throttling", "slot": "per-device", "text": "The per-device throttle allows 25 requests per second.", "source": {"kind": "file", "locator": "internal/api/ratelimit.go:15", "quote": "const PerDeviceRPS = 25"}, "supersedes": []},
+    {"id": "d3-w4", "agent": "agent:docs", "day": 31, "subject": "openapi", "slot": "limits", "text": "The public API spec says devices are limited to 10 requests per second.", "source": {"kind": "file", "locator": "api/openapi.yaml:212", "quote": "        description: Each device is limited to 10 requests per second; excess requests get 429."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What's the actual request-per-second cap a single meter gets before it starts seeing 429s?", "day": 35, "expect": {"anyOf": [["d3-w3"]], "forbidden": ["d3-w1", "d3-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d4", "kind": "silent-contradiction", "why": "Stale docs: the default gRPC port moved from 9090 to 7443 in a commit, but a later write cites a code comment still saying 9090.", writes: [
+    {"id": "d4-w1", "agent": "agent:onboarding", "day": 2, "subject": "server", "slot": "grpc-port", "text": "The gRPC listener defaults to port 9090.", "source": {"kind": "file", "locator": "cmd/gridpulse/main.go:31", "quote": "grpcPort := flag.Int(\"grpc-port\", 9090, \"gRPC listen port\")"}, "supersedes": []},
+    {"id": "d4-w2", "agent": "agent:release", "day": 17, "subject": "networking", "slot": "default-listen", "text": "gridpulse binds gRPC on 7443 by default now, so it no longer collides with Prometheus on 9090.", "source": {"kind": "commit", "locator": "commit 5d2c8e1", "quote": "-grpcPort := flag.Int(\"grpc-port\", 9090, \"gRPC listen port\")\n+grpcPort := flag.Int(\"grpc-port\", 7443, \"gRPC listen port\")"}, "supersedes": []},
+    {"id": "d4-w3", "agent": "agent:reviewer", "day": 14, "subject": "metrics", "slot": "prefix", "text": "All Prometheus metrics use the gridpulse_ prefix.", "source": {"kind": "file", "locator": "internal/metrics/metrics.go:8", "quote": "const namespace = \"gridpulse\""}, "supersedes": []},
+    {"id": "d4-w4", "agent": "agent:debugger", "day": 29, "subject": "grpc", "slot": "listener", "text": "The gRPC server listens on :9090 unless overridden.", "source": {"kind": "file", "locator": "internal/server/grpc.go:4", "quote": "// Serve starts the gRPC server; it listens on :9090 by default."}, "supersedes": []},
+    {"id": "d4-w5", "agent": "agent:ci-fixer", "day": 22, "subject": "ci", "slot": "go-version", "text": "CI uses setup-go with go-version-file: go.mod.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:18", "quote": "          go-version-file: go.mod"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Which port do I dial to hit gridpulse's gRPC API if I start it with no flags?", "day": 34, "expect": {"anyOf": [["d4-w2"]], "forbidden": ["d4-w1", "d4-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d5", "kind": "silent-contradiction", "why": "Stale docs: the allowed clock skew was tightened from 5 minutes to 90 seconds in a commit, but a later write cites the wiki still saying 5 minutes.", writes: [
+    {"id": "d5-w1", "agent": "agent:builder", "day": 8, "subject": "validation", "slot": "clock-skew", "text": "Readings timestamped more than 5 minutes in the future are rejected.", "source": {"kind": "file", "locator": "internal/ingest/validate.go:30", "quote": "const MaxClockSkew = 5 * time.Minute"}, "supersedes": []},
+    {"id": "d5-w2", "agent": "agent:planner", "day": 13, "subject": "roadmap", "slot": "q4", "text": "Q4 focuses on OTA firmware updates before the billing export.", "source": {"kind": "chat", "locator": "chat with agent:pm", "quote": "Q4: OTA first, billing export after"}, "supersedes": []},
+    {"id": "d5-w3", "agent": "agent:security", "day": 22, "subject": "ingest", "slot": "future-timestamps", "text": "Ingest now rejects any reading whose timestamp is more than 90 seconds ahead of server time.", "source": {"kind": "commit", "locator": "commit e19b4a7", "quote": "-const MaxClockSkew = 5 * time.Minute\n+const MaxClockSkew = 90 * time.Second"}, "supersedes": []},
+    {"id": "d5-w4", "agent": "agent:support", "day": 35, "subject": "troubleshooting", "slot": "rejected-readings", "text": "Meters can drift up to 5 minutes ahead before their readings get rejected.", "source": {"kind": "file", "locator": "wiki/Ingest-Validation.md:18", "quote": "Readings up to 5 minutes in the future are accepted to tolerate meter clock drift."}, "supersedes": []},
+    {"id": "d5-w5", "agent": "agent:reviewer", "day": 26, "subject": "db", "slot": "hypertable", "text": "The readings hypertable is chunked by 1 day on the ts column.", "source": {"kind": "file", "locator": "migrations/0003_readings_hypertable.sql:4", "quote": "SELECT create_hypertable('readings', 'ts', chunk_time_interval => INTERVAL '1 day');"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "A meter's clock runs about 2 minutes fast. Will its readings still be accepted?", "day": 39, "expect": {"anyOf": [["d5-w3"]], "forbidden": ["d5-w1", "d5-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d6", "kind": "silent-contradiction", "why": "Wrong file: a later write reads the partition count from the dev docker-compose file and reports it as production's.", writes: [
+    {"id": "d6-w1", "agent": "agent:release", "day": 5, "subject": "kafka", "slot": "readings-partitions", "text": "The production readings topic has 48 partitions.", "source": {"kind": "file", "locator": "deploy/kafka/topics-prod.yaml:7", "quote": "    partitions: 48"}, "supersedes": []},
+    {"id": "d6-w2", "agent": "agent:builder", "day": 10, "subject": "consumer", "slot": "group-id", "text": "The ingest consumer group id is gridpulse-ingest.", "source": {"kind": "file", "locator": "internal/ingest/consumer.go:19", "quote": "GroupID: \"gridpulse-ingest\","}, "supersedes": []},
+    {"id": "d6-w3", "agent": "agent:debugger", "day": 26, "subject": "topics", "slot": "partition-count", "text": "The readings topic is created with 3 partitions, so at most 3 consumers do useful work.", "source": {"kind": "file", "locator": "docker-compose.dev.yml:33", "quote": "      KAFKA_NUM_PARTITIONS: 3"}, "supersedes": []},
+    {"id": "d6-w4", "agent": "agent:onboarding", "day": 15, "subject": "howto", "slot": "replay", "text": "scripts/replay.sh re-publishes a day of readings from S3 back onto Kafka.", "source": {"kind": "file", "locator": "scripts/replay.sh:3", "quote": "# Replays one day of archived readings from S3 onto the readings topic."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How far can we scale the ingest consumers in prod before extra pods just sit idle?", "day": 31, "expect": {"anyOf": [["d6-w1"]], "forbidden": ["d6-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d7", "kind": "silent-contradiction", "why": "Wrong file: a later write cites the fake token issuer in test utilities and states its TTL as the real device token lifetime.", writes: [
+    {"id": "d7-w1", "agent": "agent:security", "day": 7, "subject": "auth", "slot": "device-token-ttl", "text": "Device access tokens expire after 24 hours.", "source": {"kind": "file", "locator": "internal/auth/token.go:18", "quote": "const TokenTTL = 24 * time.Hour"}, "supersedes": []},
+    {"id": "d7-w2", "agent": "agent:reviewer", "day": 12, "subject": "logging", "slot": "library", "text": "Structured logging uses log/slog with a JSON handler.", "source": {"kind": "file", "locator": "internal/log/log.go:10", "quote": "h := slog.NewJSONHandler(os.Stdout, opts)"}, "supersedes": []},
+    {"id": "d7-w3", "agent": "agent:ci-fixer", "day": 28, "subject": "tokens", "slot": "lifetime", "text": "Device tokens are short-lived: they expire 2 minutes after issue.", "source": {"kind": "file", "locator": "internal/auth/testutil/fake_issuer.go:12", "quote": "\tttl: 2 * time.Minute, // keep tests fast"}, "supersedes": []},
+    {"id": "d7-w4", "agent": "agent:planner", "day": 20, "subject": "firmware", "slot": "min-version", "text": "Meters below firmware 2.4.0 are refused at registration.", "source": {"kind": "file", "locator": "internal/registry/firmware.go:9", "quote": "var MinFirmware = semver.MustParse(\"2.4.0\")"}, "supersedes": []},
+    {"id": "d7-w5", "agent": "agent:onboarding", "day": 22, "subject": "dev", "slot": "seed", "text": "make seed registers 50 fake meters in the local registry.", "source": {"kind": "command-output", "locator": "make seed output", "quote": "registered 50 devices"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "how often do field meters need to refresh their access token in production?", "day": 33, "expect": {"anyOf": [["d7-w1"]], "forbidden": ["d7-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d8", "kind": "silent-contradiction", "why": "Wrong file: a later write cites .env.example and reports localhost as the database host the service talks to.", writes: [
+    {"id": "d8-w1", "agent": "agent:release", "day": 9, "subject": "deploy", "slot": "tsdb-host", "text": "In production gridpulse connects to TimescaleDB at tsdb-primary.gridpulse.internal.", "source": {"kind": "file", "locator": "deploy/helm/values-prod.yaml:40", "quote": "    host: tsdb-primary.gridpulse.internal"}, "supersedes": []},
+    {"id": "d8-w2", "agent": "agent:builder", "day": 14, "subject": "api", "slot": "health", "text": "GET /healthz returns 200 once the Kafka consumer has joined its group.", "source": {"kind": "file", "locator": "internal/api/health.go:21", "quote": "if !consumer.Joined() { w.WriteHeader(http.StatusServiceUnavailable); return }"}, "supersedes": []},
+    {"id": "d8-w3", "agent": "agent:debugger", "day": 30, "subject": "database", "slot": "connection", "text": "The service's TimescaleDB host is localhost on port 5432.", "source": {"kind": "file", "locator": ".env.example:2", "quote": "TSDB_HOST=localhost"}, "supersedes": []},
+    {"id": "d8-w4", "agent": "agent:cost", "day": 18, "subject": "storage", "slot": "compression", "text": "Readings chunks older than 7 days are compressed by a Timescale policy.", "source": {"kind": "file", "locator": "migrations/0007_compression.sql:3", "quote": "SELECT add_compression_policy('readings', INTERVAL '7 days');"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Which database host do the prod ingest pods write readings to?", "day": 34, "expect": {"anyOf": [["d8-w1"]], "forbidden": ["d8-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d9", "kind": "silent-contradiction", "why": "Wrong file: a later write takes the decoder worker count from a load-generator benchmark script and states it as the production setting.", writes: [
+    {"id": "d9-w1", "agent": "agent:perf", "day": 6, "subject": "decoder", "slot": "workers", "text": "Production runs 32 protobuf decoder workers per ingest pod.", "source": {"kind": "file", "locator": "config/prod.yaml:12", "quote": "decoder_workers: 32"}, "supersedes": []},
+    {"id": "d9-w2", "agent": "agent:reviewer", "day": 11, "subject": "proto", "slot": "package", "text": "Protobuf definitions live under proto/gridpulse/v1 and are generated with buf.", "source": {"kind": "file", "locator": "buf.gen.yaml:4", "quote": "  - plugin: buf.build/protocolbuffers/go"}, "supersedes": []},
+    {"id": "d9-w3", "agent": "agent:onboarding", "day": 16, "subject": "docs", "slot": "glossary", "text": "A 'register' in gridpulse means a single metered quantity such as kWh imported.", "source": {"kind": "chat", "locator": "chat with agent:domain-expert", "quote": "register = one metered quantity, e.g. kWh import"}, "supersedes": []},
+    {"id": "d9-w4", "agent": "agent:debugger", "day": 27, "subject": "ingest", "slot": "concurrency", "text": "Each ingest pod decodes payloads with 4 workers, which explains the CPU headroom.", "source": {"kind": "file", "locator": "bench/loadgen/run.sh:9", "quote": "  --decoder-workers=4 \\"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many decode goroutines does a production ingest pod run?", "day": 32, "expect": {"anyOf": [["d9-w1"]], "forbidden": ["d9-w4"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d10", "kind": "silent-contradiction", "why": "Wrong file: a later write cites the vendored grpc-go default and presents it as gridpulse's own max receive size.", writes: [
+    {"id": "d10-w1", "agent": "agent:builder", "day": 5, "subject": "grpc", "slot": "max-recv", "text": "The gRPC server accepts messages up to 16 MiB so meters can upload a full day of interval data.", "source": {"kind": "file", "locator": "internal/server/grpc.go:41", "quote": "grpc.MaxRecvMsgSize(16 << 20),"}, "supersedes": []},
+    {"id": "d10-w2", "agent": "agent:release", "day": 13, "subject": "deploy", "slot": "pdb", "text": "The ingest PodDisruptionBudget keeps at least 4 pods available.", "source": {"kind": "file", "locator": "deploy/helm/templates/pdb.yaml:7", "quote": "  minAvailable: 4"}, "supersedes": []},
+    {"id": "d10-w3", "agent": "agent:support", "day": 29, "subject": "uploads", "slot": "size-limit", "text": "Gridpulse rejects gRPC uploads larger than 4 MiB.", "source": {"kind": "file", "locator": "vendor/google.golang.org/grpc/server.go:59", "quote": "const defaultServerMaxReceiveMessageSize = 1024 * 1024 * 4"}, "supersedes": []},
+    {"id": "d10-w4", "agent": "agent:reviewer", "day": 19, "subject": "testing", "slot": "race", "text": "Tests run with -race in CI.", "source": {"kind": "file", "locator": "Makefile:22", "quote": "\tgo test -race ./..."}, "supersedes": []},
+    {"id": "d10-w5", "agent": "agent:planner", "day": 24, "subject": "customers", "slot": "pilot", "text": "The pilot utility has 12,000 meters enrolled.", "source": {"kind": "chat", "locator": "chat with agent:pm", "quote": "pilot is at 12k meters"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "A meter is uploading a 9 MB batch over gRPC. Will our server take it?", "day": 33, "expect": {"anyOf": [["d10-w1"]], "forbidden": ["d10-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d11", "kind": "silent-contradiction", "why": "Legitimately different: staging runs 2 ingest replicas and production runs 6; both are true and each question asks about exactly one environment.", writes: [
+    {"id": "d11-w1", "agent": "agent:release", "day": 8, "subject": "deploy", "slot": "prod-replicas", "text": "Production runs 6 ingest replicas.", "source": {"kind": "file", "locator": "deploy/helm/values-prod.yaml:12", "quote": "replicaCount: 6"}, "supersedes": []},
+    {"id": "d11-w2", "agent": "agent:builder", "day": 12, "subject": "api", "slot": "pagination", "text": "List endpoints paginate with an opaque cursor and a default page size of 100.", "source": {"kind": "file", "locator": "internal/api/paginate.go:11", "quote": "const DefaultPageSize = 100"}, "supersedes": []},
+    {"id": "d11-w3", "agent": "agent:qa", "day": 24, "subject": "staging", "slot": "pods", "text": "Staging runs 2 ingest replicas.", "source": {"kind": "file", "locator": "deploy/helm/values-staging.yaml:12", "quote": "replicaCount: 2"}, "supersedes": []},
+    {"id": "d11-w4", "agent": "agent:security", "day": 18, "subject": "secrets", "slot": "store", "text": "Runtime secrets come from AWS Secrets Manager via the external-secrets operator.", "source": {"kind": "file", "locator": "deploy/helm/templates/externalsecret.yaml:2", "quote": "kind: ExternalSecret"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How many ingest pods are running in staging?", "day": 30, "expect": {"anyOf": [["d11-w3"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "what's the replica count for ingest in prod?", "day": 30, "expect": {"anyOf": [["d11-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d12", "kind": "silent-contradiction", "why": "Legitimately different: the go test timeout is 10 minutes and the HTTP server read timeout is 30 seconds; they answer different questions.", writes: [
+    {"id": "d12-w1", "agent": "agent:builder", "day": 4, "subject": "http", "slot": "read-timeout", "text": "The API server's ReadTimeout is 30 seconds.", "source": {"kind": "file", "locator": "internal/server/http.go:27", "quote": "ReadTimeout: 30 * time.Second,"}, "supersedes": []},
+    {"id": "d12-w2", "agent": "agent:ci-fixer", "day": 21, "subject": "tests", "slot": "timeout", "text": "The test suite is run with a 10 minute timeout.", "source": {"kind": "file", "locator": "Makefile:22", "quote": "\tgo test -race -timeout 10m ./..."}, "supersedes": []},
+    {"id": "d12-w3", "agent": "agent:onboarding", "day": 15, "subject": "repo", "slot": "layout", "text": "Binaries live under cmd/, private packages under internal/.", "source": {"kind": "command-output", "locator": "ls output", "quote": "cmd  deploy  docs  internal  migrations  proto"}, "supersedes": []},
+    {"id": "d12-w4", "agent": "agent:perf", "day": 17, "subject": "db", "slot": "pool", "text": "The pgx pool is capped at 40 connections per pod.", "source": {"kind": "file", "locator": "internal/db/pool.go:15", "quote": "cfg.MaxConns = 40"}, "supersedes": []},
+    {"id": "d12-w5", "agent": "agent:docs", "day": 26, "subject": "glossary", "slot": "interval-data", "text": "Interval data means readings taken at fixed 15-minute intervals by the meter.", "source": {"kind": "file", "locator": "docs/glossary.md:22", "quote": "Interval data: readings recorded at fixed 15-minute intervals."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "If a slow client trickles in a request body, how long until the API server gives up reading it?", "day": 30, "expect": {"anyOf": [["d12-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "How long can the full go test run take before it gets killed?", "day": 30, "expect": {"anyOf": [["d12-w2"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d13", "kind": "silent-contradiction", "why": "Legitimately different: the v2 design doc plans QUIC on 4433 while the current config uses MQTT over TLS on 8883; both are true for their scope.", writes: [
+    {"id": "d13-w1", "agent": "agent:builder", "day": 6, "subject": "mqtt", "slot": "port", "text": "Meters connect to the broker with MQTT over TLS on port 8883.", "source": {"kind": "file", "locator": "config/prod.yaml:4", "quote": "mqtt_listen: \":8883\""}, "supersedes": []},
+    {"id": "d13-w2", "agent": "agent:architect", "day": 23, "subject": "v2", "slot": "transport", "text": "The planned v2 ingest protocol moves meters to QUIC on UDP port 4433.", "source": {"kind": "file", "locator": "docs/design/v2-ingest.md:37", "quote": "v2 meters will connect over QUIC (UDP 4433) instead of MQTT/TLS."}, "supersedes": []},
+    {"id": "d13-w3", "agent": "agent:reviewer", "day": 14, "subject": "codegen", "slot": "mocks", "text": "Interface mocks are generated with mockery into internal/mocks.", "source": {"kind": "file", "locator": ".mockery.yaml:2", "quote": "dir: internal/mocks"}, "supersedes": []},
+    {"id": "d13-w4", "agent": "agent:release", "day": 19, "subject": "release", "slot": "cadence", "text": "Releases are cut every other Tuesday.", "source": {"kind": "file", "locator": "docs/release.md:5", "quote": "We cut a release every second Tuesday."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What transport and port is the v2 meter protocol going to use?", "day": 28, "expect": {"anyOf": [["d13-w2"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "Which port do meters connect to today?", "day": 28, "expect": {"anyOf": [["d13-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d14", "kind": "silent-contradiction", "why": "Legitimately different: the database stores 1-minute rollups while the dashboard queries at 5-minute resolution by default.", writes: [
+    {"id": "d14-w1", "agent": "agent:builder", "day": 10, "subject": "rollups", "slot": "bucket", "text": "The continuous aggregate rolls readings up into 1-minute buckets.", "source": {"kind": "file", "locator": "migrations/0005_rollup_1m.sql:6", "quote": "SELECT time_bucket('1 minute', ts) AS bucket, meter_id, avg(value)"}, "supersedes": []},
+    {"id": "d14-w2", "agent": "agent:frontend", "day": 25, "subject": "dashboard", "slot": "resolution", "text": "Dashboard charts default to a 5-minute resolution.", "source": {"kind": "file", "locator": "web/dashboard/src/config.ts:8", "quote": "export const DEFAULT_RESOLUTION = '5m';"}, "supersedes": []},
+    {"id": "d14-w3", "agent": "agent:security", "day": 16, "subject": "auth", "slot": "dashboard-login", "text": "Dashboard users sign in through the company's OIDC provider.", "source": {"kind": "file", "locator": "web/dashboard/src/auth.ts:3", "quote": "const issuer = import.meta.env.VITE_OIDC_ISSUER;"}, "supersedes": []},
+    {"id": "d14-w4", "agent": "agent:ci-fixer", "day": 20, "subject": "frontend", "slot": "tests", "text": "The dashboard uses vitest, run with npm test in web/dashboard.", "source": {"kind": "file", "locator": "web/dashboard/package.json:9", "quote": "\"test\": \"vitest run\","}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What is the finest granularity of the pre-aggregated rollups stored in the database?", "day": 30, "expect": {"anyOf": [["d14-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d15", "kind": "silent-contradiction", "why": "Legitimately different: the free plan caps tenants at 100 devices and the enterprise plan at 10,000; the question asks about the free plan.", writes: [
+    {"id": "d15-w1", "agent": "agent:builder", "day": 7, "subject": "plans", "slot": "free-device-cap", "text": "Free-tier tenants can register at most 100 devices.", "source": {"kind": "file", "locator": "internal/billing/plans.go:14", "quote": "\tPlanFree:       {MaxDevices: 100},"}, "supersedes": []},
+    {"id": "d15-w2", "agent": "agent:sales-eng", "day": 22, "subject": "enterprise", "slot": "limits", "text": "Enterprise tenants can register up to 10,000 devices.", "source": {"kind": "file", "locator": "internal/billing/plans.go:16", "quote": "\tPlanEnterprise: {MaxDevices: 10000},"}, "supersedes": []},
+    {"id": "d15-w3", "agent": "agent:onboarding", "day": 12, "subject": "cli", "slot": "tool", "text": "gpctl is the admin CLI and lives in cmd/gpctl.", "source": {"kind": "file", "locator": "cmd/gpctl/main.go:1", "quote": "// Command gpctl is the gridpulse admin CLI."}, "supersedes": []},
+    {"id": "d15-w4", "agent": "agent:reviewer", "day": 18, "subject": "errors", "slot": "quota", "text": "Exceeding the device quota returns gRPC ResourceExhausted.", "source": {"kind": "file", "locator": "internal/registry/register.go:47", "quote": "return status.Error(codes.ResourceExhausted, \"device quota exceeded\")"}, "supersedes": []},
+    {"id": "d15-w5", "agent": "agent:release", "day": 9, "subject": "observability", "slot": "tracing", "text": "Traces are exported via OTLP to the collector at otel-collector:4317.", "source": {"kind": "file", "locator": "config/prod.yaml:30", "quote": "otlp_endpoint: otel-collector:4317"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "A free-plan customer wants to onboard 150 meters. Is that over their limit?", "day": 28, "expect": {"anyOf": [["d15-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d16", "kind": "silent-contradiction", "why": "Docs are right: the on-call escalation policy lives only in the runbook, and a commit to the runbook shortened escalation from 30 to 15 minutes.", writes: [
+    {"id": "d16-w1", "agent": "agent:sre", "day": 6, "subject": "oncall", "slot": "escalation", "text": "If the primary does not ack a page, the secondary is paged after 30 minutes.", "source": {"kind": "file", "locator": "docs/runbooks/oncall.md:14", "quote": "Unacknowledged pages escalate to the secondary after 30 minutes."}, "supersedes": []},
+    {"id": "d16-w2", "agent": "agent:builder", "day": 11, "subject": "alerts", "slot": "lag", "text": "The consumer-lag alert fires when lag exceeds 100k messages for 10 minutes.", "source": {"kind": "file", "locator": "deploy/alerts/ingest.rules.yaml:9", "quote": "expr: gridpulse_consumer_lag > 100000"}, "supersedes": []},
+    {"id": "d16-w3", "agent": "agent:incident", "day": 27, "subject": "paging", "slot": "secondary-after", "text": "After the October incident review, unacknowledged pages go to the secondary after 15 minutes.", "source": {"kind": "commit", "locator": "commit 71ce0d3", "quote": "-Unacknowledged pages escalate to the secondary after 30 minutes.\n+Unacknowledged pages escalate to the secondary after 15 minutes."}, "supersedes": []},
+    {"id": "d16-w4", "agent": "agent:planner", "day": 20, "subject": "team", "slot": "rotation", "text": "On-call rotation is weekly, handing over Monday at 10:00 UTC.", "source": {"kind": "file", "locator": "docs/runbooks/oncall.md:6", "quote": "Rotation: weekly, handover Mondays 10:00 UTC."}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "How long does a page sit unacked before the secondary gets woken up?", "day": 33, "expect": {"anyOf": [["d16-w3"]], "forbidden": ["d16-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d17", "kind": "silent-contradiction", "why": "Docs are right: one commit lowered the OTA canary to 5% and updated docs/release/ota.md; the older write citing rollout.sh at 10% is stale.", writes: [
+    {"id": "d17-w1", "agent": "agent:release", "day": 7, "subject": "ota", "slot": "canary-percent", "text": "Firmware OTA rollouts start with a 10% canary.", "source": {"kind": "file", "locator": "scripts/ota/rollout.sh:5", "quote": "CANARY_PERCENT=${CANARY_PERCENT:-10}"}, "supersedes": []},
+    {"id": "d17-w2", "agent": "agent:security", "day": 13, "subject": "firmware", "slot": "signing", "text": "Firmware images are signed with an ed25519 key held in KMS.", "source": {"kind": "file", "locator": "scripts/ota/sign.sh:8", "quote": "aws kms sign --key-id \"$OTA_KEY_ID\" --signing-algorithm ED25519"}, "supersedes": []},
+    {"id": "d17-w3", "agent": "agent:docs", "day": 31, "subject": "release-process", "slot": "firmware", "text": "Per the OTA release guide (updated in the same commit as rollout.sh), new firmware goes to a 5% canary for 48 hours before wider rollout.", "source": {"kind": "file", "locator": "docs/release/ota.md:22", "quote": "Stage 1: canary to 5% of meters for 48 hours."}, "supersedes": []},
+    {"id": "d17-w4", "agent": "agent:onboarding", "day": 18, "subject": "dev", "slot": "emulator", "text": "make emulate runs a meter emulator that publishes a reading every second.", "source": {"kind": "command-output", "locator": "make emulate output", "quote": "emulator: publishing every 1s to localhost:1883"}, "supersedes": []},
+    {"id": "d17-w5", "agent": "agent:qa", "day": 24, "subject": "testing", "slot": "hil", "text": "Hardware-in-the-loop tests run nightly on the lab rack.", "source": {"kind": "file", "locator": ".github/workflows/hil.yml:4", "quote": "    - cron: '0 2 * * *'"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "What share of meters gets a new firmware build first, and for how long?", "day": 36, "expect": {"anyOf": [["d17-w3"]], "forbidden": ["d17-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d18", "kind": "silent-contradiction", "why": "Docs are right: the API deprecation window is a policy defined only in docs, which says 12 months; an earlier chat-based inference said 6.", writes: [
+    {"id": "d18-w1", "agent": "agent:planner", "day": 9, "subject": "api", "slot": "deprecation", "text": "Deprecated API endpoints are probably kept for about 6 months.", "source": {"kind": "inference", "locator": "inferred from chat with agent:pm", "quote": "we usually give people around half a year"}, "supersedes": []},
+    {"id": "d18-w2", "agent": "agent:builder", "day": 14, "subject": "api", "slot": "error-format", "text": "API errors use RFC 7807 problem+json bodies.", "source": {"kind": "file", "locator": "internal/api/errors.go:12", "quote": "w.Header().Set(\"Content-Type\", \"application/problem+json\")"}, "supersedes": []},
+    {"id": "d18-w3", "agent": "agent:docs", "day": 26, "subject": "policy", "slot": "api-lifecycle", "text": "Deprecated endpoints stay available for 12 months after the Deprecation header is first sent.", "source": {"kind": "file", "locator": "docs/policies/api-versioning.md:19", "quote": "A deprecated endpoint remains available for 12 months after deprecation is announced."}, "supersedes": []},
+    {"id": "d18-w4", "agent": "agent:release", "day": 21, "subject": "changelog", "slot": "format", "text": "CHANGELOG.md follows Keep a Changelog.", "source": {"kind": "file", "locator": "CHANGELOG.md:3", "quote": "The format is based on [Keep a Changelog]"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "We just deprecated /v1/meters/export. How long do we have to keep it working?", "day": 30, "expect": {"anyOf": [["d18-w3"]], "forbidden": ["d18-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d19", "kind": "silent-contradiction", "why": "Docs are right: a commit bumped go.mod to Go 1.23 together with the README; the older write citing go.mod at 1.21 is stale.", writes: [
+    {"id": "d19-w1", "agent": "agent:builder", "day": 3, "subject": "toolchain", "slot": "go", "text": "The module targets Go 1.21.", "source": {"kind": "file", "locator": "go.mod:3", "quote": "go 1.21"}, "supersedes": []},
+    {"id": "d19-w2", "agent": "agent:reviewer", "day": 10, "subject": "lint", "slot": "rules", "text": "golangci-lint enables errcheck, govet and staticcheck.", "source": {"kind": "file", "locator": ".golangci.yml:5", "quote": "    - errcheck\n    - govet\n    - staticcheck"}, "supersedes": []},
+    {"id": "d19-w3", "agent": "agent:onboarding", "day": 28, "subject": "setup", "slot": "prerequisites", "text": "The README prerequisites say to install Go 1.23 or newer (bumped alongside go.mod).", "source": {"kind": "file", "locator": "README.md:21", "quote": "- Go 1.23+ (matches go.mod)"}, "supersedes": []},
+    {"id": "d19-w4", "agent": "agent:perf", "day": 16, "subject": "profiling", "slot": "pprof", "text": "pprof is served on the admin port at /debug/pprof.", "source": {"kind": "file", "locator": "internal/server/admin.go:18", "quote": "mux.HandleFunc(\"/debug/pprof/\", pprof.Index)"}, "supersedes": []},
+    {"id": "d19-w5", "agent": "agent:ci-fixer", "day": 22, "subject": "ci", "slot": "cache", "text": "CI caches the Go module and build cache through setup-go.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:19", "quote": "          cache: true"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "Which Go version do I need installed to build gridpulse?", "day": 34, "expect": {"anyOf": [["d19-w3"]], "forbidden": ["d19-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  {"id": "d20", "kind": "silent-contradiction", "why": "Docs are right: the data-residency doc, updated with the regions.yaml commit, says EU readings live in eu-west-1; the older regions.yaml read saying eu-central-1 is stale.", writes: [
+    {"id": "d20-w1", "agent": "agent:release", "day": 9, "subject": "regions", "slot": "eu", "text": "EU tenants' readings are stored in eu-central-1.", "source": {"kind": "file", "locator": "config/regions.yaml:8", "quote": "  eu: eu-central-1"}, "supersedes": []},
+    {"id": "d20-w2", "agent": "agent:security", "day": 15, "subject": "encryption", "slot": "at-rest", "text": "TimescaleDB volumes are encrypted with a per-region KMS key.", "source": {"kind": "file", "locator": "deploy/terraform/rds.tf:22", "quote": "  kms_key_id = aws_kms_key.region.arn"}, "supersedes": []},
+    {"id": "d20-w3", "agent": "agent:compliance", "day": 32, "subject": "data-residency", "slot": "eu-storage", "text": "Per the data residency doc (updated with the regions.yaml migration), EU tenant readings are stored only in eu-west-1.", "source": {"kind": "file", "locator": "docs/compliance/data-residency.md:12", "quote": "Readings for EU tenants are stored exclusively in eu-west-1 (Ireland)."}, "supersedes": []},
+    {"id": "d20-w4", "agent": "agent:builder", "day": 20, "subject": "tenants", "slot": "id-format", "text": "Tenant ids are ULIDs prefixed with tnt_.", "source": {"kind": "file", "locator": "internal/tenant/id.go:7", "quote": "return \"tnt_\" + ulid.Make().String()"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "A German utility asks which AWS region holds their meter data. What do we tell them?", "day": 37, "expect": {"anyOf": [["d20-w3"]], "forbidden": ["d20-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+] as MemoryBenchmarkAgentScenario[]);
 /** Set W5 (fictional game backend): silent contradictions only, written by a separate agent and scored once after the cross-key evidence fixes were frozen. */
 export const MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
   {"id": "c1", "kind": "silent-contradiction", "why": "True update: a commit diff raised the simulation tick rate from 30 to 60 Hz; the newer write does not mark that it supersedes the old file-cited fact.", writes: [

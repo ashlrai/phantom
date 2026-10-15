@@ -13,7 +13,7 @@ import { buildMemoryContextPack, type MemoryPackOptions } from '../memory/pack.j
 import { memoryScopeVisible } from '../memory/scope.js';
 import { memorySourceQuotePresent } from '../memory/source.js';
 import { memoryUtf8Bytes, validMemoryPackQuery, validMemorySnapshot } from '../memory/validate.js';
-import { expandMemoryBenchmarkPlaceholders, MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION,
+import { expandMemoryBenchmarkPlaceholders, MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_SOURCES_VALIDATION, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION,
   MEMORY_BENCHMARK_AGENT_WRITES_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, type MemoryBenchmarkAgentScenario,
   type MemoryBenchmarkAgentWriteKind } from './memory-benchmark-agent-writes.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery, MemorySnapshot } from '../memory/types.js';
@@ -340,7 +340,7 @@ export function memoryBenchmarkAgentWriteCases(set: readonly MemoryBenchmarkAgen
 export function memoryBenchmarkCases(): MemoryBenchmarkCase[] {
   return [...retrievalCases(), ...contradictionCases(), ...temporalCases(), ...withdrawalCases(), ...taskCases(),
     ...memoryBenchmarkAgentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_TUNING, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING], 'tuning'),
-    ...memoryBenchmarkAgentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION], 'validation')];
+    ...memoryBenchmarkAgentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_CONTRADICTION_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SOURCES_VALIDATION], 'validation')];
 }
 
 // ---- scoring ----

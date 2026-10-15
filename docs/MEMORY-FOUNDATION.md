@@ -211,9 +211,14 @@ withheld as `source-changed` when a later fact in the snapshot cites the same
 that removes a line of its quote, or a commit message that names a qualified
 identifier from its quote (or its file, when the message also names its topic).
 `memoryQuoteRetiredBy` in `src/core/memory/source.ts` makes that comparison.
-Chat remarks and an agent's own reasoning never retire a cited quote, and a
-contradiction with no shared evidence (a stale README, a wrong file) is still
-not detected.
+Chat remarks and an agent's own reasoning never retire a cited quote.
+
+Facts cited from docs (README, CHANGELOG, `docs/`, Markdown), tests, fixtures,
+mocks, examples, samples, benchmarks, vendored code or staging/dev config are
+secondary sources. One is held back as `weaker-evidence` when both it and a
+primary-source fact answer the query, share a topic word and state different
+numbers, unless a primary fact states the same numbers or the query names that
+kind of source ("staging", "tests", "README").
 
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt

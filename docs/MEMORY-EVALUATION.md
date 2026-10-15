@@ -187,3 +187,15 @@ A later commit diff, a commit message naming the old quote's identifier or file,
 | W5, 16 fresh histories by a separate agent, scored once after the rules were frozen | 3/16 | 7/16 |
 
 Steps serving a stale or wrong fact fell from 14 to 10 on the old sets and from 11 to 7 on W5, and no case regressed. W5 joins the validation set (516 cases). What remains is not connected by evidence: stale docs that repeat an old value, and an agent reading the wrong file. A notice for unverified claims that disagree with a cited fact was tried and dropped: 10 of its 11 notices on the tuning side were spurious.
+
+### Source tiers: stale docs and wrong-file reads
+
+A docs, test, example or staging-config fact whose numbers disagree with a code-cited fact on the same question is held back, unless code confirms its numbers or the question asks about that source. W6 (23 questions on a fictional telemetry service, written by a separate agent to cover stale docs, wrong-file reads, legitimately different values and docs that are right) was scored once after the rule was frozen against #770:
+
+| Set | Before | After | Steps serving a stale or wrong fact |
+|---|---|---|---|
+| W6 (fresh) | 12/23 | 15/23 | 10 -> 7 |
+| W5 (seen) | 7/16 | 10/16 | 7 -> 4 |
+| Tuning and W2/W4 (seen) | | +2 questions | 0 regressions |
+
+All 8 "legitimately different" W6 questions still pass. Cost: in two W6 "docs are right" histories, where a commit updated code and docs together but only the docs were re-cited, the correct docs fact is now held back behind the stale code fact. Both questions failed before as well (the stale fact was served); now the answer is missing too. W6 joins the validation set (539 cases).
