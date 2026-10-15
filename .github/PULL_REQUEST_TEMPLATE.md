@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to ashlr-hub! -->
+<!-- Thanks for contributing to Phantom! -->
 
 ## What & why
 
