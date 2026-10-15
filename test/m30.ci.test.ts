@@ -120,12 +120,12 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success') => {
+    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
       const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
         result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
-        process: { env: { GATE_NEEDS: JSON.stringify(dependencies) } }, console: { log: () => {} },
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
       });
     };
     const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
@@ -137,6 +137,18 @@ describe('M30 CI workflow', () => {
         expect(execute('full', { ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
       }
     }
+    // Deferred PR: only a skipped mac-general is accepted; failures still block
+    // and every other full-lane job must still succeed.
+    expect(execute('full', { ...complete, 'mac-general': 'skipped', site: 'skipped' }, 'success', 'true')).not.toThrow();
+    for (const outcome of ['failure', 'cancelled', 'neutral']) {
+      expect(execute('full', { ...complete, 'mac-general': outcome, site: 'skipped' }, 'success', 'true')).toThrow();
+    }
+    for (const name of full.filter((name) => name !== 'mac-general')) {
+      expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
+    }
+    expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
+      "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}",
+    );
     expect(execute('site', { ...site, site: 'failure' })).toThrow();
     expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
     expect(execute('full', { ...complete, site: 'success' })).toThrow();
@@ -350,10 +362,16 @@ describe('M30 CI workflow', () => {
       expect(short.if).toBe("${{ !cancelled() && needs.classify.outputs.lane == 'full' }}");
       expect(short['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'mac-general', 'mac-isolated', 'windows-service-authority']) {
+    for (const id of ['ci', 'mac-isolated', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
     }
+    // The exhaustive Mac partition runs on master pushes, reusable calls and
+    // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
+    expect(jobs['mac-general']!.needs).toBe('classify');
+    expect(jobs['mac-general']!.if).toBe(
+      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+    );
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     expect(ci.strategy!.matrix.include).toHaveLength(7);
