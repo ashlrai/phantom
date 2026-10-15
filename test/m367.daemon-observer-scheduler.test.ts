@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { Backlog } from '../src/core/types.js';
 import {
@@ -62,43 +62,67 @@ function spawnHarness() {
   return { child, spawn };
 }
 
+const daemonSourceDir = fileURLToPath(new URL('../src/core/daemon/', import.meta.url));
+
+/** A home whose KILL switch makes the observer child refuse before any work. */
+function killedHome(root: string): { home: string; ashlrHome: string } {
+  const home = join(root, 'home');
+  const ashlrHome = join(home, '.ashlr');
+  mkdirSync(ashlrHome, { recursive: true });
+  writeFileSync(join(ashlrHome, 'KILL'), 'kill switch active\n', { mode: 0o600 });
+  return { home, ashlrHome };
+}
+
+function spawnObserverChild(entry: string, home: string, ashlrHome: string, timeout: number) {
+  return spawnSync(
+    process.execPath,
+    ['--import', tsxImportUrl, entry, '25', '1'],
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        ASHLR_HOME: ashlrHome,
+      },
+      timeout,
+      windowsHide: true,
+    },
+  );
+}
+
 describe('daemon resolution observer child scheduling', () => {
+  // The child's static graph is about 330 TypeScript modules. A cold tsx run
+  // transforms and caches every one of them, which is what blew the alias
+  // case's 15s spawn deadline on a loaded Windows runner (spawnSync ETIMEDOUT)
+  // although a quiet run of the whole file takes under 5s. Prime tsx's
+  // on-disk cache here, through the real path: Node resolves the alias to the
+  // same real module paths, so the case below loads cached output and its
+  // deadline bounds only the entrypoint check and the KILL refusal. Priming
+  // asserts nothing; a failed prime leaves the case exactly as strict.
+  beforeAll(() => {
+    const root = mkdtempSync(join(tmpdir(), 'ashlr-observer-prime-'));
+    try {
+      const { home, ashlrHome } = killedHome(root);
+      spawnObserverChild(join(daemonSourceDir, 'resolution-observer-child.ts'), home, ashlrHome, 60_000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 65_000);
+
   it('runs through a filesystem alias and preserves the KILL refusal exit', () => {
     const root = mkdtempSync(join(tmpdir(), 'ashlr-observer-entrypoint-'));
     try {
-      const home = join(root, 'home');
-      const ashlrHome = join(home, '.ashlr');
+      const { home, ashlrHome } = killedHome(root);
       const daemonAlias = join(root, 'daemon-alias');
-      mkdirSync(ashlrHome, { recursive: true });
-      writeFileSync(join(ashlrHome, 'KILL'), 'kill switch active\n', { mode: 0o600 });
       symlinkSync(
-        fileURLToPath(new URL('../src/core/daemon/', import.meta.url)),
+        daemonSourceDir,
         daemonAlias,
         process.platform === 'win32' ? 'junction' : 'dir',
       );
 
-      const result = spawnSync(
-        process.execPath,
-        [
-          '--import',
-          tsxImportUrl,
-          join(daemonAlias, 'resolution-observer-child.ts'),
-          '25',
-          '1',
-        ],
-        {
-          cwd: process.cwd(),
-          encoding: 'utf8',
-          env: {
-            ...process.env,
-            HOME: home,
-            USERPROFILE: home,
-            ASHLR_HOME: ashlrHome,
-          },
-          timeout: 15_000,
-          windowsHide: true,
-        },
-      );
+      const result = spawnObserverChild(join(daemonAlias, 'resolution-observer-child.ts'), home, ashlrHome, 15_000);
 
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
