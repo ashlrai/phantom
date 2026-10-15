@@ -73,7 +73,9 @@ phm verse             # console at http://127.0.0.1:7777/verse/
 - `phm init [--wire] [--yes] [--json]` is idempotent onboarding. It writes the
   config, creates `~/.ashlr/genome`, symlinks `ashlr` into `~/.local/bin`, and
   with `--wire` registers the MCP gateway in detected editors. It has no
-  `--help`: any invocation runs it.
+  `--help`: any invocation runs it. A new `config.json` carries only generic
+  defaults (one tidy keeper, `github`); an existing one keeps its saved keepers
+  and categories.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `phm onboard --rollback <repo> [--kill]` undoes it.
@@ -106,7 +108,12 @@ from `mcpServers`.
 | Codex | `~/.codex/config.toml` | runs `codex mcp add ashlr-hub -- ashlr mcp` |
 | Cursor | `~/.cursor/mcp.json` | JSON merge into `mcpServers` |
 
-Without a target, or with `all`, it wires only the editors it detects. To test
+Without a target, or with `all`, it wires only the editors it detects. An
+editor counts as detected when its config exists (`~/.claude` or
+`~/.claude.json`, `~/.codex`, `~/.cursor`) or its CLI (`claude`, `codex`,
+`cursor`) is on `PATH`, so a fresh Claude Code install is found before its
+first run. `phm init --wire` and `phm doctor --fix` use the same
+detection. To test
 without touching real configs, pass one explicit target with `--config`, for
 example `phm wire claude --config /tmp/x/.claude.json` or
 `phm wire codex --config /tmp/x/config.toml` (Codex still needs the `codex` CLI).
@@ -173,6 +180,40 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm daemon stop` | Orderly shutdown; also sets the global kill switch |
 | `phm website pause` | Pause automatic site publication |
 
+### Per-agent Auto-merge
+
+Agents started from the Agents board in the Phantom app can Auto-fix CI and
+Auto-merge their PR. Both are off for each agent until the operator turns them
+on. Auto-merge also needs `ASHLR_VERSE_AUTOMERGE_CHECKS` set to the exact,
+comma-separated names of the required code checks; an unset or malformed value
+holds every automatic merge. The gates run in this order, and the first refusal
+is shown on the agent (`src/core/verse/agents/checks.ts`):
+
+1. Auto-merge is on for this agent.
+2. Stop (`~/.ashlr/KILL`) and pause (daemon or comms) are both clear.
+3. The PR is open, not a draft, mergeable, and green on the head the checks
+   ran on.
+4. Git's own diff from the merge base to that head is readable, not empty,
+   does not weaken tests (deleted tests, removed `it(` or `expect(`, added
+   `.skip` or `.only`), and touches no protected path: CI, manifests,
+   lockfiles, CODEOWNERS, hooks and, in Phantom itself, its Tier-1 authority
+   code.
+5. In Phantom's own repository, the standing grant's self-land policy is
+   `merge-non-authority`. The repository is recognised by package name
+   (`@ashlr/phantom` or `@ashlr/hub`) or by an `ashlrai/phantom` or
+   `ashlrai/ashlr-hub` origin.
+6. GitHub's branch protection. The squash merge is pinned to the head commit
+   and never uses `--admin` or `--auto`.
+
+The merge runs under the machine-wide outward-mutation fence, and Stop and
+pause are read again inside it, so Stop or unenroll cannot report quiescence
+while a merge is in flight. A busy fence holds the merge for a later pass.
+
+Seats are not allowed to merge on their own. A seat's terminal asks the
+operator before `gh pr merge`, a `gh api` merge or auto-merge call, or
+`gh pr review --approve` (rule `gh-merge`). When Auto-fix sends failing CI log
+tails back to the seat, they arrive fenced and labelled as untrusted data.
+
 ### Authority
 
 `phm authority status [--json]` shows grant state, the switch, Stop, the
@@ -231,7 +272,8 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm` not found after install | `phm doctor` checks `~/.local/bin` on `PATH`; from source run `./install.sh` |
 | Agent does not see Phantom tools | `phm mcp doctor`, `phm mcp list`, then `phm wire <client>` |
 | No local provider reachable | `phm models`, `phm models start`, `phm local-runtime status\|logs` |
-| An engine is not ready | `phm fleet doctor` and its `fix:` line |
+| An engine is not ready | `phm fleet doctor` and its `fix:` line. For a Claude engine with no credential under the daemon, the line names this platform's way to set `CLAUDE_CODE_OAUTH_TOKEN` (`launchctl setenv`, `systemctl --user set-environment` or `setx`) |
+| `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |

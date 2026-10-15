@@ -1,4 +1,4 @@
-# CODEOWNERS for ashlr-hub — the Tier-1 protected paths (SPEC-310B §2; docs/AUTHORITY.md).
+# CODEOWNERS for Phantom — the Tier-1 protected paths (SPEC-310B §2; docs/AUTHORITY.md).
 #
 # Everything below is GENERATED from renderCodeownersBlock() in
 # src/core/authority/protected-paths.ts (the owner lane of merge gate G1) so the
