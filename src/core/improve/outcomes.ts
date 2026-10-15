@@ -39,7 +39,9 @@ export type LedgerEvent =
   | { type: 'registered'; proposalId: string; title: string; proposalKind: string; source: ProposerSource; metric: MetricSpec; predictedDelta: number | null }
   | { type: 'pr'; proposalId: string; repository: string; number: number }
   | { type: 'measured'; proposalId: string; phase: MeasurementPhase; sha: string; value: number | null; reason: string | null }
-  | { type: 'promotion'; proposalId: string; headSha: string; decision: 'merge-queued' | 'refused'; reasons: string[] };
+  | { type: 'promotion'; proposalId: string; headSha: string; decision: 'merge-queued' | 'refused'; reasons: string[] }
+  /** What happened after the PR: it merged as `sha`, or `sha` on the default branch reverted it. */
+  | { type: 'observed'; proposalId: string; observation: 'merged' | 'reverted'; sha: string };
 export type LedgerRecord = LedgerEvent & { v: 1; at: string; prev: string; digest: string };
 
 export const MAX_LEDGER_BYTES = 8 * 1024 * 1024;
@@ -113,6 +115,10 @@ function validateEvent(e: LedgerEvent): LedgerEvent {
       if (typeof e.headSha !== 'string' || !SHA.test(e.headSha)) throw new Error('Invalid head SHA.');
       if (e.decision !== 'merge-queued' && e.decision !== 'refused') throw new Error('Invalid decision.');
       return { type: e.type, proposalId: e.proposalId, headSha: e.headSha, decision: e.decision, reasons: e.reasons.map((r) => String(r).slice(0, 300)).slice(0, 20) };
+    case 'observed':
+      if (e.observation !== 'merged' && e.observation !== 'reverted') throw new Error('Invalid observation.');
+      if (typeof e.sha !== 'string' || !SHA.test(e.sha)) throw new Error('Observations need an exact 40-hex commit.');
+      return { type: e.type, proposalId: e.proposalId, observation: e.observation, sha: e.sha };
     default: throw new Error('Unknown ledger event.');
   }
 }
@@ -173,6 +179,9 @@ export interface ProposalOutcome {
   status: OutcomeStatus;
   reasons: string[];
   promotion: { headSha: string; decision: 'merge-queued' | 'refused' } | null;
+  merged: { sha: string } | null;
+  /** A revert on the default branch overrides any measured gain: the change did not hold. */
+  reverted: { sha: string } | null;
 }
 
 /** Repeated measurements of one commit must agree exactly, otherwise the metric is not deterministic. */
@@ -213,10 +222,15 @@ export function scoreOutcomes(records: readonly LedgerRecord[]): ProposalOutcome
     }
     const pr = after.filter((r): r is LedgerRecord & { type: 'pr' } => r.type === 'pr').at(-1);
     const promo = after.filter((r): r is LedgerRecord & { type: 'promotion' } => r.type === 'promotion').at(-1);
+    const observed = after.filter((r): r is LedgerRecord & { type: 'observed' } => r.type === 'observed');
+    const merged = observed.filter((o) => o.observation === 'merged').at(-1);
+    const reverted = observed.filter((o) => o.observation === 'reverted').at(-1);
+    if (reverted) { status = 'regressed'; reasons.push('reverted-after-merge'); }
     out.push({ proposalId, title: reg.title, proposalKind: reg.proposalKind, source: reg.source, metric: reg.metric,
       predictedDelta: reg.predictedDelta, pr: pr ? { repository: pr.repository, number: pr.number } : null,
       base, head, effect, relativeEffect, status, reasons,
-      promotion: promo ? { headSha: promo.headSha, decision: promo.decision } : null });
+      promotion: promo ? { headSha: promo.headSha, decision: promo.decision } : null,
+      merged: merged ? { sha: merged.sha } : null, reverted: reverted ? { sha: reverted.sha } : null });
   }
   return out;
 }
