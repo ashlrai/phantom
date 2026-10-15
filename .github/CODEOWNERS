@@ -772,6 +772,7 @@
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
+/test/repo-lease-transient-unavailable.test.ts @masonwyatt23
 /test/reset-aware-scheduling.test.ts @masonwyatt23
 /test/reset-spending-park-delay.test.ts @masonwyatt23
 /test/reset-spending.test.ts @masonwyatt23

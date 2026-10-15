@@ -209,6 +209,13 @@ const MAX_ITEM_ID_BYTES = 2_048;
 const MAX_COOLDOWN_KEYS = 32;
 const DEFAULT_CLAIM_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const LOCK_RETRY_SLEEP_MS = 10;
+/**
+ * Claims wait briefly for the queue lock. Every claim, renewal and outcome is
+ * a ~10 ms read-modify-write under one lock, so N agents claiming at once used
+ * to see an empty claim for every one that lost the race and sat out a whole
+ * tick (scripts/daemon-throughput.mjs: 11 of 20). Short and synchronous.
+ */
+const CLAIM_LOCK_RETRY_MS = 250;
 const LOCK_RETRY_SIGNAL = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 const CAPABILITY_FAILURE_RETRY_MS = 60_000;
 const CAPABILITY_SUCCESS_RECHECK_MS = 5 * 60_000;
@@ -877,12 +884,15 @@ export class SharedStore {
   }
 
   private acquireLockWithRetry(maxWaitMs: number): SharedStoreLock | null {
-    const deadline = Date.now() + Math.max(0, Math.floor(maxWaitMs));
-    for (;;) {
+    const waitMs = Math.max(0, Math.floor(maxWaitMs));
+    const deadline = Date.now() + waitMs;
+    // Bounded by attempts as well as the clock, so a stalled clock cannot spin forever.
+    const maxAttempts = Math.ceil(waitMs / LOCK_RETRY_SLEEP_MS) + 1;
+    for (let attempt = 1; ; attempt++) {
       const lock = this.acquireLock();
       if (lock) return lock;
       const remaining = deadline - Date.now();
-      if (remaining <= 0) return null;
+      if (remaining <= 0 || attempt >= maxAttempts) return null;
       Atomics.wait(LOCK_RETRY_SIGNAL, 0, 0, Math.min(LOCK_RETRY_SLEEP_MS, remaining));
     }
   }
@@ -1040,7 +1050,7 @@ export class SharedStore {
         if (claimed.length >= claimLimit) break;
       }
       return { queue: q, result: claimed };
-    }, []);
+    }, [], { retryLockMs: CLAIM_LOCK_RETRY_MS });
   }
 
   /**
