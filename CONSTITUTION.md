@@ -67,7 +67,12 @@ these hold:
 - every check reported on its exact head commit is green;
 - its declared metric was measured deterministically at the PR's current merge
   base and at that exact head, and improved. Unmeasured, failed or
-  non-reproducible measurements are unknown and never promote.
+  non-reproducible measurements are unknown and never promote. The gate
+  re-measures both commits itself; recorded numbers it cannot reproduce never
+  promote;
+- Stop and Pause are off, and the diff touches no owner-lane path, none of the
+  promotion gate's own code or governance documents, not its own metric
+  script, and weakens no test.
 
 Promotion only queues GitHub auto-merge pinned to that head
 (`--match-head-commit`). Branch protection, required checks and required

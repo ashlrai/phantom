@@ -79,10 +79,11 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
   if (!outcome?.pr) { console.error('! register the proposal with its PR first (phm improve register)'); return 1; }
   const { appendLedger } = await import('../core/improve/outcomes.js');
   const { measureAt } = await import('../core/improve/measure.js');
-  const { readPr, defaultBranchOf, prMergeBase } = await import('../core/improve/promote.js');
+  const { readPr, defaultBranchOf, assertOriginIs, prMergeBase } = await import('../core/improve/promote.js');
   try {
+    assertOriginIs(outcome.pr.repository, repo);
     const pr = readPr(outcome.pr.repository, outcome.pr.number, repo);
-    const base = prMergeBase(repo, pr, defaultBranchOf(repo));
+    const base = prMergeBase(repo, pr, defaultBranchOf(outcome.pr.repository, repo));
     for (const [phase, sha] of [['base', base], ['head', pr.headRefOid]] as const) {
       for (let i = 0; i < repeat; i++) {
         const m = measureAt(repo, sha, outcome.metric);
@@ -116,18 +117,42 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
   if (!id || !repo) { console.error('Usage: phm improve promote <id> --repo <dir> [--queue-merge] [--json]'); return 2; }
   const { read, outcome } = await outcomeFor(id);
   if (!outcome?.pr) { console.error('! register the proposal with its PR first (phm improve register)'); return 1; }
+  const repository = outcome.pr.repository;
   const { appendLedger } = await import('../core/improve/outcomes.js');
-  const { readPr, defaultBranchOf, prMergeBase, evaluatePromotion, queueMerge } = await import('../core/improve/promote.js');
+  const { measureAt } = await import('../core/improve/measure.js');
+  const { readPr, defaultBranchOf, assertOriginIs, prMergeBase, prDiff, evaluatePromotion, queueMerge, confirmQueued, NOT_REMEASURED } = await import('../core/improve/promote.js');
+  const guards = async () => {
+    const [{ killSwitchOn }, { isPaused }] = await Promise.all([import('../core/sandbox/policy.js'), import('../core/comms/pause.js')]);
+    return { killSwitch: killSwitchOn(), paused: isPaused() };
+  };
   try {
-    const pr = readPr(outcome.pr.repository, outcome.pr.number, repo);
-    const defaultBranch = defaultBranchOf(repo);
-    const decision = evaluatePromotion({ outcome, pr, defaultBranch, mergeBase: prMergeBase(repo, pr, defaultBranch), ledgerIntact: read.intact });
-    if (decision.admit && !dryRun) queueMerge(outcome.pr.repository, pr, repo);
+    assertOriginIs(repository, repo);
+    const pr = readPr(repository, outcome.pr.number, repo);
+    const defaultBranch = defaultBranchOf(repository, repo);
+    const mergeBase = prMergeBase(repo, pr, defaultBranch);
+    const facts = { outcome, pr, defaultBranch, mergeBase, ledgerIntact: read.intact, diff: prDiff(repo, mergeBase, pr.headRefOid) };
+    let decision = evaluatePromotion({ ...facts, guards: await guards() });
+    // Measuring runs the PR's code; only spend it on a PR that passes every other gate.
+    if (decision.reasons.length === 1 && decision.reasons[0] === NOT_REMEASURED) {
+      const base = measureAt(repo, mergeBase, outcome.metric);
+      const head = measureAt(repo, pr.headRefOid, outcome.metric);
+      const remeasured = { base: base.value, head: head.value, reasons: [base.reason, head.reason].filter((r): r is string => !!r) };
+      // Measuring takes minutes: Stop/Pause and the PR itself are read again right before acting.
+      const now = readPr(repository, outcome.pr.number, repo);
+      decision = evaluatePromotion({ ...facts, pr: now, guards: await guards(), remeasured });
+      if (now.headRefOid !== pr.headRefOid || now.baseRefName !== pr.baseRefName) decision = { admit: false, reasons: [...decision.reasons, 'the PR changed while the gate measured it; run promote again'] };
+    }
+    let drift: string[] = [];
+    if (decision.admit && !dryRun) {
+      queueMerge(repository, pr, repo);
+      drift = confirmQueued(repository, pr, repo);
+      if (drift.length) decision = { admit: false, reasons: [`auto-merge disabled again: ${drift.join(', ')}`] };
+    }
     if (!dryRun && /^[0-9a-f]{40}$/.test(pr.headRefOid)) {
       appendLedger({ type: 'promotion', proposalId: id, headSha: pr.headRefOid, decision: decision.admit ? 'merge-queued' : 'refused', reasons: decision.reasons });
     }
     if (json) console.log(JSON.stringify({ ...decision, dryRun, headSha: pr.headRefOid }, null, 2));
-    else if (decision.admit) console.log(dryRun ? 'ok gate admits; pass --queue-merge to queue auto-merge' : `ok auto-merge queued for ${outcome.pr.repository}#${pr.number} at ${pr.headRefOid.slice(0, 12)}`);
+    else if (decision.admit) console.log(dryRun ? 'ok gate admits; pass --queue-merge to queue auto-merge' : `ok auto-merge queued for ${repository}#${pr.number} at ${pr.headRefOid.slice(0, 12)}`);
     else console.log(['! not promoted:', ...decision.reasons.map((r) => `  - ${r}`)].join('\n'));
     return decision.admit ? 0 : 1;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }

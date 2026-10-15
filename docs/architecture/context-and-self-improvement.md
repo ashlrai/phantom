@@ -78,7 +78,8 @@ A proposal earns credit only from a metric it declares up front:
 * `phm improve measure <id> --repo <dir>` runs the metric in private detached
   worktrees at the PR's exact merge base and head (twice each by default). The
   command's last stdout line must be `{"metric": "<name>", "value": <number>}`.
-  It runs with a minimal environment (no tokens or API keys). A failed run, a
+  It runs with a minimal environment (no tokens or API keys) and a private
+  empty HOME, with git hooks and fsmonitor disabled. A failed run, a
   missing script, or two runs of one commit that disagree make the outcome
   **unknown**, never zero.
 * `phm improve outcomes` lists outcomes and compares proposers. Proposals
@@ -88,9 +89,19 @@ A proposal earns credit only from a metric it declares up front:
 * `phm improve promote <id> --repo <dir> [--queue-merge]` evaluates the promotion
   gate: the PR is on an improvement-owned branch (`improve/*`, `ashlr-cloud/*`),
   targets the default branch, is not from a fork, has every reported check
-  green on its exact head, and its metric improved between the current merge
-  base and that head. With `--queue-merge` and an admitted gate it queues GitHub auto-merge
-  (`--squash --auto --match-head-commit <head>`), so branch protection and
+  green on its exact head (at least one actually passed, not only skipped), and
+  its metric improved between the current merge base and that head. It also
+  refuses when Stop or Pause is on; when the diff touches an owner-lane path
+  (`src/core/authority/protected-paths.ts`: CI, manifests, test config, Tier-1
+  code), the promotion gate itself, the autopilot, Stop/Pause or the governance
+  documents; when it changes its own metric script; or when it weakens tests
+  (G1b: deleted test files, removed `it`/`expect` calls, added `.skip`/`.only`).
+  The ledger's numbers are claims, so the gate re-measures base and head itself
+  and refuses unless its own run reproduces the recorded values and improves.
+  The default branch comes from GitHub, the checkout's `origin` must be the PR's
+  repository, and the PR is re-read after measuring. With `--queue-merge` and an admitted gate it queues GitHub auto-merge
+  (`--squash --auto --match-head-commit <head>`) and then re-reads the PR,
+  disabling auto-merge again if its head or base changed, so branch protection and
   required checks still decide the merge; it never uses `--admin`. Anything
   else is refused with reasons, and every decision is recorded in the ledger.
   Without `--queue-merge` it only reports the decision. CONSTITUTION.md v3's
