@@ -29,13 +29,13 @@ import {
   writeFileSync,
   type Stats,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir, hostname as osHostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DaemonState } from '../types.js';
 import { acquireLocalStoreLock, acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { pidProvablyReusedSince } from './pid-reuse-proof.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1004,25 +1004,6 @@ function pidExists(pid: number): boolean {
   }
 }
 
-/** Epoch ms `pid` started, from `ps -o etime=` ([[dd-]hh:]mm:ss); null when unprovable. */
-function processStartedAtMs(pid: number, nowMs: number): number | null {
-  if (process.platform === 'win32' || !existsSync('/bin/ps')) return null;
-  try {
-    const result = spawnSync('/bin/ps', ['-o', 'etime=', '-p', String(pid)], {
-      encoding: 'utf8', timeout: 2_000, maxBuffer: 1_024, shell: false, env: { ...process.env, LC_ALL: 'C' },
-    });
-    const match = result.status === 0 ? /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(result.stdout ?? '') : null;
-    if (!match) return null;
-    const [days, hours, minutes, seconds] = [match[1], match[2], match[3], match[4]].map((v) => Number(v ?? 0));
-    return nowMs - ((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1_000);
-  } catch {
-    return null;
-  }
-}
-
-/** Lock-owner pids this far (ms) after acquiredAt are not the owner; covers ps's 1 s granularity and clock jitter. */
-const LOCK_PID_REUSE_SLACK_MS = 60_000;
-
 /**
  * Stale when the owner pid is gone (ESRCH), or — a pid REUSED after a crash or
  * reboot — when the lock's heartbeat has been silent for `staleMs` (a live
@@ -1033,13 +1014,7 @@ const LOCK_PID_REUSE_SLACK_MS = 60_000;
 function lockIsSafelyStale(owner: DaemonLockOwner | null, staleMs: number): boolean {
   if (!owner || !Number.isFinite(owner.pid) || owner.pid <= 0) return true;
   if (!pidExists(owner.pid)) return true;
-  const nowMs = Date.now();
-  const heartbeatMs = Date.parse(owner.heartbeatAt);
-  const acquiredMs = Date.parse(owner.acquiredAt);
-  if (!Number.isFinite(heartbeatMs) || !Number.isFinite(acquiredMs)) return false;
-  if (nowMs - heartbeatMs < Math.max(staleMs, 3 * 30_000)) return false;
-  const startedMs = processStartedAtMs(owner.pid, nowMs);
-  return startedMs !== null && startedMs > acquiredMs + LOCK_PID_REUSE_SLACK_MS;
+  return pidProvablyReusedSince({ pid: owner.pid, acquiredAtMs: Date.parse(owner.acquiredAt), heartbeatAtMs: Date.parse(owner.heartbeatAt), staleMs });
 }
 
 function writeNewLock(path: string, owner: DaemonLockOwner): void {
