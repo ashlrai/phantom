@@ -147,10 +147,14 @@ subject, slot and text. Common function words (`the`, `how`, `what` ...) are
 ignored unless the query has nothing else, and ASCII words are folded by a small
 fixed suffix list, so `builds`, `building` and `build` match. Other scripts are
 compared exactly. An empty query gives each eligible event equal score. Ties go
-to the event whose matched terms are rarer among eligible facts, then to event
-ID order. There are no synonyms: a query that shares no word stem with a fact
-does not find it. Each complete fact and its citations are canonical JSON
-inside a fixed evidence boundary, with angle brackets escaped so quoted text
+to the event whose matched terms are rarer among eligible facts, then to more
+exact-word matches, then to event ID order. A fixed vocabulary of
+engineering synonym groups (`src/core/memory/vocabulary.ts`) lets `compile`
+match build and `credentials` match secrets; there is no model or embedding,
+so wording outside those groups still has to share a stem. Each fact is
+canonical JSON whose citations are references: source ID and digest, plus the
+quote only when it differs from the fact text. The complete source records stay
+on `items[].sourceRefs`. Facts are placed inside a fixed evidence boundary, with angle brackets escaped so quoted text
 cannot close that boundary. The view (time mode, time, knowledge cutoff) and the
 review disclaimer are stated once on the boundary tag rather than in every fact.
 Quoted instructions remain data; `authority: false` never grants tool use,

@@ -60,11 +60,11 @@ npm run --silent bench:memory -- --json            # summaries plus failing case
 npm run --silent bench:memory -- --json --cases    # every step's measurements
 ```
 
-It has 100 cases and 109 steps in five dimensions:
+It has 192 cases and 201 steps in five dimensions:
 
 | Dimension | Cases | What it measures |
 | --- | --- | --- |
-| Retrieval | 66 | Find one of 20 facts in a 26-event history with a top-3 budget. Each fact is asked three ways: sharing exact words (lexical), sharing only word stems (inflected), and sharing no content word (paraphrase). Six more queries have no answer and should return an empty pack. |
+| Retrieval | 158 | Find one of 20 facts in a 26-event history with a top-3 budget. Each fact is asked three ways in the authored catalog: sharing exact words (lexical), sharing only word stems (inflected), and sharing no content word (paraphrase). Two more sets of 40 paraphrases (held-out and unseen) were written by separate agents that saw only the facts, and each comes with six questions no fact answers. Six authored queries also have no answer. Unanswerable queries should return an empty pack. |
 | Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
 | Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
 | Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
@@ -84,4 +84,23 @@ Governed memory passes every contradiction, temporal and withdrawal case and nev
 
 The follow-up change ignores function words, folds simple English suffixes, breaks ties by term rarity, states the query view once on the evidence tag instead of in every fact, and adds a line naming any contested slot the query touches. It fixes word-form retrieval and every conflict mention, and keeps the 72-case corpus at 72/72. What remains: paraphrase retrieval (no synonyms), three unanswerable queries that still match an incidental word (`friday`, `use`, `name`), and the tight-budget task. Each fact still carries about 440 bytes of citation and validity JSON, mostly its full source reference, because the conformance judge requires the complete citation in the text. Citing the source by ID and digest, with the quote only when it differs from the fact, is the next size lever and needs that contract changed.
 
-The catalog, queries and expected outcomes were written by the same author as any later ranking change, so they are not an independent held-out set. Paraphrase retrieval needs synonyms or semantics that this benchmark does not supply. Payload ratio is a byte measure, not a tokenizer count.
+The authored catalog's queries were written by the same author as the ranking changes, so they are not independent. The held-out set was written by a separate agent but was read while the vocabulary was being written, so it is not clean either. The unseen set was written by another agent after `src/core/memory/vocabulary.ts` was frozen (sha256 `c60cc212...`) and was never read before scoring; it is the honest measure of paraphrase retrieval. Payload ratio is a byte measure, not a tokenizer count.
+
+### Paraphrases and citation size
+
+The next change adds a fixed vocabulary of 31 engineering synonym groups (`compile` for build, `ship` for release or deploy, `credentials` for secrets, and so on). It also makes pack-text citations references: each source appears as its ID and digest, with the quote only when the quote differs from the fact text. The full source records, with locator and observation time, stay on `items[].sourceRefs`. The conformance judge now accepts either full citations or references that match the fixture's IDs and digests exactly.
+
+On the #746 head, scored with the same 192 cases:
+
+| Governed | Before | After |
+| --- | --- | --- |
+| Cases passed | 89/192 | 164/192 |
+| Authored paraphrase | 1/20 | 18/20 |
+| Held-out paraphrase (read while writing the vocabulary) | 0/40 | 34/40 |
+| Unseen paraphrase (written after the vocabulary froze) | 0/40 | 27/40 |
+| Unanswerable: authored / held-out / unseen | 3/6, 6/6, 6/6 | 3/6, 4/6, 5/6 |
+| Tasks (steps) | 7/8 (15/17) | 7/8 (16/17) |
+| Forbidden leaks | 0 | 0 |
+| 72-case conformance corpus | 72/72 | 72/72 |
+
+A fact now takes about 350 bytes of pack text, down from about 440, so the two-fact step fits in 1 KiB. The three-fact step in 1.25 KiB still misses by a few dozen bytes. The vocabulary costs some precision: three separately written unanswerable questions now match a fact through a synonym (for example "who signs off on expense reimbursements" reaches the release approver), and packs carry about one extra fact per retrieval step.

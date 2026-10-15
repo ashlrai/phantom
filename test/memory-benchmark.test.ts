@@ -13,8 +13,8 @@ const emptyPack = (status: MemoryContextPack['status'] = 'none', text = ''): Mem
   items: [], receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
     selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false });
 describe('memory quality benchmark', () => {
-  it('assigns 100 uniquely named cases whose snapshots and queries all pass the closed schema', () => {
-    expect(cases).toHaveLength(100);
+  it('assigns 192 uniquely named cases whose snapshots and queries all pass the closed schema', () => {
+    expect(cases).toHaveLength(192);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
     for (const step of cases.flatMap(entry => entry.steps)) {
@@ -60,7 +60,29 @@ describe('memory quality benchmark', () => {
     expect(governed.retrievalByDifficulty.absent.passed).toBeGreaterThanOrEqual(3);
     expect(governed.byDimension.task.passed).toBeGreaterThanOrEqual(7);
     expect(governed.overall.conflictsSurfaced).toBe(governed.overall.conflictsTotal);
-    expect(governed.overall.payloadRatio).toBeGreaterThan(0.045);
+    expect(governed.overall.payloadRatio).toBeGreaterThan(0.05);
+    expect(governed.retrievalByDifficulty.paraphrase.passed).toBeGreaterThanOrEqual(18);
+    expect(governed.retrievalByDifficulty['held-out'].passed).toBeGreaterThanOrEqual(34);
+    expect(governed.retrievalByDifficulty.unseen.passed).toBeGreaterThanOrEqual(27);
+    expect(governed.overall.forbiddenLeaks).toBe(0);
+  });
+  it('cites sources by ID and digest in pack text, quoting only when the quote differs, with full records on items', () => {
+    const same = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
+    const different = { ...benchEvent({ id: 'b', subject: 'build', slot: 'cache', text: 'Build cache is safe to clear.' }) };
+    different.sourceRefs = [{ ...different.sourceRefs[0]!, quote: 'You can always clear the build cache.' }];
+    const pack = buildMemoryContextPack(benchSnapshot('cite', [same, different]), benchQuery('build', { maxFacts: 4 }));
+    const rows = pack.text.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line) as { eventId: string; sources: unknown; sourceRefs?: unknown });
+    expect(rows.find(row => row.eventId === 'a')!.sources).toEqual([{ digest: same.sourceRefs[0]!.digest, id: 'a:source' }]);
+    expect(rows.find(row => row.eventId === 'b')!.sources).toEqual([{ digest: different.sourceRefs[0]!.digest, id: 'b:source', quote: 'You can always clear the build cache.' }]);
+    expect(rows.every(row => row.sourceRefs === undefined)).toBe(true);
+    expect(pack.items.find(item => item.eventId === 'a')!.sourceRefs).toEqual(same.sourceRefs);
+  });
+  it('matches everyday synonyms from the fixed vocabulary, preferring exact words on ties', () => {
+    const snapshot = benchSnapshot('vocab', [benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build the workspace with npm run build.' }),
+      benchEvent({ id: 'b', subject: 'secrets', slot: 'storage', text: 'Secrets are stored in the OS keychain.' })]);
+    expect(buildMemoryContextPack(snapshot, benchQuery('how do I compile everything')).receipt.selectedEventIds).toEqual(['a']);
+    expect(buildMemoryContextPack(snapshot, benchQuery('where do credentials live')).receipt.selectedEventIds).toEqual(['b']);
+    expect(buildMemoryContextPack(snapshot, benchQuery('what color is the logo')).status).toBe('none');
   });
   it('names a contested slot the query touches without quoting either claim, and stays quiet for unrelated queries', () => {
     const a = 'Deployment target is the staging cluster.'; const b = 'Deployment target is the canary cluster.';

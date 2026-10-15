@@ -13,11 +13,14 @@ import { memoryUtf8Bytes } from '../memory/validate.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery, MemorySnapshot } from '../memory/types.js';
 import { buildFlatLatestMemoryDiagnostic } from './memory-evaluation-baseline.js';
 import { MEMORY_BENCHMARK_ABSENT_QUERIES, MEMORY_BENCHMARK_FACTS, type MemoryBenchmarkFact } from './memory-benchmark-catalog.js';
+import { MEMORY_BENCHMARK_HELD_OUT, MEMORY_BENCHMARK_HELD_OUT_ABSENT, MEMORY_BENCHMARK_UNSEEN, MEMORY_BENCHMARK_UNSEEN_ABSENT,
+  type MemoryBenchmarkHeldOutFact } from './memory-benchmark-heldout.js';
 
 export const MEMORY_BENCHMARK_PROTOCOL = 'phantom-memory-benchmark-v2';
 export const MEMORY_BENCHMARK_DIMENSIONS = ['retrieval', 'contradiction', 'temporal', 'withdrawal', 'task'] as const;
 export type MemoryBenchmarkDimension = typeof MEMORY_BENCHMARK_DIMENSIONS[number];
-export type MemoryBenchmarkDifficulty = 'lexical' | 'inflected' | 'paraphrase' | 'absent';
+/** held-out and unseen queries come from separately written sets that ranking must not be tuned against; unseen was written after the vocabulary froze. */
+export type MemoryBenchmarkDifficulty = 'lexical' | 'inflected' | 'paraphrase' | 'absent' | 'held-out' | 'held-out-absent' | 'unseen' | 'unseen-absent';
 export interface MemoryBenchmarkExpectation {
   status?: MemoryContextPack['status'];
   /** Fact texts that must reach the model-facing pack text. */
@@ -90,6 +93,17 @@ function retrievalCases(): MemoryBenchmarkCase[] {
   MEMORY_BENCHMARK_ABSENT_QUERIES.forEach((text, index) => cases.push({ id: `retrieval:absent:${index + 1}`, dimension: 'retrieval', difficulty: 'absent',
     why: 'Nothing stored answers this; the pack should be empty rather than filler.',
     steps: [{ snapshot, query: benchQuery(text), expect: { status: 'none', required: [], forbidden: [] } }] }));
+  const separate = (set: readonly MemoryBenchmarkHeldOutFact[], absent: readonly string[], kind: 'held-out' | 'unseen'): void => {
+    set.forEach(entry => entry.queries.forEach((text, variant) => cases.push({
+      id: `retrieval:${kind}:${entry.subject}:${entry.slot}:${variant + 1}`, dimension: 'retrieval', difficulty: kind,
+      why: 'Separately written paraphrase that shares no word stem with the fact.',
+      steps: [{ snapshot, query: benchQuery(text), expect: { required: [fact(entry.subject, entry.slot).text], forbidden: foreign.map(event => event.text) } }] })));
+    absent.forEach((text, index) => cases.push({ id: `retrieval:${kind}-absent:${index + 1}`, dimension: 'retrieval', difficulty: `${kind}-absent`,
+      why: 'Separately written question nothing stored answers.',
+      steps: [{ snapshot, query: benchQuery(text), expect: { status: 'none', required: [], forbidden: [] } }] }));
+  };
+  separate(MEMORY_BENCHMARK_HELD_OUT, MEMORY_BENCHMARK_HELD_OUT_ABSENT, 'held-out');
+  separate(MEMORY_BENCHMARK_UNSEEN, MEMORY_BENCHMARK_UNSEEN_ABSENT, 'unseen');
   return cases;
 }
 function contradictionCases(): MemoryBenchmarkCase[] {
@@ -356,7 +370,7 @@ export function runMemoryBenchmark(arms: Array<{ arm: string; builder: MemoryBen
     const pick = (filter: (result: MemoryBenchmarkCaseResult) => boolean) => summarize(results.filter(filter));
     report.arms.push({ arm, overall: pick(() => true),
       byDimension: Object.fromEntries(MEMORY_BENCHMARK_DIMENSIONS.map(dimension => [dimension, pick(result => result.dimension === dimension)])) as MemoryBenchmarkArmReport['byDimension'],
-      retrievalByDifficulty: Object.fromEntries((['lexical', 'inflected', 'paraphrase', 'absent'] as const)
+      retrievalByDifficulty: Object.fromEntries((['lexical', 'inflected', 'paraphrase', 'absent', 'held-out', 'held-out-absent', 'unseen', 'unseen-absent'] as const)
         .map(difficulty => [difficulty, pick(result => result.difficulty === difficulty)])) as MemoryBenchmarkArmReport['retrievalByDifficulty'],
       pendingDecisions: results.filter(result => result.pendingDecision).map(result => ({ id: result.id, question: result.pendingDecision!,
         observedStatus: result.steps.map(step => step.status).join(','), servedForbidden: result.steps.some(step => step.forbiddenLeaks > 0) })),

@@ -1,5 +1,6 @@
 import { canonicalJson } from '../authority/canonical-json.js';
 import { projectMemoryTemporal } from './temporal.js';
+import { memoryVocabulary } from './vocabulary.js';
 import { immutableMemorySnapshot, memoryUtf8Bytes, validMemoryPackQuery } from './validate.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery } from './types.js';
 
@@ -33,9 +34,26 @@ function terms(text: string, dropStopwords = true): Set<string> {
   // A query made only of function words keeps them rather than turning into "match everything".
   return new Set((content.length ? content : words).map(stem));
 }
+const concepts = memoryVocabulary(stem);
+/** A fact's searchable terms: its stems plus the vocabulary groups they belong to. */
+function factTerms(event: MemoryFactEvent): Set<string> {
+  const set = terms(`${event.subjectKey} ${event.slotKey} ${event.text}`, false);
+  for (const word of [...set]) concepts(word).forEach(group => set.add(group));
+  return set;
+}
+/** A query term matches on its own stem, or on a vocabulary group it shares with the fact. */
+const matches = (word: string, set: Set<string>): boolean => set.has(word) || concepts(word).some(group => set.has(group));
+/**
+ * Citations in pack text are references: source ID and digest, plus the quote only when it differs from the fact text
+ * (a quote equal to the text adds no evidence). The complete source records, with locator and observation time, stay
+ * on items[].sourceRefs, so nothing is lost; the text just does not repeat them for every fact.
+ */
+export function memoryCitationReferences(event: Pick<MemoryFactEvent, 'text' | 'sourceRefs'>): Array<{ id: string; digest: string; quote?: string }> {
+  return event.sourceRefs.map(ref => ref.quote === event.text ? { id: ref.id, digest: ref.digest } : { id: ref.id, digest: ref.digest, quote: ref.quote });
+}
 function excerpt(event: MemoryFactEvent): string {
   return quote({ eventId: event.eventId, factId: event.factId, revision: event.revision, text: event.text,
-    sourceRefs: event.sourceRefs, observedAt: event.observedAt, validFrom: event.validFrom, validUntil: event.validUntil });
+    sources: memoryCitationReferences(event), observedAt: event.observedAt, validFrom: event.validFrom, validUntil: event.validUntil });
 }
 /**
  * Pure, synchronous, deterministic evidence selection. No implicit clock, tokenizer, provider, storage or execution adapter.
@@ -67,15 +85,17 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   // Receipts never identify or count another project's, owner's or audience's events.
   output.receipt.exclusions = view.exclusions.filter(item => item.reason !== 'scope');
   const search = terms(query.query);
-  const words = (event: MemoryFactEvent): Set<string> => terms(`${event.subjectKey} ${event.slotKey} ${event.text}`, false);
-  const eligibleWords = view.eligible.map(event => ({ event, words: words(event) }));
-  // Rarer matched terms break ties between equal match counts; deterministic over the eligible set only.
+  const eligibleWords = view.eligible.map(event => ({ event, words: factTerms(event) }));
+  // Rarer matched terms break ties between equal match counts, then exact-word matches beat vocabulary matches.
+  // Deterministic over the eligible set only.
   const frequency = new Map<string, number>();
-  for (const { words: set } of eligibleWords) for (const word of set) if (search.has(word)) frequency.set(word, (frequency.get(word) ?? 0) + 1);
+  for (const { words: set } of eligibleWords) for (const word of search) if (matches(word, set)) frequency.set(word, (frequency.get(word) ?? 0) + 1);
   const ranked = eligibleWords.map(({ event, words: set }) => {
-    const matched = [...search].filter(word => set.has(word));
-    return { event, score: search.size ? matched.length : 1, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0) };
-  }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || (a.event.eventId < b.event.eventId ? -1 : a.event.eventId > b.event.eventId ? 1 : 0));
+    const matched = [...search].filter(word => matches(word, set));
+    return { event, score: search.size ? matched.length : 1, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
+      exact: matched.filter(word => set.has(word)).length };
+  }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || b.exact - a.exact
+    || (a.event.eventId < b.event.eventId ? -1 : a.event.eventId > b.event.eventId ? 1 : 0));
   const chunks: string[] = [];
   const head = header(query);
   let bytes = memoryUtf8Bytes(head + FOOTER);
@@ -95,7 +115,7 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   const reasons = new Map(view.exclusions.map(exclusion => [exclusion.eventId, exclusion.reason]));
   for (const event of snapshot.events) {
     const reason = reasons.get(event.eventId);
-    if ((reason !== 'conflict' && reason !== 'revision-conflict') || (search.size && ![...search].some(word => words(event).has(word)))) continue;
+    if ((reason !== 'conflict' && reason !== 'revision-conflict') || (search.size && ![...search].some(word => matches(word, factTerms(event))))) continue;
     const key = canonicalJson([event.subjectKey, event.slotKey]);
     const entry = contested.get(key) ?? { subject: event.subjectKey, slot: event.slotKey, claims: 0 };
     entry.claims++; contested.set(key, entry);

@@ -88,7 +88,7 @@ function judge(entry: MemoryEvalCase, pack: MemoryContextPack): string[] {
   }
   // Receipts alone do not prove evidence reached the model-facing text. Both
   // declared arms emit one JSON evidence object per line; parse independently.
-  const emitted: Array<{ eventId?: unknown; text?: unknown; sourceRefs?: unknown }> = [];
+  const emitted: Array<{ eventId?: unknown; text?: unknown; sourceRefs?: unknown; sources?: unknown }> = [];
   for (const line of pack.text.split('\n')) if (line.startsWith('{')) {
     try { emitted.push(JSON.parse(line)); } catch { failures.push('evidence-text-json'); }
   }
@@ -97,7 +97,11 @@ function judge(entry: MemoryEvalCase, pack: MemoryContextPack): string[] {
   for (const row of emitted) {
     const expected = events.find(event => event.eventId === row.eventId);
     expect(Boolean(expected) && expected!.text === row.text, 'emitted-fact-text');
-    expect(Boolean(expected) && canonicalJson(expected!.sourceRefs) === canonicalJson(row.sourceRefs), 'emitted-citation-payload');
+    // Either the complete fixture citations, or references to them: exact ID and digest for every fixture source,
+    // with the quote present unless it is byte-identical to the fact text. Computed here from fixture literals.
+    const references = expected?.sourceRefs.map(ref => ref.quote === expected.text ? { id: ref.id, digest: ref.digest } : { id: ref.id, digest: ref.digest, quote: ref.quote });
+    expect(Boolean(expected) && (row.sources === undefined ? canonicalJson(expected!.sourceRefs) === canonicalJson(row.sourceRefs)
+      : row.sourceRefs === undefined && canonicalJson(references) === canonicalJson(row.sources)), 'emitted-citation-payload');
   }
   // Nothing in the pack may identify an event outside the admitted scope. Checked against literal fixture fields,
   // even for invalid queries (then no fixture event counts as visible).

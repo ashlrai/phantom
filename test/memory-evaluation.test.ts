@@ -68,8 +68,9 @@ describe('offline memory semantic corpus and evaluator', () => {
         if (mode.startsWith('text-')) pack.text = pack.text.split('\n').map(line => {
           if (!line.startsWith('{')) return line;
           const row = JSON.parse(line);
-          if (mode === 'text-omission') row.sourceRefs = [];
-          else row.sourceRefs[0].digest = 'sha256_' + 'd'.repeat(64);
+          const citations = row.sources ? 'sources' : 'sourceRefs';
+          if (mode === 'text-omission') row[citations] = [];
+          else row[citations][0].digest = 'sha256_' + 'd'.repeat(64);
           return JSON.stringify(row);
         }).join('\n');
         pack.bytes = new TextEncoder().encode(pack.text).byteLength;
