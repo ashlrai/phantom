@@ -7,6 +7,9 @@
  * A revert is recognised by git's own revert message ("This reverts commit
  * <merge sha>") or GitHub's revert-PR body ("Reverts <owner/repo>#<number>"),
  * in commits after the merge on the default branch of a local checkout.
+ * A merge counts only once its commit is on the default branch: a PR merged
+ * into a feature branch has not landed yet. A revert of the revert re-lands
+ * the change, and the outcome earns its credit back.
  */
 import { execFileSync } from 'node:child_process';
 import type { LedgerEvent, ProposalOutcome } from './outcomes.js';
@@ -16,12 +19,18 @@ const realExec: ObserveExec = (cmd, args, cwd) => execFileSync(cmd, args, { cwd,
 const GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 const SHA = /^[0-9a-f]{40}$/;
 
+/** Whether `sha` is on `ref`; a commit git does not know yet is not. */
+function onBranch(exec: ObserveExec, cwd: string, sha: string, ref: string): boolean {
+  try { exec('git', [...GIT, 'merge-base', '--is-ancestor', sha, ref], cwd); return true; } catch { return false; }
+}
+
+/** The first commit in `log` that reverts `mergeSha` (or, with a repository, its PR `number`). */
 export function revertOf(log: string, mergeSha: string, repository: string, number: number): string | null {
-  const byPr = new RegExp(`\\bReverts ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}#${number}\\b`, 'i');
+  const byPr = repository === '' ? null : new RegExp(`\\bReverts ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}#${number}\\b`, 'i');
   for (const entry of log.split('\x1e')) {
     const [sha, body = ''] = entry.trim().split('\x1f');
     if (!sha || !SHA.test(sha)) continue;
-    if (body.includes(`This reverts commit ${mergeSha}`) || byPr.test(body)) return sha;
+    if (body.includes(`This reverts commit ${mergeSha}`) || byPr?.test(body)) return sha;
   }
   return null;
 }
@@ -31,19 +40,35 @@ export function observeOutcomes(outcomes: readonly ProposalOutcome[], repoDir: s
   const events: LedgerEvent[] = [];
   const errors: string[] = [];
   let fetched = false;
+  const fetch = () => { if (!fetched) { exec('git', [...GIT, 'fetch', '--no-tags', 'origin', `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`], repoDir); fetched = true; } };
+  const head = `refs/remotes/origin/${defaultBranch}`;
+  const logs = new Map<string, string>();
+  const logAfter = (sha: string) => {
+    let log = logs.get(sha);
+    if (log === undefined) { log = exec('git', [...GIT, 'log', '--format=%H%x1f%B%x1e', `${sha}..${head}`], repoDir); logs.set(sha, log); }
+    return log;
+  };
   for (const o of outcomes) {
-    if (!o.pr || o.reverted) continue;
+    if (!o.pr) continue;
     try {
+      if (o.reverted) {
+        // Re-landed: a later default-branch commit reverts the revert.
+        fetch();
+        const reland = revertOf(logAfter(o.reverted.sha), o.reverted.sha, '', 0);
+        if (reland) events.push({ type: 'observed', proposalId: o.proposalId, observation: 'merged', sha: reland });
+        continue;
+      }
       let mergeSha = o.merged?.sha ?? null;
       if (!mergeSha) {
         const raw = JSON.parse(exec('gh', ['pr', 'view', String(o.pr.number), '--repo', o.pr.repository, '--json', 'state,mergeCommit'], repoDir)) as { state?: string; mergeCommit?: { oid?: string } | null };
         if (raw.state !== 'MERGED' || !raw.mergeCommit?.oid || !SHA.test(raw.mergeCommit.oid)) continue;
+        fetch();
+        if (!onBranch(exec, repoDir, raw.mergeCommit.oid, head)) continue;
         mergeSha = raw.mergeCommit.oid;
         events.push({ type: 'observed', proposalId: o.proposalId, observation: 'merged', sha: mergeSha });
       }
-      if (!fetched) { exec('git', [...GIT, 'fetch', '--no-tags', 'origin', `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`], repoDir); fetched = true; }
-      const log = exec('git', [...GIT, 'log', '--format=%H%x1f%B%x1e', `${mergeSha}..refs/remotes/origin/${defaultBranch}`], repoDir);
-      const revert = revertOf(log, mergeSha, o.pr.repository, o.pr.number);
+      fetch();
+      const revert = revertOf(logAfter(mergeSha), mergeSha, o.pr.repository, o.pr.number);
       if (revert) events.push({ type: 'observed', proposalId: o.proposalId, observation: 'reverted', sha: revert });
     } catch (err) {
       errors.push(`${o.proposalId}: ${(err instanceof Error ? err.message : String(err)).split('\n')[0]!.slice(0, 200)}`);

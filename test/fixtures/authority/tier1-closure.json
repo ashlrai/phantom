@@ -235,6 +235,7 @@
     "src/core/comms/director-context.ts",
     "src/core/comms/director.ts",
     "src/core/comms/events.ts",
+    "src/core/comms/pause.ts",
     "src/core/comms/requests.ts",
     "src/core/config.ts",
     "src/core/context/task-temporal-context.ts",

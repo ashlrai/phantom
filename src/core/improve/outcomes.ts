@@ -224,7 +224,9 @@ export function scoreOutcomes(records: readonly LedgerRecord[]): ProposalOutcome
     const promo = after.filter((r): r is LedgerRecord & { type: 'promotion' } => r.type === 'promotion').at(-1);
     const observed = after.filter((r): r is LedgerRecord & { type: 'observed' } => r.type === 'observed');
     const merged = observed.filter((o) => o.observation === 'merged').at(-1);
-    const reverted = observed.filter((o) => o.observation === 'reverted').at(-1);
+    // Only a revert that still stands counts: a later merge observation (a re-land) clears it.
+    const last = observed.at(-1);
+    const reverted = last?.observation === 'reverted' ? last : undefined;
     if (reverted) { status = 'regressed'; reasons.push('reverted-after-merge'); }
     out.push({ proposalId, title: reg.title, proposalKind: reg.proposalKind, source: reg.source, metric: reg.metric,
       predictedDelta: reg.predictedDelta, pr: pr ? { repository: pr.repository, number: pr.number } : null,

@@ -571,6 +571,18 @@ export function cloudSchedulerRefusal(env: NodeJS.ProcessEnv = process.env): str
   return null;
 }
 
+/** Why unattended self-improvement must not run now (Stop or Pause), or null. Unreadable Stop state holds. */
+export async function unattendedHold(): Promise<string | null> {
+  try {
+    const [{ killSwitchOn }, { isPaused }] = await Promise.all([import('../sandbox/policy.js'), import('../comms/pause.js')]);
+    if (killSwitchOn()) return 'the autonomy kill switch is on';
+    if (isPaused()) return 'Phantom is paused';
+    return null;
+  } catch (err) {
+    return `stop state unreadable (${errorText(err)})`;
+  }
+}
+
 export interface CloudSchedulerDeps {
   refresh?: () => Promise<unknown>;
   improve?: () => Promise<unknown>;
@@ -602,10 +614,14 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
   if (cloudSchedulerRefusal(env) !== null) return false;
   const refresh = deps.refresh ?? (() => refreshCloudTasksGuarded());
   const log = deps.log ?? ((message: string) => { console.warn(`[ashlr] ${message}`); });
-  // Refill the backlog from evidence (red default branch, member issues,
-  // proposals) before each scheduled launch, so the loop never runs dry on a
-  // stale hand-kept list. Discovery failing never stops the launch.
+  // Refill the backlog from evidence (red default branch, labelled issues)
+  // before each scheduled launch, so the loop never runs dry on a stale
+  // hand-kept list. Discovery failing never stops the launch. Stop (KILL) and
+  // Pause hold the whole unattended job: no GitHub reads, no backlog writes,
+  // no launch. The operator's own "Improve" route is not this path.
   const improve = deps.improve ?? (async () => {
+    const held = await unattendedHold();
+    if (held) { try { log(`cloud improve skipped: ${held}`); } catch { /* never throws */ } return null; }
     const { autoDiscover } = await import('../improve/discover.js');
     const found = await autoDiscover();
     if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }

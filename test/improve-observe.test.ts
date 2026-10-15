@@ -67,5 +67,33 @@ describe('post-merge observation', () => {
     expect(scored[0]).toMatchObject({ status: 'regressed', effect: 20, reasons: ['reverted-after-merge'] });
     expect(kindLeverage(scored).get('perf')).toBe(0);
     expect(observeOutcomes(scored, repo, 'main', exec).events).toEqual([]);
+
+    // A revert of the revert re-lands the change and gives the credit back.
+    const revertSha = git('rev-parse', 'HEAD');
+    git('revert', '--no-edit', revertSha);
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const reland = git('rev-parse', 'HEAD');
+    const third = observeOutcomes(scoreOutcomes(readLedger().records), repo, 'main', exec);
+    expect(third.events).toEqual([{ type: 'observed', proposalId: '1111111111', observation: 'merged', sha: reland }]);
+    for (const e of third.events) appendLedger(e);
+    expect(scoreOutcomes(readLedger().records)[0]).toMatchObject({ status: 'improved', merged: { sha: reland }, reverted: null });
+  });
+
+  it('does not count a merge into a feature branch until it reaches the default branch', () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), '1'); git('add', '.'); git('commit', '-qm', 'base');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git('checkout', '-qb', 'feature');
+    fs.writeFileSync(path.join(repo, 'a.txt'), '2'); git('commit', '-qam', 'into feature (#5)');
+    const intoFeature = git('rev-parse', 'HEAD');
+    register('1111111111', 5, 80);
+    const exec: ObserveExec = (cmd, args, cwd) => {
+      if (cmd === 'gh') return JSON.stringify({ state: 'MERGED', mergeCommit: { oid: intoFeature } });
+      if (args.includes('fetch')) return '';
+      return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: 'pipe' });
+    };
+    expect(observeOutcomes(scoreOutcomes(readLedger().records), repo, 'main', exec)).toEqual({ events: [], errors: [] });
+    git('update-ref', 'refs/remotes/origin/main', intoFeature);
+    expect(observeOutcomes(scoreOutcomes(readLedger().records), repo, 'main', exec).events)
+      .toEqual([{ type: 'observed', proposalId: '1111111111', observation: 'merged', sha: intoFeature }]);
   });
 });
