@@ -280,12 +280,17 @@ export function kindLeverage(outcomes: readonly ProposalOutcome[]): Map<string, 
  * then kinds whose measured record is zero or negative. Stable otherwise.
  */
 export function rankByLeverage<T extends { kind?: string }>(proposals: readonly T[], outcomes: readonly ProposalOutcome[]): T[] {
-  const lev = kindLeverage(outcomes);
-  const tier = (p: T) => {
-    const v = p.kind ? lev.get(p.kind) ?? null : null;
+  return rankByKindLeverage(proposals, (p) => p.kind, kindLeverage(outcomes));
+}
+
+/** rankByLeverage for any item shape, given its kind and a precomputed leverage map. */
+export function rankByKindLeverage<T>(items: readonly T[], kind: (item: T) => string | undefined, lev: ReadonlyMap<string, number | null>): T[] {
+  const tier = (item: T) => {
+    const k = kind(item);
+    const v = k ? lev.get(k) ?? null : null;
     return v === null ? { t: 1, v: 0 } : v > 0 ? { t: 0, v } : { t: 2, v };
   };
-  return proposals.map((p, i) => ({ p, i, ...tier(p) }))
+  return items.map((item, i) => ({ item, i, ...tier(item) }))
     .sort((a, b) => a.t - b.t || b.v - a.v || a.i - b.i)
-    .map((x) => x.p);
+    .map((x) => x.item);
 }
