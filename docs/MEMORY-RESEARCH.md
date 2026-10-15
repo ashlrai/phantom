@@ -67,19 +67,35 @@ These are research inputs. Paper headlines, code availability, model judges,
 and vendor benchmarks do not establish Phantom task success. Reduced memory
 construction overhead does not necessarily reduce total tokens or latency.
 
-## Proposed composition layer
+## Composition layer: source foundation and future integration
 
-The first foundation should validate project-scoped facts with source IDs,
-review decisions, validity dates, revision lineage, and explicit uncertainty.
-Conflicting current facts should remain disputed until resolved. A later import
-of an old conversation must not replace a newer decision just because it was
-imported more recently.
+The [memory foundation](https://github.com/ashlrai/phantom/blob/master/docs/MEMORY-FOUNDATION.md)
+is implemented as a source-only pure kernel. Its closed project-scoped fact and
+snapshot contracts include source claims, review decisions, validity dates,
+knowledge cutoffs, revisions and lineage. Exact scope and temporal eligibility
+precede deterministic lexical ranking and bounded cited packs. Overlapping
+conflicting claims, concurrent approval/withdrawal decisions, missing lineage
+and cycles fail closed. A delayed import does not win by arrival time.
 
-Build compact, cited context packs with deterministic local eligibility and
-temporal filters before ranking. Record the included and excluded source IDs,
-byte budget, and source revisions. Cross-project collections require explicit
-admission. Personal memory needs a separate scope and consent policy because
-current project memory instructions prohibit personal data.
+Reviewed withdrawals are append-only revocation revisions; they cannot silently
+restore obsolete predecessors. Current recorded tombstones exclude explicit
+IDs and dependent derivations, including through historical queries. This is
+bounded snapshot selection, not physical erasure of exports, backups or provider
+contexts, nor a guarantee against reimport under new unrelated IDs. Source
+hashes and reviewer identities remain caller claims rather than truth or
+authentication proofs. Shared secret/home-path screening refuses recognized
+unsafe content without transforming source claims; it is not exhaustive
+privacy detection.
+
+The [offline evaluation guide](https://github.com/ashlrai/phantom/blob/master/docs/MEMORY-EVALUATION.md)
+describes independently authored synthetic contract fixtures and bounded local
+profiles. Those results do not establish model-driven coding improvement,
+production readiness or an activated service. No runtime store adapter, session
+injection or model recall worker is wired to this kernel. A structured store,
+concurrent append contract, source integrity and live authorization integration
+remain proposed work. Cross-project collections require explicit admission;
+personal memory needs a separate scope and consent policy because current
+project memory instructions prohibit personal data.
 
 An optional recall worker can later investigate missing evidence within fixed
 time, token, and expansion limits. It should return evidence or an explicit
