@@ -1,4 +1,5 @@
 import { companionDigestToReference, decodeCompanionWire } from '../../../../core/proactive/coordination-wire.js';
+import { createHash, webcrypto } from 'node:crypto';
 import type { CompanionTask, CompanionCommand } from '../../../../core/proactive/coordination-types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -44,6 +45,26 @@ afterEach(() => { evictAll(); clearMutationToken(); vi.unstubAllGlobals(); });
 
 async function edit() { fireEvent.click(await screen.findByRole('button', { name: 'Edit Build companion' })); return screen.getByRole('dialog', { name: 'Edit Build companion' }); }
 describe('proactive agent profiles', () => {
+  it('prepares a dedicated Grok reviewer with required blank identities and saves only explicitly', async () => {
+    const { calls } = server(); render(<ProactiveAgents />); await screen.findByText('Bring your persistent agents together');
+    fireEvent.click(screen.getByRole('button', { name: 'Add Grok reviewer profile' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add a proactive agent' });
+    expect(within(dialog).getByLabelText('Provider')).toHaveValue('grok-bot');
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Phantom improvement reviewer');
+    expect(within(dialog).getByLabelText('Account identity')).toHaveValue(''); expect(within(dialog).getByLabelText('Agent identity')).toHaveValue('');
+    expect((within(dialog).getByLabelText('Responsibility') as HTMLTextAreaElement).value).toContain('Do not post, merge, deploy');
+    expect(within(dialog).getByLabelText('Declared capabilities')).toHaveValue('research, code-review');
+    expect(within(dialog).getByRole('button', { name: 'Save profile' })).toBeDisabled(); expect(calls.filter(call => call.method === 'POST')).toHaveLength(0);
+    fireEvent.change(within(dialog).getByLabelText('Account identity'), { target: { value: 'operator-account' } });
+    fireEvent.change(within(dialog).getByLabelText('Agent identity'), { target: { value: 'existing-reviewer' } });
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save profile' }));
+    await screen.findByRole('heading', { name: 'Phantom improvement reviewer' });
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1);
+    expect(calls.find(call => call.method === 'POST')?.body).toMatchObject({ identity: { provider: 'grok-bot', accountId: 'operator-account', agentId: 'existing-reviewer' },
+      displayName: 'Phantom improvement reviewer', capabilityIds: ['research', 'code-review'], enabled: false, services: [], fundingReference: null });
+    expect(screen.getByText('No qualified run evidence')).toBeInTheDocument();
+  });
   it('shows an empty setup state without asserting connection or spending', async () => {
     server(); render(<ProactiveAgents />);
     await screen.findByText('Bring your persistent agents together');
@@ -58,7 +79,7 @@ describe('proactive agent profiles', () => {
     expect(screen.getByRole('link', { name: 'Grok Bot routine setup ↗' })).toHaveAttribute('href', 'https://cursor.com/help/grok-bot/routines');
     expect(screen.getByRole('link', { name: 'Meta Muse product guide ↗' })).toHaveAttribute('href', 'https://ai.meta.com/muse/');
     expect(screen.getByText(/Meta Model API funding does not connect your personal Muse/)).toBeInTheDocument();
-    expect(screen.getByText('Bot allowance and reset unknown · separate from Grok Build.')).toBeVisible();
+    expect(screen.getByText('Bot allowance and reset unknown · verify the billing account and product.')).toBeVisible();
     expect(calls.every(call => call.method === 'GET' && call.path.startsWith('/api/verse/proactive-agents'))).toBe(true);
   });
   it('refuses unsupported response versions instead of advertising an invented connection', async () => {
@@ -284,6 +305,47 @@ describe('local companion coordination operator experience', () => {
 });
 
 describe('coordination conflicts and wire evidence', () => {
+  it('loads Grok review controls only after an explicit click on a current recorded handoff intent', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const recipient = profile({ id: 'pa_' + 'c'.repeat(24), version: 2, enabled: true, capabilityIds: ['review'],
+      identity: { provider: 'grok-bot', accountId: 'grok-account', agentId: 'release-bot' } });
+    const local = task({ id: 'ct_' + 'a'.repeat(32), state: 'handoff-intent', attempts: [{ id: 'b'.repeat(64), epoch: 1,
+      assignee: recipient.identity, ownerId: 'operator', claimedAt: NOW, leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      packetDigest: DIGEST, contact: 'intent', handoffAt: NOW, cancelRequestedAt: null, providerRunId: null, observationReference: null }] });
+    const briefText = 'Manual copy is not acceptance or completion.\n{"goal":"Review the exact local artifact"}';
+    const { calls } = server([recipient], call => {
+      if (call.path.endsWith('/coordination') && call.method === 'GET') return json({ schemaVersion: 1, revision: 4, tasks: [local],
+        packetDestinations: [{ taskId: local.id, identity: recipient.identity }], sourceState: 'healthy', planningOnly: true, transport: 'unavailable' });
+      if (call.path.endsWith('/handoff-preview')) return json({ schemaVersion: 1, taskId: local.id, attemptId: companionDigestToReference(local.attempts[0]!.id),
+        epoch: 1, revision: 4, profileId: recipient.id, profileVersion: 2, packetDigest: companionDigestToReference(DIGEST),
+        previewDigest: companionDigestToReference(createHash('sha256').update(briefText).digest('hex')), briefText,
+        dispatchAuthorized: false, contextShared: false, transport: 'manual-copy' });
+      return undefined;
+    });
+    render(<ProactiveAgents />);
+    const open = await screen.findByRole('button', { name: 'Review Grok Bot brief' }); expect(open).toBeEnabled();
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(0);
+    fireEvent.click(open); await screen.findByLabelText('Grok Bot brief');
+    expect(calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual(['/api/verse/proactive-agents/coordination/handoff-preview']);
+    expect(screen.getByRole('button', { name: 'Recheck and copy brief' })).toBeDisabled();
+    expect(screen.getByText('Record a manual report')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' })); expect(screen.queryByRole('dialog', { name: 'Review Grok Bot brief' })).not.toBeInTheDocument();
+  });
+  it.each(['assigned', 'future-profile'])('does not offer actionable Grok copy for %s', async mode => {
+    const recipient = profile({ id: 'pa_' + 'c'.repeat(24), enabled: true, capabilityIds: ['review'],
+      updatedAt: mode === 'future-profile' ? new Date(Date.now() + 60_000).toISOString() : NOW,
+      identity: { provider: 'grok-bot', accountId: 'grok-account', agentId: 'release-bot' } });
+    const local = task({ state: mode === 'assigned' ? 'assigned' : 'handoff-intent', attempts: [{ id: 'b'.repeat(64), epoch: 1,
+      assignee: recipient.identity, ownerId: 'operator', claimedAt: NOW, leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      packetDigest: DIGEST, contact: mode === 'assigned' ? 'not-contacted' : 'intent', handoffAt: mode === 'assigned' ? null : NOW,
+      cancelRequestedAt: null, providerRunId: null, observationReference: null }] });
+    const { calls } = server([recipient], call => call.path.endsWith('/coordination') && call.method === 'GET' ? json({ schemaVersion: 1, revision: 4,
+      tasks: [local], packetDestinations: [{ taskId: local.id, identity: recipient.identity }], sourceState: 'healthy', planningOnly: true, transport: 'unavailable' }) : undefined);
+    render(<ProactiveAgents />); await screen.findByRole('heading', { name: local.goal });
+    if (mode === 'assigned') expect(screen.queryByRole('button', { name: 'Review Grok Bot brief' })).not.toBeInTheDocument();
+    else expect(screen.getByRole('button', { name: 'Review Grok Bot brief' })).toBeDisabled();
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(0);
+  });
   it('preserves a goal draft after a revision conflict and requires an explicit latest-revision acknowledgement', async () => {
     let conflict = true;
     const api = coordinationServer([], call => call.method === 'POST' && (call.body as CompanionCommand).kind === 'create' && conflict ? json({ error: 'Ledger changed' }, 409) : undefined);

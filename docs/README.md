@@ -37,6 +37,7 @@ that every integration, provider or autonomous effect is active.
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Explore Phantom supervising Codex and Claude desktop sessions | [Desktop app orchestration research — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-APP-ORCHESTRATION-RESEARCH.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
+| Use Grok Build, prepare a reviewed Grok Bot task, and distinguish Heavy access from verified model availability | [Grok companions — source guide](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review selected local exports and keep references separate from saved project memory | [Context import](CONTEXT-IMPORT.md) |
 | Understand current memory research and the proposed evaluation criteria | [Memory research](MEMORY-RESEARCH.md) |
