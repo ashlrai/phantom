@@ -27,6 +27,7 @@ import type { AshlrConfig } from '../src/core/types.js';
 import { createShellRunner, probeLoginPath, type LoginPathResult } from '../src/core/verse/login-path.js';
 import { discoverProjects, discoverProjectsAsync } from '../src/core/verse/projects.js';
 import { startServer } from '../src/core/web/server.js';
+import { waitForProcessExit } from './helpers/process-liveness.js';
 
 function get(port: number, urlPath: string, timeoutMs: number): Promise<{ status: number; body: string; ms: number }> {
   const started = Date.now();
@@ -40,10 +41,6 @@ function get(port: number, urlPath: string, timeoutMs: number): Promise<{ status
     req.on('error', reject);
     req.end();
   });
-}
-
-function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function makeConfig(accountsRoot: string): AshlrConfig {
@@ -147,9 +144,9 @@ describe.skipIf(process.platform === 'win32')('ashlr verse startup — /verse/ n
     expect(result.source).toBe('fallback');
     expect(result.fallbackReason).toBe('login shell timed out after 1500 ms');
     const [shellPid, jobPid] = fs.readFileSync(pids, 'utf8').trim().split(/\s+/).map(Number);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(alive(shellPid!)).toBe(false);
-    expect(alive(jobPid!)).toBe(false);
+    // Zombie-aware and polled: the orphaned job is reparented to init, which
+    // may reap it late, and kill(pid, 0) succeeds on an unreaped zombie.
+    expect(await waitForProcessExit([shellPid!, jobPid!])).toBe(true);
   }, 15_000);
 });
 

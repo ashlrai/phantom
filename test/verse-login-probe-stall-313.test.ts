@@ -19,6 +19,7 @@ import {
   LOGIN_SHELL_EXIT_GRACE_MS,
   probeLoginPath,
 } from '../src/core/verse/login-path.js';
+import { waitForProcessExit } from './helpers/process-liveness.js';
 
 const MARK = (p: string) => `__VERSE_LOGIN_PATH_BEGIN__${p}__VERSE_LOGIN_PATH_END__`;
 
@@ -132,10 +133,6 @@ describe('createShellRunner — the probe can never outlive its timeout', () => 
 describe.skipIf(process.platform === 'win32')('createShellRunner — real processes', () => {
   const run = createShellRunner();
 
-  function alive(pid: number): boolean {
-    try { process.kill(pid, 0); return true; } catch { return false; }
-  }
-
   it('kills a grandchild that holds stdout when the shell times out', async () => {
     const started = Date.now();
     // The shell prints its pid and its background job's pid, then hangs.
@@ -143,9 +140,9 @@ describe.skipIf(process.platform === 'win32')('createShellRunner — real proces
     expect(result.timedOut).toBe(true);
     expect(Date.now() - started).toBeLessThan(2_000);
     const [shellPid, jobPid] = result.stdout.trim().split(/\s+/).map(Number);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(alive(shellPid!)).toBe(false);
-    expect(alive(jobPid!)).toBe(false);
+    // Zombie-aware and polled: the orphaned job is reparented to init, which
+    // may reap it late, and kill(pid, 0) succeeds on an unreaped zombie.
+    expect(await waitForProcessExit([shellPid!, jobPid!])).toBe(true);
   });
 
   it('answers promptly when the shell exits but leaves a job holding stdout', async () => {
@@ -156,8 +153,7 @@ describe.skipIf(process.platform === 'win32')('createShellRunner — real proces
     expect(result.stdout).toContain(MARK('/usr/bin'));
     expect(Date.now() - started).toBeLessThan(2_000);
     const jobPid = Number(result.stdout.trim().split(/\s+/).pop());
-    await new Promise((r) => setTimeout(r, 50));
-    expect(alive(jobPid)).toBe(false);
+    expect(await waitForProcessExit(jobPid)).toBe(true);
   });
 
   it('runs in its own session with no stdin: a startup file reading stdin gets EOF, not a hang', async () => {

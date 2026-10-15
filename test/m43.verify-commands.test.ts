@@ -35,6 +35,7 @@ import {
 } from '../src/core/run/verify-commands.js';
 import { verifyTaskStructured } from '../src/core/run/verify.js';
 import { newUsage } from '../src/core/run/budget.js';
+import { processIsRunning, waitForProcessExit } from './helpers/process-liveness.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -70,15 +71,6 @@ function writeVerifyContract(dir: string, cmd: string[]): void {
     mode: 'replace-detected',
     commands: [{ id: 'cancel-probe', kind: 'typecheck', cmd, required: true }],
   }), 'utf8');
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function esrchError(): NodeJS.ErrnoException {
@@ -543,15 +535,10 @@ describe('runVerifyCommand', () => {
     expect(res.timedOut).toBe(true);
     expect(res.failureCategory).toBe('timeout');
 
-    await new Promise((resolveDone) => setTimeout(resolveDone, 150));
+    // Poll instead of a fixed sleep; an unreaped zombie (the killed child is
+    // reparented to init) has exited even though kill(pid, 0) succeeds.
     const childPid = Number(readFileSync(childPidPath, 'utf8'));
-    let alive = true;
-    try {
-      process.kill(childPid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive).toBe(false);
+    expect(await waitForProcessExit(childPid)).toBe(true);
   });
 });
 
@@ -649,15 +636,8 @@ describe('runVerifyCommandAsync', () => {
     expect(res.failureCategory).toBe('timeout');
     expect(ticks).toBeGreaterThanOrEqual(4);
 
-    await new Promise((resolveDone) => setTimeout(resolveDone, 150));
     const childPid = Number(readFileSync(childPidPath, 'utf8'));
-    let alive = true;
-    try {
-      process.kill(childPid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive).toBe(false);
+    expect(await waitForProcessExit(childPid)).toBe(true);
   });
 
   it('returns a truthful pre-abort result without starting the command', async () => {
@@ -930,7 +910,7 @@ describe('runVerifyCommandAsync', () => {
         expect(res.stdout).toContain('LEADER_READY_FOR_ABORT');
         expect(res.stdout).toContain('DESCENDANT_IGNORING_SIGINT');
         expect(res.stderr).toContain('cancelled by invocation owner');
-        await vi.waitFor(() => expect(processIsAlive(descendantPid)).toBe(false), { timeout: 2_000 });
+        await vi.waitFor(() => expect(processIsRunning(descendantPid)).toBe(false), { timeout: 2_000 });
       } finally {
         if (leaderPid > 0) {
           try { process.kill(-leaderPid, 'SIGKILL'); } catch { /* already gone */ }
@@ -1137,11 +1117,11 @@ describe('verifyTaskStructured', () => {
         expect(verdict).toMatchObject({ ok: false, cancelled: true, method: 'command' });
         expect(verdict.reason).toContain('cancelled');
         expect(existsSync(settledPath)).toBe(true);
-        expect(processIsAlive(verifierPid)).toBe(false);
+        expect(processIsRunning(verifierPid)).toBe(false);
       } finally {
         controller.abort();
         await pending;
-        if (verifierPid > 0 && processIsAlive(verifierPid)) {
+        if (verifierPid > 0 && processIsRunning(verifierPid)) {
           try { process.kill(verifierPid, 'SIGKILL'); } catch { /* already gone */ }
         }
         rmSync(dir, { recursive: true, force: true });
