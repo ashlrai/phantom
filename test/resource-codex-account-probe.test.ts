@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, rmdirSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { processIsRunning } from './helpers/process-liveness.js';
 import { probeCodexResourceAccount, type CodexResourceProbeOptions } from '../src/core/resources/codex-account-probe.js';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import type { ResourcePool } from '../src/core/resources/pool-policy.js';
@@ -385,7 +386,7 @@ describe('probe preflight, cancellation and output trust boundary', () => {
     acceleratedOwnership();
     const result = await probeCodexResourceAccount(options({ hangAt: 3, ignoreSignals: true }, { timeoutMs: 1_000 }));
     expect(result).toMatchObject({ status: 'timed-out', reason: 'probe-timed-out', observation: null });
-    expect(() => process.kill(invocation().pid, 0)).toThrow(); expect(existsSync(invocation().cwd)).toBe(false);
+    expect(processIsRunning(invocation().pid)).toBe(false); expect(existsSync(invocation().cwd)).toBe(false);
   });
   it('retains helper group ownership during cancellation even when native ignores it', async () => {
     acceleratedOwnership(); const controller = new AbortController();
@@ -393,7 +394,7 @@ describe('probe preflight, cancellation and output trust boundary', () => {
     await vi.waitFor(() => { expect(invocation().requests.at(-1)?.method).toBe('account/rateLimits/read'); });
     controller.abort();
     expect(await running).toMatchObject({ status: 'cancelled', reason: 'probe-cancelled', observation: null });
-    expect(() => process.kill(invocation().pid, 0)).toThrow(); expect(existsSync(invocation().cwd)).toBe(false);
+    expect(processIsRunning(invocation().pid)).toBe(false); expect(existsSync(invocation().cwd)).toBe(false);
   });
   it.each([undefined, 'unconfirmed'] as const)('requires explicit settlement even for exit0 (%s)', async (processGroupSettlement) => {
     const spy = vi.spyOn(verify, 'runVerifySubprocessAsync').mockResolvedValue({ stdout: 'PRIVATE_OUTPUT', stderr: '',

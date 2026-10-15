@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, rmdirSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { processIsRunning } from './helpers/process-liveness.js';
 import { probeGrokAccount, type GrokAccountProbeOptions } from '../src/core/resources/grok-account-probe.js';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import * as verify from '../src/core/run/verify-commands.js';
@@ -257,14 +258,14 @@ describe('Grok probe ownership and caller validation', () => {
   it('kills the owned process group on timeout, including a signal-ignoring child', async () => {
     acceleratedOwnership(); const result = await probeGrokAccount(options({ hangAt: 3, ignoreSignals: true }, { timeoutMs: 1000 }));
     expect(result.status).toBe('timed-out'); failClosed(result);
-    expect(() => process.kill(invocation().pid, 0)).toThrow(); expect(existsSync(invocation().cwd)).toBe(false);
+    expect(processIsRunning(invocation().pid)).toBe(false); expect(existsSync(invocation().cwd)).toBe(false);
   });
   it('cancels pending metadata while retaining group ownership until teardown', async () => {
     acceleratedOwnership(); const controller = new AbortController();
     const pending = probeGrokAccount(options({ hangAt: 3, ignoreSignals: true }, { signal: controller.signal }));
     await vi.waitFor(() => expect(invocation().requests.at(-1)?.method).toBe('_x.ai/billing'));
     controller.abort(); const result = await pending; expect(result.status).toBe('cancelled'); failClosed(result);
-    expect(() => process.kill(invocation().pid, 0)).toThrow();
+    expect(processIsRunning(invocation().pid)).toBe(false);
   });
   it.each([undefined, 'unconfirmed'] as const)('requires explicit settlement even for exit0 (%s)', async (processGroupSettlement) => {
     const spy = vi.spyOn(verify, 'runVerifySubprocessAsync').mockResolvedValue({ stdout: 'PRIVATE_OUTPUT', stderr: '',
