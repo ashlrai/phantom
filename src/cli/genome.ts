@@ -1139,6 +1139,17 @@ function printGenomeHuman(health: GenomeHealth): void {
  *
  * Exit codes: 0 success, 1 module/runtime error, 2 bad usage.
  */
+const GENOME_VALUE_FLAGS = new Set(['--teach', '--title', '--project', '--tags', '--limit', '--format']);
+
+function wantsGenomeHelp(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (GENOME_VALUE_FLAGS.has(arg)) { i++; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export async function cmdGenome(args: string[]): Promise<number> {
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printGenomeHelp();
@@ -1151,6 +1162,15 @@ export async function cmdGenome(args: string[]): Promise<number> {
   // succeeded while recording nothing).
   if (args[0] === 'recall') return cmdRecall(args.slice(1));
   if (args[0] === 'learn') return cmdLearn(args.slice(1));
+
+  // `genome <verb> --help` / `-h` explains itself before config, store,
+  // embeddings or the filesystem are touched: `genome export -h` used to write
+  // an export file named "-h", and teach/consolidate/playbook ran. Values of
+  // value-taking flags are operands, not help requests.
+  if (wantsGenomeHelp(args)) {
+    printGenomeHelp();
+    return 0;
+  }
 
   // Load config — required by all paths
   let cfg: import('../core/types.js').AshlrConfig;
