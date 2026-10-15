@@ -225,6 +225,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   clearSemanticPrivateStorage();
   fs.rmSync(tmpHome, { recursive: true, force: true });
   restoreEnvironment('HOME', origHome);
@@ -355,6 +356,15 @@ const TRIVIAL_DIFF = [
   '-// old comment',
   '+// new comment',
 ].join('\n');
+
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it). The decisions ledger names its file from the row's ts, so a
+ * case that later derives the same day itself must not straddle 00:00 UTC.
+ * Timers stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -772,6 +782,7 @@ describe('m119 decisions-ledger', () => {
       readDecisions,
     } = await import('../src/core/fleet/decisions-ledger.js');
     const rawCanary = 'RAW_JUDGE_RATIONALE_token=sk-abcdefghijklmnopqrstuvwxyz1234567890';
+    freezeDate();
 
     recordDecision({
       ts: new Date().toISOString(),
@@ -825,6 +836,7 @@ describe('m119 decisions-ledger', () => {
   it('normalizes caller-controlled judged verdict text to a finite value', async () => {
     const { decisionsDir, recordDecision, readDecisions } = await import('../src/core/fleet/decisions-ledger.js');
     const rawVerdict = 'RAW_CALLER_CONTROLLED_VERDICT';
+    freezeDate();
     recordDecision({
       ts: new Date().toISOString(),
       proposalId: 'prop-unrecognized-verdict',
@@ -1024,6 +1036,7 @@ describe('m119 decisions-ledger', () => {
 
   it('separates a new append from a torn prior row while preserving degraded source truth', async () => {
     const { recordDecision, readDecisionsDetailed, decisionsDir } = await import('../src/core/fleet/decisions-ledger.js');
+    freezeDate();
     const dir = decisionsDir();
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, new Date().toISOString().slice(0, 10) + '.jsonl');
