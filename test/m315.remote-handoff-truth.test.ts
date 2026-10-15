@@ -6,7 +6,7 @@
  * counted as applied/merged until a reconciler proves the host outcome.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -329,6 +329,34 @@ function recordVerificationAuthority(proposalId: string, diff: string): void {
   });
 }
 
+// One seeded repo + bare origin is built once per file and copied per test:
+// every test still gets its own private working repo, index and bare remote
+// (with the origin URL rebound to its own copy), but skips ~10 git spawns.
+let templateRoot: string;
+let templateRepo: string;
+let templateBare: string;
+beforeAll(() => {
+  templateRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-template-')));
+  templateRepo = path.join(templateRoot, 'repo');
+  templateBare = path.join(templateRoot, 'bare');
+  const templateHome = path.join(templateRoot, 'home');
+  fs.mkdirSync(templateHome);
+  setFixtureEnvironment(templateHome);
+  try {
+    initRepo(templateRepo);
+    execFileSync('git', ['init', '--bare', templateBare], { stdio: 'pipe' });
+    git(templateRepo, ['remote', 'add', 'origin', templateBare]);
+    git(templateRepo, ['push', '-u', 'origin', 'main']);
+    git(templateRepo, ['fetch', 'origin']);
+    git(templateRepo, ['remote', 'set-head', 'origin', 'main']);
+  } finally {
+    restoreFixtureEnvironment();
+  }
+});
+afterAll(() => {
+  fs.rmSync(templateRoot, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   tmpHome = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-home-')));
   tmpRepo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-repo-')));
@@ -360,7 +388,12 @@ beforeEach(() => {
     return '';
   });
   setKill(false);
-  initRepo(tmpRepo);
+  fs.cpSync(templateRepo, tmpRepo, { recursive: true });
+  fs.cpSync(templateBare, bareRepo, { recursive: true });
+  git(tmpRepo, ['remote', 'set-url', 'origin', bareRepo]);
+  // The copied index carries the template's stat data; refresh it so the
+  // checkout is exactly as clean as a freshly committed repository.
+  git(tmpRepo, ['update-index', '-q', '--refresh']);
   originAuthorityMock.mockReset();
   originAuthorityMock.mockImplementation(() => ({
     nameWithOwner: 'ashlrai/fixture',
@@ -387,11 +420,6 @@ beforeEach(() => {
     policySnapshot: TEST_POLICY_SNAPSHOT,
     detail: 'Live branch protection confirmed with required checks',
   }));
-  execFileSync('git', ['init', '--bare', bareRepo], { stdio: 'pipe' });
-  git(tmpRepo, ['remote', 'add', 'origin', bareRepo]);
-  git(tmpRepo, ['push', '-u', 'origin', 'main']);
-  git(tmpRepo, ['fetch', 'origin']);
-  git(tmpRepo, ['remote', 'set-head', 'origin', 'main']);
   enroll(tmpRepo);
   viewPrMock.mockReset();
   createPrMock.mockReset();
