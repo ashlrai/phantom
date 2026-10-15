@@ -148,8 +148,10 @@ latest `@ashlr/phantom`, `phantom-secrets`, `locus-cli`, `@ashlr/lexicon`,
 (`--prefix <dir>` keeps and reuses one) with install scripts off, resolves each
 binary from `node_modules/.bin`, and lets the Secrets and Locus wrappers
 download their native release into the disposable home. Explicit flags still
-win. The report lists each installed package version. Ashlr MD has no npm
-package, so its checks are skipped with that reason. Re-run it whenever a
+win. Ashlr MD has no npm package, so on x64 Linux it downloads the latest
+Ashlr MD GitHub release `.deb` and unpacks `mdopen` and `mdopener-mcp` from it
+(needs `curl` and `dpkg-deb`; elsewhere those checks are skipped with the
+reason). The report lists each installed version. Re-run it whenever a
 companion publishes:
 
 ```bash

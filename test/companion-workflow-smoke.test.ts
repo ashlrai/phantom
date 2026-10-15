@@ -143,10 +143,25 @@ describe('companion workflow smoke', () => {
     expect(resolved.skipReasons.stackBin).toBeUndefined();
     expect(resolved.skipReasons.locusBin).toBe('locus-cli is not installed');
     expect(resolved.skipReasons.stackMcp).toBe('ashlr-stack-mcp is not installed');
-    expect(resolved.skipReasons.mdopen).toContain('no npm package');
+    expect(resolved.skipReasons.mdopen).toBe('Ashlr MD release was not installed');
+    expect(resolved.packages).toContainEqual({ name: 'ashlrai/ashlr-md (GitHub release)', version: null });
     expect(resolved.packages).toContainEqual({ name: '@ashlr/stack', version: '0.1.1' });
     expect(resolved.packages).toContainEqual({ name: 'locus-cli', version: null });
     expect(smoke.parseArgs(['--prefix', prefix])).toMatchObject({ published: true, prefix });
+  });
+
+  it('resolves Ashlr MD from its unpacked GitHub release, or names why it could not', () => {
+    const prefix = join(dir, 'md-prefix');
+    const lib = join(prefix, 'ashlr-md', 'root', 'usr', 'lib', 'Ashlr MD');
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, 'mdopen'), '');
+    const found = smoke.resolvePublished(prefix, { mdRelease: { version: '0.4.0' } });
+    expect(found.options.mdopen).toBe(join(lib, 'mdopen'));
+    expect(found.skipReasons.mdopenerMcp).toBe('Ashlr MD 0.4.0 release ships no mdopener-mcp');
+    expect(found.packages).toContainEqual({ name: 'ashlrai/ashlr-md (GitHub release)', version: '0.4.0' });
+    const failed = smoke.resolvePublished(prefix, { mdRelease: { reason: 'curl exit 6' } });
+    expect(failed.options.mdopen).toBeUndefined();
+    expect(failed.skipReasons.mdopen).toBe('curl exit 6');
   });
 
   it('carries published skip reasons and package versions into the report', async () => {

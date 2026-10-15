@@ -22,7 +22,9 @@
  * `npm install --ignore-scripts` (no package needs its postinstall; native
  * binaries download lazily on first run, into the disposable HOME), and each
  * binary resolves from <prefix>/node_modules/.bin. Explicit flags still win.
- * The report lists each package's installed version. Needs network to npm and GitHub.
+ * Ashlr MD has no npm package: on x64 Linux its latest GitHub release .deb is
+ * unpacked into the prefix instead (curl + dpkg-deb). The report lists each
+ * installed version. Needs network to npm and GitHub.
  *
  * Exit 0: no check failed (warn/skip allowed). Exit 1: a seam is broken. Exit 2: bad usage.
  */
@@ -93,10 +95,34 @@ export const PUBLISHED_PACKAGES = Object.freeze([
   { name: '@ashlr/stack', bins: { stackBin: 'stack' } },
   { name: 'ashlr-stack-mcp', bins: { stackMcp: 'ashlr-stack-mcp' } },
 ]);
-/** Options no npm package can provide. */
-const UNPUBLISHED = Object.freeze({
-  mdopen: 'Ashlr MD has no npm package', mdopenerMcp: 'Ashlr MD has no npm package',
+/** Ashlr MD ships no npm package; on x64 Linux its GitHub release .deb carries both binaries. */
+export const MD_RELEASE = Object.freeze({
+  repo: 'ashlrai/ashlr-md', dir: 'ashlr-md', libDir: ['usr', 'lib', 'Ashlr MD'],
+  bins: { mdopen: 'mdopen', mdopenerMcp: 'mdopener-mcp' },
 });
+
+/**
+ * Download the latest Ashlr MD release .deb into `<prefix>/ashlr-md` and unpack it
+ * (curl + dpkg-deb, so the environment's proxy settings apply). Returns the release
+ * tag, or a reason it could not (other platforms, missing tools, network).
+ */
+export async function installMdRelease(prefix, { timeoutMs = 180_000 } = {}) {
+  if (process.platform !== 'linux' || process.arch !== 'x64') return { reason: 'Ashlr MD release check runs on x64 Linux only' };
+  const dir = join(prefix, MD_RELEASE.dir);
+  mkdirSync(dir, { recursive: true });
+  const meta = await run('curl', ['-fsSL', `https://api.github.com/repos/${MD_RELEASE.repo}/releases/latest`], { env: process.env, timeoutMs });
+  if (meta.code !== 0) return { reason: `could not read the latest Ashlr MD release (curl exit ${meta.code})` };
+  let release;
+  try { release = JSON.parse(meta.stdout); } catch { return { reason: 'the Ashlr MD release listing is not JSON' }; }
+  const asset = (release.assets ?? []).find(a => /_amd64\.deb$/.test(a.name));
+  if (!asset) return { reason: `Ashlr MD ${release.tag_name ?? 'latest'} ships no amd64 .deb` };
+  const deb = join(dir, asset.name);
+  const download = await run('curl', ['-fsSL', '-o', deb, asset.browser_download_url], { env: process.env, timeoutMs });
+  if (download.code !== 0) return { reason: `could not download ${asset.name} (curl exit ${download.code})` };
+  const unpack = await run('dpkg-deb', ['-x', deb, join(dir, 'root')], { env: process.env, timeoutMs });
+  if (unpack.code !== 0) return { reason: `could not unpack ${asset.name} (dpkg-deb exit ${unpack.code})` };
+  return { version: String(release.tag_name ?? '').replace(/^v/, '') || null };
+}
 
 /** Install the published packages into `prefix` (network). Scripts stay off. */
 export async function installPublished(prefix, { timeoutMs = 300_000 } = {}) {
@@ -129,7 +155,15 @@ export function resolvePublished(prefix, explicit = {}) {
       else skipReasons[key] = version ? `${pkg.name}@${version} ships no ${label}` : `${pkg.name} is not installed`;
     }
   }
-  for (const [key, why] of Object.entries(UNPUBLISHED)) if (!explicit[key]) skipReasons[key] = why;
+  const md = explicit.mdRelease ?? { reason: 'Ashlr MD release was not installed' };
+  const libDir = join(prefix, MD_RELEASE.dir, 'root', ...MD_RELEASE.libDir);
+  packages.push({ name: `${MD_RELEASE.repo} (GitHub release)`, version: md.version ?? null });
+  for (const [key, bin] of Object.entries(MD_RELEASE.bins)) {
+    if (explicit[key]) continue;
+    const path = join(libDir, bin);
+    if (md.version && existsSync(path)) options[key] = path;
+    else skipReasons[key] = md.version ? `Ashlr MD ${md.version} release ships no ${bin}` : md.reason;
+  }
   return { options, skipReasons, packages };
 }
 
@@ -461,7 +495,8 @@ export async function runPublishedSmoke(options) {
   const prefix = options.prefix ?? mkdtempSync(join(tmpdir(), 'phm-companion-published-'));
   try {
     await installPublished(prefix);
-    const resolved = resolvePublished(prefix, options);
+    const mdRelease = options.mdopen && options.mdopenerMcp ? undefined : await installMdRelease(prefix);
+    const resolved = resolvePublished(prefix, { ...options, mdRelease });
     return await runSmoke({ ...resolved.options, ...stripUndefined(options),
       skipReasons: resolved.skipReasons, packages: resolved.packages });
   } finally {
