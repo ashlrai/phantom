@@ -1085,6 +1085,15 @@ mod tests {
     fn child(root: &Path, t: &Ticket) -> (std::process::Child, std::os::unix::net::UnixStream) {
         use std::os::unix::{io::AsRawFd, process::CommandExt};
         let (parent, child) = std::os::unix::net::UnixStream::pair().unwrap();
+        // Arm the hang guard while the pair is still connected. A refusing
+        // child can exit before spawn() returns; once both peers are gone,
+        // macOS rejects SO_RCVTIMEO on the shut socket with EINVAL. The guard
+        // only bounds a wedged child: every refusal still reads as EOF. The
+        // child hashes the whole unoptimized test image before its notice, so
+        // the bound is liveness, not a latency budget for shared runners.
+        parent
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
         let fd = child.as_raw_fd();
         let mut command = Command::new(std::env::current_exe().unwrap());
         let selected = format!(
@@ -1116,9 +1125,6 @@ mod tests {
             command.spawn().unwrap()
         };
         drop(child);
-        parent
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
         (spawned, parent)
     }
     fn ready(control: &mut std::os::unix::net::UnixStream) -> String {
