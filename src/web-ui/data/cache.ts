@@ -304,6 +304,21 @@ export interface QueryRunOptions {
    * after the click.
    */
   force?: boolean;
+  /**
+   * A background re-read (invalidate(): an SSE push or a mutation's
+   * follow-up). Cached data that is already good does not flip to
+   * `refreshing`, and a result equal to it notifies no one.
+   *
+   * WHY: every subscriber re-renders on every snapshot change. With many
+   * agents running, the server pushes `verse-sessions` on each status or
+   * usage change, and the chat re-read the session list and the bootstrap
+   * each time: four snapshot changes per push (refreshing, then success,
+   * for each key), each re-rendering the open chat whole, even when nothing
+   * it shows had changed. At 4× CPU, five pushes a second kept the main
+   * thread ~100% busy. A first load and a person's Refresh still go through
+   * `refreshing`.
+   */
+  quiet?: boolean;
 }
 
 function isFresh(e: Bookkeeping, maxAgeMs: number): boolean {
@@ -329,10 +344,14 @@ function execute<T>(key: string, fetcher: () => Promise<T>, options: QueryRunOpt
     if (options.maxAgeMs !== undefined && isFresh(e, options.maxAgeMs)) return Promise.resolve();
   }
 
+  let settledQuietly = false;
   const seq = (e.issued += 1);
   e.issuedAt = Date.now();
-  setSnapshot(e, { status: e.snapshot.data !== undefined ? 'refreshing' : 'loading' });
-  notify(key);
+  const quiet = options.quiet && e.snapshot.status === 'success';
+  if (!quiet) {
+    setSnapshot(e, { status: e.snapshot.data !== undefined ? 'refreshing' : 'loading' });
+    notify(key);
+  }
 
   const run = schedule(fetcher)
     .then((data) => {
@@ -341,6 +360,14 @@ function execute<T>(key: string, fetcher: () => Promise<T>, options: QueryRunOpt
       if (seq < e.issued) return;
       e.applied = seq;
       const unchanged = e.snapshot.data !== undefined && sameData(e.snapshot.data, data);
+      if (quiet && unchanged) {
+        // Same data, same status: subscribers keep the snapshot they hold.
+        // Only freshness moves, in place, so `maxAgeMs` mounts still see a
+        // fresh read without anything re-rendering for it.
+        settledQuietly = true;
+        e.snapshot.updatedAt = Date.now();
+        return;
+      }
       setSnapshot(e, {
         data: unchanged ? e.snapshot.data : data,
         error: undefined,
@@ -357,7 +384,7 @@ function execute<T>(key: string, fetcher: () => Promise<T>, options: QueryRunOpt
       // Only the newest request owns `inFlight`; an older, superseded one
       // finishing must not clear the newer one's slot.
       if (e.issued === seq) e.inFlight = null;
-      notify(key);
+      if (!settledQuietly) notify(key);
     });
 
   e.inFlight = run;
@@ -405,7 +432,7 @@ export function refetchQuery<T>(key: string, fetcher: () => Promise<T>, force = 
 export function invalidate(key: string): void {
   const e = store.get(key);
   if (!e || !e.fetcher) return;
-  void runQuery(key, e.fetcher);
+  void execute(key, e.fetcher, { quiet: true });
 }
 
 /** Re-run the fetcher for every cached key starting with `prefix`. For
