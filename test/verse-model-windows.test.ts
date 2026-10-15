@@ -12,7 +12,7 @@
  * Hermetic: every file lives under a fresh tmp dir and HOME is relocated, so
  * nothing here can read a real seat profile or the real Claude install.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -440,16 +440,19 @@ describe('grok catalog', () => {
       'grok-4.7-build-fast': grokEntry('grok-4.7-build-fast', { name: 'Grok 4.7 Fast' }),
       'grok-internal': grokEntry('grok-internal', { name: 'Internal', hidden: true }),
       'grok-cli-only': grokEntry('grok-cli-only', { name: 'CLI only', supported_in_api: false }),
+      'grok-not-selectable': grokEntry('grok-not-selectable', { user_selectable: false }),
       'grok-4.5': grokEntry('grok-4.5', { name: 'Grok 4.5', max_completion_tokens: 32_000, auto_compact_threshold_percent: 85 }),
     });
     const catalog = readGrokCatalog(state);
     expect(JSON.stringify(catalog)).not.toContain(GROK_SECRET);
     expect(JSON.stringify(catalog)).not.toContain('XAI_API_KEY');
+    expect(catalog?.find((row) => row.id === 'grok-cli-only')).toMatchObject({ supportedInApi: false, userSelectable: true });
+    expect(catalog?.find((row) => row.id === 'grok-not-selectable')).toMatchObject({ userSelectable: false });
 
     const options = grokModelOptions(catalog);
     expect(JSON.stringify(options)).not.toContain(GROK_SECRET);
-    // Catalog order, hidden and unsupported rows dropped.
-    expect(options.map((m) => m.id)).toEqual(['grok-4.7', 'grok-4.7-build-fast', 'grok-4.5']);
+    // Native candidates retain OAuth-only rows, excluding hidden/nonselectable.
+    expect(options.map((m) => m.id)).toEqual(['grok-4.7', 'grok-4.7-build-fast', 'grok-cli-only', 'grok-4.5']);
     expect(options[1]!.label).toBe('Grok 4.7 Fast');
     expect(options[0]).toMatchObject({ contextWindow: 500_000, autoCompactAt: 400_000, windowSource: 'provider-catalog' });
     expect('expansive' in options[0]!).toBe(false);
@@ -457,6 +460,58 @@ describe('grok catalog', () => {
     const g45 = options.find((m) => m.id === 'grok-4.5')!;
     expect(g45.autoCompactAt).toBe(425_000);
     expect(g45.maxOutputTokens).toBe(32_000);
+  });
+
+  it('retains a catalog containing only a visible OAuth-only native model', () => {
+    const state = path.join(tmp, 'oauth-only');
+    writeGrokCatalog(state, { 'grok-native-test': grokEntry('grok-native-test', {
+      supported_in_api: false, user_selectable: true, context_window: 240_000,
+      auto_compact_threshold_percent: 75, max_completion_tokens: 12_000,
+    }) });
+    expect(grokModelOptions(readGrokCatalog(state))).toEqual([{
+      id: 'grok-native-test', label: 'grok-native-test', contextWindow: 240_000,
+      autoCompactAt: 180_000, maxOutputTokens: 12_000, windowSource: 'provider-catalog',
+      minCliVersion: null, unavailableReason: null,
+    }]);
+  });
+
+  it('keeps present empty, hidden and nonselectable catalogs empty without documented fallback', () => {
+    for (const [name, models] of Object.entries({
+      empty: {},
+      hidden: { x: grokEntry('grok-hidden-test', { hidden: true, supported_in_api: false }) },
+      nonselectable: { x: grokEntry('grok-blocked-test', { user_selectable: false }) },
+    })) {
+      const state = path.join(tmp, name);
+      writeGrokCatalog(state, models);
+      const catalog = readGrokCatalog(state);
+      expect(catalog, name).not.toBeNull();
+      expect(grokModelOptions(catalog), name).toEqual([]);
+    }
+    expect(grokModelOptions([])).toEqual([]);
+    expect(grokModelOptions(null)).not.toEqual([]);
+  });
+
+  it('never evaluates sibling credential, endpoint or auth-provider getters', () => {
+    const state = path.join(tmp, 'credential-getters');
+    writeGrokCatalog(state, {});
+    const entry = { info: { id: 'grok-getter-test', supported_in_api: false, user_selectable: true, context_window: 80_000 } };
+    const touched: string[] = [];
+    for (const key of ['api_key', 'env_key', 'api_base_url', 'auth_provider', 'mtls_cert_dir']) {
+      Object.defineProperty(entry, key, { enumerable: true, get() {
+        touched.push(key);
+        throw new Error('credential slot must not be read');
+      } });
+    }
+    // JSON input cannot contain getters: inject them at the parser boundary
+    // to prove the projection never touches any sibling, even for null checks.
+    const parse = vi.spyOn(JSON, 'parse').mockReturnValueOnce({ models: { x: entry } });
+    try {
+      const catalog = readGrokCatalog(state);
+      expect(catalog).toHaveLength(1);
+      expect(grokModelOptions(catalog).map((row) => row.id)).toEqual(['grok-getter-test']);
+      expect(touched).toEqual([]);
+      expect(JSON.stringify(catalog)).not.toContain('auth_provider');
+    } finally { parse.mockRestore(); }
   });
 
   it('marks a row without a window as a fallback rather than inventing a source', () => {
@@ -483,6 +538,14 @@ describe('grok catalog', () => {
     fs.mkdirSync(state);
     fs.writeFileSync(path.join(state, 'models_cache.json'), JSON.stringify({ models: [grokEntry('x', {})] }));
     expect(readGrokCatalog(state)).toBeNull();
+  });
+
+  it('keeps a nonempty catalog with no valid info rows unknown rather than known empty', () => {
+    const state = path.join(tmp, 'invalid-info');
+    writeGrokCatalog(state, { bad: grokEntry('--unsafe', {}), missing: { api_key: GROK_SECRET } });
+    const catalog = readGrokCatalog(state);
+    expect(catalog).toBeNull();
+    expect(grokModelOptions(catalog).every((row) => row.windowSource === 'documented')).toBe(true);
   });
 });
 
