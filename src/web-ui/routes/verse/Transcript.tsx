@@ -198,6 +198,35 @@ function explainedKeys(items: readonly TranscriptItem[]): Set<string> {
   return out;
 }
 
+interface TranscriptCaches {
+  scope: string | null;
+  tools: TurnCache;
+  segments: WeakMap<TranscriptSegment, SegmentModel>;
+}
+
+/** Chats whose derived turns outlive their transcript's unmount. */
+const KEPT_CHAT_CACHES = 8;
+const keptCaches = new Map<string, TranscriptCaches>();
+
+/**
+ * One chat's derivation caches, kept across mounts for the last few chats.
+ * Switching back to a chat used to rebuild every turn's model and re-read
+ * every tool call (a 300-turn chat: ~1.2 s at 4× CPU) although the store
+ * hands back the very same segments; now those segments hit at once.
+ */
+function transcriptCaches(scope: string | null): TranscriptCaches {
+  const fresh = (): TranscriptCaches => ({ scope, tools: createTurnCache(), segments: new WeakMap() });
+  if (scope === null) return fresh();
+  const kept = keptCaches.get(scope) ?? fresh();
+  keptCaches.delete(scope);
+  keptCaches.set(scope, kept);
+  for (const key of keptCaches.keys()) {
+    if (keptCaches.size <= KEPT_CHAT_CACHES) break;
+    keptCaches.delete(key);
+  }
+  return kept;
+}
+
 function deriveSegment(segment: TranscriptSegment, cache: TurnCache): SegmentModel {
   const model = buildTurns(groupTranscriptItems(segment.items), cache);
   return { turns: model.turns, facts: model.facts, errorAnchors: model.errorAnchors, explained: explainedKeys(segment.items) };
@@ -226,11 +255,7 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
   // A mounted transcript can switch chats/accounts whose native ids overlap.
   // Reset before deriving the new chat, not in an effect after its first paint.
   const cacheScope = sessionId ?? getVerseUiState().activeSessionId;
-  const scopedCaches = useMemo(() => ({
-    scope: cacheScope,
-    tools: createTurnCache(),
-    segments: new WeakMap<TranscriptSegment, SegmentModel>(),
-  }), [cacheScope]);
+  const scopedCaches = useMemo(() => transcriptCaches(cacheScope), [cacheScope]);
   const segments = useMemo<TranscriptSegment[]>(
     () => transcript.segments ?? [{ key: 'all', items: transcript.items }],
     [transcript],
