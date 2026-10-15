@@ -108,6 +108,11 @@ import {
   createProposal,
 } from '../src/core/inbox/store.js';
 
+// Loaded at collection time: buildBacklog imports the plugin registry lazily,
+// so the first enrolled tick would otherwise transform that graph cold inside
+// its 5s test window. The tick still awaits the same module, now cached.
+import '../src/core/plugins/registry.js';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
