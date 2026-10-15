@@ -1744,12 +1744,13 @@ async function cmdConfig(args: string[]): Promise<void> {
  * M32: help moved to src/cli/help.ts (topic-grouped, searchable, --all).
  * This thin wrapper keeps `ashlr help` working even if the module is missing.
  */
-async function cmdHelp(rest: string[] = []): Promise<void> {
+async function cmdHelp(rest: string[] = []): Promise<number> {
   try {
     const mod = await import('./help.js');
-    await mod.cmdHelp(rest);
+    return await mod.cmdHelp(rest);
   } catch {
     console.log('Phantom — local-first command center. Run `phm help` or see the README (ashlr remains compatible).');
+    return 0;
   }
 }
 
@@ -2488,7 +2489,7 @@ async function main(): Promise<void> {
       case 'help':
       case '--help':
       case '-h':
-        await cmdHelp(rest);
+        process.exitCode = await cmdHelp(rest);
         break;
 
       default: {
