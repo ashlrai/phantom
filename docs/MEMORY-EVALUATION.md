@@ -123,3 +123,12 @@ The next round tried to win back the unanswerable questions without losing parap
 The fresh sets show the real limit: a question about database backups shares `database` with the database facts as strongly as a real paraphrase does, and no word-level threshold tried (synonym-only matches, share of uncovered query words, match ratio) separates the two without giving up more answers than it saves. Empty packs for near-topic questions need a meaning signal this deterministic ranker does not have.
 
 The same round fits the three-fact step in 1.25 KiB. A fact leaves out `observedAt` when it equals `validFrom` and `validUntil` when it is null, under a default stated once on the boundary tag, and the conformance judge checks that every emitted fact restores to the fixture's time fields. A typical fact drops from about 350 to about 300 bytes; the three-fact step takes 1,176 of 1,280 bytes and all eight tasks pass (17/17 steps). The 72-case corpus stays 72/72 with no forbidden leaks.
+
+### A meaning signal for near-topic questions
+
+The protocol was set before measuring: tune thresholds on the authored sets and set A only, then ship an off-by-default flag only if sets B, C and D each gain. Phantom's existing embedding path is local Ollama. No Ollama model was reachable from the measuring environment, so the test used Model2Vec static vectors (potion-base-8M and potion-base-32M, MIT), which are deterministic table lookups. Three uses were tried:
+- Gating the lexical pack by cosine.
+- Ranking by cosine alone.
+- A union of the two.
+
+None beat the lexical ranker even on the tuning sets. Static vectors separate answerable from unanswerable questions only weakly (AUC about 0.65), so nothing ships. A real signal needs a contextual encoder through the local Ollama path (for example `all-minilm` or `bge-small`). It would pass the pack precomputed similarities, so the pack stays pure, and CI would read committed vectors keyed by model digest. The same protocol would then be rerun.
