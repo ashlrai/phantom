@@ -341,6 +341,9 @@ export async function locusPinReport(locusBin, locusDist, env, home) {
     // Registers locus-mcp in the sandbox project's .mcp.json, as `locus setup` does for a user.
     'locus setup --client claude >/dev/null',
     `"${process.execPath}" --input-type=module -e "$PHM_SMOKE_LOCUS_READER"`,
+    // Without a trailing command bash execs into node, which replaces the
+    // pinning (supervising) process and makes Locus end the pin on purpose.
+    'exit $?',
   ].join('\n');
   const result = await run('bash', ['-c', script], {
     cwd: home, timeoutMs: 30_000,
