@@ -42,6 +42,7 @@ import { isAbsolute, join } from 'node:path';
 
 import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
+import { detectVerifyCommands } from '../run/verify-commands.js';
 
 import { ashlrHome } from '../cloud/store.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -91,7 +92,12 @@ export interface TickOptions {
   apply: boolean;
   /** argv of the fixer; null = no code changes (merge-base without conflicts and reruns still act). */
   fixer: string[] | null;
-  /** Each entry is one argv run in the worktree before pushing; all must exit 0. */
+  /**
+   * Each entry is one argv run in the worktree before pushing; all must exit 0.
+   * Empty = the repository's own toolchain decides: its `quick` verify profile
+   * (ashlr.verify.json or detected scripts, read before the fixer runs) plus
+   * `vitest related --run` over the changed files when the repo uses vitest.
+   */
   verify: string[][];
   ownedPrefixes?: readonly string[];
   limits?: Limits;
@@ -318,6 +324,8 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     const commonDir = abs(await must(wt, ['rev-parse', '--git-common-dir']), wt);
     const wtGitDir = abs(await must(wt, ['rev-parse', '--git-dir']), wt);
     const control = gitControlDigest(commonDir, wtGitDir, wt);
+    // The verify plan is read from the pinned head before untrusted code runs.
+    const plannedVerify = verifyPlan(opts, wt);
     const tampered = () => (gitControlDigest(commonDir, wtGitDir, wt) !== control ? 'git config, hooks or the worktree link changed while the fixer or verify ran; nothing pushed' : null);
     const nm = join(opts.checkout, 'node_modules');
     if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); } catch { /* verify will say so */ } }
@@ -346,7 +354,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         await must(wt, ['commit', '--no-edit', '--no-verify']);
       }
       message = '';
-      const verified = await verify(opts, wt, run);
+      const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--name-only', pr.headSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
     } else {
       if (!opts.fixer) return { result: 'refused', detail: ['a code fix is needed and no fixer is configured (--fixer)'], newHead: null };
@@ -360,7 +368,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       if (!files.length) return { result: 'no-change', detail: [...detail, 'the fixer changed nothing'], newHead: null };
       const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--cached'])).stdout);
       if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
-      const verified = await verify(opts, wt, run);
+      const verified = await verify(plannedVerify, wt, run, files.filter((f) => f.status !== 'D').map((f) => f.path));
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
       message = p.action === 'fix-ci'
         ? `autopilot: fix ${p.failures.map((f) => f.check.name).join(', ')} on #${pr.number}`
@@ -411,14 +419,37 @@ async function runFixer(opts: TickOptions, cwd: string, brief: string, run: Run)
   return `fixer exited ${r.code}${said ? `: ${scrubSecrets(said)}` : ''}`;
 }
 
-/** null when every verify command passed, else the first failure in one line. */
-async function verify(opts: TickOptions, cwd: string, run: Run): Promise<string | null> {
-  for (const argv of opts.verify) {
-    const [cmd, ...args] = argv;
-    const r = await run(cmd!, args, { cwd, timeoutMs: 20 * 60_000, env: untrustedEnv() });
+export interface VerifyStep { cmd: string[]; cwd?: string; timeoutMs?: number }
+export interface VerifyPlan { steps: VerifyStep[]; affectedTests: boolean }
+
+/** What re-verifies a change before it is pushed: explicit --verify, else the repo's own quick profile plus affected tests. */
+export function verifyPlan(opts: Pick<TickOptions, 'verify'>, worktree: string): VerifyPlan {
+  if (opts.verify.length) return { steps: opts.verify.map((cmd) => ({ cmd })), affectedTests: false };
+  let steps: VerifyStep[] = [];
+  try {
+    steps = detectVerifyCommands(worktree, 'quick').filter((c) => c.kind !== 'test')
+      .map((c) => ({ cmd: c.cmd, ...(c.cwd ? { cwd: c.cwd } : {}), ...(c.timeoutMs ? { timeoutMs: c.timeoutMs } : {}) }));
+  } catch { /* no contract: affected tests alone */ }
+  let vitest = false;
+  try {
+    const pkg = JSON.parse(readFileSync(join(worktree, 'package.json'), 'utf8')) as Record<string, Record<string, string> | undefined>;
+    vitest = Boolean(pkg['devDependencies']?.['vitest'] ?? pkg['dependencies']?.['vitest']);
+  } catch { /* not a node repo */ }
+  return { steps, affectedTests: vitest };
+}
+
+/** null when every verify step passed, else the first failure in one line. */
+async function verify(plan: VerifyPlan, worktree: string, run: Run, changed: readonly string[]): Promise<string | null> {
+  const steps = [...plan.steps];
+  const sources = changed.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
+  if (plan.affectedTests && sources.length) steps.push({ cmd: ['npx', '--no-install', 'vitest', 'related', '--run', '--passWithNoTests', ...sources], timeoutMs: 20 * 60_000 });
+  for (const step of steps) {
+    const [cmd, ...args] = step.cmd;
+    const cwd = step.cwd && !isAbsolute(step.cwd) && !step.cwd.split('/').includes('..') ? join(worktree, step.cwd) : worktree;
+    const r = await run(cmd!, args, { cwd, timeoutMs: step.timeoutMs ?? 20 * 60_000, env: untrustedEnv() });
     if (r.code !== 0) {
       const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').filter(Boolean).slice(-3).join(' | ');
-      return `verify \`${argv.join(' ')}\` exited ${r.code}: ${scrubSecrets(tail).slice(0, 400)}`;
+      return `verify \`${step.cmd.join(' ')}\` exited ${r.code}: ${scrubSecrets(tail).slice(0, 400)}`;
     }
   }
   return null;

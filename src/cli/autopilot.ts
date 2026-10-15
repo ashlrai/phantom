@@ -16,6 +16,8 @@ const USAGE = `Usage: phm autopilot <pr-number|pr-url> [options]
                          (default: "claude -p --permission-mode acceptEdits")
   --no-fixer             never change code; only merge clean bases and re-run infra
   --verify "<command>"   run in the worktree before every push; repeatable, all must pass
+                         (default: the repo's own quick verify profile, e.g. ashlr.verify.json,
+                         plus \`vitest related\` over the changed files)
   --prefix <branch-prefix>  branch prefix the autopilot owns; repeatable (adds to the defaults)
   --max-pushes <n>       pushes per PR before handing it to a person (default 6)
   --watch                tick until the PR is green, merged, closed or stopped
