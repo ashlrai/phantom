@@ -170,7 +170,7 @@ if (mode === 'fail-add-then-appear-on-remove' && worktreeIndex >= 0 &&
 
 if (mode === 'fail-add-then-appear-on-remove' && worktreeIndex >= 0 &&
     args[worktreeIndex + 1] === 'remove') {
-  const worktree = args[worktreeIndex + 3];
+  const worktree = args[args.length - 1];
   fs.writeFileSync(process.env.M426_MARKER, worktree);
   fs.mkdirSync(worktree, { recursive: true });
   // The destination monitor owns termination once it observes the appeared path.
@@ -568,7 +568,7 @@ describe('M426 sandbox reservation and path identity', () => {
         .toContain(`worktree ${gitAliasWorktree}`);
       expect(branches(repo.dir)).not.toContain(sandbox.branch);
       expect(attemptedCleanup).toEqual([
-        { cwd: repo.dir, args: ['worktree', 'remove', '--force', sandbox.worktreePath] },
+        { cwd: repo.dir, args: ['worktree', 'remove', '--force', '--force', sandbox.worktreePath] },
         { cwd: repo.dir, args: ['worktree', 'prune'] },
       ]);
     } finally {

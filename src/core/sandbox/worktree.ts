@@ -844,7 +844,9 @@ async function rollback() {
   };
 
   if (!await runRollbackMutation(
-    ['worktree', 'remove', '--force', worktreePath],
+    // Double force: the timed-out add this rolls back was SIGKILLed while
+    // holding git's "initializing" worktree lock.
+    ['worktree', 'remove', '--force', '--force', worktreePath],
     worktreePin
       ? { worktreePin, allowWorktreeAbsence: true }
       : { requireWorktreeAbsence: true },
@@ -2516,7 +2518,10 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
   //    the RE-DERIVED safe values, not the raw metadata.
     // `git worktree remove` also deletes the worktree directory. If the dir is
     // already gone, prune first so git's bookkeeping is consistent, then ignore.
-    gitTry(sb.sourceRepo, ['worktree', 'remove', '--force', safeWorktree]);
+    // Double force: a SIGKILL mid-`worktree add` (GIT_TIMEOUT, daemon kill)
+    // leaves git's "initializing" lock, which single force and prune never
+    // clear — the sandbox would be residual on every sweep, forever.
+    gitTry(sb.sourceRepo, ['worktree', 'remove', '--force', '--force', safeWorktree]);
     gitTry(sb.sourceRepo, ['worktree', 'prune']);
 
     // 2. Delete the scratch branch (a sandbox-only ref — never a user branch).
