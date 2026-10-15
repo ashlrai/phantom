@@ -441,8 +441,9 @@ jobs:
     # the macOS-specific authority suites still run per PR (mac-isolated,
     # ci-shared-macos, native-macos-broker-foundation). The exhaustive Mac
     # partition runs on every master push, reusable workflow_call runs and any PR
-    # labelled `ci:full-mac`.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
+    # push that follows the queue still runs it.
+    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -809,7 +810,7 @@ jobs:
       - name: Require selected CI lane
         env:
           GATE_NEEDS: ${{ toJSON(needs) }}
-          MAC_GENERAL_DEFERRED: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}
+          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');

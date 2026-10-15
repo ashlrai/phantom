@@ -147,7 +147,7 @@ describe('M30 CI workflow', () => {
       expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
     }
     expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
-      "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}",
+      "${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}",
     );
     expect(execute('site', { ...site, site: 'failure' })).toThrow();
     expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
@@ -370,7 +370,7 @@ describe('M30 CI workflow', () => {
     // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
     expect(jobs['mac-general']!.needs).toBe('classify');
     expect(jobs['mac-general']!.if).toBe(
-      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
     );
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
