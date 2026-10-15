@@ -12,23 +12,36 @@
  *   address-review  the fixer gets the review items on this head
  *   rerun           one re-run of an infrastructure failure, through GitHub
  *
- * Then: no fixer commits or history edits, no weakened checks (diagnose.ts
- * `weakeningRefusals`), the `--verify` commands pass in the worktree, and only
- * then one commit and a plain `git push origin HEAD:<branch>`. Never a force
- * push, never `--admin`, never a merge: merging stays with the promotion gate
- * and branch protection. A head that moved since the read is a refusal.
+ * Then: no fixer commits or history edits; no weakened checks (G1b
+ * `detectTestTampering`, G1 `protectedPathHits`, and diagnose.ts
+ * `weakeningRefusals`, on the fixer's diff and on every conflict resolution);
+ * the `--verify` commands pass in the worktree; git config and hooks are
+ * byte-identical to before the fixer ran; KILL and pause are re-read; and only
+ * then one commit and a plain push to the push URL captured before the fixer
+ * ran. Every git call after the fixer runs with hooks and fsmonitor disabled.
+ * Never a force push, never `--admin`, never a merge: merging stays with the
+ * promotion gate and branch protection. A head that moved is a refusal.
  *
  * The fixer is any command that reads the brief on stdin and edits files in
- * its working directory, e.g. `claude -p --permission-mode acceptEdits`. It
- * runs with GitHub tokens removed from its environment; the autopilot pushes.
+ * its working directory. The default, `claude -p --permission-mode
+ * acceptEdits`, may edit files but is not granted shell commands. The fixer
+ * and the --verify commands run with GitHub tokens, the SSH agent, the gh
+ * config directory and global git config removed from their environment.
+ * This is NOT a jail: they run as the operator and can read files under HOME.
+ * Use a fixer you trust with that; the autopilot is the only thing that pushes.
  *
  * Every tick appends one row to `$ASHLR_HOME/autopilot/outcomes.jsonl` and
  * persists the per-PR bounds in `$ASHLR_HOME/autopilot/state/`.
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
+
+import { isHubRepositoryLabel } from '../authority/repository-binding.js';
+import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
 
 import { ashlrHome } from '../cloud/store.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -84,7 +97,8 @@ export interface TickOptions {
   limits?: Limits;
   gh?: Gh;
   run?: Run;
-  guards?: () => Pick<Guards, 'killSwitch' | 'paused'>;
+  /** Read before planning, again before a re-run, and again right before every push. */
+  guards?: () => Pick<Guards, 'killSwitch' | 'paused'> | Promise<Pick<Guards, 'killSwitch' | 'paused'>>;
   fixerTimeoutMs?: number;
   now?: () => Date;
 }
@@ -148,9 +162,55 @@ function lock(repo: string, n: number): (() => void) | null {
   return () => { try { unlinkSync(path); } catch { /* gone */ } };
 }
 
-function defaultGuards(): Pick<Guards, 'killSwitch' | 'paused'> {
-  // Lazy: these modules read ~/.ashlr state and pull in the policy layer.
-  return { killSwitch: false, paused: false };
+/** Without an explicit guard source the live KILL switch and pause flag decide. */
+function defaultGuards(): Promise<Pick<Guards, 'killSwitch' | 'paused'>> {
+  return liveGuards();
+}
+
+async function stopNow(opts: TickOptions): Promise<string | null> {
+  const g = await (opts.guards ?? defaultGuards)();
+  if (g.killSwitch) return 'the kill switch was engaged while acting; nothing pushed';
+  if (g.paused) return 'Phantom was paused while acting; nothing pushed';
+  return null;
+}
+
+/** Git with repository hooks and fsmonitor off: nothing the fixer planted in the tree runs. */
+export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+
+/**
+ * A digest of everything that changes what git runs or where it pushes: the
+ * shared .git/config and hooks, the worktree's own git dir and `.git` link
+ * file, and the operator's global git config. Compared before and after the
+ * fixer (and verify) ran; any difference refuses the tick.
+ */
+export function gitControlDigest(commonDir: string, worktreeGitDir: string, worktree: string): string {
+  const h = createHash('sha256');
+  const add = (label: string, path: string) => {
+    h.update(`\0${label}\0`);
+    try { h.update(readFileSync(path)); } catch { h.update('<absent>'); }
+  };
+  add('config', join(commonDir, 'config'));
+  add('wt-config', join(worktreeGitDir, 'config.worktree'));
+  add('wt-gitdir', join(worktreeGitDir, 'gitdir'));
+  add('wt-link', join(worktree, '.git'));
+  add('global', join(homedir(), '.gitconfig'));
+  add('xdg', join(process.env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config'), 'git', 'config'));
+  for (const dir of [join(commonDir, 'hooks'), join(worktreeGitDir, 'hooks')]) {
+    let names: string[] = [];
+    try { names = readdirSync(dir).sort(); } catch { /* none */ }
+    for (const n of names) add(`hook:${dir}:${n}`, join(dir, n));
+  }
+  return h.digest('hex');
+}
+
+/** Every reason a diff weakens checks or reaches protected paths. `files` is name-status + added lines. */
+export function diffRefusals(repo: string, files: readonly DiffFile[], unifiedDiff: string): string[] {
+  const out = weakeningRefusals(files);
+  const tamper = detectTestTampering(unifiedDiff);
+  if (tamper.parseError && files.length) out.push(`the diff could not be checked for test tampering (${tamper.parseError})`);
+  out.push(...tamper.findings.map((f) => `${f.path}: ${f.detail}`));
+  out.push(...protectedPathHits(files.map((f) => f.path), { selfRepo: isHubRepositoryLabel(repo) }).map((h) => `${h.path}: protected path (${h.why})`));
+  return [...new Set(out)];
 }
 
 export async function liveGuards(): Promise<Pick<Guards, 'killSwitch' | 'paused'>> {
@@ -191,16 +251,19 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
       record(row, now());
       return row;
     }
-    const guards: Guards = { ...(opts.guards ?? defaultGuards)(), ownedPrefixes: opts.ownedPrefixes ?? DEFAULT_OWNED_PREFIXES };
+    const guards: Guards = { ...(await (opts.guards ?? defaultGuards)()), ownedPrefixes: opts.ownedPrefixes ?? DEFAULT_OWNED_PREFIXES };
     const state = loadState(opts.repo, opts.number);
     const p = decide(obs, guards, state, limits);
     const row: TickResult = { ...base, headSha: obs.pr.headSha, plan: p.action, reason: p.reason };
     if ('failures' in p && p.failures) row.detail.push(...p.failures.map((f) => `${f.cause}: ${f.why}`));
+    row.detail.push(...(obs.droppedReviews ?? []));
 
     if (!['merge-base', 'fix-ci', 'address-review', 'rerun'].includes(p.action)) { record(row, now()); return row; }
     if (!opts.apply) { row.result = 'planned'; record(row, now()); return row; }
 
     if (p.action === 'rerun') {
+      const stopped = await stopNow(opts);
+      if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
       for (const c of p.checks) {
         await rerunJob(opts.repo, c.id, gh);
         state.reruns.push(`${obs.pr.headSha}:${c.name}`);
@@ -235,7 +298,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
 async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' }>, run: Run): Promise<Pick<TickResult, 'result' | 'detail' | 'newHead'>> {
   const { pr } = obs;
   const detail: string[] = [];
-  const git = async (cwd: string, args: string[], timeoutMs = 120_000) => run('git', args, { cwd, timeoutMs });
+  const git = async (cwd: string, args: string[], timeoutMs = 120_000) => run('git', [...SAFE_GIT, ...args], { cwd, timeoutMs });
   const must = async (cwd: string, args: string[]) => {
     const r = await git(cwd, args);
     if (r.code !== 0) throw new Error(`git ${args[0]} failed: ${(r.stderr.trim().split('\n').pop() ?? '').slice(0, 200)}`);
@@ -247,8 +310,15 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     await must(opts.checkout, ['fetch', '--no-tags', 'origin', `+refs/heads/${pr.headRef}:refs/remotes/origin/${pr.headRef}`, `+refs/heads/${pr.baseRef}:refs/remotes/origin/${pr.baseRef}`]);
     const remoteHead = await must(opts.checkout, ['rev-parse', `refs/remotes/origin/${pr.headRef}`]);
     if (remoteHead !== pr.headSha) return { result: 'refused', detail: [`the branch moved to ${remoteHead.slice(0, 8)} since GitHub was read; next tick re-reads`], newHead: null };
+    // Captured before any untrusted code runs: the push goes here, not to whatever `origin` says later.
+    const pushUrl = await must(opts.checkout, ['remote', 'get-url', '--push', 'origin']);
     await must(opts.checkout, ['worktree', 'add', '--detach', wt, pr.headSha]);
     added = true;
+    const abs = (p: string, from: string) => (isAbsolute(p) ? p : join(from, p));
+    const commonDir = abs(await must(wt, ['rev-parse', '--git-common-dir']), wt);
+    const wtGitDir = abs(await must(wt, ['rev-parse', '--git-dir']), wt);
+    const control = gitControlDigest(commonDir, wtGitDir, wt);
+    const tampered = () => (gitControlDigest(commonDir, wtGitDir, wt) !== control ? 'git config, hooks or the worktree link changed while the fixer or verify ran; nothing pushed' : null);
     const nm = join(opts.checkout, 'node_modules');
     if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); } catch { /* verify will say so */ } }
 
@@ -261,13 +331,19 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         if (!opts.fixer) { await git(wt, ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
         const fx = await runFixer(opts, wt, fixBrief(p, pr, { conflicted }), run);
         detail.push(fx);
+        const changedGit = tampered();
+        if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
         const left = (await must(wt, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         const markers = conflicted.filter((f) => { try { return /^(<{7}|>{7}|={7})( |$)/m.test(readFileSync(join(wt, f), 'utf8')); } catch { return false; } });
         if (markers.length) return { result: 'refused', detail: [...detail, `conflict markers remain in ${markers.join(', ')}`], newHead: null };
         await must(wt, ['add', '--', ...new Set([...conflicted, ...left])]);
         const rest = (await must(wt, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (rest.length) return { result: 'refused', detail: [...detail, `unresolved: ${rest.join(', ')}`], newHead: null };
-        await must(wt, ['commit', '--no-edit']);
+        // The resolution is the fixer's work: scan it like any fix, against the pre-merge head.
+        const resolved = parseDiff(await must(wt, ['diff', '--cached', '--name-status', pr.headSha, '--', ...conflicted]), (await git(wt, ['diff', '--cached', '-U0', pr.headSha, '--', ...conflicted])).stdout);
+        const weak = diffRefusals(opts.repo, resolved, (await git(wt, ['diff', '--cached', pr.headSha, '--', ...conflicted])).stdout);
+        if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
+        await must(wt, ['commit', '--no-edit', '--no-verify']);
       }
       message = '';
       const verified = await verify(opts, wt, run);
@@ -278,21 +354,27 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       const head = await must(wt, ['rev-parse', 'HEAD']);
       if (head !== pr.headSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD (commits are the autopilot\'s job); nothing pushed'], newHead: null };
       await must(wt, ['add', '-A']);
+      const changedGit = tampered();
+      if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
       const files = parseDiff(await must(wt, ['diff', '--cached', '--name-status']), (await git(wt, ['diff', '--cached', '-U0'])).stdout);
       if (!files.length) return { result: 'no-change', detail: [...detail, 'the fixer changed nothing'], newHead: null };
-      const weak = weakeningRefusals(files);
+      const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--cached'])).stdout);
       if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
       const verified = await verify(opts, wt, run);
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
       message = p.action === 'fix-ci'
         ? `autopilot: fix ${p.failures.map((f) => f.check.name).join(', ')} on #${pr.number}`
         : `autopilot: address review on #${pr.number}`;
-      await must(wt, ['commit', '-m', `${message.slice(0, 120)}\n\n${p.reason.slice(0, 600)}\n\nPhantom-Autopilot: ${p.action}${p.action === 'fix-ci' ? ` ${p.signature} attempt ${p.attempt}` : ''}`]);
+      await must(wt, ['commit', '--no-verify', '-m', `${message.slice(0, 120)}\n\n${p.reason.slice(0, 600)}\n\nPhantom-Autopilot: ${p.action}${p.action === 'fix-ci' ? ` ${p.signature} attempt ${p.attempt}` : ''}`]);
     }
     const newHead = await must(wt, ['rev-parse', 'HEAD']);
     if (newHead === pr.headSha) return { result: 'no-change', detail: [...detail, 'already up to date with the base'], newHead: null };
+    const changedGit = tampered();
+    if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
+    const stopped = await stopNow(opts);
+    if (stopped) return { result: 'refused', detail: [...detail, stopped], newHead: null };
     // A plain push: GitHub refuses it if the branch moved, and nothing here can force it.
-    const pushed = await git(wt, ['push', 'origin', `HEAD:refs/heads/${pr.headRef}`], 180_000);
+    const pushed = await git(wt, ['push', '--no-verify', pushUrl, `HEAD:refs/heads/${pr.headRef}`], 180_000);
     if (pushed.code !== 0) return { result: 'refused', detail: [...detail, `push refused: ${pushed.stderr.trim().split('\n').pop()?.slice(0, 200) ?? ''}`], newHead: null };
     return { result: 'pushed', detail: [...detail, message || `merged ${pr.baseRef} into ${pr.headRef}`], newHead };
   } catch (err) {
@@ -303,17 +385,28 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
   }
 }
 
-/** Fixer env: no GitHub or git credentials, so only the autopilot can push. */
-function fixerEnv(): NodeJS.ProcessEnv {
+/**
+ * Env for the fixer and verify commands: no GitHub tokens, no SSH agent, an
+ * empty gh config dir, no global/system git config (so no credential helper)
+ * and no prompting. Reduces what untrusted code can push with; not a jail.
+ */
+function untrustedEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'SSH_AUTH_SOCK']) delete env[k];
+  for (const k of Object.keys(env)) {
+    if (/^(GH_|GITHUB_|GIT_CONFIG|GIT_ASKPASS|SSH_ASKPASS)/.test(k) || /TOKEN$/.test(k) && /GIT|GH/.test(k)) delete env[k];
+  }
+  delete env['SSH_AUTH_SOCK'];
+  env['GH_CONFIG_DIR'] = mkdtempSync(join(tmpdir(), 'phm-autopilot-gh-'));
+  env['GIT_CONFIG_GLOBAL'] = '/dev/null';
+  env['GIT_CONFIG_NOSYSTEM'] = '1';
   env['GIT_TERMINAL_PROMPT'] = '0';
+  env['GIT_ASKPASS'] = 'false';
   return env;
 }
 
 async function runFixer(opts: TickOptions, cwd: string, brief: string, run: Run): Promise<string> {
   const [cmd, ...args] = opts.fixer!;
-  const r = await run(cmd!, args, { cwd, input: brief, timeoutMs: opts.fixerTimeoutMs ?? 30 * 60_000, env: fixerEnv() });
+  const r = await run(cmd!, args, { cwd, input: brief, timeoutMs: opts.fixerTimeoutMs ?? 30 * 60_000, env: untrustedEnv() });
   const said = (r.stdout.trim().split('\n').filter(Boolean).pop() ?? '').slice(0, 300);
   return `fixer exited ${r.code}${said ? `: ${scrubSecrets(said)}` : ''}`;
 }
@@ -322,7 +415,7 @@ async function runFixer(opts: TickOptions, cwd: string, brief: string, run: Run)
 async function verify(opts: TickOptions, cwd: string, run: Run): Promise<string | null> {
   for (const argv of opts.verify) {
     const [cmd, ...args] = argv;
-    const r = await run(cmd!, args, { cwd, timeoutMs: 20 * 60_000 });
+    const r = await run(cmd!, args, { cwd, timeoutMs: 20 * 60_000, env: untrustedEnv() });
     if (r.code !== 0) {
       const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').filter(Boolean).slice(-3).join(' | ');
       return `verify \`${argv.join(' ')}\` exited ${r.code}: ${scrubSecrets(tail).slice(0, 400)}`;
