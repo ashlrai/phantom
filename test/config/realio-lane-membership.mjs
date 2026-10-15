@@ -381,6 +381,7 @@ export const REAL_IO_TEST_FILES = [
 
   // --- misc real subprocess/fs/network work (worker pool, dashboard CLI spawn, fleet, retry) ---
   'test/activation-readiness-package.test.ts', // real subprocess/fs work (marker-detected or measured) — 4.7s slowest test in the quiet baseline
+  'test/agent-readable-cli.test.ts', // spawns the real CLI against a temp HOME and temp git repo (`status --json`)
   'test/h1.chain.test.ts', // real subprocess/fs work (marker-detected or measured) — 4.0s slowest test in the quiet baseline
   'test/m116.worker-pool.test.ts', // real subprocess/fs work (marker-detected or measured) — 4.8s slowest test in the quiet baseline
   'test/m2.config-set.test.ts', // real subprocess/fs work (marker-detected or measured) — 3.4s slowest test in the quiet baseline

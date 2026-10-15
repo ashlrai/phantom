@@ -1144,11 +1144,37 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   console.log('');
 }
 
-async function cmdStatus(_args: string[]): Promise<void> {
+/** Plain-data repo row for `status --json` (no ANSI, stable keys). */
+function statusRepoJson(item: IndexedItem): Record<string, unknown> {
+  const g = item.git as GitStatus;
+  return { name: item.name, path: item.path, branch: g.branch, dirty: g.dirty, ahead: g.ahead, behind: g.behind, lastCommit: g.lastCommit, lastModified: item.lastModified };
+}
+
+async function cmdStatus(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
 
   const repos = idx.items.filter(i => i.kind === 'repo' && i.git);
+
+  // Agents read this: one JSON document on stdout, same buckets as the board.
+  if (args.includes('--json')) {
+    const dirtyJ = repos.filter(i => (i.git?.dirty ?? 0) > 0);
+    const offSyncJ = repos.filter(i => !dirtyJ.includes(i) && ((i.git?.ahead ?? 0) > 0 || (i.git?.behind ?? 0) > 0));
+    const staleJ = repos.filter(i => !dirtyJ.includes(i) && !offSyncJ.includes(i) && daysSince(i.lastModified) > cfg.staleDays);
+    const clean = repos.length - dirtyJ.length - offSyncJ.length - staleJ.length;
+    console.log(JSON.stringify({
+      schemaVersion: 1,
+      reposTracked: repos.length,
+      roots: cfg.roots,
+      staleDays: cfg.staleDays,
+      counts: { clean, dirty: dirtyJ.length, offSync: offSyncJ.length, stale: staleJ.length },
+      dirty: dirtyJ.map(statusRepoJson),
+      offSync: offSyncJ.map(statusRepoJson),
+      stale: staleJ.map(statusRepoJson),
+      ...(repos.length === 0 ? { hint: 'No repos tracked. Set roots with `phm config set roots --json \'["/path/to/code"]\'`, then run `phm index --refresh`.' } : {}),
+    }, null, 2));
+    return;
+  }
 
   // Zero repos → the index is empty or roots are misconfigured. Show actionable
   // setup guidance instead of an empty attention board, then stop.
