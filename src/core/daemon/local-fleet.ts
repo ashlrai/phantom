@@ -55,7 +55,6 @@
  * No new runtime dependencies; Node builtins only. No public API throws.
  */
 
-import { countOf } from '../util/count-of.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -84,6 +83,11 @@ import {
   type LocalOnlyMode,
 } from '../policy/local-only.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
+
+/** "1 slot" / "4 slots" — kept local so no new module joins the Tier-1 import closure. */
+function slotCount(n: number): string {
+  return `${n} slot${n === 1 ? '' : 's'}`;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -435,7 +439,7 @@ export function capacityFromRuntimeSnapshot(
   const detail = snapshot.lastError
     ? text(snapshot.lastError)
     : state === 'up' && limit !== null
-      ? `llama-server up with ${countOf(limit, 'slot')} (source=${snapshot.slots.source})`
+      ? `llama-server up with ${slotCount(limit)} (source=${snapshot.slots.source})`
       : state === 'up'
         ? 'llama-server up but did not report a slot count'
         : `llama-server ${snapshot.state}`;
@@ -620,7 +624,7 @@ function deriveUncappedLocalFleetConcurrency(
       reason:
         'this engine holds the process-wide outward mutation fence for its whole run, so ' +
         'exactly one sandboxed agent can execute at a time machine-wide' +
-        (slots > 0 ? ` — the runtime's ${countOf(slots, 'slot')} cannot be used` : ''),
+        (slots > 0 ? ` — the runtime's ${slotCount(slots)} cannot be used` : ''),
     };
   }
 
@@ -646,7 +650,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: null,
       effective: ceiling,
       limiter: 'serving-slots',
-      reason: `derived from the serving runtime's ${countOf(ceiling, 'slot')}; no operator cap configured`,
+      reason: `derived from the serving runtime's ${slotCount(ceiling)}; no operator cap configured`,
     };
   }
   if (configured < ceiling) {
@@ -655,7 +659,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: configured,
       effective: configured,
       limiter: 'config',
-      reason: `operator cap ${configured} is below the runtime's ${countOf(ceiling, 'slot')}`,
+      reason: `operator cap ${configured} is below the runtime's ${slotCount(ceiling)}`,
     };
   }
   return {
@@ -664,7 +668,7 @@ function deriveUncappedLocalFleetConcurrency(
     effective: ceiling,
     limiter: 'serving-slots',
     reason: configured > ceiling
-      ? `operator cap ${configured} exceeds the runtime's ${countOf(ceiling, 'slot')} and is NOT honoured — ` +
+      ? `operator cap ${configured} exceeds the runtime's ${slotCount(ceiling)} and is NOT honoured — ` +
         'extra agents would queue inside llama-server, not run'
       : `operator cap ${configured} equals the runtime's slot count`,
   };

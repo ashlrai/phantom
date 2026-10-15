@@ -260,9 +260,14 @@ export const FLEET_LANE_LABEL: Readonly<Record<FleetEngine, string>> = {
   'devin-cli': 'Devin CLI',
 };
 
-// Re-exported so existing router consumers keep importing it from here.
-export { countOf } from '../util/count-of.js';
-import { countOf } from '../util/count-of.js';
+/**
+ * "1 slot", "2 slots", "1 local slot" — a count with its noun pluralised by
+ * the count, so reasons never read "2 slot(s)". `noun` is the singular and may
+ * carry leading words ("local slot"); only its last word gets the "s".
+ */
+export function countOf(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
 
 function concreteGrokLanes(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;

@@ -34,7 +34,6 @@
  *   // claude slots to allow (open=N, near=N/2, throttled/exhausted=0).
  */
 
-import { countOf } from '../util/count-of.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -51,6 +50,11 @@ import {
   readLatestClaudeRateLimitEvent,
   type ClaudeRateLimitEvent,
 } from './claude-rate-limit-event.js';
+
+/** "1 slot" / "4 slots" — kept local so no new module joins the Tier-1 import closure. */
+function slotCount(n: number): string {
+  return `${n} slot${n === 1 ? '' : 's'}`;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -1289,7 +1293,7 @@ async function senseLlamaServerState(
         costPerMTokenOut: 0,
         p50LatencyMs: null,
         snapshotAt: now,
-        reason: `llama-server up with ${countOf(slots, 'slot')}; occupancy not reported`,
+        reason: `llama-server up with ${slotCount(slots)}; occupancy not reported`,
       };
     }
     const usedPct = Math.min(100, Math.round((busy / slots) * 100));
