@@ -2,6 +2,9 @@
 
 This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`phm improve` / steward) and other coding agents, under the same standing authority that applies to `ashlrai/phantom` (see phantom `docs/STANDING-AUTHORITY.md`).
 
+## Tools for agents working here
+- This repo's `.mcp.json` declares Phantom's companion MCP servers (Phantom Secrets, Locus, Lexicon, Stack). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
+
 ## Agents may
 - Create branches, commit, and open pull requests.
 - Turn on GitHub auto-merge (`phm improve --auto-merge` / `gh pr merge --auto`). A PR merges only after every required CI check is green. Never bypass a failing or pending check, and never use an admin override.

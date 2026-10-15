@@ -65,7 +65,7 @@ import {
 import { proposalCompletesGoalMilestone } from './completion.js';
 // M270: dynamic frontier trio reads the resolved registry so kimi joins when configured.
 import { engineTierOf } from '../run/sandboxed-engine.js';
-import { buildTaskBrief } from '../teams/task-brief.js';
+import { buildTaskBrief } from '../teams/context.js';
 
 // ---------------------------------------------------------------------------
 // HARD per-advance budget — a goal advance is ALWAYS bounded.

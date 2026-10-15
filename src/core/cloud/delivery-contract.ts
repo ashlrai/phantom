@@ -19,6 +19,48 @@ const MAX_SUMMARY_CHARS = 2_000;
 const MAX_LIST_ITEMS = 50;
 const MAX_LIST_ITEM_CHARS = 500;
 
+/**
+ * Companion MCP servers a repo's `.mcp.json` may declare, and when a cloud
+ * session should call each. A cloud session sees the file like any Claude Code
+ * session, but nothing in the task prompt said the servers exist or what they
+ * are for. Guidance only: it grants no tool and changes no sandbox.
+ */
+const COMPANION_GUIDANCE: readonly { name: string; tools: string; when: string }[] = [
+  {
+    name: 'phantom-secrets',
+    tools: '`phantom_check`',
+    when: 'before every commit, to confirm no raw secret is staged; values never reach you, so never ask for one',
+  },
+  {
+    name: 'locus',
+    tools: '`locus_whoami`, `locus_safe_next`',
+    when: 'before any step that acts as an account (a provider CLI, a deploy, a publish); "no active pin" means do not act as any account, and say so in the report',
+  },
+  {
+    name: 'lexicon',
+    tools: '`normalize_transcript`',
+    when: 'on the task text when it reads like dictation (misspelled product names), before you act on it',
+  },
+  {
+    name: 'stack',
+    tools: '`stack_status`, `stack_doctor`',
+    when: 'read-only, to see which services the project uses; never call `stack_add` or `stack_apply`',
+  },
+];
+
+/** The prompt block for the companion servers among `servers` (declaredMcpServers), or '' when there are none. */
+export function companionToolsBlock(servers: readonly string[]): string {
+  const present = COMPANION_GUIDANCE.filter(c => servers.includes(c.name));
+  if (present.length === 0) return '';
+  return [
+    'COMPANION TOOLS (declared in this repository\'s .mcp.json)',
+    '',
+    ...present.map(c => `- \`${c.name}\`: ${c.tools} ${c.when}.`),
+    '',
+    'If a server is not available in your session, carry on without it. In the report, list the companion tools you actually called in "toolsUsed" (an empty list if none), and note any server that was unavailable under "risks".',
+  ].join('\n');
+}
+
 const STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'blocked', 'no-change'];
 
 /**
@@ -35,9 +77,9 @@ const STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'bloc
  * between the task text and the contract. Empty ⇒ the prompt is unchanged.
  * `playbook` (3.15) is the rendered playbook block (playbooks/resolve.ts);
  * it follows the task text, before the lessons. Empty ⇒ unchanged.
- * `companions` is the companion-tools block (companion-tools.ts) for the
- * repo's `.mcp.json`; it follows the lessons and adds the optional
- * "toolsUsed" report field to the contract. Empty ⇒ unchanged.
+ * `companions` is companionToolsBlock() for the repo's `.mcp.json`; it
+ * follows the lessons and adds the optional "toolsUsed" report field to the
+ * contract. Empty ⇒ unchanged.
  */
 export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '', companions = ''): string {
   const example = JSON.stringify({

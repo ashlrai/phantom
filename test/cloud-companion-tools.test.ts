@@ -1,5 +1,5 @@
 /**
- * Companion-tools block for cloud task prompts (src/core/cloud/companion-tools.ts):
+ * Companion-tools block for cloud task prompts (companionToolsBlock in delivery-contract.ts, declaredMcpServers in checkout.ts):
  * names only the companion servers a checkout's .mcp.json declares.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { companionToolsBlock, companionToolsBlockFor, declaredMcpServers } from '../src/core/cloud/companion-tools.js';
+import { declaredMcpServers } from '../src/core/cloud/checkout.js';
+import { companionToolsBlock } from '../src/core/cloud/delivery-contract.js';
+
+const companionToolsBlockFor = (dir: string): string => companionToolsBlock(declaredMcpServers(dir));
 
 const dirs: string[] = [];
 const checkout = (mcpJson?: string): string => {

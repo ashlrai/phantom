@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addContext, type TeamActor } from '../src/core/teams/index.js';
-import { buildTaskBrief } from '../src/core/teams/task-brief.js';
+import { buildTaskBrief } from '../src/core/teams/context.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
 const agent: TeamActor = { kind: 'agent', id: 'agent:claude/1' };

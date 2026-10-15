@@ -36,7 +36,7 @@ import type { AshlrConfig, EngineId, Proposal } from './types.js';
 import type { SandboxedEngineResult } from './run/sandboxed-engine.js';
 import type { AuthoritativePendingProposalExpectation } from './inbox/pending-authority.js';
 import { isSafeExecutionIdentity } from './fleet/attempt-identity.js';
-import { buildTaskBrief } from './teams/task-brief.js';
+import { buildTaskBrief } from './teams/context.js';
 import {
   LocusMintError,
   LocusSessionConfigError,
