@@ -2146,8 +2146,12 @@ async function runSwarmInternal(
     // STRICT: re-take outward authority for filing + cleanup. Fresh fence,
     // then the same gate admission passed (KILL, enrollment, a cleanup
     // authority minted under THIS fence), and the lease must not have been
-    // revoked meanwhile — a KILL armed and cleared again while the model ran
-    // still aborted the lease, so it still refuses here.
+    // revoked meanwhile. A revocation the lease OBSERVED (in-process abort or
+    // the cross-process probe) stays revoked even if KILL was cleared again;
+    // one armed and cleared inside a single probe interval is not observed.
+    // The lease signal passed to the fence acquire below is what refuses an
+    // owner cancel (lifecycleRevocation ignores 'cancelled'): an aborted
+    // signal makes the acquire return null. Do not drop it.
     let fence: OutwardMutationFence | null = null;
     let cleanupAuthority: BorrowedSandboxCleanupAuthority | null = null;
     if (lifecycleRevocation() === null) {

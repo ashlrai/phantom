@@ -11,7 +11,7 @@
  *   (c) authority revoked during inference (unenroll, or a pause that is
  *       resumed again before the model returns) still refuses filing.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,7 +74,7 @@ vi.mock('../src/core/inbox/store.js', async (importOriginal) => {
   return { ...actual, createProposal: mocks.createProposal };
 });
 
-import { enroll, isEnrolled, killSwitchOn, setKill, unenroll } from '../src/core/sandbox/policy.js';
+import { enroll, isEnrolled, killSwitchOn, readKillSwitch, setKill, unenroll } from '../src/core/sandbox/policy.js';
 import { runSwarm } from '../src/core/swarm/runner.js';
 import { loadSwarm } from '../src/core/swarm/store.js';
 
@@ -307,6 +307,24 @@ describe('builtin swarm releases the outward fence across inference', { timeout:
       ownRemovalRight: expect.objectContaining({ sandboxId: 'fence-sandbox-a' }),
     });
     expect(setKill(true, { waitMs: 500 })).toMatchObject({ ok: true, quiesced: true });
+  });
+
+  it('(b) KILL armed by another process during inference is caught by the fenced re-check, not the abort', async () => {
+    const project = join(home, 'repo-a');
+    expect(enroll(project)).toMatchObject({ ok: true });
+    mocks.runGoal.mockImplementationOnce(async (goal: string) => {
+      // Another process arms KILL: the sentinel appears on disk, but nothing
+      // aborts this process's lease. The inference finishes normally.
+      writeFileSync(readKillSwitch().path, '', { mode: 0o600 });
+      return completedRun(goal);
+    });
+
+    const result = await strictSwarm('fence-kill-cross-process', project);
+    expect(killSwitchOn()).toBe(true);
+    expect(result.status).not.toBe('done');
+    // Filing re-checks KILL under a fresh fence: nothing filed, no borrowed cleanup.
+    expect(mocks.createProposal).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxWithBorrowedAuthority).not.toHaveBeenCalled();
   });
 
   it('(b) KILL during planning inference aborts the planner and executes no task', async () => {
