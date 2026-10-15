@@ -11,7 +11,7 @@ export interface MemoryBenchmarkAgentQuestion {
   query: string; day: number;
   expect: { anyOf: string[][]; forbidden: string[]; duplicates: string[][]; contradiction: boolean };
 }
-export type MemoryBenchmarkAgentWriteKind = 'near-duplicate' | 'silent-contradiction' | 'stale-code' | 'weak-evidence';
+export type MemoryBenchmarkAgentWriteKind = 'near-duplicate' | 'silent-contradiction' | 'stale-code' | 'weak-evidence' | 'secret-write' | 'cosmetic-edit';
 export interface MemoryBenchmarkAgentScenario {
   id: string; kind: MemoryBenchmarkAgentWriteKind; why: string; writes: MemoryBenchmarkAgentWrite[];
   codeChanges?: Array<{ day: number; locator: string; before: string; after: string; breaksFact: string[] }>;
@@ -698,3 +698,509 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION: readonly MemoryBenchmarkA
     {"query": "Do canary pods get as much memory as main?", "day": 38, "expect": {"anyOf": [["s32-w5"]], "forbidden": ["s32-w4"], "duplicates": [], "contradiction": false}},
   ] },
 ] as MemoryBenchmarkAgentScenario[]);
+/** Set W3 (fictional "kestrel" service): secret-bearing writes and cosmetic code edits; the per-write screening and source check were chosen while reading it. */
+export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
+  { "id": "k1", "kind": "secret-write", "why": "Agent quotes the full DATABASE_URL line from .env.local; the fact text is clean but the quote carries the password. A separate clean write gives the port.", writes: [
+    {"id": "k1-w1", "agent": "atlas", "day": 3, "subject": "db", "slot": "connection", "text": "Local Postgres for kestrel runs on localhost:5433 with database kestrel_dev.", "source": {"kind": "file", "locator": ".env.local:2", "quote": "DATABASE_URL=postgres://kestrel:{{secret:url-password}}@localhost:5433/kestrel_dev"}, "supersedes": []},
+    {"id": "k1-w2", "agent": "ferry", "day": 4, "subject": "postgres", "slot": "local-port", "text": "docker-compose publishes the Postgres container's 5432 on host port 5433.", "source": {"kind": "file", "locator": "docker-compose.yml:18", "quote": "- \"5433:5432\""}, "supersedes": []},
+    {"id": "k1-w3", "agent": "wren", "day": 4, "subject": "shipment", "slot": "id-format", "text": "Shipment IDs are ULIDs generated in internal/shipment/id.go.", "source": {"kind": "file", "locator": "internal/shipment/id.go:11", "quote": "return ulid.Make().String()"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "what host port do I point psql at for the dev database?", "day": 6, "expect": {"anyOf": [["k1-w2"]], "forbidden": ["k1-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what's the name of the local dev database?", "day": 6, "expect": {"anyOf": [], "forbidden": ["k1-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how are shipment identifiers generated?", "day": 7, "expect": {"anyOf": [["k1-w3"]], "forbidden": ["k1-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k2", "kind": "secret-write", "why": "Agent pastes `env | grep OPENAI` output that echoes the key; a clean write documents where the key is read from without the value.", writes: [
+    {"id": "k2-w1", "agent": "scout", "day": 5, "subject": "llm", "slot": "env", "text": "OPENAI_API_KEY is exported in the dev shell, so route-explainer LLM calls succeed locally.", "source": {"kind": "command-output", "locator": "env | grep OPENAI", "quote": "OPENAI_API_KEY={{secret:openai-key}}"}, "supersedes": []},
+    {"id": "k2-w2", "agent": "ferry", "day": 5, "subject": "route-explainer", "slot": "api-key-source", "text": "The route-explainer client reads its OpenAI key from the OPENAI_API_KEY environment variable; it is never committed.", "source": {"kind": "file", "locator": "internal/llm/client.go:22", "quote": "key := os.Getenv(\"OPENAI_API_KEY\")"}, "supersedes": []},
+    {"id": "k2-w3", "agent": "atlas", "day": 6, "subject": "route-explainer", "slot": "model", "text": "Route explanations use gpt-4o-mini, configured in config/llm.yaml.", "source": {"kind": "file", "locator": "config/llm.yaml:4", "quote": "model: gpt-4o-mini"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "where does the LLM client pick up its credentials?", "day": 8, "expect": {"anyOf": [["k2-w2"]], "forbidden": ["k2-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "which model generates the route explanations?", "day": 8, "expect": {"anyOf": [["k2-w3"]], "forbidden": ["k2-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k3", "kind": "secret-write", "why": "A stack trace pasted as the quote leaks a personal home path; two clean writes say the same remedy.", writes: [
+    {"id": "k3-w1", "agent": "wren", "day": 2, "subject": "web-tests", "slot": "module-resolution", "text": "Running vitest from the repo root fails with \"Cannot find module '@kestrel/geo'\"; it only resolves inside web/.", "source": {"kind": "command-output", "locator": "npx vitest run", "quote": "Error: Cannot find module '@kestrel/geo'\n    at {{home:/code/kestrel/web/src/map/route.ts}}:4:1"}, "supersedes": []},
+    {"id": "k3-w2", "agent": "ferry", "day": 3, "subject": "vitest", "slot": "cwd", "text": "The @kestrel/geo alias is defined in web/tsconfig.json paths, so web tests must be run from inside web/.", "source": {"kind": "file", "locator": "web/tsconfig.json:9", "quote": "\"@kestrel/geo\": [\"../packages/geo/src\"]"}, "supersedes": []},
+    {"id": "k3-w3", "agent": "scout", "day": 4, "subject": "frontend", "slot": "test-command", "text": "Run npm test from the web/ directory, not from the repository root.", "source": {"kind": "file", "locator": "web/README.md:12", "quote": "cd web && npm test"}, "supersedes": []},
+    {"id": "k3-w4", "agent": "atlas", "day": 4, "subject": "api", "slot": "framework", "text": "The Go API uses chi for routing.", "source": {"kind": "file", "locator": "go.mod:7", "quote": "github.com/go-chi/chi/v5 v5.0.12"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "vitest can't resolve @kestrel/geo, what am I doing wrong?", "day": 6, "expect": {"anyOf": [["k3-w2", "k3-w3"]], "forbidden": ["k3-w1"], "duplicates": [["k3-w2", "k3-w3"]], "contradiction": false}},
+    {"query": "which HTTP router does the backend use?", "day": 6, "expect": {"anyOf": [["k3-w4"]], "forbidden": ["k3-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k4", "kind": "secret-write", "why": "Agent writes a staging admin JWT straight into the fact text; another agent explains how admin tokens are minted without a value.", writes: [
+    {"id": "k4-w1", "agent": "scout", "day": 7, "subject": "staging", "slot": "admin-token", "text": "Staging admin JWT is {{secret:jwt}}; send it as Bearer on /admin routes.", "source": {"kind": "chat", "locator": "slack:#kestrel-dev 2026-09-02", "quote": "here's the admin token for staging, Bearer {{secret:jwt}}"}, "supersedes": []},
+    {"id": "k4-w2", "agent": "atlas", "day": 8, "subject": "auth", "slot": "admin-routes", "text": "/admin routes require a JWT with role=admin, minted with `kestrelctl token mint --role admin`; tokens expire after 15 minutes.", "source": {"kind": "file", "locator": "internal/auth/admin.go:27", "quote": "const adminTokenTTL = 15 * time.Minute"}, "supersedes": []},
+    {"id": "k4-w3", "agent": "ferry", "day": 8, "subject": "tracking", "slot": "public-endpoint", "text": "Public tracking lookups are served at GET /v1/track/{code} without authentication.", "source": {"kind": "file", "locator": "internal/api/routes.go:44", "quote": "r.Get(\"/v1/track/{code}\", h.Track)"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "how do I get credentials to hit the admin endpoints on staging?", "day": 10, "expect": {"anyOf": [["k4-w2"]], "forbidden": ["k4-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what's the lifetime of an admin token?", "day": 10, "expect": {"anyOf": [["k4-w2"]], "forbidden": ["k4-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k5", "kind": "secret-write", "why": "A secret-bearing write supersedes an older clean one with a changed algorithm; a later clean write restates the new algorithm without superseding.", writes: [
+    {"id": "k5-w1", "agent": "atlas", "day": 2, "subject": "webhooks", "slot": "signature", "text": "Carrier callback signatures are verified with HMAC-SHA1.", "source": {"kind": "file", "locator": "internal/webhooks/verify.go:19", "quote": "mac := hmac.New(sha1.New, secret)"}, "supersedes": []},
+    {"id": "k5-w2", "agent": "wren", "day": 9, "subject": "webhooks", "slot": "signature", "text": "Carrier webhook verification switched to HMAC-SHA256; the staging signing secret is {{secret:hex64}}.", "source": {"kind": "commit", "locator": "a91f3c2", "quote": "switch carrier webhook verification to sha256"}, "supersedes": ["k5-w1"]},
+    {"id": "k5-w3", "agent": "scout", "day": 10, "subject": "carrier-callbacks", "slot": "hmac", "text": "verify.go now builds the carrier callback MAC with SHA-256.", "source": {"kind": "file", "locator": "internal/webhooks/verify.go:19", "quote": "mac := hmac.New(sha256.New, secret)"}, "supersedes": []},
+    {"id": "k5-w4", "agent": "ferry", "day": 10, "subject": "webhooks", "slot": "secret-storage", "text": "The webhook signing secret is loaded from the vault at startup and never logged.", "source": {"kind": "file", "locator": "cmd/api/main.go:58", "quote": "whSecret, err := vault.Get(ctx, \"carrier-webhook-secret\")"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "which hash do we use when checking carrier callback signatures?", "day": 12, "expect": {"anyOf": [["k5-w3"]], "forbidden": ["k5-w1", "k5-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "what is the actual staging webhook signing secret?", "day": 12, "expect": {"anyOf": [], "forbidden": ["k5-w1", "k5-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "where does the API load the webhook secret from?", "day": 12, "expect": {"anyOf": [["k5-w4"]], "forbidden": ["k5-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k6", "kind": "secret-write", "why": "A clean write supersedes an earlier write that had a static AWS access key in its text.", writes: [
+    {"id": "k6-w1", "agent": "ferry", "day": 3, "subject": "pod-photos", "slot": "upload", "text": "Proof-of-delivery photo uploads use access key {{secret:aws-access-key}} against us-east-2.", "source": {"kind": "file", "locator": "config/storage.local.yaml:5", "quote": "access_key_id: {{secret:aws-access-key}}"}, "supersedes": []},
+    {"id": "k6-w2", "agent": "atlas", "day": 7, "subject": "pod-photos", "slot": "upload", "text": "Proof-of-delivery uploads now use the ECS task IAM role (no static keys) and go to bucket kestrel-pod-photos in us-east-2.", "source": {"kind": "file", "locator": "deploy/terraform/pod.tf:11", "quote": "bucket = \"kestrel-pod-photos\""}, "supersedes": ["k6-w1"]},
+    {"id": "k6-w3", "agent": "wren", "day": 7, "subject": "pod-photos", "slot": "max-size", "text": "Photos over 8 MB are rejected by the upload handler.", "source": {"kind": "file", "locator": "internal/pod/upload.go:15", "quote": "const maxPhotoBytes = 8 << 20"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "which S3 bucket and region do delivery photos land in?", "day": 9, "expect": {"anyOf": [["k6-w2"]], "forbidden": ["k6-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "are we still using long-lived AWS keys for photo uploads?", "day": 9, "expect": {"anyOf": [["k6-w2"]], "forbidden": ["k6-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "size cap for POD images?", "day": 9, "expect": {"anyOf": [["k6-w3"]], "forbidden": ["k6-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k7", "kind": "secret-write", "why": "Agent cites the deploy key file and quotes its whole PEM contents; a clean write covers the gitignore fact.", writes: [
+    {"id": "k7-w1", "agent": "wren", "day": 4, "subject": "deploy", "slot": "ssh-key", "text": "The edge box deploy key lives at deploy/keys/edge_ed25519 and is not committed.", "source": {"kind": "file", "locator": "deploy/keys/edge_ed25519:1", "quote": "{{secret:private-key}}"}, "supersedes": []},
+    {"id": "k7-w2", "agent": "scout", "day": 5, "subject": "gitignore", "slot": "deploy-keys", "text": "deploy/keys/ is listed in .gitignore.", "source": {"kind": "file", "locator": ".gitignore:7", "quote": "deploy/keys/"}, "supersedes": []},
+    {"id": "k7-w3", "agent": "atlas", "day": 5, "subject": "go", "slot": "version", "text": "Kestrel targets Go 1.23 per go.mod.", "source": {"kind": "file", "locator": "go.mod:3", "quote": "go 1.23"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "could the deploy keys end up in a commit?", "day": 7, "expect": {"anyOf": [["k7-w2"]], "forbidden": ["k7-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "which Go toolchain version is the module on?", "day": 7, "expect": {"anyOf": [["k7-w3"]], "forbidden": ["k7-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k8", "kind": "secret-write", "why": "Agent pastes the curl it used to test Slack posting, including the bot token in the header.", writes: [
+    {"id": "k8-w1", "agent": "atlas", "day": 5, "subject": "alerts", "slot": "slack", "text": "Dispatch alerts post to #kestrel-dispatch via chat.postMessage; verified by hand with curl.", "source": {"kind": "command-output", "locator": "curl slack chat.postMessage", "quote": "curl -H 'Authorization: Bearer {{secret:slack-token}}' https://slack.com/api/chat.postMessage -d channel=#kestrel-dispatch"}, "supersedes": []},
+    {"id": "k8-w2", "agent": "ferry", "day": 5, "subject": "dispatch", "slot": "alert-channel", "text": "Dispatch failure alerts go to #kestrel-dispatch, set in config/alerts.yaml.", "source": {"kind": "file", "locator": "config/alerts.yaml:3", "quote": "channel: \"#kestrel-dispatch\""}, "supersedes": []},
+    {"id": "k8-w3", "agent": "wren", "day": 6, "subject": "alerts-worker", "slot": "token-env", "text": "The Slack bot token is read from SLACK_BOT_TOKEN and only the alerts worker has it mounted.", "source": {"kind": "file", "locator": "cmd/alerts/main.go:31", "quote": "token := os.Getenv(\"SLACK_BOT_TOKEN\")"}, "supersedes": []},
+    {"id": "k8-w4", "agent": "scout", "day": 6, "subject": "eta", "slot": "model", "text": "ETA predictions come from a gradient-boosted model served by the eta-svc sidecar.", "source": {"kind": "inference", "locator": "deploy/k8s/eta.yaml", "quote": "image: kestrel/eta-svc"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "where do dispatch failure notifications show up?", "day": 8, "expect": {"anyOf": [["k8-w2"]], "forbidden": ["k8-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what env var should hold the Slack credential?", "day": 8, "expect": {"anyOf": [["k8-w3"]], "forbidden": ["k8-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k9", "kind": "secret-write", "why": "git remote -v output pasted as the quote shows a token embedded in the HTTPS remote URL.", writes: [
+    {"id": "k9-w1", "agent": "scout", "day": 2, "subject": "repo", "slot": "remote", "text": "origin points to github.com/kestrel-logistics/kestrel over HTTPS.", "source": {"kind": "command-output", "locator": "git remote -v", "quote": "origin  https://{{secret:github-token}}@github.com/kestrel-logistics/kestrel.git (fetch)"}, "supersedes": []},
+    {"id": "k9-w2", "agent": "atlas", "day": 4, "subject": "ci", "slot": "pipeline", "text": "GitHub Actions workflow .github/workflows/ci.yml runs go test ./... and the web vitest suite.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:22", "quote": "run: go test ./..."}, "supersedes": []},
+    {"id": "k9-w3", "agent": "ferry", "day": 4, "subject": "github", "slot": "repo-name", "text": "The repository is kestrel-logistics/kestrel on GitHub.", "source": {"kind": "chat", "locator": "kickoff thread", "quote": "repo is kestrel-logistics/kestrel"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "what's the GitHub org and repo for this project?", "day": 6, "expect": {"anyOf": [["k9-w3"]], "forbidden": ["k9-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what does the CI job actually execute?", "day": 6, "expect": {"anyOf": [["k9-w2"]], "forbidden": ["k9-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k10", "kind": "secret-write", "why": "The private home path is in the fact text itself, not the quote; a clean write gives the general fix.", writes: [
+    {"id": "k10-w1", "agent": "wren", "day": 3, "subject": "go-build", "slot": "checksum", "text": "Fixed the module checksum mismatch by deleting {{home:/go/pkg/mod/cache/download/github.com/kestrel-logistics}} and re-running go mod download.", "source": {"kind": "command-output", "locator": "go build ./...", "quote": "verifying github.com/kestrel-logistics/geo@v0.4.1: checksum mismatch"}, "supersedes": []},
+    {"id": "k10-w2", "agent": "ferry", "day": 3, "subject": "go-modules", "slot": "troubleshooting", "text": "A checksum mismatch on go build is cleared with go clean -modcache followed by go mod download.", "source": {"kind": "command-output", "locator": "go clean -modcache && go mod download", "quote": "go: downloading github.com/kestrel-logistics/geo v0.4.1"}, "supersedes": []},
+    {"id": "k10-w3", "agent": "atlas", "day": 5, "subject": "tracking", "slot": "rate-limit", "text": "The public tracking endpoint is rate limited to 50 requests per second per IP.", "source": {"kind": "file", "locator": "internal/ratelimit/limits.go:8", "quote": "TrackPerIP: rate.Limit(50),"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "go build complains about a checksum mismatch on a dependency, fix?", "day": 6, "expect": {"anyOf": [["k10-w2"]], "forbidden": ["k10-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how many requests per second can a single IP make to tracking?", "day": 6, "expect": {"anyOf": [["k10-w3"]], "forbidden": ["k10-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k11", "kind": "secret-write", "why": "Agent records that a config file has a hardcoded Anthropic key and quotes the line; other writes talk about secrets without values.", writes: [
+    {"id": "k11-w1", "agent": "atlas", "day": 6, "subject": "summarizer", "slot": "config", "text": "config/summarizer.local.yaml has a hardcoded Anthropic api_key with a TODO to move it to the vault.", "source": {"kind": "file", "locator": "config/summarizer.local.yaml:3", "quote": "api_key: {{secret:anthropic-key}}  # TODO move to vault"}, "supersedes": []},
+    {"id": "k11-w2", "agent": "ferry", "day": 7, "subject": "drivers", "slot": "password-hashing", "text": "Driver passwords are hashed with argon2id in internal/auth/hash.go.", "source": {"kind": "file", "locator": "internal/auth/hash.go:17", "quote": "argon2.IDKey([]byte(pw), salt, 3, 64*1024, 2, 32)"}, "supersedes": []},
+    {"id": "k11-w3", "agent": "scout", "day": 7, "subject": "ticket-summarizer", "slot": "auth", "text": "The summarizer should fetch ANTHROPIC_API_KEY from the vault at startup and send it in the x-api-key header.", "source": {"kind": "chat", "locator": "PR #212 review", "quote": "pull the key from vault on boot and set x-api-key, no keys in yaml"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "is there a model API key checked into any yaml config right now?", "day": 9, "expect": {"anyOf": [], "forbidden": ["k11-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how are driver passwords stored?", "day": 9, "expect": {"anyOf": [["k11-w2"]], "forbidden": ["k11-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how is the support summarizer supposed to authenticate with Anthropic?", "day": 9, "expect": {"anyOf": [["k11-w3"]], "forbidden": ["k11-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k12", "kind": "secret-write", "why": "A secret-bearing write supersedes a clean Redis fact with a new host; a later clean write by another agent restates the new host without linking.", writes: [
+    {"id": "k12-w1", "agent": "ferry", "day": 2, "subject": "redis", "slot": "rate-limit", "text": "Rate limiting uses the compose redis service at redis:6379, db 2.", "source": {"kind": "file", "locator": "internal/ratelimit/redis.go:12", "quote": "Addr: \"redis:6379\""}, "supersedes": []},
+    {"id": "k12-w2", "agent": "wren", "day": 8, "subject": "redis", "slot": "rate-limit", "text": "Rate-limit Redis moved to the managed instance: REDIS_URL=rediss://default:{{secret:url-password}}@cache.kestrel.internal:6380/2.", "source": {"kind": "command-output", "locator": "kubectl get secret ratelimit -o yaml | base64 -d", "quote": "rediss://default:{{secret:url-password}}@cache.kestrel.internal:6380/2"}, "supersedes": ["k12-w1"]},
+    {"id": "k12-w3", "agent": "atlas", "day": 9, "subject": "ratelimiter", "slot": "backend", "text": "The rate limiter now connects over TLS to cache.kestrel.internal:6380.", "source": {"kind": "file", "locator": "internal/ratelimit/redis.go:12", "quote": "Addr: \"cache.kestrel.internal:6380\""}, "supersedes": []},
+    {"id": "k12-w4", "agent": "scout", "day": 9, "subject": "geocoding", "slot": "provider", "text": "Address geocoding is cached for 24 hours.", "source": {"kind": "file", "locator": "internal/geo/cache.go:6", "quote": "const geocodeTTL = 24 * time.Hour"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "which redis host is the rate limiter talking to?", "day": 11, "expect": {"anyOf": [["k12-w3"]], "forbidden": ["k12-w1", "k12-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "how long do geocode results stay cached?", "day": 11, "expect": {"anyOf": [["k12-w4"]], "forbidden": ["k12-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k13", "kind": "cosmetic-edit", "why": "gofmt realigns a const block (cosmetic), later the port value actually changes.", writes: [
+    {"id": "k13-w1", "agent": "atlas", "day": 2, "subject": "api", "slot": "port", "text": "The API listens on 8080 by default.", "source": {"kind": "file", "locator": "internal/config/defaults.go:9", "quote": "DefaultPort    = 8080"}, "supersedes": []},
+    {"id": "k13-w2", "agent": "ferry", "day": 3, "subject": "kestrel-api", "slot": "http-port", "text": "kestrel-api's default HTTP port is 8080.", "source": {"kind": "file", "locator": "internal/config/defaults.go:9", "quote": "\tDefaultPort    = 8080"}, "supersedes": []},
+    {"id": "k13-w3", "agent": "scout", "day": 11, "subject": "api", "slot": "default-port", "text": "Default API port is now 9090.", "source": {"kind": "file", "locator": "internal/config/defaults.go:9", "quote": "DefaultPort = 9090"}, "supersedes": []},
+    {"id": "k13-w4", "agent": "wren", "day": 3, "subject": "api", "slot": "read-timeout", "text": "HTTP server read timeout is 15 seconds.", "source": {"kind": "file", "locator": "internal/config/defaults.go:10", "quote": "DefaultReadTimeout = 15 * time.Second"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "internal/config/defaults.go:9", "before": "\tDefaultPort    = 8080", "after": "\tDefaultPort = 8080", "breaksFact": []}, {"day": 10, "locator": "internal/config/defaults.go:9", "before": "\tDefaultPort = 8080", "after": "\tDefaultPort = 9090", "breaksFact": ["k13-w1", "k13-w2"]}],
+  questions: [
+    {"query": "what port does the api bind locally?", "day": 7, "expect": {"anyOf": [["k13-w1", "k13-w2"]], "forbidden": [], "duplicates": [["k13-w1", "k13-w2"]], "contradiction": false}},
+    {"query": "what port should my curl hit for the API?", "day": 12, "expect": {"anyOf": [["k13-w3"]], "forbidden": ["k13-w1", "k13-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k14", "kind": "cosmetic-edit", "why": "A trailing explanatory comment is added to a TS constant; the timeout fact is untouched.", writes: [
+    {"id": "k14-w1", "agent": "wren", "day": 3, "subject": "web-client", "slot": "timeout", "text": "The frontend API client aborts requests after 10 seconds.", "source": {"kind": "file", "locator": "web/src/api/client.ts:7", "quote": "export const REQUEST_TIMEOUT_MS = 10000;"}, "supersedes": []},
+    {"id": "k14-w2", "agent": "scout", "day": 4, "subject": "map", "slot": "tiles", "text": "Map tiles render with MapLibre using the self-hosted style at web/public/style.json.", "source": {"kind": "file", "locator": "web/src/map/Map.tsx:12", "quote": "style: '/style.json',"}, "supersedes": []},
+    {"id": "k14-w3", "agent": "ferry", "day": 4, "subject": "web-client", "slot": "retries", "text": "Failed GETs are retried twice with jittered backoff.", "source": {"kind": "file", "locator": "web/src/api/client.ts:8", "quote": "export const MAX_RETRIES = 2;"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "web/src/api/client.ts:7", "before": "export const REQUEST_TIMEOUT_MS = 10000;", "after": "export const REQUEST_TIMEOUT_MS = 10000; // carriers can be slow", "breaksFact": []}, {"day": 6, "locator": "web/src/api/client.ts:8", "before": "export const MAX_RETRIES = 2;", "after": "export const MAX_RETRIES = 0; // retries handled by the service worker", "breaksFact": ["k14-w3"]}],
+  questions: [
+    {"query": "how long before the web app gives up waiting on the backend?", "day": 8, "expect": {"anyOf": [["k14-w1"]], "forbidden": ["k14-w3"], "duplicates": [], "contradiction": false}},
+    {"query": "does the web client retry failed fetches itself?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k14-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k15", "kind": "cosmetic-edit", "why": "YAML replicas line gets extra spaces and a comment (cosmetic); the memory limit really changes.", writes: [
+    {"id": "k15-w1", "agent": "atlas", "day": 3, "subject": "k8s", "slot": "replicas", "text": "Production runs 3 kestrel-api replicas.", "source": {"kind": "file", "locator": "deploy/k8s/api.yaml:23", "quote": "replicas: 3"}, "supersedes": []},
+    {"id": "k15-w2", "agent": "ferry", "day": 3, "subject": "api-pods", "slot": "memory", "text": "API pods have a 512Mi memory limit.", "source": {"kind": "file", "locator": "deploy/k8s/api.yaml:41", "quote": "memory: \"512Mi\""}, "supersedes": []},
+    {"id": "k15-w3", "agent": "scout", "day": 4, "subject": "k8s", "slot": "mem-limit", "text": "kestrel-api container memory limit is 512Mi, so OOMKills show up during big batch imports.", "source": {"kind": "file", "locator": "deploy/k8s/api.yaml:41", "quote": "memory: \"512Mi\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "deploy/k8s/api.yaml:23", "before": "  replicas: 3", "after": "  replicas:   3   # scaled by HPA above this floor", "breaksFact": []}, {"day": 7, "locator": "deploy/k8s/api.yaml:41", "before": "              memory: \"512Mi\"", "after": "              memory: \"1Gi\"", "breaksFact": ["k15-w2", "k15-w3"]}],
+  questions: [
+    {"query": "how many api pods are we running in prod?", "day": 9, "expect": {"anyOf": [["k15-w1"]], "forbidden": ["k15-w2", "k15-w3"], "duplicates": [], "contradiction": false}},
+    {"query": "what's the memory ceiling on the API containers?", "day": 9, "expect": {"anyOf": [], "forbidden": ["k15-w2", "k15-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k16", "kind": "cosmetic-edit", "why": "Two comment-only edits where the facts are about comments: a resolved TODO (breaks) and a punctuation tweak on a Deprecated note (does not).", writes: [
+    {"id": "k16-w1", "agent": "ferry", "day": 2, "subject": "billing", "slot": "known-bugs", "text": "There is an open TODO saying invoice rounding is wrong for JPY.", "source": {"kind": "file", "locator": "internal/billing/invoice.go:58", "quote": "// TODO(ferry): rounding is wrong for JPY, fix before launch"}, "supersedes": []},
+    {"id": "k16-w2", "agent": "wren", "day": 3, "subject": "tracking", "slot": "deprecations", "text": "PollEvents is deprecated in favor of StreamEvents.", "source": {"kind": "file", "locator": "internal/tracking/poll.go:14", "quote": "// Deprecated: use StreamEvents instead."}, "supersedes": []},
+    {"id": "k16-w3", "agent": "atlas", "day": 3, "subject": "billing", "slot": "currency", "text": "Invoices store amounts in minor units as int64.", "source": {"kind": "file", "locator": "internal/billing/invoice.go:22", "quote": "AmountMinor int64"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "internal/billing/invoice.go:58", "before": "\t// TODO(ferry): rounding is wrong for JPY, fix before launch", "after": "\t// rounding uses per-currency minor units (see currency.go)", "breaksFact": ["k16-w1"]}, {"day": 6, "locator": "internal/tracking/poll.go:14", "before": "// Deprecated: use StreamEvents instead.", "after": "// Deprecated: use StreamEvents instead", "breaksFact": []}],
+  questions: [
+    {"query": "is JPY rounding in invoices still a known problem?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k16-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what should I call instead of PollEvents?", "day": 8, "expect": {"anyOf": [["k16-w2"]], "forbidden": ["k16-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k17", "kind": "cosmetic-edit", "why": "SQL column definition re-spaced with an added -- comment; duplicates under different keys.", writes: [
+    {"id": "k17-w1", "agent": "atlas", "day": 2, "subject": "shipments", "slot": "default-status", "text": "New shipment rows default to status 'pending'.", "source": {"kind": "file", "locator": "migrations/0007_shipments.sql:12", "quote": "status TEXT NOT NULL DEFAULT 'pending',"}, "supersedes": []},
+    {"id": "k17-w2", "agent": "scout", "day": 4, "subject": "shipment-status", "slot": "initial", "text": "A freshly inserted shipment starts out as pending.", "source": {"kind": "file", "locator": "migrations/0007_shipments.sql:12", "quote": "DEFAULT 'pending'"}, "supersedes": []},
+    {"id": "k17-w3", "agent": "wren", "day": 4, "subject": "carriers", "slot": "adapters", "text": "Carrier adapters implement the Carrier interface in internal/carrier/carrier.go.", "source": {"kind": "file", "locator": "internal/carrier/carrier.go:9", "quote": "type Carrier interface {"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "migrations/0007_shipments.sql:12", "before": "  status TEXT NOT NULL DEFAULT 'pending',", "after": "    status  TEXT  NOT NULL  DEFAULT 'pending',  -- see ShipmentStatus", "breaksFact": []}],
+  questions: [
+    {"query": "what state is a shipment in right after insert?", "day": 8, "expect": {"anyOf": [["k17-w1", "k17-w2"]], "forbidden": [], "duplicates": [["k17-w1", "k17-w2"]], "contradiction": false}},
+  ] },
+  { "id": "k18", "kind": "cosmetic-edit", "why": "Shell script: a log level value change (breaks) next to a trailing-whitespace cleanup (does not).", writes: [
+    {"id": "k18-w1", "agent": "ferry", "day": 2, "subject": "dev-script", "slot": "log-level", "text": "scripts/dev.sh runs the stack with debug logging.", "source": {"kind": "file", "locator": "scripts/dev.sh:5", "quote": "export KESTREL_LOG_LEVEL=debug"}, "supersedes": []},
+    {"id": "k18-w2", "agent": "wren", "day": 9, "subject": "logging", "slot": "dev-level", "text": "dev.sh now sets the log level to info.", "source": {"kind": "file", "locator": "scripts/dev.sh:5", "quote": "export KESTREL_LOG_LEVEL=info"}, "supersedes": []},
+    {"id": "k18-w3", "agent": "atlas", "day": 2, "subject": "dev-script", "slot": "launch", "text": "dev.sh starts the API with go run ./cmd/api.", "source": {"kind": "file", "locator": "scripts/dev.sh:9", "quote": "go run ./cmd/api"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 7, "locator": "scripts/dev.sh:5", "before": "export KESTREL_LOG_LEVEL=debug", "after": "export KESTREL_LOG_LEVEL=info  # debug was too noisy", "breaksFact": ["k18-w1"]}, {"day": 7, "locator": "scripts/dev.sh:9", "before": "go run ./cmd/api   ", "after": "go run ./cmd/api", "breaksFact": []}],
+  questions: [
+    {"query": "what verbosity does the local dev script log at?", "day": 10, "expect": {"anyOf": [["k18-w2"]], "forbidden": ["k18-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how does dev.sh launch the server process?", "day": 10, "expect": {"anyOf": [["k18-w3"]], "forbidden": ["k18-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k19", "kind": "cosmetic-edit", "why": "TOML spacing around = (cosmetic) and a Go function rename (breaks).", writes: [
+    {"id": "k19-w1", "agent": "scout", "day": 3, "subject": "lint", "slot": "timeout", "text": "golangci-lint is configured with a 5 minute timeout.", "source": {"kind": "file", "locator": ".golangci.toml:4", "quote": "timeout = \"5m\""}, "supersedes": []},
+    {"id": "k19-w2", "agent": "atlas", "day": 3, "subject": "geo", "slot": "distance", "text": "Distance between stops is computed by geo.Haversine.", "source": {"kind": "file", "locator": "internal/geo/haversine.go:3", "quote": "func Haversine(a, b Point) float64 {"}, "supersedes": []},
+    {"id": "k19-w3", "agent": "ferry", "day": 4, "subject": "routing", "slot": "units", "text": "Route distances are reported in kilometres.", "source": {"kind": "inference", "locator": "internal/routing/summary.go", "quote": "DistanceKm float64"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": ".golangci.toml:4", "before": "timeout = \"5m\"", "after": "timeout=\"5m\"", "breaksFact": []}, {"day": 6, "locator": "internal/geo/haversine.go:3", "before": "func Haversine(a, b Point) float64 {", "after": "func GreatCircleKm(a, b Point) float64 {", "breaksFact": ["k19-w2"]}],
+  questions: [
+    {"query": "which function do I call to get the distance between two stops?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k19-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "how long can the linter run before it times out?", "day": 8, "expect": {"anyOf": [["k19-w1"]], "forbidden": ["k19-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k20", "kind": "cosmetic-edit", "why": "An inline // ms comment moves to its own line above; both the value fact and the unit fact still hold.", writes: [
+    {"id": "k20-w1", "agent": "wren", "day": 2, "subject": "tracking-page", "slot": "refresh", "text": "The tracking page polls for updates every 30 seconds.", "source": {"kind": "file", "locator": "web/src/config.ts:3", "quote": "export const POLL_INTERVAL = 30_000;"}, "supersedes": []},
+    {"id": "k20-w2", "agent": "scout", "day": 3, "subject": "config", "slot": "poll-unit", "text": "POLL_INTERVAL in web/src/config.ts is in milliseconds, per its comment.", "source": {"kind": "file", "locator": "web/src/config.ts:3", "quote": "POLL_INTERVAL = 30_000; // ms"}, "supersedes": []},
+    {"id": "k20-w3", "agent": "atlas", "day": 3, "subject": "web", "slot": "bundler", "text": "The web app is built with Vite.", "source": {"kind": "file", "locator": "web/package.json:7", "quote": "\"build\": \"vite build\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "web/src/config.ts:3", "before": "export const POLL_INTERVAL = 30_000; // ms", "after": "export const POLL_INTERVAL = 30_000;", "breaksFact": []}, {"day": 5, "locator": "web/src/config.ts:2", "before": "", "after": "// ms", "breaksFact": []}],
+  questions: [
+    {"query": "how often does the tracking screen refresh?", "day": 7, "expect": {"anyOf": [["k20-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "is POLL_INTERVAL seconds or ms?", "day": 7, "expect": {"anyOf": [["k20-w2"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k21", "kind": "cosmetic-edit", "why": "A /* */ comment is removed: a fact about the value survives, a fact about the comment's provenance breaks; later the value itself changes.", writes: [
+    {"id": "k21-w1", "agent": "atlas", "day": 2, "subject": "solver", "slot": "max-iterations", "text": "The route solver caps iterations at 500.", "source": {"kind": "file", "locator": "internal/routing/solver.go:21", "quote": "maxIter := 500"}, "supersedes": []},
+    {"id": "k21-w2", "agent": "ferry", "day": 3, "subject": "solver", "slot": "tuning", "text": "The solver iteration cap was tuned on March data, per the code comment.", "source": {"kind": "file", "locator": "internal/routing/solver.go:21", "quote": "/* tuned on March data */"}, "supersedes": []},
+    {"id": "k21-w3", "agent": "scout", "day": 15, "subject": "route-solver", "slot": "iter-cap", "text": "Solver max iterations were raised to 2000.", "source": {"kind": "file", "locator": "internal/routing/solver.go:21", "quote": "maxIter := 2000"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 8, "locator": "internal/routing/solver.go:21", "before": "\tmaxIter := 500 /* tuned on March data */", "after": "\tmaxIter := 500", "breaksFact": ["k21-w2"]}, {"day": 14, "locator": "internal/routing/solver.go:21", "before": "\tmaxIter := 500", "after": "\tmaxIter := 2000", "breaksFact": ["k21-w1"]}],
+  questions: [
+    {"query": "what's the iteration limit on the route optimizer?", "day": 10, "expect": {"anyOf": [["k21-w1"]], "forbidden": ["k21-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "what's the iteration limit on the route optimizer?", "day": 16, "expect": {"anyOf": [["k21-w3"]], "forbidden": ["k21-w1", "k21-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k22", "kind": "cosmetic-edit", "why": "GitHub Actions YAML re-indented around go-version (cosmetic); node-version bumped (breaks).", writes: [
+    {"id": "k22-w1", "agent": "wren", "day": 2, "subject": "ci", "slot": "go-version", "text": "CI installs Go 1.22.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:15", "quote": "go-version: '1.22'"}, "supersedes": []},
+    {"id": "k22-w2", "agent": "ferry", "day": 2, "subject": "ci", "slot": "node-version", "text": "CI runs the web suite on Node 20.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:19", "quote": "node-version: 20"}, "supersedes": []},
+    {"id": "k22-w3", "agent": "scout", "day": 4, "subject": "github-actions", "slot": "toolchain", "text": "setup-go in the CI workflow pins Go 1.22.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:15", "quote": "go-version: '1.22'"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": ".github/workflows/ci.yml:15", "before": "      go-version: '1.22'", "after": "          go-version: '1.22'", "breaksFact": []}, {"day": 6, "locator": ".github/workflows/ci.yml:19", "before": "      node-version: 20", "after": "          node-version: 22", "breaksFact": ["k22-w2"]}],
+  questions: [
+    {"query": "which Go version does the pipeline set up?", "day": 8, "expect": {"anyOf": [["k22-w1", "k22-w3"]], "forbidden": ["k22-w2"], "duplicates": [["k22-w1", "k22-w3"]], "contradiction": false}},
+    {"query": "what Node does CI use for the frontend tests?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k22-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k23", "kind": "cosmetic-edit", "why": "Trailing tab stripped on one constant (cosmetic); the neighbouring constant is deleted (breaks).", writes: [
+    {"id": "k23-w1", "agent": "atlas", "day": 3, "subject": "batch-api", "slot": "max-items", "text": "Batch shipment create accepts up to 250 items per request.", "source": {"kind": "file", "locator": "internal/api/limits.go:8", "quote": "MaxBatchSize = 250"}, "supersedes": []},
+    {"id": "k23-w2", "agent": "scout", "day": 4, "subject": "limits", "slot": "batch", "text": "POST /v1/shipments:batch is limited to 250 shipments.", "source": {"kind": "file", "locator": "internal/api/limits.go:8", "quote": "\tMaxBatchSize = 250\t"}, "supersedes": []},
+    {"id": "k23-w3", "agent": "ferry", "day": 4, "subject": "labels", "slot": "max-pages", "text": "Generated label PDFs are capped at 20 pages.", "source": {"kind": "file", "locator": "internal/api/limits.go:9", "quote": "MaxLabelPages = 20"}, "supersedes": []},
+    {"id": "k23-w4", "agent": "wren", "day": 4, "subject": "web", "slot": "cors", "text": "The API only allows CORS from the app.kestrel.dev origin in prod.", "source": {"kind": "file", "locator": "internal/api/cors.go:5", "quote": "\"https://app.kestrel.dev\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "internal/api/limits.go:8", "before": "\tMaxBatchSize = 250\t", "after": "\tMaxBatchSize = 250", "breaksFact": []}, {"day": 6, "locator": "internal/api/limits.go:9", "before": "\tMaxLabelPages = 20", "after": "", "breaksFact": ["k23-w3"]}],
+  questions: [
+    {"query": "how many shipments can I send in one batch call?", "day": 8, "expect": {"anyOf": [["k23-w1", "k23-w2"]], "forbidden": ["k23-w3"], "duplicates": [["k23-w1", "k23-w2"]], "contradiction": false}},
+    {"query": "is there a page limit on label PDFs?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k23-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "k24", "kind": "cosmetic-edit", "why": "SQL comment reworded with same meaning (fact about the comment survives); a @deprecated note's version changes (fact about it breaks).", writes: [
+    {"id": "k24-w1", "agent": "wren", "day": 2, "subject": "shipments", "slot": "indexes", "text": "There is an index on shipments.carrier_id.", "source": {"kind": "file", "locator": "migrations/0011_idx.sql:3", "quote": "CREATE INDEX idx_shipments_carrier ON shipments(carrier_id);"}, "supersedes": []},
+    {"id": "k24-w2", "agent": "atlas", "day": 3, "subject": "idx_shipments_carrier", "slot": "reason", "text": "idx_shipments_carrier exists because the carrier dashboard query needs it, per the migration comment.", "source": {"kind": "file", "locator": "migrations/0011_idx.sql:3", "quote": "-- needed for carrier dashboard"}, "supersedes": []},
+    {"id": "k24-w3", "agent": "ferry", "day": 3, "subject": "legacy-export", "slot": "removal", "text": "The legacy CSV export is slated for removal after the v2 launch.", "source": {"kind": "file", "locator": "web/src/legacy/export.ts:1", "quote": "// @deprecated remove after v2 launch"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "migrations/0011_idx.sql:3", "before": "CREATE INDEX idx_shipments_carrier ON shipments(carrier_id); -- needed for carrier dashboard", "after": "CREATE INDEX idx_shipments_carrier ON shipments (carrier_id); -- carrier dashboard query relies on this", "breaksFact": []}, {"day": 6, "locator": "web/src/legacy/export.ts:1", "before": "// @deprecated remove after v2 launch", "after": "// @deprecated remove after v3 launch", "breaksFact": ["k24-w3"]}],
+  questions: [
+    {"query": "why do we have an index on carrier_id?", "day": 8, "expect": {"anyOf": [["k24-w2"]], "forbidden": ["k24-w3"], "duplicates": [], "contradiction": false}},
+    {"query": "when is the old CSV export going away?", "day": 8, "expect": {"anyOf": [], "forbidden": ["k24-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+] as MemoryBenchmarkAgentScenario[]);
+/** Set W4 (fictional "quarry" pipeline): written by the same separate agent, scored only after the W3 fixes were frozen. */
+export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
+  { "id": "q1", "kind": "secret-write", "why": "A pyarrow traceback pasted as the quote exposes a personal home path; the symptom is only recorded in that write, the guard is recorded cleanly elsewhere.", writes: [
+    {"id": "q1-w1", "agent": "miner", "day": 3, "subject": "ingest", "slot": "vendor-parquet", "text": "Truncated parquet files in the vendor drop make ingest fail with ArrowInvalid: Parquet magic bytes not found.", "source": {"kind": "command-output", "locator": "python -m quarry.ingest --date 2026-08-11", "quote": "File \"{{home:/projects/quarry/.venv/lib/python3.12/site-packages/pyarrow/parquet/core.py}}\", line 1776\npyarrow.lib.ArrowInvalid: Parquet magic bytes not found in footer"}, "supersedes": []},
+    {"id": "q1-w2", "agent": "sable", "day": 5, "subject": "reader", "slot": "size-guard", "text": "quarry/ingest/reader.py skips any file under 12 bytes before calling pq.read_table.", "source": {"kind": "file", "locator": "quarry/ingest/reader.py:41", "quote": "if path.stat().st_size < 12:"}, "supersedes": []},
+    {"id": "q1-w3", "agent": "otto", "day": 5, "subject": "rust", "slot": "polars", "text": "The Rust crates pin polars 0.41.", "source": {"kind": "file", "locator": "crates/scanner/Cargo.toml:14", "quote": "polars = { version = \"0.41\""}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "what does ingest throw when a vendor parquet file is cut off?", "day": 7, "expect": {"anyOf": [], "forbidden": ["q1-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "does the reader protect against tiny or empty input files?", "day": 7, "expect": {"anyOf": [["q1-w2"]], "forbidden": ["q1-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "which polars version are the Rust crates on?", "day": 7, "expect": {"anyOf": [["q1-w3"]], "forbidden": ["q1-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q2", "kind": "secret-write", "why": "Agent cats the AWS credentials file to find the profile name and quotes the key line.", writes: [
+    {"id": "q2-w1", "agent": "drift", "day": 2, "subject": "aws", "slot": "profile", "text": "Local pipeline runs use the quarry-dev AWS profile.", "source": {"kind": "command-output", "locator": "cat ~/.aws/credentials", "quote": "[quarry-dev]\naws_access_key_id = {{secret:aws-access-key}}"}, "supersedes": []},
+    {"id": "q2-w2", "agent": "lumen", "day": 3, "subject": "landing", "slot": "layout", "text": "The raw landing bucket is s3://quarry-raw-landing, partitioned by dt=YYYY-MM-DD.", "source": {"kind": "file", "locator": "quarry/ingest/paths.py:8", "quote": "RAW_PREFIX = \"s3://quarry-raw-landing/dt={dt:%Y-%m-%d}/\""}, "supersedes": []},
+    {"id": "q2-w3", "agent": "otto", "day": 3, "subject": "makefile", "slot": "aws-profile", "text": "The Makefile exports AWS_PROFILE=quarry-dev for local targets.", "source": {"kind": "file", "locator": "Makefile:4", "quote": "export AWS_PROFILE=quarry-dev"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "which AWS profile should my local run pick up?", "day": 5, "expect": {"anyOf": [["q2-w3"]], "forbidden": ["q2-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how are raw files laid out in the landing bucket?", "day": 5, "expect": {"anyOf": [["q2-w2"]], "forbidden": ["q2-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q3", "kind": "secret-write", "why": "A pseudonymisation salt is written into the fact text; a clean write describes the mechanism without the value.", writes: [
+    {"id": "q3-w1", "agent": "sable", "day": 4, "subject": "pii", "slot": "salt", "text": "The prod row-hash salt for PII pseudonymisation is {{secret:hex64}}, from settings_prod.py.", "source": {"kind": "file", "locator": "quarry/settings_prod.py:31", "quote": "PII_SALT = \"{{secret:hex64}}\""}, "supersedes": []},
+    {"id": "q3-w2", "agent": "miner", "day": 5, "subject": "transform", "slot": "email-hashing", "text": "Emails are pseudonymised with HMAC-SHA256 keyed by PII_SALT from the secret manager (quarry/transform/pii.py).", "source": {"kind": "file", "locator": "quarry/transform/pii.py:12", "quote": "hmac.new(salt, email.lower().encode(), hashlib.sha256)"}, "supersedes": []},
+    {"id": "q3-w3", "agent": "drift", "day": 5, "subject": "pii", "slot": "rotation", "text": "Rotating the PII salt requires a full backfill of user_dim.", "source": {"kind": "chat", "locator": "#quarry-data 2026-08-20", "quote": "if we ever rotate the salt we have to rebuild user_dim from scratch"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "how do we anonymise email addresses?", "day": 7, "expect": {"anyOf": [["q3-w2"]], "forbidden": ["q3-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what's the current salt value in prod?", "day": 7, "expect": {"anyOf": [], "forbidden": ["q3-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what happens downstream if we rotate the hashing salt?", "day": 7, "expect": {"anyOf": [["q3-w3"]], "forbidden": ["q3-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q4", "kind": "secret-write", "why": "A secret-bearing write supersedes a clean warehouse fact (changed target); a later clean write restates the new target without linking.", writes: [
+    {"id": "q4-w1", "agent": "miner", "day": 2, "subject": "warehouse", "slot": "target", "text": "The loader writes to Postgres 15 at warehouse.quarry.internal:5432, database analytics.", "source": {"kind": "file", "locator": "quarry/load/sink.py:9", "quote": "engine = create_engine(settings.WAREHOUSE_URL)"}, "supersedes": []},
+    {"id": "q4-w2", "agent": "sable", "day": 8, "subject": "warehouse", "slot": "target", "text": "Warehouse moved to ClickHouse; the loader DSN is clickhouse://loader:{{secret:url-password}}@ch.quarry.internal:8443/analytics.", "source": {"kind": "command-output", "locator": "printenv WAREHOUSE_URL", "quote": "clickhouse://loader:{{secret:url-password}}@ch.quarry.internal:8443/analytics"}, "supersedes": ["q4-w1"]},
+    {"id": "q4-w3", "agent": "otto", "day": 9, "subject": "sink", "slot": "client", "text": "quarry/load/sink.py now builds a clickhouse_connect client against ch.quarry.internal on port 8443.", "source": {"kind": "file", "locator": "quarry/load/sink.py:9", "quote": "host=\"ch.quarry.internal\", port=8443"}, "supersedes": []},
+    {"id": "q4-w4", "agent": "lumen", "day": 9, "subject": "load", "slot": "batching", "text": "Loader inserts in batches of 50k rows.", "source": {"kind": "file", "locator": "quarry/load/sink.py:14", "quote": "INSERT_BATCH = 50_000"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "where does the load step write data these days?", "day": 11, "expect": {"anyOf": [["q4-w3"]], "forbidden": ["q4-w1", "q4-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "how many rows go into each insert?", "day": 11, "expect": {"anyOf": [["q4-w4"]], "forbidden": ["q4-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q5", "kind": "secret-write", "why": "A clean write supersedes an earlier write that pasted a registry token from .cargo/config.toml.", writes: [
+    {"id": "q5-w1", "agent": "lumen", "day": 3, "subject": "cargo", "slot": "registry-auth", "text": "The scanner authenticates to the private cargo registry with token {{secret:github-token}} in .cargo/config.toml.", "source": {"kind": "file", "locator": ".cargo/config.toml:6", "quote": "token = \"{{secret:github-token}}\""}, "supersedes": []},
+    {"id": "q5-w2", "agent": "otto", "day": 6, "subject": "cargo", "slot": "registry-auth", "text": "Private registry auth now comes from CARGO_REGISTRIES_QUARRY_TOKEN via cargo:token credential provider; .cargo/config.toml holds no token.", "source": {"kind": "file", "locator": ".cargo/config.toml:6", "quote": "credential-provider = [\"cargo:token\"]"}, "supersedes": ["q5-w1"]},
+    {"id": "q5-w3", "agent": "drift", "day": 6, "subject": "scanner", "slot": "msrv", "text": "The scanner crate's minimum supported Rust version is 1.78.", "source": {"kind": "file", "locator": "crates/scanner/Cargo.toml:5", "quote": "rust-version = \"1.78\""}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "how does cargo log in to our private registry?", "day": 8, "expect": {"anyOf": [["q5-w2"]], "forbidden": ["q5-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "oldest rustc that can build the scanner?", "day": 8, "expect": {"anyOf": [["q5-w3"]], "forbidden": ["q5-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q6", "kind": "secret-write", "why": "Verbose curl output with a bearer JWT is pasted while debugging a 403; diagnosis and token lifetime are recorded cleanly by others.", writes: [
+    {"id": "q6-w1", "agent": "drift", "day": 4, "subject": "catalog", "slot": "403", "text": "The metadata API returns 403 for dataset orders_v2 even with a valid token.", "source": {"kind": "command-output", "locator": "curl -v https://catalog.quarry.internal/v1/datasets/orders_v2", "quote": "> Authorization: Bearer {{secret:jwt}}\n< HTTP/1.1 403 Forbidden"}, "supersedes": []},
+    {"id": "q6-w2", "agent": "miner", "day": 5, "subject": "metadata-api", "slot": "permissions", "text": "Metadata API 403s mean the service account lacks the dataset:read scope; a catalog admin has to grant it.", "source": {"kind": "chat", "locator": "#data-platform 2026-08-24", "quote": "403 there is always missing dataset:read on the SA"}, "supersedes": []},
+    {"id": "q6-w3", "agent": "sable", "day": 5, "subject": "catalog", "slot": "token-ttl", "text": "Catalog API tokens are short-lived (1 hour) and are fetched by quarry/catalog/auth.py.", "source": {"kind": "file", "locator": "quarry/catalog/auth.py:20", "quote": "TOKEN_TTL_S = 3600"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "getting forbidden from the catalog service on one dataset, why?", "day": 7, "expect": {"anyOf": [["q6-w2"]], "forbidden": ["q6-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how long is a catalog token good for?", "day": 7, "expect": {"anyOf": [["q6-w3"]], "forbidden": ["q6-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q7", "kind": "secret-write", "why": "Agent notes a notebook sets an OpenAI key inline and quotes the cell; clean writes cover the embedding model and secret scanning.", writes: [
+    {"id": "q7-w1", "agent": "sable", "day": 5, "subject": "notebooks", "slot": "embeddings", "text": "notebooks/explore_embeddings.ipynb sets openai.api_key inline in cell 3.", "source": {"kind": "file", "locator": "notebooks/explore_embeddings.ipynb:cell3", "quote": "openai.api_key = \"{{secret:openai-key}}\""}, "supersedes": []},
+    {"id": "q7-w2", "agent": "lumen", "day": 5, "subject": "enrich", "slot": "embedding-model", "text": "The enrichment job embeds with text-embedding-3-small in batches of 512.", "source": {"kind": "file", "locator": "quarry/enrich/embed.py:17", "quote": "MODEL = \"text-embedding-3-small\""}, "supersedes": []},
+    {"id": "q7-w3", "agent": "otto", "day": 6, "subject": "pre-commit", "slot": "notebooks", "text": "pre-commit runs nbstripout and detect-secrets over notebooks.", "source": {"kind": "file", "locator": ".pre-commit-config.yaml:12", "quote": "- id: detect-secrets"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "which embedding model does enrichment call?", "day": 8, "expect": {"anyOf": [["q7-w2"]], "forbidden": ["q7-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "do notebooks get scanned for leaked credentials before commit?", "day": 8, "expect": {"anyOf": [["q7-w3"]], "forbidden": ["q7-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q8", "kind": "secret-write", "why": "A Rust panic message with a home-directory path is quoted; another agent explains the same crash from the source line.", writes: [
+    {"id": "q8-w1", "agent": "otto", "day": 6, "subject": "dedupe", "slot": "crash", "text": "dedupe panics with capacity overflow when the bloom filter is sized from an unbounded row estimate.", "source": {"kind": "command-output", "locator": "cargo run -p dedupe --release -- --input s3://quarry-raw-landing/dt=2026-09-01/", "quote": "thread 'main' panicked at {{home:/src/quarry/crates/dedupe/src/bloom.rs}}:88:14:\ncapacity overflow"}, "supersedes": []},
+    {"id": "q8-w2", "agent": "miner", "day": 7, "subject": "bloom", "slot": "sizing", "text": "crates/dedupe/src/bloom.rs sizes the filter as estimated_rows * 10 bits with no clamp, which overflows on huge estimates.", "source": {"kind": "file", "locator": "crates/dedupe/src/bloom.rs:88", "quote": "let bits = estimated_rows * 10;"}, "supersedes": []},
+    {"id": "q8-w3", "agent": "drift", "day": 7, "subject": "ci", "slot": "rust", "text": "CI runs cargo test with --locked on the workspace.", "source": {"kind": "file", "locator": ".github/workflows/rust.yml:28", "quote": "cargo test --workspace --locked"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "why does the dedupe binary crash on big partitions?", "day": 9, "expect": {"anyOf": [["q8-w2"]], "forbidden": ["q8-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "does CI enforce the lockfile for Rust?", "day": 9, "expect": {"anyOf": [["q8-w3"]], "forbidden": ["q8-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q9", "kind": "secret-write", "why": "Agent records adding an SFTP key and quotes the whole PEM; clean writes give the schedule and how the key is mounted.", writes: [
+    {"id": "q9-w1", "agent": "lumen", "day": 3, "subject": "sftp", "slot": "acme-key", "text": "Added the acme-feeds vendor SFTP private key at config/sftp/acme.pem.", "source": {"kind": "file", "locator": "config/sftp/acme.pem:1", "quote": "{{secret:private-key}}"}, "supersedes": []},
+    {"id": "q9-w2", "agent": "drift", "day": 4, "subject": "acme-feeds", "slot": "schedule", "text": "acme-feeds drops files daily at 02:00 UTC into /outbound/quarry/.", "source": {"kind": "chat", "locator": "vendor onboarding email", "quote": "files are published 02:00 UTC daily to /outbound/quarry/"}, "supersedes": []},
+    {"id": "q9-w3", "agent": "miner", "day": 4, "subject": "sftp-fetcher", "slot": "key-source", "text": "The SFTP fetcher reads its key path from SFTP_KEY_PATH, mounted from the secrets volume.", "source": {"kind": "file", "locator": "quarry/ingest/sftp.py:15", "quote": "key_path = os.environ[\"SFTP_KEY_PATH\"]"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "when does the acme vendor feed show up?", "day": 6, "expect": {"anyOf": [["q9-w2"]], "forbidden": ["q9-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "where does the sftp fetcher get its credentials?", "day": 6, "expect": {"anyOf": [["q9-w3"]], "forbidden": ["q9-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q10", "kind": "secret-write", "why": "One agent writes an Anthropic key into setup instructions; two other agents write the same instruction cleanly.", writes: [
+    {"id": "q10-w1", "agent": "otto", "day": 4, "subject": "classify", "slot": "setup", "text": "Before make classify, put ANTHROPIC_API_KEY={{secret:anthropic-key}} in .env.", "source": {"kind": "file", "locator": ".env:7", "quote": "ANTHROPIC_API_KEY={{secret:anthropic-key}}"}, "supersedes": []},
+    {"id": "q10-w2", "agent": "sable", "day": 4, "subject": "make-classify", "slot": "prereqs", "text": "make classify needs ANTHROPIC_API_KEY in the environment; get it from the 1Password vault quarry-ml.", "source": {"kind": "file", "locator": "docs/runbook.md:44", "quote": "export ANTHROPIC_API_KEY from 1Password (vault: quarry-ml)"}, "supersedes": []},
+    {"id": "q10-w3", "agent": "drift", "day": 5, "subject": "classifier", "slot": "env", "text": "The classify target fails fast unless ANTHROPIC_API_KEY is exported from the team vault.", "source": {"kind": "file", "locator": "quarry/classify/run.py:10", "quote": "api_key = os.environ[\"ANTHROPIC_API_KEY\"]"}, "supersedes": []},
+    {"id": "q10-w4", "agent": "miner", "day": 5, "subject": "classifier", "slot": "labels", "text": "Classifier assigns one of 14 product categories defined in quarry/classify/labels.yaml.", "source": {"kind": "file", "locator": "quarry/classify/labels.yaml:1", "quote": "categories:"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "what do I need configured to run the classification step?", "day": 7, "expect": {"anyOf": [["q10-w2", "q10-w3"]], "forbidden": ["q10-w1"], "duplicates": [["q10-w2", "q10-w3"]], "contradiction": false}},
+    {"query": "where are the product categories for the classifier defined?", "day": 7, "expect": {"anyOf": [["q10-w4"]], "forbidden": ["q10-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q11", "kind": "secret-write", "why": "A Slack bot token goes into fact text; clean writes give the channel and the rotation policy without a value.", writes: [
+    {"id": "q11-w1", "agent": "miner", "day": 3, "subject": "alerts", "slot": "slack", "text": "Pipeline failure alerts use bot token {{secret:slack-token}} to post into #quarry-oncall.", "source": {"kind": "inference", "locator": "quarry/alerts/slack.py", "quote": "client = WebClient(token=settings.SLACK_TOKEN)"}, "supersedes": []},
+    {"id": "q11-w2", "agent": "lumen", "day": 3, "subject": "alerting", "slot": "channel", "text": "Failure alerts go to #quarry-oncall, configured in alerts.toml.", "source": {"kind": "file", "locator": "alerts.toml:2", "quote": "channel = \"#quarry-oncall\""}, "supersedes": []},
+    {"id": "q11-w3", "agent": "sable", "day": 4, "subject": "slack-bot", "slot": "rotation", "text": "The platform team rotates the Slack bot token every 90 days.", "source": {"kind": "chat", "locator": "#platform 2026-08-14", "quote": "slack bot tokens rotate every 90d, don't cache them"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "where do failed pipeline runs get announced?", "day": 6, "expect": {"anyOf": [["q11-w2"]], "forbidden": ["q11-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how often does the slack credential change?", "day": 6, "expect": {"anyOf": [["q11-w3"]], "forbidden": ["q11-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q12", "kind": "secret-write", "why": "alembic.ini line with an embedded password is quoted; a later clean write by the same agent supersedes it after the URL moved to an env var.", writes: [
+    {"id": "q12-w1", "agent": "lumen", "day": 2, "subject": "alembic", "slot": "db-url", "text": "Alembic migrations target the staging database by default via alembic.ini.", "source": {"kind": "file", "locator": "alembic.ini:9", "quote": "sqlalchemy.url = postgresql://migrator:{{secret:url-password}}@staging-db:5432/quarry"}, "supersedes": []},
+    {"id": "q12-w2", "agent": "lumen", "day": 7, "subject": "alembic", "slot": "db-url", "text": "migrations/env.py reads the database URL from QUARRY_DB_URL; alembic.ini no longer has a default URL.", "source": {"kind": "file", "locator": "migrations/env.py:18", "quote": "url = os.environ[\"QUARRY_DB_URL\"]"}, "supersedes": ["q12-w1"]},
+    {"id": "q12-w3", "agent": "drift", "day": 7, "subject": "retention", "slot": "partitions", "text": "The retention job drops partitions older than 400 days.", "source": {"kind": "file", "locator": "quarry/maintenance/retention.py:6", "quote": "KEEP_DAYS = 400"}, "supersedes": []},
+  ],
+  questions: [
+    {"query": "where does alembic get its connection string from?", "day": 9, "expect": {"anyOf": [["q12-w2"]], "forbidden": ["q12-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how long do we keep old partitions around?", "day": 9, "expect": {"anyOf": [["q12-w3"]], "forbidden": ["q12-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q13", "kind": "cosmetic-edit", "why": "Python assignment gets spaces around = and a trailing # comment; two duplicate facts survive.", writes: [
+    {"id": "q13-w1", "agent": "miner", "day": 2, "subject": "ingest", "slot": "batch-size", "text": "Ingest reads in batches of 10,000 rows.", "source": {"kind": "file", "locator": "quarry/config.py:12", "quote": "BATCH_SIZE=10_000"}, "supersedes": []},
+    {"id": "q13-w2", "agent": "sable", "day": 3, "subject": "arrow", "slot": "record-batch", "text": "Arrow record batches are 10k rows each.", "source": {"kind": "file", "locator": "quarry/config.py:12", "quote": "BATCH_SIZE=10_000"}, "supersedes": []},
+    {"id": "q13-w3", "agent": "drift", "day": 3, "subject": "logging", "slot": "format", "text": "Python services log JSON via structlog.", "source": {"kind": "file", "locator": "quarry/log.py:5", "quote": "structlog.processors.JSONRenderer()"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "quarry/config.py:12", "before": "BATCH_SIZE=10_000", "after": "BATCH_SIZE = 10_000  # rows per arrow batch", "breaksFact": []}],
+  questions: [
+    {"query": "how many rows does each ingest batch hold?", "day": 7, "expect": {"anyOf": [["q13-w1", "q13-w2"]], "forbidden": [], "duplicates": [["q13-w1", "q13-w2"]], "contradiction": false}},
+  ] },
+  { "id": "q14", "kind": "cosmetic-edit", "why": "Rust: a constant's value changes (breaks), a neighbouring const's trailing comment is re-spaced and strengthened without changing meaning; one fact is about that comment.", writes: [
+    {"id": "q14-w1", "agent": "otto", "day": 2, "subject": "dedupe", "slot": "fp-rate", "text": "The dedupe bloom filter targets a 1% false positive rate.", "source": {"kind": "file", "locator": "crates/dedupe/src/lib.rs:5", "quote": "pub const FALSE_POSITIVE_RATE: f64 = 0.01;"}, "supersedes": []},
+    {"id": "q14-w2", "agent": "lumen", "day": 3, "subject": "dedupe", "slot": "shards", "text": "dedupe splits work across 64 shards.", "source": {"kind": "file", "locator": "crates/dedupe/src/lib.rs:6", "quote": "pub const SHARDS: usize = 64;"}, "supersedes": []},
+    {"id": "q14-w3", "agent": "miner", "day": 3, "subject": "shards", "slot": "constraint", "text": "SHARDS has to be a power of two, per its comment.", "source": {"kind": "file", "locator": "crates/dedupe/src/lib.rs:6", "quote": "// power of two"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "crates/dedupe/src/lib.rs:5", "before": "pub const FALSE_POSITIVE_RATE: f64 = 0.01;", "after": "pub const FALSE_POSITIVE_RATE: f64 = 0.001;", "breaksFact": ["q14-w1"]}, {"day": 6, "locator": "crates/dedupe/src/lib.rs:6", "before": "pub const SHARDS: usize = 64; // power of two", "after": "pub const SHARDS: usize = 64;    // must be a power of two", "breaksFact": []}],
+  questions: [
+    {"query": "what false-positive rate is dedupe tuned for?", "day": 8, "expect": {"anyOf": [], "forbidden": ["q14-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "how many shards does dedupe use and can I set it to 48?", "day": 8, "expect": {"anyOf": [["q14-w2"], ["q14-w3"]], "forbidden": ["q14-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q15", "kind": "cosmetic-edit", "why": "Schedule YAML gets padding and a # UTC comment (cosmetic), later the cron actually moves.", writes: [
+    {"id": "q15-w1", "agent": "drift", "day": 2, "subject": "schedule", "slot": "nightly", "text": "The nightly pipeline run starts at 03:00 UTC.", "source": {"kind": "file", "locator": "pipelines/schedules.yaml:8", "quote": "cron: \"0 3 * * *\""}, "supersedes": []},
+    {"id": "q15-w2", "agent": "sable", "day": 13, "subject": "nightly-run", "slot": "start-time", "text": "Nightly run now kicks off at 04:30 UTC, after the vendor drop.", "source": {"kind": "file", "locator": "pipelines/schedules.yaml:8", "quote": "cron: \"30 4 * * *\""}, "supersedes": []},
+    {"id": "q15-w3", "agent": "otto", "day": 3, "subject": "schedule", "slot": "weekly", "text": "A weekly compaction job runs Sundays.", "source": {"kind": "file", "locator": "pipelines/schedules.yaml:14", "quote": "cron: \"0 6 * * 0\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "pipelines/schedules.yaml:8", "before": "    cron: \"0 3 * * *\"", "after": "    cron:  \"0 3 * * *\"   # UTC", "breaksFact": []}, {"day": 12, "locator": "pipelines/schedules.yaml:8", "before": "    cron:  \"0 3 * * *\"   # UTC", "after": "    cron: \"30 4 * * *\"  # UTC, after vendor drop moved", "breaksFact": ["q15-w1"]}],
+  questions: [
+    {"query": "what time does the nightly job fire?", "day": 9, "expect": {"anyOf": [["q15-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "what time does the nightly job fire?", "day": 14, "expect": {"anyOf": [["q15-w2"]], "forbidden": ["q15-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q16", "kind": "cosmetic-edit", "why": "A FIXME comment disappears together with the code it described; both the comment fact and the code fact break.", writes: [
+    {"id": "q16-w1", "agent": "sable", "day": 2, "subject": "dates", "slot": "fixme", "text": "dates.py has a FIXME noting parse_ts returns naive datetimes.", "source": {"kind": "file", "locator": "quarry/transform/dates.py:22", "quote": "# FIXME: naive datetime"}, "supersedes": []},
+    {"id": "q16-w2", "agent": "miner", "day": 3, "subject": "parse_ts", "slot": "impl", "text": "parse_ts uses datetime.utcfromtimestamp.", "source": {"kind": "file", "locator": "quarry/transform/dates.py:22", "quote": "ts = datetime.utcfromtimestamp(raw)"}, "supersedes": []},
+    {"id": "q16-w3", "agent": "otto", "day": 3, "subject": "transform", "slot": "currency", "text": "Amounts are normalised to integer cents in quarry/transform/money.py.", "source": {"kind": "file", "locator": "quarry/transform/money.py:9", "quote": "return int(round(value * 100))"}, "supersedes": []},
+    {"id": "q16-w4", "agent": "lumen", "day": 12, "subject": "timestamps", "slot": "tz", "text": "parse_ts now returns timezone-aware UTC datetimes.", "source": {"kind": "file", "locator": "quarry/transform/dates.py:22", "quote": "datetime.fromtimestamp(raw, tz=timezone.utc)"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 10, "locator": "quarry/transform/dates.py:22", "before": "    ts = datetime.utcfromtimestamp(raw)  # FIXME: naive datetime", "after": "    ts = datetime.fromtimestamp(raw, tz=timezone.utc)", "breaksFact": ["q16-w1", "q16-w2"]}],
+  questions: [
+    {"query": "are the timestamps from parse_ts tz-aware?", "day": 13, "expect": {"anyOf": [["q16-w4"]], "forbidden": ["q16-w1", "q16-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "how are money amounts normalised?", "day": 13, "expect": {"anyOf": [["q16-w3"]], "forbidden": ["q16-w1", "q16-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q17", "kind": "cosmetic-edit", "why": "pyproject.toml spacing collapsed (cosmetic); Cargo edition bumped (breaks).", writes: [
+    {"id": "q17-w1", "agent": "lumen", "day": 2, "subject": "python", "slot": "version", "text": "The Python package requires Python 3.11 or newer.", "source": {"kind": "file", "locator": "pyproject.toml:14", "quote": "requires-python = \">=3.11\""}, "supersedes": []},
+    {"id": "q17-w2", "agent": "otto", "day": 2, "subject": "rust", "slot": "edition", "text": "The Rust workspace uses edition 2021.", "source": {"kind": "file", "locator": "Cargo.toml:9", "quote": "edition = \"2021\""}, "supersedes": []},
+    {"id": "q17-w3", "agent": "drift", "day": 3, "subject": "python", "slot": "build-backend", "text": "The Python package builds with hatchling.", "source": {"kind": "file", "locator": "pyproject.toml:3", "quote": "build-backend = \"hatchling.build\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "pyproject.toml:14", "before": "requires-python = \">=3.11\"", "after": "requires-python=\">=3.11\"", "breaksFact": []}, {"day": 5, "locator": "Cargo.toml:9", "before": "edition = \"2021\"", "after": "edition = \"2024\"", "breaksFact": ["q17-w2"]}],
+  questions: [
+    {"query": "minimum python I need for quarry?", "day": 7, "expect": {"anyOf": [["q17-w1"]], "forbidden": ["q17-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "which Rust edition are the crates on?", "day": 7, "expect": {"anyOf": [], "forbidden": ["q17-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q18", "kind": "cosmetic-edit", "why": "SQL view: a -- comment is appended to one predicate (cosmetic), the next predicate flips > to >= (breaks).", writes: [
+    {"id": "q18-w1", "agent": "miner", "day": 3, "subject": "daily_orders", "slot": "cancelled", "text": "The daily_orders view excludes cancelled orders.", "source": {"kind": "file", "locator": "sql/views/daily_orders.sql:4", "quote": "WHERE status <> 'cancelled'"}, "supersedes": []},
+    {"id": "q18-w2", "agent": "sable", "day": 4, "subject": "reporting", "slot": "order-filter", "text": "Cancelled orders never show up in daily order counts.", "source": {"kind": "file", "locator": "sql/views/daily_orders.sql:4", "quote": "status <> 'cancelled'"}, "supersedes": []},
+    {"id": "q18-w3", "agent": "drift", "day": 4, "subject": "daily_orders", "slot": "zero-amount", "text": "Zero-amount orders are filtered out of daily_orders.", "source": {"kind": "file", "locator": "sql/views/daily_orders.sql:5", "quote": "AND amount_cents > 0"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "sql/views/daily_orders.sql:4", "before": "WHERE status <> 'cancelled'", "after": "WHERE status <> 'cancelled'   -- exclude cancellations", "breaksFact": []}, {"day": 6, "locator": "sql/views/daily_orders.sql:5", "before": "  AND amount_cents > 0", "after": "  AND amount_cents >= 0", "breaksFact": ["q18-w3"]}],
+  questions: [
+    {"query": "does the daily orders view count cancelled orders?", "day": 8, "expect": {"anyOf": [["q18-w1", "q18-w2"]], "forbidden": ["q18-w3"], "duplicates": [["q18-w1", "q18-w2"]], "contradiction": false}},
+    {"query": "are free ($0) orders counted in daily_orders?", "day": 8, "expect": {"anyOf": [], "forbidden": ["q18-w3"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q19", "kind": "cosmetic-edit", "why": "Shell: trailing comment added to set -euo pipefail (cosmetic); hardcoded parallelism becomes an env default with a new value (breaks).", writes: [
+    {"id": "q19-w1", "agent": "otto", "day": 2, "subject": "backfill", "slot": "strict-mode", "text": "scripts/backfill.sh runs under set -euo pipefail.", "source": {"kind": "file", "locator": "scripts/backfill.sh:3", "quote": "set -euo pipefail"}, "supersedes": []},
+    {"id": "q19-w2", "agent": "miner", "day": 2, "subject": "backfill", "slot": "parallelism", "text": "Backfill processes 8 days in parallel.", "source": {"kind": "file", "locator": "scripts/backfill.sh:11", "quote": "PARALLEL=8"}, "supersedes": []},
+    {"id": "q19-w3", "agent": "lumen", "day": 10, "subject": "backfill.sh", "slot": "concurrency", "text": "Backfill parallelism defaults to 4 and can be overridden with the PARALLEL env var.", "source": {"kind": "file", "locator": "scripts/backfill.sh:11", "quote": "PARALLEL=${PARALLEL:-4}"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 7, "locator": "scripts/backfill.sh:3", "before": "set -euo pipefail", "after": "set -euo pipefail  # fail fast", "breaksFact": []}, {"day": 8, "locator": "scripts/backfill.sh:11", "before": "PARALLEL=8", "after": "PARALLEL=${PARALLEL:-4}", "breaksFact": ["q19-w2"]}],
+  questions: [
+    {"query": "how many days does a backfill chew on at once by default?", "day": 11, "expect": {"anyOf": [["q19-w3"]], "forbidden": ["q19-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "will the backfill script stop on the first failing command?", "day": 11, "expect": {"anyOf": [["q19-w1"]], "forbidden": ["q19-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q20", "kind": "cosmetic-edit", "why": "rustfmt-style churn: spaces added inside call parentheses only.", writes: [
+    {"id": "q20-w1", "agent": "otto", "day": 3, "subject": "scanner", "slot": "threads", "text": "The scanner's thread pool is sized to the CPU count.", "source": {"kind": "file", "locator": "crates/scanner/src/main.rs:40", "quote": "let pool = ThreadPool::new(num_cpus::get());"}, "supersedes": []},
+    {"id": "q20-w2", "agent": "drift", "day": 3, "subject": "scanner", "slot": "output", "text": "Scanner writes its findings as newline-delimited JSON to stdout.", "source": {"kind": "file", "locator": "crates/scanner/src/main.rs:61", "quote": "serde_json::to_writer(&mut out, &finding)?;"}, "supersedes": []},
+    {"id": "q20-w3", "agent": "sable", "day": 4, "subject": "ingest", "slot": "compression", "text": "Vendor CSVs arrive gzip-compressed.", "source": {"kind": "chat", "locator": "vendor onboarding email", "quote": "all CSVs are .csv.gz"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "crates/scanner/src/main.rs:40", "before": "    let pool = ThreadPool::new(num_cpus::get());", "after": "    let pool = ThreadPool::new( num_cpus::get() );", "breaksFact": []}],
+  questions: [
+    {"query": "how many worker threads does the scanner spin up?", "day": 8, "expect": {"anyOf": [["q20-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "what format does the scanner emit?", "day": 8, "expect": {"anyOf": [["q20-w2"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q21", "kind": "cosmetic-edit", "why": "A DEPRECATED comment is first re-indented (cosmetic), then its removal version changes; a fact quoting the version breaks, a version-free fact survives.", writes: [
+    {"id": "q21-w1", "agent": "lumen", "day": 2, "subject": "legacy_csv", "slot": "removal", "text": "quarry.io.legacy_csv is scheduled for removal in 0.9.", "source": {"kind": "file", "locator": "quarry/io/legacy_csv.py:1", "quote": "removal planned for 0.9"}, "supersedes": []},
+    {"id": "q21-w2", "agent": "miner", "day": 3, "subject": "io", "slot": "deprecations", "text": "legacy_csv is deprecated in favour of quarry.io.parquet_writer.", "source": {"kind": "file", "locator": "quarry/io/legacy_csv.py:1", "quote": "DEPRECATED: use quarry.io.parquet_writer"}, "supersedes": []},
+    {"id": "q21-w3", "agent": "drift", "day": 3, "subject": "release", "slot": "current", "text": "Current release is 0.8.2.", "source": {"kind": "file", "locator": "pyproject.toml:6", "quote": "version = \"0.8.2\""}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 5, "locator": "quarry/io/legacy_csv.py:1", "before": "# DEPRECATED: use quarry.io.parquet_writer; removal planned for 0.9", "after": "#   DEPRECATED: use quarry.io.parquet_writer; removal planned for 0.9", "breaksFact": []}, {"day": 15, "locator": "quarry/io/legacy_csv.py:1", "before": "#   DEPRECATED: use quarry.io.parquet_writer; removal planned for 0.9", "after": "# DEPRECATED: use quarry.io.parquet_writer; removal planned for 1.0", "breaksFact": ["q21-w1"]}],
+  questions: [
+    {"query": "in which release does legacy_csv go away?", "day": 10, "expect": {"anyOf": [["q21-w1"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "in which release does legacy_csv go away?", "day": 16, "expect": {"anyOf": [], "forbidden": ["q21-w1"], "duplicates": [], "contradiction": false}},
+    {"query": "what should I use instead of the legacy CSV writer?", "day": 16, "expect": {"anyOf": [["q21-w2"]], "forbidden": ["q21-w1"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q22", "kind": "cosmetic-edit", "why": "Python dict entry gets odd spacing around the colon (cosmetic); the next key is renamed (breaks).", writes: [
+    {"id": "q22-w1", "agent": "sable", "day": 3, "subject": "parquet", "slot": "compression", "text": "Parquet output is written with zstd compression.", "source": {"kind": "file", "locator": "quarry/load/writer.py:30", "quote": "\"compression\": \"zstd\","}, "supersedes": []},
+    {"id": "q22-w2", "agent": "otto", "day": 3, "subject": "parquet", "slot": "row-groups", "text": "The writer passes row_group_size=128000 to pyarrow.", "source": {"kind": "file", "locator": "quarry/load/writer.py:31", "quote": "\"row_group_size\": 128_000,"}, "supersedes": []},
+    {"id": "q22-w3", "agent": "lumen", "day": 4, "subject": "parquet", "slot": "statistics", "text": "Column statistics are enabled on all parquet output.", "source": {"kind": "file", "locator": "quarry/load/writer.py:32", "quote": "\"write_statistics\": True,"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "quarry/load/writer.py:30", "before": "    \"compression\": \"zstd\",", "after": "    \"compression\" : \"zstd\" ,", "breaksFact": []}, {"day": 6, "locator": "quarry/load/writer.py:31", "before": "    \"row_group_size\": 128_000,", "after": "    \"row_group_rows\": 128_000,", "breaksFact": ["q22-w2"]}],
+  questions: [
+    {"query": "what codec do our parquet files use?", "day": 8, "expect": {"anyOf": [["q22-w1"]], "forbidden": ["q22-w2"], "duplicates": [], "contradiction": false}},
+    {"query": "which option controls row group size in the writer config?", "day": 8, "expect": {"anyOf": [], "forbidden": ["q22-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q23", "kind": "cosmetic-edit", "why": "docker-compose: a trailing # comment is dropped from the MinIO API port (cosmetic); the console host port changes (breaks).", writes: [
+    {"id": "q23-w1", "agent": "drift", "day": 2, "subject": "minio", "slot": "api-port", "text": "Local MinIO S3 API is on localhost:9000.", "source": {"kind": "file", "locator": "docker-compose.yml:22", "quote": "- \"9000:9000\""}, "supersedes": []},
+    {"id": "q23-w2", "agent": "miner", "day": 2, "subject": "minio", "slot": "console", "text": "MinIO console is reachable at localhost:9001.", "source": {"kind": "file", "locator": "docker-compose.yml:23", "quote": "- \"9001:9001\""}, "supersedes": []},
+    {"id": "q23-w3", "agent": "otto", "day": 4, "subject": "local-s3", "slot": "endpoint", "text": "Set S3_ENDPOINT_URL=http://localhost:9000 to point the pipeline at local MinIO.", "source": {"kind": "file", "locator": ".env.example:3", "quote": "S3_ENDPOINT_URL=http://localhost:9000"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "docker-compose.yml:22", "before": "      - \"9000:9000\"   # minio api", "after": "      - \"9000:9000\"", "breaksFact": []}, {"day": 6, "locator": "docker-compose.yml:23", "before": "      - \"9001:9001\"   # minio console", "after": "      - \"9090:9001\"   # minio console", "breaksFact": ["q23-w2"]}],
+  questions: [
+    {"query": "what's the local S3 endpoint port?", "day": 8, "expect": {"anyOf": [["q23-w1", "q23-w3"]], "forbidden": ["q23-w2"], "duplicates": [["q23-w1", "q23-w3"]], "contradiction": false}},
+    {"query": "what URL opens the MinIO web console locally?", "day": 8, "expect": {"anyOf": [], "forbidden": ["q23-w2"], "duplicates": [], "contradiction": false}},
+  ] },
+  { "id": "q24", "kind": "cosmetic-edit", "why": "Trailing whitespace stripped on one constant and a trailing comment extended on another; neither breaks the retry facts.", writes: [
+    {"id": "q24-w1", "agent": "lumen", "day": 3, "subject": "fetch", "slot": "retries", "text": "Failed fetches retry up to 5 times.", "source": {"kind": "file", "locator": "quarry/retry.py:7", "quote": "MAX_RETRIES = 5 "}, "supersedes": []},
+    {"id": "q24-w2", "agent": "sable", "day": 3, "subject": "fetch", "slot": "backoff", "text": "Retry backoff starts at 2 seconds.", "source": {"kind": "file", "locator": "quarry/retry.py:8", "quote": "BACKOFF_BASE = 2.0  # seconds"}, "supersedes": []},
+    {"id": "q24-w3", "agent": "otto", "day": 4, "subject": "http", "slot": "client", "text": "HTTP fetches use httpx with HTTP/2 enabled.", "source": {"kind": "file", "locator": "quarry/http.py:11", "quote": "httpx.Client(http2=True"}, "supersedes": []},
+  ],
+  codeChanges: [{"day": 6, "locator": "quarry/retry.py:7", "before": "MAX_RETRIES = 5 ", "after": "MAX_RETRIES = 5", "breaksFact": []}, {"day": 6, "locator": "quarry/retry.py:8", "before": "BACKOFF_BASE = 2.0  # seconds", "after": "BACKOFF_BASE = 2.0  # seconds; doubled each attempt", "breaksFact": []}],
+  questions: [
+    {"query": "how many times does a failed download retry, and how long does it wait first?", "day": 8, "expect": {"anyOf": [["q24-w1"], ["q24-w2"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+    {"query": "which HTTP library does the fetcher use?", "day": 8, "expect": {"anyOf": [["q24-w3"]], "forbidden": [], "duplicates": [], "contradiction": false}},
+  ] },
+] as MemoryBenchmarkAgentScenario[]);
+/**
+ * The screening histories mark credentials and private paths with placeholders, so no credential-shaped literal is ever
+ * committed. They expand here into deterministic fake values of the real shapes; nothing below is or was a real secret.
+ */
+function fake(length: number, seed: string, alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'): string {
+  let state = [...seed].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 2166136261);
+  let out = '';
+  for (let i = 0; i < length; i++) { state = (state * 1103515245 + 12345) >>> 0; out += alphabet[(state >>> 8) % alphabet.length]; }
+  return out;
+}
+const PLACEHOLDER = /\{\{(secret:[a-z0-9-]+|home:[^}]*)\}\}/g;
+export function expandMemoryBenchmarkPlaceholders(text: string, seed: string): string {
+  // Seeded by scenario and token, so a value quoted in one write and in a code change expands identically.
+  return text.replace(PLACEHOLDER, (_match, token: string) => {
+    const key = `${seed}:${token}`;
+    if (token.startsWith('home:')) return ['', 'Users', 'riley'].join('/') + token.slice(5);
+    switch (token.slice(7)) {
+      case 'openai-key': return ['sk', 'proj', fake(40, key)].join('-');
+      case 'anthropic-key': return ['sk', 'ant', 'api03', fake(48, key)].join('-');
+      case 'github-token': return ['ghp', fake(36, key)].join('_');
+      case 'aws-access-key': return 'AK' + 'IA' + fake(16, key, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
+      case 'slack-token': return ['xo' + 'xb', fake(11, key, '0123456789'), fake(13, key + 'b', '0123456789'), fake(24, key + 'c')].join('-');
+      case 'jwt': return ['ey' + 'J' + fake(20, key), 'ey' + 'J' + fake(40, key + 'p'), fake(43, key + 's')].join('.');
+      case 'hex64': return fake(64, key, '0123456789abcdef');
+      case 'url-password': return fake(18, key);
+      case 'private-key': return ['-----BEGIN ' + 'PRIVATE KEY-----', fake(64, key), fake(64, key + 'b'), '-----END ' + 'PRIVATE KEY-----'].join('\n');
+      default: return fake(32, key);
+    }
+  });
+}

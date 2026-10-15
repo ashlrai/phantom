@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMemoryContextPack } from '../src/core/memory/pack.js';
+import { memorySourceQuotePresent } from '../src/core/memory/source.js';
 import { immutableMemorySnapshot, validMemoryFactEvent, validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
 import { MEMORY_LIMITS, type MemoryFactEvent, type MemoryPackQuery, type MemorySnapshot } from '../src/core/memory/types.js';
 const early = '2026-10-01T00:00:00.000Z';
@@ -180,15 +181,48 @@ describe('pure governed memory foundation', () => {
     const overBytes = chain.map(item => ({ ...item, text: 'build ' + '界'.repeat(2900) }));
     expect(validMemorySnapshot(snapshot(overBytes))).toBe(false);
   });
-  it('refuses recognized credentials and private paths without transforming facts or claimed source hashes', () => {
+  it('withholds a write with recognized credentials or private paths and still serves the others', () => {
     const unsafe = ['build xai-' + 'Ab12'.repeat(8), 'build /Users/example/private', 'build C:\\Users\\example\\private'];
+    const other = event({ eventId: 'ev_c', factId: 'fact_c', slotKey: 'tool', text: 'Builds use tsc.',
+      sourceRefs: [{ ...event().sourceRefs[0]!, id: 'src_c', quote: 'tsc -p .' }] });
     for (const text of unsafe) {
-      expect(buildMemoryContextPack(snapshot([event({ text })]), query()).status).toBe('refused');
-      expect(buildMemoryContextPack(snapshot([event({ sourceRefs: [{ ...event().sourceRefs[0]!, quote: text }] })]), query()).status).toBe('refused');
+      for (const bad of [event({ text }), event({ sourceRefs: [{ ...event().sourceRefs[0]!, quote: text }] }),
+        event({ sourceRefs: [{ ...event().sourceRefs[0]!, locator: text }] })]) {
+        expect(validMemorySnapshot(snapshot([bad, other]))).toBe(false);
+        const result = buildMemoryContextPack(snapshot([bad, other]), query());
+        expect(ids(result)).toEqual(['ev_c']);
+        expect(result.receipt.exclusions).toContainEqual({ eventId: 'ev_a', reason: 'screened' });
+        expect(result.text).not.toContain(text.slice(6));
+        expect(result.text).toContain('Withheld 1 fact(s) on this topic: they contained credential-shaped text or a private path.');
+      }
     }
+    // Screened IDs or keys, and any other defect, still refuse the whole snapshot.
+    expect(buildMemoryContextPack(snapshot([event({ subjectKey: 'xai-' + 'Ab12'.repeat(8) }), other]), query()).status).toBe('refused');
+    expect(buildMemoryContextPack(snapshot([event({ text: unsafe[0]!, revision: 0 }), other]), query()).status).toBe('refused');
     const result = buildMemoryContextPack(snapshot([event()]), query());
     expect(result.contentSafety).toBe('screened-with-shared-patterns');
     expect(result.items[0]?.sourceRefs[0]?.digest).toBe(event().sourceRefs[0]?.digest);
+  });
+  it('keeps a screened write\'s lineage: it still supersedes, never contests a slot, and its dependents are withheld', () => {
+    const secret = 'Build with token=' + 'Zq81'.repeat(4);
+    const screenedSuccessor = { ...successor(), text: secret };
+    const superseding = buildMemoryContextPack(snapshot([event(), screenedSuccessor]), query());
+    expect(ids(superseding)).toEqual([]);
+    expect(superseding.receipt.exclusions).toEqual([{ eventId: 'ev_a', reason: 'superseded' }, { eventId: 'ev_b', reason: 'screened' }]);
+    const sameSlot = event({ eventId: 'ev_b', factId: 'fact_b', text: secret, recordedAt: late, reviewedAt: late,
+      sourceRefs: [{ ...event().sourceRefs[0]!, id: 'src_b' }] });
+    expect(ids(buildMemoryContextPack(snapshot([event(), sameSlot]), query()))).toEqual(['ev_a']);
+    const child = event({ eventId: 'ev_c', factId: 'fact_c', slotKey: 'derived', derivedFrom: ['ev_b'] });
+    expect(buildMemoryContextPack(snapshot([event(), sameSlot, child]), query()).receipt.exclusions)
+      .toContainEqual({ eventId: 'ev_c', reason: 'dependency-ineligible' });
+  });
+  it('treats formatting and comment edits to a cited line as unchanged, and real edits as changed', () => {
+    const unchanged: Array<[string, string]> = [['const MAX = 5;', '  const MAX=5; // cap'], ['retries: 3', 'retries:   3   # was 2'],
+      ['SELECT id FROM users -- active only', 'SELECT id FROM users'], ['f(a, b)', 'f( a,b ) /* note */'], ['// TODO: drop v1', '//   TODO: drop v1 ']];
+    const changed: Array<[string, string]> = [['const MAX = 5;', 'const MAX = 6;'], ['npm test -- --run', 'npm test -- --watch'],
+      ['// TODO: drop v1', 'const v1 = null;'], ['color: "#fff"', 'color: "#000"'], ['url = "https://a.example/v1"', 'url = "https://a.example/v2"']];
+    for (const [quote, current] of unchanged) expect(memorySourceQuotePresent(quote, current)).toBe(true);
+    for (const [quote, current] of changed) expect(memorySourceQuotePresent(quote, current)).toBe(false);
   });
   it('reuses only factory-created snapshots and reruns selection for every changed query', () => {
     const child = event({ eventId: 'child', factId: 'child', slotKey: 'derived', derivedFrom: ['ev_a'] });
@@ -215,11 +249,13 @@ describe('pure governed memory foundation', () => {
     expect(prepared).not.toBe(frozen);
     frozen.events[0]!.text = 'build changed'; expect(prepared.events[0]!.text).toBe('Build with npm run build.');
     for (const unsafe of [Object.freeze({ ...snapshot([event()]), prepared: true }),
-      Object.freeze(snapshot([event({ text: 'build xai-' + 'Ab12'.repeat(8) })])),
       Object.freeze(snapshot([event({ authority: true } as unknown as Partial<MemoryFactEvent>)]))]) {
       expect(immutableMemorySnapshot(unsafe)).toBeNull();
       expect(buildMemoryContextPack(unsafe, query()).status).toBe('refused');
     }
+    const screened = Object.freeze(snapshot([event({ text: 'build xai-' + 'Ab12'.repeat(8) })]));
+    expect(immutableMemorySnapshot(screened)).toBeNull();
+    expect(buildMemoryContextPack(screened, query()).receipt.exclusions).toEqual([{ eventId: 'ev_a', reason: 'screened' }]);
     const roundTrip = JSON.parse(JSON.stringify(prepared));
     expect(immutableMemorySnapshot(roundTrip)).not.toBe(roundTrip);
     expect(buildMemoryContextPack(roundTrip, query())).toEqual(buildMemoryContextPack(prepared, query()));
@@ -231,7 +267,8 @@ describe('pure governed memory foundation', () => {
       return Reflect.get(target, key, receiver);
     } });
     expect(immutableMemorySnapshot(snapshot([changing]))).toBeNull();
-    reads = 0; expect(buildMemoryContextPack(snapshot([changing]), query()).status).toBe('refused');
+    reads = 0; const changed = buildMemoryContextPack(snapshot([changing]), query());
+    expect(ids(changed)).toEqual([]); expect(changed.text).not.toContain('xai-');
     let queryReads = 0;
     const changingQuery = new Proxy(query(), { get(target, key, receiver) {
       if (key === 'query' && ++queryReads >= 2) return 'build xai-' + 'Ab12'.repeat(8);

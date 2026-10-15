@@ -63,7 +63,7 @@ npm run --silent bench:memory -- --check           # regression gate: exit 1 bel
 
 CI runs `--check` on one Linux job. It fails when the governed arm drops below the floors in `src/core/local-eval/memory-benchmark-floors.ts`, which hold the current numbers: cases passed per dimension and per retrieval set (paraphrase recall and unanswerable-left-empty alike), no forbidden text, no out-of-scope receipt IDs, every contested slot mentioned, and no pack over its byte or fact budget. Case counts must match too, so a set cannot be shrunk to pass. Raise a floor in the change that raises the measurement.
 
-It has 399 cases and 408 steps in six dimensions:
+It has 500 cases and 509 steps in six dimensions:
 
 | Dimension | Cases | What it measures |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ It has 399 cases and 408 steps in six dimensions:
 | Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
 | Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
 | Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
-| Agent writes | 103 | Questions over histories written the way independent agents write memory: near-duplicates under different keys, newer facts that contradict older ones without superseding them, facts whose cited code later changed, and weakly cited claims next to cited ones. Two sets of 32 scenarios were written by separate agents. A step passes when it serves one fact from each group that answers the question, with no wrong or stale fact, no second copy of the same fact, and a notice when the question needs one. |
+| Agent writes | 204 | Questions over histories written the way independent agents write memory: near-duplicates under different keys, newer facts that contradict older ones without superseding them, facts whose cited code later changed, weakly cited claims next to cited ones, writes that carry a credential or private path, and cited lines that are only reformatted. Four sets (two of 32 scenarios, two of 24) were written by separate agents; credentials appear as placeholders that expand to fake values of the real shapes. A step passes when it serves one fact from each group that answers the question, with no wrong or stale fact, no second copy of the same fact, and a notice when the question needs one. |
 | Task | 8 | Multi-step scripted sessions (fix CI, ship a release, onboard, migrate a database, audit, cross-project work, tight budget, paraphrase). A task passes only when every step's pack has every required fact and no forbidden one. No model executes the task. |
 
 Each step passes when the expected status matches, every required fact text appears in the model-facing pack text, no forbidden text (stale, withdrawn, contested, deleted or foreign) appears, and the budget holds. The report also gives recall, rank-1 rate and mean reciprocal rank, extraneous facts per step, whether a contested slot is mentioned in the pack text, the payload ratio (required fact bytes over pack bytes) and the number of out-of-scope event IDs in receipts. A case whose expected outcome depends on an open owner decision is reported under `pendingDecisions` and left out of the scores; none is pending now.
@@ -156,6 +156,22 @@ Three rules do the work, all after ranking:
 What remains:
 - **Cross-key contradictions.** A newer fact under different keys that contradicts an older one is still served next to it in 8 of 18 questions. A value-disagreement detector was tried on the tuning set and gained at most one question, so it was not shipped.
 - **Over-cautious source checks.** A cited line that changes in a way that leaves the fact true still withholds the fact (2 tuning and 2 validation answers lost). The check compares quotes, not meaning.
-- **Screening refusals.** Six histories hold a write that trips content screening, for example "authorization request header" or a local database URL. One question trips it too ("access token"). The pack refuses all seven, so screening belongs on each write, before it is stored.
+- **Screening refusals.** Six histories held a write that trips content screening, for example "authorization request header" or a local database URL, and the pack refused the whole snapshot. That is fixed below. One question still trips screening ("access token") and is refused, because a query is screened as a whole.
 
-`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 4 tuning, 9 validation), or more duplicates (4, 8). Every other dimension must still leak nothing.
+#### Credential-bearing writes and cosmetic edits
+
+The same separate agent wrote two more sets, 24 scenarios each: 12 where one agent's write carries a credential or private path (in the fact or only in its quoted source) next to clean writes by others, and 12 where cited lines change. Some changes are only reformatting or comment edits, and some really change the fact. Both fixes were frozen on the first set (W3, "kestrel") before the second (W4, "quarry") was scored.
+
+| Governed, questions passed | W3 tuning: before | W3 tuning: after | W4 validation: before | W4 validation: after |
+| --- | --- | --- | --- | --- |
+| Credential-bearing writes | 3/28 | 25/28 | 2/26 | 22/26 |
+| Cosmetic edits | 17/23 | 20/23 | 15/24 | 19/24 |
+| Any case holding a screened write or query (all hazards) | 3/32 | 26/32 | 2/29 | 24/29 |
+
+- **Per-write screening.** A write that fails screening is withheld alone instead of refusing the snapshot. No credential-bearing write was served before or after, and no pack in the benchmark contains screened content.
+- **Formatting-tolerant source check.** `memorySourceQuotePresent` replaces the exact substring check, so whitespace and trailing-comment edits no longer withhold a true fact, and real changes still do.
+- The flat diagnostic passes 3/28, 2/23, 2/26 and 6/24 on the same questions.
+
+Still open: a fact whose cited comment is reworded with the same meaning is withheld, and a quote-only comment edit that only drops a period still counts as a change. The three W3 credential misses are false alarms in the shared screening patterns: the clean answers ("minted with `kestrelctl token mint --role admin`", "The Slack bot token is read from SLACK_BOT_TOKEN") are withheld because `token` followed by a word reads as a token value. The other W3 miss is a duplicate. W4's misses were not inspected, to keep it unseen for later rounds. Earlier W1 questions that were refused whole now serve: one of them shows a cross-key contradiction that the refusal used to hide.
+
+`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 5 tuning, 9 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.

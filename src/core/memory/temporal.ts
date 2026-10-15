@@ -2,8 +2,12 @@ import { canonicalJson } from '../authority/canonical-json.js';
 import { memoryScopeVisible, sameMemoryScope, sameMemorySlot } from './scope.js';
 import type { MemoryExclusionReason, MemoryFactEvent, MemoryPackQuery, MemorySnapshot, MemoryTemporalView } from './types.js';
 
-/** Pure projection over a validated detached snapshot; no latest-import or confidence winner. */
-export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPackQuery): MemoryTemporalView {
+/**
+ * Pure projection over a validated detached snapshot; no latest-import or confidence winner.
+ * screened names events whose content failed screening and was replaced: they keep their lineage effects (a screened
+ * successor still supersedes, a screened tombstone still deletes) but never serve and never contest a slot.
+ */
+export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPackQuery, screened: ReadonlySet<string> = new Set()): MemoryTemporalView {
   const events = [...snapshot.events].sort((a, b) => a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0);
   const excluded = new Map<string, MemoryExclusionReason>();
   const scoped = new Map<string, MemoryFactEvent>();
@@ -103,6 +107,7 @@ export function projectMemoryTemporal(snapshot: MemorySnapshot, query: MemoryPac
     const concurrent = revocations.get(factKey(previous))?.get(previous.revision);
     if (concurrent?.length) { excluded.set(previous.eventId, 'revision-conflict'); concurrent.forEach(id => excluded.set(id, 'revision-conflict')); }
   }
+  for (const id of screened) if (scoped.has(id) && !excluded.has(id)) excluded.set(id, 'screened');
   const candidates = [...scoped.values()].filter(event => !excluded.has(event.eventId));
   const slots = new Map<string, MemoryFactEvent[]>();
   const revisions = new Map<string, MemoryFactEvent[]>();

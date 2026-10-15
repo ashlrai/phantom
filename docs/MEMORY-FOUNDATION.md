@@ -136,8 +136,14 @@ Snapshot bytes are counted incrementally before allocating a whole over-cap
 canonical encoding.
 
 The existing pure `scrubSecrets` and `redactGenericHomePaths` patterns screen
-free text and opaque IDs. If screening would change a value, the kernel refuses
-it rather than silently rewriting a fact, quotation, locator or source claim.
+free text and opaque IDs. If screening would change a value, the kernel never
+silently rewrites it into the pack. A query, ID or key that fails screening
+refuses the whole call. A fact event whose text, source locator or quote fails
+is withheld on its own as `screened`, and the rest of the snapshot is still
+served. The screened event keeps its lineage effects: it still supersedes its
+predecessor and its tombstones still delete, it never contests a slot, and facts
+derived from it are withheld. When it touches the query, the pack says how many
+facts were withheld for credential-shaped text or a private path.
 This shared screening is not exhaustive private-data detection. A successful
 pack says `contentSafety: 'screened-with-shared-patterns'`, not that all content
 is safe to publish or send to a provider.
@@ -193,12 +199,14 @@ changes. The pack applies three rules after ranking:
   touch the query, the pack adds one line saying how many were withheld. The
   argument defaults to `{ changedSourceIds: [] }`. Any other shape is refused
   with `invalid-options`. The pack itself reads no files; the caller does the
-  check.
+  check, and `memorySourceQuotePresent(quote, currentLine)` in
+  `src/core/memory/source.ts` is the comparison to use. It ignores whitespace
+  next to punctuation, runs of spaces and trailing `//`, `#`, `--` or `/* */`
+  comments, so reformatting a line does not withhold a true fact. A quote that
+  is only a comment is compared as written.
 
 A contradiction between facts written under different keys is not detected:
-nothing in the history connects them. A write that content screening refuses
-makes the whole snapshot invalid, so the write path should screen each write
-before it is stored.
+nothing in the history connects them.
 
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt

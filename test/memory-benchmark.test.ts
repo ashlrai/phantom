@@ -6,7 +6,7 @@ import { MEMORY_BENCHMARK_DIMENSIONS, benchDay, benchEvent, benchQuery, benchSna
 import { memoryBenchmarkFloorViolations } from '../src/core/local-eval/memory-benchmark-floors.js';
 import { buildFlatLatestMemoryDiagnostic } from '../src/core/local-eval/memory-evaluation-baseline.js';
 import { buildMemoryContextPack } from '../src/core/memory/pack.js';
-import { validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
+import { memoryContentUnchanged, validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
 import type { MemoryContextPack } from '../src/core/memory/types.js';
 
 const cases = memoryBenchmarkCases();
@@ -15,15 +15,25 @@ const emptyPack = (status: MemoryContextPack['status'] = 'none', text = ''): Mem
   items: [], receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
     selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false });
 describe('memory quality benchmark', () => {
-  it('assigns 399 uniquely named cases whose snapshots and queries pass the closed schema, except agent-write cases that trip content screening', () => {
-    expect(cases).toHaveLength(399);
+  it('assigns 500 uniquely named cases whose snapshots and queries pass the closed schema, except agent-write cases that trip content screening', () => {
+    expect(cases).toHaveLength(500);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
-    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(7);
+    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(61);
     for (const entry of cases) for (const step of entry.steps) {
       expect(validMemorySnapshot(step.snapshot) && validMemoryPackQuery(step.query)).toBe(!entry.screened);
     }
   });
+  it('never puts screened content into any governed pack, and serves the rest of a snapshot holding a credential-bearing write', () => {
+    let partial = 0;
+    for (const entry of cases) for (const step of entry.steps) {
+      const pack = buildMemoryContextPack(step.snapshot, step.query, step.options ?? { changedSourceIds: [] });
+      expect(memoryContentUnchanged(pack.text)).toBe(true);
+      expect(pack.text).not.toContain('[screened]');
+      if (entry.screened && pack.status === 'ready') partial++;
+    }
+    expect(partial).toBeGreaterThan(40);
+  }, 60_000);
   it('is deterministic and leaves the scored arms no access to expectations', () => {
     const first = runMemoryBenchmark(); const second = runMemoryBenchmark();
     expect(JSON.stringify(second)).toBe(JSON.stringify(first));

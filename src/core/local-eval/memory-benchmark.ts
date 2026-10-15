@@ -11,8 +11,10 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from '../authority/canonical-json.js';
 import { buildMemoryContextPack, type MemoryPackOptions } from '../memory/pack.js';
 import { memoryScopeVisible } from '../memory/scope.js';
+import { memorySourceQuotePresent } from '../memory/source.js';
 import { memoryUtf8Bytes, validMemoryPackQuery, validMemorySnapshot } from '../memory/validate.js';
-import { MEMORY_BENCHMARK_AGENT_WRITES_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, type MemoryBenchmarkAgentScenario,
+import { expandMemoryBenchmarkPlaceholders, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION,
+  MEMORY_BENCHMARK_AGENT_WRITES_TUNING, MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, type MemoryBenchmarkAgentScenario,
   type MemoryBenchmarkAgentWriteKind } from './memory-benchmark-agent-writes.js';
 import type { MemoryContextPack, MemoryFactEvent, MemoryPackQuery, MemorySnapshot } from '../memory/types.js';
 import { buildFlatLatestMemoryDiagnostic } from './memory-evaluation-baseline.js';
@@ -23,7 +25,7 @@ import { MEMORY_BENCHMARK_HELD_OUT, MEMORY_BENCHMARK_HELD_OUT_ABSENT, MEMORY_BEN
 
 export const MEMORY_BENCHMARK_PROTOCOL = 'phantom-memory-benchmark-v2';
 export const MEMORY_BENCHMARK_DIMENSIONS = ['retrieval', 'contradiction', 'temporal', 'withdrawal', 'task', 'agent-writes'] as const;
-export const MEMORY_BENCHMARK_AGENT_WRITE_KINDS = ['near-duplicate', 'silent-contradiction', 'stale-code', 'weak-evidence'] as const;
+export const MEMORY_BENCHMARK_AGENT_WRITE_KINDS = ['near-duplicate', 'silent-contradiction', 'stale-code', 'weak-evidence', 'secret-write', 'cosmetic-edit'] as const;
 export type MemoryBenchmarkDimension = typeof MEMORY_BENCHMARK_DIMENSIONS[number];
 /** held-out and unseen queries come from separately written sets that ranking must not be tuned against; unseen was written after the vocabulary froze. */
 export type MemoryBenchmarkDifficulty = 'lexical' | 'inflected' | 'paraphrase' | 'absent' | 'held-out' | 'held-out-absent' | 'unseen' | 'unseen-absent' | 'fresh' | 'fresh-absent' | 'second-fresh' | 'second-fresh-absent'
@@ -298,8 +300,16 @@ function taskCases(): MemoryBenchmarkCase[] {
  * Locators carry the source kind as a prefix (file:, commit:, command-output:, chat:, inference:). The caller's source check
  * is replayed from the scenario's code changes: a cited file line whose quote is gone after the latest change has changed.
  */
+/** Placeholders become deterministic fake credentials and home paths of the real shapes, seeded per scenario. */
+function expandScenario(scenario: MemoryBenchmarkAgentScenario, seed: string): MemoryBenchmarkAgentScenario {
+  const expand = (text: string): string => expandMemoryBenchmarkPlaceholders(text, seed);
+  return { ...scenario,
+    writes: scenario.writes.map(write => ({ ...write, text: expand(write.text),
+      source: { ...write.source, locator: expand(write.source.locator), quote: expand(write.source.quote) } })),
+    ...(scenario.codeChanges ? { codeChanges: scenario.codeChanges.map(change => ({ ...change, before: expand(change.before), after: expand(change.after) })) } : {}) };
+}
 function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 'tuning' | 'validation'): MemoryBenchmarkCase[] {
-  return set.flatMap(scenario => scenario.questions.map((question, index): MemoryBenchmarkCase => {
+  return set.map(scenario => expandScenario(scenario, `${label}:${scenario.id}`)).flatMap(scenario => scenario.questions.map((question, index): MemoryBenchmarkCase => {
     const writes = scenario.writes.filter(write => write.day <= question.day).sort((a, b) => a.day - b.day || (a.id < b.id ? -1 : 1));
     const events = new Map<string, MemoryFactEvent>();
     for (const write of writes) {
@@ -315,7 +325,7 @@ function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 't
     const latest = new Map<string, string>();
     for (const change of [...scenario.codeChanges ?? []].filter(change => change.day <= question.day).sort((a, b) => a.day - b.day)) latest.set(change.locator, change.after);
     const changedSourceIds = writes.filter(write => write.source.kind === 'file' && latest.has(write.source.locator)
-      && !latest.get(write.source.locator)!.includes(write.source.quote.trim())).map(write => write.id + ':source');
+      && !memorySourceQuotePresent(write.source.quote, latest.get(write.source.locator)!)).map(write => write.id + ':source');
     const text = (id: string): string => events.get(id)?.text ?? scenario.writes.find(write => write.id === id)!.text;
     const snapshot = benchSnapshot(`${label}:${scenario.id}`, [...events.values()], benchDay(question.day));
     const query = benchQuery(question.query, { at: benchDay(question.day) });
@@ -329,7 +339,8 @@ function agentWriteCases(set: readonly MemoryBenchmarkAgentScenario[], label: 't
 }
 export function memoryBenchmarkCases(): MemoryBenchmarkCase[] {
   return [...retrievalCases(), ...contradictionCases(), ...temporalCases(), ...withdrawalCases(), ...taskCases(),
-    ...agentWriteCases(MEMORY_BENCHMARK_AGENT_WRITES_TUNING, 'tuning'), ...agentWriteCases(MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, 'validation')];
+    ...agentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_TUNING, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING], 'tuning'),
+    ...agentWriteCases([...MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION, ...MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION], 'validation')];
 }
 
 // ---- scoring ----
