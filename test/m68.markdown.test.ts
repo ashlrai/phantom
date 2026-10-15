@@ -272,12 +272,14 @@ describe('resolveMdopen / openInAshlrMd with a resolved mdopen', () => {
   });
 
   // Host path syntax: the ':'-joined POSIX case cannot hold drive-letter paths.
-  it.skipIf(process.platform === 'win32')('searches PATH in-process, with .exe/.cmd on Windows, then fixed install paths', () => {
+  it.skipIf(process.platform === 'win32')('searches PATH in-process, with .exe on Windows, then fixed install paths', () => {
     const empty = binDir();
     const posix = binDir('mdopen');
-    const win = binDir('mdopen.cmd');
+    const win = binDir('mdopen.exe');
     expect(resolveMdopen({ PATH: `${empty}:${posix}` }, 'linux', [])).toBe(join(posix, 'mdopen'));
-    expect(resolveMdopen({ Path: `${empty};${win}` }, 'win32', [])).toBe(join(win, 'mdopen.cmd'));
+    expect(resolveMdopen({ Path: `${empty};${win}` }, 'win32', [])).toBe(join(win, 'mdopen.exe'));
+    // A .cmd shim cannot be spawned without a shell (CVE-2024-27980), so it is not resolved.
+    expect(resolveMdopen({ Path: `${empty};${binDir('mdopen.cmd')}` }, 'win32', [])).toBeNull();
     expect(resolveMdopen({ PATH: empty }, 'linux', [])).toBeNull();
     // Linux .deb / macOS app bundle install mdopen off PATH.
     const fixed = join(binDir('mdopen'), 'mdopen');

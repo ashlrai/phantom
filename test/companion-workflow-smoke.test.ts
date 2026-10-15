@@ -72,6 +72,29 @@ describe('companion workflow smoke', () => {
       .rejects.toThrow(/exited 3|boom/u);
   });
 
+  it('records a server that exits before reading stdin as a failure, not an EPIPE crash', async () => {
+    const path = join(dir, 'gone.mjs');
+    writeFileSync(path, 'process.exit(0);\n');
+    await expect(smoke.mcpHandshake(path, { env: smoke.smokeEnv(dir), cwd: dir, protocolVersion: '2025-06-18', timeoutMs: 10_000 }))
+      .rejects.toThrow(/exited|EPIPE|stdin/u);
+    // A large input written to a process that never reads it must not crash the smoke.
+    const result = await smoke.run(path, [], { env: smoke.smokeEnv(dir), cwd: dir, input: 'x'.repeat(8 * 1024 * 1024), timeoutMs: 10_000 });
+    expect(result).toMatchObject({ code: 0, timedOut: false });
+  });
+
+  it.skipIf(process.platform === 'win32')('bounds a timeout even when a grandchild holds stdout open', async () => {
+    const result = await smoke.run('/bin/sh', ['-c', 'sleep 8 & wait'], { env: smoke.smokeEnv(dir), cwd: dir, timeoutMs: 500 });
+    expect(result.timedOut).toBe(true);
+    expect(result.ms).toBeLessThan(4_000);
+  });
+
+  it.skipIf(process.platform === 'win32')('returns once the child exits even if a background grandchild keeps stdout', async () => {
+    const result = await smoke.run('/bin/sh', ['-c', 'sleep 8 & echo done'], { env: smoke.smokeEnv(dir), cwd: dir, timeoutMs: 20_000 });
+    expect(result).toMatchObject({ code: 0, timedOut: false });
+    expect(result.stdout).toContain('done');
+    expect(result.ms).toBeLessThan(4_000);
+  });
+
   it('treats a newer companion release as drift, not a broken seam', () => {
     const reviewedRelease = { version: '0.5.4', sourceCommit: 'x', url: 'u', contract: 'c' };
     expect(smoke.evaluateCompanion({ status: 'known-interface', version: '0.5.4', reviewedRelease, guidance: '' }).status).toBe('pass');

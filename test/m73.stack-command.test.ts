@@ -249,15 +249,32 @@ describe('M73 cmdStack read-only passthroughs', () => {
 });
 
 describe('M73 cmdStack passthrough output and hints', () => {
-  it('scan keeps an explicit --json or --yes and does not add another flag', async () => {
+  it('scan keeps an explicit --json and does not add another flag', async () => {
     expect.hasAssertions();
     stackInstalledSpy.mockReturnValue(true);
 
-    await cmdStack(['scan', '--yes']);
     await cmdStack(['scan', '--json']);
 
-    expect(stackRunSpy.mock.calls.map((c) => c[0])).toEqual([['scan', '--yes'], ['scan', '--json']]);
+    expect(stackRunSpy.mock.calls.map((c) => c[0])).toEqual([['scan', '--json']]);
   });
+
+  for (const flag of ['--yes', '-y', '--auto']) {
+    it(`scan refuses ${flag} without running Stack or prompting (no ungated provisioning)`, async () => {
+      expect.hasAssertions();
+      stackInstalledSpy.mockReturnValue(true);
+
+      const code = await cmdStack(['scan', flag]);
+
+      expect(code).toBe(2);
+      expect(stackRunSpy).not.toHaveBeenCalled();
+      expect(_stackInternals.confirm).not.toHaveBeenCalled();
+      const errOut = (process.stderr.write as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c.map(String).join(''))
+        .join('');
+      expect(errOut).toContain(flag);
+      expect(errOut).toContain('ashlr stack apply');
+    });
+  }
 
   it('forwards Stack stderr and its exit code', async () => {
     expect.hasAssertions();

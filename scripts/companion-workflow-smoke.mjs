@@ -89,27 +89,52 @@ export function smokeEnv(home, extraPath = []) {
   };
 }
 
+/** POSIX: own process group, so a timeout kills grandchildren that hold stdout too. */
+const DETACH = process.platform !== 'win32';
+/** How long to wait for stdio to close after the child itself exited. */
+const CLOSE_GRACE_MS = 500;
+
+function killTree(child) {
+  if (DETACH && child.pid) {
+    try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* group already gone */ }
+  }
+  try { child.kill('SIGKILL'); } catch { /* already gone */ }
+}
+
+function releaseStdio(child) {
+  for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+}
+
 /** Run to completion with a hard bound; a hang is reported, never waited on. */
 export function run(path, args, { env, cwd, input, timeoutMs = 20_000 } = {}) {
   const [cmd, argv] = commandFor(path, args);
   return new Promise(resolvePromise => {
     const started = Date.now();
-    let stdout = '', stderr = '', timedOut = false;
+    let stdout = '', stderr = '', timedOut = false, settled = false, graceTimer;
     let child;
     try {
-      child = spawn(cmd, argv, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(cmd, argv, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: DETACH });
     } catch (error) {
       resolvePromise({ code: null, stdout, stderr: String(error), timedOut, ms: 0 });
       return;
     }
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const finish = code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(graceTimer);
+      resolvePromise({ code, stdout, stderr, timedOut, ms: Date.now() - started });
+    };
+    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs);
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
+    child.stdin.on('error', error => { stderr += `stdin: ${String(error)}`; });
     child.on('error', error => { stderr += String(error); });
-    child.on('close', code => {
-      clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr, timedOut, ms: Date.now() - started });
+    // A grandchild that inherited stdout can keep 'close' from ever firing.
+    child.on('exit', code => {
+      graceTimer = setTimeout(() => { releaseStdio(child); finish(code); }, CLOSE_GRACE_MS);
     });
+    child.on('close', code => finish(code));
     child.stdin.end(input ?? '');
   });
 }
@@ -120,12 +145,17 @@ export function run(path, args, { env, cwd, input, timeoutMs = 20_000 } = {}) {
  */
 export async function mcpHandshake(path, { env, cwd, protocolVersion, timeoutMs = 20_000 }) {
   const [cmd, argv] = commandFor(path);
-  const child = spawn(cmd, argv, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(cmd, argv, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: DETACH });
   const pending = new Map();
   const noise = [];
   let buffer = '', stderr = '', nextId = 0, exited = null;
   child.stderr.on('data', chunk => { stderr += chunk; });
   child.on('error', error => { exited = String(error); for (const fail of pending.values()) fail.reject(new Error(exited)); });
+  // A server that exits before reading stdin turns the next write into EPIPE.
+  child.stdin.on('error', error => {
+    exited ??= `stdin ${String(error)}`;
+    for (const fail of pending.values()) fail.reject(new Error(`server ${exited}: ${stderr.trim().slice(-300)}`));
+  });
   child.on('exit', code => { exited = `exited ${code}`; for (const fail of pending.values()) fail.reject(new Error(`server ${exited}: ${stderr.trim().slice(-300)}`)); });
   child.stdout.on('data', chunk => {
     buffer += chunk;
@@ -165,8 +195,8 @@ export async function mcpHandshake(path, { env, cwd, protocolVersion, timeoutMs 
       noise,
     };
   } finally {
-    child.stdin.end();
-    child.kill('SIGKILL');
+    killTree(child);
+    releaseStdio(child);
   }
 }
 

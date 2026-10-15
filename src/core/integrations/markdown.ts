@@ -51,9 +51,11 @@ function isFile(p: string): boolean {
 }
 
 /**
- * Resolve the `mdopen` binary: PATH first (searched in-process, with
- * .exe/.cmd on Windows, so no `which`/`where` is needed), then the fixed
- * install locations. Returns the absolute path, or null. Never throws.
+ * Resolve the `mdopen` binary: PATH first (searched in-process, with .exe
+ * on Windows, so no `which`/`where` is needed), then the fixed install
+ * locations. Returns the absolute path, or null. Never throws. A `.cmd` shim
+ * is not a candidate: spawnSync cannot launch one without a shell (EINVAL
+ * since CVE-2024-27980), and the path is never run through a shell.
  */
 export function resolveMdopen(
   env: NodeJS.ProcessEnv = process.env,
@@ -61,7 +63,7 @@ export function resolveMdopen(
   fixedPaths: readonly string[] = MDOPEN_FIXED_PATHS,
 ): string | null {
   try {
-    const names = platform === 'win32' ? ['mdopen.exe', 'mdopen.cmd', 'mdopen'] : ['mdopen'];
+    const names = platform === 'win32' ? ['mdopen.exe', 'mdopen'] : ['mdopen'];
     const pathVar = env['PATH'] ?? env['Path'] ?? '';
     for (const dir of pathVar.split(platform === 'win32' ? ';' : ':')) {
       if (!dir) continue;

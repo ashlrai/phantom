@@ -8,8 +8,9 @@
  *     ashlr stack list   [...]        Passthrough: `stack list`.
  *     ashlr stack providers [...]     Passthrough: `stack providers`.
  *     ashlr stack recommend "<what you're building>"  Passthrough: `stack recommend`.
- *     ashlr stack scan  [...]         Passthrough: `stack scan` (adds --json: Stack
- *                                     refuses to scan without a TTY otherwise).
+ *     ashlr stack scan  [...]         Passthrough: `stack scan --json` (Stack refuses
+ *                                     to scan without a TTY otherwise). Refuses
+ *                                     --yes/-y/--auto, which provision ungated.
  *
  *   Passthroughs capture output (bounded); Stack's stderr is forwarded to stderr.
  *     ashlr stack doctor [...]        Passthrough: `stack doctor`.
@@ -101,12 +102,22 @@ function cmdStackPassthrough(sub: string, rest: string[]): number {
     return printNotInstalled();
   }
 
-  // Stack refuses to scan without a TTY (and exits 0), and this passthrough
-  // captures output, so request the machine-readable mode unless the caller
-  // already chose one.
+  // `stack scan --yes` writes .stack.toml and provisions services without
+  // prompting, so the read-only scan passthrough refuses the auto-accept
+  // flags; provisioning goes through the confirm-gated add/apply path.
+  // Stack also refuses to scan without a TTY (and exits 0), and this
+  // passthrough captures output, so the machine-readable mode is forced.
   const args = [sub, ...rest];
-  if (sub === 'scan' && !rest.some((a) => a === '--json' || a === '--yes' || a === '-y')) {
-    args.push('--json');
+  if (sub === 'scan') {
+    const autoFlag = rest.find((a) => a === '--yes' || a === '-y' || a === '--auto' || a.startsWith('--yes=') || a.startsWith('--auto='));
+    if (autoFlag !== undefined) {
+      process.stderr.write(red('error: ') + `ashlr stack scan is read-only and does not accept ${autoFlag}\n`);
+      process.stderr.write(dim('  To provision what scan finds, use the confirm-gated `ashlr stack apply` or `ashlr stack add <service>`.') + '\n');
+      return 2;
+    }
+    if (!rest.includes('--json')) {
+      args.push('--json');
+    }
   }
   const result = stackRun(args);
   if (result.stdout) {
