@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { devinConnectPromptLine, runDevinCli, type DevinCliDeps } from '../src/cli/devin.js';
+import { runDevinCli, type DevinCliDeps } from '../src/cli/devin.js';
 import { devinBudgetView } from '../src/core/devin/budget.js';
 import { DEFAULT_DEVIN_BUDGET, type DevinBudgetUpdate, type DevinBudgetV1, type DevinStatus } from '../src/core/devin/types.js';
 
@@ -43,6 +43,7 @@ function harness(patch: Partial<DevinCliDeps> = {}) {
     },
     budgetView: (tasks, b, now) => devinBudgetView(tasks, b, now),
     readSecret: async () => KEY,
+    platform: 'darwin',
     originRepo: () => 'ashlrai/ashlr-hub',
     cwd: () => '/tmp',
     now: () => new Date(),
@@ -69,20 +70,14 @@ describe('ashlr devin', () => {
     expect([...h.out, ...h.err].join('\n')).not.toContain(KEY);
   });
 
-  it('the connect prompt names the macOS Keychain only where the key can go there', async () => {
-    expect(devinConnectPromptLine('darwin')).toContain('goes to the macOS Keychain');
+  it('refuses connect off macOS before asking for a key it cannot store', async () => {
     for (const platform of ['linux', 'win32'] as const) {
-      expect(devinConnectPromptLine(platform)).not.toContain('goes to the macOS Keychain');
-      expect(devinConnectPromptLine(platform)).toContain('connecting fails on this machine');
-    }
-    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
-    Object.defineProperty(process, 'platform', { value: 'linux' });
-    try {
-      const h = harness();
-      expect(await runDevinCli(['connect', '--org', 'org-abc'], h.deps)).toBe(0);
-      expect(h.out[0]).toBe(devinConnectPromptLine('linux'));
-    } finally {
-      Object.defineProperty(process, 'platform', original);
+      let asked = false;
+      const h = harness({ platform, readSecret: async () => { asked = true; return KEY; } });
+      expect(await runDevinCli(['connect', '--org', 'org-abc'], h.deps)).toBe(1);
+      expect(asked).toBe(false);
+      expect(h.err.join('\n')).toContain('macOS Keychain');
+      expect(h.err.join('\n')).toContain(platform);
     }
   });
 
