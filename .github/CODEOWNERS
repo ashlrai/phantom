@@ -840,6 +840,7 @@
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
 /test/support/pool-commissioning-transaction-fixture.ts @masonwyatt23
+/test/swarm-fence-inference-release.test.ts @masonwyatt23
 /test/task-source-310b.test.ts @masonwyatt23
 /test/task-temporal-context.test.ts @masonwyatt23
 /test/telegram-readable-dates.test.ts @masonwyatt23
