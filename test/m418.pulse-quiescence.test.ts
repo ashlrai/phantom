@@ -16,6 +16,16 @@ const enrollmentTiming = vi.hoisted(() => {
     active: false,
     acquisitions: 0,
     fsyncs: 0,
+    // Deterministic cost signals for the enrollment case. Each one counts a
+    // mechanism that can only make the operation slower by WAITING (a lock
+    // spin, a backoff timer, a subprocess ownership probe) or by issuing more
+    // durable I/O, so none of them moves when the CI host is merely loaded.
+    contending: false,
+    contenderSleeps: 0,
+    unexpectedSleeps: 0,
+    unexpectedSleepMs: 0,
+    firedTimers: [] as number[],
+    spawns: [] as string[],
     phases: [] as Array<{ phase: string; atMs: number; fsyncs: number }>,
     startedAt: 0,
     metrics,
@@ -44,6 +54,21 @@ vi.mock('node:fs', async (importOriginal) => {
     if (enrollmentTiming.active) enrollmentTiming.fsyncs += 1;
     return enrollmentTiming.measure('fsync', () => actual.fsyncSync(...args));
   } };
+});
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const counted = <F extends (...args: never[]) => unknown>(name: string, original: F): F =>
+    ((...args: Parameters<F>) => {
+      if (enrollmentTiming.active) enrollmentTiming.spawns.push(`${name} ${String(args[0])}`);
+      return original(...args);
+    }) as F;
+  return {
+    ...actual,
+    spawnSync: counted('spawnSync', actual.spawnSync),
+    execFileSync: counted('execFileSync', actual.execFileSync),
+    execSync: counted('execSync', actual.execSync),
+  };
 });
 
 vi.mock('../src/core/sandbox/mutation-fence.js', async (importOriginal) => {
@@ -95,6 +120,8 @@ import {
 } from '../src/core/sandbox/mutation-fence.js';
 
 const cfg = { user: { id: 'm418', name: 'M418' } } as AshlrConfig;
+/** Durable syncs for one tick + one borrowed-authority enrollment (18 on POSIX). */
+const M418_ENROLLMENT_FSYNC_BUDGET = 20;
 
 let home: string;
 let previousHome: string | undefined;
@@ -237,9 +264,14 @@ describe('M418 Pulse outward-mutation quiescence', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       writes.push(body);
       if (body['status'] === 'done') {
-        const competingFence = acquireOutwardMutationFence(25);
-        outerFenceHeldDuringWriteback = competingFence === null;
-        releaseOutwardMutationFence(competingFence);
+        enrollmentTiming.contending = true;
+        try {
+          const competingFence = acquireOutwardMutationFence(25);
+          outerFenceHeldDuringWriteback = competingFence === null;
+          releaseOutwardMutationFence(competingFence);
+        } finally {
+          enrollmentTiming.contending = false;
+        }
       }
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
@@ -247,26 +279,62 @@ describe('M418 Pulse outward-mutation quiescence', () => {
 
     enrollmentTiming.acquisitions = 0;
     enrollmentTiming.fsyncs = 0;
+    enrollmentTiming.contenderSleeps = enrollmentTiming.unexpectedSleeps = 0;
+    enrollmentTiming.unexpectedSleepMs = 0;
+    enrollmentTiming.firedTimers = [];
+    enrollmentTiming.spawns = [];
     for (const metric of Object.values(enrollmentTiming.metrics)) {
       metric.count = metric.totalMs = metric.maxMs = metric.nestedFsyncMs = 0;
     }
     enrollmentTiming.phases = [];
+    // The local-store lock waits with a synchronous Atomics.wait between
+    // attempts; any backoff would be a timer that actually fires. Count both.
+    const realWait = Atomics.wait;
+    const realSetTimeout = globalThis.setTimeout;
+    Atomics.wait = ((...args: Parameters<typeof Atomics.wait>) => {
+      if (enrollmentTiming.active) {
+        if (enrollmentTiming.contending) enrollmentTiming.contenderSleeps += 1;
+        else {
+          enrollmentTiming.unexpectedSleeps += 1;
+          enrollmentTiming.unexpectedSleepMs += Number(args[3] ?? 0);
+        }
+      }
+      return realWait(...args);
+    }) as typeof Atomics.wait;
+    globalThis.setTimeout = ((handler: unknown, delay?: number, ...rest: unknown[]) => {
+      if (typeof handler !== 'function' || !enrollmentTiming.active || !delay) {
+        return realSetTimeout(handler as () => void, delay, ...rest);
+      }
+      return realSetTimeout((...callbackArgs: unknown[]) => {
+        if (enrollmentTiming.active) enrollmentTiming.firedTimers.push(delay);
+        return (handler as (...a: unknown[]) => unknown)(...callbackArgs);
+      }, delay, ...rest);
+    }) as typeof globalThis.setTimeout;
     enrollmentTiming.active = true;
     const startedAt = performance.now();
     enrollmentTiming.startedAt = startedAt;
-    const result = await runPulseSync(cfg, {
-      tickTs: '2026-07-14T12:00:00.000Z',
-      shipDeps: false,
-    });
+    let result: Awaited<ReturnType<typeof runPulseSync>>;
+    try {
+      result = await runPulseSync(cfg, {
+        tickTs: '2026-07-14T12:00:00.000Z',
+        shipDeps: false,
+      });
+    } finally {
+      enrollmentTiming.active = false;
+      Atomics.wait = realWait;
+      globalThis.setTimeout = realSetTimeout;
+    }
     const elapsedMs = performance.now() - startedAt;
-    enrollmentTiming.active = false;
-    const limitMs = process.platform === 'win32' ? 2_000 : 1_000;
     const roundedMs = (value: number) => Math.round(value * 1_000) / 1_000;
     // Inclusive acquire/release/enroll totals contain their nested fsync time;
     // these diagnostic totals must not be added together as an operation budget.
     console.info('[M418 enrollment timing]', JSON.stringify({
-      platform: process.platform, elapsedMs: roundedMs(elapsedMs), limitMs,
+      platform: process.platform, elapsedMs: roundedMs(elapsedMs),
       acquisitions: enrollmentTiming.acquisitions, fsyncs: enrollmentTiming.fsyncs,
+      contenderSleeps: enrollmentTiming.contenderSleeps,
+      unexpectedSleeps: enrollmentTiming.unexpectedSleeps,
+      unexpectedSleepMs: enrollmentTiming.unexpectedSleepMs,
+      firedTimers: enrollmentTiming.firedTimers, spawns: enrollmentTiming.spawns,
       inclusiveTotals: true,
       operations: Object.fromEntries(Object.entries(enrollmentTiming.metrics).map(([kind, metric]) => [kind, {
         count: metric.count, totalMs: roundedMs(metric.totalMs), maxMs: roundedMs(metric.maxMs),
@@ -290,7 +358,23 @@ describe('M418 Pulse outward-mutation quiescence', () => {
     // Four successful acquisitions plus the deliberate losing contender:
     // tick, recovery poll, pending poll and one borrowed command authority.
     expect(enrollmentTiming.acquisitions).toBe(5);
-    expect(elapsedMs).toBeLessThan(limitMs);
+    // "Promptly" is judged on what the operation DOES, not on how long a shared
+    // CI runner took to schedule it (a loaded Windows lane once measured 2.7s
+    // for a ~0.1s run with identical counts). Every way enrollment can wait is
+    // counted exactly: no lock-contention spin outside the deliberate 25ms
+    // contender (re-acquiring instead of borrowing the held tick authority
+    // spins here until its wait expires), no backoff timer that fires, no
+    // native subprocess ownership/liveness probe, and a bounded number of
+    // durable syncs (18 on POSIX today; Windows can only skip directory syncs).
+    expect(enrollmentTiming.unexpectedSleeps).toBe(0);
+    // 10ms spins inside a 25ms deadline: at most three, fewer on a slow host.
+    expect(enrollmentTiming.contenderSleeps).toBeLessThanOrEqual(3);
+    expect(enrollmentTiming.firedTimers).toEqual([]);
+    // Darwin's real ownership check is a cached `/bin/ls -lde` ACL probe, so
+    // first sight of a new path legitimately spawns there; elsewhere the
+    // process-start identity is cached and Windows ACLs use the semantic stub.
+    if (process.platform !== 'darwin') expect(enrollmentTiming.spawns).toEqual([]);
+    expect(enrollmentTiming.fsyncs).toBeLessThanOrEqual(M418_ENROLLMENT_FSYNC_BUDGET);
   });
 
   it.each(['kill', 'abort'] as const)('does not enroll or write back after %s wins during a successful claim', async (stopKind) => {
