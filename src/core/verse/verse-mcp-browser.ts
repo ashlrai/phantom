@@ -200,7 +200,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_status',
     scope: 'browser',
-    description: 'What the operator\'s Browser pane in Verse is showing on this chat (URL, title, which capture features this shell has), and the dev servers found for this chat\'s folders. Call first.',
+    description: 'What the operator\'s Browser pane in Phantom is showing on this chat (URL, title, which capture features this shell has), and the dev servers found for this chat\'s folders. Call first.',
     annotations: observe('Browser status'),
     inputSchema: EMPTY_SCHEMA,
     handler: status,

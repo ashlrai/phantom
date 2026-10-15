@@ -404,7 +404,7 @@ async function terminalRun(args: Record<string, unknown>, ctx: VerseMcpToolConte
   if (busy) {
     return toolError(`A command is still running in ${tab.id} (${busy.id}: ${scrubSecrets(busy.command).slice(0, 120)}). Wait for it (terminal_wait_for / terminal_read), stop it (terminal_interrupt), or run in another tab.`);
   }
-  if (tab.shellIntegration !== 'active') return toolError('This shell has no active command boundary, so Verse cannot safely submit a command. Open a new agent tab.');
+  if (tab.shellIntegration !== 'active') return toolError('This shell has no active command boundary, so Phantom cannot safely submit a command. Open a new agent tab.');
 
   const refused = await gate(ctx, 'terminal_run', command, tab.id);
   if (refused) return refused;
@@ -594,7 +594,7 @@ async function terminalWaitFor(args: Record<string, unknown>, ctx: VerseMcpToolC
       const hit = matchLine(text, pattern);
       if (hit !== null) return withOutput({ tab_id: check.tab.id, matched: true }, 'The matching line', hit, ctx);
       if (watch.exited()) return withOutput({ tab_id: check.tab.id, matched: false, exited: true }, 'The output while waiting', tail(text, 4_000).text, ctx);
-      if (ctx.signal.aborted) return toolError('This turn\'s access to Verse tools has ended.');
+      if (ctx.signal.aborted) return toolError('This turn\'s access to Phantom tools has ended.');
       const elapsed = deps.now() - started;
       if (elapsed >= timeoutMs) {
         return withOutput({ tab_id: check.tab.id, matched: false, timed_out: true }, 'The output while waiting', tail(text, 4_000).text, ctx,
@@ -648,7 +648,7 @@ export const tools: VerseMcpTool[] = [
     name: 'terminal_list',
     scope: 'terminal',
     desktopOnly: true,
-    description: 'The Verse terminal tabs you may use on this chat: your own tabs and any shell the operator shared with you — with each tab\'s directory, whether a command is running, and whether the operator has taken it over.',
+    description: 'The Phantom terminal tabs you may use on this chat: your own tabs and any shell the operator shared with you — with each tab\'s directory, whether a command is running, and whether the operator has taken it over.',
     annotations: ann('List terminals', { readOnly: true, idempotent: true }),
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: terminalList,

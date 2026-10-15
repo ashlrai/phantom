@@ -55,7 +55,7 @@ To install the CLI while developing:
 | `npm run test:web` | Run the separate jsdom/Testing Library console suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
-| `npm run lint` | ESLint plus real-I/O membership and Verse synchronous-I/O guards |
+| `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |

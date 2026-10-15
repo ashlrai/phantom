@@ -20,7 +20,7 @@ either name.
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |
-| Lint (ESLint + real-I/O lane + Verse sync-I/O guards) | `npm run lint` |
+| Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
 | Backend tests with isolated homes and a runtime cap | `npm run test:ci -- <files>` |
 | Web console tests | `npm run test:web` |
@@ -123,7 +123,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | --- | --- |
 | `config.json` | configuration (`phm config path`, `phm config effective --json`) |
 | `KILL` | the global kill switch / Stop marker |
-| `account-connections/connections.json` | native account roster that Verse seats come from |
+| `account-connections/connections.json` | native account roster that Phantom seats come from |
 | `authority/ledger.jsonl` | hash-chained authority ledger |
 | `manager/<ts>.json` | `phm manager` reports |
 | `logs/` | supervised local-runtime stdout and stderr |
@@ -184,7 +184,7 @@ Phase 0. Agents do not sign grants. The policy reserved for the owner is in
 
 There are two registries:
 
-- **Verse chat routing** (`ROUTABLE_ENGINES` in
+- **Phantom chat routing** (`ROUTABLE_ENGINES` in
   `src/core/verse/multimodel/advisor.ts`): `claude`, `codex`, `devin`, `grok`,
   `local`. Native seats (claude, codex, grok) come from
   `~/.ashlr/account-connections/connections.json`. Local seats are Ollama
