@@ -232,10 +232,16 @@ export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: 
 // Commands
 // ---------------------------------------------------------------------------
 
+/** The connect prompt, true for this platform: the key is kept only in the macOS Keychain (core/devin/secret.ts). */
+export function devinConnectPromptLine(platform: NodeJS.Platform): string {
+  if (platform === 'darwin') return 'Paste your Devin API key (cog_…). It is not shown, never stored in a file, and goes to the macOS Keychain.';
+  return 'Paste your Devin API key (cog_…). It is not shown and never stored in a file. Note: the key can only be stored in the macOS Keychain, so connecting fails on this machine (not macOS).';
+}
+
 async function cmdConnect(deps: DevinCliDeps, args: string[]): Promise<number> {
   const org = takeOption(args, '--org');
   rejectLeftovers(args);
-  deps.out('Paste your Devin API key (cog_…). It is not shown, never stored in a file, and goes to the macOS Keychain.');
+  deps.out(devinConnectPromptLine(process.platform));
   let key: string;
   try {
     key = (await deps.readSecret('Devin API key: ')).trim();
