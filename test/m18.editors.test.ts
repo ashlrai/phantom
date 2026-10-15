@@ -227,6 +227,49 @@ describe('detectEditors', () => {
     expect(new Set(editors).size).toBe(editors.length);
     expect(editors.every(editor => ['claude', 'codex', 'cursor'].includes(editor))).toBe(true);
   });
+
+  it('detects claude from its CLI on PATH when ~/.claude does not exist yet', () => {
+    const home = tempRoot();
+    const binDir = tempRoot();
+    const fake = path.join(binDir, 'claude');
+    fs.writeFileSync(fake, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+    expect(detectEditors({ home, pathEnv: '', platform: process.platform })).toEqual([]);
+    expect(detectEditors({ home, pathEnv: `${tempRoot()}${path.delimiter}${binDir}`, platform: process.platform })).toEqual(['claude']);
+    // Detection is read-only: no config directory or registry is created.
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  it('merges config and PATH detection in stable order without duplicates', () => {
+    const home = tempRoot();
+    fs.mkdirSync(path.join(home, '.cursor'));
+    fs.mkdirSync(path.join(home, '.claude'));
+    const binDir = tempRoot();
+    for (const bin of ['claude', 'codex']) {
+      fs.writeFileSync(path.join(binDir, bin), '', { mode: 0o755 });
+    }
+
+    expect(detectEditors({ home, pathEnv: binDir, platform: process.platform })).toEqual(['claude', 'codex', 'cursor']);
+  });
+
+  it('ignores relative PATH entries and directories named like the binary', () => {
+    const home = tempRoot();
+    const binDir = tempRoot();
+    fs.mkdirSync(path.join(binDir, 'claude'));
+
+    expect(detectEditors({ home, pathEnv: `.${path.delimiter}${binDir}`, platform: process.platform })).toEqual([]);
+  });
+
+  it('accepts .cmd shims on win32', () => {
+    const home = tempRoot();
+    const binDir = tempRoot();
+    fs.writeFileSync(path.join(binDir, 'codex.cmd'), '');
+
+    expect(detectEditors({ home, pathEnv: binDir, platform: 'win32' })).toEqual(['codex']);
+    if (process.platform !== 'win32') {
+      expect(detectEditors({ home, pathEnv: binDir, platform: process.platform })).toEqual([]);
+    }
+  });
 });
 
 describe('Claude user registry', () => {
