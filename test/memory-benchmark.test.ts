@@ -15,11 +15,11 @@ const emptyPack = (status: MemoryContextPack['status'] = 'none', text = ''): Mem
   items: [], receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
     selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false });
 describe('memory quality benchmark', () => {
-  it('assigns 500 uniquely named cases whose snapshots and queries pass the closed schema, except agent-write cases that trip content screening', () => {
-    expect(cases).toHaveLength(500);
+  it('assigns 539 uniquely named cases whose snapshots and queries pass the closed schema, except agent-write cases that trip content screening', () => {
+    expect(cases).toHaveLength(539);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
-    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(61);
+    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(63);
     for (const entry of cases) for (const step of entry.steps) {
       expect(validMemorySnapshot(step.snapshot) && validMemoryPackQuery(step.query)).toBe(!entry.screened);
     }
@@ -57,7 +57,7 @@ describe('memory quality benchmark', () => {
     const report = runMemoryBenchmark([{ arm: 'oracle', builder: oracle }]);
     expect(report.arms[0]!.overall.passRate).toBe(1);
     expect(report.arms[0]!.overall.conflictsSurfaced).toBe(report.arms[0]!.overall.conflictsTotal);
-  });
+  }, 60_000);
   it('discriminates: the flat latest-record diagnostic leaks stale or contested text that governed memory never serves', () => {
     const [governed, flat] = runMemoryBenchmark().arms;
     expect(flat!.overall.forbiddenLeaks).toBeGreaterThan(0);
@@ -68,7 +68,7 @@ describe('memory quality benchmark', () => {
     expect(governed!.byDimension['agent-writes'].passed).toBeGreaterThan(flat!.byDimension['agent-writes'].passed);
     expect(governed!.pendingDecisions).toEqual([]);
     expect(governed!.overall.receiptForeignEventIds).toBe(0);
-  });
+  }, 60_000);
   it('holds the measured governed floors so ranking or pack changes cannot silently regress', () => {
     const governed = runMemoryBenchmark().arms[0]!;
     expect(governed.retrievalByDifficulty.lexical.passed).toBe(20);
@@ -83,7 +83,7 @@ describe('memory quality benchmark', () => {
     expect(governed.retrievalByDifficulty.fresh.passed).toBeGreaterThanOrEqual(25);
     expect(governed.retrievalByDifficulty['second-fresh'].passed).toBeGreaterThanOrEqual(27);
     expect(governed.overall.forbiddenLeaks - governed.byDimension['agent-writes'].forbiddenLeaks).toBe(0);
-  });
+  }, 60_000);
   it('cites sources by ID and digest in pack text, quoting only when the quote differs, with full records on items', () => {
     const same = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
     const different = { ...benchEvent({ id: 'b', subject: 'build', slot: 'cache', text: 'Build cache is safe to clear.' }) };

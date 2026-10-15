@@ -1,5 +1,6 @@
 import { canonicalJson } from '../authority/canonical-json.js';
 import { projectMemoryTemporal } from './temporal.js';
+import { memoryQuoteRetiredBy, type MemoryEvidenceRef } from './source.js';
 import { memoryVocabulary } from './vocabulary.js';
 import { memoryUtf8Bytes, screenedMemorySnapshot, validMemoryId, validMemoryPackQuery } from './validate.js';
 import { MEMORY_LIMITS, type MemoryContextPack, type MemoryFactEvent, type MemoryPackQuery } from './types.js';
@@ -86,6 +87,34 @@ function duplicateOf(a: MemoryFactEvent, b: MemoryFactEvent): boolean {
   const agree = [...va].every(value => vb.has(value)) || [...vb].every(value => va.has(value));
   return agree && shared * 2 >= Math.max(1, Math.min(ta.size, tb.size));
 }
+/**
+ * Where a file citation sits. Docs (README, CHANGELOG, docs/, Markdown), tests, fixtures, mocks, examples, samples,
+ * benchmarks, vendored code and staging/dev config are secondary: they often restate or vary a value the code owns.
+ */
+const SECONDARY_PATH = /(?:^|[/._-])(?:readme|changelog|contributing|docs?|wiki|tests?|__tests__|spec|specs|fixtures?|mocks?|examples?|samples?|staging|stg|dev|bench(?:marks?)?|vendor|third[_-]party)(?:[/._-]|$)|\.(?:mdx?|rst|adoc)(?::\d+)?$/i;
+function sourceTier(event: MemoryFactEvent): 'primary' | 'secondary' | 'unverified' {
+  if (!checkable(event)) return 'unverified';
+  return event.sourceRefs.every(ref => /^file:/i.test(ref.locator) && SECONDARY_PATH.test(ref.locator.slice(5))) ? 'secondary' : 'primary';
+}
+function sourceWords(event: MemoryFactEvent): Set<string> {
+  return terms(event.sourceRefs.map(ref => ref.locator.replace(/^\w+:/, '').replace(/[/._:-]+/g, ' ')).join(' '), false);
+}
+/** Both answer the query (each matches one of its words), they share a topic stem, and each states a number the other does not. */
+function disagrees(a: MemoryFactEvent, b: MemoryFactEvent, search: Set<string>): boolean {
+  const ta = terms(a.text.replace(VALUE_TOKEN, ' ')), tb = terms(b.text.replace(VALUE_TOKEN, ' '));
+  if (![...ta].some(word => tb.has(word))) return false;
+  const fa = factTerms(a), fb = factTerms(b);
+  if (search.size && (![...search].some(word => matches(word, fa)) || ![...search].some(word => matches(word, fb)))) return false;
+  const na = numbers(a.text), nb = numbers(b.text);
+  return [...na].some(value => !nb.has(value)) && [...nb].some(value => !na.has(value));
+}
+/** A primary source states every number the secondary one does: it confirms the secondary fact. */
+function agreesOn(secondary: MemoryFactEvent, primary: MemoryFactEvent): boolean {
+  const ns = numbers(secondary.text), np = numbers(primary.text);
+  return ns.size > 0 && [...ns].every(value => np.has(value));
+}
+/** Numbers stated in a fact (ports, limits, sizes, versions), the values stale docs and wrong-file reads get wrong. */
+function numbers(text: string): Set<string> { return new Set(text.match(/\d+(?:\.\d+)*/g) ?? []); }
 /** Caller-observed source state. changedSourceIds names sources whose quote the caller no longer finds at their locator. */
 export interface MemoryPackOptions { changedSourceIds: string[] }
 function validOptions(value: unknown): value is MemoryPackOptions {
@@ -133,9 +162,30 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   output.receipt.exclusions = view.exclusions.filter(item => item.reason !== 'scope');
   const search = terms(query.query);
   // A fact whose cited source changed after it was observed is withheld until someone re-checks it.
-  const stale = new Set(view.eligible.filter(event => event.sourceRefs.some(ref => changed.has(ref.id))));
+  // So is a fact whose cited quote a later fact in the snapshot shows as replaced, whatever keys either was written under.
+  const evidence = (event: MemoryFactEvent): MemoryEvidenceRef[] => event.sourceRefs.map(ref => ({ locator: ref.locator, quote: ref.quote,
+    observedAt: ref.observedAt ?? event.observedAt ?? event.recordedAt }));
+  // A commit message is looser evidence than a diff: it retires a fact only when the two facts share a topic word.
+  const topic = (event: MemoryFactEvent): Set<string> => terms(event.text.replace(VALUE_TOKEN, ' '));
+  const retired = (event: MemoryFactEvent): boolean => evidence(event).some(ref => view.eligible.some(later => evidence(later).some(newer => {
+    const how = memoryQuoteRetiredBy(ref, newer);
+    if (how === 'message') return [...topic(event)].some(word => topic(later).has(word));
+    if (how === 'file-message') {
+      const said = terms(newer.quote), file = terms(ref.locator.replace(/^file:/i, ''));
+      return [...topic(event)].some(word => said.has(word) && !file.has(word));
+    }
+    return how !== null;
+  })));
+  const stale = new Set(view.eligible.filter(event => event.sourceRefs.some(ref => changed.has(ref.id)) || retired(event)));
+  // Docs, tests, fixtures, examples and non-production config restate values; when one disagrees with a primary source on
+  // the same topic it is held back, unless the query asks about that kind of source ("staging", "tests", "README").
+  const secondary = new Set(view.eligible.filter(event => !stale.has(event) && sourceTier(event) === 'secondary'
+    && ![...search].some(word => sourceWords(event).has(word))
+    && view.eligible.some(other => other !== event && !stale.has(other) && sourceTier(other) === 'primary' && disagrees(event, other, search))
+    && !view.eligible.some(other => other !== event && !stale.has(other) && sourceTier(other) === 'primary' && agreesOn(event, other))));
   stale.forEach(event => output.receipt.exclusions.push({ eventId: event.eventId, reason: 'source-changed' }));
-  const eligibleWords = view.eligible.filter(event => !stale.has(event)).map(event => ({ event, words: factTerms(event) }));
+  secondary.forEach(event => output.receipt.exclusions.push({ eventId: event.eventId, reason: 'weaker-evidence' }));
+  const eligibleWords = view.eligible.filter(event => !stale.has(event) && !secondary.has(event)).map(event => ({ event, words: factTerms(event) }));
   // Rarer matched terms break ties between equal match counts, then exact-word matches beat vocabulary matches.
   // Deterministic over the eligible set only.
   const frequency = new Map<string, number>();

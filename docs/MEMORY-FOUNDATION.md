@@ -205,8 +205,20 @@ changes. The pack applies three rules after ranking:
   comments, so reformatting a line does not withhold a true fact. A quote that
   is only a comment is compared as written.
 
-A contradiction between facts written under different keys is not detected:
-nothing in the history connects them.
+Facts written under different keys connect through their evidence. A fact is
+withheld as `source-changed` when a later fact in the snapshot cites the same
+`file:` locator with a different quote of the same statement, a `commit:` diff
+that removes a line of its quote, or a commit message that names a qualified
+identifier from its quote (or its file, when the message also names its topic).
+`memoryQuoteRetiredBy` in `src/core/memory/source.ts` makes that comparison.
+Chat remarks and an agent's own reasoning never retire a cited quote.
+
+Facts cited from docs (README, CHANGELOG, `docs/`, Markdown), tests, fixtures,
+mocks, examples, samples, benchmarks, vendored code or staging/dev config are
+secondary sources. One is held back as `weaker-evidence` when both it and a
+primary-source fact answer the query, share a topic word and state different
+numbers, unless a primary fact states the same numbers or the query names that
+kind of source ("staging", "tests", "README").
 
 The byte budget includes all returned evidence text, escaping, framing and
 citations. Facts that do not fit are omitted whole with a reason. The receipt
