@@ -97,6 +97,8 @@ A local branch is not a merge, release or production acceptance. Keep scope,
 resource reserves and acceptance criteria explicit; routine execution can proceed
 within them without turning discovery or a passing trial into broader authority.
 
+To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
+
 ## What the evidence means
 
 - **Implemented** means the code path exists; **verified** names the tests that ran.

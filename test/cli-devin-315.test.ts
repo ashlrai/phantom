@@ -43,6 +43,7 @@ function harness(patch: Partial<DevinCliDeps> = {}) {
     },
     budgetView: (tasks, b, now) => devinBudgetView(tasks, b, now),
     readSecret: async () => KEY,
+    platform: 'darwin',
     originRepo: () => 'ashlrai/ashlr-hub',
     cwd: () => '/tmp',
     now: () => new Date(),
@@ -67,6 +68,17 @@ describe('ashlr devin', () => {
     expect(h.config).toEqual([{ enabled: true }]);
     expect(h.out.join('\n')).toMatch(/Connected to Devin as Verse \(service user\) in org-abc/);
     expect([...h.out, ...h.err].join('\n')).not.toContain(KEY);
+  });
+
+  it('refuses connect off macOS before asking for a key it cannot store', async () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      let asked = false;
+      const h = harness({ platform, readSecret: async () => { asked = true; return KEY; } });
+      expect(await runDevinCli(['connect', '--org', 'org-abc'], h.deps)).toBe(1);
+      expect(asked).toBe(false);
+      expect(h.err.join('\n')).toContain('macOS Keychain');
+      expect(h.err.join('\n')).toContain(platform);
+    }
   });
 
   it('a refused key is reported without echoing it', async () => {
