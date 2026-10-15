@@ -384,7 +384,7 @@ export function scrubSecrets(text: string): string {
       .replace(/"([^\s"]{12,200})"|'([^\s']{12,200})'/g, (m: string, dq: string | undefined, sq: string | undefined, offset: number, whole: string) =>
         (isRandomLiteral(dq ?? sq ?? '') && CREDENTIAL_HINT.test(whole.slice(Math.max(0, offset - 100), offset)) ? m.replace(dq ?? sq ?? '', REDACTED) : m))
       // 10d. A credential disclosed in prose: "the Redis password on prod-cache-02 is Y6kQ…", "reset it to 5aHJ…".
-      .replace(PROSE_CREDENTIAL_NOUN, (m: string, noun: string, rest: string) => noun + redactProseCredential(rest))
+      .replace(PROSE_CREDENTIAL_NOUN, (_m: string, noun: string, rest: string) => noun + redactProseCredential(rest))
       // 13. Suffix-named assignments rule 4's `\b` anchor cannot see. LAST, so
       // every token-shape rule above has already turned a JWT/AKIA/hex value
       // into [REDACTED]; that marker is left untouched below. Running these
