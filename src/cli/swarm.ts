@@ -1614,7 +1614,7 @@ function printSwarmHelp(): void {
   console.log(`    ashlr swarm "Refactor config parsing" --budget 40000 --parallel 2`);
   console.log('');
   console.log(`    ${gray('# Run from a spec artifact')}`)
-  console.log(`    ashlr swarm my-spec-id --project ~/Desktop/github/my-project`);
+  console.log(`    ashlr swarm my-spec-id --project ~/code/my-project`);
   console.log('');
   console.log(`    ${gray('# Launch in background and watch later')}`)
   console.log(`    ashlr swarm "Implement feature X" --background --budget 80000`);

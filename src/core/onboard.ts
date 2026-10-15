@@ -17,7 +17,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
-import { saveConfig, defaultConfig } from './config.js';
+import { saveConfig, firstRunConfig } from './config.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
@@ -61,7 +61,7 @@ async function stepConfig(): Promise<OnboardStep> {
     }
     // Create from defaults via saveConfig (loadConfig already does this, but we
     // want explicit ensure-only semantics here — never overwrite existing).
-    const defaults = defaultConfig();
+    const defaults = firstRunConfig();
     saveConfig(defaults);
     return step('config', 'ok', `Created default config at ${configPath}`);
   } catch (err) {
