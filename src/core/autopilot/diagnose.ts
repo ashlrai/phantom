@@ -145,6 +145,8 @@ const INFRA_PATTERNS: RegExp[] = [
   /npm ERR! (?:code (?:ECONNRESET|ETIMEDOUT|EAI_AGAIN)|network)/i,
   /\bAPI rate limit exceeded\b/i,
   /Error: The operation was canceled\./i,
+  // Phantom's CI refuses a run whose PR merge tree moved after the event (the base or head was pushed meanwhile).
+  /Candidate tree differs from the original GitHub event tree/,
 ];
 
 const isFailing = (c: CheckRun) => c.status === 'completed' && c.conclusion !== null && FAILING.has(c.conclusion);

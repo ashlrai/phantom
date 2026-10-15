@@ -57,6 +57,8 @@ describe('autopilot plan', () => {
     const o = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: '##[error]The hosted runner lost communication with the server.' } });
     expect(plan(o, guards, emptyState())).toMatchObject({ action: 'rerun' });
     expect(plan(o, guards, { ...emptyState(), reruns: [`${HEAD}:test`] })).toMatchObject({ action: 'stop' });
+    const moved = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: 'Candidate tree differs from the original GitHub event tree\n##[error]Process completed with exit code 1.' } });
+    expect(plan(moved, guards, emptyState())).toMatchObject({ action: 'rerun' });
   });
 
   it('merges the base on conflict before anything else, at most once per head and base', () => {

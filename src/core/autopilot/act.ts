@@ -271,8 +271,17 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
       const stopped = await stopNow(opts);
       if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
       for (const c of p.checks) {
-        await rerunJob(opts.repo, c.id, gh);
+        // Counted before asking, so a refused re-run is not retried every tick.
         state.reruns.push(`${obs.pr.headSha}:${c.name}`);
+        try {
+          await rerunJob(opts.repo, c.id, gh);
+        } catch (err) {
+          saveState(opts.repo, opts.number, state);
+          row.result = 'error';
+          row.detail.push(`could not re-run ${c.name}: ${err instanceof Error ? err.message : String(err)}`);
+          record(row, now());
+          return row;
+        }
       }
       saveState(opts.repo, opts.number, state);
       row.result = 'rerun';
