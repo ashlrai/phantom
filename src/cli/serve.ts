@@ -114,6 +114,13 @@ export async function openBrowser(url: string): Promise<void> {
     stdio: 'ignore',
     shell: platform === 'win32', // 'start' requires shell on Windows
   });
+  // A missing opener (headless Linux, containers, SSH) fails asynchronously
+  // with ENOENT. Without a listener that 'error' event kills the server, so
+  // settle here and let callers print the manual-navigation fallback.
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
   child.unref();
 }
 

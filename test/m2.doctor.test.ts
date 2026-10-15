@@ -449,7 +449,7 @@ describe('runDoctor — all healthy', () => {
 });
 
 // ---------------------------------------------------------------------------
-// No local provider up → expect a 'fail' check
+// No local provider up → warn, not fail (matches preflight readiness)
 // ---------------------------------------------------------------------------
 
 describe('runDoctor — no local provider up', () => {
@@ -464,28 +464,21 @@ describe('runDoctor — no local provider up', () => {
     };
   });
 
-  // 30s: provider probes stack multiple 2s connection timeouts on slow CI runners.
-  it('produces at least one fail check when no provider is up', async () => {
+  it('warns, without failing, when no local provider is up', async () => {
     const cfg = makeConfig(tmpHome);
     const report = await runDoctor(cfg);
-    expect(report.summary.fail).toBeGreaterThan(0);
+    const active = report.checks.find(c => c.id === 'provider:active');
+    expect(active?.status).toBe('warn');
+    expect(active?.detail).toMatch(/--allow-cloud/);
+    expect(active?.fix).toMatch(/ollama serve/);
+    expect(report.checks.some(c => c.status === 'fail' && c.id.startsWith('provider'))).toBe(false);
   });
 
-  it('summary.fail is reflected correctly in summary counts', async () => {
+  it('summary counts still match the checks', async () => {
     const cfg = makeConfig(tmpHome);
     const report = await runDoctor(cfg);
-    const failChecks = report.checks.filter(c => c.status === 'fail');
-    expect(report.summary.fail).toBe(failChecks.length);
-    expect(failChecks.length).toBeGreaterThan(0);
-  });
-
-  it('a provider-related check has id containing "provider"', async () => {
-    const cfg = makeConfig(tmpHome);
-    const report = await runDoctor(cfg);
-    const providerFails = report.checks.filter(
-      c => c.status === 'fail' && c.id.includes('provider'),
-    );
-    expect(providerFails.length).toBeGreaterThan(0);
+    expect(report.summary.fail).toBe(report.checks.filter(c => c.status === 'fail').length);
+    expect(report.summary.warn).toBe(report.checks.filter(c => c.status === 'warn').length);
   });
 });
 
@@ -574,13 +567,36 @@ describe('checkLocus / runDoctor — locus', () => {
     expect(c.detail).toContain('pin=personal:personal');
   });
 
-  it('fails when locus is not on PATH', () => {
+  it('warns when locus is not on PATH (optional companion)', () => {
     _locusAvailable = false;
     _locusProbe = makeLocusProbe({ available: false });
-    const c = checkLocus();
-    expect(c.status).toBe('fail');
-    expect(c.detail).toMatch(/not found on PATH/i);
-    expect(c.fix).toBeTruthy();
+    const prev = process.env.LOCUS_ENFORCE;
+    delete process.env.LOCUS_ENFORCE;
+    try {
+      const c = checkLocus();
+      expect(c.status).toBe('warn');
+      expect(c.detail).toMatch(/not found on PATH.*optional/i);
+      expect(c.fix).toBeTruthy();
+    } finally {
+      if (prev === undefined) delete process.env.LOCUS_ENFORCE;
+      else process.env.LOCUS_ENFORCE = prev;
+    }
+  });
+
+  it('fails when locus is not on PATH and LOCUS_ENFORCE=enforce', () => {
+    _locusAvailable = false;
+    _locusProbe = makeLocusProbe({ available: false });
+    const prev = process.env.LOCUS_ENFORCE;
+    process.env.LOCUS_ENFORCE = 'enforce';
+    try {
+      const c = checkLocus();
+      expect(c.status).toBe('fail');
+      expect(c.detail).toMatch(/not found on PATH.*LOCUS_ENFORCE/i);
+      expect(c.fix).toBeTruthy();
+    } finally {
+      if (prev === undefined) delete process.env.LOCUS_ENFORCE;
+      else process.env.LOCUS_ENFORCE = prev;
+    }
   });
 
   it('fails when agent status is unsafe', () => {
