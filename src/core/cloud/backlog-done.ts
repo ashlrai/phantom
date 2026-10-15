@@ -1,6 +1,6 @@
 /**
- * Checks a backlog item's `doneWhen` acceptance condition against the target
- * repo's default branch through GitHub (the same bounded, non-prompting gh the
+ * Checks a backlog item's `doneWhen` acceptance condition (a file on the
+ * target repo's default branch, or an issue's state) through GitHub (the same bounded, non-prompting gh the
  * tracker uses). Only a positive read skips an item: a missing file is "open",
  * and any other failure is "unknown", which launches the item as before.
  */
@@ -15,6 +15,12 @@ export async function checkDoneWhen(item: CloudBacklogItem, repo: string, gh: Gh
   const done = item.doneWhen;
   if (!done) return 'open';
   try {
+    if ('issue' in done) {
+      const res = await gh(['api', `repos/${repo}/issues/${done.issue}`, '--jq', '.state']);
+      if (!res.ok) return 'unknown';
+      const state = res.stdout.trim();
+      return state === 'closed' ? 'satisfied' : state === 'open' ? 'open' : 'unknown';
+    }
     const res = await gh(['api', '-H', 'Accept: application/vnd.github.raw', `repos/${repo}/contents/${done.path}`]);
     if (!res.ok) return /HTTP 404|Not Found/i.test(res.stderr) ? 'open' : 'unknown';
     return done.contains === undefined || res.stdout.includes(done.contains) ? 'satisfied' : 'open';

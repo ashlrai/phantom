@@ -62,10 +62,13 @@ export function validBacklogItem(value: unknown): CloudBacklogItem | null {
   return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}), ...(doneWhen ? { doneWhen } : {}) };
 }
 
-/** A repo-relative path of plain segments (no `..`, no absolute or hidden-escape forms) and a short literal. */
+/** A repo-relative path of plain segments (no `..`, no absolute forms) and a short literal, or an issue number. */
 export function validDoneWhen(value: unknown): CloudBacklogDoneWhen | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { path, contains } = value as Record<string, unknown>;
+  const { path, contains, issue } = value as Record<string, unknown>;
+  if (issue !== undefined) {
+    return path === undefined && contains === undefined && Number.isSafeInteger(issue) && (issue as number) > 0 ? { issue: issue as number } : null;
+  }
   if (typeof path !== 'string' || path.length > 300 || !/^[A-Za-z0-9_@.-]+(\/[A-Za-z0-9_@.-]+)*$/.test(path)) return null;
   if (path.split('/').some((seg) => seg === '.' || seg === '..')) return null;
   if (contains !== undefined && (typeof contains !== 'string' || contains === '' || contains.length > 200)) return null;

@@ -274,15 +274,16 @@ export interface CloudBacklogItem {
    */
   metric?: MetricSpec;
   /**
-   * Acceptance condition checked at the target repo's default branch before
-   * the item is launched: satisfied when `path` exists there (and contains
-   * `contains`, when given). A satisfied item is skipped, so a fix that
-   * already landed does not cost a session that reports "no-change".
+   * Acceptance condition checked on GitHub before the item is launched:
+   * `path` exists on the target repo's default branch (and contains
+   * `contains`, when given), or issue `issue` of the target repo is closed. A
+   * satisfied item is skipped, so a fix that already landed does not cost a
+   * session that reports "no-change".
    */
   doneWhen?: CloudBacklogDoneWhen;
 }
 
-export interface CloudBacklogDoneWhen { path: string; contains?: string }
+export type CloudBacklogDoneWhen = { path: string; contains?: string } | { issue: number };
 
 export interface CloudBacklogView {
   items: Array<CloudBacklogItem & { claimedBy: string | null; lastState: CloudTaskState | null }>;

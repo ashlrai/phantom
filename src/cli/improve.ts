@@ -5,6 +5,7 @@
  *   measure  <id> --repo <dir> [--repeat N]                  measure the metric at the PR's exact merge base and head
  *   outcomes [--json]                                        measured outcomes and proposer comparison vs the deterministic baseline
  *   sync-backlog                                             register cloud backlog PRs whose item declares a metric
+ *   discover [--repo owner/name] [--dry-run] [--json]        add backlog items from member issues, a red default branch and proposals
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
  */
 import { createHash } from 'node:crypto';
@@ -18,6 +19,7 @@ const USAGE = `Usage:
   phm improve measure <id> --repo <dir> [--repeat <1-5>]
   phm improve outcomes [--json]
   phm improve sync-backlog
+  phm improve discover [--repo <owner/name>] [--dry-run] [--json]
   phm improve promote <id> --repo <dir> [--queue-merge] [--json]`;
 
 export async function cmdImprove(argv: string[]): Promise<number> {
@@ -29,6 +31,7 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     case 'measure': return measure(args[1], val('--repo'), val('--repeat'));
     case 'outcomes': return outcomes(args.includes('--json'));
     case 'sync-backlog': return syncBacklog();
+    case 'discover': return discover(val('--repo'), args.includes('--dry-run'), args.includes('--json'));
     case 'promote': return promote(args[1], val('--repo'), !args.includes('--queue-merge'), args.includes('--json'));
     default: console.error(USAGE); return 2;
   }
@@ -133,6 +136,24 @@ async function syncBacklog(): Promise<number> {
     console.log(n ? `ok registered ${n} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
     return 0;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
+}
+
+async function discover(repoArg: string | undefined, dryRun: boolean, json: boolean): Promise<number> {
+  const { discoverBacklog } = await import('../core/improve/discover.js');
+  const { appendUserBacklogItems, validBacklogItem } = await import('../core/cloud/backlog.js');
+  const { readCloudBudget, CLOUD_REPO_PATTERN } = await import('../core/cloud/store.js');
+  const repo = repoArg ?? readCloudBudget().selfImprove.repo;
+  if (!CLOUD_REPO_PATTERN.test(repo)) { console.error('--repo must be owner/name'); return 2; }
+  const res = await discoverBacklog(repo, { proposals: gatherProposals('default', runSteward(defaultStewardPolicy())) });
+  const items = res.items.filter((i) => validBacklogItem(i) !== null);
+  const added = dryRun ? 0 : appendUserBacklogItems(items);
+  if (json) console.log(JSON.stringify({ repo, dryRun, found: items.length, added, items, errors: res.errors }, null, 2));
+  else {
+    for (const i of items) console.log(`${i.id.padEnd(28)} p${i.priority} ${i.area.padEnd(12)} ${i.title}`);
+    for (const e of res.errors) console.log(`warn ${e}`);
+    console.log(dryRun ? `-> ${items.length} item(s) found; dry run, nothing added` : `ok ${added} new backlog item(s) added (${items.length} found)`);
+  }
+  return res.errors.length && !items.length ? 1 : 0;
 }
 
 async function outcomes(json: boolean): Promise<number> {
