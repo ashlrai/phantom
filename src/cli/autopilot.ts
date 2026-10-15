@@ -25,18 +25,20 @@ const USAGE = `Usage: phm autopilot <pr-number|pr-url|--all> [options]
   --interval <seconds>   seconds between watch ticks (default 90)
   --json                 one JSON object per tick`;
 
-export const DEFAULT_FIXER = ['claude', '-p', '--permission-mode', 'acceptEdits'];
+import { DEFAULT_FIXER } from '../core/autopilot/act.js';
+
+export { DEFAULT_FIXER };
+
+export function repoFromRemote(url: string): string | null {
+  const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url.trim());
+  return m ? m[1]! : null;
+}
 
 export function parsePrRef(ref: string | undefined): { number: number; repo: string | null } | null {
   if (!ref) return null;
   const url = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(ref);
   if (url) return { repo: url[1]!, number: Number(url[2]) };
   return /^#?\d+$/.test(ref) ? { repo: null, number: Number(ref.replace('#', '')) } : null;
-}
-
-export function repoFromRemote(url: string): string | null {
-  const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url.trim());
-  return m ? m[1]! : null;
 }
 
 /** A command string → argv. Splits on whitespace; double quotes group. No shell. */
@@ -66,7 +68,7 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   if (!Number.isSafeInteger(maxPushes) || maxPushes < 0) { console.error('--max-pushes must be a whole number'); return 2; }
   const interval = Math.max(15, Number(val('--interval') ?? 90)) * 1000;
   const json = args.includes('--json');
-  const fixer = args.includes('--no-fixer') ? null : val('--fixer') ? splitCommand(val('--fixer')!) : DEFAULT_FIXER;
+  const fixer = args.includes('--no-fixer') ? null : val('--fixer') ? splitCommand(val('--fixer')!) : [...DEFAULT_FIXER];
   const guards = await liveGuards();
   const opts = {
     repo,

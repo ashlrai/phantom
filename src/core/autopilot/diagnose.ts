@@ -146,7 +146,8 @@ const INFRA_PATTERNS: RegExp[] = [
   /\bAPI rate limit exceeded\b/i,
   /Error: The operation was canceled\./i,
   // Phantom's CI refuses a run whose PR merge tree moved after the event (the base or head was pushed meanwhile).
-  /Candidate tree differs from the original GitHub event tree/,
+  // Anchored to the start of a log line, so a test that merely prints the phrase cannot turn its own failure into a re-run.
+  /^(?:\S+Z\s+)?(?:Error: )?Candidate tree differs from the original GitHub event tree/m,
 ];
 
 const isFailing = (c: CheckRun) => c.status === 'completed' && c.conclusion !== null && FAILING.has(c.conclusion);

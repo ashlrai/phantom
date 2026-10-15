@@ -59,6 +59,11 @@ describe('autopilot plan', () => {
     expect(plan(o, guards, { ...emptyState(), reruns: [`${HEAD}:test`] })).toMatchObject({ action: 'stop' });
     const moved = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: 'Candidate tree differs from the original GitHub event tree\n##[error]Process completed with exit code 1.' } });
     expect(plan(moved, guards, emptyState())).toMatchObject({ action: 'rerun' });
+    const stamped = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: '2026-10-15T04:40:00.0000000Z Error: Candidate tree differs from the original GitHub event tree' } });
+    expect(plan(stamped, guards, emptyState())).toMatchObject({ action: 'rerun' });
+    // A test that prints the phrase mid-line keeps its failure its own.
+    const printed = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: '  expected "Candidate tree differs from the original GitHub event tree" to equal ""' } });
+    expect(plan(printed, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
   });
 
   it('merges the base on conflict before anything else, at most once per head and base', () => {

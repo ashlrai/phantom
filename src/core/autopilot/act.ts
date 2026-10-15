@@ -65,6 +65,9 @@ const mergeKey = (obs: Observation) => `merge-base:${obs.pr.headSha}:${obs.pr.ba
 
 export const DEFAULT_OWNED_PREFIXES = ['improve/', 'ashlr-cloud/', 'verse/', 'ashlr/proposal'] as const;
 
+/** Edits files from the brief on stdin; not granted shell commands. */
+export const DEFAULT_FIXER: readonly string[] = ['claude', '-p', '--permission-mode', 'acceptEdits'];
+
 export type Run = (cmd: string, args: string[], opts: { cwd: string; timeoutMs?: number; input?: string; env?: NodeJS.ProcessEnv }) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 export const defaultRun: Run = (cmd, args, opts) => new Promise((resolve) => {
@@ -270,20 +273,19 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     if (p.action === 'rerun') {
       const stopped = await stopNow(opts);
       if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
+      // Counted and saved before asking: a refused re-run, or a crash mid-request, is never retried.
+      for (const c of p.checks) state.reruns.push(`${obs.pr.headSha}:${c.name}`);
+      saveState(opts.repo, opts.number, state);
       for (const c of p.checks) {
-        // Counted before asking, so a refused re-run is not retried every tick.
-        state.reruns.push(`${obs.pr.headSha}:${c.name}`);
         try {
           await rerunJob(opts.repo, c.id, gh);
         } catch (err) {
-          saveState(opts.repo, opts.number, state);
           row.result = 'error';
           row.detail.push(`could not re-run ${c.name}: ${err instanceof Error ? err.message : String(err)}`);
           record(row, now());
           return row;
         }
       }
-      saveState(opts.repo, opts.number, state);
       row.result = 'rerun';
       record(row, now());
       return row;
