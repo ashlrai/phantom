@@ -411,6 +411,19 @@ export async function cmdDocs(args: string[]): Promise<number> {
   }
 
   if (!agent) {
+    if (json) {
+      // --json never prints the human help: one JSON object, same exit code.
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        error: 'ashlr docs needs a surface; pass --agent --json',
+        surfaces: [
+          { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
+          { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
+          { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
+        ],
+      }, null, 2) + '\n');
+      return 2;
+    }
     printDocsHelp();
     return 2;
   }
