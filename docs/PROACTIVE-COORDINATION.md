@@ -61,6 +61,9 @@ preferences, lease and deadline. Changes require a new review. The preview
 contains only the saved local goal, criteria and planning metadata; packets
 with imported source accounts or evidence are refused. Locally supplied text
 does not prove human authorship or authorize access to the named project.
+Because the brief holds only the saved goal and criteria, name any exact
+repository, PR and head SHA there when you record the task. Text added in the
+Bot conversation after pasting is not part of the reviewed brief.
 
 The brief is JSON data, bounded to 32 KiB and
 screened using the shared secret patterns. Its digest binds the exact rendered
