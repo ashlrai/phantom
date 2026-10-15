@@ -153,6 +153,8 @@ describe('M30 CI workflow', () => {
     expect(ciYml.match(/^\s{2,}permissions:/gm) ?? []).toHaveLength(0);
     expect(ciYml).toMatch(/^concurrency:\n {2}group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m);
     expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
+    // The required Merge Gate must also report on merge-queue commits.
+    expect(ciYml).toMatch(/^ {2}merge_group:$/m);
   });
 
   it('checks out the exact candidate and binds its tree to the original event before gates', () => {
@@ -275,7 +277,7 @@ describe('M30 CI workflow', () => {
         expect(step).toContain('timeout-minutes: 2');
         expect(step).not.toMatch(/always\(\)|needs:|permissions:|qualifyArtifact|verifyArtifact|adoptArtifact/);
       }
-      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}');
+      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}');
       expect(observations[1]).toContain("if: success() && steps.shadow.outputs.shadow_dir != ''");
       expect(observations[1]).toContain('name: phantom-impact-shadow-');
       const full = job.match(/^ {6}- name: Test (?:web operator console|complete Mac [^\n]+)\n[\s\S]*?(?=^ {6}- name:)/m)?.[0] ?? '';
