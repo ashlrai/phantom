@@ -172,7 +172,7 @@ describe('local exhaustive prepublish shards', () => {
     // Alone on its machine, the shard gets the two workers a full local run
     // spreads over two concurrent single-worker shards.
     expect(rows[0]).toMatchObject({
-      shard: `--shard=${shard}/4`, workers: '--maxWorkers=2', unitWorkers: '2', parallelism: [], bail: '--bail=1',
+      shard: `--shard=${shard}/4`, workers: '--maxWorkers=2', unitWorkers: '1', parallelism: [], bail: '--bail=1',
     });
     expect(rows[0]?.file).toBeUndefined();
     expect(rows[0]?.excludes.sort()).toEqual([...isolatedFiles, markerFile].map(file => `--exclude=${file}`).sort());
