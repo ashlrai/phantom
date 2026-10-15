@@ -26,6 +26,8 @@ const LEASE_DURATION_MS = 24 * 60 * 60_000;
 // The conductor's longest retry window is 15 min * 2^8 = 64 h. A persisted
 // deadline further ahead than these horizons was written under a skewed clock.
 const MAX_RETRY_HORIZON_MS = 72 * 60 * 60_000;
+// A live lease is written exactly LEASE_DURATION_MS ahead; allow an hour for a backward clock step.
+const MAX_LEASE_HORIZON_MS = LEASE_DURATION_MS + 60 * 60_000;
 const LEASE_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ENGINE_IDS = new Set<EngineId>([
   'builtin', 'local-coder', 'ashlrcode', 'aw', 'claude', 'codex',
@@ -277,7 +279,7 @@ export function claimSimpleConductorTask(
       return { ok: false, reason: 'cooling', detail: 'task retry window has not opened' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId) {
-      return pendingUntil(current.dispatchLease.expiresAt, nowMs, LEASE_DURATION_MS)
+      return pendingUntil(current.dispatchLease.expiresAt, nowMs, MAX_LEASE_HORIZON_MS)
         ? { ok: false, reason: 'busy', detail: 'task has an active dispatch lease' }
         : {
             ok: false,
@@ -380,7 +382,7 @@ export function reconcileSimpleConductorTask(
       return { ok: false, reason: 'changed', detail: 'task generation changed during reconciliation' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId &&
-      pendingUntil(current.dispatchLease.expiresAt, nowMs, LEASE_DURATION_MS)) {
+      pendingUntil(current.dispatchLease.expiresAt, nowMs, MAX_LEASE_HORIZON_MS)) {
       return { ok: false, reason: 'changed', detail: 'task has an active dispatch lease' };
     }
     const nextTask: TaskSpec = {
