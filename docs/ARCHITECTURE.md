@@ -466,7 +466,7 @@ root; `ashlr loop --dry-run` remains available.
 
 This is a batched, series-level view. For an ID-by-ID lookup (including
 milestone numbers that were spec'd for one thing and shipped as another),
-see the [source milestone index](MILESTONE-INDEX.md).
+see the [source milestone index](https://github.com/ashlrai/phantom/blob/master/docs/MILESTONE-INDEX.md).
 
 | Milestones | Theme | Primary modules |
 |-----------|-------|-----------------|
