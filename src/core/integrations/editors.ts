@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import { fsyncDirectory } from '../util/durability.js';
+import { isOwnGatewayEntry, legacyGatewayKeys } from './gateway-entry.js';
 
 export type EditorTarget = 'claude' | 'codex' | 'cursor';
 
@@ -668,15 +669,25 @@ function wireJsonEditor(
 
   const existingServers = existing.mcpServers ?? {};
   const existingEntry = existingServers[ASHLR_HUB_MCP_SERVER];
-  if (sameJsonEntry(existingEntry, gatewayEntry)) {
+  // `phm mcp install` used to register this same gateway under the legacy
+  // `ashlr` key; drop it (only when it launches our own binary) so the editor
+  // never loads the gateway's tool set twice.
+  const legacyKeys = legacyGatewayKeys(existingServers);
+  const hasCanonical = Object.prototype.hasOwnProperty.call(existingServers, ASHLR_HUB_MCP_SERVER);
+  // An entry `phm mcp install` wrote (absolute path to this package's bin)
+  // is the same gateway: keep it rather than refusing or flip-flopping.
+  const ownCanonical = sameJsonEntry(existingEntry, gatewayEntry) || isOwnGatewayEntry(existingEntry);
+  if (ownCanonical && legacyKeys.length === 0) {
     return { ok: true, detail: `already wired — no changes needed (${configPath})` };
   }
-  if (Object.prototype.hasOwnProperty.call(existingServers, ASHLR_HUB_MCP_SERVER)) {
+  if (hasCanonical && !ownCanonical) {
     return {
       ok: false,
       detail: `${ASHLR_HUB_MCP_SERVER} already exists with a different ${target} configuration; refusing to overwrite it`,
     };
   }
+  const keptServers: Record<string, McpServerEntry> = { ...existingServers };
+  for (const key of legacyKeys) delete keptServers[key];
 
   try {
     if (snapshot.found) backupConfig(configPath, snapshot.bytes);
@@ -688,8 +699,8 @@ function wireJsonEditor(
   const merged: ConfigFileShape = {
     ...existing,
     mcpServers: {
-      ...existingServers,
-      [ASHLR_HUB_MCP_SERVER]: gatewayEntry,
+      ...keptServers,
+      [ASHLR_HUB_MCP_SERVER]: ownCanonical && existingEntry ? existingEntry : gatewayEntry,
     },
   };
 
