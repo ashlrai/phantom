@@ -188,6 +188,10 @@ describe('h7 preflight — READ-ONLY readiness check', () => {
       sourceState: 'healthy',
       reason: 'present',
     }));
+    // The fix hint must name a command that exists: `ashlr kill` is not one.
+    const active = await buildReadiness(makeCfg());
+    const killWarning = active.warnings.find((finding) => finding.id === 'kill-switch');
+    expect(killWarning?.fix).toContain('`ashlr enroll kill off`');
 
     fx!.setKill(false);
     mkdirSync(join(fx!.ashlrDir, 'KILL'));
