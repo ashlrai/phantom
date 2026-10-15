@@ -19,6 +19,12 @@ export class GrokHandoffPreviewError extends Error {
 function refuse(code: GrokHandoffPreviewError['code']): never { throw new GrokHandoffPreviewError(code); }
 const time = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const same = (left: unknown, right: unknown): boolean => canonicalJson(left) === canonicalJson(right);
+// Recognize these home roots at the external-brief boundary. Shared redaction
+// retains its existing contract for other consumers. Screen original leaves
+// before JSON escaping; refusing preserves the exact reviewed bytes.
+const EXTERNAL_HOME_ROOT = /(?<![\w.-])(?:\/mnt\/[a-z]\/Users\/(?!Shared(?:\/|$|[\s"'<>]))[^/\s"'<>]+|\/var\/home\/[^/\s"'<>]+|\/root)(?![\w.-])/iu;
+const unsafeBriefText = (value: string): boolean => scrubSecrets(value) !== value
+  || redactGenericHomePaths(value) !== value || EXTERNAL_HOME_ROOT.test(value);
 
 export function buildGrokHandoffPreview(input: {
   request: GrokHandoffPreviewRequest; read: CompanionRead; packet: unknown; profile: ProactiveProfile | null; asOf: string;
@@ -51,7 +57,7 @@ export function buildGrokHandoffPreview(input: {
   const rawText = [task.tenantId, task.projectBindingId, task.id, attempt.ownerId, profile.id,
     profile.identity.provider, profile.identity.accountId, profile.identity.agentId,
     packet.goal, ...packet.acceptance, ...task.capabilityIds, ...packet.coverage.stopReasons];
-  if (rawText.some(value => typeof value !== 'string' || scrubSecrets(value) !== value || redactGenericHomePaths(value) !== value)) refuse('HELD');
+  if (rawText.some(value => typeof value !== 'string' || unsafeBriefText(value))) refuse('HELD');
   const briefText = canonicalJson({
     schemaVersion: 1, type: 'phantom-grok-bot-operator-brief',
     provenance: 'locally-supplied-review-required-not-authorship-proof',
@@ -69,7 +75,7 @@ export function buildGrokHandoffPreview(input: {
   }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   // Refuse any transformation; the preview digest must bind the exact displayed/copied bytes.
   if (Buffer.byteLength(briefText, 'utf8') > GROK_HANDOFF_PREVIEW_MAX_BYTES
-    || scrubSecrets(briefText) !== briefText || redactGenericHomePaths(briefText) !== briefText) refuse('HELD');
+    || unsafeBriefText(briefText)) refuse('HELD');
   const previewDigest = createHash('sha256').update(briefText, 'utf8').digest('hex');
   if (request.expectedPreviewDigest !== undefined && request.expectedPreviewDigest !== previewDigest) refuse('HELD');
   return { schemaVersion: 1, taskId: task.id, attemptId: attempt.id, epoch: attempt.epoch, revision: read.revision,
