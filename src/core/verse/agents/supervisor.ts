@@ -54,6 +54,8 @@ export interface SupervisorDeps {
   readChecks?: typeof readAgentChecks;
   failingReport?: typeof failingCiReport;
   merge?: (root: string, input: MergeInput) => Promise<unknown>;
+  /** Runs the merge under the outward-mutation fence; resolves to a holding reason, or null when the merge ran. */
+  mutationFence?: (effect: () => Promise<string | null>) => Promise<string | null>;
   checksDeps?: ChecksDeps;
   /** Runs after each timed pass (the API rebuilds its board cache here). */
   afterTick?: () => Promise<void>;
@@ -220,18 +222,25 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
   if (agent.autoMerge && read.detail.mergeVerdict.allowed && pr.headSha) {
     if (mergeTried.get(agent.id) === pr.headSha) return agent;
     mergeTried.set(agent.id, pr.headSha);
+    let held: string | null;
     try {
-      // The verdict was read before several GitHub round-trips: Stop and Pause are read again at the moment of merging.
-      const [killed, paused] = await Promise.all([(deps.checksDeps?.killOn ?? defaultKillOn)(), (deps.checksDeps?.pausedOn ?? defaultPausedOn)()]);
-      if (killed || paused) {
-        mergeTried.delete(agent.id);
-        return (await note(store, agent.id, `Auto-merge is holding: ${killed ? 'the kill switch is engaged' : 'Phantom is paused'}.`)) ?? agent;
-      }
       const requiredChecks = (deps.checksDeps?.requiredAutoMergeChecks ?? (() => requiredAutoMergeChecks(process.env['ASHLR_VERSE_AUTOMERGE_CHECKS'])))();
-      await (deps.merge ?? ((root, input) => mergePullRequest(root, input, deps.ops)))(agent.workspace.path, { number: pr.number, headSha: pr.headSha, requiredChecks });
+      // The merge is an outward effect: it runs under the machine-wide outward-mutation fence, so KILL and
+      // unenroll (which take the same fence before reporting quiescence) can never land in the middle of it,
+      // and Stop/Pause are read inside the fence, at the moment of merging.
+      held = await (deps.mutationFence ?? withOutwardMutationFence)(async () => {
+        const [killed, paused] = await Promise.all([(deps.checksDeps?.killOn ?? defaultKillOn)(), (deps.checksDeps?.pausedOn ?? defaultPausedOn)()]);
+        if (killed || paused) return killed ? 'the kill switch is engaged' : 'Phantom is paused';
+        await (deps.merge ?? ((root, input) => mergePullRequest(root, input, deps.ops)))(agent.workspace!.path, { number: pr.number, headSha: pr.headSha!, requiredChecks });
+        return null;
+      });
     } catch (err) {
       agent = (await note(store, agent.id, `Auto-merge was refused: ${describe(err)}`)) ?? agent;
       return agent;
+    }
+    if (held) {
+      mergeTried.delete(agent.id);
+      return (await note(store, agent.id, `Auto-merge is holding: ${held}.`)) ?? agent;
     }
     agent = (await note(store, agent.id, `Merged PR #${pr.number}. Archiving the workspace.`)) ?? agent;
     try {
@@ -249,6 +258,27 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
     if (agent.loopNote !== reason) agent = (await note(store, agent.id, reason)) ?? agent;
   }
   return agent;
+}
+
+/**
+ * Run `effect` holding the outward-mutation fence (sandbox/mutation-fence.ts).
+ * Busy fence = hold and retry on a later tick; a fence lost during the effect
+ * means its outcome is unknown, which the next GitHub read settles.
+ */
+export async function withOutwardMutationFence(effect: () => Promise<string | null>): Promise<string | null> {
+  const { acquireOutwardMutationFenceAsync, ownsOutwardMutationFence, releaseOutwardMutationFence } = await import('../../sandbox/mutation-fence.js');
+  const fence = await acquireOutwardMutationFenceAsync(2_000);
+  if (!ownsOutwardMutationFence(fence)) {
+    releaseOutwardMutationFence(fence);
+    return 'another outward action holds the mutation fence; it retries on a later pass';
+  }
+  try {
+    const held = await effect();
+    if (held === null && !ownsOutwardMutationFence(fence)) return 'the mutation fence was lost during the merge; the next GitHub read settles whether it landed';
+    return held;
+  } finally {
+    releaseOutwardMutationFence(fence);
+  }
 }
 
 /** One pass over every live agent. Serial: GitHub and git are shared resources. */

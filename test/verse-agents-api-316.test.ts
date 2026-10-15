@@ -545,6 +545,13 @@ describe('the post-PR loop', () => {
       expect(agent.loopNote).toMatch(/Auto-merge is holding: (the kill switch is engaged|Phantom is paused)/);
     }
 
+    // Red team: a busy outward-mutation fence (KILL draining, another outward action) holds the merge.
+    resetSupervisorCachesForTest();
+    checksRead = readOf(detail({ ci: 'passing', mergeVerdict: { allowed: true, reason: 'ok' } }));
+    agent = await superviseAgent(supervisorDeps({ merge, mutationFence: async () => 'another outward action holds the mutation fence', checksDeps: { requiredAutoMergeChecks: () => ['CI'], killOn: async () => false, pausedOn: async () => false } }), agent);
+    expect(merges).toEqual([]);
+    expect(agent.loopNote).toMatch(/holds the mutation fence/);
+
     resetSupervisorCachesForTest();
     checksRead = readOf(detail({ ci: 'passing', mergeVerdict: { allowed: true, reason: 'ok' } }));
     agent = await superviseAgent(supervisorDeps({ merge, checksDeps: { requiredAutoMergeChecks: () => ['CI'], killOn: async () => false, pausedOn: async () => false } }), agent);
