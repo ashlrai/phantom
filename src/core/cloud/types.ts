@@ -93,6 +93,8 @@ export interface CloudTaskReport {
   testsRun: string[];
   risks: string[];
   filesChanged?: number;
+  /** Companion MCP tools the session reports calling (companion-tools.ts); absent when not reported. */
+  toolsUsed?: string[];
 }
 
 export interface CloudTaskPr {

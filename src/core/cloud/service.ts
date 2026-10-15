@@ -25,6 +25,7 @@ import { listDevinTasks } from '../devin/store.js';
 import { cloudBudgetView } from './budget.js';
 import { ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
 import { buildCloudPrompt } from './delivery-contract.js';
+import { companionToolsBlockFor } from './companion-tools.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { launchCloudSession, readCloudSeatArgv, SEAT_NOT_READY_REASON, type CloudLaunchDeps } from './launcher.js';
@@ -188,7 +189,7 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
         { repo: task.repo, paths: [], kind: null, text: `${task.title}\n${task.prompt}` },
         { fromLeader: task.origin === 'leader' },
       ).text;
-      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block) }, deps.launcher);
+      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlockFor(checkout.path)) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {
         state: 'running',

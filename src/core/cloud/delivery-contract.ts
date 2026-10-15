@@ -35,8 +35,11 @@ const STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'bloc
  * between the task text and the contract. Empty ⇒ the prompt is unchanged.
  * `playbook` (3.15) is the rendered playbook block (playbooks/resolve.ts);
  * it follows the task text, before the lessons. Empty ⇒ unchanged.
+ * `companions` is the companion-tools block (companion-tools.ts) for the
+ * repo's `.mcp.json`; it follows the lessons and adds the optional
+ * "toolsUsed" report field to the contract. Empty ⇒ unchanged.
  */
-export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = ''): string {
+export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '', companions = ''): string {
   const example = JSON.stringify({
     status: 'done',
     summary: 'One or two plain sentences on what changed and why.',
@@ -50,6 +53,7 @@ export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '
     ...(playbook.trim() ? ['', playbook.trim()] : []),
     // 3.15: approved lessons for this repo / kind of task (learn/retro/inject.ts), before the contract.
     ...(knowledge.trim() ? ['', knowledge.trim()] : []),
+    ...(companions.trim() ? ['', companions.trim()] : []),
     '',
     '---',
     `DELIVERY CONTRACT (Phantom cloud task ${task.id}) — follow it exactly; Phantom only sees what arrives on GitHub.`,
@@ -65,6 +69,7 @@ export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '
     '   - "testsRun": the exact commands you ran, each with its result',
     '   - "risks": anything a reviewer should know (an empty list if none)',
     '   - "filesChanged": the number of files changed (optional)',
+    ...(companions.trim() ? ['   - "toolsUsed": the companion tools you called (optional)'] : []),
     '   For example:',
     '',
     `\`\`\`${CLOUD_REPORT_FENCE}`,
@@ -122,6 +127,12 @@ export function cloudReportFromValue(value: unknown): CloudTaskReport | null {
     testsRun,
     risks,
   };
+  const toolsUsed = record['toolsUsed'];
+  if (toolsUsed !== undefined && toolsUsed !== null) {
+    // Telemetry only: a malformed list is dropped, never a reason to reject the report.
+    const tools = stringList(toolsUsed);
+    if (tools) report.toolsUsed = tools;
+  }
   const files = record['filesChanged'];
   // An invalid count is dropped rather than failing a report that is otherwise fine.
   if (typeof files === 'number' && Number.isInteger(files) && files >= 0 && files <= 1_000_000) report.filesChanged = files;
