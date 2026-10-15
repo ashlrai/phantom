@@ -177,7 +177,7 @@ export function grokVerseMcpSection(): string {
   const [command, ...args] = verseMcpStdioArgv();
   return [
     `[mcp_servers.${VERSE_MCP_SERVER_NAME}]`,
-    '# Written by Ashlr Verse (agent tools). The bridge serves tools only to a turn Verse granted them to.',
+    '# Written by Phantom (agent tools). The bridge serves tools only to a turn Phantom granted them to.',
     `command = ${tomlString(command!)}`,
     `args = ${tomlArray(args)}`,
     'enabled = true',

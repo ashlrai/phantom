@@ -414,8 +414,8 @@ function checksStep(task: TimelineDeliveryTask, merge: MergeRecordSource): Step 
     at: null,
     title: 'No check run recorded',
     detail: claimed > 0
-      ? `Verse recorded no check run for this PR. The ${claimed} ${claimed === 1 ? 'test' : 'tests'} in the session report are its own claim.`
-      : 'Verse recorded no check run for this PR.',
+      ? `Phantom recorded no check run for this PR. The ${claimed} ${claimed === 1 ? 'test' : 'tests'} in the session report are its own claim.`
+      : 'Phantom recorded no check run for this PR.',
     source: merge.state === 'unknown' ? 'fleet merge record (unreadable)' : 'fleet merge record',
     verified: 'unknown',
     reached: task.pr !== null,

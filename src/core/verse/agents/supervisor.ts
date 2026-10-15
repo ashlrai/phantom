@@ -103,7 +103,7 @@ function actionDeps(deps: SupervisorDeps): ActionDeps {
 function describe(err: unknown): string {
   if (err instanceof GitOpError) return err.message;
   if (err instanceof Error && err.message && err.message.length < 300 && !/\/Users\/|\/home\//.test(err.message)) return err.message;
-  return 'It failed for a reason Verse could not describe.';
+  return 'It failed for a reason Phantom could not describe.';
 }
 
 async function note(store: AgentStore, id: string, loopNote: string, patch: Partial<AgentRecord> = {}): Promise<AgentRecord | null> {

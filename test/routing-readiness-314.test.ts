@@ -176,7 +176,7 @@ describe('readiness — the machine as diagnosed (idle Verse, empty capacity sna
     expect(codex.reading).toEqual({
       state: 'last',
       at: '2026-09-26T20:56:26.150Z',
-      note: 'Polling is paused because nothing has asked for account data recently; it resumes the moment Verse is looked at.',
+      note: 'Polling is paused because nothing has asked for account data recently; it resumes the moment Phantom is looked at.',
     });
     expect(row(r, 'grok').reading.state).toBe('none');
   });

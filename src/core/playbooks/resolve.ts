@@ -253,7 +253,7 @@ export type ResolveOutcome =
   | { ok: false; error: string };
 
 function unknownError(name: string): string {
-  return `There is no playbook called “${name.slice(0, 60)}”. Run \`ashlr playbook list\` or open Playbooks in Verse.`;
+  return `There is no playbook called “${name.slice(0, 60)}”. Run \`ashlr playbook list\` or open Playbooks in Phantom.`;
 }
 
 function commandError(name: string): string {

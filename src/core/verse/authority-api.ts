@@ -869,7 +869,7 @@ export async function applyAuthorityAction(body: Record<string, unknown>): Promi
       if (typeof to !== 'string' || !(AUTONOMY_SWITCHES as readonly string[]).includes(to)) {
         return { ok: false, status: 400, code: 'VERSE_INVALID', error: 'to must be off, propose or autonomous' };
       }
-      const result = requestAutonomySwitch(to as AutonomySwitch, 'mason', 'set from Verse Command');
+      const result = requestAutonomySwitch(to as AutonomySwitch, 'mason', 'set from Phantom Command');
       if (!result.ok) {
         return {
           ok: false,
@@ -890,13 +890,13 @@ export async function applyAuthorityAction(body: Record<string, unknown>): Promi
       // drainMs:0 + waitMs:0 keeps the panic button instant: KILL is armed
       // synchronously before the first await and running agents are aborted
       // now; we just do not wait for their leases to be released.
-      const result = await stopAutonomyAndDrain({ actor: 'mason', reason: 'Stop pressed in Verse', drainMs: 0, waitMs: 0 });
+      const result = await stopAutonomyAndDrain({ actor: 'mason', reason: 'Stop pressed in Phantom', drainMs: 0, waitMs: 0 });
       invalidateStandingPolicyCache();
       if (!result.armed) return { ok: false, status: 503, code: 'stop-failed', error: `Stop could not be armed: ${result.reason}` };
       return { ok: true, status: 200, result: { stop: result } };
     }
     case 'clear-stop': {
-      const result = clearStop({ actor: 'mason', reason: 'Stop cleared in Verse', waitMs: 0 });
+      const result = clearStop({ actor: 'mason', reason: 'Stop cleared in Phantom', waitMs: 0 });
       invalidateStandingPolicyCache();
       if (!result.ok) return { ok: false, status: 409, code: 'clear-stop-failed', error: result.reason };
       return { ok: true, status: 200, result: { clearStop: result } };
@@ -910,7 +910,7 @@ export async function applyAuthorityAction(body: Record<string, unknown>): Promi
       // a number), but wait for neither the drain nor the outward-mutation
       // fence — drainMs:0 + waitMs:0 answers instantly. The grant is archived,
       // the switch lowered and KILL armed before the first await regardless.
-      const result = await revokeStandingAndDrain({ actor: 'mason', reason: typeof reason === 'string' && reason.trim() ? reason : 'revoked from Verse', drainMs: 0, waitMs: 0 });
+      const result = await revokeStandingAndDrain({ actor: 'mason', reason: typeof reason === 'string' && reason.trim() ? reason : 'revoked from Phantom', drainMs: 0, waitMs: 0 });
       invalidateStandingPolicyCache();
       return { ok: true, status: 200, result: { revoke: result } };
     }

@@ -94,7 +94,7 @@ export function shellJoinArgs(args: readonly string[]): string {
  */
 export function agentHookScript(url: string, token: string): string {
   return `#!/bin/sh
-# Ashlr Verse: this terminal tab's agent status hook. Temporary: removed when the tab closes.
+# Phantom: this terminal tab's agent status hook. Temporary: removed when the tab closes.
 state="$1"
 case "$state" in running|idle|needs-you) ;; *) exit 0 ;; esac
 if [ -n "$2" ]; then body="$2"; else body=$(head -c 16384 2>/dev/null); fi

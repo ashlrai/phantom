@@ -195,7 +195,7 @@ function parseResult(body: Record<string, unknown>): VerseBrowserCommandResult |
 
 export const handleBrowserApi: ApiModule = async (_ctx, req, res, path, method) => {
   if (VERSE_BROWSER_MCP_PATH_RE.test(path)) {
-    writeRaw(res, 410, { error: 'This Browser MCP grant endpoint has retired. Start a new turn to use Verse agent tools.' });
+    writeRaw(res, 410, { error: 'This Browser MCP grant endpoint has retired. Start a new turn to use Phantom agent tools.' });
     return true;
   }
 
@@ -255,7 +255,7 @@ export const handleBrowserApi: ApiModule = async (_ctx, req, res, path, method) 
       if (!sessionId) return true;
       const port = localPort(req);
       if (port === null) {
-        sendJson(res, 503, { code: 'VERSE_UNAVAILABLE', error: 'could not tell which port Verse is serving on' });
+        sendJson(res, 503, { code: 'VERSE_UNAVAILABLE', error: 'could not tell which port Phantom is serving on' });
         return true;
       }
       const enabled = body['enabled'];

@@ -155,8 +155,8 @@ export function autoMergeVerdict(input: MergeVerdictInput): { allowed: boolean; 
     return {
       allowed: false,
       reason: input.selfRepoMode === null
-        ? 'This is ashlr-hub itself, and no standing grant is in force: Verse opens the PR and leaves the merge to you.'
-        : 'This is ashlr-hub itself, and the grant’s self-land policy is propose-only: Verse opens the PR and leaves the merge to you.',
+        ? 'This is ashlr-hub itself, and no standing grant is in force: Phantom opens the PR and leaves the merge to you.'
+        : 'This is ashlr-hub itself, and the grant’s self-land policy is propose-only: Phantom opens the PR and leaves the merge to you.',
     };
   }
   if (input.requiredChecks.length === 0) {

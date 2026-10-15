@@ -694,7 +694,7 @@ async function safeTarget(gitRoot: string, realRoot: string, rel: string): Promi
       dir = parent;
     }
   }
-  if (rel.split(/[\\/]/).some((seg) => seg.toLowerCase() === '.git')) throw new CheckpointError('VERSE_INVALID', 'Verse never writes inside .git.');
+  if (rel.split(/[\\/]/).some((seg) => seg.toLowerCase() === '.git')) throw new CheckpointError('VERSE_INVALID', 'Phantom never writes inside .git.');
   return abs;
 }
 

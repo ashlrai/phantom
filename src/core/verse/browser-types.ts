@@ -242,7 +242,7 @@ export function agentUrlVerdict(raw: string, opts: { versePort: number | null; a
   }
   const loopback = isLoopbackHost(url.hostname);
   if (loopback && opts.versePort !== null && defaultPort(url) === String(opts.versePort)) {
-    return { ok: false, code: 'self', origin: url.origin, message: 'Verse itself cannot be opened in its own browser pane' };
+    return { ok: false, code: 'self', origin: url.origin, message: 'Phantom itself cannot be opened in its own browser pane' };
   }
   if (loopback) return { ok: true, url: url.href, origin: url.origin, loopback: true };
   if (opts.allowedOrigins.includes(url.origin)) return { ok: true, url: url.href, origin: url.origin, loopback: false };

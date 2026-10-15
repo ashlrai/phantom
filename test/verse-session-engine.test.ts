@@ -113,7 +113,7 @@ if (argv[0] === 'exec') {
   // NOCONV: the vendor conversation is gone — exactly what claude prints when
   // --resume names a deleted transcript. A retry seeded with the handoff note
   // (V3.10 recovery) carries the note's header and gets a normal answer.
-  if (prompt.includes('NOCONV') && !prompt.includes('# Continuing from an earlier Verse session')) {
+  if (prompt.includes('NOCONV') && !prompt.includes('# Continuing from an earlier Phantom session')) {
     out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: sid, errors: ['No conversation found with session ID: ' + sid] });
     fs.writeSync(2, 'No conversation found with session ID: ' + sid + '\\n');
     process.exit(1);
@@ -1889,7 +1889,7 @@ describe('V3.10 reliability — real processes', () => {
     expect(after.status).toBe('idle');
     const retry = readCalls(side).at(-1)!;
     expect(retry.argv).toContain(after.nativeSessionId);
-    expect(retry.argv.at(-1)).toContain('# Continuing from an earlier Verse session');
+    expect(retry.argv.at(-1)).toContain('# Continuing from an earlier Phantom session');
     expect(retry.argv.at(-1)!.endsWith('NOCONV now add tests')).toBe(true);
   });
 

@@ -210,7 +210,7 @@ async function readMutationBody(
 }
 
 const optionalReason = (value: unknown): string | null =>
-  value === undefined ? 'requested from Verse' : typeof value === 'string' && value.length <= 500 ? value : null;
+  value === undefined ? 'requested from Phantom' : typeof value === 'string' && value.length <= 500 ? value : null;
 
 /**
  * The learning route family. Returns false for any path outside

@@ -333,7 +333,7 @@ function accountItems(view: HealthView, nowIso: string): NeedsYouItem[] {
             request: { method: 'POST', path: '/api/verse/health/reconnect', body: { seatId: report.seatId } },
             confirm: {
               title: `Open the sign-in for ${label}?`,
-              body: "Opens the seat's own login in Terminal. Verse never sees or stores the credential.",
+              body: "Opens the seat's own login in Terminal. Phantom never sees or stores the credential.",
               confirmLabel: 'Open sign-in',
             },
             destructive: false,

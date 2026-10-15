@@ -586,8 +586,8 @@ describe('computer tools', () => {
     h.frame = FRAME;
     h.answers['probe'] = () => ({ ok: false, code: 'operator-took-over', message: 'x' });
     expect(textOf(await h.call('computer_scroll', { x: 1, y: 1, direction: 'down' }))).toMatch(/^Operator took over/);
-    h.answers['probe'] = () => ({ ok: false, code: 'operator-took-over', message: 'Verse window is hidden' });
-    expect(textOf(await h.call('computer_scroll', { x: 1, y: 1, direction: 'down' }))).toMatch(/Verse window is hidden/);
+    h.answers['probe'] = () => ({ ok: false, code: 'operator-took-over', message: 'Phantom window is hidden' });
+    expect(textOf(await h.call('computer_scroll', { x: 1, y: 1, direction: 'down' }))).toMatch(/Phantom window is hidden/);
     h.answers['probe'] = () => ({ ok: false, code: 'stopped', message: 'KILL.' });
     expect(textOf(await h.call('computer_scroll', { x: 1, y: 1, direction: 'down' }))).toMatch(/stopped/);
   });

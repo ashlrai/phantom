@@ -75,7 +75,7 @@ async function assertPlaybooksExist(input: Record<string, unknown>): Promise<voi
   if (refs.some((r) => canonicalPlaybookRef(r) === null)) return;
   const missing = await missingPlaybooks(refs);
   if (missing.length > 0) {
-    throw new AutomationInputError(`No playbook ${missing.map((m) => `"${m.slice(0, 60)}"`).join(', ')} — create it in Verse → Playbooks or \`ashlr playbook new\` first.`);
+    throw new AutomationInputError(`No playbook ${missing.map((m) => `"${m.slice(0, 60)}"`).join(', ')} — create it in Phantom → Playbooks or \`ashlr playbook new\` first.`);
   }
 }
 

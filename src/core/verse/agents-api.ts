@@ -337,10 +337,10 @@ async function checkedRoot(raw: unknown): Promise<string> {
   const expanded = expandHomePrefix(raw.trim());
   if (!isAbsolute(expanded)) invalid('root must be an absolute path.');
   const guard = await withFolderIo(() => checkWorkspaceRootPathAsync(expanded));
-  if (!guard.ok) throw new AgentActionError(409, 'VERSE_GIT_REFUSED', 'Verse does not make workspaces from that folder.');
+  if (!guard.ok) throw new AgentActionError(409, 'VERSE_GIT_REFUSED', 'Phantom does not make workspaces from that folder.');
   const known = await knownRootSet();
   if (!known.has(resolvePath(expanded)) && !known.has(guard.path)) {
-    throw new AgentActionError(409, 'VERSE_GIT_REFUSED', 'That folder is not part of any chat or project in Verse.');
+    throw new AgentActionError(409, 'VERSE_GIT_REFUSED', 'That folder is not part of any chat or project in Phantom.');
   }
   return resolvePath(expanded);
 }

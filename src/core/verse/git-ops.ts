@@ -1254,7 +1254,7 @@ export function mergeRefusal(pr: VerseGitPr, branch: string | null, headSha: str
   if (pr.state === 'draft') return 'This PR is a draft. Mark it ready for review on GitHub first.';
   if (pr.checks === 'failing') return 'Checks are failing on this PR.';
   if (pr.checks === 'pending') return 'Checks are still running on this PR.';
-  if (pr.checks !== 'passing') return 'No passing checks are reported for this PR’s head, so Verse will not merge it. Merge on GitHub if that is intended.';
+  if (pr.checks !== 'passing') return 'No passing checks are reported for this PR’s head, so Phantom will not merge it. Merge on GitHub if that is intended.';
   if (pr.mergeable === false) return 'GitHub says this PR has conflicts with its base.';
   if (pr.mergeable === null) return 'GitHub is still working out whether this PR can merge. Try again in a moment.';
   if (pr.headSha === null || pr.headSha.toLowerCase() !== headSha.toLowerCase()) {
