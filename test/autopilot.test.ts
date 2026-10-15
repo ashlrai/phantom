@@ -78,6 +78,8 @@ describe('autopilot plan', () => {
     expect(plan(obs({ reviews: [review] }), guards, emptyState()).action).toBe('address-review');
     expect(plan(obs({ reviews: [review] }), guards, { ...emptyState(), handledReviews: [5] }).action).toBe('green');
     expect(plan(obs({ headChecks: [run(1, 'test', null, 'in_progress')] }), guards, emptyState()).action).toBe('wait');
+    // Unknown mergeability is not green: a conflict may still be found.
+    expect(plan(obs({}, { mergeable: null, mergeableState: 'unknown' }), guards, emptyState()).action).toBe('wait');
   });
 
   it('fences CI logs as untrusted data that cannot close its own fence', () => {

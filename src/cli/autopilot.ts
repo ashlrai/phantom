@@ -8,7 +8,8 @@
  */
 import { execFileSync } from 'node:child_process';
 
-const USAGE = `Usage: phm autopilot <pr-number|pr-url> [options]
+const USAGE = `Usage: phm autopilot <pr-number|pr-url|--all> [options]
+  --all                  every open PR you authored on an autopilot branch prefix in --repo
   --repo <owner/name>    repository (default: the checkout's origin)
   --checkout <dir>       local clone to work from (default: current directory)
   --apply                act: push fixes, merge the base, re-run infra failures (default: plan only)
@@ -48,7 +49,8 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(USAGE); return args.length ? 0 : 2; }
   const val = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const all = (n: string) => args.flatMap((a, i) => (a === n && args[i + 1] !== undefined ? [args[i + 1]!] : []));
-  const ref = parsePrRef(args[0]);
+  const sweep = args[0] === '--all';
+  const ref = sweep ? { repo: null, number: 0 } : parsePrRef(args[0]);
   if (!ref) { console.error(USAGE); return 2; }
   const checkout = val('--checkout') ?? process.cwd();
   let repo = val('--repo') ?? ref.repo;
@@ -58,6 +60,7 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   if (!repo) { console.error('Could not tell the repository; pass --repo owner/name.'); return 2; }
 
   const { tick, liveGuards, DEFAULT_OWNED_PREFIXES } = await import('../core/autopilot/act.js');
+  const { listOwnedPrs, readViewer } = await import('../core/autopilot/github.js');
   const { DEFAULT_LIMITS } = await import('../core/autopilot/diagnose.js');
   const maxPushes = val('--max-pushes') ? Number(val('--max-pushes')) : DEFAULT_LIMITS.maxPushes;
   if (!Number.isSafeInteger(maxPushes) || maxPushes < 0) { console.error('--max-pushes must be a whole number'); return 2; }
@@ -79,16 +82,34 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
 
   let stop = false;
   process.once('SIGINT', () => { stop = true; });
+  const finished = new Set<number>();
+  let failed = false;
   for (;;) {
     Object.assign(guards, await liveGuards());
-    const r = await tick(opts);
-    if (json) console.log(JSON.stringify(r));
-    else {
-      console.log(`${r.plan === 'green' || r.result === 'pushed' ? 'ok' : r.plan === 'stop' ? '!' : '->'} ${repo}#${r.number} ${r.headSha.slice(0, 8)}: ${r.plan}${r.result !== 'none' ? ` (${r.result})` : ''}: ${r.reason}`);
-      for (const d of r.detail) console.log(`   ${d}`);
+    let numbers = [ref.number];
+    if (sweep) {
+      try {
+        numbers = (await listOwnedPrs(repo, await readViewer(), opts.ownedPrefixes)).filter((n) => !finished.has(n) || args.includes('--watch'));
+      } catch (err) {
+        console.error(`! could not list open PRs: ${err instanceof Error ? err.message : String(err)}`);
+        numbers = [];
+      }
+      if (!json && !numbers.length) console.log(`-> ${repo}: no open autopilot PRs`);
     }
-    const final = ['done', 'green', 'stop'].includes(r.plan) || (!opts.apply && r.result === 'planned');
-    if (!args.includes('--watch') || final || stop) return r.plan === 'stop' || r.result === 'refused' || r.result === 'error' || r.result === 'verify-failed' ? 1 : 0;
+    for (const number of numbers) {
+      if (stop) break;
+      const r = await tick({ ...opts, number });
+      if (json) console.log(JSON.stringify(r));
+      else {
+        console.log(`${r.plan === 'green' || r.result === 'pushed' ? 'ok' : r.plan === 'stop' ? '!' : '->'} ${repo}#${r.number} ${r.headSha.slice(0, 8)}: ${r.plan}${r.result !== 'none' ? ` (${r.result})` : ''}: ${r.reason}`);
+        for (const d of r.detail) console.log(`   ${d}`);
+      }
+      if (['done', 'green', 'stop'].includes(r.plan) || (!opts.apply && r.result === 'planned')) finished.add(number);
+      if (r.plan === 'stop' || ['refused', 'error', 'verify-failed'].includes(r.result)) failed = true;
+    }
+    // One PR: stop when it reaches an end state. A sweep keeps watching for new PRs until interrupted.
+    const done = !sweep && finished.has(ref.number);
+    if (!args.includes('--watch') || done || stop) return failed ? 1 : 0;
     await new Promise((res) => setTimeout(res, interval));
   }
 }

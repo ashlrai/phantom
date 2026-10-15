@@ -256,6 +256,7 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
     return { action: 'stop', reason: `red, but not this PR's failure: ${failures.map((f) => f.why).join('; ')}`, failures };
   }
   if (!latest.length) return { action: 'wait', reason: 'no checks reported on the head yet' };
+  if (pr.mergeable === null) return { action: 'wait', reason: 'GitHub is still computing whether the PR merges cleanly' };
   return { action: 'green', reason: `all ${latest.length} checks are green on ${pr.headSha.slice(0, 8)}` };
 }
 

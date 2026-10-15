@@ -192,6 +192,25 @@ export async function observe(repo: string, number: number, gh: Gh = defaultGh):
   return { pr, viewer, headChecks, baseChecks, baseHistory, files, logs, reviews, droppedReviews: dropped };
 }
 
+/** Open PRs in `repo` authored by `viewer` from branches in the same repository whose name starts with one of `prefixes`. */
+export async function listOwnedPrs(repo: string, viewer: string, prefixes: readonly string[], gh: Gh = defaultGh): Promise<number[]> {
+  const out: number[] = [];
+  for (let page = 1; page <= 5; page++) {
+    const raw = await api(gh, `repos/${assertRepo(repo)}/pulls?state=open&per_page=100&page=${page}`);
+    const list = (Array.isArray(raw) ? raw : []).map(obj);
+    for (const p of list) {
+      const head = obj(p['head']);
+      const ref = str(head['ref']);
+      if (str(obj(p['user'])['login']).toLowerCase() !== viewer.toLowerCase()) continue;
+      if (str(obj(head['repo'])['full_name']).toLowerCase() !== repo.toLowerCase()) continue;
+      if (!prefixes.some((x) => x && ref.startsWith(x))) continue;
+      out.push(Number(p['number']));
+    }
+    if (list.length < 100) break;
+  }
+  return out.sort((a, b) => a - b);
+}
+
 /** Re-run one Actions job (its check-run id is the job id). */
 export async function rerunJob(repo: string, jobId: number, gh: Gh = defaultGh): Promise<void> {
   await gh(['api', '-X', 'POST', `repos/${assertRepo(repo)}/actions/jobs/${jobId}/rerun`]);
