@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -149,8 +149,11 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     git(clone, 'config', 'user.email', 't@t');
     git(clone, 'config', 'user.name', 't');
     writeFileSync(join(clone, 'sum.js'), 'module.exports = (a, b) => a - b;\n');
-    git(clone, 'add', '.');
+    writeFileSync(join(clone, '.gitignore'), 'node_modules/\n');
+    git(clone, 'add', 'sum.js');
     git(clone, 'commit', '-m', 'init');
+    mkdirSync(join(clone, 'node_modules'));
+    writeFileSync(join(clone, 'node_modules', 'x.js'), '');
     git(clone, 'push', 'origin', 'HEAD:main');
     git(clone, 'push', 'origin', 'HEAD:improve/sum');
     const head = git(clone, 'rev-parse', 'HEAD');
@@ -194,6 +197,8 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(git(f.clone, 'merge-base', '--is-ancestor', f.head, r.newHead!) === '').toBe(true);
     git(f.clone, 'fetch', 'origin');
     expect(git(f.clone, 'show', 'origin/improve/sum:sum.js')).toContain('a + b');
+    // The node_modules link borrowed for verify is never committed.
+    expect(git(f.clone, 'ls-tree', '--name-only', 'origin/improve/sum')).toBe('sum.js');
     expect(readFileSync(join(f.root, 'home', 'autopilot', 'outcomes.jsonl'), 'utf8')).toContain('"result":"pushed"');
   });
 

@@ -334,7 +334,9 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     };
     const tampered = () => (gitControlDigest(commonDir, wtGitDir, wt) !== control ? 'git config, hooks or the worktree link changed while the fixer or verify ran; nothing pushed' : null);
     const nm = join(opts.checkout, 'node_modules');
-    if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); } catch { /* verify will say so */ } }
+    // Borrow the checkout's installed dependencies for verify. The link is the autopilot's, never part of a commit.
+    let linkedModules = false;
+    if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); linkedModules = true; } catch { /* verify will say so */ } }
 
     let message: string;
     if (p.action === 'merge-base') {
@@ -373,7 +375,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
       const head = await must(wt, ['rev-parse', 'HEAD']);
       if (head !== pr.headSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD (commits are the autopilot\'s job); nothing pushed'], newHead: null };
-      await must(wt, ['add', '-A']);
+      await must(wt, ['add', '-A', '--', '.', ...(linkedModules ? [':(exclude,top)node_modules'] : [])]);
       const files = parseDiff(await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-status']), (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '-U0'])).stdout);
       if (!files.length) return { result: 'no-change', detail: [...detail, 'the fixer changed nothing'], newHead: null };
       const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached'])).stdout);
