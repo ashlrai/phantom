@@ -55,6 +55,7 @@
  * No new runtime dependencies; Node builtins only. No public API throws.
  */
 
+import { countOf } from '../util/count-of.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -434,7 +435,7 @@ export function capacityFromRuntimeSnapshot(
   const detail = snapshot.lastError
     ? text(snapshot.lastError)
     : state === 'up' && limit !== null
-      ? `llama-server up with ${limit} slot(s) (source=${snapshot.slots.source})`
+      ? `llama-server up with ${countOf(limit, 'slot')} (source=${snapshot.slots.source})`
       : state === 'up'
         ? 'llama-server up but did not report a slot count'
         : `llama-server ${snapshot.state}`;
@@ -619,7 +620,7 @@ function deriveUncappedLocalFleetConcurrency(
       reason:
         'this engine holds the process-wide outward mutation fence for its whole run, so ' +
         'exactly one sandboxed agent can execute at a time machine-wide' +
-        (slots > 0 ? ` — the runtime's ${slots} slot(s) cannot be used` : ''),
+        (slots > 0 ? ` — the runtime's ${countOf(slots, 'slot')} cannot be used` : ''),
     };
   }
 
@@ -645,7 +646,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: null,
       effective: ceiling,
       limiter: 'serving-slots',
-      reason: `derived from the serving runtime's ${ceiling} slot(s); no operator cap configured`,
+      reason: `derived from the serving runtime's ${countOf(ceiling, 'slot')}; no operator cap configured`,
     };
   }
   if (configured < ceiling) {
@@ -654,7 +655,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: configured,
       effective: configured,
       limiter: 'config',
-      reason: `operator cap ${configured} is below the runtime's ${ceiling} slot(s)`,
+      reason: `operator cap ${configured} is below the runtime's ${countOf(ceiling, 'slot')}`,
     };
   }
   return {
@@ -663,7 +664,7 @@ function deriveUncappedLocalFleetConcurrency(
     effective: ceiling,
     limiter: 'serving-slots',
     reason: configured > ceiling
-      ? `operator cap ${configured} exceeds the runtime's ${ceiling} slot(s) and is NOT honoured — ` +
+      ? `operator cap ${configured} exceeds the runtime's ${countOf(ceiling, 'slot')} and is NOT honoured — ` +
         'extra agents would queue inside llama-server, not run'
       : `operator cap ${configured} equals the runtime's slot count`,
   };

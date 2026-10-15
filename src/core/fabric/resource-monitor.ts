@@ -34,6 +34,7 @@
  *   // claude slots to allow (open=N, near=N/2, throttled/exhausted=0).
  */
 
+import { countOf } from '../util/count-of.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1288,7 +1289,7 @@ async function senseLlamaServerState(
         costPerMTokenOut: 0,
         p50LatencyMs: null,
         snapshotAt: now,
-        reason: `llama-server up with ${slots} slot(s); occupancy not reported`,
+        reason: `llama-server up with ${countOf(slots, 'slot')}; occupancy not reported`,
       };
     }
     const usedPct = Math.min(100, Math.round((busy / slots) * 100));
