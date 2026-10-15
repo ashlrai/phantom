@@ -413,7 +413,8 @@ describe('overlays and keys', () => {
     await screen.findByRole('navigation', { name: 'Chats' });
     key(',', {}, 'Comma');
     key('k', {}, 'KeyK');
-    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toHaveFocus();
+    const search = await screen.findByRole('combobox', { name: 'Search commands' });
+    await waitFor(() => expect(search).toHaveFocus());
     expect(getVerseUiState().section).toBe('settings');
   });
 
