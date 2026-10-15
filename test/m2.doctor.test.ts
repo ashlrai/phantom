@@ -208,6 +208,17 @@ vi.mock('../src/core/providers.js', () => ({
 import { runDoctor, checkLocus, checkLocusFirm } from '../src/core/doctor.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
+// Loaded at collection time: runDoctor imports these probes lazily, so the
+// file's first runDoctor case would otherwise transform their graphs cold
+// inside its own 15s window. runDoctor still awaits the same modules, cached.
+import '../src/core/plugins/registry.js';
+import '../src/core/plugins/integrity.js';
+import '../src/core/mcp-registry.js';
+import '../src/core/observability/rollup.js';
+import '../src/core/observability/governance.js';
+import '../src/core/observability/telemetry-sink.js';
+import '../src/core/genome/store.js';
+
 // Doctor probes shell out even with provider and Phantom mocks. Windows CI can
 // spend more than Vitest's 5s default in process startup across a single probe.
 // Covered by the real-io lane's 60s default now — see scripts/realio-lane-membership.mjs.
