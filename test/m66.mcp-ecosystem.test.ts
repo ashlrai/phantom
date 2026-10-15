@@ -15,6 +15,32 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+// Observes (and can fail) fs.writeFileSync. root bypasses DAC mode bits, so a
+// 0o400 settings file is still writeable as uid 0; the hook raises the EACCES
+// a user gets from the kernel for that exact path, so the same write-failure
+// branch runs for every uid.
+const writeHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const writeFileSync = ((...args: Parameters<typeof actual.writeFileSync>) => {
+    const target = String(args[0]);
+    if (writeHook.denied.has(target)) {
+      writeHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    actual.writeFileSync(...args);
+  }) as typeof actual.writeFileSync;
+  return { ...actual, default: { ...actual, writeFileSync }, writeFileSync };
+});
+
 // ---------------------------------------------------------------------------
 // Import under test
 // ---------------------------------------------------------------------------
@@ -50,6 +76,8 @@ function readJson(p: string): unknown {
 }
 
 afterEach(() => {
+  writeHook.denied.clear();
+  writeHook.hits.length = 0;
   for (const f of tmpFiles) {
     try { fs.unlinkSync(f); } catch { /* ignore */ }
   }
@@ -528,10 +556,15 @@ describe('ecosystem settings refuse unknown content before writes', () => {
 });
 
 
-it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('CLI distinguishes a real write failure from a parse refusal without promising no change', async () => {
+it.skipIf(process.platform === 'win32')('CLI distinguishes a real write failure from a parse refusal without promising no change', async () => {
   const root = ecosystemFixture(); const selected = nativeCandidate(path.join(root, 'bin')); vi.stubEnv('PATH', path.dirname(selected));
   const settings = settingsFor(root); fs.mkdirSync(path.dirname(settings)); fs.writeFileSync(settings, '{}'); fs.chmodSync(settings, 0o400);
+  const asRoot = process.getuid?.() === 0;
+  if (asRoot) writeHook.denied.add(settings);
   const result = await runEcosystem(['--write']);
+  writeHook.denied.clear();
+  // As root, prove the registration write is what hit the injected denial.
+  if (asRoot) expect(writeHook.hits).toEqual([settings]);
   expect(result.code).toBe(1);
   expect(result.output).toContain('MCP registration failed');
   expect(result.output).not.toContain('No settings were changed');

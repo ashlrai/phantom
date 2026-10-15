@@ -14,6 +14,33 @@
 import { chmodSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Observes (and can fail) fs.openSync. root bypasses DAC mode bits, so a 0o000
+// store still opens as uid 0; the hook raises the EACCES a user gets from the
+// kernel for that exact path, so the same unreadable-store branch runs for
+// every uid.
+const openHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    const target = String(args[0]);
+    if (openHook.denied.has(target)) {
+      openHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  return { ...actual, default: { ...actual, openSync }, openSync };
+});
+const RUNNING_AS_ROOT = process.getuid?.() === 0;
+
 const ledger = vi.hoisted(() => ({ rows: [] as { kind: string; data: Record<string, unknown>; actor: string }[] }));
 vi.mock('../src/core/authority/ledger.js', () => ({
   appendLedger: (input: { kind: string; data: Record<string, unknown>; actor: string }) => {
@@ -49,6 +76,8 @@ const AT = '2026-09-20T00:00:00.000Z';
 beforeEach(() => {
   rmSync(harnessDir(), { recursive: true, force: true });
   ledger.rows.length = 0;
+  openHook.denied.clear();
+  openHook.hits.length = 0;
 });
 
 function encode(state: HarnessStateV1): string {
@@ -161,17 +190,21 @@ describe('an unreadable harness store is never rebuilt from the baseline (review
     return text;
   }
 
-  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)('a file that cannot be opened (EACCES) refuses the mutation and is left intact', () => {
+  it('a file that cannot be opened (EACCES) refuses the mutation and is left intact', () => {
     const text = seedAdopted();
     chmodSync(harnessStatePath(), 0o000);
+    if (RUNNING_AS_ROOT) openHook.denied.add(harnessStatePath());
     try {
       const r = recordHarnessOutcome({ passed: true, versionId: BASELINE_VERSION_ID });
       expect(r.ok).toBe(false);
       const hyp = recordHypotheses([]);
       expect(hyp.accepted).toEqual([]);
     } finally {
+      openHook.denied.clear();
       chmodSync(harnessStatePath(), 0o600);
     }
+    // As root, prove the refused mutation hit the injected denial.
+    if (RUNNING_AS_ROOT) expect(openHook.hits).toContain(harnessStatePath());
     expect(readFileSync(harnessStatePath(), 'utf8')).toBe(text);
     expect(activeHarness()?.id).toBe('h-0001');
   });
