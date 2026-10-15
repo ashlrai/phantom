@@ -186,7 +186,9 @@ function isCodeReference(value: string): boolean {
   return (
     /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+[)\]]*$/.test(v) || // process.env.X, opts.apiToken
     /^[A-Za-z_$][\w$.]*\(/.test(v) || // getToken(), cfg.read(
-    /^(?:\$\{|\$[A-Za-z_]|`|<)/.test(v) // ${VAR}, $VAR, `template`, <placeholder>
+    /^(?:\$\{|\$[A-Za-z_]|`|<)/.test(v) || // ${VAR}, $VAR, `template`, <placeholder>
+    /^[A-Za-z_][\w]*(?:::[A-Za-z_][\w]*)+(?:\(|$)/.test(v) || // std::env::var(, Config::SECRET
+    /^[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_.-]*){2,}$/.test(v) // app:jobs:default (namespaced keys, two or more colons)
   );
 }
 
@@ -209,7 +211,7 @@ function isAlreadyRedacted(value: string): boolean {
 function redactAssignment(name: string, match: string, value: string, allowIdentifiers: boolean): string {
   // Idempotence: `NAME = "[REDACTED]"` must stay byte-identical on a re-scrub.
   if (isAlreadyRedacted(value)) return match;
-  if (isCodeReference(value)) return match;
+  if (isCodeReference(value) || isMask(value)) return match;
   if (allowIdentifiers && isIdentifierOnly(value)) return match;
   return `${name}=${REDACTED}`;
 }
@@ -217,6 +219,23 @@ function redactAssignment(name: string, match: string, value: string, allowIdent
 function valueOf(match: string, name: string): string {
   return match.slice(name.length).replace(/^\s*[=:]\s*/, '');
 }
+
+/**
+ * Ordinary words after `Bearer` / `Token` / `Authorization` in prose ("send it as a Bearer token", "the token is
+ * rotated", "the Authorization header"). An all-lowercase or Capitalized letters-only word of 2–24 characters is not a
+ * credential; tokens essentially always carry digits, symbols or mixed case. Single letters stay redacted.
+ */
+function isProseWord(value: string): boolean {
+  return /^(?:[a-z]{2,24}|[A-Z][a-z]{1,23})$/.test(value);
+}
+
+/** Masks and fillers (`********`, `xxxxxxxx`): one repeated character is not a credential. */
+function isMask(value: string): boolean {
+  return /^(.)\1*$/.test(value.replace(/^["']|["']$/g, ''));
+}
+
+/** Public digests and keys that look like secrets: content digests (`sha256:…`, SRI `sha512-…`) and SSH public keys (`ssh-ed25519 AAAA…`). */
+const PUBLIC_DIGEST_PREFIX = /(?:\bsha(?:256|384|512)-|\bsha256:|\b(?:ssh-(?:rsa|ed25519|dss)|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) )$/;
 
 /**
  * Scrub recognised secret patterns from `text`.
@@ -247,13 +266,13 @@ export function scrubSecrets(text: string): string {
       .replace(/\bgh[poursa]_[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]+)*/g, REDACTED)
       .replace(/\bgithub_pat_[A-Za-z0-9_]{22,}/g, REDACTED)
       // 3. Bearer / Token / Authorization header values
-      .replace(/\b(Bearer|Token|Authorization)\s+[A-Za-z0-9\-._~+/]+=*/gi, '$1 [REDACTED]')
+      .replace(/\b(Bearer|Token|Authorization)\s+[A-Za-z0-9\-._~+/]+=*/gi, (m: string, word: string) => (isProseWord(m.slice(word.length).trim().replace(/[.]+$/, '')) ? m : `${word} ${REDACTED}`))
       // 4. Generic key=value secret patterns. ASHLR_* env vars are only
       // redacted when they look like assignments, not plain audit metadata
       // such as "keys=query".
       .replace(
         /\b(api[_-]?key|api[_-]?token|secret|secret[_-]?key|token|password|passwd|pwd|auth|credential|client[_-]?secret|private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|connection[_-]?string|conn[_-]?str|_?auth[_-]?token|ASHLR_[A-Z_]+)\s*[=:]\s*["']?[^\s,;'"]{8,}["']?/gi,
-        '$1=[REDACTED]',
+        (m: string, name: string) => (isCodeReference(valueOf(m, name)) || isMask(valueOf(m, name)) ? m : `${name}=${REDACTED}`),
       )
       // 5. Slack tokens
       .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/gi, REDACTED)
@@ -262,7 +281,7 @@ export function scrubSecrets(text: string): string {
       // 7. JWTs (eyJ header.payload.sig)
       .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, REDACTED)
       // 8. Bare hex-64 strings (SHA-256 / hex API keys)
-      .replace(/\b[0-9a-fA-F]{64,}\b/g, REDACTED)
+      .replace(/\b[0-9a-fA-F]{64,}\b/g, (m: string, offset: number, whole: string) => (/sha256:$/i.test(whole.slice(Math.max(0, offset - 7), offset)) ? m : REDACTED))
       // 9. Other common provider token prefixes.
       .replace(/\bglpat-[A-Za-z0-9_-]{16,}/g, REDACTED)
       .replace(/\bhf_[A-Za-z0-9]{16,}\b/g, REDACTED)
@@ -270,7 +289,7 @@ export function scrubSecrets(text: string): string {
       .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, REDACTED)
       // 10. URL passwords and long base64-ish blobs.
       .replace(/(:\/\/[^:\s/@]*:)[^@\s]+(@)/g, '$1[REDACTED]$2')
-      .replace(/(?<![/\w])[A-Za-z0-9+]{40,}={0,2}(?![/\w])/g, scrubLongBase64Like)
+      .replace(/(?<![/\w])[A-Za-z0-9+]{40,}={0,2}(?![/\w])/g, (m: string, offset: number, whole: string) => (PUBLIC_DIGEST_PREFIX.test(whole.slice(Math.max(0, offset - 40), offset)) ? m : scrubLongBase64Like(m)))
       // 13. Suffix-named assignments rule 4's `\b` anchor cannot see. LAST, so
       // every token-shape rule above has already turned a JWT/AKIA/hex value
       // into [REDACTED]; that marker is left untouched below. Running these
