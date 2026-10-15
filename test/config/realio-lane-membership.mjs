@@ -499,6 +499,7 @@ export const REAL_IO_TEST_FILES = [
   'test/execution-leases-310b.test.ts', // cross-process lease cases via real tsx children (test/helpers/throughput-310b.ts)
   'test/throughput-310b.test.ts', // real tsx children + h1 temp repos; only the model is faked
   'test/mirrors-310b.test.ts', // real mirror clones/fetches in h1 temp repos via the throughput helper
+  'test/mirror-git-bounded.test.ts', // real fake-git child forking a SIGTERM-ignoring grandchild; POSIX process-group kill
   'test/safe-git-310b.test.ts', // real `git init` mirrors to prove hooks/fsmonitor are forced off
   'test/confine-autonomous-darwin-310b.test.ts', // real sandbox-exec children + a real net server as an egress target
   'test/engines-judges-310b.test.ts', // execs the grok-cli launcher (fake pinned binary in a seat fixture) exactly as the fleet would, to inspect env scrubbing
