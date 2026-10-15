@@ -346,3 +346,22 @@ describe('SAFETY: no real config files were touched', () => {
     expect(() => assertNotRealConfig(safePath)).not.toThrow();
   });
 });
+
+describe('cmdMcp install — gateway already wired by phm wire', () => {
+  it('does not add a second "ashlr" entry next to "ashlr-hub"', async () => {
+    const p = tmpPath('wired-hub');
+    const original = { mcpServers: { 'ashlr-hub': { type: 'stdio', command: 'ashlr', args: ['mcp'], env: {} } } };
+    writeConfig(p, original);
+    const code = await cmdMcp(['install', 'claude', '--config', p]);
+    expect(code).toBe(0);
+    expect(readConfig(p)).toEqual(original);
+    expect(fs.existsSync(p + '.bak')).toBe(false);
+  });
+
+  it('still installs when "ashlr-hub" points at something other than the gateway', async () => {
+    const p = tmpPath('other-hub');
+    writeConfig(p, { mcpServers: { 'ashlr-hub': { command: 'other-tool', args: ['serve'] } } });
+    expect(await cmdMcp(['install', 'claude', '--config', p])).toBe(0);
+    expect('ashlr' in (readConfigTyped(p).mcpServers ?? {})).toBe(true);
+  });
+});

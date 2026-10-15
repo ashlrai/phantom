@@ -19,6 +19,7 @@ import { mkdirSync } from 'node:fs';
 
 import type { McpRegistry, McpServerSpec, McpServerHealth } from '../core/types.js';
 import { locusServerSpec } from '../core/integrations/locus.js';
+import { ASHLR_HUB_MCP_SERVER, isPhantomGatewayEntry } from '../core/integrations/editors.js';
 import { companionExecutableCandidates, companionExecutableKind } from '../core/companion-inventory.js';
 
 // ---------------------------------------------------------------------------
@@ -426,6 +427,15 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
       return 1;
     }
     throw err;
+  }
+
+  // `phm wire` registers the same gateway as "ashlr-hub"; adding "ashlr" next
+  // to it would give the client every tool twice.
+  const wired = existing.mcpServers?.[ASHLR_HUB_MCP_SERVER];
+  if (!existing.mcpServers?.['ashlr'] && isPhantomGatewayEntry(wired)) {
+    console.log(green(`  ✓ already installed as "${ASHLR_HUB_MCP_SERVER}" (phm wire) — no duplicate added.`));
+    console.log(dim(`    config: ${configPath}`));
+    return 0;
   }
 
   // ── Backup (only after a clean parse) ────────────────────────────────────

@@ -37,6 +37,22 @@ import { fsyncDirectory } from '../util/durability.js';
 export type EditorTarget = 'claude' | 'codex' | 'cursor';
 
 export const ASHLR_HUB_MCP_SERVER = 'ashlr-hub';
+/** Key `phm mcp install` writes for the same gateway. */
+export const ASHLR_MCP_INSTALL_SERVER = 'ashlr';
+
+/**
+ * True when an mcpServers entry launches Phantom's own gateway (`ashlr mcp` or
+ * `phm mcp`, bare or by absolute path). `phm wire` and `phm mcp install` write
+ * it under different keys; each checks for the other so a client never ends
+ * up with two copies of every tool.
+ */
+export function isPhantomGatewayEntry(entry: unknown): boolean {
+  if (!entry || typeof entry !== 'object') return false;
+  const { command, args } = entry as { command?: unknown; args?: unknown };
+  if (typeof command !== 'string' || !Array.isArray(args) || args.length !== 1 || args[0] !== 'mcp') return false;
+  const bin = command.split(/[\\/]/).pop()?.toLowerCase().replace(/\.(cmd|exe|ps1)$/, '');
+  return bin === 'ashlr' || bin === 'phm';
+}
 const MAX_COMMAND_OUTPUT_BYTES = 256 * 1024;
 const MAX_JSON_CONFIG_BYTES = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -668,6 +684,9 @@ function wireJsonEditor(
 
   const existingServers = existing.mcpServers ?? {};
   const existingEntry = existingServers[ASHLR_HUB_MCP_SERVER];
+  if (existingEntry === undefined && isPhantomGatewayEntry(existingServers[ASHLR_MCP_INSTALL_SERVER])) {
+    return { ok: true, detail: `already wired as "${ASHLR_MCP_INSTALL_SERVER}" (phm mcp install); not adding a duplicate ${ASHLR_HUB_MCP_SERVER} entry (${configPath})` };
+  }
   if (sameJsonEntry(existingEntry, gatewayEntry)) {
     return { ok: true, detail: `already wired — no changes needed (${configPath})` };
   }

@@ -310,6 +310,18 @@ describe('Claude user registry', () => {
     expect(wired.detail).toContain('mcpServers must be a JSON object');
   });
 
+  it('does not add ashlr-hub when phm mcp install already registered the gateway as ashlr', async () => {
+    const original = { mcpServers: { ashlr: { command: '/usr/local/bin/phm', args: ['mcp'] } } };
+    const configPath = jsonConfig('.claude.json', original);
+
+    const wired = await wireEditor('claude', { configPath });
+
+    expect(wired.ok).toBe(true);
+    expect(wired.detail).toContain('already wired as "ashlr"');
+    expect(readJson(configPath)).toEqual(original);
+    expect(fs.existsSync(`${configPath}.bak`)).toBe(false);
+  });
+
   it('refuses to overwrite a conflicting ashlr-hub entry', async () => {
     const original = {
       mcpServers: {
