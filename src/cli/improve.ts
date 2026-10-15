@@ -145,11 +145,16 @@ async function observe(repo: string | undefined): Promise<number> {
   if (!repo) { console.error('Usage: phm improve observe --repo <dir>'); return 2; }
   const { appendLedger, readLedger, scoreOutcomes } = await import('../core/improve/outcomes.js');
   const { observeOutcomes } = await import('../core/improve/observe.js');
-  const { defaultBranchOf } = await import('../core/improve/promote.js');
+  const { defaultBranchOf, assertOriginIs } = await import('../core/improve/promote.js');
   const read = readLedger();
   if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
   try {
-    const res = observeOutcomes(scoreOutcomes(read.records), repo, defaultBranchOf(repo));
+    // Only proposals whose PR lives in this checkout's origin repository.
+    const all = scoreOutcomes(read.records).filter((o) => o.pr);
+    const repository = all.map((o) => o.pr!.repository).find((r) => { try { assertOriginIs(r, repo); return true; } catch { return false; } });
+    if (!repository) { console.log('No registered PRs belong to this checkout\'s origin.'); return 0; }
+    const mine = all.filter((o) => o.pr!.repository.toLowerCase() === repository.toLowerCase());
+    const res = observeOutcomes(mine, repo, defaultBranchOf(repository, repo));
     for (const e of res.events) appendLedger(e);
     for (const e of res.errors) console.log(`warn ${e}`);
     const reverts = res.events.filter((e) => e.type === 'observed' && e.observation === 'reverted').length;
