@@ -21,6 +21,7 @@ import type {
 } from './types.js';
 import { CLOUD_BRANCH_PREFIX, CLOUD_PROMPT_MAX_CHARS, CLOUD_SEAT_ID, CLOUD_TASK_SCHEMA_VERSION } from './types.js';
 import { readCloudBacklog, nextBacklogItem, type BacklogClaimTask } from './backlog.js';
+import { checkDoneWhen, type DoneChecker } from './backlog-done.js';
 import { listDevinTasks } from '../devin/store.js';
 import { cloudBudgetView } from './budget.js';
 import { declaredMcpServers, ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
@@ -36,6 +37,8 @@ export interface CloudServiceDeps {
   launcher?: CloudLaunchDeps;
   tracker?: CloudTrackerDeps;
   now?: () => Date;
+  /** Acceptance check for backlog items with `doneWhen` (default: GitHub contents at the default branch). */
+  doneCheck?: DoneChecker;
 }
 
 /** Internal launches (Leader approvals, self-improvement) carry their origin + backlog item. */
@@ -227,11 +230,21 @@ export async function runSelfImprove(opts: { count?: number; auto: boolean }, de
   const launched: CloudTaskV1[] = [];
   const skipped: CloudImproveResponse['skipped'] = [];
   const repo = readCloudBudget().selfImprove.repo;
+  const satisfied = new Set<string>();
+  const doneCheck: DoneChecker = deps.doneCheck ?? ((item, target) => checkDoneWhen(item, target, deps.tracker?.gh ?? defaultCloudGh));
   for (let i = 0; i < count; i += 1) {
     // Re-read each round: the previous launch's task now claims its item.
     // Claims span both delivery lanes (3.15): an item a Devin session holds is not the cloud's to take.
-    const item = nextBacklogItem([...listCloudTasks(), ...backlogClaimsFromDevin()], repo, clock());
+    const item = nextBacklogItem([...listCloudTasks(), ...backlogClaimsFromDevin()], repo, clock(), satisfied);
     if (!item) break;
+    // An item whose acceptance condition already holds on the default branch
+    // would only come back "no-change"; skip it without spending a launch slot.
+    if (item.doneWhen && await doneCheck(item, item.repo ?? repo) === 'satisfied') {
+      satisfied.add(item.id);
+      skipped.push({ itemId: item.id, reason: 'Already satisfied on the default branch.' });
+      i -= 1;
+      continue;
+    }
     const res = await launchWithGate({
       repo: item.repo ?? repo,
       title: item.title,

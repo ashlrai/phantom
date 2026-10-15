@@ -62,6 +62,7 @@ function harness(opts: {
   defaultBranch?: string | null;
   runDelayMs?: number;
   allowedRepos?: string[];
+  doneCheck?: CloudServiceDeps['doneCheck'];
 } = {}): Harness {
   const events: string[] = [];
   const prompts: string[] = [];
@@ -69,6 +70,7 @@ function harness(opts: {
   let runs = 0;
   const deps: CloudServiceDeps = {
     now: () => NOW,
+    doneCheck: opts.doneCheck ?? (async () => 'open'),
     tracker: {
       gh: async (args) => {
         events.push(`gh ${args[0]} ${args[1]}`);
@@ -309,6 +311,23 @@ describe('runSelfImprove', () => {
   const padBacklog = () => appendUserBacklogItems(Array.from({ length: 5 }, (_, i) => (
     { id: `pad-${i}`, title: `Padding item ${i}`, prompt: 'Do it.', area: 'x', priority: 3 as const })));
   const backlogOrder = () => [...firstBuiltin.map((i) => i.id), ...Array.from({ length: 5 }, (_, i) => `pad-${i}`)];
+
+  it('skips items already satisfied on the default branch without spending a launch', async () => {
+    updateCloudBudget({ maxConcurrent: 10 });
+    // Two priority-1 user items right after the built-in priority-1 items: the first already holds on master.
+    appendUserBacklogItems([
+      { id: 'done-1', title: 'Already fixed', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/fixed.ts' } },
+      { id: 'open-1', title: 'Still open', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/missing.ts' } },
+    ]);
+    const checked: string[] = [];
+    const p1 = firstBuiltin.filter((it) => it.priority === 1).map((it) => it.id);
+    const res = await runSelfImprove({ auto: false, count: p1.length + 1 }, selfHarness({
+      doneCheck: async (item, repo) => { checked.push(`${item.id}@${repo}`); return item.id === 'done-1' ? 'satisfied' : 'open'; },
+    }).deps);
+    expect(res.launched.map((t) => t.backlogItemId)).toEqual([...p1, 'open-1']);
+    expect(res.skipped).toEqual([{ itemId: 'done-1', reason: 'Already satisfied on the default branch.' }]);
+    expect(checked).toEqual(['done-1@ashlrai/phantom', 'open-1@ashlrai/phantom']);
+  });
 
   it('the operator path still stops at the concurrency cap', async () => {
     padBacklog();

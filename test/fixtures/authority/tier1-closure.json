@@ -215,6 +215,7 @@
     "src/core/classify/completion-claims.ts",
     "src/core/classify/engine-errors.ts",
     "src/core/classify/typesafe-client.ts",
+    "src/core/cloud/backlog-done.ts",
     "src/core/cloud/backlog.ts",
     "src/core/cloud/budget.ts",
     "src/core/cloud/checkout.ts",

@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendUserBacklogItems, readCloudBacklog, readUserBacklogItems } from '../src/core/cloud/backlog.js';
+import { appendUserBacklogItems, readCloudBacklog, readUserBacklogItems, validDoneWhen } from '../src/core/cloud/backlog.js';
+import { checkDoneWhen } from '../src/core/cloud/backlog-done.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from '../src/core/cloud/improvement-backlog.js';
 import { writeCloudTask } from '../src/core/cloud/store.js';
 import type { CloudBacklogItem, CloudTaskV1 } from '../src/core/cloud/types.js';
@@ -94,5 +95,27 @@ describe('backlog to ledger sync', () => {
     expect(String(log.mock.calls.at(-1)![0])).toMatch(/registered 1/);
     expect(await cmdImprove(['sync-backlog'])).toBe(0);
     expect(String(log.mock.calls.at(-1)![0])).toMatch(/No new/);
+  });
+});
+
+describe('backlog items already satisfied', () => {
+  it('validates doneWhen and keeps it on user items', () => {
+    appendUserBacklogItems([user('d1', 'Perf', 3, { doneWhen: { path: 'test/x.test.ts', contains: 'budget' } })]);
+    expect(readUserBacklogItems().find((i) => i.id === 'd1')?.doneWhen).toEqual({ path: 'test/x.test.ts', contains: 'budget' });
+    for (const bad of [{ path: '../etc/passwd' }, { path: '/abs' }, { path: 'a/./b' }, { path: 'a b' }, { path: 'x', contains: '' }]) {
+      expect(validDoneWhen(bad)).toBeNull();
+    }
+  });
+
+  it('checkDoneWhen reads the default branch and fails open', async () => {
+    const item = user('d2', 'Perf', 3, { doneWhen: { path: 'package.json', contains: '--budget-kb 35' } });
+    const gh = (res: { ok: boolean; stdout?: string; stderr?: string }) => async (args: string[]) => {
+      expect(args).toEqual(['api', '-H', 'Accept: application/vnd.github.raw', 'repos/ashlrai/phantom/contents/package.json']);
+      return { stdout: '', stderr: '', ...res };
+    };
+    expect(await checkDoneWhen(item, 'ashlrai/phantom', gh({ ok: true, stdout: '"check": "--budget-kb 354"' }))).toBe('satisfied');
+    expect(await checkDoneWhen(item, 'ashlrai/phantom', gh({ ok: true, stdout: '"check": "--budget-kb 370"' }))).toBe('open');
+    expect(await checkDoneWhen(item, 'ashlrai/phantom', gh({ ok: false, stderr: 'gh: Not Found (HTTP 404)' }))).toBe('open');
+    expect(await checkDoneWhen(item, 'ashlrai/phantom', gh({ ok: false, stderr: 'connection reset' }))).toBe('unknown');
   });
 });

@@ -273,7 +273,16 @@ export interface CloudBacklogItem {
    * measured at its exact merge base and head and credits its `area`.
    */
   metric?: MetricSpec;
+  /**
+   * Acceptance condition checked at the target repo's default branch before
+   * the item is launched: satisfied when `path` exists there (and contains
+   * `contains`, when given). A satisfied item is skipped, so a fix that
+   * already landed does not cost a session that reports "no-change".
+   */
+  doneWhen?: CloudBacklogDoneWhen;
 }
+
+export interface CloudBacklogDoneWhen { path: string; contains?: string }
 
 export interface CloudBacklogView {
   items: Array<CloudBacklogItem & { claimedBy: string | null; lastState: CloudTaskState | null }>;

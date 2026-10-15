@@ -14,7 +14,7 @@ import { kindLeverage, kindOf, readLedger, scoreOutcomes, validateMetricSpec, ty
 import { readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from './improvement-backlog.js';
 import { CLOUD_REPO_PATTERN, cloudHome, ensureCloudDirectory, listCloudTasks } from './store.js';
-import { CLOUD_PROMPT_MAX_CHARS, type CloudBacklogItem, type CloudBacklogView, type CloudTaskState, type CloudTaskV1 } from './types.js';
+import { CLOUD_PROMPT_MAX_CHARS, type CloudBacklogDoneWhen, type CloudBacklogItem, type CloudBacklogView, type CloudTaskState, type CloudTaskV1 } from './types.js';
 
 export const CLOUD_BACKLOG_FILE = 'backlog.json';
 export const CLOUD_BACKLOG_MAX_USER_ITEMS = 200;
@@ -54,7 +54,22 @@ export function validBacklogItem(value: unknown): CloudBacklogItem | null {
   if (r['metric'] !== undefined) {
     try { metric = validateMetricSpec(r['metric']); } catch { return null; }
   }
-  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}) };
+  let doneWhen: CloudBacklogDoneWhen | undefined;
+  if (r['doneWhen'] !== undefined) {
+    doneWhen = validDoneWhen(r['doneWhen']) ?? undefined;
+    if (!doneWhen) return null;
+  }
+  return { id, title, prompt, area, priority, ...(repo !== undefined ? { repo } : {}), ...(metric ? { metric } : {}), ...(doneWhen ? { doneWhen } : {}) };
+}
+
+/** A repo-relative path of plain segments (no `..`, no absolute or hidden-escape forms) and a short literal. */
+export function validDoneWhen(value: unknown): CloudBacklogDoneWhen | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { path, contains } = value as Record<string, unknown>;
+  if (typeof path !== 'string' || path.length > 300 || !/^[A-Za-z0-9_@.-]+(\/[A-Za-z0-9_@.-]+)*$/.test(path)) return null;
+  if (path.split('/').some((seg) => seg === '.' || seg === '..')) return null;
+  if (contains !== undefined && (typeof contains !== 'string' || contains === '' || contains.length > 200)) return null;
+  return contains === undefined ? { path } : { path, contains };
 }
 
 /** Dedupe key for titles: case, punctuation and spacing do not make an item new. */
@@ -176,12 +191,12 @@ export function readCloudBacklog(tasks: readonly BacklogClaimTask[], now: Date):
 }
 
 /** Next unclaimed item for `repo`, highest priority first, then built-in order. */
-export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string, now: Date): CloudBacklogItem | null {
+export function nextBacklogItem(tasks: readonly BacklogClaimTask[], repo: string, now: Date, exclude: ReadonlySet<string> = new Set()): CloudBacklogItem | null {
   const newest = newestTaskByItem(tasks);
   const nowMs = now.getTime();
   const target = repo.toLowerCase();
   // An item without a repo targets whichever repo self-improvement is pointed at.
-  const match = ordered(allItems()).find((item) =>
+  const match = ordered(allItems()).find((item) => !exclude.has(item.id) &&
     (item.repo === undefined || item.repo.toLowerCase() === target) && claimOf(newest.get(item.id), nowMs).claimedBy === null);
   return match ?? null;
 }
