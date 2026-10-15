@@ -780,6 +780,7 @@ function renderSummary(): void {
     console.log(`    ${c.cyan(pad(topic, 14))}  ${TOPIC_LABELS[topic]} ${c.dim(`(${unique}, …)`)}`);
   }
   console.log('');
+  console.log('  ' + c.dim('phm init') + ' · ' + c.dim('phm doctor') + ' · ' + c.dim('phm verse') + '  start here: onboard, health check, console');
   console.log('  ' + c.dim('phm help <topic>') + '      full table for one topic');
   console.log('  ' + c.dim('phm help --search <t>') + ' find a command by keyword');
   console.log('  ' + c.dim('phm help --all') + '        every command (the legacy full table)');
@@ -803,7 +804,7 @@ function renderAll(): void {
   console.log('');
 }
 
-/** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0 always (help never fails the shell). */
+/** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0, except 2 for an unknown topic. */
 export async function cmdHelp(args: string[]): Promise<number> {
   const c = makeColors(isTty());
 
@@ -838,10 +839,14 @@ export async function cmdHelp(args: string[]): Promise<number> {
       renderTopic(topicArg as HelpTopic);
       return 0;
     }
-    console.log('');
-    console.log(c.dim(`  unknown topic "${topicArg}" — topics: ${TOPICS.join(', ')}`));
-    console.log('');
-    return 0;
+    // Unknown topic is a usage error (exit 2, like an unknown command) so agents can tell a typo from success.
+    console.error(`Unknown help topic "${topicArg}".`);
+    const { didYouMean } = await import('./completions.js');
+    const lower = topicArg.toLowerCase();
+    const guess = TOPICS.find((t) => t.startsWith(lower)) ?? didYouMean(lower, TOPICS);
+    if (guess) console.error(`Did you mean ${c.cyan(`phm help ${guess}`)}?`);
+    console.error(c.dim(`Topics: ${TOPICS.join(', ')}. Run \`phm help\` for the list.`));
+    return 2;
   }
 
   renderSummary();
