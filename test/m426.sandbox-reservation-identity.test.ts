@@ -39,6 +39,42 @@ import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 
 const privateStorageHarness = vi.hoisted(() => ({ useSemanticAdapter: false }));
 
+// Every Git call resolved through the shim costs a cold interpreter start: a
+// `node` exec on POSIX, and on Windows a whole node.exe process (the shim's
+// launcher is a node.exe hardlink). A full create/remove makes ~27 of them,
+// and under hosted-runner contention that cost scaled one case past 50s. Modes
+// whose observed effect happens only inside the pinned worktree runner (a
+// child process that resolves `git` from its inherited PATH) set this so the
+// test process's own Git calls (createSandbox's in-process discovery and
+// validation, removeSandbox cleanup, and the helpers below) run the real Git
+// directly. The runner and every Git it spawns still go through the shim.
+const inProcessGitHarness = vi.hoisted(() => ({
+  direct: null as null | { path: string | undefined; nodeOptions: string | undefined },
+}));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const execFileSync = ((file: string, ...rest: unknown[]) => {
+    const direct = inProcessGitHarness.direct;
+    if (direct === null || file !== 'git') {
+      return (actual.execFileSync as (...args: unknown[]) => unknown)(file, ...rest);
+    }
+    const args = Array.isArray(rest[0]) ? rest[0] : [];
+    const options = (Array.isArray(rest[0]) ? rest[1] : rest[0]) as
+      { env?: NodeJS.ProcessEnv } | undefined;
+    const env: NodeJS.ProcessEnv = { ...(options?.env ?? process.env) };
+    // Windows env blocks are case-insensitive but a spread copy keeps the
+    // stored spelling (usually `Path`); drop every spelling before restoring.
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === 'PATH' || key.toUpperCase() === 'NODE_OPTIONS') delete env[key];
+    }
+    if (direct.path !== undefined) env.PATH = direct.path;
+    if (direct.nodeOptions !== undefined) env.NODE_OPTIONS = direct.nodeOptions;
+    return (actual.execFileSync as (...args: unknown[]) => unknown)(file, args, { ...options, env });
+  }) as typeof actual.execFileSync;
+  return { ...actual, execFileSync };
+});
+
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
   return {
@@ -339,8 +375,26 @@ process.exit(result.status ?? 1);
   process.env.M426_GIT_MODE = mode;
   process.env.M426_REAL_GIT = realGitPath();
   process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`;
+  if (RUNNER_ONLY_SHIM_MODES.has(mode)) {
+    inProcessGitHarness.direct = { path: originalPath, nodeOptions: originalNodeOptions };
+  }
   return dir;
 }
+
+// Modes that act only on `worktree add` / `worktree remove` issued by the
+// pinned worktree runner. Every other mode intercepts a Git call the test
+// process itself makes (discovery rev-parse, worktree list), so it keeps the
+// shim on the in-process path as well.
+const RUNNER_ONLY_SHIM_MODES: ReadonlySet<Parameters<typeof installGitShim>[0]> = new Set([
+  'observe-add',
+  'observe-pinned-argv',
+  'fail-add-then-appear-on-remove',
+  'retarget-during-worktree-add',
+  'retarget-sandbox-home',
+  'retarget-sandbox-parent',
+  'hang-worktree-descendant',
+  'retarget-after-worktree-add',
+] as const);
 
 function makeDirectoryAlias(target: string): string {
   const alias = `${target}-alias`;
@@ -365,6 +419,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  inProcessGitHarness.direct = null;
   process.env.PATH = originalPath;
   if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
   else process.env.NODE_OPTIONS = originalNodeOptions;
