@@ -452,22 +452,17 @@ function readAshlrDirectorySnapshot(): AuthorityDirectorySnapshot {
   }
 }
 
-function sameAuthorityDirectory(
-  before: AuthorityDirectorySnapshot,
-  after: AuthorityDirectorySnapshot,
-): boolean {
-  if (before.state === 'missing' || after.state === 'missing') {
-    return before.state === 'missing' && after.state === 'missing';
-  }
-  return before.state === 'safe' && after.state === 'safe' &&
-    sameAuthorityDirectoryIdentity(before.identity, after.identity);
-}
-
 function sameAuthorityDirectoryIdentity(left: Stats, right: Stats): boolean {
   return sameFile(left, right) && left.ctimeMs === right.ctimeMs;
 }
 
-function openAuthorityDirectoryGuard(snapshot: AuthorityDirectorySnapshot): number | null | undefined {
+/**
+ * `null` = the directory changed between snapshot and open; `'churned'` = the
+ * same safe directory object whose ctime merely moved (a sibling write).
+ */
+function openAuthorityDirectoryGuard(
+  snapshot: AuthorityDirectorySnapshot,
+): number | null | 'churned' | undefined {
   if (snapshot.state !== 'safe' || process.platform === 'win32') return undefined;
   try {
     const directoryOnly = typeof fsConstants.O_DIRECTORY === 'number' ? fsConstants.O_DIRECTORY : 0;
@@ -476,7 +471,7 @@ function openAuthorityDirectoryGuard(snapshot: AuthorityDirectorySnapshot): numb
     const opened = fstatSync(fd);
     if (!safeAuthorityDirectory(opened) || !sameAuthorityDirectoryIdentity(snapshot.identity, opened)) {
       closeSync(fd);
-      return null;
+      return safeAuthorityDirectory(opened) && sameFile(snapshot.identity, opened) ? 'churned' : null;
     }
     return fd;
   } catch {
@@ -484,17 +479,29 @@ function openAuthorityDirectoryGuard(snapshot: AuthorityDirectorySnapshot): numb
   }
 }
 
+/**
+ * `ignoreCtime` only classifies a failed strict check as benign churn (same
+ * safe directory object, ctime moved). It never makes a read acceptable.
+ */
 function authorityDirectoryGuardStable(
   before: AuthorityDirectorySnapshot,
   after: AuthorityDirectorySnapshot,
   fd: number | undefined,
+  ignoreCtime = false,
 ): boolean {
-  if (!sameAuthorityDirectory(before, after)) return false;
+  const sameObject = (left: Stats, right: Stats): boolean =>
+    ignoreCtime ? sameFile(left, right) : sameAuthorityDirectoryIdentity(left, right);
+  if (before.state === 'missing' || after.state === 'missing') {
+    if (!(before.state === 'missing' && after.state === 'missing')) return false;
+  } else if (!(before.state === 'safe' && after.state === 'safe' &&
+    sameObject(before.identity, after.identity))) {
+    return false;
+  }
   if (fd === undefined) return true;
   try {
     const held = fstatSync(fd);
     return before.state === 'safe' && safeAuthorityDirectory(held) &&
-      sameAuthorityDirectoryIdentity(before.identity, held);
+      sameObject(before.identity, held);
   } catch {
     return false;
   }
@@ -1149,8 +1156,33 @@ function clearRegistryTransaction(transaction: RegistryTransaction): boolean {
   }
 }
 
+/**
+ * Any atomic write directly in ~/.ashlr (backlog, locks, audit) moves the
+ * directory ctime, which the strict identity fence below treats as a change.
+ * Such churn, and only such churn, is retried with a fresh full read a bounded
+ * number of times; every attempt is validated from scratch and a read whose
+ * identity check failed is never returned as ready.
+ */
+const REGISTRY_CHURN_READ_ATTEMPTS = 4;
+const REGISTRY_CHURN_RETRY_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+type RegistryReadAttempt = RegistryReadResult | { churned: true };
+
+const REGISTRY_CHURNED: RegistryReadAttempt = { churned: true };
+
 /** Missing is a valid empty registry. Existing malformed or unsafe state is degraded. */
 function readRegistryDetailed(): RegistryReadResult {
+  for (let attempt = 1; ; attempt += 1) {
+    const read = readRegistryAttempt();
+    if (!('churned' in read)) return read;
+    if (attempt >= REGISTRY_CHURN_READ_ATTEMPTS) {
+      return { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
+    }
+    Atomics.wait(REGISTRY_CHURN_RETRY_SLEEP, 0, 0, attempt * 2);
+  }
+}
+
+function readRegistryAttempt(): RegistryReadAttempt {
   let fd: number | undefined;
   let directoryFd: number | undefined;
   try {
@@ -1163,6 +1195,7 @@ function readRegistryDetailed(): RegistryReadResult {
       return { ok: false, registry: { repos: [] }, reason: 'unsafe-ashlr-directory', bytes: null };
     }
     const openedDirectory = openAuthorityDirectoryGuard(directoryBefore);
+    if (openedDirectory === 'churned') return REGISTRY_CHURNED;
     if (openedDirectory === null) {
       return { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
     }
@@ -1187,8 +1220,11 @@ function readRegistryDetailed(): RegistryReadResult {
       if (directoryAfter.state === 'unsafe') {
         return { ok: false, registry: { repos: [] }, reason: 'unsafe-ashlr-directory', bytes: null };
       }
-      return authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd)
-        ? { ok: true, registry: { repos: [] }, reason: 'missing-empty', bytes: null }
+      if (authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd)) {
+        return { ok: true, registry: { repos: [] }, reason: 'missing-empty', bytes: null };
+      }
+      return authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd, true)
+        ? REGISTRY_CHURNED
         : { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
     }
     if (!safeAuthorityFile(pathBefore) || pathBefore.size > MAX_REGISTRY_BYTES) {
@@ -1241,9 +1277,13 @@ function readRegistryDetailed(): RegistryReadResult {
       return { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
     }
     if (!safeAuthorityFile(after) || !sameFile(before, after) || !sameFile(after, pathAfter) ||
-      after.size !== before.size ||
-      !authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd)) {
+      after.size !== before.size) {
       return { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
+    }
+    if (!authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd)) {
+      return authorityDirectoryGuardStable(directoryBefore, directoryAfter, directoryFd, true)
+        ? REGISTRY_CHURNED
+        : { ok: false, registry: { repos: [] }, reason: 'registry-identity-changed', bytes: null };
     }
     const parsed = JSON.parse(bytes.toString('utf8')) as unknown;
     if (

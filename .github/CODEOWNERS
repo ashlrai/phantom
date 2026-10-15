@@ -292,6 +292,7 @@
 /test/elite-self-land-315.test.ts @masonwyatt23
 /test/engines-judges-310b.test.ts @masonwyatt23
 /test/engines-stream-family-310b.test.ts @masonwyatt23
+/test/enrollment-read-directory-churn.test.ts @masonwyatt23
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
