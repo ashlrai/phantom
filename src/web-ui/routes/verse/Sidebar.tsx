@@ -40,7 +40,7 @@ import { useCapacityClock } from './seat-subscription.js';
  * Saved projects sit above the chats: the registry the operator writes
  * deliberately (workspaces/SavedProjects.tsx).
  */
-import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import type { VerseProject, VerseSeat, VerseSession } from '../../data/api-types.js';
 import type { VerseActivityResponse, VerseSessionMetaResponse } from '../../../core/verse/workbench-types.js';
 import type { QueryStatus } from '../../data/cache.js';
@@ -63,8 +63,8 @@ import {
 } from './chat/sidebar-model.js';
 import { ArchiveGlyph, HandoffGlyph, MoreGlyph, PinGlyph, RenameGlyph, TrashGlyph } from './dock/dock-icons.js';
 import { PlusIcon, SearchIcon, SidebarIcon } from './verse-icons.js';
-import { seatSubscription } from './seat-subscription.js';
-import { formatRelative, seatById, seatPillLabel } from './verse-model.js';
+import { seatSubscription, type SeatSubscriptionView } from './seat-subscription.js';
+import { formatRelative, seatPillLabel } from './verse-model.js';
 import { SavedProjects } from './workspaces/SavedProjects.js';
 import { findCommand, formatChord } from './shell/command-catalog.js';
 import styles from './Sidebar.module.css';
@@ -118,7 +118,7 @@ const NO_SEEN: ReadonlyMap<string, number> = new Map();
 const SessionSearch = lazy(() => import('./context/SessionSearch.js').then((m) => ({ default: m.SessionSearch })));
 
 export function Sidebar(props: SidebarProps) {
-  useCapacityClock(undefined, props.seats.map(seat => seat.capacity));
+  const now = useCapacityClock(undefined, props.seats.map(seat => seat.capacity));
   const { sessions, sessionsStatus, sessionsError, projects, seats, selectedId, query, onQuery, onSelect, onNew,
     onRetry, onCollapse, onDisconnect, activity = null, selectedTerminal = null, meta = null, metaError = null, localSeen = NO_SEEN, actions } = props;
   const searchId = useId();
@@ -153,10 +153,13 @@ export function Sidebar(props: SidebarProps) {
     first.focus();
   }
 
-  function openMenu(row: SidebarRow, anchor: MenuAnchor, from: HTMLElement) {
-    if (!actions) return;
+  // One function for the component's life, so memoized rows keep skipping.
+  const hasActions = actions !== undefined;
+  const openMenu = useCallback((row: SidebarRow, anchor: MenuAnchor, from: HTMLElement) => {
     setMenu({ row, anchor, from });
-  }
+  }, []);
+  // Each seat's capacity once per render (it reads the clock), not once per row.
+  const capacityBySeat = new Map(seats.map((seat) => [seat.id, seatSubscription(seat, now)] as const));
 
   return (
     <nav className={styles.sidebar} aria-label="Chats">
@@ -205,7 +208,7 @@ export function Sidebar(props: SidebarProps) {
             toggleDisabled={group.kind === 'project' && (searching || filter !== 'all')}
             onToggle={group.kind === 'archived' ? () => setArchivedOpen((v) => !v)
               : group.kind === 'project' ? () => setSidebarGroupCollapsed(group.id, !collapsedGroups.has(group.id)) : undefined}
-            onSelect={onSelect} onMenu={actions ? openMenu : undefined}
+            capacityBySeat={capacityBySeat} onSelect={onSelect} onMenu={hasActions ? openMenu : undefined}
             onRenameDone={async (row, title) => {
               setRenaming(null);
               if (!actions || !title || title === row.session.title) return;
@@ -417,9 +420,10 @@ function EmptyList({ query, filter, hasSessions, newChatHint, onClearQuery, onCl
   );
 }
 
-function GroupView({ group, seats, selectedId, renaming, open, onToggle, toggleDisabled, onSelect, onMenu, onRenameDone }: {
+function GroupView({ group, seats, capacityBySeat, selectedId, renaming, open, onToggle, toggleDisabled, onSelect, onMenu, onRenameDone }: {
   group: SidebarGroup;
   seats: readonly VerseSeat[];
+  capacityBySeat: ReadonlyMap<string, SeatSubscriptionView>;
   selectedId: string | null;
   renaming: string | null;
   open: boolean;
@@ -453,7 +457,8 @@ function GroupView({ group, seats, selectedId, renaming, open, onToggle, toggleD
             {renaming === row.session.id ? (
               <RenameRow row={row} onDone={(title) => { void onRenameDone(row, title); }} />
             ) : (
-              <SessionRowView row={row} seats={seats} selected={row.session.id === selectedId} onSelect={onSelect} onMenu={onMenu} />
+              <SessionRowView row={row} seats={seats} capacity={capacityBySeat.get(row.session.seatId) ?? null}
+                selected={row.session.id === selectedId} onSelect={onSelect} onMenu={onMenu} />
             )}
           </li>
         )) : null}
@@ -462,16 +467,23 @@ function GroupView({ group, seats, selectedId, renaming, open, onToggle, toggleD
   );
 }
 
-function SessionRowView({ row, seats, selected, onSelect, onMenu }: {
+interface SessionRowProps {
   row: SidebarRow;
   seats: readonly VerseSeat[];
+  capacity: SeatSubscriptionView | null;
   selected: boolean;
   onSelect: (id: string) => void;
   onMenu?: (row: SidebarRow, anchor: MenuAnchor, from: HTMLElement) => void;
-}) {
+}
+
+/**
+ * A row re-renders only when what it draws changed. The list re-renders on
+ * every keystroke in the composer and every session-list push, and with a few
+ * hundred chats re-rendering every row (each with its tooltip) was most of
+ * the cost of typing.
+ */
+const SessionRowView = memo(function SessionRowView({ row, seats, capacity, selected, onSelect, onMenu }: SessionRowProps) {
   const { session, status } = row;
-  const seat = seatById(seats, session.seatId);
-  const capacity = seat === undefined ? null : seatSubscription(seat);
   // Quiet by default: a marker only where it changes what the operator would
   // do — a turn in flight on a seat whose binding window is spent.
   const spentWhileRunning = status.kind === 'running' && capacity?.cls === 'blocked';
@@ -530,6 +542,23 @@ function SessionRowView({ row, seats, selected, onSelect, onMenu }: {
       ) : null}
     </div>
   );
+}, sameRowProps);
+
+function sameRowProps(a: SessionRowProps, b: SessionRowProps): boolean {
+  return a.seats === b.seats && a.selected === b.selected && a.onSelect === b.onSelect && a.onMenu === b.onMenu &&
+    sameCapacity(a.capacity, b.capacity) && sameRow(a.row, b.row);
+}
+
+function sameCapacity(a: SeatSubscriptionView | null, b: SeatSubscriptionView | null): boolean {
+  return a === b || (a !== null && b !== null && a.cls === b.cls && a.summary === b.summary);
+}
+
+/** buildSidebar makes new row objects on every pass; equal fields draw the same row. */
+function sameRow(a: SidebarRow, b: SidebarRow): boolean {
+  if (a === b) return true;
+  return a.session === b.session && a.pinned === b.pinned && a.archived === b.archived && a.needsYou === b.needsYou &&
+    a.live?.text === b.live?.text && a.live?.startedAt === b.live?.startedAt &&
+    JSON.stringify(a.status) === JSON.stringify(b.status);
 }
 
 function RowStatus({ row }: { row: SidebarRow }) {
