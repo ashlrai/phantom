@@ -3,7 +3,7 @@
  * classify real seams correctly. Fake stdio MCP servers stand in for the
  * companion binaries; the real ones are exercised by running the script.
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -117,6 +117,42 @@ describe('companion workflow smoke', () => {
     for (const key of ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'LOCUS_CONTROL_CAPABILITY', 'PHANTOM_VAULT_PASSPHRASE']) {
       expect(env[key]).toBeUndefined();
     }
+  });
+
+  it('resolves published binaries from an npm prefix, keeps explicit flags, and names every gap', () => {
+    const prefix = join(dir, 'prefix');
+    const pkg = (name: string, version: string, files: string[] = []) => {
+      const root = join(prefix, 'node_modules', ...name.split('/'));
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name, version }));
+      for (const file of files) { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), ''); }
+    };
+    const bin = join(prefix, 'node_modules', '.bin');
+    mkdirSync(bin, { recursive: true });
+    const exe = (name: string) => process.platform === 'win32' ? `${name}.cmd` : name;
+    for (const name of ['phm', 'phantom', 'lexicon', 'lexicon-mcp', 'stack']) writeFileSync(join(bin, exe(name)), '');
+    pkg('@ashlr/phantom', '3.0.0');
+    pkg('phantom-secrets', '0.7.9');
+    pkg('@ashlr/lexicon', '0.5.4', ['plugin/hook.mjs']);
+    pkg('@ashlr/stack', '0.1.1');
+    const resolved = smoke.resolvePublished(prefix, { stackBin: '/explicit/stack' });
+    expect(resolved.options).toMatchObject({ phm: join(bin, exe('phm')), secretsBin: join(bin, exe('phantom')),
+      lexiconBin: join(bin, exe('lexicon')), lexiconMcp: join(bin, exe('lexicon-mcp')),
+      lexiconHook: join(prefix, 'node_modules', '@ashlr', 'lexicon', 'plugin', 'hook.mjs') });
+    expect(resolved.options.stackBin).toBeUndefined();
+    expect(resolved.skipReasons.stackBin).toBeUndefined();
+    expect(resolved.skipReasons.locusBin).toBe('locus-cli is not installed');
+    expect(resolved.skipReasons.stackMcp).toBe('ashlr-stack-mcp is not installed');
+    expect(resolved.skipReasons.mdopen).toContain('no npm package');
+    expect(resolved.packages).toContainEqual({ name: '@ashlr/stack', version: '0.1.1' });
+    expect(resolved.packages).toContainEqual({ name: 'locus-cli', version: null });
+    expect(smoke.parseArgs(['--prefix', prefix])).toMatchObject({ published: true, prefix });
+  });
+
+  it('carries published skip reasons and package versions into the report', async () => {
+    const report = await smoke.runSmoke({ skipReasons: { mdopen: 'Ashlr MD has no npm package' }, packages: [{ name: 'x', version: '1' }] });
+    expect(report.checks.find((check: { id: string }) => check.id === 'md:mdopen')).toMatchObject({ status: 'skip', detail: 'Ashlr MD has no npm package' });
+    expect(report.published.packages).toEqual([{ name: 'x', version: '1' }]);
   });
 
   it('skips every check, and passes, when no companion binary is given', async () => {

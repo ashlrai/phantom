@@ -141,3 +141,17 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
 
 Exit 0 means no check failed; exit 1 names the broken seam; `--json` prints
 the `phm.companion-workflow-smoke/v1` report.
+
+To check what users actually install, add `--published`. It installs the
+latest `@ashlr/phantom`, `phantom-secrets`, `locus-cli`, `@ashlr/lexicon`,
+`@ashlr/stack` and `ashlr-stack-mcp` from npm into a temporary prefix
+(`--prefix <dir>` keeps and reuses one) with install scripts off, resolves each
+binary from `node_modules/.bin`, and lets the Secrets and Locus wrappers
+download their native release into the disposable home. Explicit flags still
+win. The report lists each installed package version. Ashlr MD has no npm
+package, so its checks are skipped with that reason. Re-run it whenever a
+companion publishes:
+
+```bash
+node scripts/companion-workflow-smoke.mjs --published --json
+```

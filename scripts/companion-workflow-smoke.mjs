@@ -17,6 +17,13 @@
  *     --stack-bin /path/stack --stack-mcp /path/stack-mcp \
  *     --mdopen /path/mdopen --mdopener-mcp /path/mdopener-mcp [--json]
  *
+ * --published [--prefix <dir>] checks what users install instead: the published
+ * npm packages go into a temp npm prefix (or <dir>, kept for reuse) with
+ * `npm install --ignore-scripts` (no package needs its postinstall; native
+ * binaries download lazily on first run, into the disposable HOME), and each
+ * binary resolves from <prefix>/node_modules/.bin. Explicit flags still win.
+ * The report lists each package's installed version. Needs network to npm and GitHub.
+ *
  * Exit 0: no check failed (warn/skip allowed). Exit 1: a seam is broken. Exit 2: bad usage.
  */
 import { spawn } from 'node:child_process';
@@ -53,6 +60,14 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--json') { options.json = true; continue; }
+    if (arg === '--published') { options.published = true; continue; }
+    if (arg === '--prefix') {
+      const value = argv[++i];
+      if (!value) throw new Error('--prefix requires a path.');
+      options.prefix = resolve(value);
+      options.published = true;
+      continue;
+    }
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
     const key = FLAGS[arg];
     if (!key) throw new Error(`Unknown argument: ${arg}`);
@@ -61,6 +76,86 @@ export function parseArgs(argv) {
     options[key] = resolve(value);
   }
   return options;
+}
+
+/**
+ * What users install from npm. `bins` maps a smoke option to the package's
+ * `node_modules/.bin` name; `files` to a shipped file that is not a bin.
+ * `native` names what the npm wrapper downloads on first run (under the
+ * disposable HOME): the native CLI, which `phm companions` requires because it
+ * deliberately refuses bootstrap launchers, and the MCP server shipped with it.
+ */
+export const PUBLISHED_PACKAGES = Object.freeze([
+  { name: '@ashlr/phantom', bins: { phm: 'phm' } },
+  { name: 'phantom-secrets', bins: { secretsBin: 'phantom' }, native: { secretsBinNative: ['.phantom-secrets', 'bin', 'phantom'], secretsMcp: ['.phantom-secrets', 'bin', 'phantom-mcp'] } },
+  { name: 'locus-cli', bins: { locusBin: 'locus' }, native: { locusBinNative: ['.locus', 'bin', 'locus'], locusMcp: ['.locus', 'bin', 'locus-mcp'] } },
+  { name: '@ashlr/lexicon', bins: { lexiconBin: 'lexicon', lexiconMcp: 'lexicon-mcp' }, files: { lexiconHook: 'plugin/hook.mjs' } },
+  { name: '@ashlr/stack', bins: { stackBin: 'stack' } },
+  { name: 'ashlr-stack-mcp', bins: { stackMcp: 'ashlr-stack-mcp' } },
+]);
+/** Options no npm package can provide. */
+const UNPUBLISHED = Object.freeze({
+  mdopen: 'Ashlr MD has no npm package', mdopenerMcp: 'Ashlr MD has no npm package',
+});
+
+/** Install the published packages into `prefix` (network). Scripts stay off. */
+export async function installPublished(prefix, { timeoutMs = 300_000 } = {}) {
+  mkdirSync(prefix, { recursive: true });
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const result = await run(npm, ['install', '--prefix', prefix, '--no-audit', '--no-fund', '--ignore-scripts',
+    '--no-save', ...PUBLISHED_PACKAGES.map(pkg => `${pkg.name}@latest`)], { env: process.env, cwd: prefix, timeoutMs });
+  if (result.code !== 0) throw new Error(`npm install failed (exit ${result.code}): ${result.stderr.trim().slice(-400)}`);
+}
+
+/**
+ * Resolve smoke options from an installed prefix (pure filesystem, no network).
+ * Explicit options win; anything unresolved gets a skip reason naming the gap.
+ */
+export function resolvePublished(prefix, explicit = {}) {
+  const options = {}, skipReasons = {}, packages = [];
+  const binDir = join(prefix, 'node_modules', '.bin');
+  for (const pkg of PUBLISHED_PACKAGES) {
+    const root = join(prefix, 'node_modules', ...pkg.name.split('/'));
+    let version = null;
+    try { version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? null; } catch { /* not installed */ }
+    packages.push({ name: pkg.name, version });
+    const entries = [
+      ...Object.entries(pkg.bins ?? {}).map(([key, bin]) => [key, join(binDir, process.platform === 'win32' ? `${bin}.cmd` : bin), `bin ${bin}`]),
+      ...Object.entries(pkg.files ?? {}).map(([key, file]) => [key, join(root, file), file]),
+    ];
+    for (const [key, path, label] of entries) {
+      if (explicit[key]) continue;
+      if (version && existsSync(path)) options[key] = path;
+      else skipReasons[key] = version ? `${pkg.name}@${version} ships no ${label}` : `${pkg.name} is not installed`;
+    }
+  }
+  for (const [key, why] of Object.entries(UNPUBLISHED)) if (!explicit[key]) skipReasons[key] = why;
+  return { options, skipReasons, packages };
+}
+
+/**
+ * Run each npm wrapper once in the sandbox so it downloads its native release,
+ * then pick up the MCP server that came with it. Returns per-option skip reasons.
+ */
+export async function materializeNative(options, env, home) {
+  const skipReasons = {};
+  for (const pkg of PUBLISHED_PACKAGES) {
+    if (!pkg.native) continue;
+    const cliKey = Object.keys(pkg.bins)[0];
+    let warm = null;
+    for (const [key, parts] of Object.entries(pkg.native)) {
+      if (options[key]) continue;
+      if (!options[cliKey]) { skipReasons[key] = `${pkg.name} CLI not resolved`; continue; }
+      warm ??= await run(options[cliKey], ['--version'], { env, cwd: home, timeoutMs: 60_000 });
+      const path = join(home, ...parts);
+      if (existsSync(path)) { options[key] = path; continue; }
+      const lastLine = warm.stderr.trim().split('\n').filter(line => !/^Downloading /u.test(line))[0] ?? '';
+      skipReasons[key] = warm.code === 0
+        ? `the ${pkg.name} wrapper installs no ${parts.at(-1)}`
+        : `the ${pkg.name} wrapper failed (${warm.timedOut ? 'no exit within 60 s' : `exit ${warm.code}`})${lastLine ? `: ${lastLine.slice(0, 200)}` : ''}`;
+    }
+  }
+  return skipReasons;
 }
 
 /** Node entrypoints run under this Node; anything else is executed directly. */
@@ -85,8 +180,14 @@ export function smokeEnv(home, extraPath = []) {
     ASHLR_HOME: join(home, '.ashlr'), LOCUS_HOME: join(home, '.locus'),
     LEXICON_PATH: join(home, '.config', 'lexicon', 'lexicon.yaml'),
     TMPDIR: join(home, '..'), NO_COLOR: '1', CI: '1', PATH: [...new Set(path)].join(delimiter),
+    // Trust roots only (file paths, not credentials), so npm wrappers can download behind a TLS proxy.
+    ...pick(process.env, ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR']),
     ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
   };
+}
+
+function pick(source, keys) {
+  return Object.fromEntries(keys.filter(key => source[key]).map(key => [key, source[key]]));
 }
 
 /** POSIX: own process group, so a timeout kills grandchildren that hold stdout too. */
@@ -232,32 +333,39 @@ export async function runSmoke(options) {
   const add = (id, result) => checks.push({ id, ...result });
   const skip = (id, why) => add(id, { status: 'skip', detail: why });
   const present = key => Boolean(options[key] && existsSync(options[key]));
+  const reasons = { ...(options.skipReasons ?? {}) };
+  const why = (key, fallback) => reasons[key] ?? fallback;
   const box = sandbox();
   try {
     const env = smokeEnv(box.home, [options.stackBin, options.secretsBin].filter(Boolean).map(dirname));
+    if (options.published) Object.assign(reasons, await materializeNative(options, env, box.home));
 
     // 1. Phantom identifies each installed companion it has a reviewed contract for.
     const companionFlags = [['secrets', 'secretsBin'], ['locus', 'locusBin'], ['lexicon', 'lexiconBin']]
       .filter(([, key]) => present(key));
-    if (!present('phm')) skip('phm:companions', 'no --phm');
+    if (!present('phm')) skip('phm:companions', why('phm', 'no --phm'));
     else if (!companionFlags.length) skip('phm:companions', 'no companion CLI given');
     else {
       const args = ['companions', '--json', '--bin-dir', box.root];
-      for (const [id, key] of companionFlags) args.push(`--${id}-bin`, options[key]);
+      // A published npm wrapper is a bootstrap launcher; phm probes the native binary it installed.
+      for (const [id, key] of companionFlags) args.push(`--${id}-bin`, options[`${key}Native`] ?? options[key]);
       const result = await run(options.phm, args, { env, cwd: box.home });
       if (result.code !== 0) add('phm:companions', { status: 'fail', detail: `exit ${result.code}: ${result.stderr.trim().slice(0, 200)}` });
       else {
         const report = JSON.parse(result.stdout);
-        for (const [id] of companionFlags) {
+        for (const [id, key] of companionFlags) {
           const entry = report.companions.find(item => item.id === id);
-          add(`phm:companions:${id}`, entry ? evaluateCompanion(entry) : { status: 'fail', detail: 'not in report' });
+          const check = entry ? evaluateCompanion(entry) : { status: 'fail', detail: 'not in report' };
+          const native = reasons[`${key}Native`];
+          if (check.status === 'fail' && native && !options[`${key}Native`]) check.detail += `; no native binary to probe: ${native}`;
+          add(`phm:companions:${id}`, check);
         }
       }
     }
 
     // 2. Every MCP server completes the handshake current clients send.
     for (const server of MCP_SERVERS) {
-      if (!present(server.option)) { skip(`${server.id}:mcp`, `no --${server.option.replace(/[A-Z]/gu, c => `-${c.toLowerCase()}`)}`); continue; }
+      if (!present(server.option)) { skip(`${server.id}:mcp`, why(server.option, `no --${server.option.replace(/[A-Z]/gu, c => `-${c.toLowerCase()}`)}`)); continue; }
       for (const protocolVersion of CLIENT_PROTOCOL_VERSIONS) {
         const id = `${server.id}:mcp:${protocolVersion}`;
         try {
@@ -270,7 +378,7 @@ export async function runSmoke(options) {
     }
 
     // 3. Phantom reads the services a Stack project wires (`phm stack status --json`).
-    if (!present('phm') || !present('stackBin')) skip('phm:stack-status', 'needs --phm and --stack-bin');
+    if (!present('phm') || !present('stackBin')) skip('phm:stack-status', why('stackBin', why('phm', 'needs --phm and --stack-bin')));
     else {
       const project = join(box.home, 'stack-project');
       mkdirSync(project, { recursive: true });
@@ -302,7 +410,7 @@ export async function runSmoke(options) {
     }
 
     // 4. Lexicon's Claude Code hook: always exit 0, fast, and stdout is JSON or empty.
-    if (!present('lexiconHook')) skip('lexicon:hook', 'no --lexicon-hook');
+    if (!present('lexiconHook')) skip('lexicon:hook', why('lexiconHook', 'no --lexicon-hook'));
     else {
       const payload = JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'open the ashler stack readme', cwd: box.home, session_id: 'smoke' });
       const result = await run(options.lexiconHook, [], { env, cwd: box.home, input: payload, timeoutMs: 10_000 });
@@ -314,7 +422,7 @@ export async function runSmoke(options) {
     }
 
     // 5. `mdopen` (what Phantom's Markdown presenter launches) returns promptly and honestly.
-    if (!present('mdopen')) skip('md:mdopen', 'no --mdopen');
+    if (!present('mdopen')) skip('md:mdopen', why('mdopen', 'no --mdopen'));
     else {
       const file = join(box.home, 'smoke.md');
       writeFileSync(file, '# Smoke\n');
@@ -329,7 +437,7 @@ export async function runSmoke(options) {
     // 6. Locus: a human pin read through Phantom's own Locus parsers, with and without
     // the exported control capability. `ready` must never outrun a verified anchor.
     const locusDist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'core', 'integrations', 'locus.js');
-    if (!present('locusBin')) skip('locus:pin-report', 'no --locus-bin');
+    if (!present('locusBin')) skip('locus:pin-report', why('locusBin', 'no --locus-bin'));
     else if (process.platform === 'win32') skip('locus:pin-report', 'needs a POSIX shell for the pin hook');
     else if (!existsSync(locusDist)) skip('locus:pin-report', 'Phantom dist not built (npm run build)');
     else {
@@ -337,12 +445,32 @@ export async function runSmoke(options) {
     }
 
     // 7. Secrets: a project secret reaches an upstream only through `phantom exec`'s proxy.
-    if (!present('secretsBin')) skip('secrets:exec-proxy', 'no --secrets-bin');
+    if (!present('secretsBin')) skip('secrets:exec-proxy', why('secretsBin', 'no --secrets-bin'));
     else add('secrets:exec-proxy', await secretsExecProxy(options.secretsBin, env, box.home));
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }
-  return { schema: SMOKE_SCHEMA, ok: checks.every(check => check.status !== 'fail'), checks };
+  return {
+    schema: SMOKE_SCHEMA, ok: checks.every(check => check.status !== 'fail'), checks,
+    ...(options.packages ? { published: { prefix: options.prefix ?? null, packages: options.packages } } : {}),
+  };
+}
+
+/** `--published`: install (into a temp prefix unless --prefix), resolve, run, clean up. */
+export async function runPublishedSmoke(options) {
+  const prefix = options.prefix ?? mkdtempSync(join(tmpdir(), 'phm-companion-published-'));
+  try {
+    await installPublished(prefix);
+    const resolved = resolvePublished(prefix, options);
+    return await runSmoke({ ...resolved.options, ...stripUndefined(options),
+      skipReasons: resolved.skipReasons, packages: resolved.packages });
+  } finally {
+    if (!options.prefix) rmSync(prefix, { recursive: true, force: true });
+  }
+}
+
+function stripUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }
 
 const LOCUS_READER = `
@@ -382,7 +510,7 @@ export async function locusPinReport(locusBin, locusDist, env, home) {
   });
   let data;
   try { data = JSON.parse(result.stdout); } catch {
-    return [['locus:pin-report', { status: 'fail', detail: `pin flow exit ${result.code}: ${result.stderr.trim().slice(-200)}` }]];
+    return [['locus:pin-report', { status: 'fail', detail: `pin flow ${result.timedOut ? 'did not finish within 30 s' : `exit ${result.code}`}: ${result.stderr.trim().slice(-200)}` }]];
   }
   const describe = view => `status=${view.status} ready=${view.ready} anchor=${view.anchor} oneline=${view.oneline}`;
   const consistent = view => view.ready !== true || (view.anchor !== false && view.healthy);
@@ -435,6 +563,7 @@ export async function secretsExecProxy(secretsBin, env, home) {
 }
 
 function printHuman(report) {
+  for (const pkg of report.published?.packages ?? []) process.stdout.write(`pkg  ${pkg.name}@${pkg.version ?? 'not installed'}\n`);
   const mark = { pass: 'ok  ', warn: 'warn', fail: 'FAIL', skip: 'skip' };
   for (const check of report.checks) process.stdout.write(`${mark[check.status]} ${check.id}: ${check.detail}\n`);
   const count = status => report.checks.filter(check => check.status === status).length;
@@ -451,7 +580,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('*/')[0].replace(/^#!.*\n\/\*\*\n/u, '').replace(/^ \* ?/gmu, ''));
     process.exit(0);
   }
-  const report = await runSmoke(options);
+  let report;
+  try { report = options.published ? await runPublishedSmoke(options) : await runSmoke(options); } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
   if (options.json) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   else printHuman(report);
   process.exit(report.ok ? 0 : 1);
