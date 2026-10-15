@@ -88,7 +88,7 @@ function judge(entry: MemoryEvalCase, pack: MemoryContextPack): string[] {
   }
   // Receipts alone do not prove evidence reached the model-facing text. Both
   // declared arms emit one JSON evidence object per line; parse independently.
-  const emitted: Array<{ eventId?: unknown; text?: unknown; sourceRefs?: unknown; sources?: unknown }> = [];
+  const emitted: Array<{ eventId?: unknown; text?: unknown; sourceRefs?: unknown; sources?: unknown; observedAt?: unknown; validFrom?: unknown; validUntil?: unknown }> = [];
   for (const line of pack.text.split('\n')) if (line.startsWith('{')) {
     try { emitted.push(JSON.parse(line)); } catch { failures.push('evidence-text-json'); }
   }
@@ -102,6 +102,12 @@ function judge(entry: MemoryEvalCase, pack: MemoryContextPack): string[] {
     const references = expected?.sourceRefs.map(ref => ref.quote === expected.text ? { id: ref.id, digest: ref.digest } : { id: ref.id, digest: ref.digest, quote: ref.quote });
     expect(Boolean(expected) && (row.sources === undefined ? canonicalJson(expected!.sourceRefs) === canonicalJson(row.sourceRefs)
       : row.sourceRefs === undefined && canonicalJson(references) === canonicalJson(row.sources)), 'emitted-citation-payload');
+    // Time fields may be left out only where the boundary tag declares the default they take.
+    const declared = pack.text.includes(' omitted="observedAt=validFrom validUntil=null"');
+    const observedAt = 'observedAt' in row ? row.observedAt : declared ? row.validFrom : undefined;
+    const validUntil = 'validUntil' in row ? row.validUntil : declared ? null : undefined;
+    expect(Boolean(expected) && expected!.validFrom === row.validFrom && expected!.observedAt === observedAt && expected!.validUntil === validUntil,
+      'emitted-time-fields');
   }
   // Nothing in the pack may identify an event outside the admitted scope. Checked against literal fixture fields,
   // even for invalid queries (then no fixture event counts as visible).

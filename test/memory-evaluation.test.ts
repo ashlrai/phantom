@@ -79,6 +79,16 @@ describe('offline memory semantic corpus and evaluator', () => {
     } });
     expect(report.arms[0]!.cases.some(result => result.failures.includes(mode.startsWith('text-') ? 'emitted-citation-payload' : 'citation-payload'))).toBe(true);
   });
+  it.each(['drop-declaration', 'shift-valid-from'] as const)('fails a builder whose emitted time fields do not restore to the fixture (%s)', mode => {
+    const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
+      const pack = buildMemoryContextPack(snapshot, query);
+      if (mode === 'drop-declaration') pack.text = pack.text.replace(' omitted="observedAt=validFrom validUntil=null"', '');
+      else pack.text = pack.text.split('\n').map(line => line.startsWith('{') ? JSON.stringify({ ...JSON.parse(line), validFrom: '2020-01-01T00:00:00.000Z' }) : line).join('\n');
+      pack.bytes = new TextEncoder().encode(pack.text).byteLength;
+      return pack;
+    } });
+    expect(report.arms[0]!.cases.some(result => result.failures.includes('emitted-time-fields'))).toBe(true);
+  });
   it('fails a builder whose receipt identifies events outside the admitted scope', () => {
     const report = runMemoryEvaluation(text, binding, { repeats: 1, governed: (snapshot, query) => {
       const pack = buildMemoryContextPack(snapshot, query);

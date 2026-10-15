@@ -157,6 +157,9 @@ quote only when it differs from the fact text. The complete source records stay
 on `items[].sourceRefs`. Facts are placed inside a fixed evidence boundary, with angle brackets escaped so quoted text
 cannot close that boundary. The view (time mode, time, knowledge cutoff) and the
 review disclaimer are stated once on the boundary tag rather than in every fact.
+The tag also declares `omitted="observedAt=validFrom validUntil=null"`: a fact
+leaves out `observedAt` when it equals `validFrom` and `validUntil` when it is
+null, and states either field whenever it differs.
 Quoted instructions remain data; `authority: false` never grants tool use,
 deployment or account access.
 

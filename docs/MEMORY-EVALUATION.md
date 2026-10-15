@@ -60,11 +60,11 @@ npm run --silent bench:memory -- --json            # summaries plus failing case
 npm run --silent bench:memory -- --json --cases    # every step's measurements
 ```
 
-It has 192 cases and 201 steps in five dimensions:
+It has 296 cases and 305 steps in five dimensions:
 
 | Dimension | Cases | What it measures |
 | --- | --- | --- |
-| Retrieval | 158 | Find one of 20 facts in a 26-event history with a top-3 budget. Each fact is asked three ways in the authored catalog: sharing exact words (lexical), sharing only word stems (inflected), and sharing no content word (paraphrase). Two more sets of 40 paraphrases (held-out and unseen) were written by separate agents that saw only the facts, and each comes with six questions no fact answers. Six authored queries also have no answer. Unanswerable queries should return an empty pack. |
+| Retrieval | 262 | Find one of 20 facts in a 26-event history with a top-3 budget. Each fact is asked three ways in the authored catalog: sharing exact words (lexical), sharing only word stems (inflected), and sharing no content word (paraphrase). Four more sets of 40 paraphrases (held-out, unseen, fresh and second fresh) were written by separate agents that saw only the facts. The first two come with six questions no fact answers; the last two with twelve, at least eight of them deliberately close to the stored topics. Six authored queries also have no answer. Unanswerable queries should return an empty pack. |
 | Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
 | Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
 | Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
@@ -104,3 +104,19 @@ On the #746 head, scored with the same 192 cases:
 | 72-case conformance corpus | 72/72 | 72/72 |
 
 A fact now takes about 350 bytes of pack text, down from about 440, so the two-fact step fits in 1 KiB. The three-fact step in 1.25 KiB still misses by a few dozen bytes. The vocabulary costs some precision: three separately written unanswerable questions now match a fact through a synonym (for example "who signs off on expense reimbursements" reaches the release approver), and packs carry about one extra fact per retrieval step.
+
+### Abstention and the three-fact budget
+
+The next round tried to win back the unanswerable questions without losing paraphrase recall. The rule chosen on the authored, held-out and unseen sets was: drop a fact reached only through one vocabulary synonym that three or more eligible facts share. Before measuring, it was fixed that the rule would ship only if a set written afterwards by another agent (fresh) showed a net gain. It did not, and a second fresh set agreed, so the rule is not shipped:
+
+| Governed, top-3 | No rule (shipped) | Synonym abstention |
+| --- | --- | --- |
+| Held-out paraphrase / unanswerable | 34/40, 4/6 | 32/40, 5/6 |
+| Unseen paraphrase / unanswerable | 27/40, 5/6 | 26/40, 6/6 |
+| Fresh paraphrase / unanswerable | 25/40, 2/12 | 24/40, 2/12 |
+| Second fresh paraphrase / unanswerable | 27/40, 1/12 | 26/40, 2/12 |
+| Extraneous facts per retrieval step | 1.41 | 1.15 |
+
+The fresh sets show the real limit: a question about database backups shares `database` with the database facts as strongly as a real paraphrase does, and no word-level threshold tried (synonym-only matches, share of uncovered query words, match ratio) separates the two without giving up more answers than it saves. Empty packs for near-topic questions need a meaning signal this deterministic ranker does not have.
+
+The same round fits the three-fact step in 1.25 KiB. A fact leaves out `observedAt` when it equals `validFrom` and `validUntil` when it is null, under a default stated once on the boundary tag, and the conformance judge checks that every emitted fact restores to the fixture's time fields. A typical fact drops from about 350 to about 300 bytes; the three-fact step takes 1,176 of 1,280 bytes and all eight tasks pass (17/17 steps). The 72-case corpus stays 72/72 with no forbidden leaks.

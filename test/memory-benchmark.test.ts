@@ -1,7 +1,7 @@
 /** Offline memory quality benchmark: fixture validity, determinism, gold self-consistency and governed floors. */
 import { describe, expect, it } from 'vitest';
 import { benchmarkMemoryCli, parseMemoryBenchmarkArgs } from '../scripts/benchmark-memory.js';
-import { MEMORY_BENCHMARK_DIMENSIONS, benchEvent, benchQuery, benchSnapshot, memoryBenchmarkCases, runMemoryBenchmark,
+import { MEMORY_BENCHMARK_DIMENSIONS, benchDay, benchEvent, benchQuery, benchSnapshot, memoryBenchmarkCases, runMemoryBenchmark,
   type MemoryBenchmarkBuilder } from '../src/core/local-eval/memory-benchmark.js';
 import { buildMemoryContextPack } from '../src/core/memory/pack.js';
 import { validMemoryPackQuery, validMemorySnapshot } from '../src/core/memory/validate.js';
@@ -13,8 +13,8 @@ const emptyPack = (status: MemoryContextPack['status'] = 'none', text = ''): Mem
   items: [], receipt: { policyVersion: 1, snapshotId: null, snapshotRevision: null, recordedThrough: null, scope: null, time: null, knownAt: null,
     selectedEventIds: [], exclusions: [], stopReasons: [] }, authority: false });
 describe('memory quality benchmark', () => {
-  it('assigns 192 uniquely named cases whose snapshots and queries all pass the closed schema', () => {
-    expect(cases).toHaveLength(192);
+  it('assigns 296 uniquely named cases whose snapshots and queries all pass the closed schema', () => {
+    expect(cases).toHaveLength(296);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
     for (const step of cases.flatMap(entry => entry.steps)) {
@@ -58,12 +58,14 @@ describe('memory quality benchmark', () => {
     expect(governed.retrievalByDifficulty.lexical.passed).toBe(20);
     expect(governed.retrievalByDifficulty.inflected.passed).toBe(20);
     expect(governed.retrievalByDifficulty.absent.passed).toBeGreaterThanOrEqual(3);
-    expect(governed.byDimension.task.passed).toBeGreaterThanOrEqual(7);
+    expect(governed.byDimension.task.passed).toBe(8);
     expect(governed.overall.conflictsSurfaced).toBe(governed.overall.conflictsTotal);
     expect(governed.overall.payloadRatio).toBeGreaterThan(0.05);
     expect(governed.retrievalByDifficulty.paraphrase.passed).toBeGreaterThanOrEqual(18);
     expect(governed.retrievalByDifficulty['held-out'].passed).toBeGreaterThanOrEqual(34);
     expect(governed.retrievalByDifficulty.unseen.passed).toBeGreaterThanOrEqual(27);
+    expect(governed.retrievalByDifficulty.fresh.passed).toBeGreaterThanOrEqual(25);
+    expect(governed.retrievalByDifficulty['second-fresh'].passed).toBeGreaterThanOrEqual(27);
     expect(governed.overall.forbiddenLeaks).toBe(0);
   });
   it('cites sources by ID and digest in pack text, quoting only when the quote differs, with full records on items', () => {
@@ -109,8 +111,19 @@ describe('memory quality benchmark', () => {
     expect(buildMemoryContextPack(snapshot, benchQuery('where is the')).receipt.selectedEventIds).toEqual(['b', 'a']);
     const pack = buildMemoryContextPack(snapshot, benchQuery('build', { knownAt: '2026-09-20T00:00:00.000Z' }));
     expect(pack.text.split('\n')[1]).toBe('<phantom-memory-evidence authority="false" review="caller-recorded-approval-not-truth-proof" '
-      + 'time-mode="current" time-at="2026-09-30T00:00:00.000Z" known-at="2026-09-20T00:00:00.000Z">');
+      + 'time-mode="current" time-at="2026-09-30T00:00:00.000Z" known-at="2026-09-20T00:00:00.000Z" omitted="observedAt=validFrom validUntil=null">');
     expect(pack.text.match(/known-?at/gi)).toHaveLength(1);
+  });
+  it('leaves out only time fields equal to the default the boundary tag declares', () => {
+    const plain = benchEvent({ id: 'a', subject: 'build', slot: 'command', text: 'Build with npm run build.' });
+    const dated = benchEvent({ id: 'b', subject: 'build', slot: 'cache', text: 'Build cache is safe to clear.', recordedAt: benchDay(3), validFrom: benchDay(2),
+      validUntil: benchDay(20) });
+    const pack = buildMemoryContextPack(benchSnapshot('time', [plain, dated]), benchQuery('build', { at: benchDay(10) }));
+    const rows = new Map(pack.text.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line) as Record<string, unknown>)
+      .map(row => [row.eventId, row]));
+    expect(rows.get('a')).toMatchObject({ validFrom: plain.validFrom }); expect(rows.get('a')).not.toHaveProperty('observedAt');
+    expect(rows.get('a')).not.toHaveProperty('validUntil');
+    expect(rows.get('b')).toMatchObject({ observedAt: dated.observedAt, validFrom: dated.validFrom, validUntil: dated.validUntil });
   });
   it('the CLI accepts only its two flags and reports source identity without gating', () => {
     expect(parseMemoryBenchmarkArgs([])).toEqual({ cases: false });
