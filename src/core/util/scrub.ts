@@ -128,7 +128,7 @@ const XAI_API_KEY = /(?<![A-Za-z0-9_-])xai-[A-Za-z0-9]{20,}/g;
  * Value shape shared by the suffix-name rules: optional quote, ≥8 chars that
  * are not whitespace/separators/quotes, optional closing quote. Mirrors rule 4.
  */
-const ASSIGNED_VALUE = String.raw`\s*[=:]\s*["']?[^\s,;'"]{8,}["']?`;
+const ASSIGNED_VALUE = String.raw`\s*(?::=|[=:])\s*["']?[^\s,;'"]{8,}["']?`;
 
 /**
  * SCREAMING_SNAKE env-var names ending in a secret noun. Rule 4's `\b(token|…)`
@@ -155,8 +155,8 @@ const SNAKE_SECRET_ASSIGNMENT = new RegExp(
  * prefilters cost <1 ms and skip them on the common text that has no
  * `…Token =` / `…_password:` assignment at all.
  */
-const SNAKE_PREFILTER = /_(?:api_key|token|secret|password|passwd|pwd|credentials?|private_key|access_key|secret_key|signing_key)\s*[=:]/;
-const CAMEL_PREFILTER = /(?:Token|Secret|Password|Passwd|ApiKey|PrivateKey|AccessKey|SecretKey|SigningKey|Credentials?)\s*[=:]/;
+const SNAKE_PREFILTER = /_(?:api_key|token|secret|password|passwd|pwd|credentials?|private_key|access_key|secret_key|signing_key)\s*:?[=:]/;
+const CAMEL_PREFILTER = /(?:Token|Secret|Password|Passwd|ApiKey|PrivateKey|AccessKey|SecretKey|SigningKey|Credentials?)\s*:?[=:]/;
 
 /** camelCase names with a secret suffix (`githubToken`, `clientSecret`). */
 const CAMEL_SECRET_ASSIGNMENT = new RegExp(
@@ -172,7 +172,7 @@ const CAMEL_SECRET_ASSIGNMENT = new RegExp(
  * only the value becomes `[REDACTED]` — so a scrubbed JSON line stays parseable.
  */
 const QUOTED_SECRET_KEY =
-  /(\\?["'])([A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|passwd|pwd|credentials?|private[_-]?key|access[_-]?key|secret[_-]?key|signing[_-]?key|auth|connection[_-]?string))\1(\s*:\s*)(\\?["'])([^"'\s\\]{8,})\4/gi;
+  /(\\?["'])([A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|passwd|pwd|credentials?|private[_-]?key(?:[_-]?id)?|access[_-]?key|secret[_-]?key|signing[_-]?key|encryption[_-]?key|auth|connection[_-]?string))\1(\s*:\s*)(\\?["'])([^"'\s\\]{8,})\4/gi;
 
 /**
  * Values in CODE that merely reference a secret (a member chain, call, template
@@ -217,7 +217,7 @@ function redactAssignment(name: string, match: string, value: string, allowIdent
 }
 
 function valueOf(match: string, name: string): string {
-  return match.slice(name.length).replace(/^\s*[=:]\s*/, '');
+  return match.slice(name.length).replace(/^\s*(?::=|[=:])\s*/, '');
 }
 
 /**
@@ -229,13 +229,31 @@ function isProseWord(value: string): boolean {
   return /^(?:[a-z]{2,24}|[A-Z][a-z]{1,23})$/.test(value);
 }
 
+/** `Basic` header value: base64 of printable `user:password`. */
+function isBasicCredential(value: string): boolean {
+  try {
+    const decoded = typeof atob === 'function' ? atob(value) : '';
+    return /^[\x20-\x7e]+:[\x20-\x7e]+$/.test(decoded);
+  } catch {
+    return false;
+  }
+}
+
+/** Random-looking key material: no separator-delimited piece is a word, and upper case, lower case and digits all occur at least three times. */
+function isRandomKeyMaterial(value: string): boolean {
+  const pieces = value.replace(/=+$/, '').split(/[/+_-]+/).filter(Boolean);
+  if (pieces.some(piece => /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[A-Z]{4,})$/.test(piece))) return false;
+  const count = (pattern: RegExp): number => (value.match(pattern) ?? []).length;
+  return count(/[A-Z]/g) >= 3 && count(/[a-z]/g) >= 3 && count(/\d/g) >= 3;
+}
+
 /** Masks and fillers (`********`, `xxxxxxxx`): one repeated character is not a credential. */
 function isMask(value: string): boolean {
   return /^(.)\1*$/.test(value.replace(/^["']|["']$/g, ''));
 }
 
-/** Public digests and keys that look like secrets: content digests (`sha256:…`, SRI `sha512-…`) and SSH public keys (`ssh-ed25519 AAAA…`). */
-const PUBLIC_DIGEST_PREFIX = /(?:\bsha(?:256|384|512)-|\bsha256:|\b(?:ssh-(?:rsa|ed25519|dss)|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) )$/;
+/** Public digests and keys that look like secrets: content digests (`sha256:…`, SRI `sha512-…`, go.sum `h1:…`) and SSH public keys (`ssh-ed25519 AAAA…`). */
+const PUBLIC_DIGEST_PREFIX = /(?:\bsha(?:256|384|512)-|\bsha256:|\bh1:|\b(?:ssh-(?:rsa|ed25519|dss)|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) )$/;
 
 /**
  * Scrub recognised secret patterns from `text`.
@@ -265,15 +283,26 @@ export function scrubSecrets(text: string): string {
       // tokens); consume the entire value so no JWT segment survives.
       .replace(/\bgh[poursa]_[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]+)*/g, REDACTED)
       .replace(/\bgithub_pat_[A-Za-z0-9_]{22,}/g, REDACTED)
+      // 3a. HTTP Basic credentials: base64 of `user:password`. Only a value that decodes to printable `x:y` text counts,
+      // so "Basic usage" or "Basic AbcDefGh" prose is left alone.
+      .replace(/\b(Basic)\s+([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/gi, (m: string, word: string, value: string) => (isBasicCredential(value) ? `${word} ${REDACTED}` : m))
       // 3. Bearer / Token / Authorization header values
       .replace(/\b(Bearer|Token|Authorization)\s+[A-Za-z0-9\-._~+/]+=*/gi, (m: string, word: string) => (isProseWord(m.slice(word.length).trim().replace(/[.]+$/, '')) ? m : `${word} ${REDACTED}`))
       // 4. Generic key=value secret patterns. ASHLR_* env vars are only
       // redacted when they look like assignments, not plain audit metadata
       // such as "keys=query".
       .replace(
-        /\b(api[_-]?key|api[_-]?token|secret|secret[_-]?key|token|password|passwd|pwd|auth|credential|client[_-]?secret|private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|connection[_-]?string|conn[_-]?str|_?auth[_-]?token|ASHLR_[A-Z_]+)\s*[=:]\s*["']?[^\s,;'"]{8,}["']?/gi,
-        (m: string, name: string) => (isCodeReference(valueOf(m, name)) || isMask(valueOf(m, name)) ? m : `${name}=${REDACTED}`),
+        /\b(api[_-]?key|api[_-]?token|secret|secret[_-]?key|token|password|passwd|pwd|auth|credential|client[_-]?secret|private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|connection[_-]?string|conn[_-]?str|_?auth[_-]?token|signing[_-]?key|encryption[_-]?key|master[_-]?key|hmac[_-]?(?:key|secret)|webhook[_-]?secret|ASHLR_[A-Z_]+)\s*(?::=|[=:])\s*["']?[^\s,;'"]{8,}["']?/gi,
+        (m: string, name: string) => {
+          const value = valueOf(m, name);
+          // An earlier rule already redacted the value (`api_key="[REDACTED]"`): keep it, so a second pass is a no-op.
+          return value.replace(/^["']/, '').startsWith(REDACTED) || isCodeReference(value) || isMask(value) ? m : `${name}=${REDACTED}`;
+        },
       )
+      // 4b. A credential stated in prose: "the staging admin password is NDN5KYKdVgt6LN". The value must mix letters and
+      // digits and must not read as a file, path or word ("the token is rotated", "the secret is in vault2.yaml").
+      .replace(/\b(password|passwd|passphrase|pwd|secret|token)\s+(?:is|was)\s*:?\s+["'`]?([A-Za-z0-9!@#$%^&*_+=-]{8,})["'`]?(?=[\s.,;)]|$)/gi,
+        (m: string, word: string, value: string) => (/[A-Za-z]/.test(value) && /\d/.test(value) && !value.startsWith(REDACTED) ? `${word} ${REDACTED}` : m))
       // 5. Slack tokens
       .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/gi, REDACTED)
       // 6. AWS access key IDs
@@ -290,6 +319,11 @@ export function scrubSecrets(text: string): string {
       // 10. URL passwords and long base64-ish blobs.
       .replace(/(:\/\/[^:\s/@]*:)[^@\s]+(@)/g, '$1[REDACTED]$2')
       .replace(/(?<![/\w])[A-Za-z0-9+]{40,}={0,2}(?![/\w])/g, (m: string, offset: number, whole: string) => (PUBLIC_DIGEST_PREFIX.test(whole.slice(Math.max(0, offset - 40), offset)) ? m : scrubLongBase64Like(m)))
+      // 10b. Keys in base64 with `/`, `+`, `-` or `_` inside (AWS secret access keys, Azure AccountKey, Fernet keys).
+      // Paths and kebab identifiers are left alone: each piece between separators must not be a word, and the whole
+      // must mix upper case, lower case and digits like random key material.
+      .replace(/(?<![\w/+.-])[A-Za-z0-9+/_-]{40,}={0,2}(?![\w/+=.-])/g, (m: string, offset: number, whole: string) =>
+        (/[/+_-]/.test(m) && !/^sha(?:256|384|512)-/.test(m) && !PUBLIC_DIGEST_PREFIX.test(whole.slice(Math.max(0, offset - 40), offset)) && isRandomKeyMaterial(m) ? REDACTED : m))
       // 13. Suffix-named assignments rule 4's `\b` anchor cannot see. LAST, so
       // every token-shape rule above has already turned a JWT/AKIA/hex value
       // into [REDACTED]; that marker is left untouched below. Running these
