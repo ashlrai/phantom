@@ -68,3 +68,44 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   }
   return { items, errors };
 }
+
+/** How often the scheduler refreshes the backlog from evidence; sooner when nothing is left to launch. */
+export const AUTO_DISCOVER_EVERY_MS = 6 * 60 * 60 * 1000;
+export const AUTO_DISCOVER_EMPTY_EVERY_MS = 30 * 60 * 1000;
+
+let lastAutoDiscoverAt = 0;
+
+export interface AutoDiscoverDeps extends DiscoverDeps {
+  now?: () => Date;
+  /** Whether the backlog still has an item to launch (default: reads it). */
+  hasNext?: () => boolean;
+}
+
+/**
+ * The scheduler's step before each self-improvement launch: when
+ * self-improvement is on and the backlog is due a refresh (or ran dry), add
+ * items discovered from GitHub (red default branch, member issues). Local
+ * proposals and ledger sync stay with `phm improve discover|sync-backlog`, so
+ * the server's import closure does not grow by the team and steward stores.
+ * Never throws; returns what it did for the scheduler log.
+ */
+export async function autoDiscover(deps: AutoDiscoverDeps = {}): Promise<{ ran: boolean; added: number; errors: string[] }> {
+  const now = (deps.now ?? (() => new Date()))().getTime();
+  try {
+    const [{ readCloudBudget, listCloudTasks }, backlog] = await Promise.all([import('../cloud/store.js'), import('../cloud/backlog.js')]);
+    const budget = readCloudBudget().selfImprove;
+    if (!budget.enabled) return { ran: false, added: 0, errors: [] };
+    const hasNext = deps.hasNext ?? (() => backlog.nextBacklogItem(listCloudTasks(), budget.repo, new Date(now)) !== null);
+    const due = now - lastAutoDiscoverAt >= (hasNext() ? AUTO_DISCOVER_EVERY_MS : AUTO_DISCOVER_EMPTY_EVERY_MS);
+    if (!due) return { ran: false, added: 0, errors: [] };
+    lastAutoDiscoverAt = now;
+    const res = await discoverBacklog(budget.repo, deps);
+    const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null));
+    return { ran: true, added, errors: res.errors };
+  } catch (err) {
+    return { ran: false, added: 0, errors: [err instanceof Error ? err.message : String(err)] };
+  }
+}
+
+/** Tests only: forget the last auto-discover time. */
+export function resetAutoDiscoverForTests(): void { lastAutoDiscoverAt = 0; }

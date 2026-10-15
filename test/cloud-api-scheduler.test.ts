@@ -25,6 +25,8 @@ vi.mock('../src/core/cloud/store.js', () => ({
 }));
 vi.mock('../src/core/cloud/tracker.js', () => ({ refreshCloudTasks: core.refreshCloudTasks }));
 vi.mock('../src/core/cloud/budget.js', () => ({ cloudBudgetView: vi.fn() }));
+const discover = vi.hoisted(() => ({ autoDiscover: vi.fn(async () => ({ ran: true, added: 0, errors: [] as string[] })) }));
+vi.mock('../src/core/improve/discover.js', () => discover);
 
 const {
   CLOUD_IMPROVE_EVERY_MS,
@@ -114,6 +116,7 @@ describe('cadence', () => {
     core.runSelfImprove.mockResolvedValue({ launched: [], skipped: [] });
     startCloudScheduler({}, { log: () => undefined });
     await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(discover.autoDiscover).toHaveBeenCalledTimes(1);
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
     await vi.advanceTimersByTimeAsync(CLOUD_REFRESH_EVERY_MS);
     expect(core.refreshCloudTasks).toHaveBeenCalledTimes(1);

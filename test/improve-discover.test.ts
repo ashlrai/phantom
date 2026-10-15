@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { discoverBacklog } from '../src/core/improve/discover.js';
+import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
+import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
 import type { Proposal } from '../src/core/improve/loop.js';
 
@@ -68,5 +69,30 @@ describe('backlog discovery', () => {
     const res = await discoverBacklog('ashlrai/phantom', { gh: async () => ({ ok: false, stdout: '', stderr: 'HTTP 403' }) });
     expect(res.items).toEqual([]);
     expect(res.errors).toHaveLength(2);
+  });
+});
+
+describe('scheduled auto-discover', () => {
+  beforeEach(() => resetAutoDiscoverForTests());
+  const at = (ms: number) => () => new Date(Date.UTC(2026, 9, 15) + ms);
+
+  it('does nothing while self-improvement is off', async () => {
+    updateCloudBudget({ selfImprove: { enabled: false } });
+    expect(await autoDiscover({ gh: gh(), proposals: [], now: at(0) })).toEqual({ ran: false, added: 0, errors: [] });
+    expect(readUserBacklogItems()).toEqual([]);
+  });
+
+  it('refills on its interval, and sooner when the backlog ran dry', async () => {
+    updateCloudBudget({ selfImprove: { enabled: true, repo: 'ashlrai/phantom' } });
+    let hasNext = true;
+    const run = (ms: number) => autoDiscover({ gh: gh(), proposals: [], now: at(ms), hasNext: () => hasNext });
+    expect(await run(0)).toMatchObject({ ran: true, added: 2, errors: [] });
+    expect(readUserBacklogItems().map((i) => i.id)).toEqual([`ci-red-${SHA.slice(0, 12)}`, 'issue-7']);
+    expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS)).ran).toBe(false);
+    hasNext = false;
+    expect(await run(AUTO_DISCOVER_EMPTY_EVERY_MS)).toMatchObject({ ran: true, added: 0 });
+    hasNext = true;
+    expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS + AUTO_DISCOVER_EVERY_MS - 1)).ran).toBe(false);
+    expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS + AUTO_DISCOVER_EVERY_MS)).ran).toBe(true);
   });
 });

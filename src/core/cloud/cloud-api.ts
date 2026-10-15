@@ -601,8 +601,16 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
   if (scheduler) return true;
   if (cloudSchedulerRefusal(env) !== null) return false;
   const refresh = deps.refresh ?? (() => refreshCloudTasksGuarded());
-  const improve = deps.improve ?? (() => improveGuarded({ count: 1, auto: true }));
   const log = deps.log ?? ((message: string) => { console.warn(`[ashlr] ${message}`); });
+  // Refill the backlog from evidence (red default branch, member issues,
+  // proposals) before each scheduled launch, so the loop never runs dry on a
+  // stale hand-kept list. Discovery failing never stops the launch.
+  const improve = deps.improve ?? (async () => {
+    const { autoDiscover } = await import('../improve/discover.js');
+    const found = await autoDiscover();
+    if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }
+    return improveGuarded({ count: 1, auto: true });
+  });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };
 
   const tick = (name: JobName, job: () => Promise<unknown>): void => {
