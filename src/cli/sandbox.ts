@@ -410,7 +410,7 @@ export type EnrollmentListResponse =
 
 const ENROLL_USAGE: Record<'list' | 'add' | 'remove' | 'kill', string> = {
   list:   'Usage: ashlr enroll list [--json]',
-  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]',
+  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]',
   remove: 'Usage: ashlr enroll remove <repo>',
   kill:   'Usage: ashlr enroll kill on|off',
 };
@@ -465,7 +465,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
     // Positional repo is first non-flag after sub; boolean flags may appear anywhere.
     const repo = args.slice(1).find((a) => !a.startsWith('--'));
     if (!repo) {
-      console.error(red('error: ') + 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
+      console.error(red('error: ') + 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]');
       return 2;
     }
     const policy = await loadPolicy();
@@ -488,6 +488,14 @@ export async function cmdEnroll(args: string[]): Promise<number> {
         return 1;
       }
       console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
+      if (!args.includes('--no-secrets-offer')) {
+        try {
+          const { secretsSetupOffer } = await import('./enroll-secrets-offer.js');
+          for (const line of secretsSetupOffer(repo)) console.log(dim(line));
+        } catch {
+          // Advisory only; enrollment already succeeded.
+        }
+      }
 
       // Soft-offer Locus firm on FIRST successful enrollment only. Never forces
       // on CI/tests: non-TTY / --yes requires --locus-firm or ASHLR_LOCUS_FIRM=1.
