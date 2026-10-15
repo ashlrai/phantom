@@ -355,6 +355,7 @@
     "src/core/fleet/automerge-pass.ts",
     "src/core/fleet/backpressure.ts",
     "src/core/fleet/best-of-n-ledger.ts",
+    "src/core/fleet/budget-view.ts",
     "src/core/fleet/cloud-intake.ts",
     "src/core/fleet/context-efficiency.ts",
     "src/core/fleet/context-rollup.ts",
