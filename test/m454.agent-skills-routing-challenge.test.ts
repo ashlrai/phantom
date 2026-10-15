@@ -553,6 +553,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/RESIDENT-RUNTIME.md', 'docs/AUTHORITY.md', 'docs/STANDING-AUTHORITY.md',
       'docs/CLOUD.md', 'docs/LEADER.md', 'docs/DEVIN.md', 'docs/VERSE-CONTEXT.md',
       'docs/VERSE-BROWSER.md', 'docs/JEV-INTEGRATION.md', 'docs/COMPANIONS.md',
+      'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
       'docs/PROACTIVE-COORDINATION.md', 'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     ]) {
@@ -581,6 +582,8 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/README.md',
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
+      'docs/MEMORY-FOUNDATION.md',
+      'docs/MEMORY-EVALUATION.md',
       'docs/QUICKSTART.md',
       'docs/AUTOMATIC-OUTCOMES.md',
       'docs/VERSE.md',

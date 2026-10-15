@@ -1,0 +1,143 @@
+/**
+ * Paraphrase queries for the memory quality benchmark that ranking must not be tuned against (CC0-1.0, synthetic).
+ * Separate agents wrote them seeing only the fact texts and keys, under the rule that a query shares no content word or
+ * word stem with its fact, plus questions no fact answers. Never edit these to fit the vocabulary.
+ */
+export interface MemoryBenchmarkHeldOutFact { subject: string; slot: string; queries: readonly [string, string] }
+/** Set A: written before the vocabulary, but read while it was being written, so it is not a clean held-out measure. */
+export const MEMORY_BENCHMARK_HELD_OUT: readonly MemoryBenchmarkHeldOutFact[] = Object.freeze([
+  { subject: 'build', slot: 'command', queries: ['how do i compile everything from scratch', 'what script produces the whole project output'] },
+  { subject: 'build', slot: 'cache', queries: ['where are compiled artifacts stashed and can i wipe them', 'okay to delete the leftover compiler output folder'] },
+  { subject: 'test', slot: 'command', queries: ['how do i kick off the automated checks locally', 'which script verifies my changes single-threaded'] },
+  { subject: 'test', slot: 'fixtures', queries: ['can i copy real client records into sample inputs for specs', 'rules about what goes into mock files for specs'] },
+  { subject: 'release', slot: 'branch', queries: ['which line of git history do we ship versions off', 'shipping a new version, what ref should i tag'] },
+  { subject: 'release', slot: 'approver', queries: ['who signs off before a version goes out', 'whose green light do i need to ship'] },
+  { subject: 'deploy', slot: 'target', queries: ['where does our code end up when we ship it out', 'which environment and region receive new builds'] },
+  { subject: 'deploy', slot: 'window', queries: ['is it okay to ship late in the week', 'any days or hours where pushing to prod is blocked'] },
+  { subject: 'lint', slot: 'rule', queries: ['how strict is the static analysis gate for rust', 'will a single compiler nag fail the pipeline'] },
+  { subject: 'format', slot: 'tool', queries: ['how do i auto-tidy whitespace and indentation', 'what prettifier keeps our source consistent'] },
+  { subject: 'database', slot: 'name', queries: ['which db do we connect to by default', 'what\'s our core sql store called'] },
+  { subject: 'database', slot: 'migrations', queries: ['how do schema changes get applied', 'who checks table alterations and what library applies them'] },
+  { subject: 'api', slot: 'version', queries: ['which endpoint revision should new integrations call', 'is the older interface still supported'] },
+  { subject: 'logging', slot: 'policy', queries: ['can i print credentials to stdout while debugging', 'what am i allowed to write into diagnostic output'] },
+  { subject: 'review', slot: 'policy', queries: ['can i land my pr without someone looking at it', 'how many sign-offs does a code change require'] },
+  { subject: 'ci', slot: 'runner', queries: ['what machines execute our pipeline jobs', 'are build agents ours or github\'s cloud'] },
+  { subject: 'docs', slot: 'site', queries: ['where can customers read the product manual online', 'url for the reference guides'] },
+  { subject: 'oncall', slot: 'rotation', queries: ['when does pager duty hand off to the next person', 'what day does the pager schedule switch over'] },
+  { subject: 'style', slot: 'naming', queries: ['how should i capitalize identifiers and documents in the repo', 'dashes or underscores when titling new source modules'] },
+  { subject: 'secrets', slot: 'storage', queries: ['where do credentials live on my laptop', 'is it fine to put passwords in a config text document'] },
+]);
+export const MEMORY_BENCHMARK_HELD_OUT_ABSENT: readonly string[] = Object.freeze([
+  'how much vacation time do new hires get',
+  'who signs off on expense reimbursements',
+  'what\'s the wifi password for the guest network',
+  'which monitoring dashboard shows latency spikes',
+  'how do i get a replacement laptop',
+  'where is the team offsite next quarter',
+]);
+/** Set B: written after src/core/memory/vocabulary.ts was frozen (sha256 c60cc212...) and never read before scoring. */
+export const MEMORY_BENCHMARK_UNSEEN: readonly MemoryBenchmarkHeldOutFact[] = Object.freeze([
+  { subject: 'build', slot: 'command', queries: ['what\'s the right way to compile everything prior to shipping a bundle', 'i\'m new here so how do i produce the full project artifacts ahead of making an installer'] },
+  { subject: 'build', slot: 'cache', queries: ['can i wipe the compiled output folder without breaking anything', 'which directory holds leftover compilation intermediates and may i delete them'] },
+  { subject: 'test', slot: 'command', queries: ['how should i execute the automated checks locally the way the pipeline does', 'what invocation kicks off the suite in single-threaded mode'] },
+  { subject: 'test', slot: 'fixtures', queries: ['may i copy real client records into sample inputs for the suite', 'is it okay to put production user info in mock files'] },
+  { subject: 'release', slot: 'branch', queries: ['which line of history do we ship versions off of', 'can a new version tag be made off main'] },
+  { subject: 'release', slot: 'approver', queries: ['who signs off before a new version goes out', 'whose permission do i need to ship a version'] },
+  { subject: 'deploy', slot: 'target', queries: ['where does our code land when we push it out', 'which environment and region receive new rollouts'] },
+  { subject: 'deploy', slot: 'window', queries: ['is there a day of the week when shipping to servers is blocked', 'can i roll out changes on the last weekday once lunchtime has passed'] },
+  { subject: 'lint', slot: 'rule', queries: ['how strict is the static analysis gate for rust', 'will the pipeline fail if the analyzer flags any minor issues'] },
+  { subject: 'format', slot: 'tool', queries: ['how do i make my source files match the house indentation conventions', 'what auto pretty-printer do we rely on for the backend language'] },
+  { subject: 'database', slot: 'name', queries: ['which sql engine holds our core records and what\'s it called', 'what schema do i point my connection string at by default'] },
+  { subject: 'database', slot: 'migrations', queries: ['how do schema changes get applied', 'does somebody look over table alterations prior to landing them'] },
+  { subject: 'api', slot: 'version', queries: ['which endpoint revision should external integrators call', 'is the older interface still supported'] },
+  { subject: 'logging', slot: 'policy', queries: ['is it fine to print credentials to stdout for debugging', 'what am i allowed to write into diagnostic output regarding passwords and keys'] },
+  { subject: 'review', slot: 'policy', queries: ['how many people have to sign off on a change prior to landing', 'can i self-approve my own patch and ship it'] },
+  { subject: 'ci', slot: 'runner', queries: ['what machines execute our automated pipeline jobs', 'are the build agents ours or a cloud vendor\'s'] },
+  { subject: 'docs', slot: 'site', queries: ['where can customers read the product manual online', 'what url has the credential vault guides'] },
+  { subject: 'oncall', slot: 'rotation', queries: ['when does pager duty hand off to the next engineer', 'what day and hour does the support shift swap'] },
+  { subject: 'style', slot: 'naming', queries: ['how should i title new source documents on disk', 'what capitalization convention applies to methods and modules'] },
+  { subject: 'secrets', slot: 'storage', queries: ['where do credentials and passwords get kept on a dev laptop', 'is it okay to paste an access key into a config text document'] },
+]);
+export const MEMORY_BENCHMARK_UNSEEN_ABSENT: readonly string[] = Object.freeze([
+  'how do i book vacation days',
+  'what\'s the wifi password at the office',
+  'who handles expense reimbursements',
+  'which monitoring dashboard shows latency',
+  'how do i get a broken laptop replaced',
+  'how long is parental leave',
+]);
+/** Set C: written after the abstention rule was chosen on sets A and B; its absent questions are deliberately close to the stored topics. */
+export const MEMORY_BENCHMARK_FRESH: readonly MemoryBenchmarkHeldOutFact[] = Object.freeze([
+  { subject: 'build', slot: 'command', queries: ['which script compiles every module ahead of bundling a distributable', 'what do i type to produce the full project output prior to making an installable'] },
+  { subject: 'build', slot: 'cache', queries: ['where do compiled artifacts get stashed between compiles and may i wipe them', 'is deleting the folder of reused intermediate outputs going to break anything'] },
+  { subject: 'test', slot: 'command', queries: ['how should i kick off the automated checks so they execute serially', 'what script verifies individual functions in the pipeline and how much parallelism does it get'] },
+  { subject: 'test', slot: 'fixtures', queries: ['can i copy real client records into the sample inputs for our specs', 'are fake or production-derived examples allowed in the mock files that checks rely on'] },
+  { subject: 'release', slot: 'branch', queries: ['which line of history do we ship versions off', 'is it okay to tag a launch straight from main'] },
+  { subject: 'release', slot: 'approver', queries: ['who signs off so a new version goes out to users', 'whose green light do i need to publish a shipped build'] },
+  { subject: 'deploy', slot: 'target', queries: ['where does our code land when it gets rolled out', 'which region and environment receive new rollouts'] },
+  { subject: 'deploy', slot: 'window', queries: ['is there a day of the week when shipping to servers is blocked', 'can i push changes out late in the workweek'] },
+  { subject: 'lint', slot: 'rule', queries: ['how strict is the static analyzer gate on rust code', 'will a few compiler nags block my merge'] },
+  { subject: 'format', slot: 'tool', queries: ['how do i tidy whitespace and indentation in the systems-language sources', 'which prettifier should i apply to every package in the repo'] },
+  { subject: 'database', slot: 'name', queries: ['what is the principal sql store labeled', 'which relational engine backs the app and how is its instance identified'] },
+  { subject: 'database', slot: 'migrations', queries: ['how do schema changes get applied and checked', 'what library executes table alterations and does someone look at them prior to landing'] },
+  { subject: 'api', slot: 'version', queries: ['which revision of the external interface should integrators call', 'is the older endpoint generation still supported for partners'] },
+  { subject: 'logging', slot: 'policy', queries: ['can credentials show up in our diagnostic output', 'is it fine to print passwords or keys while debugging traces'] },
+  { subject: 'review', slot: 'policy', queries: ['how many people have to look at a code change prior to landing', 'can a bot approval alone get my pr into main'] },
+  { subject: 'ci', slot: 'runner', queries: ['what machines execute our automated pipeline jobs', 'are build agents cloud-provided or our own hardware and which operating systems'] },
+  { subject: 'docs', slot: 'site', queries: ['where can customers read the product manual online', 'what url hosts the reference pages for the credential vault'] },
+  { subject: 'oncall', slot: 'rotation', queries: ['when does pager duty hand off to the next person', 'what day and hour does the emergency responder shift swap'] },
+  { subject: 'style', slot: 'naming', queries: ['how should i title source documents and methods in the repo', 'what capitalization convention applies to routines and module paths'] },
+  { subject: 'secrets', slot: 'storage', queries: ['where should api keys and passwords be kept on a developer laptop', 'is it acceptable to put credentials in a plaintext config alongside the repo'] },
+]);
+export const MEMORY_BENCHMARK_FRESH_ABSENT: readonly string[] = Object.freeze([
+  'who pays for the compile farm each month and what does it cost',
+  'how long does it take for a new version to reach the app store after sign off',
+  'which feature flag service do we use in production environments',
+  'how often are database backups taken and where are they kept',
+  'what is the process to request credentials for the vendor billing portal',
+  'who maintains the search index for the internal docs',
+  'what is the escalation path if the pager goes unanswered for an hour',
+  'how do we roll back a bad schema change in production',
+  'what is the budget for third-party monitoring licenses in the pipeline',
+  'which naming scheme do we follow for kubernetes namespaces',
+  'how many vacation days carry over into next year',
+  'where is the expense report form for conference travel',
+]);
+
+/** Set D: written by a separate agent after the set C abstention check, as a second never-scored check. Its absent questions also sit near the stored topics. */
+export const MEMORY_BENCHMARK_SECOND_FRESH: readonly MemoryBenchmarkHeldOutFact[] = Object.freeze([
+  { subject: 'build', slot: 'command', queries: ['how do i compile every project in the monorepo prior to bundling a shippable artifact', 'which script produces the whole repo output ahead of shipping'] },
+  { subject: 'build', slot: 'cache', queries: ['can i wipe the compiled artifacts folder without breaking anything', 'where do intermediate compilation leftovers get kept on disk and may i delete them'] },
+  { subject: 'test', slot: 'command', queries: ['what\'s the invocation for checking small isolated code pieces in the pipeline', 'how many parallel threads should the spec suite get'] },
+  { subject: 'test', slot: 'fixtures', queries: ['may sample records in our spec suite include real client information', 'is it ok to copy production user rows into mock inputs'] },
+  { subject: 'release', slot: 'branch', queries: ['which git line do we ship versions from', 'can i tag a new version off main'] },
+  { subject: 'release', slot: 'approver', queries: ['who signs off before we ship a new version', 'whose green light is required to publish a tagged version to users'] },
+  { subject: 'deploy', slot: 'target', queries: ['where do our pushes land, which environment and region', 'which kubernetes group of machines receives new builds'] },
+  { subject: 'deploy', slot: 'window', queries: ['is shipping to prod allowed late in the week', 'when are we blocked from pushing changes live'] },
+  { subject: 'lint', slot: 'rule', queries: ['how strict is the rust static analyzer gate', 'will my pr fail if the analyzer emits a single complaint'] },
+  { subject: 'format', slot: 'tool', queries: ['how do i tidy indentation and spacing in our sources', 'what keeps whitespace consistent in every package of the project'] },
+  { subject: 'database', slot: 'name', queries: ['which sql store holds the core app records', 'what identifier should i put in the connection string for our central store'] },
+  { subject: 'database', slot: 'migrations', queries: ['how are schema changes applied and who checks them prior to landing', 'which library handles altering tables over time'] },
+  { subject: 'api', slot: 'version', queries: ['which revision of our external endpoints should integrators target', 'is the older http interface still supported or sunset'] },
+  { subject: 'logging', slot: 'policy', queries: ['can credentials appear in our diagnostic output', 'what\'s off limits to print to stdout or the trace files'] },
+  { subject: 'review', slot: 'policy', queries: ['how many colleagues must sign off on a code change prior to landing', 'can a bot alone approve my patch'] },
+  { subject: 'ci', slot: 'runner', queries: ['what machines execute our pipeline jobs', 'are automated checks on our own hardware or github\'s cloud'] },
+  { subject: 'docs', slot: 'site', queries: ['where can users read the product manual online', 'what url hosts the vault guides for outside readers'] },
+  { subject: 'oncall', slot: 'rotation', queries: ['when does the pager handoff happen each week', 'what day does a new person take over incident duty'] },
+  { subject: 'style', slot: 'naming', queries: ['how should i title new source documents and methods', 'dashes or underscores when labeling scripts and how to capitalize routines'] },
+  { subject: 'secrets', slot: 'storage', queries: ['where should api passwords live on my laptop', 'is it acceptable to put access keys in a plaintext config in the repo'] },
+]);
+export const MEMORY_BENCHMARK_SECOND_FRESH_ABSENT: readonly string[] = Object.freeze([
+  'how long does a full release take from tag to production',
+  'who owns the billing dashboard',
+  'what\'s the monthly cost of our ci minutes',
+  'which tool do we use for error tracking in production',
+  'how long are logs retained before deletion',
+  'what\'s the code coverage threshold for merging',
+  'who maintains the database backups and how often do they happen',
+  'what\'s the timeline for removing the old api entirely',
+  'how do we revoke a leaked credential with the vendor',
+  'which metric triggers paging the on-call engineer',
+  'when is the next team offsite',
+  'how do i request a new laptop',
+]);

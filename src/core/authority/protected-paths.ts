@@ -78,6 +78,10 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // Reviewed-memory eligibility and its offline yardstick cannot grade themselves.
+  'src/core/memory/**',
+  'src/core/local-eval/memory-*.ts',
+  'scripts/evaluate-memory.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',
@@ -330,7 +334,7 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     patterns: [
       // `**/tsconfig*.json` moved to the all-repos `verify-config` rule (it
       // matches first), so it is not repeated here.
-      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'vitest.config*', 'vitest.workspace*',
+      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'test/fixtures/memory/**', 'vitest.config*', 'vitest.workspace*',
     ],
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
   },

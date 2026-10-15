@@ -129,6 +129,9 @@
 /docs/**/*AUTHORITY* @masonwyatt23
 /docs/**/*authority* @masonwyatt23
 # tier1-authority-code: Tier-1 authority code: the fleet may never change the code that decides what the fleet may do
+/src/core/memory/** @masonwyatt23
+/src/core/local-eval/memory-*.ts @masonwyatt23
+/scripts/evaluate-memory.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
 /src/core/integrations/locus.ts @masonwyatt23
 /src/core/vision/leader-display-text.ts @masonwyatt23
@@ -217,6 +220,7 @@
 /test/setup/** @masonwyatt23
 /test/config/** @masonwyatt23
 /test/fixtures/authority/** @masonwyatt23
+/test/fixtures/memory/** @masonwyatt23
 /vitest.config* @masonwyatt23
 /vitest.workspace* @masonwyatt23
 # tier1-test: this test guards Tier-1 authority code; weakening it would weaken the gate it tests
@@ -741,6 +745,12 @@
 /test/mcp-firm-resources.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
+/test/memory-benchmark.test.ts @masonwyatt23
+/test/memory-evaluation-cli.test.ts @masonwyatt23
+/test/memory-evaluation-performance.test.ts @masonwyatt23
+/test/memory-evaluation.test.ts @masonwyatt23
+/test/memory-foundation-adversarial.test.ts @masonwyatt23
+/test/memory-foundation.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/mirror-sibling-deps-314.test.ts @masonwyatt23
 /test/mirrors-310b.test.ts @masonwyatt23

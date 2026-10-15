@@ -35,6 +35,8 @@ that every integration, provider or autonomous effect is active.
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
+| Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
+| Run bounded synthetic memory evaluations without model credentials | [Offline memory evaluation](MEMORY-EVALUATION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
