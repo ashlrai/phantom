@@ -98,6 +98,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-session-handoff.test.ts', // real temp git repos for the handoff note's `git diff --stat`
   'test/verse-control-api.test.ts', // real web server bind + real enrollment/audit/kill-switch state in a tmp HOME
   'test/verse-daemon-pause.test.ts', // real web server bind + real git repos, pause/kill sentinels and audit in a tmp HOME
+  'test/verse-git-runner-hung-child.test.ts', // real temp git repo whose pre-commit hook forks a pipe-holding grandchild
   'test/universe-control-execution.test.ts', // private signed effect and interrupted settlement records
   'test/universe-firm-resource-control-handler.test.ts', // enrolled graph dispatch to real inert transports
   'test/universe-firm-cli-integration.test.ts', // real CLI processes with test-owned provenance
