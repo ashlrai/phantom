@@ -4,7 +4,8 @@ import { constants, accessSync, lstatSync, mkdtempSync, realpathSync, rmSync, wr
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AshlrConfig } from '../types.js';
-import { enginePermitted } from '../policy/local-only.js';
+import { nativeIncludedCandidatePermitted } from '../policy/local-only.js';
+import { issueIncludedNativeContact } from '../run/included-native-contact.js';
 import { spawnEngine, type RunEvent, type SpawnEngineOptions, type SpawnEngineResult } from '../run/engines.js';
 import { prepareAutonomousSpawn, finishAutonomousSpawn, type AutonomousSpawn, type AutonomousSpawnFinish } from './autonomous-run.js';
 import { autonomousConfinementProfile, buildAutonomousSbplProfile, escapeSbplPath, SANDBOX_EXEC_PATH, type SandboxLauncher } from './confine.js';
@@ -72,7 +73,7 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
   catch (error) { return held(error instanceof Error ? error.message : 'Locus native-account context unavailable'); }
   if (options.signal === undefined) return held('Native Claude producer cancellation ownership unavailable');
   if (options.signal.aborted) return { ...held('run cancelled'), terminationReason:'cancelled' };
-  if (!enginePermitted('claude', options.cfg).permitted || !options.admission()) return held('Selected Claude account authority unavailable');
+  if (!nativeIncludedCandidatePermitted('claude', options.cfg).permitted || !options.admission()) return held('Selected Claude account authority unavailable');
   if (process.platform !== 'darwin') return held('Native Claude tool confinement requires macOS');
   if (Buffer.byteLength(options.prompt) > 1024 * 1024) return held('Native Claude stdin exceeds bounded protocol');
   const scratch = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), 'ashlr-claude-native-')));
@@ -142,7 +143,7 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
     const launcher = claudeNativeOuterLauncher(owned,proof.binding,Number(new URL(broker.url).port),scratch);
     const spawnOptions: SpawnEngineOptions = { env:{...owned.env,...claudeBrokerNativeEnvironment(),TMPDIR:owned.env.TMPDIR},
       launcher,signal,stdin:options.prompt,nativeEngine:'claude',timeoutMs:options.timeoutMs,
-      selectedOutcomeAdmission:current,onEvent:options.onEvent,onSpawn:() => {providerContacted=true;} };
+      includedFunding:issueIncludedNativeContact('claude',{...command,cwd:scratch},current),selectedOutcomeAdmission:current,onEvent:options.onEvent,onSpawn:() => {providerContacted=true;} };
     result = {...await spawnEngine({...command,cwd:scratch},options.cfg,spawnOptions),providerContacted};
     if (cleanupUnknown(result)) { retain(); return {...result,captureDenied:true}; }
     refreshEnabled=false;

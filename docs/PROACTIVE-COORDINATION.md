@@ -51,6 +51,37 @@ Canceling an attempt before any persisted handoff intent allows a new local
 assignment without inventing a remote cancellation receipt. Once intent exists,
 reassignment still requires exact host evidence of no start or confirmed cancel.
 
+### Review a Grok Bot brief
+
+Source builds containing the handoff preview offer **Review Grok Bot brief**
+after **Prepare handoff intent**. Review the exact text and selected Bot, then
+acknowledge it before copying. Copy performs a fresh local check of the ledger
+revision, current attempt/epoch, packet digest, recipient profile/version,
+preferences, lease and deadline. Changes require a new review. The preview
+contains only the saved local goal, criteria and planning metadata; packets
+with imported source accounts or evidence are refused. Locally supplied text
+does not prove human authorship or authorize access to the named project.
+Because the brief holds only the saved goal and criteria, name any exact
+repository, PR and head SHA there when you record the task. Text added in the
+Bot conversation after pasting is not part of the reviewed brief.
+
+The brief is JSON data, bounded to 32 KiB and
+screened using the shared secret patterns. Its digest binds the exact rendered
+bytes. This screening is not exhaustive privacy protection: review what you
+intend to share. Copy writes to your clipboard; paste into the chosen Bot in
+its app. The provider is not contacted by Phantom. Clipboard failure leaves
+an explicit selection fallback after the same fresh check. Preview adds no
+ledger records and retains no new server-side draft; normal prepared-packet
+and coordination retention still apply.
+The check observes separate stores at that time; it is not an atomic reservation
+of future state. A later change cannot revoke text already in your clipboard.
+
+Keeping handoff intent before copying prevents later local reassignment from
+assuming that potentially remote work never started. Copying or pasting is
+not acceptance, completion or independent verification. Record the Bot's
+answer through the existing manual report workflow, then separately review
+the exact result and criteria.
+
 ## Source contracts
 
 - [Profiles](../src/core/proactive/profiles.ts) keep arbitrary provider slugs,
@@ -78,6 +109,16 @@ prepares the bounded brief; `POST .../coordination` accepts closed commands:
 create, assign, handoff, report, operator-review, cancel and notification-ack.
 Writes require the current revision and stable command ID. Preserve a command
 after an uncertain response and retry its exact bytes; replay never dispatches.
+
+`POST .../coordination/handoff-preview` is a read-only projection behind the
+operator mutation token and `allowDispatch` boundary. It requires `taskId`,
+`attemptId`, `epoch`, `expectedRevision`, `profileId` and
+`expectedProfileVersion`; a copy recheck also supplies `expectedPreviewDigest`.
+It returns the exact binding, `packetDigest`, `previewDigest`, `briefText`,
+`transport: "manual-copy"`, `dispatchAuthorized: false` and
+`contextShared: false`. These describe the endpoint's effects, not what a user
+may subsequently paste. No public webhook key, provider session or spending
+permission is returned.
 
 ## Recovery and evidence
 

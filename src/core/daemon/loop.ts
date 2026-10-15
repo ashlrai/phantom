@@ -229,6 +229,7 @@ import { resolveNativeSeatLaunch } from '../resources/native-profile.js';
 import { resolveAccountsRoot } from '../verse/seats.js';
 // The one authority for "does this engine run on this machine" (pool tiering).
 import { engineLocality, engineMeteredness } from '../policy/local-only.js';
+import { daemonCashBudget, daemonFundingMode, noPaidCash } from './funding.js';
 import { resolveDevinCliFleetModel } from '../devin/cli-engine.js';
 // M80. The window check itself is reached through hooks.seatAllows
 // (DEFAULT_TICK_HOOKS delegates to subscriptionAllows with the same arguments).
@@ -3634,10 +3635,8 @@ function resolveCfg(cfg: AshlrConfig): DaemonConfig & ReturnType<typeof resolveD
     // DaemonConfig, where the existing `remainingBudget <= 0` guard skips
     // every tick as budget-exhausted — exactly what the UI promises. Negative
     // and non-finite values are still nonsense and still fall back.
-    dailyBudgetUsd:
-      typeof o.dailyBudgetUsd === 'number' && Number.isFinite(o.dailyBudgetUsd) && o.dailyBudgetUsd >= 0 && o.dailyBudgetUsd <= Number.MAX_SAFE_INTEGER
-        ? o.dailyBudgetUsd
-        : DEFAULTS.dailyBudgetUsd,
+    dailyBudgetUsd: daemonCashBudget(o, DEFAULTS.dailyBudgetUsd),
+    ...(o.fundingMode !== undefined ? { fundingMode: daemonFundingMode(o) } : {}),
     perItemMaxTokens: Number.isSafeInteger(o.perItemMaxTokens) && (o.perItemMaxTokens ?? 0) > 0
       ? o.perItemMaxTokens : DEFAULT_MAX_TOKENS,
     perTickItems: counts.perTickItems,
@@ -7373,7 +7372,7 @@ export async function tick(
         const accountingKnown = Number.isFinite(tickSpent) && tickSpent >= 0;
         if (accountingKnown && !zeroCostProducerViolation && tickSpent < remainingBudget) return null;
         if (accountingKnown && !zeroCostProducerViolation && standingTick && !budgetDayPessimisticallyExhausted
-          && dcfg.dailyBudgetUsd > 0 && zeroDollarProducer(backend, routingCfg, selectedModel)) return null;
+          && (dcfg.dailyBudgetUsd > 0 || noPaidCash(dcfg)) && zeroDollarProducer(backend, routingCfg, selectedModel)) return null;
         return { item, spentUsd: 0, dispatched: false, dispatch: dispatchTrace(item, {
           backend, tier: backendTier, model: selectedModel, assignedBy: 'preflight',
           reason: 'The daily USD allowance is exhausted; this producer is metered or its cost is unknown.',
@@ -10834,6 +10833,8 @@ export function zeroDollarProducer(engine: string | undefined, cfg: AshlrConfig,
 /** Hosted Devin retains its separate ACU policy and signed engine/seat gates; only cadence changes. */
 export function canContinueBudgetIndependentStanding(standing: boolean, cfg: AshlrConfig, state: DaemonState, dcfg: DaemonConfig): boolean {
   if (canContinueZeroDollarStanding(standing, cfg, state, dcfg)) return true;
+  // Hosted ACU exposure remains a separately signed metered channel.
+  if (noPaidCash(dcfg)) return false;
   return standing && Number.isFinite(dcfg.dailyBudgetUsd) && dcfg.dailyBudgetUsd > 0
     && Number.isFinite(state.todaySpentUsd) && state.todaySpentUsd >= 0
     && state.todayDate === currentUtcBudgetDay()
@@ -10843,7 +10844,7 @@ export function canContinueBudgetIndependentStanding(standing: boolean, cfg: Ash
 
 /** Potential capacity only: final routing, native seat, reserves and grant gates decide admission. */
 export function canContinueZeroDollarStanding(standing: boolean, cfg: AshlrConfig, state: DaemonState, dcfg: DaemonConfig): boolean {
-  if (!standing || !Number.isFinite(dcfg.dailyBudgetUsd) || dcfg.dailyBudgetUsd <= 0
+  if (!standing || !Number.isFinite(dcfg.dailyBudgetUsd) || (dcfg.dailyBudgetUsd <= 0 && !noPaidCash(dcfg))
     || !Number.isFinite(state.todaySpentUsd) || state.todaySpentUsd < 0
     || state.todayDate !== currentUtcBudgetDay()
     || (state.spendGuardAccounting?.budgetDay === state.todayDate && state.spendGuardAccounting.budgetExhausted === true)) return false;

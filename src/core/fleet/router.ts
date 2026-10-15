@@ -55,7 +55,7 @@
  *
  * LOCAL-ONLY (policy/local-only.ts):
  *  A cloud backend must be UNREACHABLE, not merely deprioritised. Three seams
- *  enforce that here, all consulting the same `enginePermitted()` predicate:
+ *  enforce that here, all consulting the same `nativeIncludedCandidatePermitted()` predicate:
  *
  *   availableFrom()                    — the single funnel for frontier + mid
  *                                        candidate lists, so neither tier can
@@ -96,7 +96,7 @@ import { resolveSubscriptionMaxPercent } from '../config.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
 import {
   ALWAYS_PERMITTED_ENGINE,
-  enginePermitted,
+  nativeIncludedCandidatePermitted,
   localOnlyEnabled,
   localOnlyReasonTag,
 } from '../policy/local-only.js';
@@ -127,7 +127,7 @@ export function generatedRepairCandidateAllowed(
 ): boolean {
   // LOCAL-ONLY: the repair lanes select straight from REPAIR_PREFERENCE and
   // never pass through availableFrom, so the predicate is consulted here too.
-  if (!enginePermitted(backend, cfg).permitted) return false;
+  if (!nativeIncludedCandidatePermitted(backend, cfg).permitted) return false;
   if (!generatedRepairExecutionBackendAllowed(item, backend, cfg)) return false;
   if (!withinLimit(backend, cfg)) return false;
   if (isSubscriptionEngine(backend)) {
@@ -237,7 +237,7 @@ export function inspectGeneratedRepairRouteFeasibility(
     const installed = REPAIR_PREFERENCE.filter((backend) =>
       allowed.has(backend) &&
       // LOCAL-ONLY: same funnel as availableFrom for this direct selection.
-      enginePermitted(backend, cfg).permitted &&
+      nativeIncludedCandidatePermitted(backend, cfg).permitted &&
       engineInstalled(backend, cfg));
     if (installed.length === 0) return unavailable('editing-backend-unavailable');
     routeCandidates = requiredTier === null
@@ -336,7 +336,7 @@ function availableFrom(preference: readonly string[], cfg: AshlrConfig): EngineI
       // LOCAL-ONLY: refusal, not deprioritisation — a cloud backend is not a
       // lower-ranked candidate here, it is absent from the candidate list.
       // No-op when the mode is off.
-      enginePermitted(e, cfg).permitted &&
+      nativeIncludedCandidatePermitted(e, cfg).permitted &&
       engineInstalled(e as EngineId, cfg),
   ) as EngineId[];
 }
@@ -468,7 +468,7 @@ function enforceLocalOnlyRouteDecision(
   decision: RouteDecision,
   cfg: AshlrConfig,
 ): RouteDecision {
-  const verdict = enginePermitted(decision.backend, cfg);
+  const verdict = nativeIncludedCandidatePermitted(decision.backend, cfg);
   if (verdict.permitted) return decision;
   return {
     ...decide(

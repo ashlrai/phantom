@@ -33,7 +33,7 @@ import type {
 } from '../src/core/verse/control-types.js';
 import type { SafetyReport } from '../src/cli/verify-safety.js';
 import { setVerseDaemonSpawnerForTest } from '../src/core/verse/control-api.js';
-import { loadConfigReadOnlyStrict } from '../src/core/config.js';
+import { loadConfigReadOnlyStrict, saveConfig } from '../src/core/config.js';
 import { daemonServiceInstallOptions } from '../src/core/daemon/service-config.js';
 import { generateServiceDefinition } from '../src/core/daemon/service.js';
 import { setKill } from '../src/core/sandbox/policy.js';
@@ -287,12 +287,40 @@ describe('/api/verse/caps', () => {
 
     const caps = res.json as VerseCaps;
     expect(Object.keys(caps).sort()).toEqual([
-      'concurrency', 'dailyBudgetUsd', 'defaulted', 'foundryLimits', 'goalFocusActiveThreshold', 'goalFocusMode', 'goalPreferences', 'intervalMs', 'journalItemCapacity', 'leaderPreferences',
+      'concurrency', 'dailyBudgetUsd', 'defaulted', 'foundryLimits', 'fundingMode', 'goalFocusActiveThreshold', 'goalFocusMode', 'goalPreferences', 'intervalMs', 'journalItemCapacity', 'leaderPreferences',
       'maxConcurrent', 'mode', 'parallel', 'perTickItems', 'subscriptionMaxPercent', 'supportsUncappedCounts', 'uncappedCountKeys',
     ]);
+    expect(caps.fundingMode).toBe('legacy-usd');
     expect(caps.dailyBudgetUsd).toBe(1);
     expect(caps.subscriptionMaxPercent).toBe(90);
     expect(caps.defaulted).toContain('dailyBudgetUsd');
+  });
+
+  it('reads explicit no-paid-cash configuration, preserves it across count updates, and refuses a USD-only change', async () => {
+    cfg.daemon = { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 };
+    saveConfig(cfg);
+    const { port, read, mutate } = await boot();
+    const initial = await request(port, 'GET', '/api/verse/caps', read);
+    expect(initial.status).toBe(200);
+    expect(initial.json).toMatchObject({ fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 });
+    expect((initial.json as VerseCaps).defaulted).not.toContain('dailyBudgetUsd');
+
+    const updated = await request(port, 'POST', '/api/verse/caps', mutate, JSON.stringify({ perTickItems: 5 }));
+    expect(updated.status).toBe(200);
+    expect(updated.json).toMatchObject({ ok: true, live: true, applied: ['perTickItems'],
+      caps: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0, perTickItems: 5 } });
+    const configPath = path.join(tmpHome, '.ashlr', 'config.json');
+    const savedBeforeRefusal = fs.readFileSync(configPath, 'utf8');
+
+    const refused = await request(port, 'POST', '/api/verse/caps', mutate, JSON.stringify({ dailyBudgetUsd: 7 }));
+    expect(refused.status).toBe(400);
+    expect(refused.body).toContain('Paid cash is disabled');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(savedBeforeRefusal);
+    const after = await request(port, 'GET', '/api/verse/caps', read);
+    expect(after.status).toBe(200);
+    expect(after.json).toMatchObject({ fundingMode: 'no-paid-cash', dailyBudgetUsd: 0, perTickItems: 5 });
+    expect(loadConfigReadOnlyStrict().daemon).toMatchObject({ fundingMode: 'no-paid-cash', dailyBudgetUsd: 0, perTickItems: 5 });
+    expect(spawnCalls).toEqual([]);
   });
 
   it('persists a partial update, says it is live, and reads back changed', async () => {

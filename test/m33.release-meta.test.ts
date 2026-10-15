@@ -289,7 +289,11 @@ describe('release workflow', () => {
       '.github/tests/ci-attestation-inputs.test.mjs',
       '.github/tests/hosted-build-artifact.test.mjs',
       '.github/tests/hosted-native-build.test.mjs',
+      '.github/tests/ci-docs-lane.test.mjs',
+      '.github/tests/ci-frontend-lane.test.mjs',
     ].join(' '));
+    expect(readFileSync(join(REPO_ROOT, 'docs/RELEASING-LOCALLY.md'), 'utf8'))
+      .toContain('ten whole workflow and packaging Node modules');
     expect(releaseScripts['check:release:fast']).toBe('npm run check:pack-contracts && npm run check:release');
     expect(snapshot?.run).toContain('npm run check:pack-contracts');
     expect(snapshot?.run?.indexOf('npm run check:pack-contracts'))

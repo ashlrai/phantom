@@ -21,6 +21,7 @@ import { bootstrap, CLAUDE_SEAT, CODEX_SEAT, ev, LOCAL_SEAT, session } from './f
 import { buildTranscript } from './verse-transcript.js';
 import type { VerseSessionView } from './useVerseSession.js';
 import { Workspace, type WorkspaceProps } from './Workspace.js';
+import { binding } from './native-binding/native-binding.test-support.js';
 
 const SEATS = [CLAUDE_SEAT, CODEX_SEAT, LOCAL_SEAT];
 const PROJECTS = bootstrap().projects;
@@ -174,6 +175,24 @@ describe('Workspace header — the pane toggles', () => {
 });
 
 describe('Workspace header — a chat is open', () => {
+  it('opens saved native details only for the requested chat and closes them on selection change', async () => {
+    const fetch = vi.fn(async (path: string) => path === '/api/verse/sessions/vs_1/native-binding'
+      ? new Response(JSON.stringify(binding())) : new Response('not found', { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    const user = userEvent.setup();
+    const currentProps = props({ view: opened() });
+    const view1 = render(<Workspace {...currentProps} />);
+    const nativeReads = () => fetch.mock.calls.filter(([path]) => path.endsWith('/native-binding'));
+    expect(nativeReads()).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }));
+    await user.click(screen.getByRole('menuitem', { name: /Native conversation/ }));
+    expect(await screen.findByText('conversation_1')).toBeInTheDocument();
+    expect(nativeReads()).toEqual([['/api/verse/sessions/vs_1/native-binding', expect.any(Object)]]);
+    view1.rerender(<Workspace {...currentProps} view={opened({ id: 'vs_2' })} />);
+    expect(screen.queryByRole('dialog', { name: 'Native conversation' })).toBeNull();
+    expect(screen.queryByText('conversation_1')).toBeNull(); expect(nativeReads()).toHaveLength(1);
+  });
+
   it('puts the project above the title, and a compact status — not the seat or model — beside it', async () => {
     const user = userEvent.setup();
     const view1 = render(<Workspace {...props({ view: opened() })} />);

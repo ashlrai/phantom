@@ -64,7 +64,7 @@ interface Column {
 const COMPARE_ALL_MAX_SEATS = 8;
 
 function toTarget(o: SeatAdviceOption): FlowTarget {
-  return { seatId: o.seatId, model: o.model, label: o.label, engine: o.engine };
+  return { seatId: o.seatId, model: o.model, contextMode: o.contextMode, contextWindow: o.contextWindow, label: o.label, engine: o.engine };
 }
 
 function columnsFrom(entries: readonly FanOutEntry[]): Column[] {

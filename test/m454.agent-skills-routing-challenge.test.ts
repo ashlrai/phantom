@@ -553,6 +553,11 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/RESIDENT-RUNTIME.md', 'docs/AUTHORITY.md', 'docs/STANDING-AUTHORITY.md',
       'docs/CLOUD.md', 'docs/LEADER.md', 'docs/DEVIN.md', 'docs/VERSE-CONTEXT.md',
       'docs/VERSE-BROWSER.md', 'docs/JEV-INTEGRATION.md', 'docs/COMPANIONS.md',
+      'docs/CONTEXT-IMPORT.md', 'docs/MEMORY-RESEARCH.md',
+      'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
+      'docs/KEYBOARD-HINTS.md',
+      'docs/ECOSYSTEM-RELEASE-CONTRACTS.md',
+      'docs/NO-PAID-CASH.md',
       'docs/PROACTIVE-COORDINATION.md', 'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     ]) {
@@ -581,6 +586,13 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/README.md',
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
+      'docs/CONTEXT-IMPORT.md',
+      'docs/MEMORY-RESEARCH.md',
+      'docs/MEMORY-FOUNDATION.md',
+      'docs/MEMORY-EVALUATION.md',
+      'docs/KEYBOARD-HINTS.md',
+      'docs/ECOSYSTEM-RELEASE-CONTRACTS.md',
+      'docs/NO-PAID-CASH.md',
       'docs/QUICKSTART.md',
       'docs/AUTOMATIC-OUTCOMES.md',
       'docs/VERSE.md',
@@ -642,6 +654,7 @@ describe('M454 pinned upstream routing challenge', () => {
       expect(packedPaths.length).toBeGreaterThan(0);
       expect(packedPaths).toContain('docs/AUTOMATIC-OUTCOMES.md');
       expect(packedPaths).toContain('docs/VERSE.md');
+      expect(packedPaths).toContain('docs/KEYBOARD-HINTS.md');
       expect(packedPaths).toContain('docs/PROACTIVE-COORDINATION.md');
       expect(packedPaths).toContain('docs/PROACTIVE-COORDINATION-BACKLOG.md');
       expect(packedPaths).toContain('docs/RESOURCE-POOL-COMMISSIONING-CHECK.md');

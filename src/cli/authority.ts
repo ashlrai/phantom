@@ -90,6 +90,8 @@ export interface ResidentServiceObservation {
   plistPath: string | null;
   installedBudgetUsd: number | null;
   expectedBudgetUsd: number | null;
+  expectedFundingMode?: 'legacy-usd' | 'no-paid-cash' | null;
+  installedFundingMode?: 'legacy-usd' | 'no-paid-cash' | null;
   installedKeepAwake?: boolean | null;
   expectedKeepAwake?: boolean | null;
   /** Why the expected plist could not be computed (config unreadable…); null when it could. */
@@ -249,7 +251,7 @@ function readServiceFile(path: string): string | null | undefined {
 const realResidentDeps: ResidentCliDeps = {
   admission: async () => (await import('../core/authority/resident.js')).observeResidentAdmission().admission,
   observe: async () => {
-    const { residentPlistState, plistBudgetUsd, plistKeepAwake } = await import('../core/authority/resident.js');
+    const { residentPlistState, plistBudgetUsd, plistKeepAwake, plistFundingMode } = await import('../core/authority/resident.js');
     const { generateServiceDefinition } = await import('../core/daemon/service.js');
     let state: DaemonServiceState;
     try {
@@ -266,6 +268,8 @@ const realResidentDeps: ResidentCliDeps = {
       plistPath: def.filePath,
       installedBudgetUsd: plistBudgetUsd(installed ?? null),
       expectedBudgetUsd: prepared.ok ? prepared.budgetUsd : null,
+      expectedFundingMode: prepared.ok ? prepared.opts.fundingMode ?? 'legacy-usd' : null,
+      installedFundingMode: plistFundingMode(installed ?? null),
       installedKeepAwake: plistKeepAwake(installed ?? null),
       expectedKeepAwake: prepared.ok ? prepared.opts.keepAwake === true : null,
       problem: prepared.ok ? null : prepared.problem,
@@ -2502,7 +2506,7 @@ async function cmdResidentStatus(parsed: Parsed, deps: AuthorityCliDeps): Promis
   }
   deps.out(`Resident admission: ${describeAdmission(admission)}`);
   deps.out(`Service: ai.ashlr.daemon ${observed.state}${observed.plistPath ? ` (${observed.plistPath.replace(homedir(), '~')})` : ''}`);
-  const budget = `installed $${observed.installedBudgetUsd ?? '—'}/day, config $${observed.expectedBudgetUsd ?? '?'}/day`;
+  const budget = observed.expectedFundingMode === 'no-paid-cash' ? `configured paid cash disabled; installed ${observed.installedFundingMode ?? 'unknown'} / $${observed.installedBudgetUsd ?? '—'}/day (${observed.plist}); included work requires current account and billing proof` : `installed $${observed.installedBudgetUsd ?? '—'}/day, config $${observed.expectedBudgetUsd ?? '?'}/day`;
   deps.out(`Plist: ${observed.plist}${observed.plist === 'drifted' ? ' — `ashlr authority resident start` regenerates it' : ''} (budget: ${budget})`);
   deps.out(`Awake on AC: installed ${observed.installedKeepAwake === undefined || observed.installedKeepAwake === null ? 'unknown' : observed.installedKeepAwake ? 'on' : 'off'}, config ${observed.expectedKeepAwake === undefined || observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'}; lid closure and explicit sleep still follow macOS policy.`);
   if (observed.problem) deps.out(`  ${observed.problem}`);
@@ -2544,7 +2548,7 @@ async function cmdResidentStart(parsed: Parsed, deps: AuthorityCliDeps): Promise
   deps.out(`Resident daemon under grant #${admission.grantSeq ?? '?'} (expires ${admission.expiresAt ?? '?'}):`);
   deps.out(`  release   ${admission.revision ?? '?'} (${admission.packageRoot?.replace(homedir(), '~') ?? '?'})`);
   deps.out(`  service   ai.ashlr.daemon → ${observed.plistPath?.replace(homedir(), '~') ?? '?'} (${observed.state}, plist ${observed.plist})`);
-  deps.out(`  budget    $${observed.expectedBudgetUsd ?? '?'}/day from config daemon.dailyBudgetUsd${observed.installedBudgetUsd !== null && observed.installedBudgetUsd !== observed.expectedBudgetUsd ? ` (installed: $${observed.installedBudgetUsd})` : ''}`);
+  deps.out(observed.expectedFundingMode === 'no-paid-cash' ? `  funding   Configured paid cash disabled; installed ${observed.installedFundingMode ?? 'unknown'} / $${observed.installedBudgetUsd ?? '—'}/day (${observed.plist}). The service must adopt the current plist; included account and billing proof remain required.` : `  budget    $${observed.expectedBudgetUsd ?? '?'}/day from config daemon.dailyBudgetUsd${observed.installedBudgetUsd !== null && observed.installedBudgetUsd !== observed.expectedBudgetUsd ? ` (installed: $${observed.installedBudgetUsd})` : ''}`);
   deps.out(`  awake     ${observed.expectedKeepAwake === undefined || observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'} on AC from config daemon.keepAwake${observed.installedKeepAwake !== undefined && observed.installedKeepAwake !== null && observed.installedKeepAwake !== observed.expectedKeepAwake ? ` (installed: ${observed.installedKeepAwake ? 'on' : 'off'})` : ''}; closing the lid can still sleep the Mac`);
   deps.out('  launchd   enable + bootstrap (RunAtLoad); every tick re-verifies the grant, Stop and the switch');
   const native = (await deps.resident.confirmedNatively?.()) === true;

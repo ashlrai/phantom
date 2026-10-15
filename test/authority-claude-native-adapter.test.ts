@@ -1,10 +1,11 @@
 /** Real inert native process + HTTP + OS jail seams. No vendor executable or credential is used. */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultConfig } from '../src/core/config.js';
 import { prepareResourceNativeProfile } from '../src/core/resources/native-profile.js';
 import { readClaudeNativeBinding, sameClaudeNativeBinding, claudeNativeObservation, observeClaudeNativeBinding } from '../src/core/sandbox/claude-native-admission.js';
@@ -18,10 +19,27 @@ beforeEach(() => { base=realpathSync(mkdtempSync(join(tmpdir(),'claude-native-in
 afterEach(() => {setKernelEvidenceWatcherForTest();vi.unstubAllEnvs();rmSync(base,{recursive:true,force:true});});
 const identity = {email:'native-fixture@example.invalid',orgId:'fixture-org'};
 const accountDigest = createHash('sha256').update(JSON.stringify(['claude-native-auth-v1',identity.email,identity.orgId])).digest('hex');
-function fixture() {
-  const executable=join(base,'inert-native');
-  writeFileSync(executable, `#!${realpathSync(process.execPath)}
-const fs=require('node:fs'),path=require('node:path');
+let compiledRoot: string | undefined;
+let compiledExecutable: string | undefined;
+let compilationAttempted = false;
+let compilationError: unknown;
+afterAll(() => { if (compiledRoot) rmSync(compiledRoot, { recursive: true, force: true }); });
+function compiledFixture(): string {
+  // Compile only within this module/run. A failed attempt stays failed: no
+  // retries, prebuilt artifacts, shared profile state or compiler-bound changes.
+  if (compilationAttempted) {
+    if (!compiledExecutable) throw compilationError;
+    return compiledExecutable;
+  }
+  compilationAttempted = true;
+  try {
+    compiledRoot = realpathSync(mkdtempSync(join(tmpdir(), 'claude-native-compiled-')));
+    const executable = join(compiledRoot, 'inert-native');
+  // A shebang cannot represent the qualified Node path containing spaces;
+  // /bin/sh may exec its unadmitted bash variant inside the native outer jail.
+  // This inert binary preserves the original JS payload/argv/stdin without
+  // introducing another interpreter or changing any production jail rule.
+  const script = `const fs=require('node:fs'),path=require('node:path');
 const args=process.argv.slice(2),state=process.env.CLAUDE_CONFIG_DIR;
 const data=JSON.parse(fs.readFileSync(path.join(state,'fixture.json'),'utf8'));
 if(args[0]==='auth') {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',subscriptionType:'max',email:data.email,orgId:data.orgId}));process.exit(0);}
@@ -55,7 +73,22 @@ let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>promp
  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'native fixture complete',usage:{input_tokens:9,output_tokens:4}}));
  }catch{process.exitCode=15;}
 });
-`,{mode:0o700});
+`;
+  const code = '#include <unistd.h>\n#include <stdlib.h>\nint main(int argc,char **argv){if(argc>1024)return 126;char **a=calloc(argc+4,sizeof(char*));if(!a)return 125;a[0]='+JSON.stringify(realpathSync(process.execPath))+';a[1]="-e";a[2]='+JSON.stringify(script)+';a[3]="fixture";for(int i=1;i<argc;i++)a[i+3]=argv[i];execv(a[0],a);return 127;}\n';
+  execFileSync('/usr/bin/clang',['-x','c','-O0','-o',executable,'-'],{input:code,timeout:4000});
+  chmodSync(executable,0o700);
+    compiledExecutable = executable;
+    return executable;
+  } catch (error) {
+    compilationError = error;
+    throw error;
+  }
+}
+function fixture() {
+  const executable=join(base,'inert-native');
+  // Physical exclusive copies retain independent per-case executable identity.
+  copyFileSync(compiledFixture(), executable, constants.COPYFILE_EXCL);
+  chmodSync(executable,0o700);
   const profile=prepareResourceNativeProfile({provider:'claude',directory:join(base,'profile'),executable});
   writeFileSync(join(profile.nativeStatePath,'fixture.json'),JSON.stringify({...identity,credits:false}),{mode:0o600});
   const accountsRoot=join(base,'accounts');mkdirSync(accountsRoot,{mode:0o700});
@@ -73,6 +106,24 @@ function publishLocalMetadata(nativeStatePath: string) {
 }
 
 describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'function')('native principal and immutable launch binding',()=>{
+  it('isolates copied native executables and holds a replacement without changing another case',()=>{
+    const first=fixture();const firstBinding=readClaudeNativeBinding(first.cfg,'claude-a')!;
+    const firstBase=base;const secondBase=realpathSync(mkdtempSync(join(tmpdir(),'claude-native-copy-isolation-')));
+    try {
+      base=secondBase;const second=fixture();const secondBinding=readClaudeNativeBinding(second.cfg,'claude-a')!;
+      const firstStat=lstatSync(first.executable);const secondStat=lstatSync(second.executable);
+      expect([firstStat.dev,firstStat.ino]).not.toEqual([secondStat.dev,secondStat.ino]);
+      expect([firstStat.nlink,secondStat.nlink]).toEqual([1,1]);
+      expect([firstStat.mode&0o777,secondStat.mode&0o777]).toEqual([0o700,0o700]);
+      const original=readFileSync(second.executable);expect(readFileSync(first.executable)).toEqual(original);
+      const replacement=join(firstBase,'replacement-native');writeFileSync(replacement,'inert replacement',{mode:0o700});renameSync(replacement,first.executable);
+      const changed=readClaudeNativeBinding(first.cfg,'claude-a');
+      expect(changed===null||!sameClaudeNativeBinding(firstBinding,changed)).toBe(true);
+      expect(readFileSync(second.executable)).toEqual(original);
+      expect(sameClaudeNativeBinding(secondBinding,readClaudeNativeBinding(second.cfg,'claude-a')!)).toBe(true);
+      expect(readFileSync(compiledFixture())).toEqual(original);
+    } finally { base=firstBase;rmSync(secondBase,{recursive:true,force:true}); }
+  });
   it('admits authoritative same-principal native before/after metadata without a local OAuth file',async()=>{
     const f=fixture();expect(readClaudeNativeBinding(f.cfg,'claude-a')?.localAccountDigest).toBeNull();
     const proof=await observeClaudeNativeBinding(f.cfg,'claude-a','native-fixture','claude-sonnet-4-5',base,new AbortController().signal,()=>true);

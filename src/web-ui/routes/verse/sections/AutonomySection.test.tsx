@@ -159,6 +159,19 @@ describe('AutonomySection', () => {
     await waitFor(() => expect(posted).toContainEqual({ url: '/api/verse/caps', body: { dailyBudgetUsd: 1001.25 } }));
   });
 
+  it('a configured cash-disabled mode does not prove adoption by the running resident or permit a USD-only edit', async () => {
+    const cashDisabled = { ...CAPS, dailyBudgetUsd: 0, fundingMode: 'no-paid-cash' as const };
+    stubFetch({ caps: cashDisabled, control: controlSnapshot({ caps: cashDisabled, spend: { todayUsd: 0, todayDate: '2026-09-19', dailyBudgetUsd: 50 } }) });
+    render(<AutonomySection />);
+    expect(await screen.findByText('Configured: paid cash disabled')).toBeInTheDocument();
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.getByText('Current resident policy is unconfirmed here. Included work requires current account and billing proof.')).toBeInTheDocument();
+    expect(screen.getByText('Configured: paid cash disabled. Current resident policy is unconfirmed here; included work still needs current account and billing proof.')).toBeInTheDocument();
+    expect(screen.queryByText('Paid cash disabled', { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Daily budget')).toBeDisabled();
+    expect(screen.queryByText('Loop stopped ($0 budget).')).not.toBeInTheDocument();
+  });
+
   it('states that a daily budget of 0 is a stop, not "unlimited"', async () => {
     const zeroed = { ...CAPS, dailyBudgetUsd: 0 };
     stubFetch({ caps: zeroed, control: controlSnapshot({ caps: zeroed, spend: { todayUsd: 0, todayDate: '2026-09-19', dailyBudgetUsd: 0 } }) });

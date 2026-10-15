@@ -294,6 +294,13 @@ describe('resident stop and status', () => {
     expect(h.out.join('\n')).toMatch(/Stop \(~\/\.ashlr\/KILL\) and the grant are unchanged/);
   });
 
+  it('reports configured cash disabled separately from an old running legacy service', async () => {
+    const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 0, expectedFundingMode: 'no-paid-cash', installedFundingMode: 'legacy-usd' } });
+    expect(await runAuthorityCli(['resident', 'status'], h.deps)).toBe(0);
+    expect(h.out.join('\n')).toContain('configured paid cash disabled; installed legacy-usd / $50/day (drifted)');
+    expect(h.resident.calls).toEqual([]);
+  });
+
   it('status --json is one machine-readable document and changes nothing', async () => {
     const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 20, installedKeepAwake: false, expectedKeepAwake: true } });
     expect(await runAuthorityCli(['resident', 'status', '--json'], h.deps)).toBe(0);

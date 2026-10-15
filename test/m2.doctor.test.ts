@@ -1,13 +1,13 @@
 /**
  * Tests for src/core/doctor.ts (M2)
  *
- * Stubs provider, Phantom, Locus, tool-registry and identity integrations.
+ * Stubs provider, Phantom, Locus, tool-registry, identity and genome integrations.
  * Local Git/shim discovery and fixture filesystem checks remain real.
  * Asserts report composition, summary counts and failure conditions.
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import type { AshlrConfig, ProviderRegistry, PhantomStatus } from '../src/core/types.js';
+import type { AshlrConfig, GenomeHealth, ProviderRegistry, PhantomStatus } from '../src/core/types.js';
 import type { LocusProbeResult } from '../src/core/integrations/locus.js';
 import {
   copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
@@ -132,6 +132,15 @@ const privateStorageHarness = vi.hoisted(() => ({
 const externalReportProbes = vi.hoisted(() => ({
   tools: vi.fn(() => ({ tools: [], installedCount: 0 })),
   identity: vi.fn(() => ({ loggedIn: false, user: null, tier: null, team: null })),
+  genome: vi.fn((_cfg: AshlrConfig): GenomeHealth => ({
+    totalEntries: 0,
+    projects: 0,
+    hubEntries: 0,
+    sizeBytes: 0,
+    lastLearnedAt: null,
+    embeddingsAvailable: false,
+  })),
+  curl: vi.fn(() => { throw new Error('doctor report fixture forbids provider probes'); }),
 }));
 
 // These report-composition tests must not discover arbitrary host executables
@@ -145,6 +154,24 @@ vi.mock('../src/core/tools-registry.js', () => ({
 vi.mock('../src/core/integrations/identity.js', () => ({
   getIdentity: externalReportProbes.identity,
 }));
+
+// Genome health otherwise invokes curl against Ollama even when providers.ts is
+// mocked. Report composition consumes metadata; the genome suite owns its probes.
+vi.mock('../src/core/genome/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/genome/store.js')>();
+  return { ...actual, genomeHealth: externalReportProbes.genome };
+});
+
+// Fail closed if this suite accidentally reaches the former embedding probe.
+// Real Git and locator subprocesses continue through the original implementation.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFileSync: (...args: Parameters<typeof actual.execFileSync>) =>
+      args[0] === 'curl' ? externalReportProbes.curl() : actual.execFileSync(...args),
+  };
+});
 
 // Keep Windows report tests focused on doctor semantics after one real ACL
 // proof below; all other platforms and paths continue through production code.
@@ -208,9 +235,8 @@ vi.mock('../src/core/providers.js', () => ({
 import { runDoctor, checkLocus, checkLocusFirm } from '../src/core/doctor.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
-// Doctor probes shell out even with provider and Phantom mocks. Windows CI can
-// spend more than Vitest's 5s default in process startup across a single probe.
-// Covered by the real-io lane's 60s default now — see scripts/realio-lane-membership.mjs.
+// Real Git, locator and ACL checks retain their existing bounds. The first two
+// report cases also retain their explicit 15s deadlines within the real-io lane.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -344,6 +370,8 @@ beforeAll(() => {
 beforeEach(() => {
   externalReportProbes.tools.mockClear();
   externalReportProbes.identity.mockClear();
+  externalReportProbes.genome.mockClear();
+  externalReportProbes.curl.mockClear();
   tmpHome = makeTmpHome();
   setFixtureHome(tmpHome);
   privateStorageHarness.adapterHome = tmpHome;
@@ -372,6 +400,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   restoreFixtureHome();
   process.env.PATH = origPath;
+  expect(externalReportProbes.curl).not.toHaveBeenCalled();
 });
 
 // ---------------------------------------------------------------------------
@@ -386,6 +415,7 @@ describe('runDoctor — report structure', () => {
     expect(new Date(report.generatedAt).toISOString()).toBe(report.generatedAt);
     expect(externalReportProbes.tools).toHaveBeenCalledOnce();
     expect(externalReportProbes.identity).toHaveBeenCalledOnce();
+    expect(externalReportProbes.genome).toHaveBeenCalledExactlyOnceWith(cfg);
     expect(report.checks.find((check) => check.id === 'ashlr-tools-installed'))
       .toMatchObject({ label: 'Phantom tools installed', status: 'warn', detail: 'No ecosystem tools installed; 0/0 installed' });
     expect(report.checks.find((check) => check.id === 'identity'))

@@ -6,6 +6,7 @@
  *   npm run gate -- --base REF   diff against REF instead of the merge-base with origin/master
  *   npm run gate:full            static checks + the complete backend and web suites
  *   npm run gate -- --json       machine-readable result on stdout
+ *   npm run gate -- --plan --json  read-only selection preview; no checks or writes
  *
  * This provides fast feedback alongside hosted CI, not full release-admission
  * evidence. See docs/RELEASING-LOCALLY.md for the complete release checks.
@@ -47,23 +48,26 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import { fullChangeReason } from '../.github/scripts/ci-impact-policy.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const GATE_DIR = '.ashlr-gate';
 export const DEFAULT_BASE_REF = 'origin/master';
 
-const USAGE = `usage: node scripts/gate.mjs [--full] [--base <ref>] [--json] [--fail-fast]
+const USAGE = `usage: node scripts/gate.mjs [--full] [--base <ref>] [--json] [--plan] [--fail-fast]
   --full        run the complete backend and web suites (npm run gate:full)
   --base <ref>  select tests changed since the merge-base with <ref> (default ${DEFAULT_BASE_REF})
   --json        print one JSON result object on stdout instead of the table
+  --plan        preview source, changes and test selectors without running checks or writing files
   --fail-fast   stop after the first phase that fails (default: only a failed build stops the tests)`;
 
 export function parseArgs(argv) {
-  const out = { full: false, base: null, json: false, failFast: false, help: false };
+  const out = { full: false, base: null, json: false, plan: false, failFast: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--full') out.full = true;
     else if (arg === '--json') out.json = true;
+    else if (arg === '--plan') out.plan = true;
     else if (arg === '--fail-fast') out.failFast = true;
     else if (arg === '-h' || arg === '--help') out.help = true;
     else if (arg === '--base') {
@@ -264,13 +268,18 @@ export function renderTable(steps) {
 // ---------------------------------------------------------------------------
 
 function git(args) {
-  const res = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
-  if (res.status !== 0) throw new Error(`git ${args.join(' ')}: ${(res.stderr || '').trim() || `exit ${res.status}`}`);
+  // status can otherwise refresh the index or invoke a configured fsmonitor
+  // hook, even for a read-only --plan. Keep source reads bounded as well.
+  const res = spawnSync('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
+    cwd: repoRoot, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024,
+  });
+  if (res.status !== 0) throw new Error(`git ${args.join(' ')}: ${(res.stderr || '').trim() || res.error?.message || `exit ${res.status}`}`);
   return res.stdout;
 }
 
-function lines(text) {
-  return text.split('\n').map((line) => line.trim()).filter(Boolean);
+function paths(text) {
+  // NUL-delimited Git output preserves spaces, newlines and quoted path names.
+  return text.split('\0').filter(Boolean);
 }
 
 function resolveChanges(baseRef) {
@@ -282,8 +291,8 @@ function resolveChanges(baseRef) {
   }
   // `git diff <commit>` compares against the working tree: committed + staged + unstaged.
   const changed = new Set([
-    ...lines(git(['diff', '--name-only', mergeBase])),
-    ...lines(git(['ls-files', '--others', '--exclude-standard'])),
+    ...paths(git(['diff', '--name-only', '-z', mergeBase, '--'])),
+    ...paths(git(['ls-files', '-z', '--others', '--exclude-standard'])),
   ]);
   const texts = (file) => {
     let baseText = null;
@@ -307,6 +316,46 @@ export function loadSmoke(data = loadJson('scripts/gate-smoke.json')) {
 
 export function loadKnownFailures(data = loadJson('scripts/gate-known-failures.json')) {
   return new Map(data.files.map((entry) => [entry.file, entry.reason]));
+}
+
+/** Classification is advisory: an unclassified path never gains release authority. */
+export function classifyPlanPath(path) {
+  const qualificationReason = fullChangeReason(path);
+  const category = qualificationReason ?? (path.startsWith('src/cli/') ? 'cli-change'
+    : path.startsWith('src/web-ui/') ? 'web-ui-change'
+      : path.startsWith('docs/') || /\.(?:md|mdx|txt)$/.test(path) ? 'documentation-change'
+        : path.startsWith('site/') ? 'public-site-change' : 'unclassified-change');
+  return { path, category, qualificationReason,
+    importSelection: isModuleCandidate(path) ? 'candidate-input' : 'not-import-selected' };
+}
+
+/** Pure preview; selectors describe inputs, not an observed collection or passing tests. */
+export function createPlanReport({ source, baseRef, changes, selection, full }) {
+  return {
+    schema: 'phantom-gate-plan/v1',
+    mode: 'plan',
+    scope: 'local-development-feedback',
+    checksExecuted: false,
+    releaseAdmission: false,
+    source,
+    base: { ref: baseRef, mergeBase: changes.mergeBase,
+      changedPathScope: full ? 'working-tree-vs-head' : 'merge-base-to-working-tree' },
+    changedPaths: changes.changed.map(classifyPlanPath),
+    dependencyKeys: changes.dependencyKeys,
+    lockfileDependencyChanged: changes.lockfileChanged,
+    selection,
+    limitations: [
+      'Selectors are previewed without loading Vitest; related test collection has not been observed.',
+      'File-reading contracts and native code can be invisible to import-based selection; run their whole modules separately.',
+      'A source snapshot records HEAD, tree and dirty state, not immutable qualification of working-tree bytes.',
+      'Canonical release requires complete exact-source hosted CI, Audit and trusted attestation, then separate publication and runtime acceptance.',
+    ],
+  };
+}
+
+function planSource() {
+  return { revision: git(['rev-parse', 'HEAD']).trim(), tree: git(['rev-parse', 'HEAD^{tree}']).trim(),
+    dirty: git(['status', '--porcelain=v1', '-z', '--untracked-files=normal']).length > 0 };
 }
 
 /** Run one command, streaming stdout+stderr into .ashlr-gate/<name>.log. */
@@ -455,21 +504,44 @@ async function main() {
   }
   const say = args.json ? () => {} : (text) => process.stderr.write(`${text}\n`);
   const started = performance.now();
-  mkdirSync(join(repoRoot, GATE_DIR), { recursive: true });
 
   let smoke;
   let known;
   let changes = { mergeBase: null, changed: [], dependencyKeys: [], lockfileChanged: false };
   const baseRef = args.base ?? DEFAULT_BASE_REF;
+  let source;
   try {
+    if (args.plan) source = planSource();
     smoke = loadSmoke();
-    known = loadKnownFailures();
-    if (!args.full) changes = resolveChanges(baseRef);
+    if (!args.plan) known = loadKnownFailures();
+    if (!args.full || args.plan) changes = resolveChanges(args.full ? 'HEAD' : baseRef);
   } catch (err) {
     console.error(`gate: ${err.message}`);
     return 2;
   }
   const plan = planTests({ ...changes, full: args.full, smoke });
+  if (args.plan) {
+    // Keep this branch before directory creation, staticSteps (which removes a
+    // stale cache), builds and all runners. Preview needs only Node and Git.
+    if (JSON.stringify(planSource()) !== JSON.stringify(source)) {
+      console.error('gate: source identity or dirty state changed while planning; retry.');
+      return 2;
+    }
+    const report = createPlanReport({ source, baseRef: args.full ? 'HEAD' : baseRef, changes, selection: plan, full: args.full });
+    if (args.json) console.log(JSON.stringify(report, null, 2));
+    else {
+      console.log(`GATE PLAN (checks not run) — ${source.revision} ${source.dirty ? '(dirty)' : '(clean)'}`);
+      console.log(`base ${report.base.ref} @ ${changes.mergeBase}; ${changes.changed.length} changed path(s)`);
+      for (const row of report.changedPaths) console.log(`  ${JSON.stringify(row.path)}: ${row.category}`);
+      for (const [suite, selected] of Object.entries(plan)) {
+        console.log(`${suite}: ${selected.mode} — ${selected.reason}`);
+        for (const file of selected.files) console.log(`  ${JSON.stringify(file)}`);
+      }
+      for (const limitation of report.limitations) console.log(limitation);
+    }
+    return 0;
+  }
+  mkdirSync(join(repoRoot, GATE_DIR), { recursive: true });
   say(args.full
     ? 'gate:full — every backend and web test'
     : `gate — base ${baseRef} @ ${changes.mergeBase.slice(0, 10)}, ${changes.changed.length} changed file(s); backend ${plan.backend.mode}, web ${plan.web.mode}`);

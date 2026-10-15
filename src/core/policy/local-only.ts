@@ -57,6 +57,7 @@
 
 import type { AshlrConfig, EngineId, EngineTier } from '../types.js';
 import { resolveEngineRegistry, resolveEngineSpec } from '../run/engine-registry.js';
+import { noPaidCash } from '../daemon/funding.js';
 
 // ---------------------------------------------------------------------------
 // Mode
@@ -125,6 +126,17 @@ function configLocalOnly(cfg: AshlrConfig | undefined): boolean {
  * Erring toward refusal is the whole point.
  */
 let latchedConfigLocalOnly = false;
+let latchedNoPaidCash = false;
+
+/** Config-less SDK transports inherit a previously observed cash refusal. */
+export function noPaidCashContactPolicy(cfg?: AshlrConfig): boolean {
+  if (cfg !== undefined) {
+    const enabled = noPaidCash(cfg.daemon);
+    if (enabled) latchedNoPaidCash = true;
+    return enabled || latchedNoPaidCash;
+  }
+  return latchedNoPaidCash;
+}
 
 /** Record that a persisted local-only was observed. Monotonic; never unlatches. */
 export function latchLocalOnly(enabled: boolean): void {
@@ -139,6 +151,7 @@ export function localOnlyLatched(): boolean {
 /** Test-only: clear the monotonic latch so suites stay independent. */
 export function __resetLocalOnlyLatchForTests(): void {
   latchedConfigLocalOnly = false;
+  latchedNoPaidCash = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -595,6 +608,10 @@ export function decidePermission(
   env: EnvLike = process.env,
 ): LocalOnlyVerdict {
   const mode = resolveLocalOnlyMode(cfg, env);
+  if (noPaidCashContactPolicy(cfg) && subject.meteredness !== 'free') {
+    return { permitted: false, subject, mode,
+      reason: `no-paid-cash: ${SUBJECT_NOUN[subject.kind]} '${subject.id}' has no current included-funding contact proof. Paid and unknown funding are refused; gifted APIs require separate signed admission.` };
+  }
   // THE RULE: refuse anything not PROVABLY free. Reading `locality` here is
   // what let `ashlrcode` — a local process holding paid credentials — through,
   // and treating 'unknown' as permitted is the same mistake one step removed.
@@ -646,6 +663,18 @@ export function enginePermitted(
     cfg,
     env,
   );
+}
+
+/** Selection is not contact permission. Only the source-owned selected native
+ * adapters can later present fresh billing proof at the subprocess seam. */
+export function nativeIncludedCandidatePermitted(engine: string, cfg?: AshlrConfig, env: EnvLike = process.env): LocalOnlyVerdict {
+  const verdict = enginePermitted(engine, cfg, env);
+  if (verdict.permitted || !cfg || !noPaidCashContactPolicy(cfg) || verdict.mode.enabled) return verdict;
+  if (!['codex', 'claude', 'claude-cli', 'devin-cli'].includes(engine) ||
+      Object.prototype.hasOwnProperty.call(cfg.foundry?.engines ?? {}, engine)) return verdict;
+  const spec = resolveEngineSpec(engine, cfg);
+  if (!spec || spec.kind !== 'cli-agent') return verdict;
+  return { ...verdict, permitted: true, reason: null };
 }
 
 /** Is this PROVIDER permitted right now? */
@@ -705,6 +734,7 @@ export function binPermitted(
 ): LocalOnlyVerdict {
   const id = engineIdForBin(bin, cfg);
   if (id === undefined) {
+    if (noPaidCashContactPolicy(cfg)) return decidePermission({ kind: 'engine', id: bin, locality: 'local', meteredness: 'unknown' }, cfg, env);
     return {
       permitted: true,
       // Deliberate: an executable no engine claims is outside the roster this
@@ -781,8 +811,8 @@ export function filterPermittedEngines<T extends string>(
   env: EnvLike = process.env,
 ): T[] {
   const mode = resolveLocalOnlyMode(cfg, env);
-  if (!mode.enabled) return [...engines];
-  return engines.filter((e) => enginePermitted(e, cfg, env).permitted);
+  if (!mode.enabled && !noPaidCashContactPolicy(cfg)) return [...engines];
+  return engines.filter((e) => nativeIncludedCandidatePermitted(e, cfg, env).permitted);
 }
 
 /**
@@ -802,7 +832,7 @@ export function permittedEnginesAtTier(
       ? 'local'
       : resolveEngineSpec(engine, cfg)?.tier ?? 'local';
     if (resolvedTier !== tier) return false;
-    return enginePermitted(engine, cfg, env).permitted;
+    return nativeIncludedCandidatePermitted(engine, cfg, env).permitted;
   });
 }
 

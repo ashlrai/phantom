@@ -9,15 +9,17 @@
  * closes and puts focus back on the gear (a press outside just closes).
  * Portalled to <body> so the 56px rail cannot clip it.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useTheme } from '../../../data/hooks.js';
 import type { ThemePreference } from '../../../data/theme-store.js';
+import { useGuardState } from './guard-store.js';
 import { useVerseUi } from '../useVerseUi.js';
 import { AppsIcon, AutomationsIcon, PlaybooksIcon, SettingsIcon, UsageIcon, WikiIcon } from '../verse-icons.js';
 import { IconKeyboard } from '../../../components/primitives/icons.js';
 import { openVerseOverlay, setVerseSection, toggleVerseRail } from '../verse-ui-store.js';
 import { detectKeyPlatform, findCommand, formatChord } from './command-catalog.js';
+import { useHintSettings, setHintSettings, type HintChord, type HintSettings } from '../hints/hint-settings.js';
 import styles from './GearTray.module.css';
 
 export interface GearTrayProps {
@@ -26,6 +28,8 @@ export interface GearTrayProps {
   onClose: () => void;
   /** Phone layout: the rail is a bottom bar, so the menu rises from it. */
   compact: boolean;
+  /** Other shell overlays suspend hint entry, even while the tray is closed. */
+  hintBlocked?: boolean;
 }
 
 interface Entry {
@@ -51,7 +55,26 @@ const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'dark', label: 'Dark' },
 ];
 
-export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
+const HintNavigation = lazy(() => import('../hints/HintNavigation.js'));
+
+/** The tray already loads after first paint. Disabled hint code is never requested. */
+export function GearTray(props: GearTrayProps) {
+  const hints = useHintSettings();
+  const ui = useVerseUi();
+  const guard = useGuardState();
+  // Once loaded, retain the input owner until shell teardown. Disabling entry must
+  // still drain the release/repeat tail of a key consumed by the last session.
+  const [activated, setActivated] = useState(hints.enabled);
+  useEffect(() => { if (hints.enabled) setActivated(true); }, [hints.enabled]);
+  return <>
+    <GearTrayMenu {...props} hints={hints} />
+    <Suspense fallback={null}>
+      {(activated || hints.enabled) ? <HintNavigation blocked={props.open || props.hintBlocked === true || Boolean(ui.overlay) || guard.request !== null} /> : null}
+    </Suspense>
+  </>;
+}
+
+function GearTrayMenu({ open, anchorRef, onClose, compact, hints }: GearTrayProps & { hints: HintSettings }) {
   const ui = useVerseUi();
   const theme = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -66,6 +89,8 @@ export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
     { key: 'playbooks', role: 'menuitem', label: 'Playbooks', icon: <PlaybooksIcon />, run: () => setVerseSection('playbooks') },
     { key: 'automations', role: 'menuitem', label: 'Automations', icon: <AutomationsIcon />, run: () => setVerseSection('automations') },
     { key: 'shortcuts', role: 'menuitem', label: 'Keyboard shortcuts', icon: <IconKeyboard />, shortcut: shortcutOf('shortcuts.open'), run: () => openVerseOverlay('shortcuts') },
+    { key: 'hints', role: 'menuitemcheckbox', label: 'Phantom keyboard hints (experimental)', checked: hints.enabled, run: () => setHintSettings({ ...hints, enabled: !hints.enabled }), stay: true },
+    ...(['ctrl-alt-h', 'ctrl-shift-h'] as HintChord[]).map((chord) => ({ key: `hints-${chord}`, role: 'menuitemradio' as const, label: chord === 'ctrl-alt-h' ? 'Hint shortcut: Ctrl+Alt+H' : 'Hint shortcut: Ctrl+Shift+H', checked: hints.chord === chord, run: () => setHintSettings({ ...hints, chord }), stay: true })),
     ...(compact
       ? []
       : [{ key: 'rail', role: 'menuitemcheckbox' as const, label: 'Show rail labels', shortcut: shortcutOf('rail.toggle-labels'), checked: ui.railExpanded, run: toggleVerseRail, stay: true }]),

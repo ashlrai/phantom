@@ -1,6 +1,8 @@
+import { enginePermitted, __resetLocalOnlyLatchForTests } from '../src/core/policy/local-only.js';
 /** Production dispatcher and real inert child protocol. No provider or native
  * account is contacted: profiles, login files and grants are test fixtures. */
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -60,8 +62,8 @@ describe('native role completion protocol',()=>{
 });
 
 let root:string;
-beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'phantom-native-role-fixture-')));host.policy=null;});
-afterEach(()=>{setKernelEvidenceWatcherForTest();vi.restoreAllMocks();host.policy=null;vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});});
+beforeEach(()=>{__resetLocalOnlyLatchForTests();root=realpathSync(mkdtempSync(join(tmpdir(),'phantom-native-role-fixture-')));host.policy=null;});
+afterEach(()=>{__resetLocalOnlyLatchForTests();setKernelEvidenceWatcherForTest();vi.restoreAllMocks();host.policy=null;vi.unstubAllEnvs();rmSync(root,{recursive:true,force:true});});
 function fixture(){
   const home=join(root,'home');mkdirSync(home,{mode:0o700});vi.stubEnv('HOME',home);
   const executable=join(root,'inert-codex');
@@ -86,8 +88,11 @@ let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>promp
 });
 }
 `;
-  const quote=(value:string)=>"'"+value.replaceAll("'","'\"'\"'")+"'";
-  writeFileSync(executable,'#!/bin/sh\nexec '+quote(realpathSync(process.execPath))+' -e '+quote(script)+' fixture "$@"\n',{mode:0o700});
+  // A physical inert exec shim carries the exact Node argv/stdin protocol;
+  // it avoids the shell interpreter variant under the unchanged native jail.
+  const code = '#include <unistd.h>\n#include <stdlib.h>\nint main(int argc,char **argv){if(argc>1024)return 126;char **a=calloc(argc+4,sizeof(char*));if(!a)return 125;a[0]='+JSON.stringify(realpathSync(process.execPath))+';a[1]="-e";a[2]='+JSON.stringify(script)+';a[3]="fixture";for(int i=1;i<argc;i++)a[i+3]=argv[i];execv(a[0],a);return 127;}\n';
+  execFileSync('/usr/bin/clang',['-x','c','-O0','-o',executable,'-'],{input:code,timeout:4000});
+  chmodSync(executable,0o700);
   const profile=prepareResourceNativeProfile({provider:'codex',directory:join(root,'profile'),executable});
   const auth={email:'fixture@example.invalid',tokens:{account_id:'fixture-selected-account',id_token:'h.'+Buffer.from(JSON.stringify({sub:'fixture-user'})).toString('base64url')+'.s',refresh_token:'fixture-refresh',access_token:'fixture-access'}};
   writeFileSync(join(profile.nativeStatePath,'auth.json'),JSON.stringify(auth),{mode:0o600});
@@ -101,6 +106,20 @@ let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>promp
   return {cfg,profile,accountHint};
 }
 describe.runIf(process.platform === 'darwin' && typeof process.execve === 'function')('actual owned native role dispatcher',()=>{
+  it('a legacy role config after the cash latch cannot issue contact authority without current included billing', async () => {
+    const f = fixture();
+    f.cfg.daemon = { ...f.cfg.daemon, fundingMode: 'legacy-usd', dailyBudgetUsd: 50 };
+    enginePermitted('codex', { ...f.cfg, daemon: { fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 } });
+    vi.spyOn(capacityStore, 'readCapacitySnapshot').mockReturnValue({ seats: [] } as unknown as ReturnType<typeof capacityStore.readCapacitySnapshot>);
+    const probe = vi.spyOn(codexMetadata, 'probeCodexResourceAccount');
+    const spawn = vi.spyOn(engineRuntime, 'spawnEngine');
+    const complete = nativeRoleCompletion({ cfg: f.cfg, role: 'leader', seatId: 'codex-a', engine: 'codex', model: 'gpt-fixture', accountHint: f.accountHint, timeoutMs: 5000, admitted: () => true });
+    await expect(complete('SYSTEM', 'USER')).rejects.toThrow(/admission unavailable/);
+    expect(probe).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(countLiveExecutionLeases()).toBe(0);
+  });
+
   it('refuses an already cancelled native call before metadata or process contact',async()=>{
     const f=fixture();const controller=new AbortController();controller.abort();
     const probe=vi.spyOn(codexMetadata,'probeCodexResourceAccount');

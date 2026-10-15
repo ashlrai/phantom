@@ -1,5 +1,67 @@
 # TypeSafe AI (Jev) integration contract
 
+## Track PR quality over time
+
+Run `phm jev status --json` to check configuration and recorded provider usage
+without making a paid call or displaying credentials. Jev already supplies the
+typed adapter for the existing frontier taste critic; it extracts that critic's
+stated scores rather than inventing an independent approval. New ratings use
+that existing path and do not add provider calls.
+
+`phm fleet scorecard --json` includes an additive `selfEvaluation.prRatings`
+report. GET `/api/scorecard` returns it as `prRatings` on the scorecard itself.
+The existing scorecard history saves the
+report with each snapshot. Older snapshots may omit it. Ratings cover at most
+64 authenticated merged changes from a separate 90-day lookback, including local
+default-branch patches. Each row identifies its merge source; authenticated
+GitHub merges include the PR URL, repository, and number. Seven- and 30-day
+scorecard velocity metrics retain their own windows. `lookbackStartedAt`,
+`scorecardWindowStartedAt`, source coverage, and `capped` make these scopes
+explicit. A missing provider ledger is shown in `sources`; incomplete or corrupt
+readback suppresses positive ratings. Missing evidence never becomes a zero score.
+Authentication inspects at most 64 recent candidate changes per report; a larger
+history sets `capped: true` and leaves the total authenticated `candidateCount`
+unknown. Rating rows have an additional 64 KiB payload cap so they fit within the
+existing snapshot storage budget. Partial reports never claim complete coverage.
+
+The stable `eventDigest` binds the canonical merge identity, proposal, candidate
+head, and actual diff hash. `ratingDigest` changes with new outcome evidence so
+snapshots can follow the same change over time. Diff and verification hashes
+must match the signed merge intent; replacing all mutable hashes cannot substitute
+a different diff. Private titles, rationale, diffs, paths, and process output
+are excluded from rating rows.
+
+`impactEstimate` contains the existing critic's alignment, ambition, and design
+scores. Its source is always `critic-estimate`, and its confidence is `null`
+because this rubric does not measure confidence. It is potential leverage, not
+a measured improvement in revenue, capability, or benchmark results. An ambitious
+build earns a positive advisory comparison only after both of these observations:
+
+1. A signed, manifested v2 stability witness covers at least seven days starting
+   at the exact merge time, with a clean detached workspace and required checks.
+2. A signed detached verification cohort independently matches the repository,
+   proposal, branch, candidate head, merge commit, checked head, verification
+   manifest digest, command count, and verification timestamp. Its terminal
+   result must be a healthy pass. The checked head must be the exact merge commit.
+
+A valid observed window is labelled `verified-window`. Its advisory reward is
+`20 × (0.35 × alignment + 0.45 × ambition + 0.20 × design)`, rounded to an integer.
+Raw risk, changed-line count, ambitious language, and number of PRs earn no bonus.
+Higher-risk work still needs the same protected approval and verification gates.
+Later signed adverse evidence overrides positive observations: a revert rates
+−100, a regression −80, a detached code-verification failure −60, and an overlapping
+follow-up fix −20. The follow-up label remains a heuristic association, not proof
+the PR caused a bug. Missing checks or critic estimates leave the reward `null`.
+
+Ratings are **observation-only** and `policyEligible` is always `false`. A positive
+comparison is not operational learning credit, production acceptance, merge
+permission, or proof of a complete success-rate denominator. The existing
+post-merge learning release remains disabled; ratings do not change routing,
+skill promotion, budgets, credentials, or merge policy. Source and implementation:
+[`pr-ratings.ts`](https://github.com/ashlrai/phantom/blob/master/src/core/fleet/pr-ratings.ts),
+[`scorecard.ts`](https://github.com/ashlrai/phantom/blob/master/src/core/fleet/scorecard.ts), and
+[`pr-ratings.test.ts`](https://github.com/ashlrai/phantom/blob/master/test/pr-ratings.test.ts).
+
 Jev is a "System One" decision model: you send state plus typed questions and get back a label, a
 probability distribution over the options, and a **separate confidence value**. Their framing is the
 one that matters for this codebase is advisory selection after deterministic admission.

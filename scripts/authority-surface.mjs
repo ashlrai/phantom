@@ -70,6 +70,9 @@ import { fileURLToPath } from 'node:url';
  * are also Tier-1 protected paths, so the fleet itself can never change them.
  */
 export const AUTHORITY_SURFACE_ROOTS = Object.freeze([
+  // Reviewed external briefs stay scope-bound if the server import graph changes.
+  'dist/core/proactive/handoff-preview.js',
+  'dist/core/proactive/coordination-wire.js',
   'dist/core/authority/',
   'dist/core/website/',
   'dist/cli/website.js',
@@ -82,6 +85,13 @@ export const AUTHORITY_SURFACE_ROOTS = Object.freeze([
   'dist/core/daemon/tick-hooks.js',
   'dist/core/daemon/post-merge-halt.js',
   'dist/core/daemon/liveness.js',
+  // Preserve the funding boundary across future import refactors.
+  'dist/core/daemon/funding.js',
+  'dist/core/daemon/state.js',
+  'dist/core/run/included-native-contact.js',
+  'dist/core/run/engines.js',
+  'dist/core/run/provider-client.js',
+  'dist/core/run/role-completion.js',
   'dist/core/inbox/merge.js',
   'dist/core/fleet/automerge-pass.js',
   'dist/core/fleet/merge-gates.js',

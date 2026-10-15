@@ -111,7 +111,7 @@ describe('M30 CI workflow', () => {
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
     expect(gate.name).toBe('Merge Gate');
-    expect(gate.needs).toEqual(['classify', 'site', ...full]);
+    expect(gate.needs).toEqual(['classify', 'site', 'documentation', 'frontend', ...full]);
     expect(gate.if).toBe('${{ always() }}');
     expect(gate['runs-on']).toBe('ubuntu-latest');
     expect(gate['continue-on-error']).toBeUndefined();
@@ -120,9 +120,10 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success') => {
-      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
-        result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
+    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', releaseEligible = 'false') => {
+      const dependencies = Object.fromEntries(['classify', 'site', 'documentation', 'frontend', ...full].map((name) => [name, {
+        result: name === 'classify' ? classify : ['documentation', 'frontend'].includes(name) ? outcomes[name] ?? 'skipped' : outcomes[name],
+        ...(name === 'classify' ? { outputs: { lane } } : ['documentation', 'frontend'].includes(name) ? { outputs: { release_eligible: releaseEligible } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies) } }, console: { log: () => {} },
@@ -132,6 +133,22 @@ describe('M30 CI workflow', () => {
     const complete = Object.fromEntries(full.map((name) => [name, 'success']));
     expect(execute('site', { ...site, site: 'success' })).not.toThrow();
     expect(execute('full', { ...complete, site: 'skipped' })).not.toThrow();
+    expect(execute('documentation', { ...site, site: 'skipped', documentation: 'success' })).not.toThrow();
+    expect(execute('frontend', { ...site, site: 'skipped', frontend: 'success' })).not.toThrow();
+    for (const result of ['failure', 'cancelled', 'skipped', 'neutral']) expect(execute('frontend', { ...site, site: 'skipped', frontend: result })).toThrow();
+    for (const marker of ['true', '', 'unknown']) expect(execute('frontend', { ...site, site: 'skipped', frontend: 'success' }, 'success', marker)).toThrow();
+    expect(execute('full', { ...complete, site: 'skipped', frontend: 'success' })).toThrow();
+    for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+      expect(execute('documentation', { ...site, site: 'skipped', documentation: outcome })).toThrow();
+    }
+    for (const marker of ['true', '', 'unknown']) {
+      expect(execute('documentation', { ...site, site: 'skipped', documentation: 'success' }, 'success', marker)).toThrow();
+    }
+    for (const name of ['site', ...full]) {
+      expect(execute('documentation', { ...site, site: 'skipped', documentation: 'success', [name]: 'success' })).toThrow();
+    }
+    expect(execute('full', { ...complete, site: 'skipped', documentation: 'success' })).toThrow();
+    expect(execute('site', { ...site, site: 'success', documentation: 'success' })).toThrow();
     for (const name of full) {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
         expect(execute('full', { ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
@@ -142,6 +159,35 @@ describe('M30 CI workflow', () => {
     expect(execute('full', { ...complete, site: 'success' })).toThrow();
     expect(execute('full', { ...complete, site: 'skipped' }, 'failure')).toThrow();
     expect(execute('unknown', { ...complete, site: 'skipped' })).toThrow();
+  });
+
+  it('runs fresh complete frontend PR checks without release eligibility', () => {
+    const job = workflowJob('frontend');
+    expect(job).toContain("if: needs.classify.outputs.lane == 'frontend'");
+    expect(job).toContain('npm ci --ignore-scripts');
+    expect(job).toContain('ci-frontend-lane.mjs');
+    expect(job).toContain('phantom-frontend-pr-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(job).not.toMatch(/capture|adoptArtifact|verifyArtifact|pack --|publish/);
+    const collector = readFileSync(resolve(repoRoot, '.github/scripts/ci-frontend-lane.mjs'), 'utf8');
+    expect(collector).toContain("schema: 'phantom-frontend-pr-receipt/v1', releaseEligible: false");
+    for (const command of ['test:web', 'typecheck:web', 'build:web', 'check:first-paint:built']) expect(collector).toContain(command);
+    expect(collector).toContain('desktop: 354, mobile: 250');
+    expect(collector).toContain('Frontend module inventory differs');
+  });
+
+  it('runs reviewed documentation contracts once without creating release coverage', () => {
+    const job = workflowJob('documentation');
+    expect(job).toContain("if: needs.classify.outputs.lane == 'documentation'");
+    expect(job).toContain('run: node .github/scripts/ci-source-binding.mjs');
+    expect(job).toContain('run: npm ci --ignore-scripts');
+    expect(job).toContain('run: node --test .github/tests/ci-site-lane.test.mjs .github/tests/ci-docs-lane.test.mjs');
+    expect(job).toContain('run: node .github/scripts/ci-docs-lane.mjs');
+    expect(job).toContain('phantom-documentation-pr-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(job).not.toMatch(/continue-on-error|npm publish|npm pack|run: npm run build|ashlr-build-/);
+    const collector = readFileSync(resolve(repoRoot, '.github/scripts/ci-docs-lane.mjs'), 'utf8');
+    expect(collector).toContain("schema: 'phantom-documentation-pr-receipt/v1', releaseEligible: false");
+    for (const file of ['test/documentation-navigation.test.ts', 'test/authority-release-truth.test.ts',
+      'test/m33.release-meta.test.ts', 'test/m93.service-authority-docs.test.ts']) expect(collector).toContain(file);
   });
 
   it('is reusable as the canonical release verification authority', () => {
@@ -371,8 +417,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(18);
-    expect(new Set(names).size).toBe(18);
+    expect(names).toHaveLength(20);
+    expect(new Set(names).size).toBe(20);
+    expect(names).toContain('Documentation PR (reviewed prose)');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');

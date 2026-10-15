@@ -685,6 +685,7 @@ export function TerminalPane({ sessionId, roots, request, onSendToChat, visible,
                   type="button"
                   role="tab"
                   id={`terminal-tab-${tab.id}`}
+                  data-phantom-hint={`terminal.tab.${tab.id}`} data-phantom-hint-action="press"
                   aria-selected={selected}
                   aria-controls={`terminal-panel-${tab.id}`}
                   tabIndex={selected ? 0 : -1}
@@ -779,7 +780,11 @@ export function TerminalPane({ sessionId, roots, request, onSendToChat, visible,
               hidden={!selected}
             >
               <div className={styles.viewport}>
-                <div className={styles.host} ref={hostRef(tab.id)} data-testid={`terminal-host-${tab.id}`} />
+                <div className={styles.host} ref={hostRef(tab.id)} data-testid={`terminal-host-${tab.id}`}
+                  tabIndex={-1} aria-label="Terminal input"
+                  data-phantom-hint={selected && readyIds.has(tab.id) && !tab.exited ? `terminal.input.${tab.id}` : undefined}
+                  data-phantom-hint-action="focus"
+                  onFocus={(event) => { if (event.target === event.currentTarget) views.current.get(tab.id)?.view.focus(); }} />
                 {!readyIds.has(tab.id) && !viewFailed ? (
                   <div className={styles.viewLoading} aria-hidden="true"><SkeletonLine width="30%" /></div>
                 ) : null}

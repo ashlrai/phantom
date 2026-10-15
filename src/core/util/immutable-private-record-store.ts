@@ -376,7 +376,9 @@ function readRecordFile<RecordType>(
     if (!exactPrivateFile(before, expectedLinks) ||
       before.size < 2n || before.size > BigInt(directories.config.maxRecordBytes)) return null;
     const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
-    fd = openSync(path, fsConstants.O_RDONLY | noFollow);
+    // A regular inode may become a FIFO after stat; refuse at fstat without blocking open.
+    const nonBlock = typeof fsConstants.O_NONBLOCK === 'number' ? fsConstants.O_NONBLOCK : 0;
+    fd = openSync(path, fsConstants.O_RDONLY | noFollow | nonBlock);
     const opened = fstatSync(fd, { bigint: true });
     if (!exactPrivateFile(opened, expectedLinks) ||
       !sameIdentity(before, opened) || before.size !== opened.size) return null;
@@ -454,7 +456,9 @@ function fsyncExactFile(
   let fd: number | undefined;
   try {
     const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
-    fd = openSync(path, fsConstants.O_RDONLY | noFollow);
+    // A regular inode may become a FIFO after stat; refuse at fstat without blocking open.
+    const nonBlock = typeof fsConstants.O_NONBLOCK === 'number' ? fsConstants.O_NONBLOCK : 0;
+    fd = openSync(path, fsConstants.O_RDONLY | noFollow | nonBlock);
     const opened = fstatSync(fd, { bigint: true });
     const named = lstatSync(path, { bigint: true });
     if (

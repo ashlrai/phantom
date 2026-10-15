@@ -375,6 +375,7 @@ describe('projectVerseControl', () => {
       available: true,
       reason: null,
       dailyBudgetUsd: 25,
+      fundingMode: null,
       subscriptionMaxPercent: 90,
       todaySpentUsd: 4.25,
       // No `spend` block here, so there is no ledger day to carry — null
@@ -422,5 +423,14 @@ describe('projectVerseControl', () => {
     const junk = projectVerseControl({ caps: { foundryLimits: [{ engine: 42 }, 'nope', { engine: 'codex' }] } });
     expect(junk.foundryLimits).toEqual([]);
     expect(junk.dailyBudgetUsd).toBeNull();
+  });
+});
+
+
+describe('explicit funding mode projection', () => {
+  it('accepts only the source enum and never infers included funding from a zero balance', () => {
+    expect(projectVerseControl({ caps: { dailyBudgetUsd: 0, fundingMode: 'no-paid-cash' } }).fundingMode).toBe('no-paid-cash');
+    expect(projectVerseControl({ caps: { dailyBudgetUsd: 0 } }).fundingMode).toBeNull();
+    expect(projectVerseControl({ caps: { dailyBudgetUsd: 0, fundingMode: 'gifted' } }).fundingMode).toBeNull();
   });
 });

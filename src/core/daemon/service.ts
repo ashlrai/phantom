@@ -59,6 +59,8 @@ export interface ServiceInstallOptions {
   binPath?: string;
   /** Daily budget in USD passed to `daemon start --budget`. */
   budget?: number;
+  /** Explicit policy serialized into the generated command; absence preserves legacy argv. */
+  fundingMode?: 'legacy-usd' | 'no-paid-cash';
   /** Interval in ms passed to `daemon start --interval`. */
   intervalMs?: number;
   /** Crash restart throttle in seconds (default: 30). Independent of intervalMs. */
@@ -166,7 +168,10 @@ export function generateServiceDefinition(opts: ServiceInstallOptions = {}): Ser
   const home = resolveHome(opts.homeDir);
   const configDir = path.join(home, '.ashlr');
 
-  const budget = opts.budget ?? 5;
+  if (opts.fundingMode !== undefined && opts.fundingMode !== 'legacy-usd' && opts.fundingMode !== 'no-paid-cash') {
+    throw new Error('Invalid daemon service funding mode');
+  }
+  const budget = opts.fundingMode === 'no-paid-cash' ? 0 : opts.budget ?? 5;
   const intervalMs = opts.intervalMs ?? 1_800_000;
   const restartSec = Number.isFinite(opts.restartSec) && opts.restartSec !== undefined
     ? Math.max(MIN_RESTART_SEC, Math.floor(opts.restartSec))
@@ -177,11 +182,11 @@ export function generateServiceDefinition(opts: ServiceInstallOptions = {}): Ser
 
   switch (platform) {
     case 'darwin':
-      return buildLaunchdDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec: launchdRestartSec, parallel, keepAwake });
+      return buildLaunchdDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec: launchdRestartSec, parallel, keepAwake, fundingMode: opts.fundingMode });
     case 'linux':
-      return buildSystemdDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec, parallel });
+      return buildSystemdDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec, parallel, fundingMode: opts.fundingMode });
     case 'win32':
-      return buildSchtasksDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec, parallel });
+      return buildSchtasksDefinition({ nodePath, binPath, home, configDir, budget, intervalMs, restartSec, parallel, fundingMode: opts.fundingMode });
     default:
       throw new Error(`Unsupported platform: ${platform}`);
   }
@@ -192,6 +197,7 @@ export function generateServiceDefinition(opts: ServiceInstallOptions = {}): Ser
 // ---------------------------------------------------------------------------
 
 interface BuildOpts {
+  fundingMode?: 'legacy-usd' | 'no-paid-cash';
   nodePath: string;
   binPath: string;
   home: string;
@@ -237,6 +243,7 @@ function buildLaunchdDefinition(o: BuildOpts): ServiceDefinition {
     '--parallel',
     String(o.parallel),
   );
+  if (o.fundingMode === 'no-paid-cash') runtimeArguments.push('--funding-mode', 'no-paid-cash');
   const programArgs = runtimeArguments.map((argument) => `\t\t<string>${argument}</string>`);
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>
@@ -311,7 +318,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${o.nodePath} ${o.binPath} daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}
+ExecStart=${o.nodePath} ${o.binPath} daemon start --budget ${o.budget}${o.fundingMode === 'no-paid-cash' ? ' --funding-mode no-paid-cash' : ''} --interval ${o.intervalMs} --parallel ${o.parallel}
 Restart=always
 RestartSec=${o.restartSec}
 Environment=HOME=${o.home}
@@ -352,7 +359,7 @@ function buildSchtasksDefinition(o: BuildOpts): ServiceDefinition {
     '/IT',
   ];
 
-  const content = `@echo off\r\n"${o.nodePath}" "${o.binPath}" daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}\r\n`;
+  const content = `@echo off\r\n"${o.nodePath}" "${o.binPath}" daemon start --budget ${o.budget}${o.fundingMode === 'no-paid-cash' ? ' --funding-mode no-paid-cash' : ''} --interval ${o.intervalMs} --parallel ${o.parallel}\r\n`;
 
   return {
     filePath: cmdPath,

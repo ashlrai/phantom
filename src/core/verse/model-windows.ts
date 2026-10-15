@@ -520,6 +520,7 @@ export interface GrokCatalogEntry {
   autoCompactThresholdPercent: number | null;
   maxCompletionTokens: number | null;
   hidden: boolean;
+  userSelectable: boolean;
   supportedInApi: boolean;
 }
 
@@ -543,10 +544,15 @@ function parseGrokCatalog(raw: unknown): GrokCatalogEntry[] | null {
       autoCompactThresholdPercent: percentOrNull(info['auto_compact_threshold_percent']),
       maxCompletionTokens: positiveInt(info['max_completion_tokens']),
       hidden: info['hidden'] === true,
+      // The CLI derives this from allowed_models and normally omits it from
+      // its persisted cache. Honor explicit false; absence is not proof that
+      // a model is currently allowed by the CLI's resolved configuration.
+      userSelectable: info['user_selectable'] !== false,
       supportedInApi: info['supported_in_api'] !== false,
     });
   }
-  return out.length > 0 ? out : null;
+  // A valid empty catalog is different from an absent/unreadable catalog.
+  return out.length > 0 || Object.keys(raw['models']).length === 0 ? out : null;
 }
 
 /**
@@ -572,6 +578,7 @@ const GROK_DOCUMENTED_MODELS: readonly GrokCatalogEntry[] = [
   autoCompactThresholdPercent: 80,
   maxCompletionTokens: null,
   hidden: false,
+  userSelectable: true,
   supportedInApi: true,
 }));
 
@@ -591,14 +598,18 @@ function grokOption(entry: GrokCatalogEntry, source: VerseWindowSource): VerseMo
 }
 
 /**
- * A grok seat's model list: every entry that is not hidden and not flagged
- * unsupported, in the catalog's own order (JSON object order is preserved and
- * is the CLI's), or the documented list when the seat has no catalog. Grok has
- * no expansive mode: its CLI cannot be told a larger budget per invocation.
+ * Native Grok seat candidates, in catalog order, or the documented list only
+ * when the catalog is unavailable. This helper is not an API-key picker:
+ * supported_in_api=false means OAuth-only, not unsupported by the native CLI
+ * (xai-org/grok-build config.rs, 2bdd1d6, ModelInfo::visible_for_auth).
+ * Hidden and explicitly nonselectable rows remain excluded. Catalog metadata
+ * does not prove current authentication, funding, entitlement or execution;
+ * existing seat admission and the CLI's resolved picker rules still apply.
+ * Grok has no expansive mode: its CLI cannot be told a larger budget per turn.
  */
 export function grokModelOptions(catalog: GrokCatalogEntry[] | null): VerseModelOption[] {
-  const offered = (catalog ?? []).filter((entry) => !entry.hidden && entry.supportedInApi);
-  if (offered.length === 0) return GROK_DOCUMENTED_MODELS.map((entry) => grokOption(entry, 'documented'));
+  if (catalog === null) return GROK_DOCUMENTED_MODELS.map((entry) => grokOption(entry, 'documented'));
+  const offered = catalog.filter((entry) => !entry.hidden && entry.userSelectable !== false);
   return offered.map((entry) => grokOption(entry, 'provider-catalog'));
 }
 

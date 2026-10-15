@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -219,6 +219,20 @@ describe('onboard — NON-TTY-safe (no prompt/hang)', () => {
 // ---------------------------------------------------------------------------
 
 describe('onboard — config step', () => {
+  it('new-init writes an explicit cash-disabled policy; rerunning never reinterprets an existing legacy zero', async () => {
+    mockFetch.mockRejectedValue(new Error('offline'));
+    const onboard = await importOnboard();
+    const cfg = makeConfig();
+    await onboard(cfg, { wire: false, yes: true });
+    const path = join(tmpHome, '.ashlr', 'config.json');
+    expect(JSON.parse(readFileSync(path, 'utf8')).daemon).toMatchObject({ fundingMode: 'no-paid-cash', dailyBudgetUsd: 0 });
+    const config = await import('../src/core/config.js');
+    const legacy = { ...cfg, daemon: { dailyBudgetUsd: 0 } };
+    config.saveConfig(legacy);
+    await onboard(legacy, { wire: false, yes: true });
+    expect(JSON.parse(readFileSync(path, 'utf8')).daemon).toEqual({ dailyBudgetUsd: 0 });
+  });
+
   it('config step status is ok', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
     const onboard = await importOnboard();

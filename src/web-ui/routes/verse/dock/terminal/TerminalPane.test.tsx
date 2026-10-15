@@ -180,6 +180,17 @@ describe('TerminalPane', () => {
     expect(screen.getByTitle('~/code/app')).toHaveTextContent(/^app$/);
   });
 
+  it('exposes ready terminal focus as a semantic hint target without writing input', async () => {
+    const h = harness(); renderPane(h);
+    await waitFor(() => expect(h.views[0]?.host).toBeInTheDocument());
+    const host = h.views[0]!.host!;
+    await waitFor(() => expect(host).toHaveAttribute('data-phantom-hint', 'terminal.input.t-new1'));
+    const previous = h.views[0]!.focused;
+    act(() => host.focus());
+    expect(h.views[0]!.focused).toBe(previous + 1);
+    expect(h.inputs).toEqual([]); expect(h.views[0]!.pasted).toEqual([]);
+  });
+
   it('reattaches to existing tabs after a reload instead of opening another, resuming after the last seq', async () => {
     const h = harness({ tabs: [tabOf('t-1')] });
     renderPane(h);

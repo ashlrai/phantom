@@ -127,7 +127,7 @@ describe('daemon accounting power-loss barriers', () => {
     } }, armed.guard, 0).ok).toBe(false);
   });
 
-  it.each([{ zeroCostOnly: false }, { reservedUsd: 1 }, { exhaustBudgetDay: true }, { dailyBudgetUsd: 0 }])(
+  it.each([{ zeroCostOnly: false }, { reservedUsd: 1 }, { exhaustBudgetDay: true }, { dailyBudgetUsd: -1 }])(
     'refuses malformed zero-cost journal authority %j', (change) => {
       const armed = armDaemonSpendGuard({ itemIds: ['free-item'], daemonStartedAt: null,
         budgetDay: '2026-08-05', dailyBudgetUsd: 1, spentUsdAtArm: 2, reservedUsd: 0,
@@ -138,6 +138,22 @@ describe('daemon accounting power-loss barriers', () => {
       expect(readDaemonSpendGuard()).toMatchObject({ exists: true, malformed: true, guard: null });
     },
   );
+
+  it('cash zero requires an explicit zero-cost journal and cannot settle paid or unknown accounting', () => {
+    const input = { itemIds: ['included-item'], daemonStartedAt: null, budgetDay: '2026-08-05',
+      dailyBudgetUsd: 0, spentUsdAtArm: 2, reservedUsd: 0, now: new Date('2026-08-05T12:00:00.000Z') };
+    expect(armDaemonSpendGuard(input).ok).toBe(false);
+    const armed = armDaemonSpendGuard({ ...input, zeroCostOnly: true });
+    expect(armed.ok).toBe(true);
+    if (!armed.ok) return;
+    expect(readDaemonSpendGuard().guard).toEqual(armed.guard);
+    expect(accountDaemonSpendGuard(state(2), armed.guard, 0)).toMatchObject({ ok: true, state: { todaySpentUsd: 2 } });
+    expect(accountDaemonSpendGuard(state(2), armed.guard, 0.001).ok).toBe(false);
+    expect(accountDaemonSpendGuard(state(2), armed.guard, NaN).ok).toBe(false);
+    expect(accountDaemonSpendGuard({ ...state(2), spendGuardAccounting: {
+      budgetDay: '2026-08-05', accountingId: armed.guard.accountingId, budgetExhausted: true,
+    } }, armed.guard, 0).ok).toBe(false);
+  });
 
   it('orders state temp write and file fsync before rename and parent fsync', () => {
     expect(saveDaemonStateResult(state()).ok).toBe(true);

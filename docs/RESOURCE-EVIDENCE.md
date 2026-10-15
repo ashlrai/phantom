@@ -43,38 +43,59 @@ The private cache binds readings to the account, selected native profile, and a 
 | Captured Claude API promotion | Separate recorded API dollars and verified date precision | Advisory only; billing, execution binding and signed API authority must be commissioned before spending |
 | Operator cloud estimate | **Cloud estimate**, with its estimate qualifier | Separate from a provider-reported wallet or captured balance |
 | Local model | Runtime readiness, host CPU/RAM and scoped speed readings | Uses this computer's hardware, not a provider subscription allowance |
-| Grok Bot profile | Separate identity; unknown allowance and reset until verified | Grok Build quota does not establish Bot capacity or connect Bot execution |
+| Grok Bot profile | Separate identity; unknown allowance and reset until verified | A Grok Build reading alone does not establish Bot capacity or connect Bot execution |
 
 Dollar references are not invoices, purchased-credit prices, or attributed task costs. Subscription percentages are not token counts. Different accounts remain independent, including accounts from the same provider. No account-count truncation is introduced by these views.
 
 ## Grok Build and Grok Bot
 
-Grok Build's native account reading, Grok Bot's included allowance and xAI API
-credits are separate resources. The native CLI reports a consumer billing
-window and reset, which can be Build-specific or shared across supported
-consumer use. Usage labels distinguish these scopes and their reported weekly
-or monthly periods. Phantom does not copy the observation into a Bot profile
-or API wallet.
+Treat the observed Grok execution route and the account's current billing
+arrangement as separate evidence. Grok Build, Grok Bot and xAI API are distinct
+interfaces; they do not always have independent funding pools. A resource label
+cannot establish whether an account has kept a legacy plan or moved to the
+unified X Subscription.
 
-Grok's Usage page can show separate weekly meters for Build/shared consumer
-use and Grok Bot, with independent resets. Verify the account behind each
-meter; subscription linkage alone does not establish that billing identity.
+Public sources checked on **2026-10-14** describe two arrangements:
 
-[Cursor's Grok Bot plans](https://cursor.com/help/grok-bot/plans) describe Bot
-eligibility and on-demand billing, not the billing account behind a particular
-Grok usage-page meter. A linked SuperGrok plan grants Bot access without
-stacking another allowance on top of an existing eligible Cursor plan.
-On-demand usage is a separate paid pool; its monthly spending limit is not a
-hard stop during an active run.
+- **Legacy SuperGrok/Cursor:** linked SuperGrok, Plus or Heavy grants Bot weekly
+  usage on the Cursor account. It does not stack with an eligible Cursor grant;
+  the larger grant wins. Bot metering is separate from the consumer allowance,
+  with Cursor on-demand billing when enabled. See [legacy Bot plans](https://cursor.com/help/grok-bot/plans).
+- **The X Subscription:** eligible first-party Grok/Cursor surfaces share the
+  paid seat's weekly pool. Premium, Super and Ultra include Bot; X Subscription
+  Plus does not. This Plus is distinct from legacy SuperGrok Plus. See
+  [current usage limits](https://docs.x.ai/x-subscription/usage-limits) and
+  [Bot entitlement](https://docs.x.ai/x-subscription/grok-bot).
 
-Current proactive profiles record the intended Bot account and responsibilities,
-not a verified remaining allowance or reset. Phantom has not qualified a native
-Bot quota reader or autonomous Bot dispatch. Unknown Bot usage stays unknown;
-saving a profile never enables spending. See [proactive profiles](VERSE.md#proactive-agent-profiles).
+Grok Build's native reading describes only its observed account, scope,
+billing window and reset. Phantom does not manufacture a second Bot balance
+or copy a Build percentage into an API wallet. A shared pool must not be counted
+twice, and a legacy separate Bot grant must not be inferred from a unified seat.
+An account switch, unknown product scope or unverified billing association leaves
+Bot capacity and reset unknown.
 
-Track each account and product independently. Build allowance cannot substitute
-for Bot allowance, even when one subscription gives access to both. Purchased
-credits and Bot on-demand billing are not included allowance to spend before a reset.
+Do not assert that every API request is separately paid, or that a subscription
+funds every API key. Current [consumer documentation](https://docs.x.ai/grok/faq)
+lists API in the usage breakdown, and [pricing](https://x.ai/pricing) includes API
+access, while the [developer account FAQ](https://docs.x.ai/developers/faq/accounts)
+still describes separate Console billing. Verify the exact credential route,
+team and eligible surface before admitting spend. A Heavy subscription label is
+not a Heavy model ID, verified quota or execution authority.
+
+Current proactive profiles store intended Bot identities, responsibilities and
+preferences, not qualified remaining allowance, resets or remote execution. The
+source successor adds an explicitly reviewed manual-copy brief for an existing
+handoff intent. Its server recheck binds the exact saved packet, task attempt,
+recipient profile and acknowledged text; `dispatchAuthorized` and
+`contextShared` remain false. Copying is not sending, and this path does not
+commission a Bot quota reader, webhook, status/cancel API or automatic result
+transport. See the [Grok companion guide](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md).
+
+Legacy on-demand monthly limits can be exceeded by a job already running. Unified
+Additional Usage uses its applicable prepaid/top-up and spending controls. A
+public plan description does not reveal the current user's enabled settings.
+Purchased credits and paid overage never acquire subscription reset urgency.
+Missing funding or reset evidence stays unknown; it is neither zero nor unlimited.
 
 ## Local hardware and task speed
 

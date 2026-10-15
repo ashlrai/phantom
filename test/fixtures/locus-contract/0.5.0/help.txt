@@ -1,0 +1,67 @@
+Pin a Binding (tenant × providers × credentials × policy).
+Every CLI exec and MCP tool call is hard-scoped to that pin.
+Sibling to Phantom Secrets: Phantom protects secrets in context;
+Locus protects which identity acts.
+
+Commands are grouped (in display order):
+  Setup         init · quickstart · setup · agent · doctor · watch · workspace · hook · mcp · engagement · graph · goal · verify · upstream · adapter
+  Daily use     enter · switch · pin · leave · whoami · status · exec · run · binding
+  CI            ci mint · ci env · ci run
+  Approvals     approve · notify
+  Audit         events · forensics
+  Local UI      serve · dashboard
+  Maintenance   completion · topic · version
+
+Topic help:  locus topic <name>  or  locus help topic <name>
+  Topics: dashboard · forensics · serve · goal · verify · agent · mcp · http · upstream · adapter
+
+Usage: locus [OPTIONS] <COMMAND>
+
+Commands:
+  init        Initialize ~/.locus (or LOCUS_HOME)
+  quickstart  First 60 seconds: init samples if needed, enter workspace default, whoami + doctor
+  capability  Operator control-capability posture: status / persist / unpersist
+  setup       Register locus-mcp with an AI client config
+  doctor      Health check for the local control plane
+  watch       Continuous session heartbeat for hub (verify_session each tick)
+  workspace   Write a .locus.toml in the current directory
+  hook        Shell hook snippet (prints eval-able code)
+  mcp         Run the locus-mcp stdio server, or manage multi-tenant MCP grants
+  enter       Enter a client context (pin + shell-friendly status)
+  switch      One-shot switch: leave the active pin (if any) and enter ALIAS
+  pin         Pin the current session to a binding
+  leave       Leave the active pin (clear identity) and suggest re-enter
+  engagement  Manage client engagements (init / close)
+  graph       Encrypted binding-graph share (bindings + workspace templates, no secrets)
+  whoami      Show who you are acting as (active pin)
+  status      Short status line for prompts / CI
+  agent       AI-native setup + identity readiness (setup / doctor / report)
+  goal        Northstar goal progress (`GOALS.md` or embedded milestones)
+  verify      Verification plane — score claims / session pack before acting (M5)
+  exec        Run a command with only the pinned binding's identity surface
+  run         One-shot: run a command under a temporary pin (global pin unchanged)
+  binding     Manage bindings
+  client      Guided client onboarding — walk through adding a client binding
+  upstream    Built-in upstream MCP recipes (command/args for common servers)
+  adapter     Built-in adapter registry catalog (manifest list + signature verify)
+  ci          CI / ephemeral pin minting (short-lived sealed sessions)
+  approve     Manage advisory review labels and blocked external authorization records
+  notify      Desktop approval banners (OFF by default — opt in explicitly)
+  events      Read recent local audit events (`$LOCUS_HOME/audit/events.jsonl`)
+  forensics   Export a shareable forensics pack (no secrets)
+  serve       Serve the local identity dashboard + JSON API (127.0.0.1 only)
+  dashboard   Open the local identity dashboard (serve + browser)
+  completion  Generate shell completions (bash | zsh | fish | elvish | powershell)
+  topic       Extended help for product surfaces (dashboard, forensics, serve, goal, verify, …) [alias: help-topic]
+  version     Print version (also available as `locus --version`)
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+      --json
+          Emit machine-readable JSON where applicable
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

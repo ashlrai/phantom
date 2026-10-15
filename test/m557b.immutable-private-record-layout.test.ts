@@ -10,6 +10,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -257,4 +261,82 @@ describe('read-only conservative linked-recovery admission', () => {
       });
     expect(replaced).toBe(true);
   });
+});
+
+
+/** The child owns only disposable files. A fixed deadline prevents a regression
+ * from parking Vitest itself when a regular inode becomes a FIFO after stat.
+ * Bundling exposes a private fsync function only in the inert fixture module;
+ * the production module's exports and all its admission checks stay unchanged. */
+describe('regular record descriptors refuse post-stat nonregular replacement', () => {
+  it.each(['stable', 'immutable-read', 'immutable-fsync'] as const)('refuses %s before target data reads', async kind => {
+    const directory = mkdtempSync(join(tmpdir(), 'private-reader-nonregular-'));
+    roots.push(directory);
+    chmodSync(directory, 0o700);
+    const repository = fileURLToPath(new URL('..', import.meta.url));
+    const relative = kind === 'stable' ? 'src/core/util/stable-file-read.ts' : 'src/core/util/immutable-private-record-store.ts';
+    const sourcePath = join(repository, relative);
+    const source = readFileSync(sourcePath, 'utf8');
+    const bundle = join(directory, 'reader.mjs');
+    const require = createRequire(import.meta.url);
+    const { build } = require('esbuild') as typeof import('esbuild');
+    await build({ entryPoints: [sourcePath], outfile: bundle, bundle: true, platform: 'node', format: 'esm', target: 'node22',
+      plugins: [{ name: 'fixture-only-before-open', setup(builder) {
+        builder.onLoad({ filter: /\.ts$/ }, args => {
+          if (args.path !== sourcePath) return;
+          const hook = String.raw`
+import fixtureFs from 'node:fs';
+import { execFileSync as fixtureExec } from 'node:child_process';
+function openSync(path, flags, ...rest) {
+  if (globalThis.__fixtureReplacement === path) {
+    globalThis.__fixtureReplacement = null;
+    fixtureFs.unlinkSync(path);
+    if (process.platform === 'win32') fixtureFs.mkdirSync(path);
+    else { fixtureExec('/usr/bin/mkfifo', [path]); fixtureFs.chmodSync(path, 0o600); }
+    process.stderr.write('ACTUAL_NONREGULAR_INSTALLED_BEFORE_OPEN\n');
+  }
+  return fixtureOpenSync(path, flags, ...rest);
+}
+function readSync(...args) { globalThis.__fixtureReads++; return fixtureReadSync(...args); }
+`;
+          return { contents: source.replace('  openSync,', '  openSync as fixtureOpenSync,').replace('  readSync,', '  readSync as fixtureReadSync,') + hook
+            + (kind === 'immutable-fsync' ? '\nexport { fsyncExactFile as fixtureFsyncExactFile };' : ''), loader: 'ts' };
+        });
+        // Windows ACL cost is outside the bounded post-stat descriptor fixture.
+        // Existing layout/reader tests still exercise that unchanged adapter.
+        if (process.platform === 'win32') builder.onLoad({ filter: /private-storage\.ts$/ }, () => ({
+          contents: 'export const assurePrivateStoragePath=()=>({ok:true});export const assurePrivateStoragePaths=()=>({ok:true});', loader: 'ts',
+        }));
+      } }],
+    });
+    const setup = kind === 'stable' ? String.raw`
+const file=join(dir,'record.json');fs.writeFileSync(file,'{}',{mode:0o600});
+globalThis.__fixtureReads=0;globalThis.__fixtureReplacement=file;
+const result=reader.readStableRegularFile(file,{anchorPath:dir,maxFileBytes:1024,remainingBytes:1024});
+if(result.ok!==false)throw Error('nonregular stable file admitted');
+` : kind === 'immutable-fsync' ? String.raw`
+const file=join(dir,'record.json');fs.writeFileSync(file,'{}',{mode:0o600});const identity=fs.lstatSync(file,{bigint:true});
+globalThis.__fixtureReads=0;globalThis.__fixtureReplacement=file;
+const result=reader.fixtureFsyncExactFile(file,identity,{anchorPath:dir});
+if(result!==false)throw Error('nonregular fsync file admitted');
+` : String.raw`
+const codec={parse:v=>v?.id==='record'?v:null,serialize:v=>JSON.stringify(v)+'\n',recordId:v=>v.id,recordFileName:v=>v.id+'.json',isRecordFileName:n=>n==='record.json',stageToken:v=>v.id,equivalent:(a,b)=>JSON.stringify(a)===JSON.stringify(b)};
+const cfg={label:'Inert descriptor fixture',anchorPath:dir,rootPath:join(dir,'store'),lockFileName:'.lock',maxRecordBytes:1024,defaultMaxFiles:8,hardMaxFiles:8,defaultMaxBytes:8192,hardMaxBytes:8192,codecForRead:()=>codec,codecForWrite:()=>codec};
+if(reader.writeImmutablePrivateRecord(cfg,{id:'record'},{lockWaitMs:0})!=='recorded')throw Error('fixture publication refused');
+const file=join(dir,'store','records','record.json');globalThis.__fixtureReads=0;globalThis.__fixtureReplacement=file;
+const result=reader.readImmutablePrivateRecordPoint(cfg,'record','record.json');
+if(result.sourceState==='healthy'||result.record!==null)throw Error('nonregular immutable file admitted');
+`;
+    const child = join(directory, 'child.mjs');
+    writeFileSync(child, `import fs from 'node:fs';import {join} from 'node:path';import * as reader from ${JSON.stringify(bundle)};
+const dir=${JSON.stringify(join(directory, 'fixture'))};fs.mkdirSync(dir,{mode:0o700});globalThis.__fixtureReads=0;
+${setup}
+process.stdout.write(JSON.stringify({refused:true,targetReads:globalThis.__fixtureReads}));`, { mode: 0o600 });
+    const result = spawnSync(process.execPath, [child], { encoding: 'utf8', timeout: 1500,
+      env: { ...process.env, HOME: join(directory, 'inert-home'), USERPROFILE: join(directory, 'inert-home') } });
+    expect(result.stderr).toContain('ACTUAL_NONREGULAR_INSTALLED_BEFORE_OPEN');
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ refused: true, targetReads: 0 });
+  }, 5000);
 });

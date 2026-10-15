@@ -4,8 +4,10 @@
 import { assessSeat, type SeatCapacity } from '../../routing/headroom.js';
 import type { BudgetEngine } from '../../routing/policy.js';
 import { COST_BASIS_LABELS, type CostBasis } from '../../routing/tiers.js';
-import { capacityTier, DEFAULT_ROUTER_WEIGHTS, routeSeat, type RouterWeights } from '../../routing/router.js';
+import { capacityTier, DEFAULT_ROUTER_WEIGHTS, rankEligibleCapacities, routeSeat, type RouterWeights } from '../../routing/router.js';
 import type { BudgetPolicy, SeatDecision } from '../../routing/types.js';
+import { canonicalModelId } from '../context-math.js';
+import type { VerseContextMode } from '../types.js';
 import { learnedTilt } from './learning.js';
 import type {
   AutoMode,
@@ -39,8 +41,13 @@ export interface AdvisorSeat {
   seatId: string;
   engine: string;
   label: string;
-  /** The model a new chat on this seat would use (first runnable); null = none runnable. */
+  /** Current binding or configured first runnable model; null = none runnable. */
   model: string | null;
+  /** Exact mode/window for this model; absent on legacy advisor callers. */
+  contextMode?: VerseContextMode;
+  /** Source-discovered options on the SAME account. These may change context
+   * fit and display tier, never funding, quota, privacy or execution authority. */
+  modelVariants?: readonly AdvisorModelVariant[];
   /** Runs on this Mac (a local runtime seat). */
   local: boolean;
   /** Local AND its endpoint is loopback — nothing leaves the machine. */
@@ -54,6 +61,13 @@ export interface AdvisorSeat {
   cheaper?: { model: string; capacity: SeatCapacity } | null;
 }
 
+export interface AdvisorModelVariant {
+  model: string;
+  contextMode: VerseContextMode;
+  contextWindow: number | null;
+  tier?: SeatCapacity['tier'];
+}
+
 export interface AdviseInput {
   classification: PromptClassification;
   seats: readonly AdvisorSeat[];
@@ -62,6 +76,8 @@ export interface AdviseInput {
   nowMs: number;
   /** The chat's seat, when there is a chat. */
   currentSeatId?: string | null;
+  currentModel?: string | null;
+  currentContextMode?: VerseContextMode | null;
   /** Turns the chat already has; stickiness applies only mid-conversation. */
   turnCount?: number;
   /** What the chat already holds — the router refuses seats it would not fit. */
@@ -109,7 +125,19 @@ function option(seat: AdvisorSeat, nowMs: number): SeatAdviceOption {
   return {
     seatId: seat.seatId, label: seat.label, engine: seat.engine, model: seat.model, local: seat.local, note: seatNote(seat, nowMs),
     tier: capacityTier(seat.capacity),
+    ...(seat.contextMode ? { contextMode: seat.contextMode, contextWindow: seat.capacity.contextWindow } : {}),
   };
+}
+
+/** Compare an actual session binding; only the existing legacy alias table is
+ * used. A model or mode change on the same account requires a continuation. */
+export function sameAdviceBinding(
+  selected: Pick<SeatAdviceOption, 'seatId' | 'model' | 'contextMode'>,
+  current: { seatId: string; model: string | null; contextMode?: VerseContextMode | null },
+): boolean {
+  return selected.seatId === current.seatId && selected.model !== null && current.model !== null &&
+    canonicalModelId(selected.model) === canonicalModelId(current.model) &&
+    (selected.contextMode ?? 'standard') === (current.contextMode ?? 'standard');
 }
 
 interface Ranked {
@@ -155,19 +183,45 @@ export function adviseSeat(input: AdviseInput): SeatAdvice {
   // Cheap work may use an explicitly supplied lower-consumption funding variant;
   // a provider or model-family tier alone never supplies one.
   const cheap = !hard && (mode === 'cheap-first' || cls.difficulty === 'low' || cls.task === 'bulk');
+  const weights = weightsFor(cls, mode);
+  const context = Math.max(0, input.contextTokens ?? 0) + cls.estTokens;
+  const request = { task: cls.task, difficulty: (cls.needsFrontier ?? 0) >= 0.7 && cls.difficulty !== 'high' ? 'high' as const : cls.difficulty,
+    contextTokens: context, autonomous: false };
   const known = input.seats
     .filter((s) => (ROUTABLE_ENGINES as readonly string[]).includes(s.engine) && s.model !== null)
-    .map((s) => forMessage(s, cheap));
+    .map((original) => {
+      const seat = forMessage(original, cheap);
+      // Preserve independently qualified legacy cheaper variants. The new
+      // catalog variants share the original account's funding and headroom.
+      if (seat !== original || !seat.modelVariants) return seat;
+      const variants = seat.modelVariants.filter((v) =>
+        sameAdviceBinding({ ...v, seatId: seat.seatId }, seat) && v.contextWindow === null ||
+        typeof v.contextWindow === 'number' && Number.isFinite(v.contextWindow) && v.contextWindow > 0,
+      ).map((v) => ({
+        ...seat, model: v.model, contextMode: v.contextMode,
+        capacity: { ...seat.capacity, contextWindow: v.contextWindow, ...(v.tier ? { tier: v.tier } : {}) },
+      }));
+      // An eligible current binding wins equal per-account rank; otherwise
+      // catalog order is retained. Never add virtual quota seats to the final
+      // account pool or borrow an unknown option as a context-fit escape.
+      variants.sort((a, b) => {
+        if (input.currentSeatId !== seat.seatId || !input.currentModel) return 0;
+        const current = { seatId: input.currentSeatId, model: input.currentModel, contextMode: input.currentContextMode };
+        return Number(sameAdviceBinding(b, current)) - Number(sameAdviceBinding(a, current));
+      });
+      const ranked = rankEligibleCapacities(request, variants.map((v) => v.capacity), input.policy, { nowMs, weights });
+      // Preserve exact held evidence for the final account exclusion. Falling
+      // back to the pre-variant window could admit a contradictory larger base.
+      return variants.find((v) => v.capacity === ranked[0]) ?? variants[0] ?? { ...seat, model: null };
+    }).filter((s) => s.model !== null);
   const pool = localOnly.on ? known.filter((s) => s.local && s.private) : known;
   const byId = new Map(pool.map((s) => [s.seatId, s]));
   const factors: string[] = [];
   if (localOnly.on) factors.push(`This repo is local-only${localOnly.reason ? ` — ${localOnly.reason.replace(/\.$/, '')}` : ''}.`);
   factors.push(`Read as ${cls.label}${cls.decidedBy === 'jev' ? ` (labelled by Jev, ${Math.round((cls.confidence ?? 0) * 100)}% sure)` : ''}${cls.signals.length > 0 ? `: ${cls.signals.slice(0, 3).join(', ')}` : ''}.`);
 
-  const weights = weightsFor(cls, mode);
-  const context = Math.max(0, input.contextTokens ?? 0) + cls.estTokens;
   const decision: SeatDecision = routeSeat(
-    { task: cls.task, difficulty: (cls.needsFrontier ?? 0) >= 0.7 && cls.difficulty !== 'high' ? 'high' : cls.difficulty, contextTokens: context, autonomous: false },
+    request,
     pool.map((s) => s.capacity),
     input.policy,
     { nowMs, weights },
@@ -213,7 +267,9 @@ export function adviseSeat(input: AdviseInput): SeatAdvice {
   const pinned = input.pinnedSeatId ? ranked.find((r) => r.seat.seatId === input.pinnedSeatId) ?? null : null;
   const winner = pinned ?? ranked[0]!;
   const seat = winner.seat;
-  const stay = typeof input.currentSeatId === 'string' && seat.seatId === input.currentSeatId;
+  const stay = typeof input.currentSeatId === 'string' && (input.currentModel === undefined
+    ? seat.seatId === input.currentSeatId // Legacy callers supplied only a seat.
+    : sameAdviceBinding(seat, { seatId: input.currentSeatId, model: input.currentModel, contextMode: input.currentContextMode }));
 
   // The ONE reason that decided it — the most specific that actually moved the result.
   const withoutLearned = order(rows, false)[0]!.seat.seatId;

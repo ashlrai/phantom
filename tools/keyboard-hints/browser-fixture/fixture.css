@@ -1,0 +1,19 @@
+body { margin: 0; background: var(--bg-canvas); color: var(--text-primary); font: 14px/1.5 var(--font-ui); }
+header, section, main { padding: 12px 20px; }
+h1 { margin: 0; font-size: 24px; } p { margin: 8px 0; }
+.settings, .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; border-bottom: 1px solid var(--border-default); }
+label { display: inline-flex; align-items: center; gap: 6px; }
+button, select, textarea { font: inherit; color: inherit; background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: 6px; }
+button { padding: 8px 12px; cursor: pointer; } button:disabled { opacity: .45; }
+button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.editor-label { display: flex; flex-direction: column; align-items: stretch; margin-bottom: 20px; }
+textarea { min-height: 70px; padding: 12px; resize: vertical; }
+.target-grid { display: flex; flex-wrap: wrap; gap: 12px; } .stacked { gap: 1px; flex-direction: column; align-items: flex-start; } .stacked button { height: 16px; padding: 0 6px; font-size: 10px; line-height: 14px; }
+.clip-container { width: 180px; margin: 14px 0; } .clipped { width: 40px; overflow-x: hidden; }
+.clip-container button { white-space: nowrap; }
+output { display: block; padding: 8px; border: 1px solid var(--border-default); border-radius: 6px; }
+.dialog { position: fixed; z-index: 70; inset: 30% auto auto 25%; background: var(--bg-surface-raised); padding: 20px; border: 2px solid var(--accent-500); border-radius: 8px; box-shadow: var(--shadow-dialog); }
+.partly-outside { left: -12px; }
+.edge-right, .edge-bottom { position: fixed; padding: 0; width: 20px; height: 16px; font-size: 10px; line-height: 12px; }
+.edge-right { right: 0; top: 48%; } .edge-bottom { left: 46%; bottom: 0; }
+@media (max-width: 380px) { header, section, main { padding: 10px 12px; } .target-grid button { padding: 6px; } }

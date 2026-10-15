@@ -1294,6 +1294,18 @@ export async function handleApi(
 ): Promise<boolean> {
   const path = reqPath(req);
 
+  // Own this raw namespace before URL dot-segment normalization can route it
+  // into a legacy action. Context references never notify or create sessions.
+  const contextImportPath = '/api/verse/context-imports';
+  const rawContextPath = (req.url ?? path).split(/[?#]/, 1)[0] ?? '';
+  if (rawContextPath.startsWith(contextImportPath) || path.startsWith(contextImportPath)) {
+    if (rawContextPath !== path || path !== contextImportPath && !path.startsWith(contextImportPath + '/')) {
+      sendJson(res, 404, { code: 'CONTEXT_IMPORT_NOT_FOUND', error: 'Imported reference unavailable.' }); return true;
+    }
+    return handleVerseApi({ cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession },
+      req, res, path, (req.method ?? 'GET').toUpperCase());
+  }
+
   // Only handle /api/* paths.
   if (!path.startsWith('/api/') && path !== '/api') {
     return false;

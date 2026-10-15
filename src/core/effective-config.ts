@@ -1,3 +1,4 @@
+import { daemonCashBudget, daemonFundingMode, type DaemonFundingMode } from './daemon/funding.js';
 /**
  * Read-only effective config snapshot for operator visibility.
  *
@@ -59,6 +60,7 @@ export interface EffectiveConfigSnapshot {
     killSwitch: EffectiveConfigValue<boolean>;
   };
   daemon: {
+    fundingMode: EffectiveConfigValue<DaemonFundingMode>;
     dailyBudgetUsd: EffectiveConfigValue<number>;
     perTickItems: EffectiveConfigValue<number | null>;
     parallel: EffectiveConfigValue<number | null>;
@@ -131,6 +133,7 @@ interface RawConfigRead {
 }
 
 interface ResolvedDaemonConfig {
+  fundingMode: DaemonFundingMode;
   dailyBudgetUsd: number;
   perTickItems: number | null;
   parallel: number | null;
@@ -205,7 +208,8 @@ function resolveDaemon(cfg: AshlrConfig): ResolvedDaemonConfig {
   const o = cfg.daemon ?? {};
   const counts = resolveDaemonCountPreferences(o);
   return {
-    dailyBudgetUsd: typeof o.dailyBudgetUsd === 'number' && Number.isFinite(o.dailyBudgetUsd) && o.dailyBudgetUsd >= 0 && o.dailyBudgetUsd <= Number.MAX_SAFE_INTEGER ? o.dailyBudgetUsd : 1,
+    fundingMode: daemonFundingMode(o),
+    dailyBudgetUsd: daemonCashBudget(o, 1),
     perTickItems: counts.perTickItems,
     parallel: counts.parallel,
     intervalMs: positiveNumber(o.intervalMs, 5 * 60_000),
@@ -434,6 +438,7 @@ export function buildEffectiveConfigSnapshot(
       killSwitch: boolValue(raw, 'foundry.killSwitch', cfg.foundry?.killSwitch === true),
     },
     daemon: {
+      fundingMode: value(raw, 'daemon.fundingMode', daemon.fundingMode),
       dailyBudgetUsd: value(raw, 'daemon.dailyBudgetUsd', daemon.dailyBudgetUsd),
       perTickItems: value(raw, 'daemon.perTickItems', daemon.perTickItems),
       parallel: value(raw, 'daemon.parallel', daemon.parallel),

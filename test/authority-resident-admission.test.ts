@@ -107,6 +107,7 @@ import {
   observeResidentAdmission,
   operatorContextRefusal,
   plistBudgetUsd,
+  plistFundingMode,
   residentPlistState,
   trustedResidentBuildIdentity,
   type ResidentAdmissionInput,
@@ -376,6 +377,24 @@ describe('the service install path', () => {
 });
 
 describe('plist budget derives from config', () => {
+  it('distinguishes configured cash refusal from actual legacy installed argv and malformed modes', () => {
+    const legacy = service.generateServiceDefinition({ ...residentOpts(), budget: 50 }).content;
+    const cash = service.generateServiceDefinition({ ...residentOpts(), fundingMode: 'no-paid-cash', budget: 0 }).content;
+    expect(plistFundingMode(legacy)).toBe('legacy-usd');
+    expect(plistFundingMode(legacy.replace('</dict>', '<key>Unrelated</key><array><string>--funding-mode</string><string>no-paid-cash</string></array></dict>'))).toBe('legacy-usd');
+    expect(plistFundingMode(cash.replace('<string>0</string>', '<string>50</string>'))).toBeNull();
+    expect(plistFundingMode(cash.replace('<string>daemon</string>', '<string>other-command</string>'))).toBeNull();
+    expect(plistFundingMode(cash.replace('</dict>', '<key>ProgramArguments</key><array><string>fake</string></array></dict>'))).toBeNull();
+
+    expect(plistFundingMode(cash)).toBe('no-paid-cash');
+    expect(plistBudgetUsd(legacy)).toBe(50);
+    expect(plistBudgetUsd(cash)).toBe(0);
+    expect(residentPlistState(legacy, cash)).toBe('drifted');
+    expect(plistFundingMode(cash.replace('<string>no-paid-cash</string>', '<string>gifted</string>'))).toBeNull();
+    expect(plistFundingMode(cash.replace('<string>no-paid-cash</string>', '<string>no-paid-cash</string><string>--funding-mode</string><string>no-paid-cash</string>'))).toBeNull();
+    expect(plistFundingMode(null)).toBeNull();
+  });
+
   it('regenerates --budget from daemon.dailyBudgetUsd and detects drift', () => {
     const at = (budget: number) => service.generateServiceDefinition({
       ...daemonServiceInstallOptions({ daemon: { dailyBudgetUsd: budget } }, { autostart: true }),

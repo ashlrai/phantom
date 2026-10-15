@@ -1,3 +1,4 @@
+import { issueIncludedNativeContact } from './included-native-contact.js';
 import type { RunStep } from '../types.js';
 import { neutralTokenEvidence, requestTokenEvidence, tokenEvidenceFromSteps } from './token-evidence.js';
 import { assertSelectedOutcomeAdmission, selectedOutcomeAdmissionCurrent, SelectedOutcomeAdmissionRefusal } from './outcome-admission.js';
@@ -148,7 +149,7 @@ import {
   killSwitchOn,
 } from '../sandbox/policy.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
-import { enginePermitted } from '../policy/local-only.js';
+import { nativeIncludedCandidatePermitted } from '../policy/local-only.js';
 import { markLocalFleetAgentRunning } from '../daemon/local-fleet.js';
 import {
   acquireOutwardMutationFenceAsync,
@@ -2052,7 +2053,7 @@ export async function runEngineSandboxed(
   // under this mode the engine genuinely is unsupported, and the reason carries
   // the engine name, the mode source, and what to do about it.
   {
-    const verdict = enginePermitted(engine, cfg);
+    const verdict = nativeIncludedCandidatePermitted(engine, cfg);
     if (!verdict.permitted) {
       const outcome = proposalOutcome('engine-unsupported', verdict.reason ?? 'local-only: refused');
       recordSandboxedRunAgentAction({
@@ -2639,8 +2640,8 @@ export async function runEngineSandboxed(
       res = selectedStandingClaude
         ? await runSelectedClaude(goalWithContext,cfg.foundry?.timeoutMs ?? DEFAULT_TIMEOUT_MS,observeEngineEvent)
         : await spawnEngine(cmd, spawnCfg, {
-        ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(autonomousSpawn)}
-          : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && selectedDevinCurrent() }
+        ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,includedFunding:issueIncludedNativeContact('codex',cmd,() => selectedCodexCurrent(autonomousSpawn)),selectedOutcomeAdmission:() => selectedCodexCurrent(autonomousSpawn)}
+          : selectedDevinBinding ? {nativeEngine:'devin-cli' as const,includedFunding:issueIncludedNativeContact('devin-cli',cmd,() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && selectedDevinCurrent()), selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && selectedDevinCurrent() }
           : opts.selectedOutcomeAdmission ? { selectedOutcomeAdmission: opts.selectedOutcomeAdmission } : {}),
         env: spawnEnv,
         ...(selectedCodexLaunch ? {onSpawn:() => {selectedCodexSpawns++;}} : selectedDevinBinding ? { onSpawn: notifySelectedDevinSpawn } : {}),
@@ -3109,8 +3110,8 @@ export async function runEngineSandboxed(
                     r = selectedStandingClaude
                       ? await runSelectedClaude(repairGoal,_v2g.perRunTimeoutMs ?? 180_000,observeEngineEvent)
                       : await spawnEngine(repairCmd, cfg, {
-                      ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(repairSpawn)}
-                        : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) &&
+                      ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,includedFunding:issueIncludedNativeContact('codex',repairCmd,() => selectedCodexCurrent(repairSpawn)),selectedOutcomeAdmission:() => selectedCodexCurrent(repairSpawn)}
+                        : selectedDevinBinding ? {nativeEngine:'devin-cli' as const,includedFunding:issueIncludedNativeContact('devin-cli',repairCmd,() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && repairSpawn !== null && selectedDevinCurrent(repairSpawn)), selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) &&
                         repairSpawn !== null && selectedDevinCurrent(repairSpawn) }
                         : opts.selectedOutcomeAdmission ? { selectedOutcomeAdmission: opts.selectedOutcomeAdmission } : {}),
                       env:repairSpawn?.env ?? env,
@@ -3671,7 +3672,7 @@ export async function runApiModelSandboxed(
   // trust tier says nothing about where it bills — 'nim' and 'local-coder' are
   // both tier 'mid' — so the predicate classifies by the RESOLVED endpoint.
   {
-    const verdict = enginePermitted(engine, cfg);
+    const verdict = nativeIncludedCandidatePermitted(engine, cfg);
     if (!verdict.permitted) {
       const outcome = proposalOutcome('engine-unsupported', verdict.reason ?? 'local-only: refused');
       recordSandboxedRunAgentAction({

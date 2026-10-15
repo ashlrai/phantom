@@ -78,6 +78,21 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // External handoff projections and their scope/digest admission remain owner-controlled.
+  'src/core/proactive/handoff-preview*.ts',
+  // Pin the shipped compiled root explicitly as well as later companion helpers.
+  'src/core/proactive/handoff-preview.ts',
+  'src/core/proactive/coordination-wire.ts',
+  'src/core/verse/proactive-coordination-api.ts',
+  // Reviewed-memory eligibility and its offline yardstick cannot grade themselves.
+  'src/core/memory/**',
+  'src/core/local-eval/memory-*.ts',
+  'scripts/evaluate-memory.ts',
+  // Import admission, private reference custody and redaction remain owner-controlled.
+  'src/core/verse/context-import-api.ts',
+  'src/core/verse/context-import-store.ts',
+  'src/core/verse/context-import-types.ts',
+  'src/core/util/scrub-secrets.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',
@@ -98,6 +113,13 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
   'src/core/daemon/loop.ts',
+  // Included funding and the final inference contact remain owner-controlled.
+  'src/core/daemon/funding.ts',
+  'src/core/daemon/state.ts',
+  'src/core/run/included-native-contact.ts',
+  'src/core/run/engines.ts',
+  'src/core/run/provider-client.ts',
+  'src/core/run/role-completion.ts',
   // Resolves operator count preferences used by both tick admission and routing.
   'src/core/daemon/count-preferences.ts',
   'src/core/daemon/outcome-*.ts',
@@ -330,7 +352,7 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     patterns: [
       // `**/tsconfig*.json` moved to the all-repos `verify-config` rule (it
       // matches first), so it is not repeated here.
-      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'vitest.config*', 'vitest.workspace*',
+      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'test/fixtures/memory/**', 'vitest.config*', 'vitest.workspace*',
     ],
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
   },

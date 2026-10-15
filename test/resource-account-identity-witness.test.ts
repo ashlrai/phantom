@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { roleAccountEpoch } from '../src/core/run/role-account.js';
+import type { NativeSeatLaunch } from '../src/core/resources/native-profile.js';
 import { readResourceAccountLocalEpoch, resourceAccountProfileDigest, recheckResourceAccountIdentitySnapshot } from '../src/core/resources/account-identity-witness.js';
 import { createResourceReadingCache } from '../src/core/resources/reading-cache.js';
 import type { ResourceAccountConnection } from '../src/core/resources/connection-types.js';
@@ -22,6 +24,30 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
 
 describe('same-profile last-checked local identity epoch', () => {
+  it.each(['seatId', 'provider', 'command', 'executable', 'nativeStatePath'] as const)('an expected launch tightens the fresh inner resolution: changed %s is held', key => {
+    const a = account(); writeFileSync(join(state, 'auth.json'), '{}', { mode: 0o600 });
+    const expected: NativeSeatLaunch = { provider: a.provider, seatId: a.id, nativeStatePath: state, command: a.command as [string, string], executable: '/private/inert/native' };
+    const changed = { ...expected, [key]: key === 'provider' ? 'grok' : key === 'command' ? ['/other/node', '/other/launcher.mjs'] : 'different' } as NativeSeatLaunch;
+    resolver.mockClear();
+    expect(readResourceAccountLocalEpoch(root, a, changed)).toBeNull();
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(readResourceAccountLocalEpoch(root, a, expected)).not.toBeNull();
+    expect(readResourceAccountLocalEpoch(root, a, null as never)).toBeNull();
+    resolver.mockReturnValueOnce({ ok: false, reason: 'profile-invalid' });
+    expect(readResourceAccountLocalEpoch(root, a, expected)).toBeNull();
+  });
+
+  it('moves the full role launch comparison into exactly one independently fresh local-epoch resolution', () => {
+    const a = account(); writeFileSync(join(state, 'auth.json'), '{}', { mode: 0o600 });
+    writeFileSync(join(root, 'connections.json'), JSON.stringify({ schemaVersion: 1, intervalMs: 30000, accounts: [a] }), { mode: 0o600 });
+    const launch: NativeSeatLaunch = { provider: a.provider, seatId: a.id, nativeStatePath: state, command: a.command as [string, string], executable: '/private/inert/native' };
+    resolver.mockClear();
+    expect(roleAccountEpoch({ verse: { accountsRoot: root } } as never, launch, 'a'.repeat(64))).not.toBeNull();
+    expect(resolver).toHaveBeenCalledOnce();
+    resolver.mockReturnValueOnce({ ok: true, launch: { ...launch, executable: '/different/native' } });
+    expect(roleAccountEpoch({ verse: { accountsRoot: root } } as never, launch, 'a'.repeat(64))).toBeNull();
+  });
+
   it('survives a real Claude settings replacement only for history, not financial evidence', async () => {
     const a = account('claude'); const file = join(state, '.claude.json');
     const value = { oauthAccount: { emailAddress: 'demo@example.invalid', organizationUuid: 'demo-org' }, settings: 1 };

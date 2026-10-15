@@ -66,6 +66,7 @@ import {
 import { canonicalModelTag } from '../run/model-catalog.js';
 import { loadLastReport, type BenchReport } from '../eval/swe-bench.js';
 import type { DecisionEntry, Proposal } from '../types.js';
+import { readPrRatings, type PrRatings } from './pr-ratings.js';
 import {
   appendScorecardSnapshot,
   readScorecardHistory,
@@ -215,6 +216,8 @@ export interface FleetScorecard {
   byEngine: ScorecardEngineSplit[];
   /** Capability axis — separate from production velocity. See module doc. */
   capability: ScorecardCapability;
+  /** Additive, observation-only per-PR ratings; old snapshots omit this field. */
+  prRatings?: PrRatings;
 }
 
 // ---------------------------------------------------------------------------
@@ -717,6 +720,7 @@ export function computeFleetScorecard(window: ScorecardWindow): FleetScorecard {
   const learning = buildLearningSection(decisions, decisionsSq, decisionsOk);
   const byEngine = buildEngineSplits(decisions, realizedIds, releasedIds, mergeAttributionOk);
   const capability = buildCapabilitySection();
+  const prRatings = readPrRatings([...proposalEvidence.proposalsById.values()], proposalEvidence.sourceQuality, sinceMs, nowMs);
 
   return {
     window,
@@ -729,6 +733,7 @@ export function computeFleetScorecard(window: ScorecardWindow): FleetScorecard {
     learning,
     byEngine,
     capability,
+    prRatings,
   };
 }
 

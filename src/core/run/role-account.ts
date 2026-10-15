@@ -8,7 +8,7 @@ import { canonical } from '../universe/artifacts.js';
 import { readResourceJson } from '../resources/pool-runtime.js';
 import { validateResourceConnectionConfig } from '../resources/connection-monitor.js';
 import { readResourceAccountLocalEpoch } from '../resources/account-identity-witness.js';
-import { resolveNativeSeatLaunch, type NativeSeatLaunch } from '../resources/native-profile.js';
+import type { NativeSeatLaunch } from '../resources/native-profile.js';
 import { probeCodexResourceAccount } from '../resources/codex-account-probe.js';
 import { probeGrokAccount } from '../resources/grok-account-probe.js';
 
@@ -22,9 +22,9 @@ export function roleAccountEpoch(cfg: AshlrConfig, launch: NativeSeatLaunch, acc
       .find(row => row.id === launch.seatId && row.provider === launch.provider);
     if (!account || canonical(account.command) !== canonical(launch.command) ||
         account.expectedAccountHint !== undefined && account.expectedAccountHint !== accountHint) return null;
-    const current = resolveNativeSeatLaunch({ accountsRoot: root, provider: launch.provider, seatId: launch.seatId });
-    if (!current.ok || canonical(current.launch) !== canonical(launch)) return null;
-    const epoch = readResourceAccountLocalEpoch(root, account);
+    // The inner epoch read resolves the launch independently and compares this
+    // entire tuple before the same private auth-file before/after stat checks.
+    const epoch = readResourceAccountLocalEpoch(root, account, launch);
     return epoch && (epoch.accountDigest === undefined || epoch.accountDigest === accountHint) ? canonical(epoch) : null;
   } catch { return null; }
 }

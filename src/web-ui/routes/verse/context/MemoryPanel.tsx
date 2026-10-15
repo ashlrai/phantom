@@ -67,6 +67,13 @@ import {
 import { describeContextError, useTokenGate } from './use-token-gate.js';
 import styles from './context.module.css';
 
+export interface ReviewedMemoryDraft {
+  /** One explicit operator request, scoped to the same project's editable panel. */
+  nonce: number;
+  projectPath: string;
+  text: string;
+}
+
 export interface MemoryPanelProps {
   /** The project whose memory to show — the open chat's primary folder. Null when no chat is open. */
   projectPath: string | null;
@@ -75,9 +82,11 @@ export interface MemoryPanelProps {
    * write memory during turns. Optional; the panel also has a Refresh button.
    */
   refreshKey?: number | string;
+  /** Operator-rewritten facts only. Creates an editable draft; never saves. */
+  reviewedDraft?: ReviewedMemoryDraft | null;
 }
 
-export function MemoryPanel({ projectPath, refreshKey }: MemoryPanelProps) {
+export function MemoryPanel({ projectPath, refreshKey, reviewedDraft }: MemoryPanelProps) {
   const headingId = useId();
   if (!projectPath) {
     return (
@@ -89,7 +98,7 @@ export function MemoryPanel({ projectPath, refreshKey }: MemoryPanelProps) {
   }
   // Keyed by path: switching projects discards any half-finished edit of the
   // previous project's file instead of letting it be saved onto the new one.
-  return <MemoryPanelBody key={projectPath} projectPath={projectPath} refreshKey={refreshKey} />;
+  return <MemoryPanelBody key={projectPath} projectPath={projectPath} refreshKey={refreshKey} reviewedDraft={reviewedDraft} />;
 }
 
 type Mode = 'view' | 'edit' | 'confirm-clear';
@@ -100,7 +109,7 @@ const CLEAR_REASON = 'Clearing empties MEMORY.md for every chat on this project.
 const TOGGLE_REASON = 'This changes whether new chats on this project are given shared memory.';
 const GLOBAL_REASON = 'This changes whether new chats on ANY project are given shared memory.';
 
-function MemoryPanelBody({ projectPath, refreshKey }: { projectPath: string; refreshKey?: number | string }) {
+function MemoryPanelBody({ projectPath, refreshKey, reviewedDraft }: { projectPath: string; refreshKey?: number | string; reviewedDraft?: ReviewedMemoryDraft | null }) {
   const headingId = useId();
   const editorId = useId();
   const counterId = useId();
@@ -164,6 +173,21 @@ function MemoryPanelBody({ projectPath, refreshKey }: { projectPath: string; ref
   // Only a sanitized base makes a placeholder dangerous: in an unsanitized
   // file a literal "[REDACTED]" is just text the file already had.
   const placeholders = mode === 'edit' && baseSanitized ? redactionMarkers(draft) : 0;
+  const appliedDraft = useRef<number | null>(null);
+  useEffect(() => {
+    if (!reviewedDraft || reviewedDraft.projectPath !== projectPath || !Number.isSafeInteger(reviewedDraft.nonce) ||
+      appliedDraft.current === reviewedDraft.nonce || !data || busy || !reviewedDraft.text.trim()) return;
+    appliedDraft.current = reviewedDraft.nonce;
+    const append = (current: string) => `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${reviewedDraft.text.trim()}`;
+    // Preserve any edit already in progress and its original conflict base.
+    if (mode === 'edit') setDraft(current => append(current));
+    else {
+      setDraft(append(data.content)); setBase(data.content); setBaseSanitized(data.contentSanitized === true);
+      setConflict(null); setError(null); setMode('edit');
+    }
+    setNotice('Reviewed facts added to the draft. Review the full memory and choose Save to write it.');
+  }, [reviewedDraft, projectPath, data, busy, mode]);
+
 
   function startEdit(from: string, sanitized: boolean) {
     setDraft(from);

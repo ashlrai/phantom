@@ -38,7 +38,7 @@ describe('Grok Build display identity', () => {
     const projected = barRows([row({ seatId: saved.id, label: saved.label })], { healthRead: true, now: NOW });
     expect(projected[0]).toMatchObject({ key: 'grok-custom', engine: 'grok', name: 'Team research', leftPercent: 72 });
     expect(projected[0]!.summary).toContain('Team research · Grok Build');
-    expect(projected[0]!.detail).toContain('Grok Build · native CLI; Grok Bot has a separate allowance.');
+    expect(projected[0]!.detail).toContain('Grok Build · native CLI; Bot billing scope needs its own account evidence.');
     expect(projected).toHaveLength(1);
     expect(barRows([row({ label: 'Grok Build' })], { healthRead: true, now: NOW })[0]!.summary).not.toContain('Grok Build · Grok Build');
   });

@@ -112,7 +112,7 @@ export function ResourcesRailButton({ expanded, buttonClass, iconClass, labelCla
   const label = resourcesLabel(resources.summary);
   return (
     <Tooltip label={label} shortcut={shortcutText()} placement="right" disabled={expanded}>
-      <button
+      <button data-phantom-hint="rail.resources" data-phantom-hint-action="press"
         type="button"
         className={buttonClass}
         aria-label={label}

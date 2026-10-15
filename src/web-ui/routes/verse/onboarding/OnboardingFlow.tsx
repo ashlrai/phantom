@@ -78,6 +78,7 @@ import {
 } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
 import { FirstResultGuide } from './FirstResultGuide.js';
+import { WorkspaceSetupLauncher } from './WorkspaceSetupLauncher.js';
 import styles from './onboarding.module.css';
 
 // The setup checklist is its own chunk (shared with the "Autonomy is off" state).
@@ -137,6 +138,7 @@ function WelcomeStep() {
           );
         })}
       </ul>
+      <WorkspaceSetupLauncher />
       <p className={styles.sectionBlurb}>
         <kbd className={styles.kbd}>⌘K</kbd> runs anything by name · <kbd className={styles.kbd}>⌘J</kbd> is everything
         waiting on you · Settings, Apps &amp; Accounts and Usage are under the gear.
@@ -353,6 +355,7 @@ function FinishStep() {
   return (
     <StepBody>
       <FirstResultGuide />
+      <WorkspaceSetupLauncher />
       <p className={styles.lead}>
         Settings <kbd className={styles.kbd}>⌘,</kbd> carries theme, accent hue, density, display font, corner radius
         and reduced motion. Every change applies as you make it — there is no save button.

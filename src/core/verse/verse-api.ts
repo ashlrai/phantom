@@ -1973,9 +1973,38 @@ export async function handleVerseApi(
   path: string,
   method: string,
 ): Promise<boolean> {
+  const contextImportPath = `${VERSE_API_PREFIX}/context-imports`;
+  const rawContextPath = (req.url ?? path).split(/[?#]/, 1)[0] ?? '';
+  if (rawContextPath.startsWith(contextImportPath) || path.startsWith(contextImportPath)) {
+    if (rawContextPath !== path || path !== contextImportPath && !path.startsWith(contextImportPath + '/')) {
+      sendJson(res, 404, { code: 'CONTEXT_IMPORT_NOT_FOUND', error: 'Imported reference unavailable.' }); return true;
+    }
+    try { return await (await import('./context-import-api.js')).handleContextImportApi(ctx, req, res, path, method); }
+    catch { sendJson(res, 503, { code: 'CONTEXT_IMPORT_REFUSED', error: 'Imported reference unavailable.' }); return true; }
+  }
   if (!isVerseApiPath(path)) return false;
 
   try {
+    // Exact saved metadata reads precede all engine and legacy module creation.
+    // The web server already authenticated GET under the existing read boundary.
+    const rawPath = (req.url ?? path).split(/[?#]/, 1)[0] ?? '';
+    const rawNativeBinding = /^\/api\/verse\/sessions\/[^?#]*\/native-binding(?:\/.*)?$/.test(rawPath);
+    if (path === `${VERSE_API_PREFIX}/native-binding` || rawNativeBinding || path.startsWith(`${VERSE_API_PREFIX}/sessions/`) && path.slice(`${VERSE_API_PREFIX}/sessions/`.length).split('/')[1]?.startsWith('native-binding')) {
+      const match = /^\/api\/verse\/sessions\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/native-binding$/.exec(path);
+      let query = true;
+      try { query = Boolean(new URL(req.url ?? path, 'http://localhost').search); } catch { /* refuse malformed query */ }
+      if (method !== 'GET' || !match || rawPath !== path || query) {
+        sendJson(res, 404, { code: 'VERSE_NATIVE_BINDING_NOT_FOUND', error: 'Native session binding unavailable.' }); return true;
+      }
+      let binding: import('./native-session-binding-types.js').VerseNativeSessionBinding | null = null;
+      try {
+        const { readVerseNativeSessionBinding } = await import('./session-store.js');
+        // Bounded exact-ID private ~/.ashlr metadata only; never an operator project folder.
+        binding = readVerseNativeSessionBinding(match[1]!);
+      } catch { /* fixed unavailable response, never expose a local path/error */ }
+      if (!binding) { sendJson(res, 404, { code: 'VERSE_NATIVE_BINDING_NOT_FOUND', error: 'Native session binding unavailable.' }); return true; }
+      sendJson(res, 200, binding); return true;
+    }
     if (path === `${VERSE_API_PREFIX}/adoption` || path.startsWith(`${VERSE_API_PREFIX}/adoption/`)) {
       // Metadata reads cannot evaluate legacy scheduler-owning mounted modules.
       if (path !== `${VERSE_API_PREFIX}/adoption` && path !== `${VERSE_API_PREFIX}/adoption/refresh`) {

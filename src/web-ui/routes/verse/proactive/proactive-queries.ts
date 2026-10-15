@@ -3,6 +3,8 @@ import { decodeCompanionWire, projectCompanionWire } from '../../../../core/proa
 import type { CompanionTask, CompanionCommand, CompanionWrite, CompanionTaskInput } from '../../../../core/proactive/coordination-types.js';
 import type { ProactiveProfile, ProactiveProfileInput, ProactiveProfilePatch, ProactiveProfilesResponse } from '../../../../core/proactive/types.js';
 import { VERSE_PROACTIVE_AGENTS_PATH } from '../../../../core/proactive/types.js';
+import { GROK_HANDOFF_PREVIEW_MAX_BYTES, validGrokHandoffPreviewRequest,
+  type GrokHandoffPreviewRequest, type GrokHandoffPreviewResponse } from '../../../../core/proactive/handoff-preview-types.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { invalidate } from '../../../data/cache.js';
 import { apiGet, apiPost } from '../../../data/client.js';
@@ -123,4 +125,37 @@ export async function prepareCoordinationPacket(input: CoordinationPacketInput):
   const result = decodeCompanionWire(await write<unknown>(`${COORDINATION_PATH}/packet`, input)) as { packetDigest: string; dispatchAuthorized: false };
   if (result?.dispatchAuthorized !== false || !/^[a-f0-9]{64}$/.test(result.packetDigest)) throw new Error('The local evidence packet could not be confirmed. No task was created.');
   return result.packetDigest;
+}
+
+export type GrokBotHandoffRequest = GrokHandoffPreviewRequest;
+export type GrokBotHandoffPreview = GrokHandoffPreviewResponse;
+const HANDOFF_KEYS = ['schemaVersion', 'taskId', 'attemptId', 'epoch', 'revision', 'profileId', 'profileVersion',
+  'packetDigest', 'previewDigest', 'briefText', 'dispatchAuthorized', 'contextShared', 'transport'];
+const HASH = /^[a-f0-9]{64}$/;
+function throwIfAborted(signal: AbortSignal): void { if (signal.aborted) throw new DOMException('Aborted', 'AbortError'); }
+/** A projection POST, not a ledger mutation: do not invalidate or queue a handoff. */
+export async function fetchGrokBotHandoffPreview(request: GrokBotHandoffRequest, packetDigest: string, signal: AbortSignal): Promise<GrokBotHandoffPreview> {
+  throwIfAborted(signal);
+  if (!validGrokHandoffPreviewRequest(request) || !HASH.test(packetDigest)) throw new Error('Use a current Grok Bot handoff intent.');
+  const token = getMutationToken();
+  if (!token) throw new VerseMutationLockedError();
+  const stillHeld = () => { throwIfAborted(signal); if (getMutationToken() !== token) throw new VerseMutationLockedError(); };
+  const value = decodeCompanionWire(await apiPost<unknown>(`${COORDINATION_PATH}/handoff-preview`, projectCompanionWire(request), token, signal));
+  stillHeld();
+  const refused = () => new Error('The exact Grok Bot brief could not be confirmed. Refresh coordination and review again.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length !== HANDOFF_KEYS.length || HANDOFF_KEYS.some(key => !Object.hasOwn(value, key))) throw refused();
+  const preview = value as GrokBotHandoffPreview;
+  if (preview.schemaVersion !== 1 || preview.taskId !== request.taskId || preview.attemptId !== request.attemptId
+    || preview.epoch !== request.epoch || preview.revision !== request.expectedRevision || preview.profileId !== request.profileId
+    || preview.profileVersion !== request.expectedProfileVersion || preview.packetDigest !== packetDigest
+    || !HASH.test(preview.packetDigest) || typeof preview.previewDigest !== 'string' || !HASH.test(preview.previewDigest) || preview.dispatchAuthorized !== false
+    || preview.contextShared !== false || preview.transport !== 'manual-copy' || typeof preview.briefText !== 'string'
+    || !preview.briefText.trim() || new TextEncoder().encode(preview.briefText).length > GROK_HANDOFF_PREVIEW_MAX_BYTES
+    || request.expectedPreviewDigest !== undefined && preview.previewDigest !== request.expectedPreviewDigest) throw refused();
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(preview.briefText));
+  stillHeld();
+  if (Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') !== preview.previewDigest) throw refused();
+  stillHeld(); touchMutationHold(); stillHeld();
+  return preview;
 }

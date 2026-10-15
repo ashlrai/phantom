@@ -32,12 +32,43 @@ export interface AgentCommandDoc {
   jsonShape: string;
 }
 
+/** Public discovery only: resolving these links neither contacts a provider nor grants access. */
+export const ONLINE_DOCUMENTATION = Object.freeze({
+  schemaVersion: 1,
+  product: 'Phantom workbench',
+  home: 'https://phm.dev/docs',
+  agentQuickstart: 'https://phm.dev/docs/workbench-agents',
+  manifest: 'https://phm.dev/docs/manifest.json',
+  compact: 'https://phm.dev/workbench/llms.txt',
+  full: 'https://phm.dev/workbench/llms-full.txt',
+  source: 'https://github.com/ashlrai/phantom',
+  secrets: 'https://phm.dev/secrets',
+});
+
 /**
  * Selected agent-relevant commands, not an exhaustive permission registry.
  * Preserve the legacy safety vocabulary for consumers; descriptions document
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  {
+    usage: 'phm verse native-binding --id SESSION_ID [--json]',
+    description: 'Read one saved Phantom session binding; live owner and desktop attachment stay unverified. No engine/provider launch, session reconciliation, directory listing, control or grant. Existing read-only Windows ACL assurance applies.',
+    safety: 'read',
+    jsonShape: 'VerseNativeSessionBinding (schemaVersion 1); savedStatus and savedUpdatedAt only, liveOwnerState unverified, desktopAttachment unverified, controlEnabled false; exit 0 saved record, 1 unavailable, 2 invalid usage',
+  },
+  {
+    usage: 'phm resources launcher capabilities --provider codex|claude --command ABS_JSON --cwd ABS_PRIVATE_DIR [--json]',
+    description: 'Explicit trusted-launcher help/version probes only. Separates advertised native surfaces from implemented Phantom transports; reads no sessions and grants no control. Vendor startup/cache effects are not attested.',
+    safety: 'read',
+    jsonShape: 'NativeLauncherCapabilities (schemaVersion 1); runtimeReadiness not-inspected, sessionsInspected false, controlEnabled false; exit 0 observed, 1 unavailable, 2 usage, 130 cancelled',
+  },
+  {
+    usage: 'phm docs --online [--json]',
+    description: 'Print public workbench setup, raw Markdown manifest and agent documentation URLs without opening a browser or making a network request. Installed command metadata remains available through --agent.',
+    safety: 'read',
+    jsonShape: 'OnlineDocumentation (schemaVersion 1); links are discovery, not execution authority',
+  },
   {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
@@ -327,6 +358,8 @@ export function agentDocsText(): string {
     'or execution permission. JSON output is ANSI-free. Check each command description',
     'and help for result/exit semantics: exit 0 need not mean ready, delivered or accepted.',
     'Campaign supervision additionally returns 130 for caller cancellation.',
+    `Public setup guides: ${ONLINE_DOCUMENTATION.home}`,
+    'Use `phm docs --online --json` for public machine-readable documentation links.',
     '',
     'Legacy safety labels describe command categories, not authorization:',
     'read = inspection-oriented · append = writes or executes work (not append-only) ·',
@@ -397,6 +430,7 @@ function printDocsHelp(): void {
   console.log('');
   console.log(`    ${c.cyan('ashlr docs --agent')}          ${c.dim('agent cheat sheet (llms.txt-style, plain text)')}`);
   console.log(`    ${c.cyan('ashlr docs --agent --json')}   ${c.dim('the same registry as JSON')}`);
+  console.log(`    ${c.cyan('phm docs --online [--json]')}   ${c.dim('public setup guides and agent documentation URLs')}`);
   console.log(`    ${c.cyan('ashlr wire --claude-md')}      ${c.dim('CLAUDE.md snippet for agent configs')}`);
   console.log('');
 }
@@ -404,9 +438,23 @@ function printDocsHelp(): void {
 export async function cmdDocs(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const agent = args.includes('--agent');
+  const online = args.includes('--online');
 
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     printDocsHelp();
+    return 0;
+  }
+
+  if (online && agent) {
+    printDocsHelp();
+    return 2;
+  }
+
+  if (online) {
+    process.stdout.write(json
+      ? JSON.stringify(ONLINE_DOCUMENTATION, null, 2) + '\n'
+      : Object.entries(ONLINE_DOCUMENTATION).filter(([key]) => key !== 'schemaVersion')
+        .map(([key, value]) => `${key}: ${value}`).join('\n') + '\n');
     return 0;
   }
 

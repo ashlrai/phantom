@@ -1,0 +1,58 @@
+{
+  "producer": "locus",
+  "version": "0.5.0",
+  "sourceCommit": "e7bced3cd4cb4adf08bbba020f2e05f163b55941",
+  "normalizedKeys": [
+    "expires_at",
+    "ts",
+    "session_id",
+    "seal",
+    "worker_home",
+    "expires_in_secs"
+  ],
+  "scenarios": {
+    "fresh-home": {
+      "setup": [],
+      "setupExits": [],
+      "capabilityExported": false,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 0
+      }
+    },
+    "pinned-capability-not-exported": {
+      "setup": [
+        "locus quickstart"
+      ],
+      "setupExits": [
+        0
+      ],
+      "capabilityExported": false,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 1
+      }
+    },
+    "pinned-capability-exported": {
+      "setup": [
+        "locus quickstart"
+      ],
+      "setupExits": [
+        0
+      ],
+      "capabilityExported": true,
+      "exits": {
+        "agent-report.json": 1,
+        "status-oneline.txt": 0,
+        "verify-session.json": 1,
+        "watch-once.json": 1
+      }
+    }
+  },
+  "binarySourceProvenance": "caller-supplied-not-attested",
+  "countdownNormalization": "positive=1; zero=0; negative=-1; null unchanged; readiness/expired unchanged"
+}

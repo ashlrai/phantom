@@ -73,6 +73,9 @@ const LAZY_ONLY = [
   './growth/adoption-data.js',
   './growth/adoption-model.js',
   ...DYNAMIC,
+  './hints/HintNavigation.js',
+  './hints/hint-model.js',
+  './hints/hint-settings.js',
   './shell/palette-model.js',
   // The palette's half of the catalog; first paint matches keys with command-keys.ts.
   './shell/command-catalog.js',
@@ -109,6 +112,13 @@ describe('VerseApp keeps non-first-paint modules out of its static imports', () 
 
   it('loads each of them with import()', () => {
     for (const spec of DYNAMIC) expect(SOURCE).toContain(`import('${spec}')`);
+  });
+
+  it('loads hint code only through the enabled gate in the after-first-paint gear tray', () => {
+    const tray = read('shell/GearTray.tsx');
+    expect(SOURCE).not.toContain('<HintNavigation');
+    expect(tray).toContain("import('../hints/HintNavigation.js')");
+    expect(tray).toContain('(activated || hints.enabled) ? <HintNavigation');
   });
 
   it('the warm-up chunk reaches the surfaces’ query table only through import() too', () => {
