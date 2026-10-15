@@ -90,7 +90,9 @@ ineligible, including a superseded, expired, conflicted or deleted parent.
 
 Updates retain earlier events and append a higher reviewed revision with
 explicit valid-time supersession links. A replacement's expiry or deletion does
-not automatically restore its obsolete predecessor.
+not automatically restore its obsolete predecessor. An admitted, effective
+replacement whose own lineage is invalid or cyclic does not restore it either:
+its predecessors in the same scope and slot are excluded as `conflict`.
 
 A `withdrawn` fact event is an append-only durable reviewed revocation revision,
 with a review decision, review date and known effective `validFrom`. It never
@@ -102,7 +104,9 @@ and withdrawal decisions conflict and select neither. A genuinely higher
 reviewed approval can express a later renewal. A withdrawn tombstone is refused.
 
 Approved tombstones cover their explicit target event IDs and dependent
-`derivedFrom` lineage within the exact admitted scope. Current recorded deletion
+`derivedFrom` lineage within the exact admitted scope. Each target is applied
+independently: a missing, unreviewed or foreign target is skipped and does not
+void the deletion of the others. Current recorded deletion
 decisions prevent those events from returning through historical validity or
 knowledge queries. This is selection invalidation over the supplied snapshot,
 not physical erasure. It does not erase original files, backups, provider
