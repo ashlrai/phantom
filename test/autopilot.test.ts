@@ -223,6 +223,14 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
   });
 
+  it('refuses when verify changes the staged tree it was meant to check', async () => {
+    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [['git', 'rm', '-q', '--cached', 'sum.js']], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('staged tree')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
+  });
+
   it('does not push when KILL is engaged while the fixer runs', async () => {
     const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
     const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));

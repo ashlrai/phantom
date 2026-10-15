@@ -326,6 +326,12 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     const control = gitControlDigest(commonDir, wtGitDir, wt);
     // The verify plan is read from the pinned head before untrusted code runs.
     const plannedVerify = verifyPlan(opts, wt);
+    // HEAD and the staged tree, so what is committed is exactly what was scanned.
+    const snapshot = async () => ({ head: await must(wt, ['rev-parse', 'HEAD']), tree: await must(wt, ['write-tree']) });
+    const moved = async (was: { head: string; tree: string }) => {
+      const now = await snapshot();
+      return now.head !== was.head || now.tree !== was.tree ? 'HEAD or the staged tree changed while verify ran; nothing pushed' : null;
+    };
     const tampered = () => (gitControlDigest(commonDir, wtGitDir, wt) !== control ? 'git config, hooks or the worktree link changed while the fixer or verify ran; nothing pushed' : null);
     const nm = join(opts.checkout, 'node_modules');
     if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); } catch { /* verify will say so */ } }
@@ -354,8 +360,9 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         await must(wt, ['commit', '--no-edit', '--no-verify']);
       }
       message = '';
+      const before = await snapshot();
       const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', pr.headSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
-      const afterVerify = tampered();
+      const afterVerify = tampered() ?? await moved(before);
       if (afterVerify) return { result: 'refused', detail: [...detail, afterVerify], newHead: null };
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
     } else {
@@ -371,9 +378,10 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       if (!files.length) return { result: 'no-change', detail: [...detail, 'the fixer changed nothing'], newHead: null };
       const weak = diffRefusals(opts.repo, files, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached'])).stdout);
       if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
+      const before = await snapshot();
       const verified = await verify(plannedVerify, wt, run, files.filter((f) => f.status !== 'D').map((f) => f.path));
-      // Verify ran the head's own code: nothing it wrote to git config may reach the commit below.
-      const afterVerify = tampered();
+      // Verify ran the head's own code: nothing it wrote to git config, HEAD or the index may reach the commit below.
+      const afterVerify = tampered() ?? await moved(before);
       if (afterVerify) return { result: 'refused', detail: [...detail, afterVerify], newHead: null };
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
       message = p.action === 'fix-ci'
