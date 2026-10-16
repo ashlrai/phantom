@@ -13,10 +13,12 @@ permissions:
   contents: read
 
 # Candidate checkouts must match the original GitHub event's tree before gates.
-# Superseded PR revisions can stop safely; default
-# branch pushes and reusable workflow callers retain independent full matrices.
+# Superseded PR revisions can stop safely. Each master push gets its own group
+# keyed by commit, so a run waiting on a Mac runner never cancels or blocks the
+# next push's run: one shared ref group holds a single pending run and cancels
+# the one it replaces, which left master with no completed post-merge Mac run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
