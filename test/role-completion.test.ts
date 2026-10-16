@@ -1,9 +1,10 @@
 /** Production dispatcher and real inert child protocol. No provider or native
  * account is contacted: profiles, login files and grants are test fixtures. */
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultConfig } from '../src/core/config.js';
 import type { EffectivePolicy } from '../src/core/authority/types.js';
 import { prepareResourceNativeProfile } from '../src/core/resources/native-profile.js';
@@ -18,6 +19,8 @@ import { canonical, digest } from '../src/core/universe/artifacts.js';
 import { roleAccountEpoch } from '../src/core/run/role-account.js';
 import { resolveNativeSeatLaunch } from '../src/core/resources/native-profile.js';
 import * as codexMetadata from '../src/core/resources/codex-account-probe.js';
+import { probeHelperArgv } from '../src/core/resources/probe-helper-invocation.js';
+import { workerEnvironment } from '../src/core/resources/worker.js';
 import * as capacityStore from '../src/core/routing/budget-store.js';
 import { defaultLeaderTransports } from '../src/core/vision/leader-seat.js';
 
@@ -101,6 +104,24 @@ let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>promp
   return {cfg,profile,accountHint};
 }
 describe.runIf(process.platform === 'darwin' && typeof process.execve === 'function')('actual owned native role dispatcher',()=>{
+  // The first case to reach observeRoleAccount spawns the Codex metadata
+  // helper as `node --eval` with tsx registered. test-ci gives every run a
+  // fresh private TMP, so tsx's cache starts cold and that case also pays the
+  // transform and cache write of the helper's graph inside its 5s window
+  // (locally, under 12 busy loops on 4 cores: 551-793 ms cold against
+  // 378-483 ms warm for the same case). Prime the cache through the exact
+  // argv, environment and kind of cwd (a private directory under tmpdir, so
+  // tsx resolves the same tsconfig and writes the same cache keys) that
+  // production uses. With empty stdin the helper loads its graph, rejects the
+  // payload and exits 1 without spawning anything. Priming asserts nothing;
+  // a failed prime leaves every case exactly as strict.
+  beforeAll(()=>{
+    const cwd=mkdtempSync(join(realpathSync(tmpdir()),'ashlr-codex-metadata-prime-'));
+    try {
+      const [bin,...args]=probeHelperArgv('codex',new URL('../src/core/resources/codex-account-probe.ts',import.meta.url).href);
+      spawnSync(bin!,args,{cwd,env:workerEnvironment(),input:'',stdio:['pipe','ignore','ignore'],timeout:60_000});
+    } finally { rmSync(cwd,{recursive:true,force:true}); }
+  },65_000);
   it('refuses an already cancelled native call before metadata or process contact',async()=>{
     const f=fixture();const controller=new AbortController();controller.abort();
     const probe=vi.spyOn(codexMetadata,'probeCodexResourceAccount');
