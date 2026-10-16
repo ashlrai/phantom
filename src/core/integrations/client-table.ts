@@ -10,7 +10,7 @@
  * the same relative path and has not been independently verified.
  */
 
-export type ClientId = 'claude' | 'codex' | 'cursor' | 'gemini';
+export type ClientId = 'claude' | 'codex' | 'cursor' | 'windsurf' | 'gemini';
 export type ClientOs = 'darwin' | 'linux' | 'win32';
 export type ClientConfigFormat = 'json-mcpServers' | 'toml-mcp_servers';
 
@@ -23,6 +23,11 @@ export interface ClientEntry {
   wire: ClientWireSupport;
   /** Config file path segments relative to the home directory, per OS. */
   configPath: Record<ClientOs, readonly string[]>;
+  /**
+   * Project-scoped config path relative to a project root, when the client has
+   * one. Not read by `wire status` yet.
+   */
+  projectConfigPath?: readonly string[];
   format: ClientConfigFormat;
   detection: {
     /** Home-relative paths whose existence means the client is installed. */
@@ -90,10 +95,22 @@ export const CLIENT_TABLE: readonly ClientEntry[] = [
     source: 'src/core/integrations/editors.ts (existing wiring)',
   },
   {
+    id: 'windsurf',
+    displayName: 'Windsurf',
+    wire: 'status',
+    configPath: same('.codeium', 'windsurf', 'mcp_config.json'),
+    format: 'json-mcpServers',
+    detection: { homePaths: [['.codeium', 'windsurf']], binary: 'windsurf' },
+    serverName: 'ashlr-hub',
+    wiredEntry: { command: 'ashlr', args: ['mcp'] },
+    source: 'phantom-secrets crates/phantom-cli/src/commands/setup.rs (writes ~/.codeium/windsurf/mcp_config.json)',
+  },
+  {
     id: 'gemini',
     displayName: 'Gemini CLI',
     wire: 'status',
     configPath: same('.gemini', 'settings.json'),
+    projectConfigPath: ['.gemini', 'settings.json'],
     format: 'json-mcpServers',
     detection: { homePaths: [['.gemini']], binary: 'gemini' },
     serverName: 'ashlr-hub',

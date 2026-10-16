@@ -25,11 +25,42 @@ function tmp(): string {
   return dir;
 }
 
+describe('windsurf and gemini rows', () => {
+  it('windsurf is status-only with the Rust-side path, and is never wired by default wire', async () => {
+    const w = getClient('windsurf');
+    expect(w.wire).toBe('status');
+    expect(w.configPath.linux).toEqual(['.codeium', 'windsurf', 'mcp_config.json']);
+    expect(WRITABLE_EDITOR_TARGETS).not.toContain('windsurf');
+    const home = tmp();
+    fs.mkdirSync(path.join(home, '.codeium', 'windsurf'), { recursive: true });
+    expect(detectEditors({ home, pathEnv: '' })).toEqual([]);
+    expect(detectEditors({ home, pathEnv: '', includeStatusOnly: true })).toEqual(['windsurf']);
+    const file = path.join(home, 'mcp_config.json');
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { 'ashlr-hub': { command: 'ashlr', args: ['mcp'] } } }));
+    expect(inspectEditorWiring('windsurf', { configPath: file, home, pathEnv: '' }))
+      .toMatchObject({ target: 'windsurf', wired: true, matchesExpected: true });
+    const res = await wireEditor('windsurf', { configPath: file });
+    expect(res.ok).toBe(false);
+  });
+
+  it('gemini records its project-scoped config path', () => {
+    expect(getClient('gemini').projectConfigPath).toEqual(['.gemini', 'settings.json']);
+  });
+
+  it('status JSON keeps the agreed fields (stable contract)', () => {
+    const home = tmp();
+    const status = inspectEditorWiring('gemini', { home, pathEnv: '' });
+    for (const key of ['target', 'configPath', 'detected', 'wired', 'matchesExpected', 'backupFound']) {
+      expect(status).toHaveProperty(key);
+    }
+  });
+});
+
 describe('client table', () => {
   it('has unique ids, one server name, and home-relative paths for every OS', () => {
     const ids = CLIENT_TABLE.map(c => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual(['claude', 'codex', 'cursor', 'gemini']);
+    expect(ids).toEqual(['claude', 'codex', 'cursor', 'windsurf', 'gemini']);
     for (const c of CLIENT_TABLE) {
       expect(c.serverName).toBe('ashlr-hub');
       for (const os of ['darwin', 'linux', 'win32'] as const) {

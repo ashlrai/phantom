@@ -112,6 +112,46 @@
       "source": "src/core/integrations/editors.ts (existing wiring)"
     },
     {
+      "id": "windsurf",
+      "displayName": "Windsurf",
+      "wire": "status",
+      "configPath": {
+        "darwin": [
+          ".codeium",
+          "windsurf",
+          "mcp_config.json"
+        ],
+        "linux": [
+          ".codeium",
+          "windsurf",
+          "mcp_config.json"
+        ],
+        "win32": [
+          ".codeium",
+          "windsurf",
+          "mcp_config.json"
+        ]
+      },
+      "format": "json-mcpServers",
+      "detection": {
+        "homePaths": [
+          [
+            ".codeium",
+            "windsurf"
+          ]
+        ],
+        "binary": "windsurf"
+      },
+      "serverName": "ashlr-hub",
+      "wiredEntry": {
+        "command": "ashlr",
+        "args": [
+          "mcp"
+        ]
+      },
+      "source": "phantom-secrets crates/phantom-cli/src/commands/setup.rs (writes ~/.codeium/windsurf/mcp_config.json)"
+    },
+    {
       "id": "gemini",
       "displayName": "Gemini CLI",
       "wire": "status",
@@ -129,6 +169,10 @@
           "settings.json"
         ]
       },
+      "projectConfigPath": [
+        ".gemini",
+        "settings.json"
+      ],
       "format": "json-mcpServers",
       "detection": {
         "homePaths": [

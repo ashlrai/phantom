@@ -3,7 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
- *   ashlr wire status [claude|codex|cursor|gemini|all]  [--config <path>]  [--json]   (read-only)
+ *   ashlr wire status [claude|codex|cursor|windsurf|gemini|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
  * Target-aware, backup-first, idempotent, LOCAL only.
@@ -35,7 +35,7 @@ async function importEditors() {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-const VALID_TARGETS = ['claude', 'codex', 'cursor', 'gemini', 'all'] as const;
+const VALID_TARGETS = ['claude', 'codex', 'cursor', 'windsurf', 'gemini', 'all'] as const;
 type WireTarget = typeof VALID_TARGETS[number];
 
 interface ParsedWireArgs {
@@ -64,7 +64,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
       configPath = val;
     } else if (VALID_TARGETS.includes(arg as WireTarget)) {
       if (explicitTarget !== null) {
-        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor gemini all` };
+        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor windsurf gemini all` };
       }
       explicitTarget = arg as WireTarget;
     } else if (arg.startsWith('--')) {

@@ -739,7 +739,7 @@ export interface DetectEditorsOptions {
   pathEnv?: string;
   /** Platform used for executable suffixes (defaults to process.platform). */
   platform?: NodeJS.Platform;
-  /** Include status-only clients (gemini). Used by `wire status`, never by `wire`. */
+  /** Include status-only clients (gemini, windsurf). Used by `wire status`, never by `wire`. */
   includeStatusOnly?: boolean;
 }
 
@@ -889,17 +889,17 @@ export async function wireEditor(
   opts: WireEditorOptions,
 ): Promise<{ ok: boolean; detail: string }> {
   const configPath = opts.configPath ?? defaultConfigPath(target);
-  if (target === 'gemini') {
+  if (getClient(target).wire === 'status') {
     return {
       ok: false,
-      detail: 'gemini is status-only for now; run `wire status gemini` to inspect it. No file was changed.',
+      detail: `${target} is status-only for now; run \`wire status ${target}\` to inspect it. No file was changed.`,
     };
   }
   try {
     if (target === 'codex') {
       return await wireCodex(configPath, opts.runCommand ?? defaultCommandRunner);
     }
-    return wireJsonEditor(target, configPath);
+    return wireJsonEditor(target as 'claude' | 'cursor', configPath);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, detail: `editor wiring failed: ${msg}` };
