@@ -9,7 +9,7 @@
  * never accept a malformed token, and never echo a secret.
  */
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chownSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +82,10 @@ describe('helper install trust (root-owned or nothing)', () => {
     expect(custodyHelperInstallProblem(join(dir, 'absent'))).toMatch(/not installed/);
     const userOwned = join(dir, 'ashlr-custody');
     writeFileSync(userOwned, '#!/bin/sh\n', { mode: 0o755 });
+    // A file root creates is root-owned; hand it to an unprivileged uid so the
+    // fixture is user-owned for every runner, not only a non-root one.
+    if (process.getuid?.() === 0) chownSync(userOwned, 65534, 65534);
+    expect(lstatSync(userOwned).uid).not.toBe(0);
     expect(custodyHelperInstallProblem(userOwned)).toMatch(/not owned by root/);
     const link = join(dir, 'link');
     symlinkSync('/usr/bin/true', link);
