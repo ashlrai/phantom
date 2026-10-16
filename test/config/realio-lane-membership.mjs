@@ -386,6 +386,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m412.sandbox-pre-effect-recovery.test.ts', // real fs lock/sandbox lifecycle work — 3.3s slowest test in the quiet baseline
   'test/m417.sandbox-cleanup-quiescence.test.ts', // real fs lock/sandbox lifecycle work — 4.8s slowest test in the quiet baseline
   'test/m426.sandbox-reservation-identity.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
+  'test/sandbox-create-two-phase.test.ts', // real git through a PATH shim: slow and failing checkouts, KILL armed during populate
   'test/m463.claimed-batch-admission.test.ts', // real fs lock/sandbox lifecycle work — 7.4s slowest test in the quiet baseline
   'test/m490.daemon-state-recovery-cli.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
 

@@ -2141,9 +2141,13 @@ export async function runEngineSandboxed(
       // synchronously froze the whole event loop — watchdog, lease renewer,
       // shutdown handler, control plane — for the entire wait, and then failed
       // anyway. This queues off the loop instead.
+      // The lease is handed over: creation releases it once the worktree is
+      // registered (the checkout touches only the new worktree) and re-takes
+      // it only to roll back.
       sb = await wt.createSandboxAsync(opts.sourceRepo, {
         allowAnyRepo: process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1',
         ...(opts.signal ? { signal: opts.signal } : {}),
+        repoLease: creationLease,
       });
       createdHere = true;
       setRunActionCount(actionCounts, 'sandboxCreated', 1);
@@ -3798,6 +3802,7 @@ export async function runApiModelSandboxed(
         sb = await createAsync(opts.sourceRepo, {
           allowAnyRepo: process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1',
           ...(opts.signal ? { signal: opts.signal } : {}),
+          repoLease: creationLease,
         });
       } else {
         await awaitFenceFree(ADMIT_FENCE_WAIT_MS, opts.signal);
