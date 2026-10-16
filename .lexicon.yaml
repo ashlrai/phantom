@@ -1,0 +1,55 @@
+# Lexicon: Phantom's project vocabulary for voice-to-agents.
+# canonical: the spelling agents and docs use; aliases: what speech-to-text writes.
+# Merged into a user's lexicon only after `lexicon trust` in this repo.
+version: 1
+terms:
+  - canonical: Ashlr.AI
+    category: brand
+    aliases: [Ashlr AI, Ashler, Ashlar, Ashler AI, Ashlar AI, Ashler dot AI, Ashlar dot AI]
+  - canonical: Phantom
+    category: product
+    aliases: [Fantom]
+    notes: The engineering agent workbench in this repo. CLI is `phm`; desktop app is Phantom.app.
+  - canonical: phm
+    category: identifier
+    aliases: [P H M, PHM, p.h.m.]
+    notes: Phantom's CLI. phm.dev is the website.
+  - canonical: Phantom Secrets
+    category: product
+    aliases: [Fantom Secrets, phantom secret]
+    notes: Separate repo ashlrai/phantom-secrets; CLI `phantom`, MCP `phantom-mcp`. Never put raw keys in prompts.
+  - canonical: Locus
+    category: product
+    aliases: [Locas, Lowkus, Locust]
+    never: [locust]
+    notes: Identity pins and authority for parallel agents (ashlrai/locus).
+  - canonical: Lexicon
+    category: product
+    aliases: [Lexikon]
+  - canonical: Cortex
+    category: product
+    aliases: [Cortecs, Kortex]
+    notes: Ashlr Cortex, the shared memory and proposal hub (ashlrai/ashlr-cortex).
+  - canonical: ashlr-md
+    category: product
+    aliases: [Ashlr MD, ashler md, Ashlar MD]
+  - canonical: Verse
+    category: product
+    aliases: [Verse app]
+    notes: Phantom's chat and workbench UI.
+  - canonical: Jev
+    category: product
+    aliases: [Jevv, Gev]
+    notes: Phantom's bounded triage model seat.
+  - canonical: Codex
+    category: brand
+    aliases: [Codecs, Code X]
+  - canonical: Devin
+    category: brand
+    aliases: [Devon]
+  - canonical: Grok
+    category: brand
+    aliases: [Grock, Groc]
+  - canonical: Claude Code
+    category: brand
+    aliases: [Cloud Code, Clawed Code, Claud Code]

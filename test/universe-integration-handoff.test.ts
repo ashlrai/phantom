@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,21 @@ import type { UniverseManifest } from '../src/core/universe/types.js';
 import { withUniverseExecution } from '../src/core/universe/execution.js';
 
 const roots: string[] = [];
+// Handoff only registers a downstream Universe (delivery is mocked); no
+// Universe run or evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'integration-handoff-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 beforeEach(() => { mocks.readDelivery.mockReset(); mocks.settled.mockReset(); });
 afterEach(() => {
   const writable = (path: string): void => {
@@ -49,7 +64,7 @@ function fixture() {
   const acceptance: UniverseManifest = { schemaVersion: 1, id: 'acceptance', name: 'Acceptance', objective: 'Evaluate explicitly',
     seed: { repo, revision: base }, metric: { name: 'value', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxDurationMs: 5_000, trialTimeoutMs: 1_000, maxParallel: 1 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1_000 },
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1_000 },
     variants: [{ id: 'variant', niche: 'default', hypothesis: 'Explicit worker', command: [process.execPath, 'evaluate.mjs'] }] };
   initUniverse(acceptance, { root });
   const accepted = manifestRecord(join(root, 'universes', acceptance.id));

@@ -55,7 +55,7 @@ To install the CLI while developing:
 | `npm run test:web` | Run the separate jsdom/Testing Library console suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
-| `npm run lint` | ESLint plus real-I/O membership and Verse synchronous-I/O guards |
+| `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
@@ -189,7 +189,11 @@ serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
 
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate serial Mac lane for all isolated
-suites, macOS queue coverage and native broker checks. Local tests and hosted checks
+suites, macOS queue coverage and native broker checks. The four exhaustive Mac
+partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
+other pull requests they are skipped and `Merge Gate` reports them as deferred
+to post-merge. The isolated Mac lane, macOS queue coverage and native broker
+checks still run on every pull request. Local tests and hosted checks
 prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 

@@ -5,7 +5,7 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initUniverse, manifestRecord, projectUniverse, universePath } from '../src/core/universe/store.js';
 import { appendCampaignEvent, campaignDirectory, initUniverseCampaign, readUniverseCampaign } from '../src/core/universe/campaign-store.js';
 import { withUniverseExecution } from '../src/core/universe/execution.js';
@@ -32,11 +32,24 @@ const roots: string[] = [];
 const evaluator = vi.mocked(runFixedUniverseEvaluator);
 const response = (patch: Partial<VerifySubprocessResult> = {}): VerifySubprocessResult => ({ stdout: '{"passed":false,"score":0,"metrics":{"checks":142}}',
   stderr: '', exitCode: 0, signal: null, timedOut: false, cancelled: false, processGroupSettlement: 'group-exit-confirmed', ...patch });
-const nodeDigest = createHash('sha256').update(readFileSync(process.execPath)).digest('hex');
+// The fixed evaluator is mocked and never launches its pinned executable, so the
+// pin is a tiny inert script rather than the ~100 MB node binary: the real store
+// still freshly hashes and compares these bytes on every comparator check, but
+// each check no longer re-reads the whole node runtime.
+let inertRoot = '';
+let inertEvaluator = '';
+let inertDigest = '';
+beforeAll(() => {
+  inertRoot = realpathSync(mkdtempSync(join(tmpdir(), 'seed-runtime-evaluator-')));
+  inertEvaluator = join(inertRoot, 'inert-evaluator');
+  writeFileSync(inertEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+  inertDigest = createHash('sha256').update(readFileSync(inertEvaluator)).digest('hex');
+});
+afterAll(() => { rmSync(inertRoot, { recursive: true, force: true }); });
 beforeEach(() => {
   // The real store still pins these bytes; the mocked fixed evaluator never launches the command.
   vi.mocked(resolveBuiltinEvaluator).mockReturnValue({ id: 'preparation-measurement-v1', digest: 'a'.repeat(64),
-    executableDigest: nodeDigest, command: [process.execPath, '-e', 'throw new Error("inert evaluator must not execute")'],
+    executableDigest: inertDigest, command: [inertEvaluator, '-e', 'throw new Error("inert evaluator must not execute")'],
     files: [], tools: [], git: { path: '/usr/bin/git', digest: 'b'.repeat(64) } });
   vi.mocked(readKillSwitch).mockReturnValue({ state: 'inactive', sourceState: 'healthy' } as ReturnType<typeof readKillSwitch>);
   evaluator.mockImplementation(async (...args) => { args[9]?.(); return response(); });
@@ -58,7 +71,7 @@ function fixture(longDiagnostic = false) {
   initUniverse({ schemaVersion: 1, id: 'seed', name: 'Seed measurement', objective: 'Measure immutable seed', seed: { repo, revision: git('rev-parse', 'HEAD') },
     metric: { name: 'quality', direction: 'maximize', minImprovement: 0 }, budget: { maxTrials: 1, maxDurationMs: 5000, trialTimeoutMs: 1000, maxParallel: 1 },
     evaluation: longDiagnostic ? { builtin: 'preparation-measurement-v1', timeoutMs: 1_800_000 }
-      : { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1000 },
+      : { command: [inertEvaluator, 'evaluate.mjs'], timeoutMs: 1000 },
     variants: [{ id: 'change', niche: 'quality', hypothesis: 'Improve', command: [process.execPath, '-e', 'void 0'] }] }, { root });
   initUniverseCampaign({ schemaVersion: 1, id: 'campaign', universeId: 'seed', measureSeed: true, feedback: true,
     budget: { maxGenerations: 1, maxDurationMs: 60_000, maxModelRequests: 0, maxStagnantGenerations: 1, maxReportedTokens: null } }, { root });
