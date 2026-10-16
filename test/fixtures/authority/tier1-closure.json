@@ -481,6 +481,7 @@
     "src/core/inbox/remote-handoff-time.ts",
     "src/core/inbox/remote-handoff.ts",
     "src/core/inbox/store.ts",
+    "src/core/inbox/temp-worktree-reaper.ts",
     "src/core/index-engine.ts",
     "src/core/integrations/dep-parser.ts",
     "src/core/integrations/desktop-notify.ts",
