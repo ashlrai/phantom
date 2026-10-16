@@ -141,7 +141,8 @@ function isReport(value: unknown): value is CloudTaskReport {
     && isString(value['summary'])
     && isStringArray(value['testsRun'])
     && isStringArray(value['risks'])
-    && (value['filesChanged'] === undefined || (typeof value['filesChanged'] === 'number' && Number.isFinite(value['filesChanged'])));
+    && (value['filesChanged'] === undefined || (typeof value['filesChanged'] === 'number' && Number.isFinite(value['filesChanged'])))
+    && (value['toolsUsed'] === undefined || isStringArray(value['toolsUsed']));
 }
 
 function isPr(value: unknown): value is CloudTaskPr {

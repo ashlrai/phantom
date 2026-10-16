@@ -124,11 +124,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
+// A full local run keeps two single-worker shards active. A selected shard runs
+// alone on its machine, so its real-I/O lane gets those same two workers. The
+// unit lane keeps one fork so its event-loop timing budgets see no co-tenant.
+const shardWorkerArgs = selectedShard === null
+  ? ['--maxWorkers=1', '--fileParallelism=false'] : ['--maxWorkers=2'];
+const shardEnvironment = selectedShard === null
+  ? childEnvironment : { ...childEnvironment, ASHLR_VITEST_UNIT_MAX_WORKERS: '1' };
+
 function runShard(shard) { return new Promise((resolve) => {
-  const child = spawn(process.execPath, [runner, `--shard=${shard}/${shards.length}`, '--maxWorkers=1', '--fileParallelism=false', '--bail=1', ...exclusions,
+  const child = spawn(process.execPath, [runner, `--shard=${shard}/${shards.length}`, ...shardWorkerArgs, '--bail=1', ...exclusions,
     ...reportArgs(`general-${shard}-of-4.json`)], {
     cwd: process.cwd(),
-    env: childEnvironment,
+    env: shardEnvironment,
     stdio: 'inherit',
   });
   children.set(shard, child);

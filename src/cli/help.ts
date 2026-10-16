@@ -411,6 +411,19 @@ export async function cmdDocs(args: string[]): Promise<number> {
   }
 
   if (!agent) {
+    if (json) {
+      // --json never prints the human help: one JSON object, same exit code.
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        error: 'ashlr docs needs a surface; pass --agent --json',
+        surfaces: [
+          { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
+          { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
+          { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
+        ],
+      }, null, 2) + '\n');
+      return 2;
+    }
     printDocsHelp();
     return 2;
   }
@@ -465,7 +478,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
-  { cmd: 'status',                       desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'status [--json]',              desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },
@@ -478,6 +491,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
+  { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
   { cmd: 'runtime install --store <absolute> --artifact <absolute> --sha256 <hash> --revision <sha> --version <version>', desc: 'Install exact offline candidate bytes into a private store; not production qualification or service activation.', topic: 'core' },
   { cmd: 'runtime status|rollback --store <absolute> [--json]', desc: 'Verify local candidate selection or explicitly restore the previous verified installation.', topic: 'core' },
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
@@ -570,6 +584,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'goal "<objective>"',           desc: 'Live owner-invoked objective → plan → one sandboxed proposal-only advance; never resident or unattended authority.', topic: 'autonomy' },
   { cmd: 'goal "<objective>" --direct',  desc: 'One owner-invoked proposal-only run with bounded --json output; no unattended authority or verification proof.', topic: 'autonomy' },
   { cmd: 'loop',                         desc: 'Dormant non-dry conductor loop: compiled conductor trust roots are empty; use loop --dry-run.', topic: 'autonomy' },
+  { cmd: 'loop leases [clear <task-id>] [--dry-run]', desc: 'List simple-conductor leases needing reconciliation; clear one only when its owner is provably not running.', topic: 'autonomy' },
   { cmd: 'conductor-permit request|mint|inspect|stage', desc: 'Dormant signed one-shot goal-conductor permit operator; fail-closed while source trust roots are empty.', topic: 'autonomy' },
   { cmd: 'website status|auto|pause|off', desc: 'Inspect or pause automatic phm.dev publication; Auto resumes within its existing signed website scope.', topic: 'autonomy' },
   { cmd: 'website prepare --image <digest>', desc: 'Qualify the fixed website publisher and a real offline Linux x64 production build before one-time commissioning.', topic: 'autonomy' },
@@ -648,7 +663,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail (newest-first); filter by action/result/since (read-only).', topic: 'observability' },
 
-  { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes 21 native ashlr_* tools).', topic: 'integrations' },
+  { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals; --open-pr opens DRAFT PRs from an isolated worktree, never merges or deploys.', topic: 'integrations' },
@@ -780,6 +795,7 @@ function renderSummary(): void {
     console.log(`    ${c.cyan(pad(topic, 14))}  ${TOPIC_LABELS[topic]} ${c.dim(`(${unique}, …)`)}`);
   }
   console.log('');
+  console.log('  ' + c.dim('phm init') + ' · ' + c.dim('phm doctor') + ' · ' + c.dim('phm verse') + '  start here: onboard, health check, console');
   console.log('  ' + c.dim('phm help <topic>') + '      full table for one topic');
   console.log('  ' + c.dim('phm help --search <t>') + ' find a command by keyword');
   console.log('  ' + c.dim('phm help --all') + '        every command (the legacy full table)');
@@ -803,7 +819,7 @@ function renderAll(): void {
   console.log('');
 }
 
-/** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0 always (help never fails the shell). */
+/** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0, except 2 for an unknown topic. */
 export async function cmdHelp(args: string[]): Promise<number> {
   const c = makeColors(isTty());
 
@@ -838,10 +854,25 @@ export async function cmdHelp(args: string[]): Promise<number> {
       renderTopic(topicArg as HelpTopic);
       return 0;
     }
-    console.log('');
-    console.log(c.dim(`  unknown topic "${topicArg}" — topics: ${TOPICS.join(', ')}`));
-    console.log('');
-    return 0;
+    // `phm help doctor` names a command, not a topic: show that command's rows.
+    const wanted = topicArg.toLowerCase();
+    const commandHits = HELP_ENTRIES.filter((e) => e.cmd.split(/\s+/)[0]?.toLowerCase() === wanted);
+    if (commandHits.length > 0) {
+      console.log('');
+      console.log(renderEntries(commandHits));
+      console.log('');
+      console.log('  ' + c.dim(`phm help ${commandHits[0]!.topic}`) + '  more commands in this topic');
+      console.log('');
+      return 0;
+    }
+    // Unknown topic is a usage error (exit 2, like an unknown command) so agents can tell a typo from success.
+    console.error(`Unknown help topic "${topicArg}".`);
+    const { didYouMean } = await import('./completions.js');
+    const lower = topicArg.toLowerCase();
+    const guess = TOPICS.find((t) => t.startsWith(lower)) ?? didYouMean(lower, TOPICS);
+    if (guess) console.error(`Did you mean ${c.cyan(`phm help ${guess}`)}?`);
+    console.error(c.dim(`Topics: ${TOPICS.join(', ')}. Run \`phm help\` for the list.`));
+    return 2;
   }
 
   renderSummary();

@@ -469,6 +469,13 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     console.log(USAGE);
     return sub ? 0 : 2;
   }
+  // `leader <verb> --help` prints usage and never runs the verb: without this,
+  // `leader directives add --help` recorded a standing directive "--help" and
+  // `leader say --help` posted "--help" to the thread.
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(USAGE);
+    return 0;
+  }
   // Before the core import: printing a plist needs no Leader state.
   if (sub === 'oversight-plist') return runOversightPlist(args);
   if (sub === 'say' || sub === 'thread' || sub === 'answer' || sub === 'approve' || sub === 'directives') return runThreadCli(sub, args);

@@ -29,6 +29,7 @@ import {
 } from '../core/daemon/service-install-authority.js';
 import type { OnboardResult, OnboardStep } from '../core/types.js';
 import { pad, makeColors, isTty } from './ui.js';
+import { setupRefusalLead } from './first-run-guidance.js';
 
 const { bold, dim, red, green, yellow, cyan } = makeColors(isTty());
 
@@ -135,6 +136,8 @@ export async function cmdSetup(args: string[]): Promise<number> {
     if (jsonMode) {
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     } else {
+      for (const line of setupRefusalLead()) console.log(`  ${line}`);
+      console.log('');
       console.error(`  ${red('error:')} ${result.steps[0]?.detail}`);
       console.log(`  ${red('✗ setup incomplete')}  ${dim('daemon service changes restricted')}`);
       for (const nextStep of result.nextSteps) console.log(`  ${green(nextStep)}`);

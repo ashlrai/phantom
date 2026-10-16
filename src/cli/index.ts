@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -66,7 +67,9 @@ import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocatio
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
+import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
+import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
@@ -817,8 +820,8 @@ async function tryGetIdentity(): Promise<GetIdentityFn | null> {
 
 // ─── ANSI helpers ──────────────────────────────────────────────────────────────
 
-// index.ts colorizes unconditionally (output is always color-coded regardless
-// of TTY), so we bind the shared colorizers with tty=true.
+// index.ts colorizes regardless of TTY, so we bind the shared colorizers with
+// tty=true; NO_COLOR still turns them off (makeColors honors it).
 const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(true);
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -1135,7 +1138,7 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
   console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
   console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  console.log(`       ${cyan(`ashlr config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
   console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);
@@ -1144,11 +1147,23 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   console.log('');
 }
 
-async function cmdStatus(_args: string[]): Promise<void> {
+async function cmdStatus(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
 
-  const repos = idx.items.filter(i => i.kind === 'repo' && i.git);
+  if (args.includes('--json')) {
+    await printStatusJson(cfg, idx, {
+      getToolsRegistry: tryGetToolsRegistry,
+      discoverMcpServers: tryDiscoverMcpServers,
+      buildRollup: tryBuildRollup,
+      githubStatus: tryGithubStatus,
+      vercelStatus: tryVercelStatus,
+      getIdentity: tryGetIdentity,
+    });
+    return;
+  }
+
+  const { repos, dirty, offSync, stale } = classifyRepos(idx, cfg.staleDays);
 
   // Zero repos → the index is empty or roots are misconfigured. Show actionable
   // setup guidance instead of an empty attention board, then stop.
@@ -1159,14 +1174,6 @@ async function cmdStatus(_args: string[]): Promise<void> {
     printNoReposHelp(cfg);
     return;
   }
-
-  const dirty   = repos.filter(i => (i.git?.dirty ?? 0) > 0);
-  const offSync  = repos.filter(i => !dirty.includes(i) && ((i.git?.ahead ?? 0) > 0 || (i.git?.behind ?? 0) > 0));
-  const stale   = repos.filter(i =>
-    !dirty.includes(i) &&
-    !offSync.includes(i) &&
-    daysSince(i.lastModified) > cfg.staleDays
-  );
 
   const nameW  = 30;
   const branchW = 18;
@@ -1744,12 +1751,13 @@ async function cmdConfig(args: string[]): Promise<void> {
  * M32: help moved to src/cli/help.ts (topic-grouped, searchable, --all).
  * This thin wrapper keeps `ashlr help` working even if the module is missing.
  */
-async function cmdHelp(rest: string[] = []): Promise<void> {
+async function cmdHelp(rest: string[] = []): Promise<number> {
   try {
     const mod = await import('./help.js');
-    await mod.cmdHelp(rest);
+    return await mod.cmdHelp(rest);
   } catch {
     console.log('Phantom — local-first command center. Run `phm help` or see the README (ashlr remains compatible).');
+    return 0;
   }
 }
 
@@ -2008,7 +2016,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
@@ -2383,6 +2393,12 @@ async function main(): Promise<void> {
       case 'authority': {
         // V3.10: standing authority — Touch ID grants, the autonomy switch,
         // Stop, revoke, the ledger, rulesets and the guided Phase-0 setup.
+        const offMac = authoritySetupPlatformRefusal(rest);
+        if (offMac) {
+          for (const line of offMac) console.error(`  ${line}`);
+          process.exitCode = 1;
+          break;
+        }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
         break;
@@ -2488,7 +2504,7 @@ async function main(): Promise<void> {
       case 'help':
       case '--help':
       case '-h':
-        await cmdHelp(rest);
+        process.exitCode = await cmdHelp(rest);
         break;
 
       default: {

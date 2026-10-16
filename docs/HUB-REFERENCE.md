@@ -568,8 +568,8 @@ Full invariant set: [`docs/SPEC-V4-FOUNDRY.md`](https://github.com/ashlrai/phant
 ├── audit/               # Append-only confinement + action audit log
 ├── manager/             # Manager judge scorecards
 ├── native-profiles/     # One private profile per seat (launcher, command.json, native state)
-├── account-connections/ # connections.json: the seats Verse lists
-├── verse/               # Verse sessions, workspaces, project memory, attachments
+├── account-connections/ # connections.json: the seats Phantom lists
+├── verse/               # Phantom console sessions, workspaces, project memory, attachments
 ├── authority/           # Standing grants and the hash-chained ledger
 ├── budget.json          # Budget mode and per-seat overrides
 ├── routing/

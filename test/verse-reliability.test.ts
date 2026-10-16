@@ -473,22 +473,21 @@ describe('storage failures, crash interruption, registry, reasoning tap', () => 
     const s = engine.createSession({ projectPath: project, seatId: CLAUDE.id }, launchFor(CLAUDE));
     const seen = collect(engine, s.id);
     engine.sendTurn(s.id, 'x');
-    // Pull the log out from under the running turn and make it impossible to recreate.
-    const sessions = join(root, 'sessions');
-    rmSync(join(sessions, `${s.id}.events.jsonl`));
-    chmodSync(sessions, 0o500);
-    try {
-      children[0]!.line({ type: 'text-delta', text: 'lost' });
-      await waitFor(() => seen.some((e) => e.type === 'error' && (e as { code?: string }).code === 'storage'));
-      expect(engine.getSession(s.id)).toMatchObject({ status: 'error', lastError: expect.stringContaining('storage error') });
-      expect(logged.some((m) => m.includes('event log write failed'))).toBe(true);
-      // One notice per turn, however many writes fail after it.
-      children[0]!.line({ type: 'text-delta', text: 'also lost' });
-      await new Promise((r) => setTimeout(r, 20));
-      expect(seen.filter((e) => e.type === 'error')).toHaveLength(1);
-    } finally {
-      chmodSync(sessions, 0o700);
-    }
+    // Pull the log out from under the running turn and put a DIRECTORY in its
+    // place, so no append can recreate it. (A chmod 0500 sessions dir only
+    // blocks a normal user; root ignores the mode bits and recreates the log.)
+    const log = join(root, 'sessions', `${s.id}.events.jsonl`);
+    rmSync(log);
+    mkdirSync(log, { mode: 0o700 });
+    children[0]!.line({ type: 'text-delta', text: 'lost' });
+    await waitFor(() => seen.some((e) => e.type === 'error' && (e as { code?: string }).code === 'storage'));
+    expect(engine.getSession(s.id)).toMatchObject({ status: 'error', lastError: expect.stringContaining('storage error (EISDIR)') });
+    expect(logged.some((m) => m.includes('event log write failed (EISDIR)'))).toBe(true);
+    // One notice per turn, however many writes fail after it.
+    children[0]!.line({ type: 'text-delta', text: 'also lost' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen.filter((e) => e.type === 'error')).toHaveLength(1);
+    expect(statSync(log).isDirectory()).toBe(true);
   });
 
   it('interruptAll settles running turns synchronously as failed and clears the registry', () => {
@@ -657,7 +656,23 @@ describe('process registry: identity-verified orphan reaping', () => {
     const report = registry.reapOrphans();
     expect(kills).toEqual([]);
     expect(report.skipped).toEqual([expect.objectContaining({ sessionId: 'sess-2', reason: expect.stringContaining('cannot verify') })]);
-    expect(registry.entries().map((e) => e.sessionId)).toEqual(['sess-1']);
+    // An unverifiable live group is kept for the next start; the gone group is dropped.
+    expect(registry.entries().map((e) => e.sessionId)).toEqual(['sess-1', 'sess-2']);
+  });
+
+  it('a transient ps failure does not forget a live orphan: the next start still verifies and reaps it', () => {
+    seed([entry()]);
+    const alive = new Set([-5001, 5001]);
+    const first = harness(null, alive);
+    expect(first.registry.reapOrphans().skipped).toEqual([expect.objectContaining({ reason: expect.stringContaining('cannot verify') })]);
+    expect(first.kills).toEqual([]);
+    const rows: ProcessRow[] = [
+      { pid: 5001, pgid: 5001, startedAt: SPAWNED_AT + 400, command: 'node /x/launcher.mjs -p' },
+    ];
+    const second = harness(rows, alive);
+    expect(second.registry.reapOrphans().reaped.map((r) => r.pgid)).toEqual([5001]);
+    expect(second.kills).toEqual([[-5001, 'SIGTERM']]);
+    expect(second.registry.entries()).toEqual([]);
   });
 
   it('add/remove only touch this server’s entries; the file is 0600 JSON; markers are basenames', () => {

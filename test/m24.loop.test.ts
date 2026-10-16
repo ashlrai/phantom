@@ -192,6 +192,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   // Always unenroll
   try { unenroll(tmpRepo); } catch { /* ignore */ }
   // Always clear kill switch
@@ -363,6 +364,14 @@ describe('M24 tick — BOUNDED: kill switch halts immediately', () => {
 // ===========================================================================
 
 describe('M24 tick — BOUNDED: daily budget exhaustion does nothing', () => {
+  // Each case seeds today's spend and then ticks, and the tick re-derives the
+  // UTC day: freeze Date at the real current instant so a run crossing 00:00
+  // UTC cannot reset the seeded spend. Timers stay real; afterEach restores.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
+  });
+
   it('returns reason "budget-exhausted" when todaySpentUsd >= dailyBudgetUsd', async () => {
     // Pre-load state where today's spend already equals the cap
     const today = new Date().toISOString().slice(0, 10);

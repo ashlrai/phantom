@@ -258,4 +258,23 @@ describe('H2 orphan sandbox — crash-leftover worktree is surfaced and swept', 
     // Cleanup the remaining fresh orphan.
     sweepOrphanSandboxes();
   });
+
+  it('a crash-leftover worktree still holding git\'s "initializing" lock is reclaimed, not leaked forever', () => {
+    // `git worktree add` writes .git/worktrees/<name>/locked ("initializing")
+    // and unlinks it only after checkout. A SIGKILL mid-add (the pinned
+    // supervisor's 30s GIT_TIMEOUT kills the git process group; a daemon kill)
+    // leaves that lock behind. Single-force `worktree remove` refuses a locked
+    // tree and `worktree prune` skips it, so every sweep reported residual and
+    // the home counted toward MAX_SANDBOXES forever.
+    const treeBefore = repo.shasumTree();
+    const sb = makeOrphanSandbox(repo.dir);
+    const gitdir = readFileSync(join(sb.worktreePath, '.git'), 'utf8').replace(/^gitdir:\s*/, '').trim();
+    writeFileSync(join(gitdir, 'locked'), 'initializing\n', 'utf8');
+
+    expect(sweepOrphanSandboxes()).toEqual([sb.id]);
+    expect(sandboxHomeExists(sb.id)).toBe(false);
+    expect(repo.branches()).not.toContain(scratchBranch(sb.id));
+    expect(repo.shasumTree()).toBe(treeBefore);
+    expect(repo.gitStatus()).toBe('');
+  });
 });

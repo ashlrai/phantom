@@ -44,6 +44,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { onTestFinished, vi } from 'vitest';
 
 import type {
   DaemonState,
@@ -75,6 +76,21 @@ import { createProposal } from '../../src/core/inbox/store.js';
 /** Today's calendar day in the YYYY-MM-DD form the daemon state uses. */
 export function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Freeze Date at the current real instant until the calling test finishes,
+ * unless the test already controls the clock (fake timers, or a spied
+ * Date.now it advances itself). A test that seeds today's budget
+ * day and then ticks must observe one clock: otherwise a run crossing 00:00 UTC
+ * seeds one day, the daemon's resetDayIfNeeded() sees the next, and zeroes the
+ * seeded spend. Only Date is faked; timers stay real.
+ */
+export function freezeDateForTest(): void {
+  if (vi.isFakeTimers() || vi.isMockFunction(Date.now)) return;
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+  onTestFinished(() => { vi.useRealTimers(); });
 }
 
 /** A zeroed RunUsage. */
@@ -215,8 +231,12 @@ export interface SeedMidTickSpendOptions {
  *
  * This is the NO-DOUBLE-SPEND probe surface: a subsequent honest tick / restart
  * must treat `spentUsd` as already-counted and NEVER re-add it.
+ *
+ * Freezes Date for the rest of the test (see freezeDateForTest) so the seeded
+ * day is the day the daemon re-derives.
  */
 export function seedMidTickSpend(opts: SeedMidTickSpendOptions): DaemonState {
+  freezeDateForTest();
   const running = opts.running ?? true;
   const ticks: DaemonTick[] = opts.withTickRecord
     ? [
