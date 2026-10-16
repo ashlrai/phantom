@@ -8,6 +8,12 @@ on:
   # A merge queue reruns the full lane on the queued merge commit.
   merge_group:
   workflow_call:
+  # Nightly full run of the exhaustive Mac partition on master (2:17 AM ET
+  # during EDT, 1:17 AM ET during EST), so coverage deferred from PRs is still
+  # exercised once a day even if master pushes are sparse or their Mac runs
+  # were cancelled.
+  schedule:
+    - cron: '17 6 * * *'
 
 permissions:
   contents: read
@@ -446,7 +452,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac') || contains(github.event.pull_request.labels.*.name, 'mac-full'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -813,7 +819,7 @@ jobs:
       - name: Require selected CI lane
         env:
           GATE_NEEDS: ${{ toJSON(needs) }}
-          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
+          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') && !contains(github.event.pull_request.labels.*.name, 'mac-full')) }}
         run: |
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
@@ -840,3 +846,41 @@ jobs:
           }
           console.log(`Merge Gate passed: ${lane} CI`);
           NODE
+
+  # Coverage that PRs defer must not be lost silently: when a post-merge (master
+  # push) or nightly run has a failed Mac job, open or update one tracking issue.
+  # Reports only; never blocks anything, and is not part of Merge Gate.
+  mac-failure-issue:
+    name: Report Mac failure on master
+    needs: [mac-general, mac-isolated, ci-shared-macos, native-macos-broker-foundation]
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/master')) && (needs.mac-general.result == 'failure' || needs.mac-isolated.result == 'failure' || needs.ci-shared-macos.result == 'failure' || needs.native-macos-broker-foundation.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the Mac failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          label='ci-mac-failure'
+          gh api -X POST "repos/$REPO/labels" -f name="$label" -f color=B60205 \
+            -f description='Mac CI failed on master or nightly' >/dev/null 2>&1 || true
+          failed=$(printf '%s' "$RESULTS" | jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")')
+          body=$(printf 'Mac CI failed on `%s` (%s run).\n\nFailed jobs: %s\nRun: %s\nCommit: %s/%s/commit/%s\n\nThis issue is opened or updated automatically by the `Report Mac failure on master` job in `.github/workflows/ci.yml`. Close it once master is green on Mac again; the next failure reopens a new one.' \
+            "$GITHUB_REF_NAME" "$EVENT" "$failed" "$RUN_URL" "$GITHUB_SERVER_URL" "$REPO" "$SHA")
+          existing=$(gh api "repos/$REPO/issues?labels=$label&state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request | not)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh api -X POST "repos/$REPO/issues/$existing/comments" -f body="$body" >/dev/null
+            echo "Updated issue #$existing"
+          else
+            gh api -X POST "repos/$REPO/issues" -f title="Mac CI failing on master" -f body="$body" -f "labels[]=$label" --jq '.html_url'
+          fi
