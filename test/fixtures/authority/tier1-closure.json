@@ -153,6 +153,8 @@
     "src/core/sandbox/policy.ts",
     "src/core/sandbox/safe-git.ts",
     "src/core/sandbox/worktree.ts",
+    "src/core/util/scrub-secrets.ts",
+    "src/core/util/scrub.ts",
     "src/core/verse/manager-conversation.ts",
     "src/core/verse/manager-scope.ts",
     "src/core/verse/manager-session.ts",

@@ -133,6 +133,8 @@
 /src/core/local-eval/memory-*.ts @masonwyatt23
 /scripts/evaluate-memory.ts @masonwyatt23
 /scripts/benchmark-memory.ts @masonwyatt23
+/src/core/util/scrub.ts @masonwyatt23
+/src/core/util/scrub-secrets.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
 /src/core/integrations/locus.ts @masonwyatt23
 /src/core/vision/leader-display-text.ts @masonwyatt23
@@ -841,6 +843,7 @@
 /test/sandbox-kernel-evidence-310.test.ts @masonwyatt23
 /test/sandbox-reservation-recovery.test.ts @masonwyatt23
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23
+/test/scrub-310.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23

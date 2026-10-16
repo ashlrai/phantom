@@ -83,6 +83,9 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/core/local-eval/memory-*.ts',
   'scripts/evaluate-memory.ts',
   'scripts/benchmark-memory.ts',
+  // The shared secret scrub decides what memory and prompts may carry.
+  'src/core/util/scrub.ts',
+  'src/core/util/scrub-secrets.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',
