@@ -67,6 +67,7 @@ import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
 import { pad, makeColors } from './ui.js';
+import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
@@ -2383,6 +2384,12 @@ async function main(): Promise<void> {
       case 'authority': {
         // V3.10: standing authority — Touch ID grants, the autonomy switch,
         // Stop, revoke, the ledger, rulesets and the guided Phase-0 setup.
+        const offMac = authoritySetupPlatformRefusal(rest);
+        if (offMac) {
+          for (const line of offMac) console.error(`  ${line}`);
+          process.exitCode = 1;
+          break;
+        }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
         break;
