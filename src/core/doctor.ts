@@ -351,6 +351,12 @@ function checkLocalBin(): DoctorCheck {
   if (pathDirs.includes(localBin)) {
     return check('local-bin', '~/.local/bin on PATH', 'pass', `${localBin} is on PATH`);
   }
+  // A global npm install already puts phm on PATH; the ~/.local/bin link is then only a spare.
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const phm = runCmd(finder, ['phm']);
+  if (phm) {
+    return check('local-bin', '~/.local/bin on PATH', 'pass', `not needed: phm is on PATH at ${phm.split(/\r?\n/)[0]}`);
+  }
   return check(
     'local-bin',
     '~/.local/bin on PATH',
@@ -707,7 +713,7 @@ function checkMcpPlugin(mcpRegistry: McpRegistry | null): DoctorCheck {
     'Phantom MCP plugin registered (ashlr)',
     'warn',
     'ashlr MCP server not found in ~/.claude/settings.json, ~/.mcp.json, or ~/.claude.json',
-    'Add the Phantom MCP server via: ashlr init  or install the compatible ashlr Claude Code plugin',
+    'Register it for Claude Code: phm mcp install claude  (or install the compatible ashlr Claude Code plugin)',
   );
 }
 
@@ -727,7 +733,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
       'MCP servers discovered',
       'warn',
       'MCP registry module not available',
-      'configure MCP servers or run ashlr init',
+      'Register installed companions: phm mcp ecosystem --write',
     );
   }
 
@@ -746,7 +752,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
     'MCP servers discovered',
     'warn',
     'No MCP servers discovered in known config locations',
-    'configure MCP servers or run ashlr init',
+    'Register installed companions: phm mcp ecosystem --write  (and phm mcp install claude for the gateway)',
   );
 }
 

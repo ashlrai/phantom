@@ -763,6 +763,32 @@ describe('runDoctor — compatible CLI installation guidance', () => {
       .toBe('Phantom MCP plugin registered (ashlr)');
   });
 
+  it('does not ask for ~/.local/bin on PATH when phm is already on PATH (npm -g install)', async () => {
+    installAshlrShim(tmpHome, 'phm');
+    isolateCommandPath();
+    const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toMatch(/^not needed: phm is on PATH at /);
+  });
+
+  it('still warns about ~/.local/bin when phm is not on PATH either', async () => {
+    mkdirSync(join(tmpHome, 'bin'), { recursive: true });
+    isolateCommandPath();
+    const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
+    expect(check?.status).toBe('warn');
+    expect(check?.fix).toContain('export PATH="$HOME/.local/bin:$PATH"');
+  });
+
+  it('points unregistered MCP checks at the phm mcp commands that register them, not init', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const plugin = report.checks.find(c => c.id === 'mcp-plugin');
+    expect(plugin?.status).toBe('warn');
+    expect(plugin?.fix).toContain('phm mcp install claude');
+    const servers = report.checks.find(c => c.id === 'mcp-servers-discovered');
+    if (servers?.status === 'warn') expect(servers.fix).toContain('phm mcp ecosystem --write');
+    for (const c of [plugin, servers]) expect(c?.fix ?? '').not.toContain('ashlr init');
+  });
+
   it('recognizes the canonical phm command and prefers it over ashlr', async () => {
     installAshlrShim(tmpHome, 'phm');
     isolateCommandPath();

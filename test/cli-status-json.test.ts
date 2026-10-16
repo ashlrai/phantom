@@ -75,6 +75,9 @@ describe('CLI: phm status --json', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ashlr status');
     expect(result.stdout).toContain('No git repos are being tracked yet.');
+    expect(result.stdout).toContain('phm config set roots --json');
+    // Only this platform's quoting is shown.
+    if (process.platform !== 'win32') expect(result.stdout).not.toContain('PowerShell');
     expect(() => JSON.parse(result.stdout)).toThrow();
   });
 });
