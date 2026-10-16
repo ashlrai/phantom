@@ -50,6 +50,11 @@ export const _stackInternals: { confirm: (q: string) => Promise<boolean> } = {
 
 function cmdStackStatus(jsonMode: boolean): number {
   if (!stackInstalled()) {
+    if (jsonMode) {
+      // --json keeps stdout machine-readable: same shape stackStatus() reports.
+      process.stdout.write(JSON.stringify({ ok: false, detail: 'stack not installed' }, null, 2) + '\n');
+      return 1;
+    }
     return printNotInstalled();
   }
 
@@ -222,8 +227,8 @@ export async function cmdStack(args: string[]): Promise<number> {
     return 0;
   }
 
-  // No subcommand → status
-  if (sub === undefined || sub === 'status') {
+  // No subcommand → status (`ashlr stack --json` is `ashlr stack status --json`)
+  if (sub === undefined || sub === 'status' || sub === '--json') {
     const jsonMode = args.includes('--json');
     return cmdStackStatus(jsonMode);
   }
