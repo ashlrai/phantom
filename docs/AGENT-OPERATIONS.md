@@ -279,6 +279,8 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm` not found after install | `phm doctor` checks `~/.local/bin` on `PATH`; from source run `./install.sh` |
 | Agent does not see Phantom tools | `phm mcp doctor`, `phm mcp list`, then `phm wire <client>` |
 | No local provider reachable | `phm models`, `phm models start`, `phm local-runtime status\|logs` |
+| `phm run --engine claude --sandbox-engine` refuses with exit 2 | Run as a non-root user (Claude Code refuses unattended mode as root), or hand the task to `phm cloud launch "<task>"`. Inside a Claude Code cloud container the session's sign-in is not passed into the sandbox: export `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) first |
+| `repo not enrolled for autonomous work` | `phm enroll add <repo>` |
 | An engine is not ready | `phm fleet doctor` and its `fix:` line. For a Claude engine with no credential under the daemon, the line names this platform's way to set `CLAUDE_CODE_OAUTH_TOKEN` (`launchctl setenv`, `systemctl --user set-environment` or `setx`) |
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
