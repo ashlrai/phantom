@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -1137,7 +1138,7 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
   console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
   console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  console.log(`       ${cyan(`ashlr config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
   console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);

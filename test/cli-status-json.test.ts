@@ -31,7 +31,7 @@ function runStatus(args: string[], writeConfig: (home: string) => void = () => {
 
 describe('CLI: phm status --json', () => {
   it('prints one parseable JSON object with no ANSI codes', () => {
-    const { home, result } = runStatus(['--json']);
+    const { result } = runStatus(['--json']);
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain('\u001b');
@@ -41,11 +41,18 @@ describe('CLI: phm status --json', () => {
     expect(data.schemaVersion).toBe(1);
     expect(data.summary).toEqual({ tracked: 0, clean: 0, dirty: 0, offSync: 0, stale: 0, staleDays: 30 });
     expect(data.dirty).toEqual([]);
-    expect(data.roots.length).toBeGreaterThan(0);
-    for (const r of data.roots) expect(r.path.startsWith(home)).toBe(true);
+    // A fresh HOME with no code folders gets no roots (not two missing ones).
+    expect(data.roots).toEqual([]);
     for (const key of ['tools', 'mcpServers', 'activity7d', 'memory', 'github', 'vercel', 'identity', 'resources']) {
       expect(data).toHaveProperty(key);
     }
+  });
+
+  it('detects an existing code folder as a root when no config exists', () => {
+    const { home, result } = runStatus(['--json'], (h) => mkdirSync(join(h, 'code'), { recursive: true }));
+    expect(result.status).toBe(0);
+    const data = JSON.parse(result.stdout) as { roots: Array<{ path: string; exists: boolean }> };
+    expect(data.roots).toEqual([{ path: join(home, 'code'), exists: true }]);
   });
 
   it('reports configured roots and whether each exists', () => {
