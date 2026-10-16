@@ -44,8 +44,27 @@ export function loadMarkdownRenderer(): Promise<RendererModule> {
   return pending;
 }
 
+/**
+ * One message touching every block and inline rule marked tries. The first
+ * parse in a tab compiles marked's large regexes; done here at idle, the first
+ * chat opened does not pay for it (~150 ms at 4x CPU across its first ten messages).
+ */
+const WARM_SAMPLE = '# h\n\nA **b** _i_ `c` [l](https://example.com) <b>x</b>\n\n- a\n- b\n\n1. c\n\n> q\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x = 1;\n```\n';
+
+function warmRenderer(mod: RendererModule): void {
+  const run = () => {
+    try {
+      mod.renderMarkdown(WARM_SAMPLE);
+    } catch {
+      /* warming is best effort */
+    }
+  };
+  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 0);
+}
+
 // Start now, in parallel with whatever else the transcript is waiting on.
-if (typeof window !== 'undefined') void loadMarkdownRenderer().catch(() => undefined);
+if (typeof window !== 'undefined') void loadMarkdownRenderer().then(warmRenderer, () => undefined);
 
 function useRenderer(): RendererModule | null {
   const [mod, setMod] = useState<RendererModule | null>(renderer);
