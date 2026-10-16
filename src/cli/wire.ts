@@ -252,7 +252,7 @@ export async function cmdWire(args: string[]): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// wire status — read-only
+// wire status: read-only
 // ---------------------------------------------------------------------------
 
 async function cmdWireStatus(args: string[]): Promise<number> {
