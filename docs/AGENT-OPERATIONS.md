@@ -35,6 +35,13 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
+**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
+succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
+unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
+deferred to post-merge; they always run on master pushes. `Mac exhaustive
+(isolated)` and the other macOS checks run on every pull request
+(`.github/workflows/ci.yml`).
+
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
 `test/h<N>.*.test.ts`, and `test/<topic>-<release>.test.ts`. Web tests sit next
