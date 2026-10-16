@@ -51,6 +51,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MaintainerVerificationResult; exit 0 verified, 1 withheld, 2 usage',
   },
   {
+    usage: 'ashlr cortex check|once --config ABS [--execute] --json',
+    description: 'Check a private Cortex bridge config, or execute one signed engineering assignment in the existing sandbox and return a verified pending proposal receipt. No resident service, merge, push or deployment.',
+    safety: 'proposal',
+    jsonShape: '{state:"checked"|"idle"|"proposed",runId?,proposalId?}; check is offline and read-only; once requires --execute',
+  },
+  {
     usage: 'ashlr benchmark --compare-reports BASELINE.json CANDIDATE.json',
     description: 'Compare compatible recorded local-eval receipts offline. Descriptive measurements, no runtime or provider calls, no universal savings claim.',
     safety: 'read',

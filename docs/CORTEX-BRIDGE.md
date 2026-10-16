@@ -1,0 +1,122 @@
+# Cortex engineering bridge
+
+Use Cortex to prepare a company engineering request and Phantom to produce one
+pending patch proposal on an explicitly selected local repository. The bridge
+uses Cortex's authenticated worker protocol v2 at `/api/fleet/worker` and the
+signed `ashlr-engineering-assignment/v1` contract. A worker advertising
+`engineering-assignment-v1` receives engineering assignments only.
+
+The command runs in the foreground once. It creates private local artifacts and
+returns their hashes plus a bounded summary to the original Cortex run. It does
+not install a resident worker, push a branch, merge a proposal, or deploy code.
+Google/provider activation and proactive-assistant adapters are separate from
+this engineering transport.
+
+## Configure a worker
+
+The operator must obtain a worker-scoped Cortex API token, the organization ID,
+and the issuer/audience/key ID and Ed25519 public key from the Cortex deployment
+owner. Pin that public key independently of the claim response. Never copy a
+signing private key onto the worker. The token's current organization membership
+and workstream permissions are checked by Cortex on every request.
+
+Create an owned private directory for bridge records and a private JSON
+configuration (mode `0600`). Paths must be absolute physical paths without
+symlink aliases. Repository mapping is explicit; a server cannot choose arbitrary
+local paths. Example values below are fictional:
+
+```json
+{
+  "schemaVersion": 1,
+  "url": "https://cortex.example.invalid",
+  "organizationId": "company-example",
+  "tokenEnv": "CORTEX_WORKER_TOKEN",
+  "root": "/absolute/private/cortex-bridge",
+  "verifier": {
+    "issuer": "ashlr-cortex",
+    "audience": "ashlr-phantom",
+    "publicKeys": {
+      "company-key-1": "-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_OPERATOR_PINNED_ED25519_PUBLIC_KEY\n-----END PUBLIC KEY-----\n"
+    }
+  },
+  "repositories": [
+    {
+      "repository": "example-company/example-project",
+      "path": "/absolute/repositories/example-project",
+      "workstreams": ["company"]
+    }
+  ],
+  "runtimes": ["codex"],
+  "budget": { "maxTokens": 200000, "maxSteps": 40, "allowCloud": true }
+}
+```
+
+`runtimes` supports `codex` and `claude-code`. Runtime authentication, repository
+enrollment and normal Phantom KILL/policy checks remain required. The mapped
+repository must have the signed GitHub origin, a clean worktree, and HEAD equal
+to the assignment's exact source commit. A signed assignment permits at most
+32 allowed-file patterns of 220 characters each on this worker. Changes to
+build/CI/manifests may be refused by the existing proposal verifier and require
+normal manual review.
+
+Check the configuration offline:
+
+```sh
+ashlr cortex check --config /absolute/private/cortex.json --json
+```
+
+With the worker token supplied in the selected environment variable by the
+operator's secret manager, explicitly execute one prepared request:
+
+```sh
+ashlr cortex once --config /absolute/private/cortex.json --execute --json
+```
+
+The token is sent only in the HTTPS authorization header. Redirects are refused.
+The foreground process removes that token from its environment while executing
+the producer and verification commands, restoring it before exit. No company
+memory is recalled or captured by the bridge's model invocation.
+
+## Review the result
+
+An empty queue returns `{"state":"idle"}`. A successful round trip returns
+`{"state":"proposed","runId":"…","proposalId":"…"}`. This means a signed,
+complete pending Phantom proposal was correlated to the producer's durable run,
+and the existing separate-worktree verifier accepted it at the signed base
+commit. Captured changed paths, changed files and added/deleted lines are checked
+against the signed assignment. Cortex receives a proposal receipt and creates
+its own review item; the receipt is authenticated worker evidence, not an
+independent attestation or a completed business outcome.
+
+Each attempt has a private directory named by SHA-256 of the Cortex run ID:
+`assignment.json`, `proposal.diff`, `proposal.json`, `verification.json`,
+`receipt.json`, and (after acceptance) `accepted.json`. The three artifact hashes
+in the receipt identify the exact local diff, proposal, and verification record.
+Artifact paths are local relative references; this version does not upload raw
+patches or company repository files to Cortex.
+
+## Cancellation and uncertain results
+
+A fresh heartbeat is required before producing work and before returning a
+receipt. The producer receives an abort signal on revocation, lost heartbeat,
+SIGINT/SIGTERM, assignment expiry, or the bounded wall-clock deadline. Existing
+verification commands do not accept this signal: a verification already running
+may finish its locally bounded checks, but the bridge cannot publish its receipt
+without another successful heartbeat.
+
+Every assignment reserves its local attempt directory exclusively before model
+execution. A replay or uncertain crash is held rather than dispatched again.
+Do not delete this directory to retry. Inspect the Cortex run and retained local
+proposal, then make a new reviewed assignment if needed. If the final network
+response is lost, `receipt.json` is retained and `accepted.json` may be absent;
+that absence does not prove Cortex rejected it. Reconcile the run in Cortex
+before creating replacement work. Invalid local configuration, failed checks,
+or unsuccessful receipt acceptance exit nonzero.
+
+## Implementation references
+
+- [Foreground bridge and receipt construction](../src/core/cortex/bridge.ts)
+- [Portable signed assignment codec](../src/core/cortex/engineering-assignment.ts)
+- [Existing sandboxed producer](../src/core/run/sandboxed-engine.ts)
+- [Existing pending-proposal authority](../src/core/inbox/pending-authority.ts)
+- [Existing separate-worktree verification](../src/core/inbox/merge.ts)
