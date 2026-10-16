@@ -405,10 +405,11 @@ jobs:
           retention-days: 7
 
   ci-shared-macos:
-    # Scheduling experiment: start this short Mac gate after the isolated
-    # lane settles so it can overlap unfinished general lanes, unless cancelled.
-    needs: [classify, mac-isolated]
-    if: ${{ !cancelled() && needs.classify.outputs.lane == 'full' }}
+    # Queues with the isolated lane instead of after it. PRs no longer run the
+    # general Mac matrix, so waiting on mac-isolated only added a second Mac
+    # queue wait to every PR.
+    needs: classify
+    if: needs.classify.outputs.lane == 'full'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -574,10 +575,10 @@ jobs:
 
   native-macos-broker-foundation:
     name: Native macOS broker foundation (Rust 1.97.1)
-    # Own checkout and fixtures remain independent evidence. Start this short
-    # gate after the isolated lane settles, including failure, to overlap general lanes.
-    needs: [classify, mac-isolated]
-    if: ${{ !cancelled() && needs.classify.outputs.lane == 'full' }}
+    # Own checkout and fixtures remain independent evidence. Queues with the
+    # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
+    needs: classify
+    if: needs.classify.outputs.lane == 'full'
     runs-on: macos-latest
     steps:
       - name: Checkout

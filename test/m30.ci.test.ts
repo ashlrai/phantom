@@ -320,7 +320,7 @@ describe('M30 CI workflow', () => {
     expect(ciYml).not.toContain('pull_request_target');
   });
 
-  it('releases only the two short Mac gates after isolated work while general lanes remain independent', () => {
+  it('queues the short Mac gates beside the isolated lane while general lanes remain independent', () => {
     type Job = {
       name: string;
       'runs-on': string;
@@ -345,24 +345,12 @@ describe('M30 CI workflow', () => {
     expect(jobs.site?.needs).toBe('classify');
     expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site'");
     expect(shared, 'shared Mac still requires its own complete named gate').toBeDefined();
+    // Each Mac gate queues straight after classify: chaining one Mac job behind
+    // another adds a whole Mac queue wait to the PR's wall clock.
     for (const id of ['ci-shared-macos', 'native-macos-broker-foundation']) {
-      const short = jobs[id]!;
-      expect(short.needs).toEqual(['classify', 'mac-isolated']);
-      expect(jobs['mac-isolated']!.needs).toBe('classify');
-      // The actual transitive graph cannot reintroduce the general matrix as
-      // a predecessor; this is scheduling overlap, never missing coverage.
-      const predecessors = (jobId: string): string[] => {
-        const needs = jobs[jobId]!.needs;
-        const dependencies = needs === undefined ? [] : Array.isArray(needs) ? needs : [needs];
-        return dependencies.flatMap((dependency) => [dependency, ...predecessors(dependency)]);
-      };
-      expect(new Set(predecessors(id))).toEqual(new Set(['classify', 'mac-isolated']));
-      // An explicit status function keeps the short gate eligible on predecessor
-      // failure; cancellation stops it rather than starting more work.
-      expect(short.if).toBe("${{ !cancelled() && needs.classify.outputs.lane == 'full' }}");
-      expect(short['continue-on-error']).toBeUndefined();
+      expect(jobs[id]!['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'mac-isolated', 'windows-service-authority']) {
+    for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
     }
