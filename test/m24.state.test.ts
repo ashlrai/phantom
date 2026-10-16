@@ -37,6 +37,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fs.rmSync(tmpHome, { recursive: true, force: true });
   process.env.HOME = origHome;
 });
@@ -68,6 +69,14 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from '../src/core/fleet/
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it), so todayStr(), yesterdayStr() and the day resetDayIfNeeded()
+ * derives cannot straddle 00:00 UTC. Timers stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -316,6 +325,7 @@ describe('M24 loadDaemonStateStrict — fail-closed ledger reads', () => {
   });
 
   it('rejects spend accounting receipts from a different UTC budget day', () => {
+    freezeDate();
     const p = daemonStatePath();
     const budgetDay = todayStr();
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -869,6 +879,8 @@ describe('M24 daemon singleton lock', () => {
 // ===========================================================================
 
 describe('M24 resetDayIfNeeded — zeroes spend on new day', () => {
+  beforeEach(() => { freezeDate(); });
+
   it('returns state unchanged when todayDate matches today', () => {
     const today = todayStr();
     const s: DaemonState = {

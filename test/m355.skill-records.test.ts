@@ -2,13 +2,14 @@
  * m355.skill-records.test.ts - verified skill card/use metadata ledgers.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -35,6 +36,44 @@ import {
   skillUseEventsDir,
 } from '../src/core/fleet/skill-records.js';
 import { selectVerifiedSkills } from '../src/core/fleet/skill-retrieval.js';
+
+// Observes (and can fail) fs.openSync. root bypasses DAC mode bits, so a 0o200
+// partition still opens for read as uid 0; the hook raises the EACCES a user
+// gets from the kernel so the same open-failure branch runs for every uid.
+const openHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    const target = String(args[0]);
+    if (openHook.denied.has(target)) {
+      openHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  return { ...actual, default: { ...actual, openSync }, openSync };
+});
+
+const RUNNING_AS_ROOT = process.getuid?.() === 0;
+
+/** Make `file` unreadable for the current uid: write-only mode, plus an injected EACCES as root. */
+function denyRead(file: string): void {
+  chmodSync(file, 0o200);
+  if (RUNNING_AS_ROOT) openHook.denied.add(realpathSync(file));
+}
+
+/** As root, prove the injected denial was actually hit by the reader under test. */
+function expectReadDenied(file: string): void {
+  if (RUNNING_AS_ROOT) expect(openHook.hits).toContain(realpathSync(file));
+}
 
 let previousAshlrHome: string | undefined;
 let home: string;
@@ -159,6 +198,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openHook.denied.clear();
+  openHook.hits.length = 0;
   if (previousAshlrHome === undefined) delete process.env.ASHLR_HOME;
   else process.env.ASHLR_HOME = previousAshlrHome;
   rmSync(home, { recursive: true, force: true });
@@ -209,7 +250,7 @@ describe('M355 skill records', () => {
       encoding: 'utf8',
       mode: 0o200,
     });
-    chmodSync(unreadable, 0o200);
+    denyRead(unreadable);
 
     expect(readSkillCardCorpus()).toMatchObject({
       cards: [],
@@ -221,6 +262,7 @@ describe('M355 skill records', () => {
       limitExceeded: false,
     });
     expect(readSkillCards({ complete: true })).toEqual([]);
+    expectReadDenied(unreadable);
   });
 
   it('appends cards and use events to separate streams and reads newest first', () => {
@@ -598,9 +640,10 @@ describe('M355 skill records', () => {
       encoding: 'utf8',
       mode: 0o200,
     });
-    chmodSync(unreadable, 0o200);
+    denyRead(unreadable);
 
     expect(readSkillCards({ complete: true })).toEqual([]);
+    expectReadDenied(unreadable);
   });
 
   it('deduplicates exact replays and quarantines conflicting event ids', () => {

@@ -136,7 +136,23 @@ describe('deriveLocalFleetConcurrency — parallelism derives from measured slot
   it.each([33, 64, 128, Number.MAX_SAFE_INTEGER])('preserves %s measured slots without a product ceiling', (slots) => {
     const derived = deriveLocalFleetConcurrency(capacity({ slots }), null);
     expect(derived).toMatchObject({ slots, effective: slots, limiter: 'serving-slots' });
-    expect(derived.reason).toContain(`${slots} slot(s)`);
+    expect(derived.reason).toContain(`${slots} slots`);
+    expect(derived.reason).not.toContain('slot(s)');
+  });
+
+  // Reasons are operator-facing sentences: the noun is pluralised by the count
+  // at the source, never "N slot(s)". Machine fields (slots/effective) are unchanged.
+  it('pluralises the runtime slot count in every reason', () => {
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), null).reason)
+      .toBe("derived from the serving runtime's 1 slot; no operator cap configured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 2 }), null).reason)
+      .toBe("derived from the serving runtime's 2 slots; no operator cap configured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 4 }), 2).reason)
+      .toBe("operator cap 2 is below the runtime's 4 slots");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), 3).reason)
+      .toContain("exceeds the runtime's 1 slot and is NOT honoured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), null, { fenceSerialized: true }).reason)
+      .toContain("the runtime's 1 slot cannot be used");
   });
 
   it.each([NaN, Infinity, -Infinity, -1, 0, 33.5, Number.MAX_SAFE_INTEGER + 1])('rejects malformed measured slot count %s', (slots) => {
@@ -216,6 +232,12 @@ describe('capacityFromRuntimeSnapshot — adapting the runtime lane answer', () 
     expect(observed.endpoint).toBe('127.0.0.1:8080');
   });
 
+  it('words the up detail as a pluralised sentence, never "slot(s)"', () => {
+    expect(capacityFromRuntimeSnapshot(runtimeSnapshot()).detail).toBe('llama-server up with 4 slots (source=props)');
+    const one = runtimeSnapshot({ slots: { configured: 1, busy: 0, idle: 1, source: 'props' } });
+    expect(capacityFromRuntimeSnapshot(one).detail).toBe('llama-server up with 1 slot (source=props)');
+  });
+
   it('never publishes a URL, only host:port', () => {
     const observed = capacityFromRuntimeSnapshot(runtimeSnapshot());
     expect(observed.endpoint).not.toMatch(/https?:\/\//);
@@ -281,9 +303,20 @@ describe('resolveServingCapacity', () => {
 // ---------------------------------------------------------------------------
 
 describe('readLocalFleetSettings', () => {
-  it('is armed by the local-only policy, not by a switch of its own', () => {
+  it('keeps local-only behavior and requires an explicit llama-server backend in mixed mode', () => {
     expect(readLocalFleetSettings(makeCfg()).enabled).toBe(false);
     expect(readLocalFleetSettings(localOnlyCfg()).enabled).toBe(true);
+    const mixed = makeCfg({ foundry: { allowedBackends: ['builtin', 'llama-server', 'claude'] } });
+    expect(readLocalFleetSettings(mixed)).toMatchObject({ enabled: true, source: 'allowed-backend' });
+    expect(readLocalFleetSettings(mixed).detail).toContain('mixed mode');
+    expect(localFleetEnabled(mixed)).toBe(true);
+    expect(readLocalFleetSettings(makeCfg({ foundry: { allowedBackends: ['builtin', 'local-coder', 'claude'] } })).enabled).toBe(false);
+    const remote = makeCfg({
+      foundry: { allowedBackends: ['llama-server'] },
+      models: { llamaServer: { baseUrl: 'https://example.com/v1' } },
+    });
+    expect(localFleetEnabled(remote)).toBe(false);
+    expect(readLocalFleetSettings(remote).enabled).toBe(false);
   });
 
   it('follows an env-enabled local-only', () => {

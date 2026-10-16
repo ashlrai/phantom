@@ -15,7 +15,8 @@ function stage(value: unknown, running: boolean): boolean {
   if (value === null) return true;
   if (!object(value) || !intent(value.intent) || !['running', 'succeeded', 'failed', 'aborted', 'stale'].includes(String(value.state)) ||
       running && value.state !== 'running') return false;
-  return object(value.route) && value.route.tier === 'frontier' && label(value.route.engine) && label(value.route.seatId) && label(value.route.model);
+  return object(value.route) && ['local', 'mid', 'frontier'].includes(String(value.route.tier)) &&
+    label(value.route.engine) && label(value.route.seatId) && label(value.route.model);
 }
 /** Shared browser-only validation for actual resident and interactive projections. */
 export function validManagerProjection(value: unknown): value is Extract<OutcomeManagerSessionRead, { sourceState: 'healthy' }>['association']['manager'] {

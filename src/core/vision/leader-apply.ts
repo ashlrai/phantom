@@ -1315,7 +1315,11 @@ async function executeAction(deps: LeaderApplyDeps, action: LeaderAction): Promi
         ...task,
         source: 'leader',
         requestedBy: 'leader',
-        dedupeKey: `leader:${task.repo}:${sha256(task.title.toLowerCase()).slice(0, 16)}`,
+        // Exact saved milestone identity owns dedupe in the locked task queue.
+        // The legacy title key remains only for actions without that identity.
+        dedupeKey: task.milestoneId
+          ? null
+          : `leader:${task.repo}:${sha256(task.title.toLowerCase()).slice(0, 16)}`,
       });
       if (!res.ok) return { status: 'failed', reason: res.reason };
       if (res.deduped) return { status: 'refused', reason: 'An identical task is already queued.' };

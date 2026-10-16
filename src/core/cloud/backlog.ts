@@ -2,7 +2,7 @@
  * Self-improvement backlog (unit C1): built-in items (improvement-backlog.ts)
  * plus operator/Leader items at `<cloudHome>/backlog.json`. An item is
  * "claimed" by its newest task; it becomes available again 3 days after
- * that task ends closed/failed/expired, never after merged.
+ * that task ends closed/failed/expired, never after merged or a "no-change" report.
  *
  * File: `{ "v": 1, "items": CloudBacklogItem[] }`, 0600, at most
  * CLOUD_BACKLOG_MAX_USER_ITEMS items. Readers validate every item and skip
@@ -103,7 +103,7 @@ interface Claim {
  * Devin session is working on is never also handed to a cloud session, and
  * the reverse.
  */
-export type BacklogClaimTask = Pick<CloudTaskV1, 'id' | 'backlogItemId' | 'createdAt' | 'updatedAt'> & {
+export type BacklogClaimTask = Pick<CloudTaskV1, 'id' | 'backlogItemId' | 'createdAt' | 'updatedAt'> & Partial<Pick<CloudTaskV1, 'report'>> & {
   /** A cloud state, or Devin's extra in-progress `blocked` (waiting for Mason). */
   state: CloudTaskState | 'blocked';
 };
@@ -123,7 +123,9 @@ function claimOf(task: BacklogClaimTask | undefined, nowMs: number): Claim {
   if (!task) return { claimedBy: null, lastState: null };
   // A Devin session waiting for Mason is still in progress.
   const state: CloudTaskState = task.state === 'blocked' ? 'running' : task.state;
-  if (RETRYABLE.includes(state)) {
+  // A session that reported "no-change" found the work already done; closing
+  // its empty PR must not put the item back in rotation every few days.
+  if (RETRYABLE.includes(state) && task.report?.status !== 'no-change') {
     // updatedAt is when the task last changed — for a terminal task, when it ended.
     const endedAt = Date.parse(task.updatedAt);
     const released = Number.isFinite(endedAt) && nowMs - endedAt >= CLOUD_BACKLOG_RETRY_MS;

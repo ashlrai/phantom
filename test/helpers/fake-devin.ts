@@ -18,6 +18,7 @@ export interface FakeSession {
   title?: string | null;
   structured_output?: Record<string, unknown> | null;
   org_id?: string;
+  user_id?: string;
   created_at?: number;
   updated_at?: number;
 }
@@ -50,6 +51,7 @@ export interface FakeDevin {
   key: string;
   orgId: string;
   self: Record<string, unknown>;
+  users: Array<{ email: string; name: string; user_id: string; role_assignments: Array<{ org_id: string }> }>;
   /** Queue of forced responses: consumed first (status, body, headers). */
   forced: Array<{ status: number; body?: unknown; headers?: Record<string, string>; throws?: boolean }>;
   /** Called before a create is answered (e.g. to throw after "sending"). */
@@ -71,6 +73,7 @@ export function fakeDevin(opts: { key?: string; orgId?: string; self?: Record<st
     key: opts.key ?? FAKE_KEY,
     orgId: opts.orgId ?? FAKE_ORG,
     self: opts.self ?? { principal_type: 'service_user', service_user_id: 'su-1', service_user_name: 'Ashlr Verse', org_id: null },
+    users: [{ email: 'mason@example.com', name: 'Mason', user_id: 'user-mason', role_assignments: [{ org_id: opts.orgId ?? FAKE_ORG }] }],
     forced: [],
     onCreate: null,
   };
@@ -108,6 +111,13 @@ export function fakeDevin(opts: { key?: string; orgId?: string; self?: Record<st
     }
     const path = parsed.pathname;
     if (init.method === 'GET' && path === '/v3/self') return respond(200, f.self);
+    const members = /^\/v3beta1\/organizations\/([^/]+)\/members\/users$/.exec(path);
+    if (init.method === 'GET' && members) {
+      if (decodeURIComponent(members[1]!) !== f.orgId) return respond(403, { title: 'Forbidden', status: 403 });
+      const email = parsed.searchParams.get('email')?.toLowerCase();
+      const items = email ? f.users.filter(user => user.email.toLowerCase() === email) : f.users;
+      return respond(200, { items, has_next_page: false, end_cursor: null, total: items.length });
+    }
     const orgMatch = /^\/v3\/organizations\/([^/]+)\/sessions(?:\/([^/]+))?(\/messages)?$/.exec(path);
     if (!orgMatch) return respond(404, { title: 'Not Found', status: 404, detail: 'no route' });
     if (decodeURIComponent(orgMatch[1]!) !== f.orgId) return respond(403, { title: 'Forbidden', status: 403, detail: 'not your org' });
@@ -121,6 +131,7 @@ export function fakeDevin(opts: { key?: string; orgId?: string; self?: Record<st
         session_id: id, url: `https://app.devin.ai/sessions/${id}`, status: 'new', status_detail: null, acus_consumed: 0,
         pull_requests: [], tags: (request['tags'] as string[] | undefined) ?? [], title: (request['title'] as string | undefined) ?? null,
         org_id: f.orgId, created_at: 1, updated_at: 1,
+        user_id: typeof request['create_as_user_id'] === 'string' ? request['create_as_user_id'] : 'user-service',
       };
       f.sessions.set(id, session);
       push(id, 'user', String(request['prompt'] ?? ''));

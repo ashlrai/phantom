@@ -29,8 +29,14 @@ import { lazy, useEffect, useState, type ComponentType } from 'react';
  * is fixed for that mount's life: swapping the lazy wrapper for the loaded
  * component mid-life would remount the subtree and drop its state — the
  * composer's draft, the transcript's scroll.
+ *
+ * `eager: false` (3.29.16) declares the same thing without starting the
+ * download: for overlays a warm-up fetches after first paint. A lazy() that
+ * has never rendered suspends on its first mount even when its chunk is in,
+ * and React then holds the reveal for 300 ms (the command palette's first
+ * ⌘K took ~330 ms); a Slot whose chunk is in mounts in the same render.
  */
-export function preloadedLazy<P extends object>(load: () => Promise<ComponentType<P>>): { Slot: ComponentType<P>; ready: () => Promise<ComponentType<P>> } {
+export function preloadedLazy<P extends object>(load: () => Promise<ComponentType<P>>, eager = true): { Slot: ComponentType<P>; ready: () => Promise<ComponentType<P>> } {
   let loaded: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
   const ready = (): Promise<ComponentType<P>> => {
@@ -43,7 +49,7 @@ export function preloadedLazy<P extends object>(load: () => Promise<ComponentTyp
     const [Ready] = useState<ComponentType<P> | null>(() => loaded);
     return Ready ? <Ready {...props} /> : <Lazy {...props} />;
   }
-  if (typeof window !== 'undefined') void ready().catch(() => undefined);
+  if (eager && typeof window !== 'undefined') void ready().catch(() => undefined);
   return { Slot, ready };
 }
 

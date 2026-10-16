@@ -125,9 +125,10 @@ export function ReadinessLines({ row, onAction, busy = false }: ReadinessLinesPr
   const fixes = readinessFixes(row).filter((fix) => fix.kind === 'command' || onAction !== undefined);
   return (
     <div className={styles.readiness} data-readiness={row.id} role="group" aria-label={`${row.label}: readiness`}>
+      <p className={styles.subtle}>Chat and Fleet admission · separate from connection and usage</p>
       <Line label="Chat" verdict={row.chat} word={row.chat.word} />
       <Line label="Fleet" verdict={row.fleet} word={fleetWord(row)} />
-      {reading !== null ? <p className={styles.readyReading} title={reading}>{reading}</p> : null}
+      {reading !== null ? <p className={styles.readyReading} title={reading}><span>Usage evidence · </span><span>{reading}</span></p> : null}
       {fixes.map((fix) =>
         fix.kind === 'command' ? (
           <CommandFix key={`${fix.kind}:${fix.command ?? ''}`} fix={fix} />

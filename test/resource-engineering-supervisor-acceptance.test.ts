@@ -33,6 +33,11 @@ function git(repo: string, ...args: string[]) {
 }
 function http(handle: ResourceConsoleServerHandle, path: string, body?: unknown, headers?: Record<string, string>) {
   return new Promise<{ status: number; text: string; noStore: boolean }>((resolve, reject) => {
+    // Keep timeout diagnostics closed: never include a token, origin or request body.
+    const route = path === '/api/resources/engineering-supervision' ? 'supervision'
+      : path === '/api/resources/engineering' ? 'engineering-list'
+        : path.startsWith('/api/resources/engineering/') ? 'engineering-job'
+          : path === '/api/resources/queue' ? 'queue' : 'other';
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     const req = request({ hostname: '127.0.0.1', port: handle.port, path, method: bytes === undefined ? 'GET' : 'POST', agent: false,
       headers: { ...(bytes === undefined ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(bytes)) }),
@@ -43,7 +48,7 @@ function http(handle: ResourceConsoleServerHandle, path: string, body?: unknown,
       res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode!, text: Buffer.concat(chunks).toString('utf8'),
         noStore: res.headers['cache-control'] === 'no-store' }));
     });
-    req.on('error', reject); req.setTimeout(10_000, () => req.destroy(new Error('Fixture HTTP timeout'))); req.end(bytes);
+    req.on('error', reject); req.setTimeout(10_000, () => req.destroy(new Error(`Fixture HTTP timeout (${route})`))); req.end(bytes);
   });
 }
 const engineeringPath = '/api/resources/engineering';

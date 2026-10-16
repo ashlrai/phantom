@@ -1,6 +1,6 @@
-# Contributing to ashlr-hub
+# Contributing to Phantom
 
-ashlr-hub is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
+Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
 ---
 
@@ -37,10 +37,10 @@ See [Dependency boundary](#dependency-boundary) below.
 To install the CLI while developing:
 
 ```sh
-./install.sh    # builds dist/, symlinks bin/ashlr → ~/.local/bin/ashlr, smoke-tests ashlr help
+./install.sh    # builds dist/, links bin/ashlr → ~/.local/bin/phm and ~/.local/bin/ashlr, smoke-tests `help` on both
 ```
 
-`install.sh` is idempotent — re-run it after pulling changes.
+`install.sh` is idempotent — re-run it after pulling changes. It creates only absent links and refuses to replace an unrelated file or link.
 
 ---
 
@@ -58,7 +58,7 @@ To install the CLI while developing:
 | `npm run lint` | ESLint plus real-I/O membership and Verse synchronous-I/O guards |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
-| `npm run build` | Compile backend, copy assets, build the web console, then generate dependency inventory and Git build identity in `dist/` |
+| `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
@@ -132,6 +132,29 @@ No hint file is checked in, downloaded, or activated by this conversion.
 
 ### Definition of green
 
+#### Keep development and release checks economical
+
+Run the affected whole test modules while editing, then `npm run gate -- --base
+<base-sha>` for related tests and static checks. Use an explicit base when
+integrating parallel branches so the selection includes every combined change.
+The local gate does not push, dispatch Actions, or contact model providers.
+Its import graph cannot cover tests that read source as text; also run
+`npm run check:release:fast` after the canonical build for release changes.
+
+For final local source qualification, run `prepublishOnly` once as described
+below. Reuse the exact completed hosted build for canonical publication instead
+of rebuilding or repacking it. Local feedback does not replace protected merge
+checks, independent Audit, attestation, signing, or installed acceptance.
+
+Standard GitHub-hosted runners are free in public repositories; larger runners
+and private-repository usage have different billing rules. Artifact and cache
+storage have separate allowances. Before starting hosted work, verify repository
+visibility, runner labels, current usage, and the owner's blocking budget through
+GitHub's billing readback. Do not increase a budget or select a paid runner as a
+fallback. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+#### Complete source qualification
+
 For the complete local source release check, run the canonical script once:
 
 ```sh
@@ -200,8 +223,10 @@ imports and never introduce Node-only runtime imports into browser modules.
 
 `src/core/` and `src/cli/` primarily use Node builtins. The declared runtime
 dependencies are `@modelcontextprotocol/sdk` for MCP, `marked` for external-skill
-Markdown analysis, and `tar` for managed-runtime archives. They are bundled in
-the package and verified by the release dependency inventory. **Do not add a
+Markdown analysis, `tar` for managed-runtime archives, `smol-toml` and `yaml` for
+TOML/YAML parsing, and `@simplewebauthn/server`, `@simplewebauthn/browser`,
+`jose`, `reflect-metadata` and `web-push` for the optional phone gateway. They
+are listed in `bundleDependencies`, bundled in the package and verified by the release dependency inventory. **Do not add a
 runtime dependency casually:** reuse an existing utility first, and change the
 dependency contract, lockfile, inventory and verification together if a new
 dependency is justified. React/Vite build dependencies do not make Node-only
@@ -227,7 +252,7 @@ Author attribution (Mason Wyatt / `masonwyatt23` / ashlr.ai) is intentional and 
 
 ## Contracts-first pattern
 
-ashlr-hub is built **contract-first**: interfaces and types are authored before code, so multiple agents can build disjoint modules in parallel without colliding.
+Phantom is built **contract-first**: interfaces and types are authored before code, so multiple agents can build disjoint modules in parallel without colliding.
 
 1. **Use the owning subsystem's canonical types.** `src/core/types.ts` holds shared Hub types. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
 
@@ -251,7 +276,7 @@ The following invariants are enforced by named adversarial tests. A PR that weak
 4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Test: `test/m45.*` no-raw-fallback test.
 5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.*` pre-push test.
 6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Test: `test/m45.*` diff-only test.
-7. **Immutable signed provenance.** `{engineModel, engineTier}` is write-once and HMAC-signed. The merge gate must verify the HMAC. Test: `test/m47.*`, `test/m47-1.*`.
+7. **Immutable signed provenance.** `{engineModel, engineTier}` is write-once and HMAC-signed. The merge gate must verify the HMAC. Test: `test/m47.*`, `test/m47_1.*`.
 8. **Merge requires explicit policy and verification.** Default tier mode requires frontier provenance and a matching `mergeAuthority` entry. Opt-in verification/evidence modes have their own stricter gates; no producer verdict, test result or documentation change grants authority by itself. See the [safety model](docs/HUB-REFERENCE.md#safety-model) and `test/m47.*`, `test/m153.*`, `test/m307.*`.
 9. **Self-improvement cannot self-disarm.** Self-target diffs must pass the suite flag-off and flag-on. Safety-test-weakening diffs refused. Test: `test/m54.*`.
 10. **Preserve the declared dependency boundary.** Manifest, lockfile and packaged dependency inventory must agree; do not bypass the associated tests.
@@ -264,7 +289,7 @@ If you are adding a new safety invariant, the pattern is: add the invariant to `
 
 Backends are registered in `src/core/run/engine-registry.ts`. To add a new one:
 
-1. Add an entry to `ENGINE_REGISTRY` with `id`, `bin`/`apiBase`, `tier` (`local | mid | frontier`), and `buildArgv`.
+1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types.ts`.
 2. If it is API-based (OpenAI-compatible), confirm it works through the existing `provider-client.ts` path.
 3. Add a `cfg.foundry.engines` example to `docs/examples/foundry.config.json`.
 4. Add a test that asserts the new entry resolves to byte-identical argv and that its tier is correct.
@@ -273,11 +298,11 @@ No changes to `buildEngineCommand`, `engineInstalled`, or `engineTierOf` should 
 
 ## Adding a new scanner
 
-Portfolio scanners live in `src/core/portfolio/scanners.ts`. Each scanner is a function that returns `WorkItem[]`. Add your scanner, register it in the scanner list, and add a test with a mock repo fixture.
+Portfolio scanners live in `src/core/portfolio/scanners.ts`. Each scanner is an async function that returns `WorkItem[]`. Add your scanner, register it in `SCANNER_REGISTRATIONS`, and add a test with a mock repo fixture.
 
 ## Adding a new comms transport
 
-Comms transports live in `src/core/integrations/`. Implement the `CommsBridge` interface from `src/core/types.ts`, register it in `comms/dispatch.ts` based on `cfg.comms.channel`, and add a hermetic test with a mock transport.
+Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
 
 ---
 
@@ -295,6 +320,7 @@ Comms transports live in `src/core/integrations/`. Implement the `CommsBridge` i
 
 ```
 src/
+├── api/           # Public SDK entrypoints (`@ashlr/phantom`, `/core`, `/types`, `/plugin`)
 ├── cli/           # Thin argv dispatchers — parse, delegate to core, format output
 ├── core/
 │   ├── types.ts   # Shared Hub types; subsystems also own focused contracts
@@ -315,6 +341,8 @@ src/
 │   ├── portfolio/ # Backlog scanners, value filter, EDV verify
 │   ├── observability/ # Telemetry, spend rollup, budget alerts, OTLP
 │   ├── learn/     # Reflect, playbooks, tuning
+│   ├── verse/     # Console backend: chats, seats, accounts, agents, MCP tools
+│   ├── web/       # Loopback HTTP server, API and optional phone gateway
 │   └── ...        # config, git, classify, index-engine, providers, doctor, mcp, …
 ├── web-ui/        # React console, feature-local DOM tests, Vite entrypoints
 ├── raycast/       # Separate package (React/Raycast extension)

@@ -19,7 +19,7 @@
  */
 import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.js';
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
@@ -27,10 +27,10 @@ import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usedPercentText } from '../percent-text.js';
 import { historicalLeftPercent } from './resource-usage-history.js';
-import { ACCOUNT_CLOCK_MS, useCapacityData } from '../usage/CapacityStrip.js';
+import { useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
-import { accountStatus, buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
+import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { formatUsd, localObservationAge } from './resources-model.js';
 import { cloudCreditsQuery } from './resources-queries.js';
 import { creditPoolsQuery } from './credit-pools-query.js';
@@ -42,6 +42,9 @@ import { moveResource, orderedResources, useResourceOrder } from './resource-ord
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import styles from './ResourcesBar.module.css';
+import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
+import { projectResourceDisplay, type ResourceDisplayView } from './resource-display-model.js';
+import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
 
 type Level = 'ok' | 'low' | 'out' | 'idle' | 'unknown';
 
@@ -59,6 +62,7 @@ export interface BarRow {
   creditHeld?: boolean;
   /** Raw provider reading retained here; display metadata formats it at render. */
   exactCreditBalance?: string;
+  display?: ResourceDisplayView;
   /** Spoken + hover summary. */
   summary: string;
   detail: string[];
@@ -75,7 +79,7 @@ const LEVEL_OF_STATUS: Readonly<Record<AccountStatus['kind'], Level>> = {
 };
 
 /** Pure: capacity rows → bar rows (exported for tests). */
-export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolean; now: number; localReadFailed?: boolean; pendingSeatIds?: readonly string[]; devinConsumption?: unknown }): BarRow[] {
+export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolean; now: number; maxAgeMs?: number; localReadFailed?: boolean; pendingSeatIds?: readonly string[]; devinConsumption?: unknown }): BarRow[] {
   const out: BarRow[] = [];
   for (const row of rows) {
     const surfaceLabel = row.engine === 'grok' && row.label !== 'Grok Build' ? ' · Grok Build' : '';
@@ -102,9 +106,10 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       });
       continue;
     }
-    const status = accountStatus(row, { healthRead: opts.healthRead, now: opts.now });
+    const display = projectResourceDisplay(row, { nowMs: opts.now, healthRead: opts.healthRead, maxAgeMs: opts.maxAgeMs });
+    const status = display.status;
     // Quota history does not determine freshness of the independent credit read.
-    const currentCredits = !row.lastReading && !row.signedOut;
+    const currentCredits = display.credit.current;
     const creditValue = currentCredits && (row.creditState === 'none' || row.credits !== null) ? estimatedCreditValue(row.creditBalance, row.plan) : null;
     const priorCredit = row.engine === 'codex' && !row.signedOut &&
       (!currentCredits || row.creditState === 'unknown') ? row.historicalCredits : null;
@@ -139,7 +144,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       const historicalValue = history.windows.some(window => window.limitReached) ? 'limit was reached · last'
         : historicalUsed === null ? 'last reading' : `${usedPercentText(historicalUsed)} used · last`;
       out.push({ key: row.seatId, engine: row.engine, name: row.label, leftPercent: recordedLeft, level: 'unknown',
-        value: row.engine === 'codex' ? historicalValue : recordedLeft === null ? 'last reading' : `${usedPercentText(recordedLeft)} last`,
+        value: row.engine === 'codex' ? historicalValue : recordedLeft === null ? 'last reading' : `${usedPercentText(recordedLeft)} left · last`,
         ...(creditLabel === undefined ? {} : { creditLabel, creditHeld }),
         ...(exactCreditBalance === undefined ? {} : { exactCreditBalance }),
         summary: `${row.label}${surfaceLabel}: last known usage · current usage unconfirmed${creditSummary}`,
@@ -160,25 +165,25 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
       : binding?.limitReached ? 'limit reached' : null;
     // Credit availability/holds do not change the subscription battery's state.
-    const level = row.engine === 'codex' && !row.lastReading && !row.signedOut
+    const level = row.quotaCurrent === false ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
       ? left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok' : LEVEL_OF_STATUS[status.kind] ?? 'unknown';
-    const value = row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
-      ? `${subscriptionValue}${row.lastReading ? ' · last' : ''}`
+    const value = row.quotaCurrent === false && subscriptionValue !== null ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
+      ? `${subscriptionValue}${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`
       : level === 'out' ? (status.kind === 'spent' ? 'spent' : status.label.toLowerCase())
-      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading ? ' · last' : ''}`;
+      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`;
     const detail = row.windows.map((w) => {
       const used = w.limitReached ? 'limit reached' : w.usedPercent === null ? 'no reading' : `${usedPercentText(w.usedPercent)} used`;
       // The accounts model already words it "resets Fri 2:25 PM"; don't say it twice.
       const reset = w.resetText ? w.resetText.replace(/^resets\s+/i, '') : '';
-      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · resets ${reset}` : ''}`;
+      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${row.quotaCurrent === false ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
     });
     detail.push(...creditDetail);
     if (row.engine === 'grok') detail.push('Grok Build · native CLI; Grok Bot has a separate allowance.');
     if (row.windows.length === 0) detail.push('Usage is not reported by this resource.');
     if (row.lastReading) detail.push('Last known usage · latest check failed.');
     if (row.reserve) detail.push(row.reserve.label);
+    if (row.quotaCurrent === false) detail.push('Last known usage · current usage and resets unconfirmed.');
     if (status.usableAgain) detail.push(`Usable again ${status.usableAgain}`);
-    if (status.checked) detail.push(status.checked);
     out.push({
       key: row.seatId,
       engine: row.engine,
@@ -193,7 +198,22 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     });
   }
   // Keep roster order: a new reading must never move the resource under a pointer.
-  return out;
+  // The projection emits exactly one row per input; keep provenance paired
+  // by position rather than allowing duplicate IDs to alias a later reading.
+  return out.map((row, index) => {
+    const source = rows[index];
+    // Organization consumption has its own qualified source/asOf projection;
+    // it is not this native subscription usage observation.
+    if (!source || source.engine === 'devin' && source.seatId === 'devin') return row;
+    const display = projectResourceDisplay(source, { nowMs: opts.now, healthRead: opts.healthRead, maxAgeMs: opts.maxAgeMs });
+    const unconfirmed = !display.usage.current && source.kind === 'subscription';
+    const stamp = display.usage.observedAt ? `Usage observed ${new Date(display.usage.observedAt).toLocaleString()}` : 'Usage observation time unavailable';
+    const value = source.kind === 'subscription' && ['retained', 'historical'].includes(display.usage.state) && !row.value.includes('last') ? `${row.value} · last` : row.value;
+    const summary = source.kind === 'subscription' && !display.usage.current ? `${row.name}: ${display.usage.label} · ${value}${row.creditLabel ? ` · ${row.creditLabel}` : ''}` : row.summary;
+    const detail = unconfirmed ? row.detail.filter(line => !/Usable again|Usable now|running low/i.test(line)).map(line => line.replace(/ · resets /g, ' · recorded reset ')) : row.detail;
+    return { ...row, value, summary, display, level: source.kind === 'subscription' && unconfirmed ? 'unknown' as const : row.level,
+      detail: [...detail, ...(display.connection.checkedAt && source.connection ? [`Connection: ${source.connection.word}`] : []), ...(display.connection.checkedAt ? [`Connection checked ${new Date(display.connection.checkedAt).toLocaleString()}`] : []), display.usage.label, ...(unconfirmed && display.status.detail ? [display.status.detail] : []), ...(source.kind === 'subscription' ? [stamp] : [])] };
+  });
 }
 
 function Battery({ left, level, vertical }: { left: number | null; level: Level; vertical: boolean }) {
@@ -222,7 +242,7 @@ function RowTip({ row }: { row: BarRow }) {
   );
 }
 
-export function ResourcesBar({ expanded }: { expanded: boolean }) {
+export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; now?: number }) {
   // With the budget view, like the drawer: for seats like Claude and Grok the
   // window readings arrive through it, so without it the batteries read empty.
   const data = useCapacityData();
@@ -251,17 +271,17 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
     && Date.now() - coldStartedAt < DEVIN_POLL_MS;
   // The drawer owns this cadence while open; hidden bars/windows do not poll.
   usePollWhileVisible(refreshDevin, coldPending ? 5_000 : DEVIN_POLL_MS, { enabled: resources.bar && !resources.open });
-  const [, setClock] = useState(() => Date.now());
   const savedOrder = useResourceOrder();
+  // 0: ordinary; 1: provider pending/unavailable; 2: provider ready.
+  const [providerView, setProviderView] = useState(0);
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   // The poll triggers expiry renders; query arrivals use the actual render time,
   // so a freshly retrieved reading is not rejected by an older clock tick.
-  usePollWhileVisible(() => setClock(Date.now()), ACCOUNT_CLOCK_MS);
-  const now = Date.now();
+  const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
   const rows = useMemo(
-    () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
+    () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
     [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],
   );
   const cloud = cloudRead.data?.credits ?? null;
@@ -287,6 +307,9 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
             className={styles.row}
             data-level={row.level}
             data-account-row
+            data-usage-state={row.display?.usage.state}
+            data-usage-observed-at={row.display?.usage.observedAt ?? undefined}
+            aria-describedby={expanded && row.display ? `usage-stamp-${row.key}` : undefined}
             aria-label={`${row.summary}. Open Resources`}
             title={nativeCreditBalanceTitle(row.exactCreditBalance) ?? undefined}
             onClick={() => openResources()}
@@ -301,6 +324,8 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
                   <Battery left={row.leftPercent} level={row.level} vertical={false} />
                   <span className={styles.value}>{row.value}</span>
                 </span>
+                {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
+                  {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{new Date(row.display.usage.observedAt).toLocaleString()}</time></> : null}</span> : null}
                 {row.creditLabel ? <span className={styles.credits}>
                   <span>{row.creditLabel}</span>
                   {row.creditHeld ? <span className={styles.creditHold}>Held</span> : null}
@@ -469,12 +494,54 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
   ) });
   const ordered = orderedResources(entries, savedOrder);
   const ids = ordered.map(entry => entry.key);
+  const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
+  const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
+    const native = rows.find(row => `account:${row.key}` === entry.key);
+    const seat = native ? data.seats.find(seat => seat.id === native.key) : undefined;
+    const profile = proactiveRead.data?.profiles.find(profile => `proactive:${profile.id}` === entry.key);
+    return { resourceId: entry.key, provider: native ? providerOf(native.engine) : profile ? profile.identity.provider : entry.key === 'budget:devin' ? 'devin' : 'anthropic',
+      accountId: seat?.accountId ?? profile?.identity.accountId ?? null, label: entry.name,
+      resourceKind: native ? native.engine === 'local' ? 'local-readiness' : 'native-account' : profile ? 'declared-agent' : 'funding-or-budget',
+      readingState: native?.display?.usage.current ? 'current' : native?.display?.usage.freshness === 'stale' ? 'stale' : 'unknown', observedAt: native?.display?.usage.observedAt ?? null };
+  });
+  const entryByKey = new Map(ordered.map(entry => [entry.key, entry]));
+
   const move = (source: string, target: string) => {
     if (moveResource(ids, source, target)) {
       const name = entries.find(entry => entry.key === source)?.name ?? 'Resource';
       setAnnouncement(`${name} moved to position ${ids.indexOf(target) + 1} of ${ids.length}.`);
     }
   };
+  const ordinaryRows = ordered.map((entry, index) => (
+    <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
+      data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
+      draggable
+      onDragStart={(event) => {
+        setDragged(entry.key);
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('application/x-ashlr-resource', entry.key);
+      }}
+      onDragOver={(event) => {
+        if (dragged !== null && ids.includes(dragged) && dragged !== entry.key) {
+          event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget(entry.key);
+        }
+      }}
+      onDrop={(event) => {
+        if (dragged !== null && ids.includes(dragged)) { event.preventDefault(); move(dragged, entry.key); }
+        setDragged(null); setDropTarget(null);
+      }}
+      onDragEnd={() => { setDragged(null); setDropTarget(null); }}
+    >
+      {entry.content}
+      <span className={styles.moveControls}>
+        <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
+          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
+        <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
+          disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+      </span>
+    </div>
+  ));
+
   if (ordered.length === 0) return null;
   return (
     <div className={styles.bar} data-expanded={expanded || undefined} data-compact={expanded && resources.compact || undefined} role="group" aria-label="Resources at a glance" aria-busy={data.refreshing || undefined}>
@@ -484,36 +551,16 @@ export function ResourcesBar({ expanded }: { expanded: boolean }) {
         onClick={() => setResourcesCompact(!resources.compact)}>
         <span>Resources</span>{resources.compact ? <IconChevronDown /> : <IconChevronUp />}
       </button> : null}
+      {expanded ? <button type="button" className={styles.densityToggle} aria-pressed={providerView !== 0} onClick={() => setProviderView(value => value ? 0 : 1)}>
+        {providerView ? 'Show account view' : 'Group by provider'}
+      </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
-      {ordered.map((entry, index) => (
-        <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
-          data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
-          draggable
-          onDragStart={(event) => {
-            setDragged(entry.key);
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('application/x-ashlr-resource', entry.key);
-          }}
-          onDragOver={(event) => {
-            if (dragged !== null && ids.includes(dragged) && dragged !== entry.key) {
-              event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget(entry.key);
-            }
-          }}
-          onDrop={(event) => {
-            if (dragged !== null && ids.includes(dragged)) { event.preventDefault(); move(dragged, entry.key); }
-            setDragged(null); setDropTarget(null);
-          }}
-          onDragEnd={() => { setDragged(null); setDropTarget(null); }}
-        >
-          {entry.content}
-          <span className={styles.moveControls}>
-            <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
-              disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
-            <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-              disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
-          </span>
-        </div>
-      ))}
+      {providerView && expanded ? <Suspense fallback={null}>
+        <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
+          classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}
+          renderResource={resource => <div data-resource-id={resource.resourceId}>{entryByKey.get(resource.resourceId)?.content}</div>} />
+      </Suspense> : null}
+      {providerView === 2 && expanded ? null : ordinaryRows}
     </div>
   );
 }

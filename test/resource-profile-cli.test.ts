@@ -1,7 +1,11 @@
 /** Parser/routing fixtures: no native account preparation or provider contact. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const backend = vi.hoisted(() => ({ prepare: vi.fn(), legacy: vi.fn() }));
-vi.mock('../src/core/resources/native-profile.js', () => ({ prepareResourceNativeProfile: backend.prepare }));
+const backend = vi.hoisted(() => ({ prepare: vi.fn(), upgradeIdentity: vi.fn(), legacy: vi.fn(),
+  PrepareError: class ResourceNativeProfilePrepareError extends Error {} }));
+vi.mock('../src/core/resources/native-profile.js', () => ({ prepareResourceNativeProfile: backend.prepare,
+  ResourceNativeProfilePrepareError: backend.PrepareError,
+  upgradeResourceNativeProfileIdentity: backend.upgradeIdentity,
+  ResourceNativeProfileIdentityUpgradeError: class ResourceNativeProfileIdentityUpgradeError extends Error {} }));
 vi.mock('../src/core/config.js', () => ({ loadConfig: backend.legacy }));
 import { cmdResources } from '../src/cli/resources.js';
 const directory = "/private/owner's profiles/codex-a";
@@ -11,6 +15,8 @@ beforeEach(() => {
   vi.resetAllMocks(); output = vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
   backend.prepare.mockImplementation((options) => ({ ...options, status: 'prepared', authentication: 'not-checked',
     commandPath: `${directory}/command.json`, loginCommand: ['/private/node', `${directory}/launcher.mjs`, 'login'] }));
+  backend.upgradeIdentity.mockImplementation((options) => ({ ...options, provider: 'codex', status: options.dryRun ? 'would-upgrade' : 'upgraded',
+    authentication: 'not-checked', launcherPath: `${directory}/launcher.mjs`, backupPath: null, manifestBackupPath: null }));
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,5 +54,22 @@ describe('native profile preparation CLI', () => {
     backend.prepare.mockImplementation(() => { throw new Error('PRIVATE credential path'); });
     expect(await cmdResources([...args, '--json'])).toBe(1); expect(backend.prepare).toHaveBeenCalledTimes(1);
     expect(output.mock.calls[0]![0]).toContain('partial files'); expect(output.mock.calls[0]![0]).not.toContain('PRIVATE');
+  });
+  it('reports the specific refused prepare check, such as an install symlink and its real path', async () => {
+    const reason = 'Invalid native profile executable: it is a symlink; pass its real path: /private/lib/native.js';
+    backend.prepare.mockImplementation(() => { throw new backend.PrepareError(reason); });
+    expect(await cmdResources([...args, '--json'])).toBe(1); expect(JSON.parse(output.mock.calls[0]![0])).toEqual({ error: reason });
+  });
+  it.each([[['prepare'], true], [['prepare', '--json'], false]])('prints a one-line prepare usage for missing arguments %j', async (input, human) => {
+    const error = vi.mocked(console.error);
+    expect(await cmdResources(['profile', ...input])).toBe(2); expect(backend.prepare).not.toHaveBeenCalled();
+    const text = human ? error.mock.calls.map((call) => String(call[0])).join('\n') : JSON.parse(output.mock.calls[0]![0]).usage;
+    expect(text).toContain('usage: ashlr resources profile prepare --provider codex|claude|grok --directory NEW_ABS --executable ABS [--json]');
+  });
+  it('routes explicit identity upgrade and dry run without invoking preparation', async () => {
+    expect(await cmdResources(['profile', 'upgrade-identity', '--directory', directory, '--dry-run', '--json'])).toBe(0);
+    expect(backend.upgradeIdentity).toHaveBeenCalledWith({ directory, dryRun: true });
+    expect(JSON.parse(output.mock.calls[0]![0])).toMatchObject({ status: 'would-upgrade', authentication: 'not-checked' });
+    expect(backend.prepare).not.toHaveBeenCalled();
   });
 });

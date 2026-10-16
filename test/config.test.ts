@@ -224,23 +224,28 @@ describe('defaultConfig', () => {
     expect(cfg.tools).not.toBeNull();
   });
 
-  it('keepers include expected Desktop top-level names', () => {
+  it('keepers protect the github folder and are all strings', () => {
     const cfg = defaultConfig();
-    // Per the spec, known keepers include things like "github", "ASHLRAI", "Keys & Recovery" etc.
-    // We only assert that keepers is non-empty and contains strings.
+    expect(cfg.keepers).toContain('github');
     expect(cfg.keepers.every(k => typeof k === 'string')).toBe(true);
   });
 
-  it('categories map contains expected github sub-categories', () => {
+  it('categories map contains the generic github sub-categories', () => {
     const cfg = defaultConfig();
     const keys = Object.keys(cfg.categories);
-    // The config should seed the known Desktop github categories
-    const expectedCategories = [
-      'dev-tools', 'side-projects', 'professional-tools',
-      'artist-encyclopedias', 'client-engagements', 'forks', 'ashlrai',
-    ];
-    for (const cat of expectedCategories) {
+    for (const cat of ['dev-tools', 'side-projects', 'professional-tools', 'forks']) {
       expect(keys).toContain(cat);
+    }
+  });
+
+  it('ships no personal file, folder or client names to new installs', () => {
+    // defaultConfig() is written verbatim into every fresh ~/.ashlr/config.json.
+    const text = JSON.stringify(defaultConfig());
+    for (const personal of [
+      'Rent Application', 'James Madison', 'OneDrive', 'Evero', 'Keys & Recovery',
+      'rde-other', 'tts agents', 'ASHLRAI', 'artist-encyclopedias', 'client-engagements',
+    ]) {
+      expect(text).not.toContain(personal);
     }
   });
 

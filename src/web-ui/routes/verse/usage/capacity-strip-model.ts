@@ -26,6 +26,7 @@ import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import { ENGINE_MONOGRAM } from '../../../../core/verse/workbench-types.js';
 import type { VerseEngine, VerseSeat } from '../../../data/api-types.js';
 import type { ResourceLastKnownUsage } from '../../../../core/resources/reading-cache-types.js';
+import type { VerseClaudeQuotaReadReason } from '../../../../core/verse/types.js';
 import { resourceCreditHistory, resourceUsageHistory } from '../resources/resource-usage-history.js';
 import { buildBudgetRows, STATUS_WORDS, type BudgetSeatStatus } from '../budget/budget-model.js';
 import { relativePhrase } from '../context/context-model.js';
@@ -99,18 +100,29 @@ export interface CapacityRow {
   creditSpendControlReached?: boolean | null;
   creditBalance?: string | null;
   creditState?: 'available' | 'held' | 'none' | 'unknown';
+  /** Original native credit observation and deadline, independent of quota resets. */
+  creditObservedAt?: string | null;
+  creditsExpiresAt?: string | null;
   reserve: CapacityReserve | null;
   notes: string[];
+  /** Reviewed Claude native-check code; only relevant while its usage meter is absent. */
+  quotaReadReason?: VerseClaudeQuotaReadReason | null;
   /** For the collapsed local row: how many local seats it stands for. */
   localCount: number;
   /** When this seat was last checked (health sweep, else the usage reading), ISO; null when never. */
   checkedAt: string | null;
+  /** Usage observation time; a later connection check must never replace it. */
+  usageObservedAt?: string | null;
+  /** Connection-only check time, independent of usage and dispatch readiness. */
+  connectionCheckedAt?: string | null;
   /** The instant a spent seat becomes usable again (ISO), when one is known. */
   resetAt: string | null;
   /** The account is signed out — by the health sweep or by its own capacity record. */
   signedOut: boolean;
   /** A verified, still-fresh window retained only for display after a failed check. */
   lastReading?: boolean;
+  quotaCurrent?: boolean;
+  quotaExpiresAt?: string | null;
   /** Original account-checked historical display; excluded from windows, status and headroom. */
   historicalUsage?: ResourceLastKnownUsage | null;
   historicalCredits?: ResourceLastKnownUsage['creditHistory'] | null;
@@ -224,6 +236,7 @@ function seatRow(
   }
   const report = health.get(seat.id);
   const connection = connectionOf(report, now);
+  const connectionCheckedAt = parseable(report?.checkedAt) ? report!.checkedAt : null;
   // A seat A2 found signed out or out of usage cannot run a turn, whatever
   // its last window reading says (the engine's readiness gate refuses it —
   // seat-readiness.ts SEAT_BLOCKING_CONNECTIONS). Counting it "usable"
@@ -247,14 +260,23 @@ function seatRow(
     creditBalance: view.creditBalance ?? null,
     creditState: view.creditState ?? 'unknown',
     creditSpendControlReached: view.creditSpendControlReached ?? null,
+    creditObservedAt: seat.engine === 'codex' && parseable(seat.capacity?.observedAt) ? seat.capacity!.observedAt : null,
+    creditsExpiresAt: seat.engine === 'codex' && parseable(seat.capacity?.creditsExpiresAt) ? seat.capacity!.creditsExpiresAt! : null,
     reserve: reserveOf(budget.get(seat.id)),
     notes: [...view.notes],
+    quotaCurrent: view.quotaCurrent,
+    quotaExpiresAt: view.quotaExpiresAt,
+    quotaReadReason: windows.length === 0 && seat.engine === 'claude' ? seat.capacity?.quotaReadReason ?? null : null,
     localCount: 1,
-    checkedAt: parseable(report?.checkedAt) ? report!.checkedAt : parseable(view.observedAt) ? view.observedAt : null,
+    checkedAt: connectionCheckedAt ?? (parseable(view.observedAt) ? view.observedAt : null),
+    usageObservedAt: view.kind !== 'subscription' ? null : view.extended
+      ? parseable(seat.capacity?.observedAt) ? seat.capacity!.observedAt : null
+      : parseable(view.observedAt) ? view.observedAt : null,
+    connectionCheckedAt,
     // The LATEST reset among ALL the spent windows (not only the ones this row
     // has room to draw) — seat-subscription `seatReopensAt`, which Fleet's
     // "eligible again" and the health banner agree with.
-    resetAt: seatReopensAt(view, report?.resetAt),
+    resetAt: view.quotaCurrent === false ? null : seatReopensAt(view, report?.resetAt),
     signedOut: connection?.connection === 'signed-out' || seat.capacity?.usability === 'signed-out',
     lastReading: seat.health.state === 'degraded' && seat.capacity?.usability === 'unknown' && windows.length > 0,
   };
@@ -267,6 +289,7 @@ function collapsedLocal(seats: readonly VerseSeat[], health: ReadonlyMap<string,
   const cls: SeatCapacityClass = ready > 0 ? 'ready' : blocked === rows.length ? 'blocked' : 'unread';
   // One runtime behind every tag: the first report that says anything speaks for it.
   const report = seats.map((s) => health.get(s.id)).find((r) => r !== undefined);
+  const connectionCheckedAt = parseable(report?.checkedAt) ? report!.checkedAt : null;
   const count = seats.length;
   return {
     seatId: 'local',
@@ -288,10 +311,10 @@ function collapsedLocal(seats: readonly VerseSeat[], health: ReadonlyMap<string,
     reserve: null,
     notes: [],
     localCount: count,
-    checkedAt: parseable(report?.checkedAt)
-      ? report!.checkedAt
-      : rows.map((r) => r.observedAt).filter(parseable).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null,
+    checkedAt: connectionCheckedAt ?? rows.map((r) => r.observedAt).filter(parseable).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null,
     resetAt: null,
+    usageObservedAt: null,
+    connectionCheckedAt,
     signedOut: false,
   };
 }
@@ -454,7 +477,7 @@ export function buildCapacityRows(seats: readonly VerseSeat[], inputs: CapacityI
 
 /** Current subscription usage evidence, independent of connection and admission. */
 export function hasCurrentUsage(row: CapacityRow): boolean {
-  return row.kind === 'subscription' && row.cls !== 'unread' && !row.signedOut && !row.lastReading
+  return row.kind === 'subscription' && row.cls !== 'unread' && row.quotaCurrent !== false && !row.signedOut && !row.lastReading
     && row.windows.some(w => w.usedPercent !== null || w.limitReached);
 }
 
@@ -484,7 +507,7 @@ export function capacityHeadline(rows: readonly CapacityRow[]): string {
 export function scarcestSeat(rows: readonly CapacityRow[]): CapacityRow | null {
   let best: { row: CapacityRow; score: number } | null = null;
   for (const row of rows) {
-    if (row.kind !== 'subscription') continue;
+    if (!hasCurrentUsage(row)) continue;
     const binding = row.windows.find((w) => w.binding) ?? null;
     let score: number;
     if (row.cls === 'blocked' || binding?.limitReached) score = 300;
@@ -508,8 +531,9 @@ export function capacityRowFor(seats: readonly VerseSeat[], seatId: string, inpu
 export { percentText };
 
 /** The accessible sentence for one window bar. */
-export function windowSentence(row: Pick<CapacityRow, 'label'>, w: CapacityWindowRow, reservePercent: number | null): string {
+export function windowSentence(row: Pick<CapacityRow, 'label' | 'quotaCurrent'>, w: CapacityWindowRow, reservePercent: number | null): string {
   const head = `${row.label} ${w.label}`;
+  if (row.quotaCurrent === false) return `${head}: ${w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : `${percentText(w.usedPercent)} used`} · last reading; current usage and resets unconfirmed`;
   const reset = w.resetText === null ? '' : `, ${w.resetText}`;
   if (w.limitReached) return `${head}: limit reached${reset}`;
   if (w.usedPercent === null) return `${head}: no reading${reset}`;
@@ -636,6 +660,7 @@ export function accountStatus(row: CapacityRow, opts: AccountStatusOptions): Acc
     if (row.creditSpendControlReached === true) return make('unavailable', 'Credits held', 'native spend control reached · balance is separate', { coversConnection: true });
     return make('low', 'Credits available', binding !== null && isSpentWindow(binding) ? 'subscription window spent · autonomous credit spending is not admitted' : 'native credit balance · separate from subscription usage', { coversConnection: c === 'exhausted' });
   }
+  if (row.quotaCurrent === false) return make('not-checked', 'Usage unconfirmed', row.summary);
   if (spent) {
     const when = describeResetAt(row.resetAt, now);
     const ahead = row.resetAt !== null && Date.parse(row.resetAt) > now;

@@ -29,6 +29,7 @@ import { describeContextError, useTokenGate } from '../context/use-token-gate.js
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { acuLevel, devinConsumptionEvidence, devinHeadline, devinModelsLines, devinReadinessRow, devinSelfIdentityEvidence, devinTaskDiagnosticEvidence, devinUsageEvidence, DEVIN_USAGE_LINK, formatAcu, formatConsumptionAcu, safeDevinHref, waitingTasks } from '../devin/devin-model.js';
 import { DEVIN_POLL_MS, devinQuery, messageDevinTask, refreshDevinConsumption } from '../devin/devin-queries.js';
+import { DevinDashboardReader } from '../devin/DevinDashboardReader.js';
 import { requestGuarded } from '../shell/guarded-action.js';
 import { ReadinessLines } from './ReadinessLines.js';
 import { ResourceFacts } from './ResourceFacts.js';
@@ -189,12 +190,16 @@ export function DevinResource({ facts = null, bases }: DevinResourceProps = {}) 
         <p className={styles.fine}>
           {identity ? 'Cached Devin API /self observation.' : 'Current account identity is unconfirmed.'}
         </p>
+        {status.attribution?.kind === 'human-seat' ? <p className={styles.fine}>Future cloud sessions request attribution to {status.attribution.email}. Devin must permit impersonation and confirm the user on each session; this is not a balance reading.</p>
+          : status.attribution?.kind === 'service-user' ? <p className={styles.fine}>Future cloud sessions are attributed to the service account; your personal allowance is unverified. To select a direct member, run <code>ashlr devin seat --email &lt;address&gt;</code> on this Mac.</p>
+            : status.attribution?.kind === 'personal' ? <p className={styles.fine}>Future cloud sessions use the personal token owner.</p> : null}
       </section> : null}
       {status.connected ? <section aria-label="Devin subscription and purchased credits">
         <p className={styles.creditsHead}><span>Weekly subscription allowance</span><span className={styles.pill} data-tone="neutral">not reported</span></p>
         <p className={styles.creditsHead}><span>On-demand credits</span><span className={styles.pill} data-tone="neutral">not reported</span></p>
         <p className={styles.fine}>Subscription-only spending is unverified. Check Devin for your allowance, reset and credit balance.</p>
       </section> : null}
+      {status.connected ? <DevinDashboardReader orgId={status.orgId} /> : null}
       {status.connected ? <section aria-label="Devin organization consumption">
         <p className={styles.creditsHead}><span className={styles.creditsAmount}>{consumption?.value ?? 'Consumption not reported by this server'}</span>
           <span className={styles.pill} data-tone="neutral">organization API</span></p>

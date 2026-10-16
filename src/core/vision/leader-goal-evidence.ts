@@ -20,6 +20,8 @@ export interface LeaderGoalItem {
   repo: string | null;
   milestonesDone: number;
   milestones: number;
+  /** Exact pending ids the Leader may use for goal-bound dispatch. */
+  pendingMilestones?: { id: string; title: string }[];
   updatedOn: string;
 }
 
@@ -69,6 +71,8 @@ export function buildLeaderGoalEvidence(read: GoalReadLike, preferences = resolv
       repo: g.project ? g.project.split(/[\\/]/).pop() ?? null : null,
       milestonesDone: g.milestones.filter((m) => m.status === 'done').length,
       milestones: g.milestones.length,
+      pendingMilestones: g.milestones.filter((m) => m.status === 'pending').slice(0, 4)
+        .map((m) => ({ id: m.id, title: cleanModelText(m.title, 100) ?? '' })),
       updatedOn: day(g.updatedAt),
     })),
   };

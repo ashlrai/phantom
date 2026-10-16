@@ -91,6 +91,24 @@ describe('local Leader binding', () => {
     expect(url).toBe(runtime.baseUrl + '/chat/completions'); expect(init.redirect).toBe('error');
     expect(init.headers).not.toHaveProperty('Authorization');
     expect(JSON.parse(String(init.body))).toMatchObject({ model: blob, max_tokens: 120, stream: true });
+    expect(JSON.parse(String(init.body))).not.toHaveProperty('chat_template_kwargs');
+  });
+  it('disables the pinned Qwen3.8 template thinking for Leader without changing other models', async () => {
+    const qwenManifest = join(home, '.ollama', 'models', 'manifests', 'registry.ollama.ai', 'library', 'qwen3.8', '27b-ctx64k');
+    mkdirSync(join(home, '.ollama', 'models', 'manifests', 'registry.ollama.ai', 'library', 'qwen3.8'), { recursive: true });
+    writeFileSync(qwenManifest, readFileSync(manifest));
+    const pinned = bindLocalLeaderModel(runtime, 'qwen3.8:27b-ctx64k', 65536);
+    expect(pinned).not.toBeNull();
+    const frame = `data: ${JSON.stringify({ model: blob, id: 'x'.repeat(256), object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { content: 'a' }, finish_reason: null }] })}\n\n`;
+    const stream = frame.repeat(3_000) + `data: ${JSON.stringify({ model: blob, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+    expect(Buffer.byteLength(stream)).toBeGreaterThan(1024 * 1024);
+    const fetch = vi.fn().mockResolvedValue(new Response(stream, { headers: { 'content-type': 'text/event-stream' } })); vi.stubGlobal('fetch', fetch);
+    const output = await llamaLeaderTransport(pinned!, cfg, { timeoutMs: 1000, maxOutputTokens: 3072 }, vi.fn().mockResolvedValue(runtime))('system', 'task');
+    expect(output).toHaveLength(3_000);
+    expect(JSON.parse(String((fetch.mock.calls[0] as [string, RequestInit])[1].body))).toMatchObject({
+      max_tokens: 3072, chat_template_kwargs: { enable_thinking: false },
+    });
   });
   it.each(['unknown', 'model', 'context', 'endpoint'])('holds %s refresh before inference', async kind => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);

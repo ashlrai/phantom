@@ -553,6 +553,8 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/RESIDENT-RUNTIME.md', 'docs/AUTHORITY.md', 'docs/STANDING-AUTHORITY.md',
       'docs/CLOUD.md', 'docs/LEADER.md', 'docs/DEVIN.md', 'docs/VERSE-CONTEXT.md',
       'docs/VERSE-BROWSER.md', 'docs/JEV-INTEGRATION.md', 'docs/COMPANIONS.md',
+      'docs/PROACTIVE-COORDINATION.md', 'docs/PROACTIVE-COORDINATION-BACKLOG.md',
+      'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     ]) {
       const source = readFileSync(join(REPO_ROOT, path), 'utf8');
       for (const canary of consumerCanaries) expect(source).not.toContain(canary);
@@ -582,6 +584,8 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/QUICKSTART.md',
       'docs/AUTOMATIC-OUTCOMES.md',
       'docs/VERSE.md',
+      'docs/PROACTIVE-COORDINATION.md',
+      'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/AUTONOMY-SETUP.md',
       'docs/RESIDENT-RUNTIME.md',
       'docs/AUTHORITY.md',
@@ -601,6 +605,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/UNIVERSE-RESEARCH.md',
       'docs/UNIVERSE-AUTONOMY-RESEARCH.md',
       'docs/RESOURCE-POOLS.md',
+      'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
       'docs/NORTH-STAR.md',
       'docs/ELITE-AGENT-EFFICIENCY.md',
       'docs/OPENAI-AGENTS-INTEGRATION.md',
@@ -637,6 +642,9 @@ describe('M454 pinned upstream routing challenge', () => {
       expect(packedPaths.length).toBeGreaterThan(0);
       expect(packedPaths).toContain('docs/AUTOMATIC-OUTCOMES.md');
       expect(packedPaths).toContain('docs/VERSE.md');
+      expect(packedPaths).toContain('docs/PROACTIVE-COORDINATION.md');
+      expect(packedPaths).toContain('docs/PROACTIVE-COORDINATION-BACKLOG.md');
+      expect(packedPaths).toContain('docs/RESOURCE-POOL-COMMISSIONING-CHECK.md');
       expect(packedPaths).toContain('docs/AUTONOMY-SETUP.md');
       expect(packedPaths).toContain('docs/RESIDENT-RUNTIME.md');
       expect(packedPaths).toContain('docs/AUTHORITY.md');

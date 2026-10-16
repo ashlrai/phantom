@@ -1704,7 +1704,25 @@ repaired or overwritten. A partial failure retains its leaf for inspection;
 never delete it automatically because a later login may have added credentials.
 
 The standalone launcher pins the selected native and Node executable paths and
-checks its original private directory identities. It uses `process.execve` to
+checks its original private directory identities. New macOS profiles additionally
+record the APFS volume UUID, directory inode and creation time, and preparation
+boot UUID in both a version-2 preparation manifest and the launcher. A device number may change after a reboot only when the stable
+volume and directory witnesses still match; any unavailable witness, replacement,
+permission change or device change during the preparation boot is refused.
+This adds a bounded local `df`/`diskutil`/`plutil` probe before native launch.
+Older profiles retain their original strict device and inode binding. Before
+their device changes, `ashlr resources profile upgrade-identity --directory
+<existing-profile> --dry-run` validates the old binding; repeat without
+`--dry-run` while that seat is idle to install the witness without reading
+native sign-in state. It saves `launcher.mjs.identity-prev` for inspection.
+It also saves `profile.json.identity-prev`; an interrupted publication refuses
+launch until the explicit upgrade verifies both backups and finishes the manifest.
+An already drifted profile cannot be upgraded: prepare a new private profile,
+sign in separately, verify the account and quota, then update the seat binding.
+Both files remain owner-managed and can be rewritten by the same macOS user;
+this witness detects replacement and accidental one-file edits under the private
+directory trust model, not a malicious owner with access to both files.
+The launcher uses `process.execve` to
 preserve PID, process group and stdio. A Node runtime supporting that API and a
 supported POSIX system are required; relocating/replacing state directories or
 removing the pinned runtime can invalidate the launcher. A native OS-level exec
@@ -2309,18 +2327,21 @@ quota windows and execution support:
 
 - Codex uses native account and rate-limit metadata. Unknown or expired windows
   never become zero usage. Monitoring alone does not supply admission observations.
-- Claude uses native `auth status --json` and, for the verified native version
-  2.1.257 only, its built-in noninteractive `/usage` command. Customizations,
+- Claude uses native `auth status --json` and, for the verified native versions
+  2.1.257 and 2.1.280, its built-in noninteractive `/usage` command. Customizations,
   tools and MCP are disabled; conversation persistence is disabled. This local
   command reports session, all-model weekly and recognized model-scoped windows
   without model inference. Unknown versions receive no slash command and remain
   auth-only. Identity is compared before/after the read and pinned across monitor
   cycles; raw identities and activity diagnostics never reach the browser.
-  **Native usage is display-only:** Claude floors percentages and can silently
-  fall back to cached usage. Hub therefore labels them approximate, leaves exact
-  reset timestamps null, preserves validated native reset text, and makes no
-  quota-freshness or network-health claim. A newly collected report is not proof
-  of freshly measured usage. Unsupported/incomplete output stays unknown.
+  **Legacy text is display-only:** 2.1.257 floors percentages and can silently
+  fall back to cached usage. Its reports stay approximate, with exact reset
+  timestamps null and no quota-freshness or network-health claim. Validated
+  2.1.280 structured reports can publish fresh quota windows and exact resets;
+  text fallback stays approximate and provides no fresh quota proof. Incomplete
+  or unsupported output stays unknown. Fresh usage alone
+  does not authorize dispatch. A subscription-only billing boundary additionally
+  requires verified extra usage disabled for that exact checked account.
 - Grok uses native ACP auth/billing metadata, with identity checked before and
   after billing. Cached authentication alone cannot establish live health. Missing
   billing configuration remains unknown. Grok has no Hub task execution adapter;
@@ -2400,13 +2421,14 @@ Account usage reported by the provider includes outside activity, not merely Hub
 work. Each window is evaluated separately; percentages are never summed across
 accounts or windows. Unknown or stale quota blocks subscription admission below
 100%, even if the pool previously allowed unknown quota. This currently means
-Claude's display-only native report cannot guarantee a reserved quota allowance.
+Claude's legacy cached text report cannot guarantee a reserved quota allowance;
+validated current structured windows are evaluated separately.
 
 The account view draws the saved ceiling as a reference on current, timestamped
 quota windows, with per-window percentage-point comparisons. It is not an account
 dispatch decision or a sum across subscriptions. Historical, unknown, reset-expired
-and native cached reports have no ceiling comparison. Claude's `/usage` reports
-are marked approximate and may be cached even when sign-in was just checked.
+and native cached reports have no ceiling comparison. Claude's legacy text
+reports are approximate and may be cached even when sign-in was just checked.
 
 The **Account reference summary** identifies the most-used window (including
 ties) and the smallest percentage-point margin below the saved ceiling. It uses
@@ -2557,6 +2579,14 @@ separate opt-in [Universe resource generation path](ASHLR-UNIVERSE.md#generate-c
 can use the shared pool for candidate responses; a benchmark does not enable it.
 
 ## Failure and recovery
+
+For a pool whose old launcher identities cannot establish continuity, use
+`phm resources pool commission check --request /absolute/private/request.json --json`
+to prepare an inert, content-bound new-roster plan. The check preserves policy,
+history and unresolved evidence; it does not apply a migration or contact providers.
+See [native pool commissioning](RESOURCE-POOL-COMMISSIONING-CHECK.md)
+for reviewed apply/resume recovery, refusal cases and separate account, quota
+and billing qualifications. Migration preserves existing allocation and exclusions.
 
 SIGINT/SIGTERM abort the owned request/process and await bounded cleanup. Native
 process ownership is limited to the existing subprocess runner's process-group

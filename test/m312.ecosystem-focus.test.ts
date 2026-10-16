@@ -20,6 +20,8 @@ describe('M312 — strategic ecosystem focus', () => {
       'ashlr-pulse',
       'ashlrcode',
       'ashlr-workbench',
+      'lexicon',
+      'locus',
     ]);
     expect(focus.externalCoreCandidates).toContainEqual(expect.objectContaining({
       id: 'ashlr-mux',

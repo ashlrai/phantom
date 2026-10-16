@@ -74,8 +74,20 @@ import { resolveLlamaServerBaseUrl } from '../local-runtime/llama/config.js';
 import type { LlamaRuntimeSnapshot } from '../local-runtime/llama/types.js';
 // LOCAL-ONLY is one predicate with one resolution, owned by the policy lane.
 // This lane consumes it; it never re-derives "are we local" from its own key.
-import { localOnlyEnabled, resolveLocalOnlyMode, type LocalOnlyMode } from '../policy/local-only.js';
+import {
+  engineLocality,
+  engineMeteredness,
+  isLoopbackEndpoint,
+  localOnlyEnabled,
+  resolveLocalOnlyMode,
+  type LocalOnlyMode,
+} from '../policy/local-only.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
+
+/** "1 slot" / "4 slots" — kept local so no new module joins the Tier-1 import closure. */
+function slotCount(n: number): string {
+  return `${n} slot${n === 1 ? '' : 's'}`;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -233,10 +245,10 @@ function utcDay(nowMs: number): string {
  */
 export interface LocalFleetSettings {
   /**
-   * True when the fleet is armed. This is NOT a switch of its own: it is
-   * `localOnlyEnabled(cfg)` from the local-only policy. A second mechanism for
-   * "are we local right now" is exactly the bypass that policy exists to make
-   * impossible, so this lane consumes the predicate and adds nothing beside it.
+   * Local-only mode keeps its existing fleet behavior. In mixed mode the
+   * operator must explicitly allowlist llama-server; a reachable process by
+   * itself never grants dispatch. This does not change local-only's refusal of
+   * cloud engines or any standing grant's lane and seat checks.
    */
   readonly enabled: boolean;
   /** Engine local work is dispatched through. Always the llama-server engine. */
@@ -256,18 +268,18 @@ export interface LocalFleetSettings {
    * A dollar cap cannot bound free work; this is the knob that actually can.
    */
   readonly maxDispatchesPerDay: number | null;
-  /** How local-only resolved, carried verbatim from the policy. */
-  readonly source: LocalOnlyMode['source'];
-  /** The policy's own explanation, so no surface has to invent one. */
+  /** The opt-in source; local-only's own source is carried verbatim. */
+  readonly source: LocalOnlyMode['source'] | 'allowed-backend';
+  /** Why this fleet is (or is not) armed. */
   readonly detail: string;
 }
 
 /**
  * Read local-fleet settings.
  *
- * `enabled` and `source` come from the local-only policy — this lane never
- * decides whether the machine is local-only, it only decides how many agents
- * to run once it is.
+ * Local-only remains a strict cloud-refusal policy. An explicit llama-server
+ * backend is a separate mixed-mode producer opt-in; it cannot arise from a
+ * health probe or a default backend list.
  *
  * The remaining knobs live under `cfg.daemon.localFleet` and are read through a
  * narrow validated cast rather than a `types.ts` edit — the same pattern
@@ -283,13 +295,14 @@ export function readLocalFleetSettings(cfg: AshlrConfig): LocalFleetSettings {
   const daemon = plainObject((cfg as unknown as Record<string, unknown>)['daemon']);
   const raw = plainObject(daemon?.['localFleet']) ?? {};
   const mode = resolveLocalOnlyMode(cfg);
+  const mixedOptIn = explicitlyAllowsLlamaServer(cfg);
 
   const model = typeof raw['model'] === 'string' && raw['model'].trim()
     ? raw['model'].trim()
     : null;
 
   return {
-    enabled: mode.enabled,
+    enabled: mode.enabled || mixedOptIn,
     engine: LOCAL_FLEET_ENGINE,
     baseUrl: resolveLlamaServerBaseUrl(cfg),
     model,
@@ -308,15 +321,26 @@ export function readLocalFleetSettings(cfg: AshlrConfig): LocalFleetSettings {
     maxDispatchesPerDay: raw['maxDispatchesPerDay'] === null
       ? null
       : positiveInt(raw['maxDispatchesPerDay']) ?? DEFAULT_LOCAL_FLEET_MAX_DISPATCHES_PER_DAY,
-    source: mode.source,
-    detail: text(mode.detail, 240),
+    source: mode.enabled ? mode.source : mixedOptIn ? 'allowed-backend' : mode.source,
+    detail: text(mode.enabled ? mode.detail : mixedOptIn
+      ? 'llama-server fleet is explicitly allowed in mixed mode; cloud engines keep their separate authority and seat gates.'
+      : mode.detail, 240),
   };
 }
 
-/** True when the local-only fleet is armed for this config. Never throws. */
+function explicitlyAllowsLlamaServer(cfg: AshlrConfig): boolean {
+  const allowed = cfg.foundry?.allowedBackends;
+  return Array.isArray(allowed)
+    && allowed.includes(LOCAL_FLEET_ENGINE)
+    && isLoopbackEndpoint(resolveLlamaServerBaseUrl(cfg))
+    && engineLocality(LOCAL_FLEET_ENGINE, cfg) === 'local'
+    && engineMeteredness(LOCAL_FLEET_ENGINE, cfg) === 'free';
+}
+
+/** True when the llama-server fleet is armed for this config. Never throws. */
 export function localFleetEnabled(cfg: AshlrConfig): boolean {
   try {
-    return localOnlyEnabled(cfg);
+    return localOnlyEnabled(cfg) || explicitlyAllowsLlamaServer(cfg);
   } catch {
     return false;
   }
@@ -415,7 +439,7 @@ export function capacityFromRuntimeSnapshot(
   const detail = snapshot.lastError
     ? text(snapshot.lastError)
     : state === 'up' && limit !== null
-      ? `llama-server up with ${limit} slot(s) (source=${snapshot.slots.source})`
+      ? `llama-server up with ${slotCount(limit)} (source=${snapshot.slots.source})`
       : state === 'up'
         ? 'llama-server up but did not report a slot count'
         : `llama-server ${snapshot.state}`;
@@ -600,7 +624,7 @@ function deriveUncappedLocalFleetConcurrency(
       reason:
         'this engine holds the process-wide outward mutation fence for its whole run, so ' +
         'exactly one sandboxed agent can execute at a time machine-wide' +
-        (slots > 0 ? ` — the runtime's ${slots} slot(s) cannot be used` : ''),
+        (slots > 0 ? ` — the runtime's ${slotCount(slots)} cannot be used` : ''),
     };
   }
 
@@ -626,7 +650,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: null,
       effective: ceiling,
       limiter: 'serving-slots',
-      reason: `derived from the serving runtime's ${ceiling} slot(s); no operator cap configured`,
+      reason: `derived from the serving runtime's ${slotCount(ceiling)}; no operator cap configured`,
     };
   }
   if (configured < ceiling) {
@@ -635,7 +659,7 @@ function deriveUncappedLocalFleetConcurrency(
       configuredLocal: configured,
       effective: configured,
       limiter: 'config',
-      reason: `operator cap ${configured} is below the runtime's ${ceiling} slot(s)`,
+      reason: `operator cap ${configured} is below the runtime's ${slotCount(ceiling)}`,
     };
   }
   return {
@@ -644,7 +668,7 @@ function deriveUncappedLocalFleetConcurrency(
     effective: ceiling,
     limiter: 'serving-slots',
     reason: configured > ceiling
-      ? `operator cap ${configured} exceeds the runtime's ${ceiling} slot(s) and is NOT honoured — ` +
+      ? `operator cap ${configured} exceeds the runtime's ${slotCount(ceiling)} and is NOT honoured — ` +
         'extra agents would queue inside llama-server, not run'
       : `operator cap ${configured} equals the runtime's slot count`,
   };
@@ -1572,7 +1596,7 @@ export function projectFleetSnapshot(
       ' — the daemon that wrote it may no longer be running',
     );
   }
-  if (!snapshot.enabled) notes.push('local-only is off; this fleet is not armed');
+  if (!snapshot.enabled) notes.push('llama-server fleet is not armed by local-only mode or an explicit backend allowlist');
   if (snapshot.concurrency.limiter === 'fail-closed') {
     notes.push(`concurrency failed closed to 1: ${snapshot.concurrency.reason}`);
   }

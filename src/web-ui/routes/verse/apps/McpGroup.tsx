@@ -11,7 +11,7 @@
  *   - the unenrolled-folder footgun for Codex/Grok seats is stated;
  *   - an env VALUE is never displayed (the disclosure forces '<set>').
  */
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { IconChevronDown, IconChevronRight, IconPlus } from '../../../components/primitives/icons.js';
 import { Input } from '../../../components/primitives/Input.js';
@@ -107,6 +107,13 @@ function AddServerSheet({ open, snapshot, run, onClose, onAdded }: {
   onClose: () => void;
   onAdded: (message: string) => void;
 }) {
+  const active = useRef(true);
+  const operation = useRef(false);
+  const issuedApply = useRef(false);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   const titleId = useId();
   const targets = mcpTargets(snapshot);
   const [target, setTarget] = useState('hub');
@@ -118,66 +125,69 @@ function AddServerSheet({ open, snapshot, run, onClose, onAdded }: {
   const [busy, setBusy] = useState(false);
   const [proposal, setProposal] = useState<{ input: McpServerInput; target: string; value: Proposal } | null>(null);
 
-  const reset = () => {
-    setProposal(null);
-    setError(null);
-    setBusy(false);
+  const dismiss = () => {
+    // Closing a form clears its drafts, but cannot undo an already sent Apply.
+    active.current = false;
+    if (issuedApply.current) onAdded('The MCP server update is still running. Closing this form does not cancel it.');
+    onClose();
   };
 
   const review = async (event: FormEvent) => {
     event.preventDefault();
+    if (operation.current || !active.current) return;
     setError(null);
     const parsedEnv = parseEnvLines(env);
-    if (!parsedEnv.ok) {
-      setError(parsedEnv.error);
-      return;
-    }
+    if (!parsedEnv.ok) { setError(parsedEnv.error); return; }
     const input: McpServerInput = {
-      name: name.trim(),
-      command: command.trim(),
-      args: splitArgs(args),
+      name: name.trim(), command: command.trim(), args: splitArgs(args),
       ...(Object.keys(parsedEnv.env).length > 0 ? { env: parsedEnv.env } : {}),
     };
+    operation.current = true;
     setBusy(true);
     try {
-      const raw = await run('Review an MCP server before adding it', () => proposeMcpServer(target, input));
-      if (raw === null) return;
+      // The token gate can park this action. Dismissal revokes that parked
+      // Review before it sends any of the now-cleared sensitive draft.
+      const raw = await run('Review an MCP server before adding it', () => active.current ? proposeMcpServer(target, input) : Promise.resolve(null));
+      if (!active.current || raw === null) return;
       const value = narrowProposal(raw);
       if (!value) setError('The server answered with something that is not a proposal.');
       else setProposal({ input, target, value });
-    } catch (err) {
-      setError(describe(err));
-    } finally {
-      setBusy(false);
-    }
+    } catch (err) { if (active.current) setError(describe(err)); }
+    finally { operation.current = false; if (active.current) setBusy(false); }
   };
 
   const apply = async () => {
-    if (!proposal) return;
+    if (!proposal || operation.current || !active.current) return;
+    operation.current = true;
     setBusy(true);
     setError(null);
     try {
-      const done = await run('Add an MCP server', () => applyMcpServer(proposal.target, proposal.input, proposal.value.digest));
+      const done = await run('Add an MCP server', () => {
+        if (!active.current) return Promise.resolve(null);
+        issuedApply.current = true;
+        return applyMcpServer(proposal.target, proposal.input, proposal.value.digest).then(result => ({ result }));
+      });
       if (done === null) return;
+      issuedApply.current = false;
+      if (!done.result || typeof done.result !== 'object' || (done.result as { ok?: unknown }).ok !== true) {
+        throw new Error('The server did not confirm the update.');
+      }
+      // An issued write still completes after dismissal. Report it to the
+      // page, but never close/overwrite a newer form that has since opened.
       onAdded(`${proposal.value.action === 'replace' ? 'Replaced' : 'Added'} ${proposal.value.server.name} in ${proposal.value.targetRef}.`);
-      setName('');
-      setCommand('');
-      setArgs('');
-      setEnv('');
-      reset();
-      onClose();
+      if (active.current) dismiss();
     } catch (err) {
-      setError(describe(err));
-    } finally {
-      setBusy(false);
-    }
+      issuedApply.current = false;
+      if (active.current) setError(`${describe(err)} Refresh the configuration before trying again.`);
+      else onAdded('The MCP server update did not return confirmation. Refresh the configuration before trying again.');
+    } finally { operation.current = false; if (active.current) setBusy(false); }
   };
 
   const chosen = targets.find((t) => t.id === target);
   return (
     <Sheet
       open={open}
-      onClose={() => { reset(); onClose(); }}
+      onClose={dismiss}
       titleId={titleId}
       title={proposal ? 'Review before adding' : 'Add an MCP server'}
       description="An MCP server is a program that runs with the agent’s permissions. Nothing is written until you confirm what you read."
@@ -199,7 +209,7 @@ function AddServerSheet({ open, snapshot, run, onClose, onAdded }: {
           </label>
           {error ? <p className={styles.error} role="alert">{error}</p> : null}
           <div className={styles.dialogActions}>
-            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="button" variant="ghost" onClick={dismiss}>Cancel</Button>
             <Button type="submit" variant="primary" busy={busy} disabled={name.trim() === '' || command.trim() === '' || chosen?.disabledReason != null}>
               Review
             </Button>
@@ -220,7 +230,7 @@ function AddServerSheet({ open, snapshot, run, onClose, onAdded }: {
           {proposal.value.note ? <p className={styles.hint}>{proposal.value.note}</p> : null}
           {error ? <p className={styles.error} role="alert">{error}</p> : null}
           <div className={styles.dialogActions}>
-            <Button variant="ghost" onClick={() => setProposal(null)}>Back</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setProposal(null)}>Back</Button>
             <Button variant="primary" busy={busy} onClick={() => void apply()}>
               {proposal.value.action === 'replace' ? 'Replace server' : 'Add server'}
             </Button>
@@ -249,6 +259,9 @@ export function McpGroup({
   onAdded: (message: string) => void;
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const reportAdded = (message: string) => { if (mounted.current) onAdded(message); };
   const [adding, setAdding] = useState(false);
   const rows = snapshot ? mcpSeatRows(snapshot) : [];
   return (
@@ -298,7 +311,7 @@ export function McpGroup({
             ? <p key={code}>{SCOPE_SETUP_COPY[code]}</p> : null)}
         </div>
       ) : null}
-      <AddServerSheet open={adding} snapshot={snapshot} run={run} onClose={() => setAdding(false)} onAdded={onAdded} />
+      {adding ? <AddServerSheet open snapshot={snapshot} run={run} onClose={() => setAdding(false)} onAdded={reportAdded} /> : null}
     </AppGroup>
   );
 }

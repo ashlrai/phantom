@@ -275,12 +275,27 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
   );
   const matchKeys = useMemo(() => new Set(matches.map((m) => m.turnKey)), [matches]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = useCallback((behavior: 'instant' | 'smooth' = 'instant') => {
     const node = scroller.current;
     if (!node) return;
-    // jsdom has no Element.scrollTo; fall back to the property for tests.
-    if (typeof node.scrollTo === 'function') node.scrollTo({ top: node.scrollHeight, behavior });
-    else node.scrollTop = node.scrollHeight;
+    // jsdom has no Element.scrollTo (and no smooth scrolling); the property is enough there.
+    if (typeof node.scrollTo !== 'function') {
+      node.scrollTop = node.scrollHeight;
+      return;
+    }
+    // 'instant', not 'auto': `.transcript` is `scroll-behavior: smooth`, so an
+    // 'auto' jump animated. Opening a 300-turn chat then swept ~100k px from
+    // the top while the turn window rendered ~175 turns in full on the way
+    // down, and a streamed reply chased its own tail.
+    try {
+      node.scrollTo({ top: node.scrollHeight, behavior });
+    } catch {
+      // An engine without the 'instant' keyword rejects the dictionary: same jump, inline override.
+      const previous = node.style.scrollBehavior;
+      node.style.scrollBehavior = 'auto';
+      node.scrollTop = node.scrollHeight;
+      node.style.scrollBehavior = previous;
+    }
   }, []);
 
   function onScroll() {
