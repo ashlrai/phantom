@@ -28,12 +28,16 @@ const USAGE =
   '    --watch / --continuous   Run continuously (Ctrl-C to stop)\n' +
   '    --dry-run                Show what WOULD advance; create no proposals\n' +
   '    --allow-cloud            Allow cloud engines for planning and execution\n' +
-  '    --goal <id>              Signed one-shot target (no watch/cloud/fallback)';
+  '    --goal <id>              Signed one-shot target (no watch/cloud/fallback)\n' +
+  '\n' +
+  '  Subcommands:\n' +
+  '    leases [clear <task-id>] List or clear simple-conductor leases needing reconciliation';
 
 export async function cmdLoop(args: string[]): Promise<number> {
   const tty = process.stdout.isTTY === true;
   const col = makeColors(tty);
 
+  if (args[0] === 'leases') return (await import('./loop-leases.js')).cmdLoopLeases(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     console.log(USAGE);
     return 0;
