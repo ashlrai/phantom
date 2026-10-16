@@ -9,7 +9,7 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { acquireProposalMutationLock, releaseProposalMutationLock, type ProposalMutationLock } from '../inbox/proposal-mutation-lock.js';
 import { parseEngineeringAssignmentV1, type EngineeringAssignmentV1 } from './engineering-assignment.js';
 import { assertNoCortexProjectConfig, cortexCodexConfig } from './codex-policy.js';
-import { assertCortexAdmission, inspectCortexAdmission, withCortexForegroundAdmission, type CortexAdmissionToken } from './admission.js';
+import { inspectCortexAdmission, withCortexForegroundAdmission, type CortexAdmissionToken } from './admission.js';
 import type { AshlrConfig, Proposal, RunOptions, RunState } from '../types.js';
 
 export { parseCortexBridgeConfig, readCortexBridgeConfig } from './config.js';
@@ -199,7 +199,9 @@ export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: Brid
       verification: { status: 'passed', commands: verification.commands }, artifacts };
     const text = JSON.stringify({ outcome: receipt.summary, engineeringReceipt: receipt }); save('receipt.json', `${text}\n`);
     if (proposalLock) { releaseProposalMutationLock(proposalLock); proposalLock = null; }
-    assertCortexAdmission(repo, authority.verifier, 'verify');
+    // Stop may have been armed after verification persisted its evidence.
+    // Recheck the full policy, not only the private admission, before publishing.
+    (await import('../sandbox/policy.js')).assertMayExecuteWithCortexAdmission(repo, { cortexAdmission: authority.verifier }, 'verify');
     const finish = await post('finish', { runId: assignment.runId, ok: true, text });
     requireFact(finish.status === 'succeeded' && id(finish.proposalId), 'Cortex did not confirm an Approval Inbox proposal');
     save('accepted.json', `${JSON.stringify(finish)}\n`);

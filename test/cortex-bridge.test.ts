@@ -10,11 +10,11 @@ import { buildEngineCommand } from '../src/core/run/engines.js';
 import { engineeringAssignmentDigest, engineeringAssignmentSignature, parseEngineeringAssignmentV1, type EngineeringAssignmentV1 } from '../src/core/cortex/engineering-assignment.js';
 import type { AshlrConfig, Proposal, RunState } from '../src/core/types.js';
 import { admitCortexConfiguration, revokeCortexConfiguration } from '../src/core/cortex/admission.js';
+import { setKill } from '../src/core/sandbox/policy.js';
 
-vi.mock('../src/core/sandbox/policy.js', () => ({ assertMayMutate: vi.fn(), assertMayExecuteWithCortexAdmission: vi.fn() }));
 const roots: string[] = [];
 const diff = 'diff --git a/feature.txt b/feature.txt\nnew file mode 100644\nindex 0000000..ce01362\n--- /dev/null\n+++ b/feature.txt\n@@ -0,0 +1 @@\n+hello\n';
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+afterEach(() => { setKill(false); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.unstubAllEnvs(); });
 function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cortex-bridge-'))); roots.push(root); chmodSync(root, 0o700);
   const repo = join(root, 'repo'); mkdirSync(repo); const store = join(root, 'private'); mkdirSync(store, { mode: 0o700 });
@@ -117,6 +117,19 @@ describe('Cortex foreground proposal bridge', () => {
     const f = fixture(); f.host.verify.mockResolvedValue({ passed: true, commands: ['npm test'], baseHead: 'f'.repeat(40) });
     await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('signed source');
     expect(f.ops.filter(v => v.op === 'finish').map(v => v.ok)).toEqual([false]);
+  });
+  it('does not publish a successful receipt when Stop is armed after verification', async () => {
+    const f = fixture();
+    f.host.verify.mockImplementation(async () => {
+      f.proposal.verifyResult = { passed: true, diffHash: f.proposal.diffHash, baseHead: f.commit };
+      setKill(true);
+      return { passed: true, commands: ['npm test'], baseHead: f.commit };
+    });
+    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('kill switch');
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.ops.some(v => v.op === 'finish' && v.ok === true)).toBe(false);
+    const attempt = join(f.store, readdirSync(f.store)[0]!);
+    expect(readdirSync(attempt)).not.toContain('accepted.json');
   });
   it('holds changed or re-signed proposal bytes after verification and never returns an old diff receipt', async () => {
     const f = fixture(); const before = JSON.parse(JSON.stringify(f.proposal));
