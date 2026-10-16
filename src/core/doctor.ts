@@ -1152,7 +1152,7 @@ function checkKillSwitch(): DoctorCheck {
         'Kill switch',
         'warn',
         'Kill switch is ON — autonomy paused (nothing will run)',
-        'Clear it when ready: `ashlr kill off` (or remove ~/.ashlr/KILL)',
+        'Clear it when ready: `ashlr enroll kill off` (or remove ~/.ashlr/KILL)',
       );
     }
     return check('kill-switch', 'Kill switch', 'pass', 'Kill switch is OFF');
