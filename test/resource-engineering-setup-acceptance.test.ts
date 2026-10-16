@@ -208,9 +208,17 @@ async function predecessorCli(f: Fixture, expectedPlanDigest: string, expectedDe
   { timeout: 180_000, maxBuffer: 256 * 1024, env: childEnv() }));
   expect(stderr).toBe(''); return JSON.parse(stdout) as ReturnType<typeof checkResourceEngineeringPredecessor>;
 }
-async function until(check: (deadlineMonotonicMs: number) => Promise<boolean>, timeoutMs: number) {
+async function until(check: (deadlineMonotonicMs: number) => Promise<boolean>, timeoutMs: number, observed?: () => unknown) {
   const deadline = performance.now() + timeoutMs;
-  while (!await check(deadline)) { if (performance.now() >= deadline) throw Error('Setup acceptance condition not reached'); await new Promise(resolve => setTimeout(resolve, 500)); }
+  while (!await check(deadline)) {
+    if (performance.now() >= deadline) {
+      // Name the last observed progress so an expired wait says which stage stalled.
+      let detail = '';
+      if (observed) { try { detail = `: last observed ${JSON.stringify(observed())}`; } catch { detail = ': last observation unavailable'; } }
+      throw Error(`Setup acceptance condition not reached after ${timeoutMs}ms${detail}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 }
 async function consoleCli(consoleArguments: string[], recovery: { count: number; deadlineMonotonicMs: number }) {
   // Only operational handshake/ephemeral-port flags are added. Every emitted
@@ -330,7 +338,10 @@ describe.runIf(process.platform === 'darwin')('offline autonomous engineering se
     expect(initial.entries).toHaveLength(1); expect(initial.entries[0]).toMatchObject({ enrollmentId: f.recipe.id, enrollmentDigest: prepared.initialEnrollmentDigest });
     const originalDeadline = initial.deadlineAt;
     let state = initial;
-    await timedAsync('delivery.wait', () => until(async deadline => { state = await first.read('/api/resources/engineering-supervision', deadline); return state.entries.length === 2 && state.entries.every(row => row.state === 'completed'); }, 300_000));
+    await timedAsync('delivery.wait', () => until(async deadline => { state = await first.read('/api/resources/engineering-supervision', deadline); return state.entries.length === 2 && state.entries.every(row => row.state === 'completed'); }, 300_000,
+      () => ({ state: state.state, sourceState: state.sourceState, paused: state.paused,
+        entries: state.entries.map(row => ({ enrollmentId: row.enrollmentId, state: row.state, reasons: row.reasons, attempts: row.attempts })),
+        generations: f.generations.length, proposals: f.proposals.length, errors: f.errors })));
     point('both-delivered');
     const sampleStartedAt = Date.now();
     const successors = await first.read<ResourceEngineeringSuccessorCoordinatorSnapshot>('/api/resources/engineering-successors');
