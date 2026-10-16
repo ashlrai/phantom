@@ -198,6 +198,9 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/cli/improve.ts',
   'src/core/autopilot/**',
   'src/cli/autopilot.ts',
+  // Task-to-PR Land: decides which cloud and Devin PRs a click may squash-merge.
+  'src/core/cloud/pr-actions.ts',
+  'src/core/cloud/pr-preview.ts',
 ]);
 
 /**

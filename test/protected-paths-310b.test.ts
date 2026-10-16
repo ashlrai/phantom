@@ -152,7 +152,7 @@ describe('G1 — ashlr-hub Tier-1 (self repo only)', () => {
     'src/core/improve/promote.ts',
     'src/cli/improve.ts',
     'src/core/autopilot/act.ts',
-    'src/cli/autopilot.ts',
+    'src/cli/autopilot.ts', 'src/core/cloud/pr-actions.ts', 'src/core/cloud/pr-preview.ts',
     'test/setup/home-isolation-guard.ts',
     'test/config/realio-lane-membership.mjs',
     'test/fixtures/authority/tier1-closure.json',
