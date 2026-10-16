@@ -206,7 +206,7 @@ describe('launchCloudTask — gates come before persisting and launching', () =>
   it('refuses when the seat is not set up (seat-unavailable), persisting nothing', async () => {
     const h = harness({ seat: null });
     const res = await launchCloudTask({ ...REQ, baseBranch: 'master' }, h.deps);
-    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this Mac.", failure: 'seat-unavailable' });
+    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this computer.", failure: 'seat-unavailable' });
     expect(listCloudTasks()).toEqual([]);
     expect(h.events).toEqual([]);
   });
@@ -305,17 +305,24 @@ describe('runSelfImprove', () => {
     expect(res.skipped).toEqual([]);
   });
 
+  // Enough lowest-priority user items behind the built-ins that a cap, not the backlog's length, ends the batch.
+  const padBacklog = () => appendUserBacklogItems(Array.from({ length: 5 }, (_, i) => (
+    { id: `pad-${i}`, title: `Padding item ${i}`, prompt: 'Do it.', area: 'x', priority: 3 as const })));
+  const backlogOrder = () => [...firstBuiltin.map((i) => i.id), ...Array.from({ length: 5 }, (_, i) => `pad-${i}`)];
+
   it('the operator path still stops at the concurrency cap', async () => {
+    padBacklog();
     const res = await runSelfImprove({ auto: false, count: 5 }, selfHarness().deps);
     expect(res.launched).toHaveLength(4);
-    expect(res.skipped).toEqual([{ itemId: firstBuiltin[4]!.id, reason: '4 of 4 cloud sessions are already running.' }]);
+    expect(res.skipped).toEqual([{ itemId: backlogOrder()[4]!, reason: '4 of 4 cloud sessions are already running.' }]);
   });
 
   it('auto: stops at the daily self-improvement cap', async () => {
     updateCloudBudget({ selfImprove: { maxPerDay: 2 } });
+    padBacklog();
     const res = await runSelfImprove({ auto: true, count: 4 }, selfHarness().deps);
     expect(res.launched).toHaveLength(2);
-    expect(res.skipped).toEqual([{ itemId: firstBuiltin[2]!.id, reason: '2 of 2 self-improvement launches used today.' }]);
+    expect(res.skipped).toEqual([{ itemId: backlogOrder()[2]!, reason: '2 of 2 self-improvement launches used today.' }]);
   });
 
   it('stops the batch at the first failed launch instead of burning through the backlog', async () => {
@@ -328,7 +335,7 @@ describe('runSelfImprove', () => {
 
   it('targets budget.selfImprove.repo and honours repo-scoped user items', async () => {
     updateCloudBudget({ selfImprove: { repo: 'ashlrai/other' } });
-    appendUserBacklogItems([{ id: 'other-1', title: 'Other repo item', prompt: 'Do it.', area: 'x', priority: 1, repo: 'ashlrai/other' }]);
+    appendUserBacklogItems([{ id: 'other-1', title: 'Other repo item', prompt: 'Do it.', area: 'x', priority: 3, repo: 'ashlrai/other' }]);
     const h = selfHarness();
     // Launches from the other repo's checkout; the self-improvement harness asserts the canonical folder, so relax it here.
     h.deps.launcher!.run = async () => ({ output: SUCCESS('session_o'), code: 0, timedOut: false });
@@ -356,7 +363,7 @@ describe('runSelfImprove', () => {
 
 describe('cloudOverview and cloudSeatStatus', () => {
   it('seat: not ready without command.json, ready once it parses to an argv array — without running anything', () => {
-    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this Mac." });
+    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this computer." });
     const file = cloudSeatCommandPath();
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, '"node launcher.mjs"', { mode: 0o600 });

@@ -5,6 +5,7 @@
  */
 import { useId, type ReactNode } from 'react';
 import { ChevronGlyph } from './mobile-icons.js';
+import { usedPercentText } from '../percent-text.js';
 import partStyles from './parts.module.css';
 import { Button, cx, ui as coreStyles } from './ui.js';
 
@@ -100,7 +101,9 @@ export function meterTone(percent: number | null): 'ok' | 'warning' | 'danger' |
 
 export function Meter({ label, percent, valueText, note }: MeterProps) {
   const clamped = percent === null ? null : Math.max(0, Math.min(100, percent));
-  const text = valueText ?? (clamped === null ? 'unknown' : `${Math.round(clamped)}% used`);
+  // The one percent rule (percent-text.ts): rounding alone printed a 99.6%
+  // window as "100% used" (spent) and a 0.3% one as "0% used" (untouched).
+  const text = valueText ?? (clamped === null ? 'unknown' : `${usedPercentText(clamped)} used`);
   return (
     <div className={styles.meter}>
       <div className={styles.meterHead}>

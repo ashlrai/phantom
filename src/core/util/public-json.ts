@@ -79,6 +79,9 @@ function scrubPublicString(input: string, matcher: RegExp | null): string {
   return redactOwnHome(scrubSecrets(redactOwnHome(input, matcher)), matcher);
 }
 
+/** Strings up to this length are scrubbed once per sanitizePublicJson() call. */
+const MEMO_MAX_LENGTH = 256;
+
 /**
  * Convert arbitrary local read-model data into a public dashboard/API payload.
  *
@@ -89,9 +92,26 @@ function scrubPublicString(input: string, matcher: RegExp | null): string {
 export function sanitizePublicJson(value: unknown): unknown {
   const matcher = homeMatcher(homeCandidates());
   const active = new WeakSet<object>();
+  // scrubSecrets is pure, so a string scrubs the same every time it appears.
+  // A chat's event log repeats the same few keys (`seq`, `type`, `turnId`…)
+  // and enum values on every event: a 4,200-event detail read made ~31k key
+  // and ~21k value scrubs, ~7k of them distinct, and spent ~220 ms here
+  // before this cache. Long strings are nearly always unique (prose, tool
+  // output), so only short ones are remembered, bounding the cache's memory.
+  const scrubbed = new Map<string, string>();
+
+  function scrub(input: string): string {
+    if (input.length > MEMO_MAX_LENGTH) return scrubPublicString(input, matcher);
+    let out = scrubbed.get(input);
+    if (out === undefined) {
+      out = scrubPublicString(input, matcher);
+      scrubbed.set(input, out);
+    }
+    return out;
+  }
 
   function visit(current: unknown): unknown {
-    if (typeof current === 'string') return scrubPublicString(current, matcher);
+    if (typeof current === 'string') return scrub(current);
     if (typeof current === 'bigint') return current.toString();
     if (
       current === null ||
@@ -110,7 +130,7 @@ export function sanitizePublicJson(value: unknown): unknown {
 
       const out: Record<string, unknown> = {};
       for (const [key, nested] of Object.entries(current as Record<string, unknown>)) {
-        out[scrubPublicString(key, matcher)] = visit(nested);
+        out[scrub(key)] = visit(nested);
       }
       return out;
     } finally {

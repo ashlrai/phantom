@@ -21,7 +21,7 @@
  *     delegates identically to routeBackend (same backend, tier, and no nudge).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +47,17 @@ beforeEach(() => {
   process.env['ASHLR_HOME'] = tmpHome;
 });
 
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it): the dispatch-production ledger partitions by each event's UTC
+ * day, so a case that later derives the ledger path itself must not straddle
+ * 00:00 UTC. Timers stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   if (origHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = origHome;
   if (origAshlrHome === undefined) delete process.env['ASHLR_HOME'];
@@ -865,6 +875,7 @@ describe('M53 invariant 4 — recommendRoute stays within allowedBackends', () =
   });
 
   it('degraded dispatch-production input cannot change learned routing', async () => {
+    freezeDate();
     const cfg = withInstalledFrontierEngines(withIntelligence({
       allowedBackends: ['builtin', 'claude', 'codex'],
       minProposalYieldRate: 0.5,
@@ -897,6 +908,7 @@ describe('M53 invariant 4 — recommendRoute stays within allowedBackends', () =
   });
 
   it('persisted unlabeled legacy rows remain visible but cannot reroute execution', async () => {
+    freezeDate();
     const cfg = withInstalledFrontierEngines(withIntelligence({
       allowedBackends: ['builtin', 'claude', 'codex'],
       minProposalYieldRate: 0.5,
