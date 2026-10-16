@@ -488,6 +488,8 @@ export interface AshlrConfig {
   roots: string[];
   /** Preferred editor for deep links. */
   editor: 'cursor' | 'vscode';
+  /** Markdown opener. Default `ashlr-md` (when installed, else editor); `editor` opts out. */
+  markdownOpener?: 'ashlr-md' | 'editor';
   /** Days without modification before an item is considered stale/inactive. */
   staleDays: number;
   /** Map of category name -> absolute folder path (e.g. "dev-tools" -> ".../github/dev-tools"). */
