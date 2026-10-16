@@ -16,7 +16,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -62,7 +62,7 @@ function installShim(checkout: 'slow' | 'fail' | 'slow-fail'): void {
     '#!/bin/sh',
     'for a in "$@"; do',
     '  if [ "$a" = "reset" ]; then',
-    `    : > "${marker}"`,
+    `    printf "%s" "$1" > "${marker}"`,
     checkout === 'fail' ? '    exit 1' : checkout === 'slow' ? '    sleep 1.5' : '    sleep 1.5; exit 1',
     '  fi',
     'done',
@@ -150,6 +150,12 @@ describe.skipIf(!posix)('sandbox creation: REGISTER fenced, POPULATE outside the
     releaseOutwardMutationFence(fence);
     expect(leased.lease.isHeld()).toBe(false);
     expect(countLiveExecutionLeases(null)).toBe(1);
+
+    // Like every pinned Git command, the checkout starts with its subcommand
+    // (repository context travels in GIT_DIR / GIT_WORK_TREE): a Node-based
+    // git stand-in, as m426 uses on Windows, would take a leading
+    // --git-dir=... as one of its own options.
+    expect(readFileSync(marker, 'utf8')).toBe('reset');
 
     const sb = await creating;
     try {

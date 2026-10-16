@@ -432,7 +432,14 @@ delete gitEnv.GIT_WORK_TREE;
 delete gitEnv.GIT_COMMON_DIR;
 if (repositoryContext === 'pinned') {
   gitEnv.GIT_DIR = '.';
+} else if (repositoryContext === 'linked') {
+  // A linked worktree's own administrative directory and work tree, exactly
+  // as git worktree add hands them to its checkout.
+  gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
+  gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
 }
+delete gitEnv.ASHLR_LINKED_GIT_DIR;
+delete gitEnv.ASHLR_LINKED_WORK_TREE;
 
 const destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
   parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
@@ -781,6 +788,12 @@ function run(cwd, args, options = {}) {
       delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
     }
     delete supervisorEnv.NODE_OPTIONS;
+    delete supervisorEnv.ASHLR_LINKED_GIT_DIR;
+    delete supervisorEnv.ASHLR_LINKED_WORK_TREE;
+    if (options.linkedWorktree) {
+      supervisorEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
+      supervisorEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
+    }
     if (options.monitorDestination) {
       supervisorEnv.ASHLR_PINNED_DESTINATION = '1';
       supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
@@ -809,7 +822,7 @@ function run(cwd, args, options = {}) {
     try {
       supervisor = spawn(process.execPath, [
         '-e', supervisorSource, '--', cwd,
-        options.pinnedRepository ? 'pinned' : 'plain', sourceRepo, ...args,
+        options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args,
       ], {
         cwd,
         env: supervisorEnv,
@@ -1046,6 +1059,17 @@ function markStep(name) {
   stepTiming.last = now;
 }
 
+// " (exit N: <stderr tail>)" for a failed supervised git command, or "".
+function describeGitFailure(entry) {
+  if (!entry) return '';
+  const parts = [];
+  if (entry.status !== 0) parts.push('exit ' + entry.status);
+  if (entry.error) parts.push(String(entry.error));
+  const tail = typeof entry.stderr === 'string' ? entry.stderr.replace(/\s+/g, ' ').trim().slice(-300) : '';
+  if (tail) parts.push(tail);
+  return parts.length > 0 ? ' (' + parts.join(': ') + ')' : '';
+}
+
 // One bounded line naming what went wrong, for the caller's error and audit.
 function describeError(error) {
   const text = error && typeof error === 'object'
@@ -1206,11 +1230,16 @@ async function populateWorktree() {
   if (!adminStillPinned()) {
     return { ok: false, cleanupComplete: false, error: 'worktree administrative directory identity changed before checkout' };
   }
-  const adminDir = pinnedAdminPath;
+  // GIT_DIR / GIT_WORK_TREE travel in the environment (as git worktree add
+  // passes them to its own reset), so the argv starts with the subcommand like
+  // every other pinned Git command.
   const populated = await run(worktreePath, [
-    '--git-dir=' + adminDir, '--work-tree=' + worktreePath,
     'reset', '--hard', '--no-recurse-submodules', '--quiet',
-  ], { monitorDestination: true, worktreePin });
+  ], {
+    monitorDestination: true,
+    worktreePin,
+    linkedWorktree: { gitDir: pinnedAdminPath, workTree: worktreePath },
+  });
   markStep('checkout');
   if (populated.status !== 0 || !currentDestinationIsPinned() || !worktreeStillPinned() ||
       !adminStillPinned()) {
@@ -1219,7 +1248,7 @@ async function populateWorktree() {
       cleanupComplete: false,
       error: populated.error && populated.error.includes('sandbox reservation identity changed')
         ? populated.error
-        : 'git worktree checkout failed',
+        : 'git worktree checkout failed' + describeGitFailure(populated),
     };
   }
   runPinnedPostCreateWriter();
