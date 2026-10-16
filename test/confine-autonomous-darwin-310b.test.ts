@@ -109,6 +109,15 @@ describe.runIf(process.platform === 'darwin')('autonomous confinement under real
     expect(existsSync(join(worktree, 'nested', '.codex'))).toBe(false);
   });
 
+  it('Cortex protection denies case aliases, rename destinations, and symlink destinations', () => {
+    for (const target of ['.CODEX', 'nested/.CoDeX']) {
+      const r = confined('local-coder', ['/bin/sh', '-c',
+        `mkdir -p nested; mkdir ${target} 2>/dev/null; a=$?; mkdir -p safe-config; mv safe-config ${target} 2>/dev/null; b=$?; ln -s nested ${target} 2>/dev/null; c=$?; test "$a" -ne 0 && test "$b" -ne 0 && test "$c" -ne 0`],
+      { profile: { denyCodexProjectConfig: true } });
+      expect(r.status, r.stderr).toBe(0); expect(existsSync(join(worktree, target))).toBe(false);
+    }
+  });
+
   it('reading ~/.ashlr/authority or the custody dir fails — and kills the reader', () => {
     for (const target of [authorityFile, custodyBlob]) {
       const r = confined('local-coder', ['/bin/sh', '-c', `/bin/cat "${target}"; echo "status=$?"`]);

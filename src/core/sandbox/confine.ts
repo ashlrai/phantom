@@ -789,7 +789,7 @@ export function buildAutonomousSbplProfile(profile: ConfinementProfile, ctx: Con
       ' (regex #"^/dev/fd/[0-9]+$") (regex #"^/dev/ttys[0-9]+$"))',
     `(deny file-write* ${lit(join(worktree, '.git'))} ${sub(join(worktree, '.git'))})`,
     ...(profile.denyCodexProjectConfig === true ? [
-      `(deny file-write* (regex #"^${sbplRegexLiteral(worktree)}/(.*/)?\\.codex(/.*)?$"))`,
+      `(deny file-write* (regex #"^${sbplRegexLiteral(worktree)}/(.*/)?\\.[cC][oO][dD][eE][xX](/.*)?$"))`,
     ] : []),
     '',
     '; --- protected paths (last, so nothing above can re-allow them)',
