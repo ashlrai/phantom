@@ -163,19 +163,27 @@ function managerTerminal(state: OutcomeState, stage: OutcomeManagerStage, runId:
   return { stageId: stage.id, runId, state: result ? 'succeeded' : 'failed', resultDigest,
     proposalId: effects?.proposalId ?? null, ...(!result ? { failureReason: run?.status === 'done' ? 'invalid-result' as const : 'run-failed' as const } : {}), ...(result?.plan ? { plan: result.plan } : {}) };
 }
-/** Restart reconciliation joins only actual terminal evidence; it cannot relaunch a child. */
+/** Stages this process has claimed and is still executing (begin() .. finishWithRetry()). */
+const liveStages = new Set<string>();
+/** Restart reconciliation joins only actual terminal evidence; it cannot relaunch a child.
+ * `exclusiveOwner` is the singleton daemon lock: while it holds, a running stage this
+ * process is not executing has no live owner (its daemon crashed or was killed), so a
+ * missing/never-terminal run settles as aborted rather than blocking every later stage. */
 export function reconcileOutcomeManagerTerminals(store: OutcomeStore, admission: OutcomeManagerAdmission,
-  deps: Pick<OutcomeManagerDispatchDeps, 'readRun'> = {}): number {
+  deps: Pick<OutcomeManagerDispatchDeps, 'readRun'> & { exclusiveOwner?(): boolean } = {}): number {
   const read = store.read(); if (read.sourceState !== 'healthy') return 0;
   let joined = 0;
   for (const stage of read.state.manager?.stages.filter(stage => stage.state === 'running') ?? []) {
+    const orphaned = (): OutcomeManagerTerminal | null => !liveStages.has(stage.id) && deps.exclusiveOwner?.() === true
+      ? { stageId: stage.id, runId: stage.runId, state: 'aborted', resultDigest: null, proposalId: null } : null;
     const runs = stage.providerRunIds.map(id => (deps.readRun ?? loadRun)(id));
     // A cancelled controller cannot hide a missing or still-running registered child.
-    if (runs.some((run, i) => !run || run.id !== stage.providerRunIds[i] || run.status === 'running')) continue;
-    const candidates = runs.map(run => managerTerminal(read.state, stage, run!.id, run));
+    const unsettled = runs.some((run, i) => !run || run.id !== stage.providerRunIds[i] || run.status === 'running');
+    const candidates = unsettled ? [] : runs.map(run => managerTerminal(read.state, stage, run!.id, run));
     const successful = candidates.filter(result => result.state === 'succeeded');
-    if (successful.length > 1) continue; // No invented judge/winner in the single-manager path.
-    const terminal = successful[0] ?? candidates.find(result => result.runId === stage.runId);
+    // No invented judge/winner in the single-manager path.
+    const terminal = unsettled || successful.length > 1 ? orphaned()
+      : successful[0] ?? candidates.find(result => result.runId === stage.runId) ?? orphaned();
     if (!terminal) continue;
     if (new OutcomeManagerCoordinator(store).finish(`manager-terminal-${stage.id}`, terminal, admission).ok) joined += 1;
   }
@@ -238,7 +246,7 @@ export class OutcomeManagerDispatch {
     const result = this.coordinator.claimRun({ commandId: this.claimId, expectedRevision: fresh.state.revision },
       fresh.next, this.item.repo, this.route, this.runId, this.admission);
     if (!result.ok || result.disposition !== 'recorded') return false;
-    this.began = true;
+    this.began = true; liveStages.add(this.stageId);
     return this.stillAuthorized();
   }
   stillAuthorized(): boolean { return this.began && this.coordinator.inspectStage(this.stageId, this.admission).admitted; }
@@ -269,6 +277,9 @@ export class OutcomeManagerDispatch {
   }
   async finishWithRetry(production?: DaemonDispatchProduction, cancelled = false): Promise<boolean> {
     if (!this.began) return true;
+    try { return await this.finishOnce(production, cancelled); } finally { liveStages.delete(this.stageId); }
+  }
+  private async finishOnce(production?: DaemonDispatchProduction, cancelled = false): Promise<boolean> {
     const terminal = this.terminal(production, cancelled); if (!terminal) return false;
     for (const wait of [0, 25, 50, 100, 200, 400]) {
       if (wait) await delay(wait);
