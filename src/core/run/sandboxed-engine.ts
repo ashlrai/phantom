@@ -1074,8 +1074,9 @@ export const FLEET_MCP_CONFIG_FILENAME = '.ashlr-fleet.mcp.json';
  * Write a minimal sidecar MCP config into the worktree so the fleet's claude instance
  * always has ashlr__ MCP tools regardless of the user's global settings.
  *
- * GUARD: only writes when `ashlr-mcp` is on PATH — CI/CD environments without the
- * plugin are completely unaffected (returns null → caller skips --mcp-config).
+ * GUARD: only writes when `ashlr-mcp` is on PATH or the repo's tracked `.mcp.json`
+ * declares a reviewed companion server (trackedCompanionMcpServers) — otherwise
+ * returns null and the caller skips --mcp-config.
  *
  * M283 PRE-EXISTING GUARD: this writes a fleet-owned sidecar instead of `.mcp.json`,
  * so a repo-owned `.mcp.json` can be edited by the agent and captured normally.
@@ -1087,29 +1088,70 @@ export const FLEET_MCP_CONFIG_FILENAME = '.ashlr-fleet.mcp.json';
  * Best-effort — a failure in exclude registration is silently suppressed; the
  * sandboxDiff pathspec filter (worktree.ts) is an independent belt-and-suspenders.
  *
- * Returns the path to the written file, or null when the plugin is absent.
+ * Returns the path to the written file and the ashlr-mcp command (null when only
+ * companions were written), or null when there is nothing to write.
  * Never throws — any failure is silently suppressed so it never breaks dispatch.
  */
-function prepareFleetMcpConfig(worktreePath: string, searchPath?: string): { path: string; command: string } | null {
-  try {
-    const ashlrBin = resolveAshlrEfficiencyMcpBin(searchPath);
-    if (!ashlrBin) return null;
+/**
+ * Companion MCP servers a confined run may start from the repo's tracked
+ * `.mcp.json`: the exact npx specs of the reviewed releases in
+ * companion-types.ts (test/fleet-companion-mcp.test.ts keeps the two in step;
+ * it is not imported here so the Tier-1 closure does not grow). A server is
+ * taken only when its entry matches one spec exactly; anything else in the
+ * file is ignored, because a repo file must not choose what runs unconfined
+ * beside the agent.
+ */
+export const FLEET_COMPANION_MCP_SPECS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'phantom-secrets': Object.freeze(['-y', 'phantom-secrets-mcp@0.7.9']),
+  locus: Object.freeze(['-y', '@ashlrai/locus-mcp@0.5.0']),
+  lexicon: Object.freeze(['-y', '-p', '@ashlr/lexicon@0.5.4', 'lexicon-mcp']),
+});
 
-    const mcpConfigPath = join(worktreePath, FLEET_MCP_CONFIG_FILENAME);
+/** The reviewed companion servers the worktree's `.mcp.json` declares; {} when none or unreadable. Never throws. */
+export function trackedCompanionMcpServers(worktreePath: string): Record<string, { command: 'npx'; args: string[] }> {
+  const out: Record<string, { command: 'npx'; args: string[] }> = {};
+  try {
+    const file = join(worktreePath, '.mcp.json');
+    if (!existsSync(file) || statSync(file).size > 64 * 1024) return out;
+    const servers = (JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: unknown } | null)?.mcpServers;
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return out;
+    for (const [name, spec] of Object.entries(FLEET_COMPANION_MCP_SPECS)) {
+      const entry = (servers as Record<string, unknown>)[name] as { command?: unknown; args?: unknown; env?: unknown } | undefined;
+      if (!entry || entry.command !== 'npx' || entry.env !== undefined || !Array.isArray(entry.args)) continue;
+      if (entry.args.length !== spec.length || entry.args.some((arg, i) => arg !== spec[i])) continue;
+      out[name] = { command: 'npx', args: [...spec] };
+    }
+  } catch { /* An unreadable file adds nothing. */ }
+  return out;
+}
+
+function prepareFleetMcpConfig(
+  worktreePath: string,
+  searchPath?: string,
+  options: { companions?: boolean } = {},
+): { path: string; command: string | null } | null {
+  try {
     // Only write if the worktree path exists (sanity check).
     if (!existsSync(worktreePath)) return null;
+    const ashlrBin = resolveAshlrEfficiencyMcpBin(searchPath);
+    const companions = options.companions === false ? {} : trackedCompanionMcpServers(worktreePath);
+    if (!ashlrBin && Object.keys(companions).length === 0) return null;
 
+    const mcpConfigPath = join(worktreePath, FLEET_MCP_CONFIG_FILENAME);
     const mcpConfig = {
       mcpServers: {
-        ashlr: {
-          command: ashlrBin,
-          args: [],
-          env: {
-            ASHLR_MCP_HOST: 'ashlr-fleet-engine',
-            ASHLR_HOOK_MODE: 'nudge',
-            ASHLR_SESSION_LOG: '0',
+        ...companions,
+        ...(ashlrBin ? {
+          ashlr: {
+            command: ashlrBin,
+            args: [],
+            env: {
+              ASHLR_MCP_HOST: 'ashlr-fleet-engine',
+              ASHLR_HOOK_MODE: 'nudge',
+              ASHLR_SESSION_LOG: '0',
+            },
           },
-        },
+        } : {}),
       },
     };
     writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
@@ -1163,10 +1205,11 @@ export function writeMcpConfigIfAvailable(worktreePath: string, searchPath?: str
 }
 
 /** Per-invocation configuration only; existing MCP servers and approval policy remain native. */
-export function fleetEfficiencyMcpArgs(engine: string, config: { path: string; command: string } | null): string[] {
+export function fleetEfficiencyMcpArgs(engine: string, config: { path: string; command: string | null } | null): string[] {
   if (!config) return [];
   if (engine === 'claude') return ['--mcp-config', config.path, '--strict-mcp-config'];
-  if (engine !== 'codex') return [];
+  // Codex gets only the ashlr sidecar; companions ride the Claude config file.
+  if (engine !== 'codex' || !config.command) return [];
   const key = 'mcp_servers.ashlr-efficiency';
   return [
     '-c', `${key}.command=${JSON.stringify(config.command)}`,
@@ -2362,7 +2405,10 @@ export async function runEngineSandboxed(
   // an unconfined ashlr MCP server the agent could drive (its tools run as
   // Mason, outside the sandbox profile).
   const fleetMcpEnabled = !autonomousRun && !selectedStandingGrok && !selectedStandingClaude && (cfg.foundry as Record<string, unknown> | undefined)?.['fleetMcp'] !== false;
-  const fleetMcpConfig = fleetMcpEnabled ? prepareFleetMcpConfig(sb.worktreePath) : null;
+  // Companions from the repo's .mcp.json ride the same sidecar; opt out with
+  // cfg.foundry.fleetCompanionMcp = false.
+  const fleetCompanionMcp = (cfg.foundry as Record<string, unknown> | undefined)?.['fleetCompanionMcp'] !== false;
+  const fleetMcpConfig = fleetMcpEnabled ? prepareFleetMcpConfig(sb.worktreePath, undefined, { companions: fleetCompanionMcp }) : null;
 
   // M154: prepend repo-map + localization context to goal when flags are ON.
   // Flag-OFF → contextPrefix is '' → goalWithContext === goal (byte-identical).

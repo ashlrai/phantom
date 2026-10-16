@@ -61,24 +61,25 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   benchmark: ['run', '--compare-reports', 'help'],
   config: ['get', 'set', 'path'],
-  mcp: ['list', 'doctor', 'install'],
+  mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
-  models: ['pull', 'start'],
+  models: ['list', 'pull', 'start'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
   wire: ['claude', 'codex', 'cursor', 'all'],
-  notify: ['test'],
+  notify: ['test', 'session'],
   telemetry: ['status', 'test'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh'],
-  inbox: ['show', 'approve', 'reject', 'automerge'],
+  inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
     'recover-state', 'resolve-state', 'install', 'uninstall', 'service-status',
+    'pause', 'resume', 'doctor',
   ],
   worker: ['setup', 'status'],
   fleet: [
@@ -111,23 +112,26 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model'],
   // Mirrors the verb switch in src/cli/authority.ts (runAuthorityCli).
-  authority: ['status', 'switch', 'stop', 'clear-stop', 'revoke', 'draft', 'grant', 're-approve', 'ledger', 'surface', 'protect', 'github-app', 'rotate-provenance', 'setup', 'help'],
+  authority: ['status', 'switch', 'stop', 'clear-stop', 'revoke', 'draft', 'grant', 're-approve', 'ledger', 'surface', 'protect', 'github-app', 'rotate-provenance', 'setup', 'resident', 'help'],
   // Mirror the verb switches in src/cli/leader.ts (runLeaderCli) and src/cli/mirror.ts (runMirrorCli).
   // oversight-plist only PRINTS the nightly LaunchAgent (install is by hand) —
   // listed so the verb is discoverable, not hidden behind `leader help`.
   leader: ['show', 'run', 'tick', 'veto', 'oversight-plist', 'say', 'thread', 'answer', 'approve', 'directives', 'help'],
-  mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'help'],
+  mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  devin: ['connect', 'disconnect', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
+  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
   automations: ['list', 'templates', 'add', 'enable', 'disable', 'remove', 'fire', 'help'],
-  universe: ['demo', 'init', 'run', 'status', 'archive', 'campaign', 'portfolio', 'integration', 'deliver', 'deliveries', 'graph', 'compare', 'help'],
+  // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).
+  universe: ['demo', 'init', 'run', 'status', 'archive', 'campaign', 'portfolio', 'integration', 'deliver', 'deliveries', 'graph', 'compare',
+    'controller', 'console', 'resources', 'firm', 'preparation-measurement', 'preparation-measurement-capture',
+    'preparation-measurement-compare', 'preparation-measurement-calibrate', 'help'],
 };
 
 const FLEET_AUTOMERGE_CANARY_SUBCOMMANDS = [
@@ -236,10 +240,10 @@ function editDistance(a: string, b: string): number {
  * Closest known command for a typo, or null when nothing is plausibly close
  * (distance must be ≤ 2 and less than half the input length).
  */
-export function didYouMean(input: string): string | null {
+export function didYouMean(input: string, candidates: readonly string[] = TOP_LEVEL_COMMANDS): string | null {
   let best: string | null = null;
   let bestDist = Infinity;
-  for (const cmd of TOP_LEVEL_COMMANDS) {
+  for (const cmd of candidates) {
     const d = editDistance(input.toLowerCase(), cmd);
     if (d < bestDist) {
       bestDist = d;

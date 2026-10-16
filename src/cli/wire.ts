@@ -119,7 +119,7 @@ function printWireHelp(): void {
   console.log('');
   console.log('  ' + bold('What it does:'));
   console.log('');
-  console.log(`    ${dim('• Registers the distinct "ashlr-hub" MCP gateway; legacy "ashlr" plugin entries remain untouched.')}`);
+  console.log(`    ${dim('• Registers the "ashlr-hub" MCP gateway (same entry as mcp install); a duplicate legacy "ashlr" gateway entry is removed, other "ashlr" entries remain untouched.')}`);
   console.log(`    ${dim('• Uses codex mcp for config.toml; deep-merges supported JSON registries for Claude and Cursor.')}`);
   console.log(`    ${dim('• Backs up an existing target config before any write.')}`);
   console.log(`    ${dim('• Idempotent: re-running with the same config is a no-op.')}`);

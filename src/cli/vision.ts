@@ -543,16 +543,21 @@ async function cmdSet(args: string[]): Promise<number> {
   let specId = 'ecosystem';
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--north-star' && args[i + 1]) {
-      northStar = args[i + 1];
-      i++;
-    } else if (args[i] === '--end-state' && args[i + 1]) {
-      endState = args[i + 1];
-      i++;
-    } else if (args[i] === '--id' && args[i + 1]) {
-      specId = args[i + 1]!;
-      i++;
+    const arg = args[i]!;
+    if (arg !== '--north-star' && arg !== '--end-state' && arg !== '--id') {
+      // Unknown flags and stray words are refused: a typo must not edit the spec.
+      console.error(`vision set: unknown argument '${arg}'. Run 'phm vision --help' for usage.`);
+      return 2;
     }
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`vision set: ${arg} needs a value.`);
+      return 2;
+    }
+    if (arg === '--north-star') northStar = value;
+    else if (arg === '--end-state') endState = value;
+    else specId = value;
+    i++;
   }
 
   if (!northStar && !endState) {
@@ -610,9 +615,19 @@ Examples:
 export async function cmdVision(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
 
-  if (!sub || sub === '--help' || sub === 'help') {
+  // `vision <verb> --help` prints usage and never runs the verb: approve and
+  // reconcile create goals, and set edits the spec.
+  if (!sub || sub === '--help' || sub === '-h' || sub === 'help' ||
+      rest.includes('--help') || rest.includes('-h')) {
     cmdVisionHelp();
     return 0;
+  }
+
+  // approve, reconcile and preview take no arguments; refuse extras rather
+  // than silently ignoring a mistyped flag on a planning mutation.
+  if ((sub === 'approve' || sub === 'reconcile' || sub === 'preview') && rest.length > 0) {
+    console.error(`vision ${sub}: takes no arguments (got '${rest[0]}'). Run 'phm vision --help' for usage.`);
+    return 2;
   }
 
   switch (sub) {

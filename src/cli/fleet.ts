@@ -2291,6 +2291,21 @@ export async function cmdFleet(args: string[]): Promise<number> {
     return 0;
   }
 
+  // `fleet <verb> --help` prints usage and never runs the verb: without this,
+  // `fleet pause --help` engaged the kill switch and `fleet resume --help`
+  // released it. automerge-canary owns its own help and refusals.
+  if (sub !== 'automerge-canary' && (rest.includes('--help') || rest.includes('-h'))) {
+    printFleetHelp();
+    return 0;
+  }
+
+  // pause/resume take no arguments; refuse extras rather than toggling the
+  // kill switch on a mistyped flag.
+  if ((sub === 'pause' || sub === 'resume') && rest.length > 0) {
+    process.stderr.write(red('error: ') + `fleet ${sub} takes no arguments (got ${rest[0]})\n`);
+    return 2;
+  }
+
   switch (sub) {
     case 'status':
       return cmdFleetStatus(rest.includes('--json'));
@@ -2728,6 +2743,16 @@ async function cmdFleetJudgeHealth(args: string[]): Promise<number> {
  * Never throws.
  */
 async function cmdFleetOptimizePrompt(args: string[]): Promise<number> {
+  // Refuse unknown flags before any work: a typo like `--dry_run` must not
+  // fall through to a real run that spends on LLM calls and writes a candidate.
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--target' || arg === '--rounds') { i++; continue; }
+    if (arg !== '--json' && arg !== '--dry-run') {
+      process.stderr.write(red('error: ') + `unknown optimize-prompt option: ${arg}\n`);
+      return 2;
+    }
+  }
   const jsonMode = args.includes('--json');
   const dryRun = args.includes('--dry-run');
 

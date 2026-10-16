@@ -51,15 +51,21 @@ mod tests {
             return;
         }
         // A separate test process prevents another TLS test from masking startup.
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "native_update_client::tests::updater_client_constructs_in_a_fresh_process_without_network",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .output()
-            .unwrap();
+        let output = crate::native_metadata_launch::spawn_outside_fixture_leases(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "native_update_client::tests::updater_client_constructs_in_a_fresh_process_without_network",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
         assert!(
             output.status.success(),
             "fresh updater client failed: {}{}",

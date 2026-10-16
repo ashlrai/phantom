@@ -294,7 +294,7 @@ function printSteps(repoHint: string): void {
   console.log(`  ${dim('Run these in order. Each step is the explicit human gate — nothing runs on its own.')}`);
   console.log('');
   console.log(`  ${cyan('1.')} ${bold('Preflight')}   ${dim('ashlr preflight')}                      ${dim('— read-only readiness check')}`);
-  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr sandbox enroll ${repoHint}`)}   ${dim('— the explicit enrollment gate')}`);
+  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr enroll add ${repoHint}`)}       ${dim('— the explicit enrollment gate')}`);
   console.log(`  ${cyan('3.')} ${bold('Dry-run')}     ${dim('ashlr daemon start --dry-run --once')}    ${dim('— preview the plan; NO proposal, $0')}`);
   console.log(`  ${cyan('4.')} ${bold('Review')}      ${dim('ashlr inbox')}                          ${dim('— review + approve; NEVER auto-applied')}`);
   console.log(`  ${cyan('5.')} ${bold('Rollback')}    ${dim(`ashlr onboard --rollback ${repoHint}`)}  ${dim('— one-command undo')}`);

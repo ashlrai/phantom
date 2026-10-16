@@ -195,7 +195,7 @@ const TOOLS: NativeToolImpl[] = [
       outcomeId: { type: 'string' }, taskId: { type: 'string', description: 'The stable task ID returned by the saved outcome.' },
       asOf: { type: 'string', description: 'Optional event-time view with an explicit timezone offset.' },
       observedThrough: { type: 'string', description: 'Optional knowledge-time cutoff with an explicit timezone offset.' },
-      maxEvents: { type: 'number', description: 'Positive retrieval size. Partial context remains visible.' },
+      maxEvents: { type: 'number', description: 'Positive integer retrieval size, at most 100000. Partial context remains visible.' },
     }, required: ['outcomeId', 'taskId'], additionalProperties: false },
     safety: 'read',
     handler: async args => {
@@ -227,7 +227,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async args => (await import('./teams/tools.js')).teamClaim(args),
   },
   {
-    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff between agents and humans. Consequential actions (deploy, release, merge, rotate-secret, external-message, delete, spend) wait for human owner/admin approval.',
+    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff between agents and humans. Consequential actions (push-main, deploy, release, merge, rotate-secret, external-message, delete, spend) wait for human owner/admin approval before anyone can accept.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_handoff, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamHandoff(args),
   },
@@ -242,8 +242,8 @@ const TOOLS: NativeToolImpl[] = [
     handler: async args => (await import('./teams/tools.js')).teamContextGet(args),
   },
   {
-    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',
-    inputSchema: { type: 'object', properties: { profile: { type: 'string', enum: ['phantom-public-web'] }, expectedMerge: { type: 'string', pattern: '^[a-f0-9]{40}$' } }, required: ['profile','expectedMerge'], additionalProperties: false },
+    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. Returns queued, already-recorded, or held (nothing queued) when publication is not commissioned or no valid standing grant exists; queued is not published. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',
+    inputSchema: { type: 'object', properties: { profile: { type: 'string', enum: ['phantom-public-web'] }, expectedMerge: { type: 'string', pattern: '^[a-f0-9]{40}$', description: 'Full 40-character lowercase SHA of the merged revision.' } }, required: ['profile','expectedMerge'], additionalProperties: false },
     safety: 'append', handler: async (args) => (await import('./website/host-release.js')).requestWebsitePublication(args),
   },
   {
@@ -327,7 +327,7 @@ const TOOLS: NativeToolImpl[] = [
         text: { type: 'string', description: 'The learning to store.' },
         title: { type: 'string', description: 'Short title (derived when omitted).' },
         project: { type: 'string', description: 'Project name to scope to (optional).' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Tags (optional).' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags (optional). Reserved internal tags are dropped.' },
       },
       required: ['text'],
     },
@@ -355,8 +355,8 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        repo: { type: 'string', description: 'Filter to one repo (optional).' },
-        limit: { type: 'number', description: 'Max items (default 10).' },
+        repo: { type: 'string', description: 'Filter to one repo by exact path or trailing name (optional).' },
+        limit: { type: 'number', description: 'Max items, 1–50 (default 10).' },
       },
     },
     safety: 'read',
@@ -453,7 +453,7 @@ const TOOLS: NativeToolImpl[] = [
     name: 'ashlr_impact',
     description:
       'Impact analysis for a file or symbol: references and dependents within and ' +
-      'across enrolled repos (from the knowledge graph). Read-only.',
+      'across enrolled repos, from a bounded live text scan (not a persisted index). Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -579,7 +579,7 @@ const TOOLS: NativeToolImpl[] = [
       'approves via `ashlr inbox`. Natural-language instructions are recorded as context, ' +
       'not executed or verified; observation-only outcomes do not mark the task applied. ' +
       'Requires a Claude-in-Chrome (or compatible) MCP ' +
-      'server to be configured; browser tasks are refused cleanly in headless / ' +
+      'server to be configured; at apply time browser tasks are refused cleanly in headless / ' +
       'daemon contexts where no browser MCP is reachable. ' +
       'Requires the repo to be enrolled and the kill switch to be off.',
     inputSchema: {
@@ -657,9 +657,9 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_fleet_status',
     description:
-      'Live fleet status: daemon running/pid, last tick, today\'s spend vs budget, ' +
-      'items processed, recent tick history (concurrency + per-backend dispatch counts), ' +
-      'and pending-proposal count. Combines daemon state + fleet digest. Read-only.',
+      'Live fleet status: daemon running/pid, last tick, today\'s estimated spend, ' +
+      'items processed, the last 20 ticks (items considered, proposals created, spend, reason, ' +
+      'per-backend dispatch counts), pending-proposal count, and a 7d fleet digest. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, _cfg) => {
@@ -732,9 +732,9 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_routing',
     description:
-      'Recent routing decisions: which engine:model handled which task and the reason. ' +
-      'Derives history from proposal engineModel fields (always populated by M127) and ' +
-      'merges any routing-tagged decisions-ledger entries that carry a reason. ' +
+      'Recent routing decisions: which engine:model handled which task. ' +
+      'Derives history from proposals that carry an engineModel field and ' +
+      'merges decisions-ledger entries with an engine (only these carry a reason). ' +
       'Returns { recent: RoutingRow[], modelSplit: Record<string,number> }. ' +
       'Best-effort — recent is [] when no proposals exist yet. Read-only.',
     inputSchema: {
@@ -759,9 +759,10 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_north_star',
     description:
-      'Human-leverage north-star metric for the autonomous fleet (7d window): ' +
-      'substantive merges, estimated engineering hours saved, leverage score (0–100), ' +
-      'and week-over-week trend. Read-only.',
+      'Human-leverage north-star metric for the autonomous fleet (7d window). ' +
+      'Substantive merges, hours saved, leverage score and trend are currently dormant ' +
+      '(always 0 / flat) pending a post-merge proof verifier; raw 7d proposal metrics ' +
+      '(merged, accept/empty/trivial rates, avg diff lines) are factual. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
@@ -795,8 +796,8 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_self_heal',
     description:
-      'Read-only self-heal queue summary: how many repos are being monitored, ' +
-      'which are currently broken, and the queued high-priority heal work items. ' +
+      'Read-only self-heal queue summary: whether self-heal is enabled, the enrolled ' +
+      'repo count, and up to 10 queued heal work items from ~/.ashlr/self-heal-queue.json. ' +
       'Never triggers a heal cycle — purely observational. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
@@ -936,7 +937,7 @@ const TOOLS: NativeToolImpl[] = [
       properties: {
         repo: {
           type: 'string',
-          description: 'Absolute path of an enrolled repo. Required — target must reside within it.',
+          description: 'Absolute path of an enrolled repo. Required — the proposal is scoped to it.',
         },
         action_type: {
           type: 'string',
@@ -945,7 +946,7 @@ const TOOLS: NativeToolImpl[] = [
         },
         target: {
           type: 'string',
-          description: 'Absolute path to open (must be within the enrolled repo).',
+          description: 'Absolute path to open. Checked at apply time: must resolve (following symlinks) inside an enrolled repo.',
         },
         title: {
           type: 'string',
