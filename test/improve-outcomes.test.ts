@@ -96,11 +96,13 @@ describe('promotion gate', () => {
   const improved = () => write(reg('0123456789'), { type: 'pr', proposalId: '0123456789', repository: 'acme/p', number: 7 },
     m('0123456789', 'base', A, 1), m('0123456789', 'head', B, 2))[0]!;
 
+  const clean = { guards: { killSwitch: false, paused: false }, diff: { paths: ['src/core/run/fast-path.ts'], patch: '' }, remeasured: { base: 1, head: 2, reasons: [] } };
+
   it('admits only green exact-head checks plus a measured improvement at the current merge base', () => {
     const outcome = improved();
-    expect(evaluatePromotion({ outcome, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true })).toEqual({ admit: true, reasons: [] });
+    expect(evaluatePromotion({ outcome, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true, ...clean })).toEqual({ admit: true, reasons: [] });
     const refuse = (o: Partial<Parameters<typeof evaluatePromotion>[0]>) =>
-      evaluatePromotion({ outcome, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true, ...o }).reasons.join(' | ');
+      evaluatePromotion({ outcome, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true, ...clean, ...o }).reasons.join(' | ');
     expect(refuse({ pr: pr({ checks: [{ name: 'ci', state: 'pending' }] }) })).toMatch(/pending: ci/);
     expect(refuse({ pr: pr({ checks: [] }) })).toMatch(/no checks/);
     expect(refuse({ pr: pr({ checks: [{ name: 'Merge Gate', state: 'failure' }] }) })).toMatch(/not green: Merge Gate/);
@@ -116,7 +118,7 @@ describe('promotion gate', () => {
 
   it('refuses unchanged and unknown outcomes', () => {
     const unchanged = write(reg('0123456789'), m('0123456789', 'base', A, 1), m('0123456789', 'head', B, 1))[0]!;
-    expect(evaluatePromotion({ outcome: unchanged, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true }).reasons[0]).toMatch(/is unchanged/);
+    expect(evaluatePromotion({ outcome: unchanged, pr: pr(), defaultBranch: 'main', mergeBase: A, ledgerIntact: true, ...clean, remeasured: { base: 1, head: 1, reasons: [] } }).reasons[0]).toMatch(/is unchanged/);
   });
 
   it('normalizes check runs and status contexts conservatively', () => {
@@ -127,7 +129,7 @@ describe('promotion gate', () => {
       { __typename: 'CheckRun', name: 'd', status: 'COMPLETED', conclusion: 'CANCELLED' },
       { __typename: 'StatusContext', context: 'e', state: 'PENDING' },
       { __typename: 'StatusContext', context: 'f', state: 'ERROR' },
-    ]).map((c) => c.state)).toEqual(['success', 'success', 'pending', 'failure', 'pending', 'failure']);
+    ]).map((c) => c.state)).toEqual(['success', 'skipped', 'pending', 'failure', 'pending', 'failure']);
     expect(normalizeChecks(null)).toEqual([]);
   });
 
@@ -178,7 +180,7 @@ describe('measurement', () => {
     expect(() => parseMetricOutput('{"metric":"m","value":"3"}', 'm')).toThrow();
     expect(() => parseMetricOutput('{"metric":"m","value":3}\ndone', 'm')).toThrow();
     const env = metricEnv({ PATH: '/bin', GITHUB_TOKEN: 'x', GH_TOKEN: 'x', ANTHROPIC_API_KEY: 'x', NPM_TOKEN: 'x', CLAUDECODE: '1' });
-    expect(env).toEqual({ CI: '1', NO_COLOR: '1', PATH: '/bin' });
+    expect(env).toEqual({ CI: '1', NO_COLOR: '1', PATH: '/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' });
   });
 });
 

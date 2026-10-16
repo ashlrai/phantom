@@ -327,6 +327,7 @@ export const REAL_IO_TEST_FILES = [
   'test/npm-cli-launch.test.ts', // spawns the real npm CLI — 3.5s slowest test in the quiet baseline
   'test/m310.queued-autonomy-work.test.ts', // real queued autonomy work over real fs — 9.6s slowest test in the quiet baseline
   'test/m245.self-improve-integration.test.ts', // real self-improve integration loop — 4.7s slowest test in the quiet baseline
+  'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
   'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
