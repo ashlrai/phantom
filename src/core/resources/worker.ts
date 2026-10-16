@@ -235,8 +235,10 @@ async function executeLocal(worker: ResourceWorker, binding: Extract<ResourceBin
   try {
     if (controller.signal.aborted) return empty('worker-cancelled', 'cancelled');
     const client = buildOpenAICompatibleClient(binding.endpoint, '', worker.model, false, undefined, controller.signal,
+      // One task, one connection: a pooled idle socket can be closed by the
+      // server during this process's synchronous work between tasks.
       { redirect: 'error', timeoutMs: task.timeoutMs, maxRequestBytes: MAX_BYTES, maxResponseBytes: MAX_BYTES,
-        maxOutputTokens: task.maxOutputTokens });
+        maxOutputTokens: task.maxOutputTokens, freshConnection: true });
     const response = await client.chat([{ role: 'user', content: task.prompt }], undefined, controller.signal);
     if (response.usageKnown === true && count(response.usage.tokensIn) && count(response.usage.tokensOut) &&
         count(response.usage.tokensIn + response.usage.tokensOut)) {
