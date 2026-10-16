@@ -147,7 +147,7 @@ describe('M30 CI workflow', () => {
       expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
     }
     expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
-      "${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}",
+      "${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') && !contains(github.event.pull_request.labels.*.name, 'mac-full')) }}",
     );
     expect(execute('site', { ...site, site: 'failure' })).toThrow();
     expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
@@ -358,7 +358,7 @@ describe('M30 CI workflow', () => {
     // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
     expect(jobs['mac-general']!.needs).toBe('classify');
     expect(jobs['mac-general']!.if).toBe(
-      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac') || contains(github.event.pull_request.labels.*.name, 'mac-full'))",
     );
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
@@ -385,6 +385,17 @@ describe('M30 CI workflow', () => {
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
     expect(names).toContain('Native macOS broker foundation (Rust 1.97.1)');
+  });
+
+  it('runs the exhaustive Mac partition nightly and reports master Mac failures without gating', () => {
+    expect(ciYml).toMatch(/^ {2}schedule:\n {4}- cron: '17 6 \* \* \*'$/m);
+    const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
+    expect(Object.keys(jobs)).not.toContain('mac-failure-issue');
+    const reporter = readFileSync(resolve(repoRoot, '.github/workflows/mac-failure-issue.yml'), 'utf8');
+    expect(reporter).toMatch(/^ {2}workflow_run:\n {4}workflows: \[CI\]\n {4}types: \[completed\]\n {4}branches: \[master\]$/m);
+    expect(reporter).toContain("github.event.workflow_run.head_repository.full_name == github.repository");
+    expect(reporter).toContain('issues: write');
+    expect(reporter).not.toMatch(/actions\/checkout|pull_request_target|npm |node |--admin/);
   });
 
   it('keeps native cache reuse independent from test and artifact admission', () => {
