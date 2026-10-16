@@ -50,7 +50,7 @@ describe('CloudCreditsPanel', () => {
     const panel = await screen.findByRole('region', { name: 'Cloud credits' });
     expect(within(panel).getByText('Not set up')).toBeInTheDocument();
     expect(within(panel).getByText('~$250 credits · estimate')).toBeInTheDocument();
-    expect(within(panel).getByText("The Claude seat isn't set up on this Mac.")).toBeInTheDocument();
+    expect(within(panel).getByText("The Claude seat isn't set up on this computer.")).toBeInTheDocument();
     expect(within(panel).queryByRole('meter')).toBeNull();
     // The calibration form is still there: the estimate can be corrected before setup.
     expect(within(panel).getByLabelText('Credits on the account')).toBeInTheDocument();
