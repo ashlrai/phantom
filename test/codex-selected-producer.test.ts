@@ -8,6 +8,7 @@ import { defaultConfig } from '../src/core/config.js';
 import type { EffectivePolicy } from '../src/core/authority/types.js';
 import { prepareResourceNativeProfile, repinResourceNativeProfile } from '../src/core/resources/native-profile.js';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
+import { writeCapacitySnapshot } from '../src/core/routing/budget-store.js';
 import * as autonomous from '../src/core/sandbox/autonomous-run.js';
 import * as leases from '../src/core/sandbox/execution-leases.js';
 import * as engines from '../src/core/run/engines.js';
@@ -84,11 +85,52 @@ if(args.includes('app-server')){
   const diffs:string[]=[];const diff=worktree.sandboxDiff;
   vi.spyOn(worktree,'sandboxDiff').mockImplementation(sb=>{const d=diff(sb);diffs.push(d.patch);return d;});
   const opts={sourceRepo:repo,model:'gpt-fixture',seatId:'codex-b',selectedCodexAccount:{accountHint:b.accountHint,admitted:()=>true}};
+  const publishBoundary=(kind:'current'|'missing'|'expired'|'wrong-account'='current')=>{
+    const observedAt=new Date(Date.now()-(kind==='expired'?120_000:0)).toISOString();
+    const accountHint=kind==='wrong-account'?a.accountHint:b.accountHint;
+    writeCapacitySnapshot([{seatId:'codex-b',engine:'codex',label:'B',free:false,windows:[],signedOut:false,
+      reachable:true,contextWindow:256000,spentTodayUsd:null,observedAt,accountHint,
+      ...(kind==='missing'?{}:{subscriptionOnlyBoundary:{source:'codex-siwc-app-credit-control' as const,
+        accountHint,observedAt,expiresAt:new Date(Date.parse(observedAt)+60_000).toISOString(),creditsEnabled:false as const}})}]);
+  };
+  publishBoundary();
   const reply=(index=0) => JSON.parse(JSON.parse(spawns[index]!.result.output.trim().split('\n').find(line=>JSON.parse(line).item?.id==='reply')!).item.text) as {binary:string;account:string;state:string;cwd:string;input:string;repair:boolean};
-  return {a,b,cfg,opts,spawns,diffs,repo,reply,actual};
+  return {a,b,cfg,opts,spawns,diffs,repo,reply,actual,publishBoundary};
 }
 
 describe.runIf(process.platform==='darwin' && typeof process.execve==='function')('selected Codex producer binding',() => {
+  it('refuses an unselected autonomous Codex producer before any native contact',async()=>{
+    const f=fixture(),probe=vi.spyOn(accounts,'observeRoleAccount');
+    const result=await runEngineSandboxed('codex','Read and edit',f.cfg,{sourceRepo:f.repo,model:'gpt-fixture',propose:false});
+    expect(result.state.status).toBe('failed');expect(result.proposalOutcome?.reason).toContain('selected native account');
+    expect(probe).not.toHaveBeenCalled();expect(f.spawns).toEqual([]);
+  });
+  it.each(['missing','expired','wrong-account'] as const)('refuses %s billing evidence before native metadata or provider contact',async kind=>{
+    const f=fixture();f.publishBoundary(kind);
+    const probe=vi.spyOn(accounts,'observeRoleAccount');
+    const result=await runEngineSandboxed('codex','Read and edit',f.cfg,{...f.opts,propose:false});
+    expect(result.state.status).toBe('failed');expect(result.proposalOutcome?.reason).toContain('subscription-only billing control');
+    expect(probe).not.toHaveBeenCalled();expect(f.spawns).toEqual([]);
+    expect(existsSync(join(f.repo,'edited.ts'))).toBe(false);
+  });
+  it('rechecks billing evidence at actual contact after setup and refuses revoked protection',async()=>{
+    const f=fixture(),actual=f.actual;
+    vi.mocked(engines.spawnEngine).mockImplementation(async(cmd,cfg,opts)=>{
+      f.publishBoundary('missing');const result=await actual(cmd,cfg,opts);f.spawns.push({cmd,result});return result;
+    });
+    const result=await runEngineSandboxed('codex','Read and edit',f.cfg,{...f.opts,propose:false});
+    expect(result.state.status).toBe('aborted');expect(f.spawns[0]!.result.output).toBe('');
+    expect(result.state.usage.steps).toBe(0);expect(existsSync(join(f.repo,'edited.ts'))).toBe(false);
+  });
+  it('refuses a repair contact when billing protection expires after the first native run',async()=>{
+    const f=fixture();f.cfg.foundry!.completenessGate=true;f.cfg.foundry!.verifyToGreen={enabled:true,maxIterations:1};
+    vi.mocked(runCompletenessGate).mockImplementation(async()=>{
+      f.publishBoundary('expired');return {pass:false,reason:'fixture needs repair'};
+    });
+    const result=await runEngineSandboxed('codex','Read input and edit',f.cfg,f.opts);
+    expect(f.spawns).toHaveLength(1);expect(f.reply()).toMatchObject({binary:'B',repair:false});
+    expect(result.state.status).toBe('failed');expect(result.state.usage.steps).toBe(1);
+  });
   it('executes versioned B with B private login despite PATH A and captures its real read/edit',async() => {
     const f=fixture();const result=await runEngineSandboxed('codex','Read input.txt and edit edited.ts',f.cfg,{...f.opts,propose:false});
     expect(result.state.status).toBe('done');expect(f.spawns).toHaveLength(1);

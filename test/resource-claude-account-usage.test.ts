@@ -182,7 +182,7 @@ describe('bounded version-gated report collection', () => {
     expect(await probeClaudeAccountUsage(options())).toMatchObject({ status: 'uncertain', windows: [] });
   });
   it.each([
-    [{ timedOut: true }, 'timed-out', 'status-timed-out'], [{ cancelled: true }, 'cancelled', 'status-cancelled'],
+    [{ timedOut: true }, 'timed-out', 'status-version-timed-out'], [{ cancelled: true }, 'cancelled', 'status-cancelled'],
     [{ exitCode: 2 }, 'observed', 'usage-process-failed'], [{ outputTruncated: true }, 'observed', 'usage-output-invalid'],
     [{ stderr: 'é'.repeat(20000) }, 'observed', 'usage-output-invalid'],
     [{ error: 'termination authority lost: PRIVATE', processGroupSettlement: 'unconfirmed' }, 'uncertain', 'status-termination-uncertain'],
@@ -208,6 +208,7 @@ describe('bounded version-gated report collection', () => {
     const report = await probeClaudeAccountUsage(options());
     expect(report).toMatchObject({ status: 'uncertain', reason: 'status-termination-uncertain',
       windows: [], loggedIn: null, authMethod: 'unknown', accountHint: null, subscriptionType: null });
+    expect(report).not.toHaveProperty('timeoutElapsedMs');
     expect(subprocess).toHaveBeenCalledTimes(stage);
     expect(subprocess.mock.calls.every(([, config]) => config.requireProcessGroupExit === true)).toBe(true);
     expect(existsSync(subprocess.mock.calls.at(-1)![1].cwd)).toBe(true);
@@ -216,8 +217,49 @@ describe('bounded version-gated report collection', () => {
   it('withholds quota when the entire monotonic budget expired during auth', async () => {
     let now = 0; vi.spyOn(performance, 'now').mockImplementation(() => now);
     const { authentication, subprocess } = mocks(); authentication.mockImplementation(async () => { now = 5000; return status(); });
-    expect(await probeClaudeAccountUsage(options())).toMatchObject({ status: 'timed-out', windows: [] });
+    expect(await probeClaudeAccountUsage(options())).toMatchObject({ status: 'timed-out', reason: 'status-version-timed-out',
+      timeoutElapsedMs: 5000, windows: [] });
     expect(subprocess).not.toHaveBeenCalled();
+  });
+  it('reports only a closed stage and bounded elapsed time for each composite timeout', async () => {
+    let now = 0; vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { authentication, subprocess } = mocks();
+    const timedOutAuth = status({ status: 'timed-out', reason: 'status-timed-out',
+      accountHint: null, loggedIn: null, authMethod: 'unknown', subscriptionType: null });
+    authentication.mockImplementationOnce(async () => { now = 6000; return timedOutAuth; });
+    const authResult = await probeClaudeAccountUsage(options());
+    expect(authResult).toMatchObject({ status: 'timed-out', reason: 'status-auth-timed-out',
+      timeoutElapsedMs: 5000, windows: [], accountHint: null });
+    expect(subprocess).not.toHaveBeenCalled();
+
+    now = 0;
+    subprocess.mockImplementationOnce(async (_, config) => {
+      scratchDirs.push(config.cwd); now = 1200;
+      return nativeResult('PRIVATE_VERSION', { timedOut: true, stderr: 'PRIVATE_ACCOUNT' });
+    });
+    const versionResult = await probeClaudeAccountUsage(options());
+    expect(versionResult).toMatchObject({ status: 'timed-out', reason: 'status-version-timed-out',
+      timeoutElapsedMs: 1200, windows: [] });
+    expect(JSON.stringify(versionResult)).not.toMatch(/PRIVATE_VERSION|PRIVATE_ACCOUNT/);
+
+    now = 0;
+    subprocess.mockImplementationOnce(async (_, config) => {
+      scratchDirs.push(config.cwd); now = 100;
+      return nativeResult('2.1.257 (Claude Code)');
+    }).mockImplementationOnce(async (_, config) => {
+      scratchDirs.push(config.cwd); now = 4900;
+      return nativeResult('PRIVATE_USAGE', { timedOut: true, stderr: 'PRIVATE_ACCOUNT' });
+    });
+    const usageResult = await probeClaudeAccountUsage(options());
+    expect(usageResult).toMatchObject({ status: 'timed-out', reason: 'status-usage-timed-out',
+      timeoutElapsedMs: 4900, windows: [] });
+    expect(JSON.stringify(usageResult)).not.toMatch(/PRIVATE_USAGE|PRIVATE_ACCOUNT/);
+
+    now = 0;
+    authentication.mockResolvedValueOnce(status()).mockImplementationOnce(async () => { now = 6000; return timedOutAuth; });
+    const reauthResult = await probeClaudeAccountUsage(options());
+    expect(reauthResult).toMatchObject({ status: 'timed-out', reason: 'status-reauth-timed-out',
+      timeoutElapsedMs: 5000, windows: [], accountHint: null });
   });
   it('pins command options against mutation between awaits', async () => {
     const config = options(); const { authentication, subprocess } = mocks();

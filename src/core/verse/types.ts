@@ -274,6 +274,15 @@ export type VerseSeatUsability = 'ready' | 'tight' | 'exhausted' | 'signed-out' 
  */
 export type VerseSeatEvidenceSource = 'collector' | 'shared-evidence' | 'baseline' | 'none';
 
+/** Closed, non-sensitive Claude quota-check outcomes that explain an absent meter. */
+export type VerseClaudeQuotaReadReason =
+  | 'usage-output-invalid' | 'usage-process-failed' | 'usage-version-unsupported'
+  | 'usage-identity-unavailable' | 'usage-account-changed'
+  | 'status-termination-uncertain' | 'status-timed-out'
+  | 'status-auth-timed-out' | 'status-version-timed-out'
+  | 'status-usage-timed-out' | 'status-reauth-timed-out'
+  | 'connection-monitor-stopped' | 'connection-reading-expired';
+
 /** Everything the seat list needs to draw a capacity meter honestly. */
 export interface VerseSeatCapacity {
   /** Opaque current native account proof; missing legacy evidence remains unknown. */
@@ -291,11 +300,15 @@ export interface VerseSeatCapacity {
   windows: VerseSeatWindow[];
   /** Codex only; null for every other provider and when no signal exists. */
   credits: VerseSeatCredits | null;
+  /** Original native quota expiry. Missing legacy evidence remains unconfirmed. */
+  quotaExpiresAt?: string | null;
   /** Original native credit-reading expiry; never renewed by cached display. */
   creditsExpiresAt?: string | null;
   usability: VerseSeatUsability;
   observedAt: string | null;
   evidenceSource: VerseSeatEvidenceSource;
+  /** Present only for an absent Claude meter and an allowlisted probe outcome. Never raw native output. */
+  quotaReadReason?: VerseClaudeQuotaReadReason;
   /** Plain-language provider facts the UI must show instead of implying a fault. */
   notes: string[];
 }

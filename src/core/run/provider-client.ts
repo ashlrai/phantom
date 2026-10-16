@@ -1078,7 +1078,7 @@ export function buildOpenAICompatibleClient(
   signal?: AbortSignal,
   transport?: {
     /** Qualified text-only local completion: strict SSE, exact model, no replay. */
-    strictStreaming?: { expectedModel: string };
+    strictStreaming?: { expectedModel: string; disableThinking?: boolean };
     redirect?: 'follow' | 'error' | 'manual';
     timeoutMs?: number;
     maxRequestBytes?: number;
@@ -1297,6 +1297,7 @@ export function buildOpenAICompatibleClient(
           !transport.strictStreaming.expectedModel || transport.strictStreaming.expectedModel !== model) throw new Error('Strict local completion transport invalid');
         const body = JSON.stringify({ model, messages: toOpenAIMessages(messages), stream: true,
           max_tokens: maxOutputTokens, stream_options: { include_usage: true },
+          ...(transport.strictStreaming.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
           ...(temperature !== undefined ? { temperature } : {}) });
         if (Buffer.byteLength(body) > Number(transport.maxRequestBytes)) throw new Error('OpenAI-compat request exceeds byte limit');
         const result = await strictTextStream({ url: chatUrl, headers: buildHeaders(), body, signal: requestSignal,

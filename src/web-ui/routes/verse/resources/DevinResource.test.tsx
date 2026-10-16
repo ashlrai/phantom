@@ -218,11 +218,11 @@ describe('DevinResource', () => {
     expect(isGuardOpen()).toBe(true); expect(posts).toHaveLength(0);
   });
 
-  it('labels an empty organization report without claiming measured zero consumption', async () => {
+  it('labels an empty organization report as a reported zero without claiming consumed zero', async () => {
     overview = { ...(overview as Record<string, unknown>), consumption: consumption({ report: { totalAcus: 0, days: [] } }) };
     mount();
     const section = await screen.findByRole('region', { name: 'Devin organization consumption' });
-    expect(within(section).getByText('No consumption reported')).toBeInTheDocument();
+    expect(within(section).getByText('0 ACUs reported')).toBeInTheDocument();
     expect(within(section).queryByText('0 ACUs consumed')).toBeNull();
     expect(within(section).getByText('Daily consumption (0 reporting buckets)')).toBeInTheDocument();
     expect(within(section).getByText(/Balance, subscription limits and resets are not reported/)).toBeInTheDocument();
@@ -233,8 +233,10 @@ describe('DevinResource', () => {
     expect(devinConsumptionEvidence(consumption({ report: { totalAcus: -1, days: [] } }))).toBeNull();
     expect(devinConsumptionEvidence(consumption({ report: { totalAcus: '0', days: [] } }))).toBeNull();
     expect(devinConsumptionEvidence(consumption({ fetchedAt: new Date(Date.now() + 60_000).toISOString() }))).toBeNull();
+    expect(devinConsumptionEvidence(consumption({ report: null }))?.value).toBe('consumption not reported');
     const empty = devinConsumptionEvidence(consumption({ report: { totalAcus: 0, days: [] } }));
-    expect(empty?.value).toBe('No consumption reported');
+    expect(empty?.value).toBe('0 ACUs reported');
+    expect(devinConsumptionEvidence(consumption({ stale: true, report: { totalAcus: 0, days: [] } }))?.value).toBe('0 ACUs reported · last');
     expect(empty?.report).toEqual({ totalAcus: 0, days: [] });
     expect(empty?.lines).toContain('0 daily reporting buckets; dates retained as provider values.');
     const measuredZero = consumption({ report: { totalAcus: 0, days: [{ date: 123, acus: 0,
@@ -248,7 +250,7 @@ describe('DevinResource', () => {
     mount();
     const section = await screen.findByRole('region', { name: 'Devin organization consumption' });
     expect(within(section).getByText(`0.031 ACUs consumed${stale ? ' · last' : ''}`)).toBeInTheDocument();
-    expect(within(section).queryByText('No consumption reported')).toBeNull();
+    expect(within(section).queryByText('0 ACUs reported')).toBeNull();
     expect(within(section).getByText('Daily consumption (0 reporting buckets)')).toBeInTheDocument();
     expect(within(section).queryByRole('list')).toBeNull();
     expect(section.textContent).not.toMatch(/\$|% left|resets in/);

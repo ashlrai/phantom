@@ -723,8 +723,35 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Seed daemon state with a given spent amount for today. */
+/** Freeze Date at the current real instant for the rest of the case. A case
+ * that seeds a UTC budget day (or a dated ledger path) and then calls code that
+ * re-derives the day itself must observe one clock: otherwise a run crossing
+ * 00:00 UTC seeds one day and is judged against the next. Only Date is faked:
+ * timers and performance.now() stay real, so bounded lock waits still
+ * progress. The file-level afterEach restores real timers. */
+function freezeWallClock(): Date {
+  const now = new Date();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(now);
+  return now;
+}
+
+/** freezeWallClock() for spend-guard fixtures armed at `${day}T00:01:00Z`:
+ * startup recovery rejects a guard armed in the future, so a case that starts
+ * in the first two minutes of a UTC day freezes at 00:02 of that same day
+ * instead of the real instant. Returns the frozen budget day. */
+function freezeBudgetDayClock(): string {
+  const nowMs = Date.now();
+  const dayStartMs = nowMs - (nowMs % 86_400_000);
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Math.max(nowMs, dayStartMs + 120_000));
+  return today();
+}
+
+/** Seed daemon state with a given spent amount for today. Freezes Date first
+ * (see freezeWallClock) so the seeded day is the day the tick re-derives. */
 function seedSpend(spentUsd: number): void {
+  freezeWallClock();
   saveDaemonState({
     running: false,
     pid: null,
@@ -751,8 +778,10 @@ function seedSpendForDate(date: string, spentUsd: number): void {
   });
 }
 
-/** Seed daemon state with recent tick history. */
+/** Seed daemon state with recent tick history for today. Freezes Date first
+ * (see freezeWallClock) so the seeded day is the day the tick re-derives. */
 function seedTicks(ticks: DaemonTick[], automaticDrainOrdinaryTurnDue?: boolean): void {
+  freezeWallClock();
   saveDaemonState({
     running: false,
     pid: null,
@@ -2302,6 +2331,7 @@ describe('M201 — Group A: backlog build + top-K selection', () => {
   });
 
   it('A1-shared-production-failure: settles only the executing claim and permits an immediate retry', async () => {
+    freezeWallClock();
     const { repo, items } = enrollWithItems(1);
     const item = items[0]!;
     const sharedPath = join(fx.ashlrDir, 'shared-production-failure');
@@ -6457,6 +6487,7 @@ describe('M201 — Group A: backlog build + top-K selection', () => {
   });
 
   it('A1h5b-disabled-authority: canonical dispatch persistence remains mandatory', async () => {
+    freezeWallClock();
     const { items } = enrollWithItems(1);
     const item = items[0]!;
     fs.mkdirSync(join(dispatchProductionDir(), `${today()}.jsonl`), { recursive: true });
@@ -10765,7 +10796,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
   });
 
   it('E3l: unreceipted concurrent v2 exposure is charged once and survives a later cap increase', async () => {
-    const budgetDay = today();
+    const budgetDay = freezeBudgetDayClock();
     const daemonStartedAt = `${budgetDay}T00:00:00.000Z`;
     const guard = {
       schemaVersion: 2,
@@ -10831,7 +10862,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
   });
 
   it('E3m: an exact persisted receipt permits same-process replay clearing without a second charge', () => {
-    const budgetDay = today();
+    const budgetDay = freezeBudgetDayClock();
     const daemonStartedAt = `${budgetDay}T00:00:00.000Z`;
     const guard = {
       schemaVersion: 2 as const,
@@ -10869,7 +10900,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
   });
 
   it('E3n: a same-process guard without its exact receipt remains fail-closed', () => {
-    const budgetDay = today();
+    const budgetDay = freezeBudgetDayClock();
     const daemonStartedAt = `${budgetDay}T00:00:00.000Z`;
     const guard = {
       schemaVersion: 2 as const,
@@ -10901,7 +10932,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
   });
 
   it('E3o: a state-bound same-host dead-owner v1 guard upgrades, exhausts the day, and clears', async () => {
-    const budgetDay = today();
+    const budgetDay = freezeBudgetDayClock();
     const daemonStartedAt = `${budgetDay}T00:00:00.000Z`;
     const deadPid = 2_147_483_647;
     const legacy = {
@@ -10989,6 +11020,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
   });
 
   it('E5c: authoritative lock ownership repairs stale resident state before restart', async () => {
+    freezeWallClock();
     const stalePid = 424_243;
     const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
       if (pid === stalePid) {
@@ -11001,7 +11033,7 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
       pid: stalePid,
       startedAt: '2026-07-13T00:00:00.000Z',
       lastTickAt: null,
-      todayDate: new Date().toISOString().slice(0, 10),
+      todayDate: today(),
       todaySpentUsd: 0.25,
       itemsProcessed: 2,
       ticks: [],

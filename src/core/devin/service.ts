@@ -32,6 +32,7 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-sto
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { devinBudgetView, DEVIN_ACCOUNTING_UNAVAILABLE } from './budget.js';
+import { devinFleetApiBillingGate } from './api-billing.js';
 import { devinTaskDiagnostics } from './create-recovery.js';
 import { stateFromSession } from './session-state.js';
 import { DevinApiError, DevinClient, devinFailureSentence, type DevinFetch, type DevinSession } from './client.js';
@@ -56,6 +57,7 @@ import {
 import {
   DEVIN_BRANCH_PREFIX,
   DEVIN_ORG_ID_PATTERN,
+  isDevinOpaqueSelfId,
   DEVIN_PR_TITLE_PREFIX,
   DEVIN_PROMPT_MAX_CHARS,
   DEVIN_SESSION_TAG,
@@ -208,7 +210,8 @@ export const DEVIN_CHAT_VERDICT: ReadinessVerdict = Object.freeze(devinChatVerdi
  * Ready needs the lane on, a key, Mason's opt-in, a live standing grant whose
  * current stage names the `devin` engine with a producer-only Devin seat
  * (3.15 — its own engine identity; see authority/effective-config.ts
- * standingAuthorizesDevin) and the budget's reserve and fleet caps. Devin PRs
+ * standingAuthorizesDevin), a positive standing metered API allowance, and
+ * the budget's reserve and fleet caps. Devin PRs
  * then merge only under the two-judge rule (merge-gates.ts G6) — or, 3.15,
  * on green tests alone when Devin ran an elite model (SWE-2, GPT-6) under an
  * elite-direct grant (authority/elite-models.ts).
@@ -239,6 +242,9 @@ export function devinFleetVerdict(input: {
     return v(false, 'warn', 'Not in the grant', `${granted.reason} Draft a new grant (or re-approve) with the Devin fleet opt-in on.`,
       commandFix('Draft a grant that includes Devin', 'ashlr authority draft'));
   }
+  const billing = devinFleetApiBillingGate(input.policy);
+  if (!billing.ok) return v(false, 'warn', 'Billing held', billing.reason!,
+    commandFix('Review the standing metered allowance', 'ashlr authority draft'));
   if (!input.fleetGate.ok) return v(false, 'warn', 'Paused', input.fleetGate.reason ?? 'The Devin budget refused another fleet session.');
   return v(true, 'ok', 'Ready', 'The fleet may launch Devin on well-scoped backlog work. Its PRs pass every standing gate; on an elite model (SWE-2, GPT-6) under an elite-direct grant they land on green tests, otherwise they merge only when two judges from different families ship them.');
 }
@@ -309,6 +315,11 @@ export async function devinStatus(deps: DevinServiceDeps = {}, tasks?: readonly 
       hasOrgId: connection.selfIdentity.orgId !== null,
       hasDevinSessionsOrgId: connection.selfIdentity.devinSessionsOrgId !== null,
     } } : {}),
+    ...(connection ? { attribution: connection.principal === 'pat_user'
+      ? { kind: 'personal' as const, email: null, verifiedAt: connection.selfIdentity?.observedAt ?? null }
+      : connection.humanSeat
+        ? { kind: 'human-seat' as const, email: connection.humanSeat.email, verifiedAt: connection.humanSeat.selectedAt }
+        : { kind: 'service-user' as const, email: null, verifiedAt: null } } : {}),
     chatLine: state === 'ready'
       ? chat.ready ? 'Chat: ready — pick “Devin (cloud)” in New chat' : `Chat: new sessions paused — ${chat.detail}`
       : `Chat: off — ${chat.detail}`,
@@ -357,6 +368,35 @@ export async function connectDevin(input: { key: string; orgId?: string | null }
     keyPresence = null;
     noteApiSuccess();
     return { orgId, principal: self.principal, principalName: self.name };
+  });
+}
+
+/** Select a direct human member for future service-user launches. This never reads an allowance or starts a session. */
+export async function selectDevinHumanSeat(email: string, deps: DevinServiceDeps = {}): Promise<{ email: string; selectedAt: string }> {
+  const before = readDevinConnection();
+  if (!before || before.principal !== 'service_user') throw new DevinApiError('not-connected', 'Connect a Devin service-user key before selecting a human seat.');
+  const connected = await connectedClient(deps);
+  if ('error' in connected) throw new DevinApiError(connected.failure, connected.error);
+  const self = await connected.client.getSelf();
+  const serviceUserId = self.identity?.serviceUserId;
+  if (self.principal !== 'service_user' || !isDevinOpaqueSelfId(serviceUserId)
+    || (self.orgId !== null && self.orgId !== before.orgId)
+    || (before.selfIdentity?.serviceUserId && before.selfIdentity.serviceUserId !== serviceUserId)) {
+    throw new DevinApiError('not-connected', 'The Devin key no longer matches this service-user connection. Reconnect before selecting a seat.');
+  }
+  const member = await connected.client.getOrganizationUserByEmail(before.orgId, email);
+  if (!member) throw new DevinApiError('invalid-request', 'That email is not a direct member of the connected Devin organization.');
+  return consumptionConnectionTransition(async () => {
+    if (JSON.stringify(readDevinConnection()) !== JSON.stringify(before)) {
+      throw new DevinApiError('not-connected', 'The Devin connection changed while selecting a seat. Try again.');
+    }
+    const selectedAt = (deps.now ?? (() => new Date()))().toISOString();
+    const { v: _v, updatedAt: _updatedAt, ...base } = before;
+    writeDevinConnection({ ...base,
+      selfIdentity: { ...self.identity!, source: 'devin-v3-self', observedAt: selectedAt },
+      humanSeat: { userId: member.userId, email: member.email, selectedAt },
+    });
+    return { email: member.email, selectedAt };
   });
 }
 
@@ -414,7 +454,9 @@ async function consumptionConnectionTransition<T>(run: () => Promise<T>): Promis
 function consumptionIdentity(): string | null {
   if (consumptionConnectionTransitions > 0 || devinConsumptionConnectionUnconfirmed()) return null;
   const connection = readDevinConnection();
-  return connection ? JSON.stringify([connection.orgId, connection.principal, connection.principalName, connection.connectedAt]) : null;
+  return connection ? JSON.stringify([connection.orgId, connection.principal, connection.principalName,
+    connection.connectedAt, connection.updatedAt, connection.humanSeat?.userId ?? null,
+    connection.humanSeat?.selectedAt ?? null]) : null;
 }
 
 /** Cache-only: neither provider nor Keychain reads occur on this projection. */
@@ -519,9 +561,29 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
     // authorizes Claude (or anything else) never authorizes Devin.
     const granted = standingAuthorizesDevin(policy);
     if (!granted.ok) return refusal(granted.reason, 'not-enabled');
+    // Fleet API creation is distinct from native free CLI authority. Manual,
+    // chat and operator launches retain their existing explicit ACU semantics.
+    const billing = devinFleetApiBillingGate(policy);
+    if (!billing.ok) return refusal(billing.reason!, 'budget');
   }
   const connected = await connectedClient(deps);
   if ('error' in connected) return refusal(connected.error, connected.failure);
+  const humanSeat = connection.humanSeat;
+  if (humanSeat) {
+    try {
+      const self = await connected.client.getSelf();
+      if (self.principal !== 'service_user' || self.identity?.serviceUserId !== connection.selfIdentity?.serviceUserId
+        || (self.orgId !== null && self.orgId !== connection.orgId)) {
+        return refusal('The Devin key no longer matches the service user that selected this human seat. Reconnect before launching.', 'not-connected');
+      }
+      const member = await connected.client.getOrganizationUserByEmail(connection.orgId, humanSeat.email);
+      if (!member || member.userId !== humanSeat.userId) {
+        return refusal('The selected Devin human seat no longer matches a direct organization member. Select it again before launching.', 'not-connected');
+      }
+    } catch {
+      return refusal('Devin human-seat membership could not be verified before launch. Nothing was started.', 'not-connected');
+    }
+  }
   const baseBranch = givenBase !== '' ? givenBase : (await defaultBranchOf(repo, deps)) ?? FALLBACK_BASE_BRANCH;
   // 3.15: the playbook (named, `!macro` in the text, or auto-matched). A named one that does not exist refuses.
   const resolvedPlaybook = await playbookForLaunch({ explicit: req.playbook, title, prompt, repo });
@@ -531,6 +593,13 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
   const playbook = chatLaunch && resolvedPlaybook.match === 'auto'
     ? { ...resolvedPlaybook, ref: null, match: null, block: '' }
     : resolvedPlaybook;
+
+  // Preparation awaited key/branch/playbook work. A tightened dollar gate
+  // must refuse before even publishing a new local queue reservation.
+  if (origin === 'fleet') {
+    const billing = devinFleetApiBillingGate(safePolicy(deps));
+    if (!billing.ok) return refusal(billing.reason!, 'budget');
+  }
 
   // --- budget gate + persist queued (no await between them) ----------------
   const now = clock();
@@ -604,6 +673,20 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
   };
 
   const { client, orgId } = connected;
+  const adoptWithAttribution = async (session: DevinSession): Promise<DevinLaunchResponse> => {
+    if (!humanSeat) return adopt(session);
+    // Create responses may omit user_id. Only the exact GET can establish the
+    // selected human session attribution; a failed GET still leaves a live, fully held session.
+    let observed: DevinSession = session;
+    try { observed = await client.getSession(orgId, session.sessionId); } catch { /* retain the created id and full ACU exposure */ }
+    if (observed.userId === humanSeat.userId) return adopt(observed);
+    Object.assign(task, { sessionId: session.sessionId, sessionUrl: session.url,
+      launchedAt: clock().toISOString(), session: snapshotOf(observed, clock()),
+      state: 'failed', failure: 'unparsed',
+      stateReason: 'Devin started a session, but human-seat attribution was not verified. Its ACU cap remains held; inspect the provider session before another launch.' });
+    writeDevinTask(task);
+    return { ok: false, task, error: task.stateReason, failure: 'unparsed' };
+  };
   const tag = devinSessionTaskTag(id);
   const beforeContact = (): void => {
     const sectionNow = readConfig(deps);
@@ -622,6 +705,8 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
       if (!policy || !repoPolicyFor(policy, repo)) throw new DevinApiError('not-enabled', 'The current standing grant no longer authorizes this Devin repo.');
       const granted = standingAuthorizesDevin(policy);
       if (!granted.ok) throw new DevinApiError('not-enabled', granted.reason);
+      const billing = devinFleetApiBillingGate(policy);
+      if (!billing.ok) throw new DevinApiError('budget', billing.reason!);
       const clamped = clampBudgetPolicy(loadBudgetPolicy(), policy, [DEVIN_SEAT_ID]);
       if (!effectiveSeatPolicy(clamped, DEVIN_SEAT_ID, 'devin').enabled) throw new DevinApiError('budget', 'The current budget policy keeps autonomy off Devin.');
     }
@@ -644,6 +729,7 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
     ownedTaskRecord = JSON.stringify(task);
     const session = await client.createSession(orgId, {
       prompt: chatLaunch ? buildDevinChatPrompt(task, { planOnly, playbook: playbook.block }) : buildDevinPrompt(task, playbook.block),
+      ...(humanSeat ? { createAsUserId: humanSeat.userId } : {}),
       title: `${DEVIN_PR_TITLE_PREFIX} ${title}`,
       repos: [repo],
       tags: [DEVIN_SESSION_TAG, tag],
@@ -655,7 +741,7 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
       devinMode: task.devinMode,
     }, beforeContact);
     noteApiSuccess();
-    return adopt(session);
+    return adoptWithAttribution(session);
   } catch (error) {
     noteApiFailure(error);
     const code: DevinFailureCode = error instanceof DevinApiError ? error.code : 'unknown';
@@ -664,7 +750,7 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
       try {
         const page = await client.listSessions(orgId, { first: RECOVERY_LIST_SIZE });
         const found = page.items.find((s) => s.tags.includes(tag));
-        if (found) return adopt(found);
+        if (found) return adoptWithAttribution(found);
       } catch { /* fall through to the recorded failure */ }
       return fail(code, 'Devin may or may not have started this session — the connection dropped before it answered. Check app.devin.ai; until then its full ACU cap counts against the budget.');
     }

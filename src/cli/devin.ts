@@ -44,6 +44,9 @@ Usage:
       Create a key at app.devin.ai: Settings > Devin API (a service user with the Member role, or a personal access token).
   ashlr devin disconnect
       Remove the key from the Keychain and forget the connection.
+  ashlr devin seat --email you@example.com
+      Select a direct human organization member for future service-user sessions. The API key remains a service-user key.
+      Devin must grant that service user ImpersonateOrgSessions; this does not prove plan allowance or credit balance.
   ashlr devin enable | disable
       Turn the Devin lane on or off (the key stays).
   ashlr devin fleet on | off
@@ -73,6 +76,7 @@ Dollar figures are estimates; ACUs come from Devin's own readings.`;
 export interface DevinCliDeps {
   connect: (input: { key: string; orgId: string | null }) => Promise<DevinConnectResult>;
   disconnect: () => Promise<{ removedKey: boolean }>;
+  selectHumanSeat?: (email: string) => Promise<{ email: string; selectedAt: string }>;
   setConfig: (patch: { enabled?: boolean; fleet?: boolean }) => void;
   status: () => Promise<DevinStatus>;
   launch: (req: DevinLaunchRequest) => Promise<DevinLaunchResponse>;
@@ -85,6 +89,8 @@ export interface DevinCliDeps {
   budgetView: (tasks: readonly DevinTaskV1[], budget: DevinBudgetV1, now: Date, sourceState?: import('../core/devin/types.js').DevinTaskSourceState) => DevinBudgetView;
   /** Hidden terminal input (raw mode, no echo). */
   readSecret: (prompt: string) => Promise<string>;
+  /** Host platform; the Devin key store (core/devin/secret.ts) is macOS Keychain only. */
+  platform?: NodeJS.Platform;
   originRepo: (cwd: string) => string | null;
   cwd: () => string;
   now: () => Date;
@@ -102,6 +108,7 @@ async function defaultDeps(): Promise<DevinCliDeps> {
   return {
     connect: (input) => service.connectDevin(input),
     disconnect: () => service.disconnectDevin(),
+    selectHumanSeat: (email) => service.selectDevinHumanSeat(email),
     setConfig: (patch) => { service.updateDevinConfig(patch); },
     status: () => service.devinStatus(),
     launch: (req) => service.launchDevinTask(req),
@@ -230,6 +237,13 @@ export function devinTasksToList(tasks: readonly DevinTaskV1[], now: Date, all: 
 async function cmdConnect(deps: DevinCliDeps, args: string[]): Promise<number> {
   const org = takeOption(args, '--org');
   rejectLeftovers(args);
+  // The key is kept only in the macOS Keychain (core/devin/secret.ts). Refuse
+  // before asking for a secret this machine cannot store.
+  const platform = deps.platform ?? process.platform;
+  if (platform !== 'darwin') {
+    deps.err(`Devin connect stores the API key in the macOS Keychain, which this machine (${platform}) does not have. Connect Devin from a Mac; nothing was asked for or stored.`);
+    return 1;
+  }
   deps.out('Paste your Devin API key (cog_…). It is not shown, never stored in a file, and goes to the macOS Keychain.');
   let key: string;
   try {
@@ -256,6 +270,16 @@ async function cmdDisconnect(deps: DevinCliDeps, args: string[]): Promise<number
   const { removedKey } = await deps.disconnect();
   deps.setConfig({ enabled: false, fleet: false });
   deps.out(removedKey ? 'Disconnected: the Devin key was removed from the Keychain and the lane is off.' : 'Disconnected: no key was in the Keychain; the lane is off.');
+  return 0;
+}
+
+async function cmdSeat(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const email = takeOption(args, '--email');
+  rejectLeftovers(args);
+  if (!email) throw new UsageError('Pass the direct Devin member email with --email.');
+  if (!deps.selectHumanSeat) throw new Error('Devin human-seat selection is unavailable.');
+  const selected = await deps.selectHumanSeat(email);
+  deps.out(`Future service-user sessions will request attribution to ${selected.email}. Devin verifies the permission on create; this selection does not prove remaining plan allowance or a zero-cash boundary.`);
   return 0;
 }
 
@@ -293,6 +317,11 @@ async function cmdStatus(deps: DevinCliDeps, args: string[]): Promise<number> {
   }
   deps.out(`Devin: ${status.state === 'ready' ? 'ready' : status.state.replace('-', ' ')} — ${status.reason}`);
   if (status.orgId) deps.out(`  Organization: ${status.orgId}${status.principalName ? ` · ${status.principalName}` : ''} · key in the ${status.keyStore === 'keychain' ? 'macOS Keychain' : 'custody helper'}`);
+  if (status.attribution) deps.out(status.attribution.kind === 'human-seat'
+    ? `  Session attribution: selected human member ${status.attribution.email} (verify it on each new session; allowance and cash exposure remain unknown).`
+    : status.attribution.kind === 'personal'
+      ? '  Session attribution: the personal token owner.'
+      : '  Session attribution: the service user. Select a human seat with `ashlr devin seat --email <address>` to use included human usage.');
   deps.out(`  ${status.chatLine}`);
   deps.out(`  ${status.fleetLine}`);
   if (view.accountingState && view.accountingState !== 'ready') {
@@ -466,7 +495,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
   }
-  const known = ['connect', 'disconnect', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget'];
+  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget'];
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
@@ -476,6 +505,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
     switch (sub) {
       case 'connect': return await cmdConnect(deps, args);
       case 'disconnect': return await cmdDisconnect(deps, args);
+      case 'seat': return await cmdSeat(deps, args);
       case 'enable': return cmdSwitch(deps, true, args);
       case 'disable': return cmdSwitch(deps, false, args);
       case 'fleet': return cmdFleet(deps, args);

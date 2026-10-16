@@ -4,9 +4,9 @@ import { selectedOutcomeAdmissionCurrent } from '../run/outcome-admission.js';
  * System One decision model.
  *
  * WHAT JEV IS: you POST some state plus a bag of typed questions and get back,
- * per question, an answer AND a separate calibrated confidence. The framing
- * that matters here is: *the answer tells you what, the confidence tells you
- * whether to act on it.* Callers gate on confidence and fall back to their own
+ * per question, an answer and a separate confidence value. Confidence describes
+ * distribution sharpness, not calibrated correctness or authorization.
+ * Callers use an advisory confidence threshold and fall back to their own
  * deterministic implementation below it — see docs/JEV-INTEGRATION.md.
  *
  * DESIGN RULES (all from the integration contract, all load-bearing):
@@ -119,7 +119,7 @@ export type TypeSafeQuestion =
 export interface TypeSafeChoiceAnswer<K extends string = string> {
   readonly type: 'choice';
   readonly choice: K;
-  /** Calibrated in [0, 1]. This is the gate — not the top probability. */
+  /** Provider-reported value in [0, 1]; advisory sharpness, not measured accuracy. */
   readonly confidence: number;
   readonly probabilities: Readonly<Record<string, number>>;
 }

@@ -9,7 +9,188 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.9] — Unreleased
+## [3.29.15] — Unreleased
+
+### Added
+- Group resource displays by provider while keeping configured references,
+  current readings and verified account coverage separate. Unknown identities,
+  balances and capacity stay unknown; grouping does not authorize execution.
+- Add local team claims, handoffs and scoped shared context, an evidence-scored
+  task context compiler, and public-only self-improvement proposals through
+  the normal protected pull-request path. Human team approval, standing
+  authority and provider qualification remain separate gates.
+- Add bounded steward disk and session-retention planning with the existing
+  operator controls; source availability does not establish runtime acceptance.
+
+### Fixed
+- Preserve original quota and credit expiry across resource cards, provider
+  groups and capacity views. Connection and admission checks cannot refresh
+  or extend retained usage evidence.
+- Keep ordinary resource rows and controls available when optional provider
+  grouping fails to load or returns invalid data.
+- Restrict steward effects to the documented roots and actions, refuse
+  symlink paths and observed file replacements, and preserve existing archives
+  through exclusive creation and verification before removing an original.
+- Reject established agent contexts for human team joining and approval.
+  Preserve the first local human's ownership after agent activity and refuse
+  agent role promotion, including inconsistent event and member kinds.
+- Keep context replacements within the same owner, project and person scope;
+  hidden or separately scoped evidence cannot suppress an admitted record.
+- Create improvement proposals in unique owned worktrees, withhold private or
+  unverified GitHub evidence, and scrub public titles consistently. Proposals
+  remain drafts; automatic merging requires the existing protected process.
+
+## [3.29.14] — Unreleased
+
+### Added
+- Add an optional desktop-only Devin dashboard observation. In a separate
+  account window, a user-present sign-in can read the displayed Max weekly
+  percentage, on-demand balance, auto-reload state, and plan price. Each
+  short-lived reading brackets Usage with matching organization IDs from
+  General before and after. It is display-only and does not change launch
+  admission, budgets, or the ACU ledger. Embedded sign-in and real account
+  extraction still require user-present validation.
+- Add an opt-in resident Mac awake preference with status and controls in
+  Settings. Its installed service requests idle sleep prevention while running,
+  plus system sleep prevention on AC power; a stopped service holds no assertion.
+  The setting does not override lid closure or the signed authority policy. The
+  resident panel includes a finite, reduced-motion-aware coffee scene with Ash.
+- Add local companion task records, explicitly scoped handoff packets, manual
+  reports and independent operator review in the existing proactive workbench.
+  Resource evidence, offline routing comparisons and release-readiness views
+  distinguish declarations from verified evidence. External companion transports
+  remain unqualified; these records do not authorize provider dispatch.
+- Make older completed and archived agents discoverable through Done history,
+  and guide onboarding toward one bounded change with an inspected diff and
+  actual repository test output.
+- Add explicit native pool re-enrollment with a reviewed plan digest, atomic
+  staged custody, interrupted-publication recovery and exact completed replay.
+  Preserve policy, receipts, aliases and operator holds; keep retained old
+  context behind its original account boundary. Runtime admission requires
+  intact transition custody and fresh target collector/profile evidence, with
+  subscription-only billing qualification separate from locator migration.
+
+### Fixed
+- Skip unmatched path characters in the composer's file finder without changing
+  scores, ordering or result limits. Preserve the existing handler CPU budget.
+- Keep a resource supervisor available when another enrolled owner atomically
+  commits a valid pool ledger during its custody read. Retry only the observed
+  file replacement with bounded fresh reads; unsafe data, invalid controls and
+  incomplete commissioning still hold execution.
+- Honor the provider's original native quota expiry across resource cards,
+  account details, composer seats and mobile views. Cached readings remain
+  dated history after failed refreshes; exact expiry and focus resumption clear
+  current claims without renewing evidence or coupling independent credits.
+- Read the installed resident service definition without following a swapped
+  symlink, and report service transition states without claiming an awake
+  assertion before the resident confirms it.
+- Read the current Devin dashboard's bounded plan-card price and renewal fields
+  when the provider renders them as leaf divs, while rejecting ambiguous cards.
+- Require every task to complete before a run reports `done`; retain partial
+  results and explain failed or blocked descendants.
+- Finalize durable output before publishing terminal run state. Drain large SSE
+  replays with backpressure, independently resume task/step/output events, and
+  keep browser replay open through its terminal frame. SSE IDs are opaque
+  versioned cursors; legacy numeric cursors remain accepted. Capture gaps and
+  interrupted reconnects are visible separately from the run outcome.
+- Reject ambiguous MCP routes and collect bounded paginated inventories before
+  replacing them. Failed discovery revokes invocation routes and exposes stale
+  inventory diagnostics.
+- Mark cached agent boards stale after refresh failure. Preserve per-seat launch
+  results and retry only confirmed unstarted attempts; disclose held first
+  prompts. Clear dismissed MCP drafts and reject late parked actions without
+  implying cancellation of a write already issued.
+- Detect lost local coordination records with separate replay watermarks,
+  replay committed acknowledgments before fresh host observations, and allow
+  cancellation of an assignment that has never been handed off.
+- Describe available Codex credits separately from spending authorization;
+  an unreached provider spending control does not mean credit spending is off.
+- Hold Devin fleet API launches under a zero or unavailable standing metered
+  allowance before credentials, queue publication and every create attempt.
+  Recheck tightened allowances after preparation and retry backoff. Human
+  attribution and subscription labels do not establish included API billing;
+  native CLI, manual launches and usage metadata keep their existing paths.
+- Reject quota-proof metadata failures before native contact or after known
+  settlement without falsely reporting uncertain native termination. Actual
+  unknown or uncertain launches retain their durable recovery fence.
+
+## [3.29.13] — 2026-10-12
+
+### Added
+- Allow an explicitly selected loopback llama-server to serve Fleet alongside
+  subscription seats, using current slot activity and per-slot context readings.
+- Select a verified organization member for Devin service-user session
+  attribution and verify that attribution after creation. Attribution does not
+  establish a subscription allowance, credit balance or cash billing boundary.
+- Give Leader tasks an explicit goal milestone identity so rewording the same
+  milestone does not queue duplicate work; distinct milestones remain separate.
+
+### Fixed
+- Hold autonomous native Codex producer calls without fresh, exact-account
+  subscription-only billing-control proof, including retries. The current
+  Codex quota feed does not supply that proof, so those autonomous calls remain
+  held pending a genuine provider control source; manual Verse Codex chats use
+  a separate turn path and are unchanged.
+- Keep the served Qwen3.8 Leader's output budget for its structured memo and
+  bound the streaming transport separately from the model's token allowance.
+- Accept qualified local and mid-tier outcome-manager records in the workbench.
+- Show stale lane capacity as unobserved and label historical remaining allowance.
+- Publish exact native metadata child identity before fallible launch checks,
+  preserving full signed-image verification before execution and recovery.
+  Failures before durable identity publication remain held for recovery.
+- Refuse local app installation while quota collection or ownership is unresolved.
+- Report native launch failure stages without provider, account or command data.
+- Identify whether Claude quota collection timed out during sign-in, version,
+  usage or final sign-in verification while retaining the bounded probe budget.
+
+## [3.29.12] — 2026-10-12
+
+### Changed
+- Clarify that the resident USD ceiling is secondary to signed metered authority:
+  subscription and local work may continue after a positive ceiling is reached,
+  while setting the ceiling to zero stops all resident work.
+
+### Fixed
+- Explain a missing Claude quota reading in Apps & Accounts and Resources using
+  an allowlisted diagnostic reason. An unavailable reading remains unavailable;
+  no provider output or account identifier is exposed.
+
+## [3.29.11] — 2026-10-11
+
+### Added
+- Bind new macOS native profiles to their APFS volume UUID, directory inode and
+  creation time so a device-number change after reboot can be verified without
+  accepting a replaced directory. An explicit `upgrade-identity` command adds
+  the witness to an unchanged older profile before its device number changes.
+
+### Fixed
+- Require a stable, source-bound merge gate for protected PRs while retaining
+  the full platform matrix for non-site changes.
+- Parse GitHub's optional unattributed-change approval flag and requester-specific
+  ruleset bypass display when inspecting branch protection. The latter is not
+  treated as policy; unknown fields and invalid values still fail.
+- Permit the fixed macOS identity probes inside Claude's outer native jail so
+  witnessed profiles can verify their boot and APFS volume before launch.
+
+## [3.29.10] — 2026-10-10
+
+### Changed
+- Remove fixed 3.26 labels from the landing-page story and footer so those
+  decorative elements do not imply a stale installed or published version.
+
+### Fixed
+- Restore fresh public release facts after the site-only CI lane added two
+  ancillary jobs. The reader binds their names and results to the exact
+  candidate workflow while retaining all 15 required release gates.
+- Check the configured model through a bounded loopback `/models` probe before
+  marking a keyless Ollama or llama-server fleet engine ready. Missing models and
+  probe errors remain unavailable; a model listing does not claim completion.
+- Keep a standing Codex judge off an unpinned native seat, allow another admitted
+  independent judge family when available, and record a CLI launch refusal as
+  unavailable instead of a malformed verdict. Genuine malformed replies still
+  receive the strict retry.
+
+## [3.29.9] — 2026-10-10
 
 ### Changed
 - Load doctor, init and setup only for their selected CLI commands. Local

@@ -416,6 +416,8 @@ export interface FleetTaskInput {
   value: number;
   requestedBy: FleetActor;
   goalId?: string | null;
+  /** Exact saved milestone under goalId; absent on legacy tasks. */
+  milestoneId?: string | null;
   /** repair / revert: the landing that caused it. */
   landingId?: string | null;
   /** insight: the A7 ReasoningInsight id it came from. */
@@ -435,6 +437,8 @@ export interface FleetTask {
   value: number;
   requestedBy: FleetActor;
   goalId: string | null;
+  /** Optional for persisted v1 compatibility; present on exact-milestone work. */
+  milestoneId?: string | null;
   landingId: string | null;
   insightId: string | null;
   dedupeKey: string | null;

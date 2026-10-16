@@ -464,7 +464,10 @@ fn reservation(root: &Path, t: &Ticket, phase: &str, pid: i32) -> Result<()> {
                 },
     )
 }
-fn check(root: &Path, path: &Path, t: &Ticket, digest: &str) -> Result<()> {
+// Bind the child to the private ledger and physical image inode before it
+// publishes its own process identity. Full image hashing remains mandatory
+// before parent notification or any provider exec.
+fn check_pre_registration(root: &Path, path: &Path, t: &Ticket, digest: &str) -> Result<PathBuf> {
     let directory = private_directory(root)?;
     need(
         directory.dev().to_string() == t.root.dev
@@ -492,6 +495,10 @@ fn check(root: &Path, path: &Path, t: &Ticket, digest: &str) -> Result<()> {
             && stamp(&before) == t.host.stamp
             && before.mode() & 0o111 != 0,
     )?;
+    Ok(actual)
+}
+fn check(root: &Path, path: &Path, t: &Ticket, digest: &str) -> Result<()> {
+    let actual = check_pre_registration(root, path, t, digest)?;
     let mut f = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -571,7 +578,52 @@ fn not_started(
         &b,
     )
 }
+// Closed, static failure stages. Diagnostics never carry ticket, account,
+// provider, argv or environment data and never act as recovery evidence.
+#[derive(Clone, Copy)]
+enum LaunchStage {
+    Ticket,
+    ProcessGroup,
+    ImageBinding,
+    BootBinding,
+    Reservation,
+    ControlChannel,
+    ChildIdentity,
+    Registration,
+    ParentNotice,
+    ParentGo,
+    OwnerBinding,
+    Exec,
+}
+impl LaunchStage {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Ticket => "ticket",
+            Self::ProcessGroup => "process-group",
+            Self::ImageBinding => "image-binding",
+            Self::BootBinding => "boot-binding",
+            Self::Reservation => "reservation",
+            Self::ControlChannel => "control-channel",
+            Self::ChildIdentity => "child-identity",
+            Self::Registration => "registration",
+            Self::ParentNotice => "parent-notice",
+            Self::ParentGo => "parent-go",
+            Self::OwnerBinding => "owner-binding",
+            Self::Exec => "exec",
+        }
+    }
+}
+thread_local! {
+    static LAUNCH_STAGE: std::cell::Cell<LaunchStage> = const {
+        std::cell::Cell::new(LaunchStage::Ticket)
+    };
+}
+
+fn stage(value: LaunchStage) {
+    LAUNCH_STAGE.set(value);
+}
 fn run() -> Result<()> {
+    stage(LaunchStage::Ticket);
     let name = std::env::var(TICKET_ENV).map_err(|_| ())?;
     std::env::remove_var(TICKET_ENV);
     let path = PathBuf::from(&name);
@@ -581,27 +633,18 @@ fn run() -> Result<()> {
     let t = parse_ticket(&bytes)?;
     need(path == root.join(format!(".resource-quota-launch-{}.json", t.id)))?;
     let digest = hash(&bytes);
+    stage(LaunchStage::ProcessGroup);
     let pid = unsafe { libc::getpid() };
     need(unsafe { libc::getpgrp() } == pid)?;
-    check(root, &path, &t, &digest)?;
-    // Registration survives owner death before notification. A fresh live owner
-    // and native parent are required only for go, never fabricated on recovery.
-    need(
-        metadata(
-            "/usr/sbin/sysctl",
-            &["-n".into(), "kern.bootsessionuuid".into()],
-        )?
-        .to_lowercase()
-            == t.boot_identity.boot_id,
-    )?;
+    stage(LaunchStage::ImageBinding);
+    check_pre_registration(root, &path, &t, &digest)?;
+    stage(LaunchStage::Reservation);
     reservation(root, &t, "preparing", pid)?;
-    // fd3 must be a private full-duplex pipe/socket; fd0 is never consumed here.
-    let fd = unsafe { libc::fcntl(3, libc::F_GETFD) };
-    need(fd >= 0)?;
-    let mut control = unsafe { File::from_raw_fd(3) };
-    // Node's Unix stdio pipe is a socketpair, as is the inert native fixture.
-    // An inherited regular file is not a private duplex control channel.
-    need(control.metadata().map_err(|_| ())?.file_type().is_socket())?;
+    // Publish the actual child identity before fallible full-image hashing,
+    // boot lookup or fd3 validation. This is not execution authority: the
+    // parent still needs the exact ready notice and must verify registration,
+    // while recovery still requires the exact ticket and kernel group absence.
+    stage(LaunchStage::ChildIdentity);
     let registration = Registration {
         schema_version: 1,
         scope: "native-metadata-child",
@@ -613,10 +656,32 @@ fn run() -> Result<()> {
     };
     let mut registered = serde_json::to_vec(&registration).map_err(|_| ())?;
     registered.push(b'\n');
+    stage(LaunchStage::Registration);
     write(
         &PathBuf::from(format!("{}.registered", path.display())),
         &registered,
     )?;
+    // Registration survives owner death before notification. A fresh live owner
+    // and native parent are required only for go, never fabricated on recovery.
+    stage(LaunchStage::ImageBinding);
+    check(root, &path, &t, &digest)?;
+    stage(LaunchStage::BootBinding);
+    need(
+        metadata(
+            "/usr/sbin/sysctl",
+            &["-n".into(), "kern.bootsessionuuid".into()],
+        )?
+        .to_lowercase()
+            == t.boot_identity.boot_id,
+    )?;
+    // fd3 must be a private full-duplex pipe/socket; fd0 is never consumed here.
+    stage(LaunchStage::ControlChannel);
+    let fd = unsafe { libc::fcntl(3, libc::F_GETFD) };
+    need(fd >= 0)?;
+    let mut control = unsafe { File::from_raw_fd(3) };
+    // Node's Unix stdio pipe is a socketpair, as is the inert native fixture.
+    // An inherited regular file is not a private duplex control channel.
+    need(control.metadata().map_err(|_| ())?.file_type().is_socket())?;
     #[cfg(test)]
     if std::env::var("PHANTOM_INERT_OWNER_DEATH_BEFORE_NOTICE").as_deref() == Ok("1") {
         // Only this compiled inert route pauses after the real durable write.
@@ -636,9 +701,11 @@ fn run() -> Result<()> {
         )?;
     }
     let result = (|| {
+        stage(LaunchStage::ParentNotice);
         control
             .write_all(format!("{digest}\n").as_bytes())
             .map_err(|_| ())?;
+        stage(LaunchStage::ParentGo);
         let mut packet = Vec::new();
         let mut one = [0u8; 1];
         loop {
@@ -660,9 +727,11 @@ fn run() -> Result<()> {
                 && Path::new(&go.argv[0]).is_absolute()
                 && go.argv.iter().all(|s| !s.contains('\0')),
         )?;
+        stage(LaunchStage::OwnerBinding);
         check(root, &path, &t, &digest)?;
         owner(root, &t)?;
         reservation(root, &t, "registered", pid)?;
+        stage(LaunchStage::Exec);
         let argv: Vec<CString> = go
             .argv
             .iter()
@@ -819,7 +888,16 @@ pub fn dispatch(args: &[String]) -> Option<i32> {
     if args.len() != 2 || args[1] != FLAG {
         return Some(126);
     }
-    Some(if run().is_ok() { 0 } else { 126 })
+    Some(if run().is_ok() {
+        0
+    } else {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "Native metadata launch held: {}",
+            LAUNCH_STAGE.get().code()
+        );
+        126
+    })
 }
 #[cfg(test)]
 mod tests {
@@ -1085,7 +1163,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn compiled_regular_fd3_is_refused_before_registration_without_file_writes() {
+    fn compiled_regular_fd3_is_refused_after_identity_without_control_writes() {
         use std::os::unix::{io::AsRawFd, process::CommandExt};
         let (root, t, _) = fixture();
         let control = root.join("inert-control");
@@ -1109,7 +1187,7 @@ mod tests {
             )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         unsafe {
             command.pre_exec(move || {
                 if libc::setsid() < 0
@@ -1121,15 +1199,49 @@ mod tests {
                 Ok(())
             });
         }
-        let mut spawned = {
+        let spawned = {
             let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
             command.spawn().unwrap()
         };
-        assert!(!spawned.wait().unwrap().success());
+        let child_pid = spawned.id();
+        let output = spawned.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        assert_eq!(
+            output.stderr,
+            b"Native metadata launch held: control-channel\n"
+        );
         assert_eq!(fs::read(&control).unwrap(), b"unchanged");
+        let identity: serde_json::Value = serde_json::from_slice(
+            &read(
+                &root.join(format!(".resource-quota-launch-{}.json.registered", t.id)),
+                LIMIT,
+                true,
+            )
+            .unwrap()
+            .0,
+        )
+        .unwrap();
+        assert_eq!(identity["pid"], child_pid);
+        assert_eq!(identity["pgid"], child_pid);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn compiled_pending_drift_before_identity_stays_unregistered() {
+        let (root, mut t, _) = fixture();
+        t.pending.bytes_digest = "0".repeat(64);
+        fs::write(
+            root.join(format!(".resource-quota-launch-{}.json", t.id)),
+            serde_json::to_vec(&t).unwrap(),
+        )
+        .unwrap();
+        let (mut child, mut control) = self::child(&root, &t);
+        let mut one = [0u8; 1];
+        assert_eq!(control.read(&mut one).unwrap(), 0);
+        assert!(!child.wait().unwrap().success());
         assert!(!root
             .join(format!(".resource-quota-launch-{}.json.registered", t.id))
             .exists());
+        assert!(!root.join("contact").exists());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -1204,8 +1316,8 @@ mod tests {
     fn compiled_parent_image_boot_and_ticket_drift_never_contact_a_target() {
         for failure in ["parent", "image", "boot", "ticket"] {
             let (root, mut t, _) = fixture();
-            // Image/boot refuse before registration; a stale captured parent
-            // refuses at go. Ticket mutation after ready stays unknown.
+            // Image/boot refuse after identity, before parent notice. A stale
+            // captured parent refuses at go; later ticket drift stays unknown.
             if failure != "ticket" {
                 if failure == "image" {
                     t.host.sha256 = "0".repeat(64);
@@ -1225,9 +1337,20 @@ mod tests {
                 let mut one = [0u8; 1];
                 assert_eq!(pipe.read(&mut one).unwrap(), 0);
                 assert!(!child.wait().unwrap().success());
-                assert!(!root
-                    .join(format!(".resource-quota-launch-{}.json.registered", t.id))
-                    .exists());
+                let identity: serde_json::Value = serde_json::from_slice(
+                    &read(
+                        &root.join(format!(".resource-quota-launch-{}.json.registered", t.id)),
+                        LIMIT,
+                        true,
+                    )
+                    .unwrap()
+                    .0,
+                )
+                .unwrap();
+                assert_eq!(identity["pid"], child.id());
+                assert_eq!(identity["pgid"], child.id());
+                assert!(hex(identity["startRef"].as_str().unwrap(), 64));
+                assert_eq!(identity["startRefSource"], "ps-lstart");
             } else {
                 let digest = ready(&mut pipe);
                 activity(&root, &t, "registered", Some(child.id() as i32));

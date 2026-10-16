@@ -84,6 +84,7 @@ import {
   type VerseSeat,
   type VerseLocalDispatch,
   type VerseSeatCapacity,
+  type VerseClaudeQuotaReadReason,
   type VerseSeatEvidenceSource,
   type VerseSeatHealth,
   type VerseSeatUsability,
@@ -541,10 +542,35 @@ export function seatHealthState(
   return record.windows.length > 0 || record.observedAt !== null ? 'degraded' : 'unknown';
 }
 
+function claudeQuotaReadReason(record: VerseAccountRecord): VerseClaudeQuotaReadReason | null {
+  if (record.provider !== 'claude' || record.windows.length > 0) return null;
+  // A probe reason is a machine code, but only these reviewed codes may cross
+  // from the account diagnostic record into the broadly used seat payload.
+  switch (record.reason) {
+    case 'usage-output-invalid':
+    case 'usage-process-failed':
+    case 'usage-version-unsupported':
+    case 'usage-identity-unavailable':
+    case 'usage-account-changed':
+    case 'status-termination-uncertain':
+    case 'status-timed-out':
+    case 'status-auth-timed-out':
+    case 'status-version-timed-out':
+    case 'status-usage-timed-out':
+    case 'status-reauth-timed-out':
+    case 'connection-monitor-stopped':
+    case 'connection-reading-expired':
+      return record.reason;
+    default:
+      return null;
+  }
+}
+
 function telemetryOf(record: VerseAccountRecord, evidenceSource: VerseSeatEvidenceSource): VerseSeatTelemetry {
   const windows = record.windows.map(seatWindow);
   const bindingId = record.binding?.id ?? null;
   const binding = bindingId === null ? null : windows.find((w) => w.id === bindingId) ?? null;
+  const quotaReadReason = claudeQuotaReadReason(record);
   return {
     ...(record.lastKnownUsage ? { lastKnownUsage: structuredClone(record.lastKnownUsage) } : {}),
     health: {
@@ -565,10 +591,12 @@ function telemetryOf(record: VerseAccountRecord, evidenceSource: VerseSeatEviden
       // Structurally identical to `VerseCodexCredits`; this assignment is the
       // compile-time drift guard between core and the browser-safe contract.
       credits: record.credits,
+      quotaExpiresAt: record.expiresAt,
       creditsExpiresAt: record.credits === null ? null : record.expiresAt,
       usability: seatUsability(record),
       observedAt: record.observedAt,
       evidenceSource,
+      ...(quotaReadReason ? { quotaReadReason } : {}),
       notes: [...record.notes],
     },
   };

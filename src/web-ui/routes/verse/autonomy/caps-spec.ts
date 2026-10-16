@@ -59,7 +59,7 @@ export const CAP_FIELDS: readonly CapFieldSpec[] = [
     max: VERSE_CAPS_BOUNDS.dailyBudgetUsd.max,
     integer: false,
     step: 1,
-    help: 'Hard ceiling on what the loop may spend in a calendar day. 0 stops the loop.',
+    help: 'Secondary USD ceiling for the resident loop. Eligible subscription and local work can continue after a positive ceiling is reached; metered work also needs signed authority. Setting 0 stops all work, including free work.',
     toDisplay: identity,
     fromDisplay: identity,
   },

@@ -26,6 +26,7 @@ import {
   DEVIN_BUDGET_SCHEMA_VERSION,
   DEVIN_CONNECTION_SCHEMA_VERSION,
   DEVIN_ORG_ID_PATTERN,
+  isDevinOpaqueSelfId,
   isDevinSelfIdentity,
   DEVIN_SESSION_ID_PATTERN,
   DEVIN_TASK_ID_PATTERN,
@@ -421,7 +422,14 @@ function isDevinConnectionBase(value: unknown): value is DevinConnectionV1 {
     && isNullableString(value['principalName'])
     && (value['keyStore'] === 'custody' || value['keyStore'] === 'keychain')
     && isIso(value['connectedAt'])
-    && isIso(value['updatedAt']);
+    && isIso(value['updatedAt'])
+    && (value['humanSeat'] === undefined || (value['principal'] === 'service_user'
+      && isRecord(value['humanSeat'])
+      && Object.keys(value['humanSeat']).length === 3
+      && isDevinOpaqueSelfId(value['humanSeat']['userId'])
+      && typeof value['humanSeat']['email'] === 'string'
+      && /^[^\s@]{1,128}@[^\s@]{1,255}$/.test(value['humanSeat']['email'])
+      && isIso(value['humanSeat']['selectedAt'])));
 }
 
 function validSelfIdentity(connection: DevinConnectionV1): boolean {
@@ -441,7 +449,7 @@ export function readDevinConnection(): DevinConnectionV1 | null {
   if (!isDevinConnectionBase(value)) return null;
   if (validSelfIdentity(value)) return value;
   // Optional observation corruption does not change a legacy usable lane.
-  const legacy = { ...value }; delete legacy.selfIdentity;
+  const legacy = { ...value }; delete legacy.selfIdentity; delete legacy.humanSeat;
   return legacy;
 }
 

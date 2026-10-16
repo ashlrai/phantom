@@ -68,7 +68,7 @@ function runPhantom(args: string[]): {
  * optional user name.
  *
  * When logged in, phantom typically prints one of:
- *   ->  Cloud: logged in as <user>  (e.g. mason@evero-consulting.com)
+ *   ->  Cloud: logged in as <user>  (e.g. mason@ashlr.ai)
  *   ->  Cloud: logged in            (no user shown)
  *
  * When logged out:

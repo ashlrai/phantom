@@ -1,3 +1,4 @@
+import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/usage/accounts-model.ts — the "can I use this account right
  * now" decision, in one pure module.
@@ -231,8 +232,26 @@ export const REASON_COPY: Record<string, string> = {
     'Native account collection is not configured for this accounts root.',
   'usage-version-unsupported':
     'The usage probe is pinned to a different provider build than the one installed, so it did not run.',
+  'usage-output-invalid':
+    'Claude’s native usage response could not be verified. Current quota remains unknown.',
+  'usage-process-failed':
+    'Claude’s native usage command failed. Current quota remains unknown.',
+  'usage-identity-unavailable':
+    'Claude sign-in did not provide the account identity needed to bind a usage reading. Current quota remains unknown.',
   'usage-account-changed':
     'The account behind this profile changed between reads; the reading was discarded.',
+  'status-termination-uncertain':
+    'The native check did not confirm process cleanup. Current quota remains unknown.',
+  'status-timed-out':
+    'The native account check timed out. Current quota remains unknown.',
+  'status-auth-timed-out':
+    'Claude’s first sign-in check timed out. Current quota remains unknown.',
+  'status-version-timed-out':
+    'Claude’s version check timed out. Current quota remains unknown.',
+  'status-usage-timed-out':
+    'Claude’s local usage check timed out. Current quota remains unknown.',
+  'status-reauth-timed-out':
+    'Claude’s final sign-in check timed out. Current quota remains unknown.',
   'probe-account-unavailable':
     'The pinned profile answered but carries no usable account identity — it is not authenticated.',
   'probe-account-unsupported':
@@ -259,6 +278,29 @@ export const REASON_COPY: Record<string, string> = {
 export function reasonSentence(reason: string | null, fallback: string): string {
   if (reason === null) return fallback;
   return REASON_COPY[reason] ?? fallback;
+}
+
+/** Only reviewed Claude quota codes may explain a missing meter in seat views. */
+export function claudeQuotaDiagnostic(reason: string | null | undefined): { code: string; sentence: string } | null {
+  if (reason === undefined || reason === null) return null;
+  switch (reason) {
+    case 'usage-output-invalid':
+    case 'usage-process-failed':
+    case 'usage-version-unsupported':
+    case 'usage-identity-unavailable':
+    case 'usage-account-changed':
+    case 'status-termination-uncertain':
+    case 'status-timed-out':
+    case 'status-auth-timed-out':
+    case 'status-version-timed-out':
+    case 'status-usage-timed-out':
+    case 'status-reauth-timed-out':
+    case 'connection-monitor-stopped':
+    case 'connection-reading-expired':
+      return { code: reason, sentence: REASON_COPY[reason]! };
+    default:
+      return null;
+  }
 }
 
 /** Ordering rank: what Mason can use comes first. */
@@ -288,7 +330,7 @@ export function accountCreditDetail(credits: NonNullable<Account['credits']>, hi
   if (credits.spendControlReached === true) return 'Balance reported; the provider reports credit spending held. Separate from subscription usage.';
   if (credits.spendControlReached !== false) return 'Balance reported; credit spending control is unconfirmed. Separate from subscription usage.';
   return creditsSpendable(credits)
-    ? 'The provider reports credits available. Separate from subscription usage; automatic credit spending is not enabled.'
+    ? 'The provider reports credits available. Separate from subscription usage; automatic dispatch requires separate spending authorization.'
     : 'The provider reports no available credits. Separate from subscription usage.';
 }
 
@@ -297,7 +339,7 @@ function describeCredits(credits: NonNullable<Account['credits']>): string {
   return `a credit balance of ${credits.balance ?? 'an unreported amount'} is still spendable`;
 }
 
-export function accountVerdict(account: Account, binding: AccountWindow | null): AccountVerdict {
+export function accountVerdict(account: Account, binding: AccountWindow | null, now: number = Date.now()): AccountVerdict {
   if (account.authentication === 'signed-out' || account.state === 'signed-out') {
     return {
       state: 'signed-out',
@@ -329,6 +371,16 @@ export function accountVerdict(account: Account, binding: AccountWindow | null):
         ? `${reasonSentence(account.reason, 'The latest account check did not succeed.')} Current access and headroom are unconfirmed.`
         : `${reasonSentence(account.reason, 'The latest account check did not succeed.')} The window shown is a prior verified reading for context only; current access and headroom are unconfirmed.`,
       code: account.reason,
+    };
+  }
+
+  if (!currentQuotaReading(account.observedAt, account.expiresAt, now, account.windows.map(window => window.resetsAt))) {
+    if (currentQuotaReading(account.observedAt, account.expiresAt, now) && creditsSpendable(account.credits)) return {
+      state: 'credits', headline: 'Usable on credits', detail: 'Native credit balance remains current; subscription usage and resets are unconfirmed.', code: account.reason,
+    };
+    return {
+    state: 'unknown', headline: binding === null ? 'No current reading' : 'Last reading',
+    detail: 'Last known usage; current access, headroom and resets are unconfirmed.', code: account.reason,
     };
   }
 
@@ -425,6 +477,8 @@ export interface AccountCardModel {
    * the same data in one list so the detail view never re-derives an order.
    */
   allWindows: WindowView[];
+  quotaCurrent?: boolean;
+  creditsCurrent?: boolean;
   /** Probe evidence, shown in the detail view rather than on the card face. */
   evidence: AccountEvidence;
   /** The binding window, already viewified. Null when nothing was measured. */
@@ -469,9 +523,9 @@ export interface AccountEvidence {
   unsupported: Account['unsupported'];
 }
 
-export function buildAccountCard(account: Account, sourceNote: string | null = null): AccountCardModel {
+export function buildAccountCard(account: Account, sourceNote: string | null = null, now: number = Date.now()): AccountCardModel {
   const binding = bindingWindow(account);
-  const verdict = accountVerdict(account, binding);
+  const verdict = accountVerdict(account, binding, now);
   const engine: VerseEngine = account.provider;
   const others = account.windows.filter((w) => w.id !== binding?.id).map((w) => toWindowView(w));
   const bindingView = binding ? toWindowView(binding) : null;
@@ -491,6 +545,8 @@ export function buildAccountCard(account: Account, sourceNote: string | null = n
     color: ENGINE_COLOR[engine],
     plan: account.planType,
     verdict,
+    creditsCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now),
+    quotaCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now, account.windows.map(window => window.resetsAt)),
     allWindows: bindingView ? [bindingView, ...others] : others,
     evidence,
     hasDetail:
@@ -526,10 +582,10 @@ export function collectAccountNotes(snapshot: { accounts: Account[] } | null): s
 }
 
 /** Most usable first; ties keep a stable alphabetical order so cards do not shuffle. */
-export function buildAccountCards(snapshot: { accounts: Account[] } | null): AccountCardModel[] {
+export function buildAccountCards(snapshot: { accounts: Account[] } | null, now: number = Date.now()): AccountCardModel[] {
   if (!snapshot) return [];
   return snapshot.accounts
-    .map((account) => buildAccountCard(account))
+    .map((account) => buildAccountCard(account, null, now))
     .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
 }
 

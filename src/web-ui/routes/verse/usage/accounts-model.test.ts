@@ -10,10 +10,12 @@ import type { Account, AccountWindow, LocalModelsSnapshot } from './usage-contra
 import { sanitizeCommand } from './usage-contract.js';
 import {
   accountVerdict,
+  accountCreditDetail,
   bindingWindow,
   buildAccountCard,
   buildAccountCards,
   buildLocalCard,
+  claudeQuotaDiagnostic,
   creditsSpendable,
   toWindowView,
   windowLabel,
@@ -38,7 +40,8 @@ function account(over: Partial<Account> & { id: string; provider: Account['provi
     authentication: 'signed-in',
     health: null,
     planType: null,
-    observedAt: null,
+    observedAt: '2020-01-01T00:00:00.000Z',
+    expiresAt: '2033-01-01T00:00:00.000Z',
     windows: [],
     binding: null,
     credits: null,
@@ -122,6 +125,29 @@ describe('bindingWindow — the constraint that actually blocks work', () => {
   });
 });
 
+describe('Claude missing-quota diagnostics', () => {
+  it('uses reviewed copy and never prints an untrusted probe reason', () => {
+    expect(claudeQuotaDiagnostic('usage-output-invalid')).toEqual({
+      code: 'usage-output-invalid',
+      sentence: 'Claude’s native usage response could not be verified. Current quota remains unknown.',
+    });
+    expect(claudeQuotaDiagnostic('/private/profile?token=secret')).toBeNull();
+    expect(claudeQuotaDiagnostic(null)).toBeNull();
+  });
+  it.each([
+    ['status-auth-timed-out', 'first sign-in'],
+    ['status-version-timed-out', 'version'],
+    ['status-usage-timed-out', 'local usage'],
+    ['status-reauth-timed-out', 'final sign-in'],
+  ])('shows the reviewed %s stage without native output', (code, stage) => {
+    const diagnostic = claudeQuotaDiagnostic(code);
+    expect(diagnostic?.code).toBe(code);
+    expect(diagnostic?.sentence).toContain(stage);
+    expect(diagnostic?.sentence).toContain('Current quota remains unknown.');
+    expect(claudeQuotaDiagnostic(`${code}:PRIVATE_ACCOUNT`)).toBeNull();
+  });
+});
+
 describe('toWindowView — the sentinel 100 is a flag, not a measurement', () => {
   it('strips the percentage off a flagged window so no "100% used" is printed', () => {
     const view = toWindowView(win({ id: 'primary', usedPercent: 100, limitReached: true }));
@@ -172,6 +198,17 @@ describe('toWindowView — the sentinel 100 is a flag, not a measurement', () =>
     const view = toWindowView(source, Date.parse('2026-10-09T12:00:00.000Z'));
     expect(view).toMatchObject({ id: source.id, label: 'Shared consumer · weekly', usedPct: source.usedPercent, resetsAt: source.resetsAt });
     expect(source).toEqual(before);
+  });
+});
+
+describe('credit detail preserves billing uncertainty', () => {
+  it('does not attest disabled credit billing from an unreached spending limit', () => {
+    const credits = { hasCredits: true, unlimited: false, balance: '123.45', balanceValue: 123.45, spendControlReached: false };
+    expect(accountCreditDetail(credits, false)).toBe('The provider reports credits available. Separate from subscription usage; automatic dispatch requires separate spending authorization.');
+    expect(accountCreditDetail(credits, false)).not.toMatch(/spending is not enabled|credits disabled|subscription.only/i);
+    expect(accountCreditDetail(credits, true)).toContain('current access and spendability are unconfirmed');
+    expect(accountCreditDetail({ ...credits, spendControlReached: null }, false)).toContain('control is unconfirmed');
+    expect(accountCreditDetail({ ...credits, spendControlReached: true }, false)).toContain('spending held');
   });
 });
 

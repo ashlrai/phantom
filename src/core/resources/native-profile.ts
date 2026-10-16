@@ -3,6 +3,7 @@
  * and re-pin an existing prepared profile to a different native executable.
  */
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   accessSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeSync,
   type BigIntStats,
@@ -14,7 +15,7 @@ import { fsyncDirectory } from '../util/durability.js';
 export type ResourceNativeProfileProvider = 'codex' | 'claude' | 'grok';
 export interface ResourceNativeProfileOptions { provider: ResourceNativeProfileProvider; directory: string; executable: string }
 export interface ResourceNativeProfile {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   scope: 'native-profile-preparation';
   status: 'prepared';
   authentication: 'not-checked';
@@ -29,6 +30,7 @@ export interface ResourceNativeProfile {
   manifestPath: string;
   command: string[];
   loginCommand: string[];
+  identity?: { preparedBootId: string; directories: DirectoryBinding[] };
 }
 
 function path(value: unknown): value is string {
@@ -40,6 +42,24 @@ function executable(path: string): void {
   if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path || stat.mode & 0o022) throw new Error();
   accessSync(path, constants.X_OK);
 }
+/** Why `executable` refuses a path, naming the canonical target for symlinks; never throws. */
+function executableProblem(path: string): string {
+  const prefix = 'Invalid native profile executable';
+  const stat = (() => { try { return lstatSync(path); } catch { return null; } })();
+  if (!stat) return `${prefix}: it does not exist`;
+  let real: string | null = null; try { real = realpathSync(path); } catch { /* dangling */ }
+  // Install symlinks are refused by design: the profile pins one canonical file.
+  if (stat.isSymbolicLink()) return real ? `${prefix}: it is a symlink; pass its real path: ${real}` : `${prefix}: it is a dangling symlink`;
+  if (real !== path) return real ? `${prefix}: its path goes through a symlink; pass its real path: ${real}` : `${prefix}: its path cannot be resolved`;
+  if (!stat.isFile()) return `${prefix}: it is not a regular file`;
+  if (stat.mode & 0o022) return `${prefix}: it is group- or world-writable`;
+  try { accessSync(path, constants.X_OK); } catch { return `${prefix}: it is not executable by this user`; }
+  return `${prefix}: it failed validation`;
+}
+/** Fixed or operator-supplied-path text that the CLI may show; never authentication material. */
+export class ResourceNativeProfilePrepareError extends Error {
+  constructor(message: string) { super(message); this.name = 'ResourceNativeProfilePrepareError'; }
+}
 function same(left: BigIntStats, right: BigIntStats): boolean { return left.dev === right.dev && left.ino === right.ino; }
 
 // The generated launcher's fixed landmarks. `repinResourceNativeProfile` edits
@@ -48,29 +68,96 @@ function same(left: BigIntStats, right: BigIntStats): boolean { return left.dev 
 const LAUNCHER_HEADER = '// Generated private native profile. Owner-editable configuration, not an authentication attestation.';
 const LAUNCHER_PROFILE_PREFIX = 'const profile=';
 const LAUNCHER_DIRECTORIES_PREFIX = 'const directories=';
+const LAUNCHER_BOOT_PREFIX = 'const preparedBootId=';
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+type DirectoryBinding = { path: string; dev: string; ino: string; birthtimeNs?: string; volumeUuid?: string };
+
+/** Bounded OS reads. A missing or ambiguous APFS identity must never relax a binding. */
+function macIdentity(path: string): { bootId: string; volumeUuid: string } {
+  const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' };
+  const run = (file: string, args: string[], input?: string): string => execFileSync(file, args,
+    { encoding: 'utf8', timeout: 1_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL', stdio: ['pipe', 'pipe', 'ignore'], env, input });
+  const bootId = run('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid']).trim().toLowerCase();
+  const lines = run('/bin/df', ['-P', path]).trimEnd().split('\n');
+  const device = lines.length === 2 ? /^([^\s]+)\s+/.exec(lines[1]!)?.[1] : undefined;
+  if (!UUID.test(bootId) || bootId === '00000000-0000-0000-0000-000000000000' ||
+    !device || !/^\/dev\/disk\d+s\d+(?:s\d+)?$/.test(device)) throw new Error('Native profile identity unavailable');
+  const plist = run('/usr/sbin/diskutil', ['info', '-plist', device]);
+  const info: unknown = JSON.parse(run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], plist));
+  const volumeUuid = isRecord(info) && typeof info['VolumeUUID'] === 'string' ? info['VolumeUUID'].toLowerCase() : '';
+  if (!isRecord(info) || info['FilesystemType'] !== 'apfs' || info['DeviceNode'] !== device ||
+    !UUID.test(volumeUuid) || volumeUuid === '00000000-0000-0000-0000-000000000000' ||
+    run('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid']).trim().toLowerCase() !== bootId) {
+    throw new Error('Native profile identity unavailable');
+  }
+  return { bootId, volumeUuid };
+}
 /** Key order of the embedded launcher profile, exactly as `launcherSource` serializes it. */
 const LAUNCHER_PROFILE_KEYS = ['provider', 'executable', 'nativeStatePath', 'anthropicStatePath', 'launcherPath'] as const;
 /**
- * Key order of profile.json, exactly as `prepareResourceNativeProfile` builds it.
- * Exported so a test can pin prepare's output to it: repin refuses any other
- * shape, so the two must never drift apart silently.
+ * Versioned key orders of profile.json. Legacy output keeps the first order;
+ * macOS witnessed profiles append identity in v2. Repin refuses either shape
+ * when it has drifted from the corresponding prepared output.
  */
 export const RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS = ['schemaVersion', 'scope', 'status', 'authentication', 'provider', 'directory', 'executable',
   'nodeExecutable', 'commandPath', 'launcherPath', 'nativeStatePath', 'anthropicStatePath', 'manifestPath', 'command', 'loginCommand'] as const;
+export const RESOURCE_NATIVE_PROFILE_MANIFEST_V2_KEYS = [...RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS, 'identity'] as const;
 
 /** Standalone source deliberately has no dependency on an installed Hub path. */
-function launcherSource(profile: ResourceNativeProfile, directories: Array<{ path: string; dev: string; ino: string }>, brokerSafety = true): string {
+function launcherSource(profile: ResourceNativeProfile, directories: DirectoryBinding[], brokerSafety = true, preparedBootId?: string): string {
+  const witnessed = preparedBootId !== undefined;
   return `${LAUNCHER_HEADER}
 import {accessSync,constants,lstatSync,realpathSync} from 'node:fs';
+${witnessed ? "import {closeSync,fstatSync,openSync,readSync} from 'node:fs';\nimport {execFileSync} from 'node:child_process';\n" : ''}\
 ${LAUNCHER_PROFILE_PREFIX}${JSON.stringify({ provider: profile.provider, executable: profile.executable, nativeStatePath: profile.nativeStatePath,
     anthropicStatePath: profile.anthropicStatePath, launcherPath: profile.launcherPath })};
 ${LAUNCHER_DIRECTORIES_PREFIX}${JSON.stringify(directories)};
+${witnessed ? `${LAUNCHER_BOOT_PREFIX}${JSON.stringify(preparedBootId)};\n` : ''}\
 const fail=()=>{process.stderr.write('Native profile launcher unavailable or conflicting authentication override\\n');process.exit(126);};
 try {
   if(typeof process.execve!=='function')fail();
+${witnessed ? `  const probeEnv={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'};
+  const run=(file,args,input)=>execFileSync(file,args,{encoding:'utf8',timeout:1000,maxBuffer:65536,killSignal:'SIGKILL',stdio:['pipe','pipe','ignore'],env:probeEnv,input});
+  const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  const bootId=run('/usr/sbin/sysctl',['-n','kern.bootsessionuuid']).trim().toLowerCase();
+  const lines=run('/bin/df',['-P',profile.launcherPath]).trimEnd().split('\\n');
+  const device=lines.length===2?/^([^\\s]+)\\s+/.exec(lines[1])?.[1]:undefined;
+  if(!uuid.test(bootId)||!device||!/^\\/dev\\/disk\\d+s\\d+(?:s\\d+)?$/.test(device))fail();
+  const plist=run('/usr/sbin/diskutil',['info','-plist',device]);
+  const info=JSON.parse(run('/usr/bin/plutil',['-convert','json','-o','-','-'],plist));
+  const volumeUuid=typeof info.VolumeUUID==='string'?info.VolumeUUID.toLowerCase():'';
+  if(info.FilesystemType!=='apfs'||info.DeviceNode!==device||!uuid.test(volumeUuid)||
+    run('/usr/sbin/sysctl',['-n','kern.bootsessionuuid']).trim().toLowerCase()!==bootId)fail();
+  const originalBoot=bootId===preparedBootId;
+  const profileStat=lstatSync(directories[0].path,{bigint:true});
   for(const row of directories){const stat=lstatSync(row.path,{bigint:true});
+    if(!stat.isDirectory()||stat.isSymbolicLink()||realpathSync(row.path)!==row.path||stat.ino.toString()!==row.ino||
+      stat.birthtimeNs.toString()!==row.birthtimeNs||row.volumeUuid!==volumeUuid||stat.dev!==profileStat.dev||
+      originalBoot&&stat.dev.toString()!==row.dev||
+      (stat.mode&511n)!==448n||typeof process.getuid==='function'&&stat.uid!==BigInt(process.getuid()))fail();}
+  const manifestPath=profile.launcherPath.slice(0,-'launcher.mjs'.length)+'profile.json';
+  const descriptor=openSync(manifestPath,constants.O_RDONLY|constants.O_NOFOLLOW);
+  let manifest;
+  try {const stat=fstatSync(descriptor,{bigint:true});const named=lstatSync(manifestPath,{bigint:true});
+    if(!stat.isFile()||stat.nlink!==1n||(stat.mode&511n)!==384n||stat.dev!==named.dev||stat.ino!==named.ino||
+      stat.size<1n||stat.size>65536n||named.isSymbolicLink()||typeof process.getuid==='function'&&stat.uid!==BigInt(process.getuid()))fail();
+    const bytes=Buffer.alloc(Number(stat.size)+1);let length=0;
+    while(length<bytes.length){const read=readSync(descriptor,bytes,length,bytes.length-length,null);if(read===0)break;length+=read;}
+    const content=bytes.subarray(0,length);const text=content.toString('utf8');
+    const after=lstatSync(manifestPath,{bigint:true});
+    if(length!==Number(stat.size)||!Buffer.from(text,'utf8').equals(content)||after.dev!==stat.dev||after.ino!==stat.ino||
+      after.size!==stat.size||after.mtimeNs!==stat.mtimeNs||after.ctimeNs!==stat.ctimeNs)fail();
+    manifest=JSON.parse(text);
+  }finally{closeSync(descriptor);}
+  if(manifest.schemaVersion!==2||manifest.provider!==profile.provider||manifest.executable!==profile.executable||
+    manifest.directory!==directories[0].path||manifest.launcherPath!==profile.launcherPath||
+    manifest.nativeStatePath!==profile.nativeStatePath||manifest.anthropicStatePath!==profile.anthropicStatePath||
+    manifest.nodeExecutable!==process.execPath||JSON.stringify(manifest.command)!==JSON.stringify([process.execPath,profile.launcherPath])||
+    JSON.stringify(manifest.identity)!==JSON.stringify({preparedBootId,directories}))fail();
+` : `  for(const row of directories){const stat=lstatSync(row.path,{bigint:true});
     if(!stat.isDirectory()||stat.isSymbolicLink()||realpathSync(row.path)!==row.path||stat.dev.toString()!==row.dev||stat.ino.toString()!==row.ino||
       (stat.mode&511n)!==448n||typeof process.getuid==='function'&&stat.uid!==BigInt(process.getuid()))fail();}
+`}\
   const source=lstatSync(profile.launcherPath);if(!source.isFile()||source.isSymbolicLink()||source.nlink!==1||(source.mode&511)!==384||
     realpathSync(profile.launcherPath)!==profile.launcherPath||typeof process.getuid==='function'&&source.uid!==process.getuid())fail();
   const native=lstatSync(profile.executable);if(!native.isFile()||native.isSymbolicLink()||native.mode&18||realpathSync(profile.executable)!==profile.executable)fail();
@@ -117,6 +204,7 @@ ${brokerSafety ? `    // Fixed nonsecret native safety flags. Ambient auth/proxy
  */
 export function prepareResourceNativeProfile(options: ResourceNativeProfileOptions): ResourceNativeProfile {
   let parent: string; let parentStat: BigIntStats; let nodeExecutable: string;
+  let stage: 'options' | 'parent' | 'executable' | 'runtime' = 'options';
   try {
     if (options === null || typeof options !== 'object' || Array.isArray(options) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(options)) || Reflect.ownKeys(options).length !== 3 ||
@@ -124,9 +212,15 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
         'value' in Object.getOwnPropertyDescriptor(options, key)!) || !['codex', 'claude', 'grok'].includes(options.provider) ||
       !path(options.directory) || !path(options.executable) || typeof process.execve !== 'function' ||
       process.platform === 'win32' || process.platform === 'aix') throw new Error();
-    parent = dirname(options.directory); inspectPrivateDirectory(parent); parentStat = lstatSync(parent, { bigint: true });
-    executable(options.executable); nodeExecutable = realpathSync(process.execPath); executable(nodeExecutable);
-  } catch { throw new Error('Invalid native profile configuration, executable, runtime or private parent'); }
+    stage = 'parent'; parent = dirname(options.directory); inspectPrivateDirectory(parent); parentStat = lstatSync(parent, { bigint: true });
+    stage = 'executable'; executable(options.executable);
+    stage = 'runtime'; nodeExecutable = realpathSync(process.execPath); executable(nodeExecutable);
+  } catch {
+    throw new ResourceNativeProfilePrepareError(stage === 'executable' ? executableProblem(options.executable)
+      : stage === 'parent' ? 'Invalid native profile parent: it must already exist as an owned, canonical mode-0700 directory'
+        : stage === 'runtime' ? 'Invalid native profile runtime: the Node executable must be a canonical, non-writable regular file'
+          : 'Invalid native profile configuration, executable, runtime or private parent');
+  }
   const profile: ResourceNativeProfile = { schemaVersion: 1, scope: 'native-profile-preparation', status: 'prepared', authentication: 'not-checked',
     provider: options.provider, directory: options.directory, executable: options.executable, nodeExecutable,
     commandPath: join(options.directory, 'command.json'), launcherPath: join(options.directory, 'launcher.mjs'),
@@ -139,7 +233,7 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
     inspectPrivateDirectory(parent);
     if (!same(parentStat, lstatSync(parent, { bigint: true }))) throw new Error();
     mkdirSync(profile.directory, { mode: 0o700 });
-  } catch { throw new Error('Native profile directory must be new and its private parent unchanged'); }
+  } catch { throw new ResourceNativeProfilePrepareError('Native profile directory must be new and its private parent unchanged'); }
   const owned: Array<{ path: string; stat: BigIntStats }> = [];
   try {
     inspectPrivateDirectory(profile.directory); owned.push({ path: profile.directory, stat: lstatSync(profile.directory, { bigint: true }) });
@@ -166,14 +260,19 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
         assertOwned();
       } finally { if (fd !== undefined) closeSync(fd); }
     };
-    write(profile.launcherPath, launcherSource(profile, owned.map((row) => ({ path: row.path, dev: row.stat.dev.toString(), ino: row.stat.ino.toString() }))));
+    const identity = process.platform === 'darwin' ? macIdentity(profile.directory) : null;
+    if (identity && owned.some((row) => row.stat.dev !== owned[0]!.stat.dev || row.stat.birthtimeNs <= 0n)) throw new Error();
+    const bindings = owned.map((row): DirectoryBinding => ({ path: row.path, dev: row.stat.dev.toString(), ino: row.stat.ino.toString(),
+      ...(identity ? { birthtimeNs: row.stat.birthtimeNs.toString(), volumeUuid: identity.volumeUuid } : {}) }));
+    if (identity) { profile.schemaVersion = 2; profile.identity = { preparedBootId: identity.bootId, directories: bindings }; }
+    write(profile.launcherPath, launcherSource(profile, bindings, true, identity?.bootId));
     write(profile.commandPath, JSON.stringify(profile.command, null, 2) + '\n');
     // Publish the descriptive manifest last; it contains locators, never credentials.
     write(profile.manifestPath, JSON.stringify(profile, null, 2) + '\n');
     for (const row of owned) fsyncDirectory(row.path, { expectedIdentity: row.stat });
     fsyncDirectory(parent, { expectedIdentity: parentStat }); assertOwned();
     return profile;
-  } catch { throw new Error('Native profile preparation failed; the partial directory remains for inspection'); }
+  } catch { throw new ResourceNativeProfilePrepareError('Native profile preparation failed; the partial directory remains for inspection'); }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +378,8 @@ interface RepinInspection {
   launcherProfile: Record<string, unknown>;
   launcherExecutable: string;
   manifestExecutable: string;
+  preparedBootId?: string;
+  identityConsistent: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -353,7 +454,8 @@ function inspectRepinTarget(directory: string): RepinInspection {
   } catch { throw new ResourceNativeProfileRepinError('invalid'); }
   try {
     const manifest = exactJson(files.manifest.text, 2);
-    if (!isRecord(manifest) || !hasExactKeys(manifest, RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS)) throw new Error();
+    if (!isRecord(manifest) || !hasExactKeys(manifest, manifest['schemaVersion'] === 2 ?
+      RESOURCE_NATIVE_PROFILE_MANIFEST_V2_KEYS : RESOURCE_NATIVE_PROFILE_MANIFEST_KEYS)) throw new Error();
     const provider = manifest['provider'];
     if (provider !== 'codex' && provider !== 'claude' && provider !== 'grok') throw new Error();
     // Every locator is derived from the directory, exactly as prepare derives it:
@@ -363,7 +465,7 @@ function inspectRepinTarget(directory: string): RepinInspection {
       anthropicStatePath: provider === 'claude' ? join(directory, 'anthropic-state') : null, manifestPath: paths.manifest,
     };
     const command = manifest['command']; const loginCommand = manifest['loginCommand'];
-    if (manifest['schemaVersion'] !== 1 || manifest['scope'] !== 'native-profile-preparation' || manifest['status'] !== 'prepared' ||
+    if ((manifest['schemaVersion'] !== 1 && manifest['schemaVersion'] !== 2) || manifest['scope'] !== 'native-profile-preparation' || manifest['status'] !== 'prepared' ||
       manifest['authentication'] !== 'not-checked' || Object.entries(expected).some(([key, value]) => manifest[key] !== value) ||
       !path(manifest['executable']) || !path(manifest['nodeExecutable']) || !isStringArray(command) || command.length !== 2 ||
       command[0] !== manifest['nodeExecutable'] || command[1] !== paths.launcher || !isStringArray(loginCommand) ||
@@ -373,6 +475,7 @@ function inspectRepinTarget(directory: string): RepinInspection {
     const launcherLines = files.launcher.text.split('\n');
     const indexesOf = (prefix: string): number[] => launcherLines.flatMap((line, index) => line.startsWith(prefix) ? [index] : []);
     const profileIndexes = indexesOf(LAUNCHER_PROFILE_PREFIX); const directoryIndexes = indexesOf(LAUNCHER_DIRECTORIES_PREFIX);
+    const bootIndexes = indexesOf(LAUNCHER_BOOT_PREFIX);
     if (launcherLines[0] !== LAUNCHER_HEADER || profileIndexes.length !== 1 || directoryIndexes.length !== 1) throw new Error();
     const embedded = (index: number, prefix: string): unknown => {
       const line = launcherLines[index]!; if (!line.endsWith(';')) throw new Error();
@@ -388,13 +491,31 @@ function inspectRepinTarget(directory: string): RepinInspection {
     const directories = embedded(directoryIndexes[0]!, LAUNCHER_DIRECTORIES_PREFIX);
     const expectedDirectories = [directory, join(directory, 'native-state'), ...(provider === 'claude' ? [join(directory, 'anthropic-state')] : [])];
     if (!Array.isArray(directories) || directories.length !== expectedDirectories.length) throw new Error();
+    const witnessed = directories.every((row: unknown) => isRecord(row) && hasExactKeys(row,
+      ['path', 'dev', 'ino', 'birthtimeNs', 'volumeUuid']));
+    if (!witnessed && !directories.every((row: unknown) => isRecord(row) && hasExactKeys(row, ['path', 'dev', 'ino']))) throw new Error();
+    if (bootIndexes.length !== (witnessed ? 1 : 0) || witnessed && process.platform !== 'darwin') throw new Error();
+    const preparedBootId = witnessed ? embedded(bootIndexes[0]!, LAUNCHER_BOOT_PREFIX) : undefined;
+    if (witnessed && (typeof preparedBootId !== 'string' || !UUID.test(preparedBootId) ||
+      preparedBootId === '00000000-0000-0000-0000-000000000000')) throw new Error();
+    const current = witnessed ? macIdentity(directory) : null;
+    const profileStat = witnessed ? lstatSync(directory, { bigint: true }) : null;
     directories.forEach((row: unknown, index) => {
-      if (!isRecord(row) || !hasExactKeys(row, ['path', 'dev', 'ino']) || row['path'] !== expectedDirectories[index]) throw new Error();
+      if (!isRecord(row) || row['path'] !== expectedDirectories[index] || typeof row['dev'] !== 'string' ||
+        !/^\d+$/.test(row['dev']) || typeof row['ino'] !== 'string' || !/^\d+$/.test(row['ino'])) throw new Error();
       inspectPrivateDirectory(expectedDirectories[index]!); const live = lstatSync(expectedDirectories[index]!, { bigint: true });
-      if (live.dev.toString() !== row['dev'] || live.ino.toString() !== row['ino']) throw new Error();
+      if (live.ino.toString() !== row['ino'] || (witnessed ?
+        typeof row['birthtimeNs'] !== 'string' || !/^[1-9]\d*$/.test(row['birthtimeNs']) ||
+        live.birthtimeNs.toString() !== row['birthtimeNs'] || row['volumeUuid'] !== current!.volumeUuid ||
+        live.dev !== profileStat!.dev || current!.bootId === preparedBootId && live.dev.toString() !== row['dev'] :
+        live.dev.toString() !== row['dev'])) throw new Error();
     });
+    const expectedIdentity = { preparedBootId, directories };
+    const identityConsistent = witnessed ? manifest['schemaVersion'] === 2 &&
+      JSON.stringify(manifest['identity']) === JSON.stringify(expectedIdentity) : manifest['schemaVersion'] === 1;
     return { provider, parent, parentStat, directoryStat, paths, files, manifest, launcherLines, profileLineIndex: profileIndexes[0]!,
-      launcherProfile, launcherExecutable: launcherProfile['executable'] as string, manifestExecutable: manifest['executable'] as string };
+      launcherProfile, launcherExecutable: launcherProfile['executable'] as string, manifestExecutable: manifest['executable'] as string,
+      identityConsistent, ...(witnessed ? { preparedBootId: preparedBootId as string } : {}) };
   } catch { throw new ResourceNativeProfileRepinError('inconsistent'); }
 }
 
@@ -457,6 +578,7 @@ export function repinResourceNativeProfile(options: ResourceNativeProfileRepinOp
   } catch { throw new ResourceNativeProfileRepinError('invalid'); }
 
   const state = inspectRepinTarget(directory);
+  if (!state.identityConsistent) throw new ResourceNativeProfileRepinError('inconsistent');
   const previous = state.manifestExecutable;
   const mode: 'unchanged' | 'repin' | 'resume' = state.launcherExecutable === previous ? (previous === target ? 'unchanged' : 'repin')
     : state.launcherExecutable === target ? 'resume' : (() => { throw new ResourceNativeProfileRepinError('inconsistent'); })();
@@ -526,6 +648,189 @@ export function repinResourceNativeProfile(options: ResourceNativeProfileRepinOp
 }
 
 // ---------------------------------------------------------------------------
+// Explicit, same-binding upgrade of an old profile to a reboot-stable witness.
+// It never repairs an already drifted or replaced directory. No native state is
+// opened and no profile is signed in; the operator runs this before st_dev moves.
+// ---------------------------------------------------------------------------
+export interface ResourceNativeProfileIdentityUpgradeOptions { directory: string; dryRun?: boolean }
+export interface ResourceNativeProfileIdentityUpgrade {
+  schemaVersion: 1;
+  scope: 'native-profile-identity-upgrade';
+  status: 'upgraded' | 'unchanged' | 'would-upgrade';
+  authentication: 'not-checked';
+  provider: ResourceNativeProfileProvider;
+  directory: string;
+  launcherPath: string;
+  backupPath: string | null;
+  manifestBackupPath: string | null;
+}
+export class ResourceNativeProfileIdentityUpgradeError extends Error {
+  constructor(readonly failure: 'invalid' | 'inconsistent' | 'failed-unchanged' | 'failed-after-publish') {
+    super({ invalid: 'Native profile identity upgrade unavailable; nothing was written',
+      inconsistent: 'Native profile identity or backup is inconsistent; nothing was written',
+      'failed-unchanged': 'Native profile identity upgrade failed before launcher publication',
+      'failed-after-publish': 'Native profile identity publication unconfirmed; inspect and retry the explicit upgrade' }[failure]);
+    this.name = 'ResourceNativeProfileIdentityUpgradeError';
+  }
+}
+
+export function upgradeResourceNativeProfileIdentity(options: ResourceNativeProfileIdentityUpgradeOptions): ResourceNativeProfileIdentityUpgrade {
+  let directory: string; let dryRun: boolean; let state: RepinInspection;
+  try {
+    if (!isRecord(options) || ![Object.prototype, null].includes(Object.getPrototypeOf(options)) ||
+      !Object.hasOwn(options, 'directory') || Reflect.ownKeys(options).some(key =>
+        (key !== 'directory' && key !== 'dryRun') || !('value' in Object.getOwnPropertyDescriptor(options, key)!))) throw new Error();
+    directory = options.directory; dryRun = options.dryRun ?? false;
+    if (!path(directory) || typeof dryRun !== 'boolean' || process.platform !== 'darwin' || typeof process.execve !== 'function') throw new Error();
+    state = inspectRepinTarget(directory);
+  } catch { throw new ResourceNativeProfileIdentityUpgradeError('invalid'); }
+  const backupPath = `${state.paths.launcher}.identity-prev`;
+  const manifestBackupPath = `${state.paths.manifest}.identity-prev`;
+  const report = (status: ResourceNativeProfileIdentityUpgrade['status'], backup: boolean): ResourceNativeProfileIdentityUpgrade => ({
+    schemaVersion: 1, scope: 'native-profile-identity-upgrade', status, authentication: 'not-checked', provider: state.provider,
+    directory, launcherPath: state.paths.launcher, backupPath: backup ? backupPath : null,
+    manifestBackupPath: backup ? manifestBackupPath : null,
+  });
+  if (state.launcherExecutable !== state.manifestExecutable) throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+  if (state.preparedBootId) {
+    let saved: OwnedFile | null; let savedManifest: OwnedFile | null;
+    try {
+      saved = readOwnedFile(backupPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+      saved = null;
+    }
+    try { savedManifest = readOwnedFile(manifestBackupPath); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+      savedManifest = null;
+    }
+    let expectedManifest: string;
+    try {
+      const templates = profileTemplates(state);
+      const current = state.files.launcher.text === templates.current;
+      if (!current && state.files.launcher.text !== templates.previous) throw new Error();
+      const line = state.launcherLines.find(value => value.startsWith(LAUNCHER_DIRECTORIES_PREFIX))!;
+      const rows = exactJson(line.slice(LAUNCHER_DIRECTORIES_PREFIX.length, -1), 0) as DirectoryBinding[];
+      const prior = launcherSource(state.manifest as unknown as ResourceNativeProfile,
+        rows.map(row => ({ path: row.path, dev: row.dev, ino: row.ino })), current);
+      if ((saved === null) !== (savedManifest === null) || saved && saved.text !== prior) throw new Error();
+      const originalManifest: Record<string, unknown> = { ...state.manifest, schemaVersion: 1 };
+      delete originalManifest['identity'];
+      const originalText = `${JSON.stringify(originalManifest, null, 2)}\n`;
+      if (savedManifest && savedManifest.text !== originalText) throw new Error();
+      expectedManifest = `${JSON.stringify({ ...originalManifest, schemaVersion: 2,
+        identity: { preparedBootId: state.preparedBootId, directories: rows } }, null, 2)}\n`;
+    } catch { throw new ResourceNativeProfileIdentityUpgradeError('inconsistent'); }
+    if (state.identityConsistent) {
+      if (state.files.manifest.text !== expectedManifest) throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+      return report('unchanged', saved !== null);
+    }
+    // A crash after launcher publication leaves a witnessed launcher and the
+    // original manifest. Only the exact two backups authorize finishing it.
+    if (!saved || !savedManifest || state.manifest['schemaVersion'] !== 1 ||
+      state.files.manifest.text !== savedManifest.text) throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+    if (dryRun) return report('would-upgrade', true);
+    try {
+      const prior = readOwnedFile(state.paths.manifest);
+      const assertOwned = (): void => {
+        inspectPrivateDirectory(state.parent); if (!same(state.parentStat, lstatSync(state.parent, { bigint: true }))) throw new Error();
+        inspectPrivateDirectory(directory); if (!same(state.directoryStat, lstatSync(directory, { bigint: true }))) throw new Error();
+      };
+      publishProfileFile(directory, assertOwned, state.paths.manifest, expectedManifest, () => {
+        assertOwned();
+        const now = readOwnedFile(state.paths.manifest);
+        if (!same(now.stat, prior.stat) || now.text !== prior.text || readOwnedFile(backupPath).text !== saved!.text ||
+          readOwnedFile(manifestBackupPath).text !== savedManifest!.text) throw new Error();
+      });
+      fsyncDirectory(directory, { expectedIdentity: state.directoryStat });
+      if (!inspectRepinTarget(directory).identityConsistent) throw new Error();
+    } catch { throw new ResourceNativeProfileIdentityUpgradeError('failed-after-publish'); }
+    return report('upgraded', true);
+  }
+  const oldTemplates = profileTemplates(state);
+  if (state.files.launcher.text !== oldTemplates.current && state.files.launcher.text !== oldTemplates.previous)
+    throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+  let previous: OwnedFile | null; let previousManifest: OwnedFile | null;
+  try { previous = readOwnedFile(backupPath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+    previous = null;
+  }
+  try { previousManifest = readOwnedFile(manifestBackupPath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+    previousManifest = null;
+  }
+  if (!previous && previousManifest || previous && previous.text !== state.files.launcher.text ||
+    previousManifest && previousManifest.text !== state.files.manifest.text || !state.identityConsistent)
+    throw new ResourceNativeProfileIdentityUpgradeError('inconsistent');
+  let identity: ReturnType<typeof macIdentity>; let bindings: DirectoryBinding[];
+  try {
+    identity = macIdentity(directory);
+    const paths = [directory, join(directory, 'native-state'), ...(state.provider === 'claude' ? [join(directory, 'anthropic-state')] : [])];
+    const stats = paths.map(value => lstatSync(value, { bigint: true }));
+    if (stats.some(stat => stat.dev !== stats[0]!.dev || stat.birthtimeNs <= 0n)) throw new Error();
+    bindings = paths.map((value, index) => ({ path: value, dev: stats[index]!.dev.toString(), ino: stats[index]!.ino.toString(),
+      birthtimeNs: stats[index]!.birthtimeNs.toString(), volumeUuid: identity.volumeUuid }));
+  } catch { throw new ResourceNativeProfileIdentityUpgradeError('invalid'); }
+  const next = launcherSource(state.manifest as unknown as ResourceNativeProfile, bindings,
+    state.files.launcher.text === oldTemplates.current, identity.bootId);
+  const nextManifest = `${JSON.stringify({ ...state.manifest, schemaVersion: 2,
+    identity: { preparedBootId: identity.bootId, directories: bindings } }, null, 2)}\n`;
+  if (dryRun) return report('would-upgrade', previous !== null);
+  const assertOwned = (): void => {
+    inspectPrivateDirectory(state.parent); if (!same(state.parentStat, lstatSync(state.parent, { bigint: true }))) throw new Error();
+    inspectPrivateDirectory(directory); if (!same(state.directoryStat, lstatSync(directory, { bigint: true }))) throw new Error();
+  };
+  const assertOld = (): void => {
+    assertOwned(); const fresh = inspectRepinTarget(directory);
+    if (fresh.files.launcher.text !== state.files.launcher.text || !same(fresh.files.launcher.stat, state.files.launcher.stat) ||
+      fresh.files.manifest.text !== state.files.manifest.text || !same(fresh.files.manifest.stat, state.files.manifest.stat) ||
+      fresh.files.command.text !== state.files.command.text || !same(fresh.files.command.stat, state.files.command.stat) ||
+      macIdentity(directory).bootId !== identity.bootId) throw new Error();
+  };
+  let published = false;
+  try {
+    assertOld();
+    if (!previous) {
+      publishProfileFile(directory, assertOwned, backupPath, state.files.launcher.text, () => {
+        assertOld();
+        try { lstatSync(backupPath); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+        throw new Error();
+      });
+      previous = readOwnedFile(backupPath);
+      fsyncDirectory(directory, { expectedIdentity: state.directoryStat });
+    }
+    if (!previousManifest) {
+      publishProfileFile(directory, assertOwned, manifestBackupPath, state.files.manifest.text, () => {
+        assertOld();
+        try { lstatSync(manifestBackupPath); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+        throw new Error();
+      });
+      previousManifest = readOwnedFile(manifestBackupPath);
+      fsyncDirectory(directory, { expectedIdentity: state.directoryStat });
+    }
+    if (previous.text !== state.files.launcher.text || previousManifest?.text !== state.files.manifest.text) throw new Error();
+    publishProfileFile(directory, assertOwned, state.paths.launcher, next, () => {
+      assertOld(); if (readOwnedFile(backupPath).text !== state.files.launcher.text ||
+        readOwnedFile(manifestBackupPath).text !== state.files.manifest.text) throw new Error();
+    }, () => { published = true; });
+    fsyncDirectory(directory, { expectedIdentity: state.directoryStat });
+    publishProfileFile(directory, assertOwned, state.paths.manifest, nextManifest, () => {
+      assertOwned(); const current = readOwnedFile(state.paths.manifest);
+      if (!same(current.stat, state.files.manifest.stat) || current.text !== state.files.manifest.text ||
+        readOwnedFile(backupPath).text !== state.files.launcher.text || readOwnedFile(manifestBackupPath).text !== state.files.manifest.text) throw new Error();
+    });
+    fsyncDirectory(directory, { expectedIdentity: state.directoryStat });
+    const settled = inspectRepinTarget(directory);
+    if (!settled.identityConsistent || settled.files.launcher.text !== next || settled.preparedBootId !== identity.bootId ||
+      settled.files.manifest.text !== nextManifest || settled.files.command.text !== state.files.command.text) throw new Error();
+  } catch { throw new ResourceNativeProfileIdentityUpgradeError(published ? 'failed-after-publish' : 'failed-unchanged'); }
+  return report('upgraded', true);
+}
+
+// ---------------------------------------------------------------------------
 // Explicit Claude safety-template upgrade; state and binary pins never migrate.
 // ---------------------------------------------------------------------------
 export interface ResourceNativeProfileTemplateUpgradeOptions { directory: string; dryRun?: boolean }
@@ -556,9 +861,10 @@ export class ResourceNativeProfileTemplateUpgradeError extends Error {
 
 function profileTemplates(state: RepinInspection): { current: string; previous: string } {
   const line = state.launcherLines.find(line => line.startsWith(LAUNCHER_DIRECTORIES_PREFIX))!;
-  const directories = exactJson(line.slice(LAUNCHER_DIRECTORIES_PREFIX.length, -1), 0) as Array<{ path: string; dev: string; ino: string }>;
+  const directories = exactJson(line.slice(LAUNCHER_DIRECTORIES_PREFIX.length, -1), 0) as DirectoryBinding[];
   const profile = state.manifest as unknown as ResourceNativeProfile;
-  return { current: launcherSource(profile, directories), previous: launcherSource(profile, directories, false) };
+  return { current: launcherSource(profile, directories, true, state.preparedBootId),
+    previous: launcherSource(profile, directories, false, state.preparedBootId) };
 }
 function sameExecutableStamp(a: BigIntStats, b: BigIntStats): boolean {
   return same(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
@@ -586,7 +892,7 @@ export function upgradeResourceNativeProfileTemplate(options: ResourceNativeProf
   let templates: ReturnType<typeof profileTemplates>; let backup: OwnedFile | null;
   const backupPath = `${state.paths.launcher}.template-prev`;
   try {
-    if (state.provider !== 'claude' || state.launcherExecutable !== state.manifestExecutable) throw new Error();
+    if (!state.identityConsistent || state.provider !== 'claude' || state.launcherExecutable !== state.manifestExecutable) throw new Error();
     templates = profileTemplates(state);
     if (state.files.launcher.text !== templates.current && state.files.launcher.text !== templates.previous) throw new Error();
     try { backup = readOwnedFile(backupPath); }
@@ -745,7 +1051,7 @@ export function resolveNativeSeatLaunch(options: {
   let state: RepinInspection;
   try { state = inspectRepinTarget(dirname(command[1]!)); } catch { return seatFailure('profile-invalid'); }
   const manifestCommand = state.manifest['command'];
-  if (state.provider !== provider || state.launcherExecutable !== state.manifestExecutable ||
+  if (!state.identityConsistent || state.provider !== provider || state.launcherExecutable !== state.manifestExecutable ||
     !isStringArray(manifestCommand) || manifestCommand.length !== 2 ||
     manifestCommand[0] !== command[0] || manifestCommand[1] !== command[1]) return seatFailure('profile-invalid');
   const nativeStatePath = state.manifest['nativeStatePath'];
