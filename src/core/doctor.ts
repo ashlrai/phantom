@@ -17,6 +17,7 @@ import {
   extractLocusConfigFirm,
   locusAgentReport,
   locusAvailable,
+  locusExecutableState,
   resolveLocusEnforceMode,
 } from './integrations/locus.js';
 // H7 — 5 NEW read-only probes share the SAME read-only readiness facets that
@@ -472,7 +473,7 @@ function checkPhantom(): DoctorCheck {
         'Phantom Secrets CLI (phantom)',
         'warn',
         'phantom not found on PATH',
-        'Install Phantom Secrets (phantom): https://github.com/ashlrai/phantom-secrets#installation',
+        'Install Phantom Secrets (phantom): https://github.com/ashlrai/phantom-secrets#install',
       );
     }
     const ver = status.version ? ` v${status.version}` : '';
@@ -527,14 +528,19 @@ export function checkLocus(): DoctorCheck {
   try {
     if (!locusAvailable()) {
       const enforce = resolveLocusEnforceMode() === 'enforce';
+      // locusAvailable() is false for a bootstrap launcher (the npm locus-cli
+      // shim installs on first run); it is never executed, as in `phm companions`.
+      const found = locusExecutableState() === 'unsupported-launcher'
+        ? 'locus on PATH is an unsupported bootstrap launcher (not run)'
+        : 'locus not found on PATH';
       return check(
         'locus',
         'Locus identity plane',
         enforce ? 'fail' : 'warn',
         enforce
-          ? 'locus not found on PATH (required: LOCUS_ENFORCE=enforce)'
-          : 'locus not found on PATH (optional identity plane)',
-        'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)',
+          ? `${found} (required: LOCUS_ENFORCE=enforce)`
+          : `${found} (optional identity plane)`,
+        'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
 

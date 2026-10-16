@@ -74,6 +74,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getLocusJobEnv, hasLocusJobEnv, runInLocusJobEnv, withLocusJobChildEnv } from "./locus-job-env.js";
+import { companionExecutableKind } from "../companion-inventory.js";
 import { loadConfigReadOnly } from "../config.js";
 import type { AshlrConfig } from "../types.js";
 
@@ -470,18 +471,41 @@ export interface RunWithLocusSessionOptions extends WithLocusSessionOptions {
 // Env / process helpers
 // ---------------------------------------------------------------------------
 
-/** True when `locus` is on PATH. Never throws. */
-export function locusAvailable(): boolean {
+/**
+ * Where `locus` resolves on PATH, and whether it may be executed. A bootstrap
+ * launcher (the npm `locus-cli` shim runs `cargo install` even for a probe) is
+ * `unsupported-launcher` and is never run; detection is shared with
+ * `phm companions` (companion-inventory). Never throws.
+ */
+export type LocusExecutableState = "missing" | "unsupported-launcher" | "available";
+
+function locusStateFromLocator(stdout: unknown): LocusExecutableState {
+  const located = typeof stdout === "string"
+    ? stdout.split(/\r?\n/u).map((line) => line.trim()).find(Boolean)
+    : undefined;
+  // A locator that reported success without a path cannot be classified; keep
+  // the previous behaviour (available) rather than inventing a refusal.
+  if (located && companionExecutableKind(located) === "bootstrap") return "unsupported-launcher";
+  return "available";
+}
+
+/** Resolve and classify the `locus` executable on PATH. Never throws. */
+export function locusExecutableState(): LocusExecutableState {
   try {
-    execFileSync(
+    const stdout = execFileSync(
       process.platform === "win32" ? "where" : "which",
       [LOCUS_BIN],
-      { stdio: "ignore", timeout: TIMEOUT_MS },
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: TIMEOUT_MS },
     );
-    return true;
+    return locusStateFromLocator(stdout);
   } catch {
-    return false;
+    return "missing";
   }
+}
+
+/** True when `locus` is on PATH and is not a bootstrap launcher. Never throws. */
+export function locusAvailable(): boolean {
+  return locusExecutableState() === "available";
 }
 
 /** How long {@link locusAvailableAsync} trusts a PATH lookup. A miss is re-checked sooner. */
@@ -553,7 +577,7 @@ export async function locusAvailableAsync(): Promise<boolean> {
   if (!locusWhichInFlight) {
     locusWhichInFlight = execFileSettled(process.platform === "win32" ? "where" : "which", [LOCUS_BIN], {})
       .then((r) => {
-        const available = r.status === 0;
+        const available = r.status === 0 && locusStateFromLocator(r.stdout) === "available";
         locusWhichCache = { at: Date.now(), available, path };
         return available;
       })
@@ -2359,7 +2383,7 @@ export function locusDoctorLine(): {
       id: "locus",
       ok: false,
       detail: "locus CLI not installed",
-      fix: "cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked",
+      fix: "cargo install --git https://github.com/ashlrai/locus locus-cli --locked",
     };
   }
   if (!probe.report) {

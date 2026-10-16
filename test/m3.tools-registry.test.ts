@@ -181,7 +181,7 @@ describe('getToolsRegistry — platform PATH lookup', () => {
     expect(_execFileCalls).toContain('C:\\Windows\\System32\\where.exe $PATH:phantom');
   });
 
-  it('does not invoke a shell to version a discovered Windows command shim', () => {
+  it('never executes a discovered Windows command shim (bootstrap launcher)', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     process.env.SystemRoot = 'C:\\Windows';
     _mockResponses.set(
@@ -191,12 +191,8 @@ describe('getToolsRegistry — platform PATH lookup', () => {
 
     const phantom = getToolsRegistry().tools.find(tool => tool.id === 'phantom');
 
-    expect(phantom).toMatchObject({
-      installed: true,
-      path: 'C:\\Tools\\phantom.cmd',
-      version: null,
-    });
-    expect(_execFileCalls).toContain('C:\\Tools\\phantom.cmd --version');
+    expect(phantom).toMatchObject({ installed: false, path: null, version: null });
+    expect(_execFileCalls).not.toContain('C:\\Tools\\phantom.cmd --version');
   });
 });
 
@@ -260,7 +256,8 @@ describe('getToolsRegistry — all expected ecosystem tool ids present', () => {
     'morphkit',
     'binshield',
     'ashlr-md',
-    'ashlr-hub',
+    'locus',
+    'lexicon',
   ];
 
   it('registry contains all expected tool ids', () => {
@@ -369,20 +366,48 @@ describe('getToolsRegistry — multiple tools installed', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ashlr-hub always present (self)
+// The running ashlr binary is not a companion
 // ---------------------------------------------------------------------------
 
-describe('getToolsRegistry — ashlr-hub entry', () => {
-  it('ashlr-hub entry exists in registry', () => {
+describe('getToolsRegistry — ashlr (this binary) is not counted', () => {
+  it('reports 0 installed when only the ashlr binary is on PATH', () => {
+    mockInstalled('ashlr', '3.29.15', '/usr/local/bin/ashlr');
     const reg = getToolsRegistry();
-    const t = reg.tools.find(t => t.id === 'ashlr-hub');
-    expect(t).toBeDefined();
+    expect(reg.installedCount).toBe(0);
+    expect(reg.tools.some(t => t.installed)).toBe(false);
+    expect(reg.tools.map(t => t.id)).not.toContain('ashlr-hub');
+    expect(_execFileCalls).not.toContain('/usr/local/bin/ashlr --version');
   });
 
-  it('ashlr-hub has a display name', () => {
-    const reg = getToolsRegistry();
-    const t = reg.tools.find(t => t.id === 'ashlr-hub');
-    expect(t?.name.length).toBeGreaterThan(0);
+  it('ashlr-plugin is detected only through its own binary', () => {
+    mockInstalled('ashlr-plugin', '1.4.0', '/usr/local/bin/ashlr-plugin');
+    const t = getToolsRegistry().tools.find(tool => tool.id === 'ashlr-plugin');
+    expect(t).toMatchObject({ installed: true, version: '1.4.0', path: '/usr/local/bin/ashlr-plugin' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A failed version probe is not an install
+// ---------------------------------------------------------------------------
+
+describe('getToolsRegistry — failing version probe', () => {
+  it('reports not installed and ignores a version printed on stderr', () => {
+    _mockResponses.set('which phantom', whichResult('/usr/local/bin/phantom'));
+    _mockResponses.set('/usr/local/bin/phantom --version', makeResult('', 'phantom 0.7.9: vault locked', 1));
+    const t = getToolsRegistry().tools.find(tool => tool.id === 'phantom');
+    expect(t).toMatchObject({ installed: false, version: null, path: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lexicon companion
+// ---------------------------------------------------------------------------
+
+describe('getToolsRegistry — lexicon', () => {
+  it('lists lexicon and detects it on PATH', () => {
+    mockInstalled('lexicon', '0.5.4', '/usr/local/bin/lexicon');
+    const t = getToolsRegistry().tools.find(tool => tool.id === 'lexicon');
+    expect(t).toMatchObject({ installed: true, version: '0.5.4', path: '/usr/local/bin/lexicon' });
   });
 });
 
