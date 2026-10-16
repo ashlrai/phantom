@@ -493,4 +493,3 @@ export function parseEngineeringAssignmentV1(
     assignmentSignature: value.assignmentSignature,
   })
 }
-

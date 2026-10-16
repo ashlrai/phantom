@@ -6,7 +6,7 @@ const HELP = `usage: phm cortex check --config ABS [--json]
 
 Check the private, explicitly selected bridge configuration offline, or claim one
 signed engineering assignment from Cortex and produce a verified pending local
-proposal. Once uses configured Codex/Claude subscription resources and writes
+proposal. Once uses the configured Codex subscription resource and writes
 private artifacts under the configured root. It never installs a service, merges,
 pushes, deploys, or exposes a local listener. The source repository must be clean,
 enrolled, explicitly mapped and at the signed commit. No private memory is loaded.
