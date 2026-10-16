@@ -214,17 +214,17 @@ A refused launch is recorded nowhere and costs nothing. It comes back with the
 Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 
 - **Built-in items** live in `src/core/cloud/improvement-backlog.ts`. Each is
-  a complete brief for a session working in `ashlrai/ashlr-hub`: long-failing
-  tests, the first-paint JavaScript target, the runtime probe's event-loop
-  stall, harness settings at dispatch, the router's λ weights, and similar
-  gaps known as of 3.10.1. The delivery contract is appended to each brief.
+  a complete brief for a session working in `ashlrai/phantom`, re-verified
+  against master before it is added. The delivery contract is appended to
+  each brief.
 - **Your items and the Leader's** are added to `~/.ashlr/cloud/backlog.json`.
   The file is validated and holds at most 200 items. The Leader turns
   code-change actions from its memos into items with ids like
   `leader-<memoId>-<n>`. Its class-C actions still go to Needs you.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
-  after it ends `merged`.
+  after it ends `merged` or its session reported `no-change` (the work was
+  already done).
 - **Order.** The next item is the highest priority (1 first), then built-in
   order.
 

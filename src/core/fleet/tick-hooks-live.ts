@@ -440,7 +440,7 @@ export async function probeLocalRuntimeDefault(cfg: AshlrConfig, snapshot: Capac
         idleSlots: usable ? idle : null,
         observedAt: reading.checkedAt,
         contextPerSlot: usable ? context : null,
-        detail: usable ? `llama-server up with ${slots} slot(s) at ${context} ctx/slot`
+        detail: usable ? `llama-server up with ${countOf(slots, 'slot')} at ${context} ctx/slot`
           : reading.state === 'up' ? 'llama-server slot activity or per-slot context is unverified'
             : `llama-server ${reading.state}`,
       };
