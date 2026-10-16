@@ -45,7 +45,7 @@
 
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -142,12 +142,137 @@ function cutToBytes(text: string, maxBytes: number): string {
   return lastNewline >= prefix.length * 0.6 ? prefix.slice(0, lastNewline) : prefix;
 }
 
+// ---------------------------------------------------------------------------
+// Stale path references
+// ---------------------------------------------------------------------------
+
+/**
+ * A repository path written in a memory line: at least two segments, made of
+ * the characters real paths use. Prose like "and/or" or "CI/CD" matches too;
+ * {@link isCheckablePath} keeps only references whose first segment exists in
+ * the project, so those are never checked.
+ */
+const PATH_REFERENCE = /(?:^|[\s`'"([])((?:\.\/)?[A-Za-z0-9_@][A-Za-z0-9_@.-]*(?:\/[A-Za-z0-9_@.-]+)+\/?)/g;
+/** A markdown link target: the index links its detail files this way. */
+const LINK_TARGET = /\]\(([^()\s#?]+)(?:#[^()\s]*)?\)/g;
+/** Build output and installed packages: absent from a clean checkout without anything being stale. */
+const GENERATED_SEGMENT = /(?:^|\/)(?:node_modules|target|dist|build|out|coverage|\.next|gen)(?:\/|$)/;
+/** At most this many references are checked per MEMORY.md, so a huge file costs a bounded number of stats. */
+const MAX_PATH_CHECKS = 300;
+/** At most this many missing references are named on one line. */
+const MAX_MISSING_PER_LINE = 3;
+
+/** `src/a.ts:42`, `src/a.ts:42:7` and a trailing `.`/`,` are the same reference as `src/a.ts`. */
+function trimReference(raw: string): string {
+  return raw.replace(/(?::\d+){1,2}$/, '').replace(/[.,;:]+$/, '').replace(/^\.\//, '').replace(/\/$/, '');
+}
+
+/**
+ * Whether `path` names something inside `base` that exists right now. A
+ * reference that climbs out of `base` is never probed. `lstat`, so a symlink
+ * counts as present without being followed.
+ */
+function existsUnder(base: string, path: string): boolean {
+  const target = resolve(base, path);
+  if (target !== base && !target.startsWith(base + sep)) return true;
+  try {
+    lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The checker {@link prepareProjectMemory} hands to {@link renderMemoryBlock}:
+ * a path reference is missing when its first segment exists at the project
+ * root (so it really is a repository path) but the path itself does not. A
+ * markdown link to a detail file is missing when neither the memory directory
+ * nor the project has it.
+ */
+export function memoryPathChecker(projectRoot: string, memoryDir: string): MemoryPathChecker {
+  const firstSegments = new Map<string, boolean>();
+  const isCheckablePath = (ref: string): boolean => {
+    const first = ref.split('/')[0] ?? '';
+    if (first === '' || first === '..') return false;
+    let present = firstSegments.get(first);
+    if (present === undefined) {
+      present = existsUnder(projectRoot, first);
+      firstSegments.set(first, present);
+    }
+    return present;
+  };
+  return {
+    pathMissing: (ref) => isCheckablePath(ref) && !existsUnder(projectRoot, ref),
+    linkMissing: (ref) => !existsUnder(memoryDir, ref) && !existsUnder(projectRoot, ref),
+  };
+}
+
+export interface MemoryPathChecker {
+  /** A repository path reference (`src/core/x.ts`) that is gone. */
+  pathMissing(ref: string): boolean;
+  /** A relative markdown link target (`](debugging.md)`) that is gone. */
+  linkMissing(ref: string): boolean;
+}
+
+/** The note appended to a memory line that cites paths missing when the chat began. */
+export function staleReferenceNote(missing: readonly string[]): string {
+  return ` (stale? not in the project now: ${missing.map((ref) => `\`${ref}\``).join(', ')})`;
+}
+
+/**
+ * Mark each memory line that cites a path that no longer exists. A memory
+ * that names a deleted or renamed file sends the agent to read the wrong
+ * thing, and the fact around it is the most likely to be out of date; the
+ * note keeps the fact but says what to verify. Returns the text and whether
+ * any line was marked.
+ */
+export function markStaleReferences(text: string, checker: MemoryPathChecker): { text: string; marked: number } {
+  let checks = 0;
+  let marked = 0;
+  const lines = text.split('\n').map((line) => {
+    const missing: string[] = [];
+    const consider = (ref: string, isMissing: (r: string) => boolean): void => {
+      if (ref.length === 0 || ref.includes('://') || missing.includes(ref) || checks >= MAX_PATH_CHECKS) return;
+      checks += 1;
+      if (isMissing(ref)) missing.push(ref);
+    };
+    const links = new Set<string>();
+    for (const match of line.matchAll(LINK_TARGET)) {
+      const target = match[1] ?? '';
+      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('/')) continue;
+      const ref = trimReference(target);
+      links.add(ref);
+      consider(ref, checker.linkMissing);
+    }
+    // Strip URLs first so their paths are never read as repository paths.
+    const prose = line.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, ' ');
+    for (const match of prose.matchAll(PATH_REFERENCE)) {
+      const raw = match[1] ?? '';
+      const after = prose.charAt((match.index ?? 0) + match[0].length);
+      // `test/h*.test.ts`, `CONTRACT-M<N>.md`, `{a,b}`: a pattern, not a path.
+      if (/[*<{$[%]/.test(after)) continue;
+      const ref = trimReference(raw);
+      if (!ref.includes('/') || links.has(ref) || GENERATED_SEGMENT.test(ref)) continue;
+      // Without an extension, "test/release-authoring helper" is as likely
+      // prose as a directory; only a quoted or slash-terminated one is a path.
+      const hasExtension = /\.[A-Za-z0-9]+$/.test(ref.slice(ref.lastIndexOf('/') + 1));
+      if (!hasExtension && !match[0].startsWith('`') && !raw.endsWith('/')) continue;
+      consider(ref, checker.pathMissing);
+    }
+    if (missing.length === 0) return line;
+    marked += 1;
+    return `${line}${staleReferenceNote(missing.slice(0, MAX_MISSING_PER_LINE))}`;
+  });
+  return { text: lines.join('\n'), marked };
+}
+
 /**
  * The fixed instructions. SHORT and DIRECTIVE on purpose: it rides on every
  * turn's system prompt, so each sentence is paid for again and again (cheaply,
  * from cache — which is why it must never vary between turns of one chat).
  */
-function memoryInstructions(dir: string, projectName: string, writable: boolean): string {
+function memoryInstructions(dir: string, projectName: string, writable: boolean, staleMarked = false): string {
   const file = join(dir, VERSE_MEMORY_FILE);
   const lines = [
     '# Shared project memory (Phantom)',
@@ -171,6 +296,13 @@ function memoryInstructions(dir: string, projectName: string, writable: boolean)
       '- Never repeat secrets, credentials, tokens or personal data from it.',
     );
   }
+  if (staleMarked) {
+    lines.push(
+      writable
+        ? '- Lines marked "(stale? …)" cite paths missing when this chat began: verify them before relying on the fact, then fix or delete the line.'
+        : '- Lines marked "(stale? …)" cite paths missing when this chat began: treat those facts as possibly out of date.',
+    );
+  }
   lines.push('', `## ${VERSE_MEMORY_FILE} when this chat began`, '');
   return lines.join('\n');
 }
@@ -180,14 +312,23 @@ function memoryInstructions(dir: string, projectName: string, writable: boolean)
  * bytes, so a block snapshotted into a launch record keeps the prompt prefix
  * cache-stable for the whole conversation.
  */
-export function renderMemoryBlock(input: { dir: string; projectName: string; content: string; writable: boolean }): string {
+export function renderMemoryBlock(input: {
+  dir: string;
+  projectName: string;
+  content: string;
+  writable: boolean;
+  /** When given, lines citing paths that are gone are marked (see {@link markStaleReferences}). */
+  paths?: MemoryPathChecker;
+}): string {
+  // Strip BEFORE scrubbing and trimming, so a control byte can neither split a
+  // secret the scrubber would have matched nor survive at an edge.
+  let body = scrubSecrets(stripUnsafeControlChars(input.content)).trim();
+  let marked = 0;
+  if (input.paths && body.length > 0) ({ text: body, marked } = markStaleReferences(body, input.paths));
   // The project name is a directory basename: legal on disk with control
   // bytes in it, never legal on argv with a NUL. `dir` is a real path (no NUL
   // possible) and must stay byte-exact, so it is left alone.
-  const head = memoryInstructions(input.dir, stripUnsafeControlChars(input.projectName), input.writable);
-  // Strip BEFORE scrubbing and trimming, so a control byte can neither split a
-  // secret the scrubber would have matched nor survive at an edge.
-  const body = scrubSecrets(stripUnsafeControlChars(input.content)).trim();
+  const head = memoryInstructions(input.dir, stripUnsafeControlChars(input.projectName), input.writable, marked > 0);
   if (body.length === 0) {
     return cutToBytes(`${head}(empty — nothing recorded yet)`, VERSE_MEMORY_BLOCK_MAX_BYTES);
   }
@@ -263,6 +404,7 @@ export function prepareProjectMemory(
     projectName: basename(canonical) || canonical,
     content: current?.text ?? '',
     writable: opts.writable,
+    paths: memoryPathChecker(canonical, dir),
   });
   return { dir, block, writable: opts.writable };
 }
