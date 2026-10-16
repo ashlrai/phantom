@@ -31,6 +31,9 @@ import {
 } from '../command/surface-data.js';
 import { leaderDirectivesQuery, leaderThreadQuery } from '../leader/thread-data.js';
 import { fleetControlQuery, fleetQueueQuery } from '../fleet/fleet-control-queries.js';
+import { outcomesQuery } from '../fleet/outcomes-queries.js';
+import { adoptionQuery } from '../growth/adoption-data.js';
+import { lessonsQuery } from '../growth/lessons-data.js';
 import { verseBootstrapQuery, verseSessionsQuery, verseWorkspacesQuery } from '../verse-queries.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 
@@ -48,12 +51,38 @@ export const SURFACE_PREFETCH: Readonly<Partial<Record<VerseSectionId, readonly 
   // authorityQuery + fleetLiveQuery on Fleet, Growth and Mind: the shared
   // "Autonomy is off" state (autonomy/AutonomyOffState) reads both.
   // fleetControlQuery + fleetQueueQuery (3.15): the control surface and the steer panel.
-  fleet: [fleetLiveQuery, authorityQuery, overnightQuery, budgetQuery, budgetPreviewQuery, fleetControlQuery, fleetQueueQuery],
-  growth: [fleetHistoryQuery, learningQuery, modelsQuery('30d'), authorityQuery, fleetLiveQuery],
+  // outcomesQuery: the lead's outcomes panel (fleet/OutcomesPanel, lazy).
+  fleet: [fleetLiveQuery, authorityQuery, overnightQuery, budgetQuery, budgetPreviewQuery, fleetControlQuery, fleetQueueQuery, outcomesQuery],
+  // adoptionQuery + lessonsQuery: Growth's two lazy panels, which otherwise
+  // ask only once their chunks have loaded and the section has rendered.
+  growth: [fleetHistoryQuery, learningQuery, modelsQuery('30d'), authorityQuery, fleetLiveQuery, adoptionQuery, lessonsQuery],
   // The conversation (leader/LeaderConversation) reads the thread and the directives.
   mind: [leaderQuery, leaderThreadQuery, leaderDirectivesQuery, reasoningDigestQuery, verseBootstrapQuery, verseWorkspacesQuery, authorityQuery, fleetLiveQuery],
   chat: [verseBootstrapQuery, verseSessionsQuery, verseWorkspacesQuery],
 };
+
+/**
+ * The surfaces whose first visit mounts lazy panels (each section's
+ * `preloadPanels`). Loaded with the surface's own chunk, so the first visit
+ * renders them in the same pass instead of a fallback (command/Surface.tsx
+ * lazyPanel). The section chunk is already in by then (warmup.ts loads it
+ * first), so these imports only reach its exports.
+ */
+export const SURFACE_PANELS: Readonly<Partial<Record<VerseSectionId, () => Promise<{ preloadPanels: () => Promise<unknown> }>>>> = {
+  fleet: () => import('../sections/FleetSection.js'),
+  growth: () => import('../sections/GrowthSection.js'),
+  mind: () => import('../sections/MindSection.js'),
+};
+
+/** Load one surface's lazy panels. Never rejects: each panel's own load asks again on mount. */
+export async function prefetchSurfacePanels(id: VerseSectionId): Promise<void> {
+  try {
+    const section = await SURFACE_PANELS[id]?.();
+    await section?.preloadPanels();
+  } catch {
+    // Left to the panel's own load.
+  }
+}
 
 /**
  * A cached answer younger than this is left alone. The surfaces accept 10–60 s

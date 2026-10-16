@@ -37,7 +37,7 @@ import { paletteBlock, useGrantFlow } from '../command/AutonomyBar.js';
 import { anchorId } from '../command/nav.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
-import { Cell, Surface } from '../command/Surface.js';
+import { Cell, Surface, lazyPanel } from '../command/Surface.js';
 import { authorityQuery, fleetLiveQuery } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useViewport } from '../shell/viewport.js';
@@ -46,7 +46,7 @@ import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, W
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
-const ResetSpendingControl = lazy(() => import('../budget/ResetSpendingControl.js').then(module => ({ default: module.ResetSpendingControl })));
+const ResetSpendingControl = lazyPanel(() => import('../budget/ResetSpendingControl.js').then((m) => m.ResetSpendingControl));
 import { nothingToDraw } from '../fleet/live-model.js';
 import { fleetDarkSince } from '../fleet/dark-since.js';
 import styles from '../fleet/fleet.module.css';
@@ -62,7 +62,12 @@ const ShadowDecisions = lazy(() => import('../fleet/ShadowDecisions.js'));
 const FleetAdvanced = lazy(() => import('../fleet/Advanced.js').then((m) => ({ default: () => <m.FleetAdvanced embedded /> })));
 // The rollout ladder (3.14) lives here since 3.15 — Command links to it.
 const AutonomyStatus = lazy(() => import('../command/AutonomyStatus.js'));
-const OutcomesPanel = lazy(() => import('../fleet/OutcomesPanel.js').then(m => ({ default: m.OutcomesPanel })));
+const OutcomesPanel = lazyPanel(() => import('../fleet/OutcomesPanel.js').then((m) => m.OutcomesPanel));
+
+/** The panels a first visit mounts, for the idle warm-up (shell/surface-prefetch.ts). */
+export function preloadPanels(): Promise<unknown> {
+  return Promise.all([OutcomesPanel.preload(), ResetSpendingControl.preload()]);
+}
 const FleetWorld = lazy(() => import('../fleet/FleetWorld.js'));
 
 export function FleetSection() {

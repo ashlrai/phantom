@@ -19,7 +19,7 @@
  * Action log; a digest with no reasoning drops the matrix and the trend
  * (the insights card says it once). Both empty: that one card is Mind.
  */
-import { lazy, Suspense, useId, useMemo, useState } from 'react';
+import { Suspense, useId, useMemo, useState } from 'react';
 import { AreaTrend } from '../../../components/charts/AreaTrend.js';
 import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
 import { MatrixHeatmap } from '../../../components/charts/MatrixHeatmap.js';
@@ -29,7 +29,7 @@ import { AutonomyOffState, useAutonomyOff } from '../autonomy/AutonomyOffState.j
 import type { AutonomyOffState as AutonomyOffStateModel } from '../autonomy/autonomy-off-model.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { anchorId } from '../command/nav.js';
-import { Card, Cell, Surface } from '../command/Surface.js';
+import { Card, Cell, Surface, lazyPanel } from '../command/Surface.js';
 import { leaderQuery, reasoningDigestQuery } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useViewport } from '../shell/viewport.js';
@@ -42,7 +42,12 @@ import styles from '../mind/mind.module.css';
 
 // The conversation is Mind's heart but its own chunk (thread model, composer,
 // memo cards): Mind's cards paint first, and the chat first paint never pays for it.
-const LeaderConversation = lazy(() => import('../leader/LeaderConversation.js'));
+const LeaderConversation = lazyPanel(() => import('../leader/LeaderConversation.js').then((m) => m.default));
+
+/** The panels a first visit mounts, for the idle warm-up (shell/surface-prefetch.ts). */
+export function preloadPanels(): Promise<unknown> {
+  return LeaderConversation.preload();
+}
 
 export const MIND_POLL_MS = 60_000;
 

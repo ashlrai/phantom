@@ -21,7 +21,7 @@
  * they have something real to draw — one clear state instead of six
  * identical empty cards.
  */
-import { lazy, Suspense, useMemo } from 'react';
+import { Suspense, useMemo } from 'react';
 import { AreaTrend } from '../../../components/charts/AreaTrend.js';
 import { BarStack } from '../../../components/charts/BarStack.js';
 import { CalendarHeatmap } from '../../../components/charts/CalendarHeatmap.js';
@@ -37,7 +37,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { AutonomyOffState, useAutonomyOff } from '../autonomy/AutonomyOffState.js';
 import { modelsQuery } from '../../../data/queries.js';
 import { useNow } from '../autonomy/use-ticker.js';
-import { Cell, Surface } from '../command/Surface.js';
+import { Cell, Surface, lazyPanel } from '../command/Surface.js';
 import { fleetHistoryQuery, learningQuery } from '../command/surface-data.js';
 import { quietSinceStatus } from '../fleet/dark-since.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -47,8 +47,13 @@ import { HARNESS_ADOPTION_GATE } from '../../../../core/learn/harness-types.js';
 export const GROWTH_POLL_MS = 300_000;
 
 /** Both secondary panels load only when Growth renders, never on app start. */
-const AdoptionPanel = lazy(() => import('../growth/AdoptionPanel.js').then((m) => ({ default: m.AdoptionPanel })));
-const LessonsPanel = lazy(() => import('../growth/LessonsPanel.js').then((m) => ({ default: m.LessonsPanel })));
+const AdoptionPanel = lazyPanel(() => import('../growth/AdoptionPanel.js').then((m) => m.AdoptionPanel));
+const LessonsPanel = lazyPanel(() => import('../growth/LessonsPanel.js').then((m) => m.LessonsPanel));
+
+/** The panels a first visit mounts, for the idle warm-up (shell/surface-prefetch.ts). */
+export function preloadPanels(): Promise<unknown> {
+  return Promise.all([AdoptionPanel.preload(), LessonsPanel.preload()]);
+}
 
 const models30 = modelsQuery('30d');
 

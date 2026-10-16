@@ -14,7 +14,7 @@ import { GrowthSection } from '../sections/GrowthSection.js';
 import { MindSection } from '../sections/MindSection.js';
 import { resetActivityForTest } from './useActivity.js';
 import { mockWideViewport, type ViewportMock } from './viewport.test-support.js';
-import { PREFETCH_FRESH_MS, SURFACE_PREFETCH, prefetchSurfaceData } from './surface-prefetch.js';
+import { PREFETCH_FRESH_MS, SURFACE_PANELS, SURFACE_PREFETCH, prefetchSurfaceData, prefetchSurfacePanels } from './surface-prefetch.js';
 
 let vp: ViewportMock | null = null;
 beforeEach(() => {
@@ -152,4 +152,20 @@ describe('surface prefetch', () => {
     await prefetchSurfaceData('growth');
     expect([...getPaths(fetchMock)].some((path) => path.startsWith('/api/verse/fleet/history'))).toBe(false);
   });
+
+  it('a Mind whose panels were warmed renders the conversation on its first render — no “Opening the conversation…”', async () => {
+    stubSurfaceFetch({ kind: 'live' });
+    await prefetchSurfacePanels('mind');
+    render(createElement(MindSection));
+    expect(screen.queryByText('Opening the conversation…')).not.toBeInTheDocument();
+  });
+
+  it('warms the panels of every surface that has them, and never rejects', async () => {
+    for (const id of ['fleet', 'growth', 'mind'] as const) {
+      const section = await SURFACE_PANELS[id]!();
+      expect(typeof section.preloadPanels, id).toBe('function');
+      await expect(prefetchSurfacePanels(id)).resolves.toBeUndefined();
+    }
+    await expect(prefetchSurfacePanels('settings')).resolves.toBeUndefined();
+  }, 30_000);
 });
