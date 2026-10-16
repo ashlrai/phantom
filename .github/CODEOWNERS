@@ -297,6 +297,7 @@
 /test/fixture-custody.test.ts @masonwyatt23
 /test/fixtures/m454/agent-skills-ff2df4c.provenance.json @masonwyatt23
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
+/test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
