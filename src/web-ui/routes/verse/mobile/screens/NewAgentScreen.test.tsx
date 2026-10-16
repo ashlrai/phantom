@@ -137,6 +137,12 @@ describe('NewAgentScreen pickers', () => {
     expect(screen.getByRole('radio', { name: /site/ })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('counts repos in the filter placeholder with the right plural', async () => {
+    routes(bootstrap({ projects: [{ path: '/Users/me/code/hub', name: 'hub', enrolled: true }] }));
+    mount();
+    expect(await screen.findByRole('searchbox', { name: 'Find a repo' })).toHaveAttribute('placeholder', '1 repo');
+  });
+
   it('orders seats Claude, Codex, Grok; disables the unavailable one; lists runnable models', async () => {
     routes();
     mount();

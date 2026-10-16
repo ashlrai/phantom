@@ -20,6 +20,7 @@
  */
 
 import { parsePositiveInt } from './args.js';
+import { describeListenError, parsePortArg } from './port.js';
 import { openBrowser } from './serve.js';
 import { makeColors, isTty } from './ui.js';
 
@@ -85,7 +86,7 @@ export function parseVerseArgs(args: string[]): VerseOptions | { error: string; 
     const arg = args[i];
 
     if (arg === '--port' || arg === '-p') {
-      const result = parsePositiveInt('port', args[++i]);
+      const result = parsePortArg(args[++i]);
       if ('error' in result) return { error: result.error, code: 2 };
       port = result.n;
 
@@ -347,7 +348,7 @@ export async function cmdVerse(args: string[]): Promise<number> {
   try {
     handle = await startServer(cfg, { port, open, allowDispatch });
   } catch (err) {
-    console.error(red('error: ') + 'Failed to start server: ' + String(err));
+    console.error(red('error: ') + (describeListenError(err, port) ?? 'Failed to start server: ' + String(err)));
     return 1;
   }
 

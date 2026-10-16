@@ -19,6 +19,12 @@ import { mkdirSync } from 'node:fs';
 
 import type { McpRegistry, McpServerSpec, McpServerHealth } from '../core/types.js';
 import { locusServerSpec } from '../core/integrations/locus.js';
+import {
+  GATEWAY_MCP_SERVER,
+  LEGACY_GATEWAY_MCP_SERVER,
+  isOwnGatewayEntry,
+  legacyGatewayKeys,
+} from '../core/integrations/gateway-entry.js';
 import { companionExecutableCandidates, companionExecutableKind } from '../core/companion-inventory.js';
 
 // ---------------------------------------------------------------------------
@@ -448,30 +454,59 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
   }
 
   // ── Idempotency check ────────────────────────────────────────────────────
+  // Claude Code shares ~/.claude.json with `phm wire claude`, which registers
+  // the gateway as "ashlr-hub" (the bare "ashlr" key also belongs to the
+  // separate ashlr-plugin server). Use that same key so running both commands
+  // leaves exactly one gateway entry, and migrate a legacy "ashlr" entry only
+  // when it launches this product's own binary. ashlrcode keeps "ashlr".
+  const serverKey = target === 'claude' ? GATEWAY_MCP_SERVER : LEGACY_GATEWAY_MCP_SERVER;
   const existingServers: McpServersConfig = existing.mcpServers ?? {};
-  const existingEntry = existingServers['ashlr'];
+  const legacyKeys = target === 'claude' ? legacyGatewayKeys(existingServers) : [];
+  const existingEntry = existingServers[serverKey];
+  // `phm wire claude` writes the same gateway with a bare PATH command; keep it.
+  const wiredByPath =
+    existingEntry !== undefined &&
+    target === 'claude' &&
+    isOwnGatewayEntry(existingEntry) &&
+    !/[\\/]/.test(existingEntry.command);
 
   if (existingEntry) {
     const same =
       existingEntry.command === gatewayEntry.command &&
       JSON.stringify(existingEntry.args ?? []) === JSON.stringify(gatewayEntry.args);
 
-    if (same) {
+    if ((same || wiredByPath) && legacyKeys.length === 0) {
       console.log(green('  ✓ already installed — no changes needed.'));
       console.log(dim(`    config: ${configPath}`));
       return 0;
     }
 
-    // Entry exists but differs — update it
-    console.log(yellow('  ! existing "ashlr" entry differs — updating.'));
+    if (target === 'claude' && !isOwnGatewayEntry(existingEntry)) {
+      console.error(
+        red('error: ') +
+        `refusing to overwrite: "${serverKey}" in ${configPath} is not the Phantom gateway; ` +
+        `rename or remove it, then re-run.`,
+      );
+      return 1;
+    }
+
+    if (!same && !wiredByPath) {
+      console.log(yellow(`  ! existing "${serverKey}" entry differs — updating.`));
+    }
   }
 
-  // ── Deep merge: add/update "ashlr" key only, preserve all others ─────────
+  // ── Deep merge: add/update the gateway key only, preserve all others ─────
+  const keptServers: McpServersConfig = { ...existingServers };
+  for (const key of legacyKeys) {
+    delete keptServers[key];
+    console.log(yellow(`  ! removed duplicate legacy "${key}" gateway entry (now "${serverKey}").`));
+  }
+  const writtenEntry = wiredByPath && existingEntry ? existingEntry : gatewayEntry;
   const merged: ConfigFileShape = {
     ...existing,
     mcpServers: {
-      ...existingServers,
-      ashlr: gatewayEntry,
+      ...keptServers,
+      [serverKey]: writtenEntry,
     },
   };
 
@@ -482,9 +517,9 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
   console.log('');
   console.log(`  ${bold('entry added:')}`);
   console.log(`  ${gray('"mcpServers"')}: {`);
-  console.log(`    ${gray('"ashlr"')}: {`);
-  console.log(`      ${gray('"command"')}: ${cyan(`"${gatewayEntry.command}"`)},`);
-  console.log(`      ${gray('"args"')}: ${cyan(JSON.stringify(gatewayEntry.args))}`);
+  console.log(`    ${gray(`"${serverKey}"`)}: {`);
+  console.log(`      ${gray('"command"')}: ${cyan(`"${writtenEntry.command}"`)},`);
+  console.log(`      ${gray('"args"')}: ${cyan(JSON.stringify(writtenEntry.args ?? []))}`);
   console.log(`    }`);
   console.log(`  }`);
   console.log('');

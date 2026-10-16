@@ -11,6 +11,8 @@ export function isOutcomeWorkItem(item: Pick<WorkItem, 'id' | 'tags'>): boolean 
   return item.tags.includes('outcome') || /^goal:outcome-[a-f0-9]{64}:/.test(item.id);
 }
 
+/** Attempts this process has claimed and is still executing (begin() .. finish*()). */
+const liveAttempts = new Set<string>();
 /** Resident-owned bridge into the existing queue, producers and protected Inbox.
  * No model selection, provider worker or outward primitive lives here. */
 export class OutcomeDispatch {
@@ -36,7 +38,7 @@ export class OutcomeDispatch {
     // Claim and parent registration are one transaction. A replay can describe
     // an earlier launch, but never permits a second provider execution.
     if (!claimed.ok || claimed.disposition !== 'recorded') return false;
-    this.began = true;
+    this.began = true; liveAttempts.add(this.attemptId);
     return this.stillAuthorized();
   }
   stillAuthorized(): boolean {
@@ -85,6 +87,7 @@ export class OutcomeDispatch {
   }
   finish(production?: DaemonDispatchProduction, cancelled = false): boolean {
     if (!this.began) return true;
+    liveAttempts.delete(this.attemptId);
     const terminal = this.terminalFor(production, cancelled);
     return terminal !== null && this.coordinator.joinTerminalCurrent(`terminal-${terminal.attemptId}`, terminal).ok;
   }
@@ -93,6 +96,9 @@ export class OutcomeDispatch {
    * when scope changes while another writer owns the store. */
   async finishWithRetry(production?: DaemonDispatchProduction, cancelled = false): Promise<boolean> {
     if (!this.began) return true;
+    try { return await this.finishOnce(production, cancelled); } finally { liveAttempts.delete(this.attemptId); }
+  }
+  private async finishOnce(production: DaemonDispatchProduction | undefined, cancelled: boolean): Promise<boolean> {
     const terminal = this.terminalFor(production, cancelled);
     if (terminal === null) return false;
     const commandId = `terminal-${terminal.attemptId}`;
@@ -107,14 +113,21 @@ export class OutcomeDispatch {
 }
 
 /** Restart-safe completion uses the original selected terminal identity and
- * the protected persisted proposal; request/planner JSON cannot supply evidence. */
-export function reconcileOutcomeCompletions(context: Pick<OutcomeGoalContext, 'store'>): number {
+ * the protected persisted proposal; request/planner JSON cannot supply evidence.
+ * `exclusiveOwner` is the singleton daemon lock: while it holds, a running attempt this
+ * process is not executing has no live owner (its daemon crashed or was killed), so it
+ * settles as aborted (never proposed/complete) rather than blocking its node forever. */
+export function reconcileOutcomeCompletions(context: Pick<OutcomeGoalContext, 'store'>,
+  deps: { exclusiveOwner?(): boolean } = {}): number {
   const read = context.store.read();
   if (read.sourceState !== 'healthy') return 0;
   const coordinator = new OutcomeCoordinator(context.store);
   let joined = 0;
   for (const nodeId of read.state.activeNodeIds) {
     const attempt = read.state.nodes[nodeId]?.attempts.at(-1);
+    if (attempt?.state === 'running' && attempt.runId && !liveAttempts.has(attempt.id) && deps.exclusiveOwner?.() === true &&
+        coordinator.joinTerminalCurrent(`terminal-${attempt.id}`, { nodeId, attemptId: attempt.id, generationId: attempt.generationId,
+          executionRepo: attempt.executionRepo, runId: attempt.runId, proposalId: null, state: 'aborted' }).ok) { joined++; continue; }
     if (attempt?.state !== 'proposed' || !attempt.proposalId || !attempt.terminalRunId) continue;
     const proposal = loadProposal(attempt.proposalId);
     const latest = context.store.read();

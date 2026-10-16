@@ -188,9 +188,16 @@ describe('cmdHelp routing', () => {
     expect(output()).toContain('no commands match');
   });
 
-  it('unknown topic lists the valid topics (exit 0 — help never fails)', async () => {
-    expect(await cmdHelp(['nonsense'])).toBe(0);
-    expect(output()).toContain('unknown topic');
-    expect(output()).toContain('autonomy');
+  it('unknown topic is a usage error (exit 2) that lists the valid topics on stderr', async () => {
+    const errs: string[] = [];
+    const origErr = console.error;
+    console.error = (...args: unknown[]) => { errs.push(args.map(String).join(' ')); };
+    try {
+      expect(await cmdHelp(['nonsense'])).toBe(2);
+    } finally {
+      console.error = origErr;
+    }
+    expect(errs.join('\n')).toContain('Unknown help topic "nonsense".');
+    expect(errs.join('\n')).toContain('autonomy');
   });
 });
