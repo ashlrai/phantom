@@ -133,6 +133,7 @@
 /src/core/local-eval/memory-*.ts @masonwyatt23
 /scripts/evaluate-memory.ts @masonwyatt23
 /scripts/benchmark-memory.ts @masonwyatt23
+/scripts/benchmark-memory-embeddings.ts @masonwyatt23
 /src/core/util/scrub.ts @masonwyatt23
 /src/core/util/scrub-secrets.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
@@ -775,6 +776,7 @@
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
 /test/memory-benchmark.test.ts @masonwyatt23
+/test/memory-embeddings.test.ts @masonwyatt23
 /test/memory-evaluation-cli.test.ts @masonwyatt23
 /test/memory-evaluation-performance.test.ts @masonwyatt23
 /test/memory-evaluation.test.ts @masonwyatt23

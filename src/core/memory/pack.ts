@@ -116,14 +116,30 @@ function agreesOn(secondary: MemoryFactEvent, primary: MemoryFactEvent): boolean
 /** Numbers stated in a fact (ports, limits, sizes, versions), the values stale docs and wrong-file reads get wrong. */
 function numbers(text: string): Set<string> { return new Set(text.match(/\d+(?:\.\d+)*/g) ?? []); }
 /** Caller-observed source state. changedSourceIds names sources whose quote the caller no longer finds at their locator. */
-export interface MemoryPackOptions { changedSourceIds: string[] }
+/**
+ * `semantic` is an optional, caller-computed meaning signal (for example cosine similarity from a local embedding model).
+ * The kernel never computes it: it stays pure and offline. Lexical matches always outrank meaning-only matches; a fact with
+ * no lexical match is admitted only when its score reaches `minScore`, and then ranks by that score below every lexical match.
+ */
+export interface MemoryPackOptions { changedSourceIds: string[]; semantic?: { scores: Record<string, number>; minScore: number } }
+const unitScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= -1 && value <= 1;
+function validSemantic(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  const { scores, minScore, ...rest } = value as { scores?: unknown; minScore?: unknown };
+  if (Object.keys(rest).length || !unitScore(minScore) || !scores || typeof scores !== 'object' || Object.getPrototypeOf(scores) !== Object.prototype) return false;
+  const entries = Object.entries(scores);
+  return entries.length <= MEMORY_LIMITS.events && entries.every(([id, score]) => validMemoryId(id) && unitScore(score));
+}
 function validOptions(value: unknown): value is MemoryPackOptions {
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
   const keys = Object.keys(value);
-  if (keys.length !== 1 || keys[0] !== 'changedSourceIds') return false;
+  if (!keys.includes('changedSourceIds') || keys.some(key => key !== 'changedSourceIds' && key !== 'semantic')) return false;
+  if (keys.includes('semantic') && !validSemantic((value as { semantic: unknown }).semantic)) return false;
   const ids = (value as { changedSourceIds: unknown }).changedSourceIds;
   return Array.isArray(ids) && ids.length <= MEMORY_LIMITS.events * MEMORY_LIMITS.refs && ids.every(validMemoryId) && new Set(ids).size === ids.length;
 }
+/** Meaning-only matches score below any lexical match (which scores at least 1). */
+const SEMANTIC_ONLY_SCORE = 0.5;
 
 /**
  * Pure, synchronous, deterministic evidence selection. No implicit clock, tokenizer, provider, storage or execution adapter.
@@ -142,9 +158,11 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     if (!validMemoryPackQuery(query)) { output.receipt.stopReasons.push('invalid-query'); return output; }
   } catch { output.receipt.stopReasons.push('invalid-query'); return output; }
   let changed: Set<string>;
+  let semantic: { scores: Map<string, number>; minScore: number } | null = null;
   try {
     if (!validOptions(optionsInput)) { output.receipt.stopReasons.push('invalid-options'); return output; }
     changed = new Set(optionsInput.changedSourceIds);
+    if (optionsInput.semantic) semantic = { scores: new Map(Object.entries(optionsInput.semantic.scores)), minScore: optionsInput.semantic.minScore };
   } catch { output.receipt.stopReasons.push('invalid-options'); return output; }
   output.receipt.time = query.time;
   output.receipt.scope = { projectId: query.projectId, ownerId: query.ownerId, audienceId: query.audienceId };
@@ -192,9 +210,12 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   for (const { words: set } of eligibleWords) for (const word of search) if (matches(word, set)) frequency.set(word, (frequency.get(word) ?? 0) + 1);
   const ranked = eligibleWords.map(({ event, words: set }) => {
     const matched = [...search].filter(word => matches(word, set));
-    return { event, score: search.size ? matched.length : 1, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
-      exact: matched.filter(word => set.has(word)).length };
-  }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || b.exact - a.exact
+    const meaning = semantic?.scores.get(event.eventId) ?? null;
+    const lexical = search.size ? matched.length : 1;
+    const score = lexical || (semantic && meaning !== null && meaning >= semantic.minScore ? SEMANTIC_ONLY_SCORE : 0);
+    return { event, score, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
+      exact: matched.filter(word => set.has(word)).length, meaning: meaning ?? -1 };
+  }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || b.exact - a.exact || b.meaning - a.meaning
     || (a.event.eventId < b.event.eventId ? -1 : a.event.eventId > b.event.eventId ? 1 : 0));
   const chunks: string[] = [];
   const head = header(query);

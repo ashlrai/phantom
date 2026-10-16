@@ -83,6 +83,7 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/core/local-eval/memory-*.ts',
   'scripts/evaluate-memory.ts',
   'scripts/benchmark-memory.ts',
+  'scripts/benchmark-memory-embeddings.ts',
   // The shared secret scrub decides what memory and prompts may carry.
   'src/core/util/scrub.ts',
   'src/core/util/scrub-secrets.ts',
