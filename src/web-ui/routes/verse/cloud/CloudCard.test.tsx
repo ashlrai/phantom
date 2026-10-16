@@ -145,9 +145,9 @@ describe('CloudCard states', () => {
   });
 
   it('says so when the seat is not ready, and disables launching', async () => {
-    stubCloudFetch(overview({ seat: { id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this Mac." } }));
+    stubCloudFetch(overview({ seat: { id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this computer." } }));
     render(<Host />);
-    expect(await within(card()).findByText("The Claude seat isn't set up on this Mac.")).toBeInTheDocument();
+    expect(await within(card()).findByText("The Claude seat isn't set up on this computer.")).toBeInTheDocument();
     expect(within(card()).getByRole('button', { name: 'New cloud task' })).toBeDisabled();
   });
 
@@ -156,7 +156,7 @@ describe('CloudCard states', () => {
     render(<Host />);
     expect(await within(card()).findByText('Not set up')).toBeInTheDocument();
     expect(within(card()).getByText('~$250 credits · estimate')).toBeInTheDocument();
-    expect(within(card()).getByText("The Claude seat isn't set up on this Mac.")).toBeInTheDocument();
+    expect(within(card()).getByText("The Claude seat isn't set up on this computer.")).toBeInTheDocument();
     expect(within(card()).queryByRole('meter')).toBeNull();
     expect(card().textContent).not.toContain('$250 of $250');
     // The estimate's own note and the real-balance link stay.

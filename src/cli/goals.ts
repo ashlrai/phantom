@@ -765,7 +765,8 @@ export async function cmdGoals(args: string[]): Promise<number> {
       const repo = resolve(goal.project);
       if (!core.isEnrolled(repo)) {
         process.stderr.write(
-          red('error: ') + `repo not enrolled for autonomous work: ${repo}\n`,
+          red('error: ') + `repo not enrolled for autonomous work: ${repo}\n` +
+            '         Enroll it with `ashlr enroll add <repo>`.\n',
         );
         return 1;
       }

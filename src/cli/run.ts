@@ -68,6 +68,7 @@ async function importStreaming(): Promise<StreamingMod> {
 import { pad, makeColors, isTty, isStderrTty } from './ui.js';
 import { parsePositiveInt } from './args.js';
 import { resolveEngineSpec } from '../core/run/engine-registry.js';
+import { claudeSandboxHostRefusal } from './run-preflight.js';
 
 const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -538,6 +539,17 @@ export async function cmdRun(args: string[]): Promise<number> {
       process.stdout.write(renderEstimate(est) + '\n');
     }
     return 0;
+  }
+
+  const hostRefusal = claudeSandboxHostRefusal(
+    parsed.engine, parsed.sandboxEngine ?? false, process.env, process.getuid?.());
+  if (hostRefusal) {
+    if (parsed.json) {
+      process.stdout.write(JSON.stringify({ ok: false, status: 'refused', ...hostRefusal }, null, 2) + '\n');
+    }
+    process.stderr.write(red('error: ') + hostRefusal.error + '\n' +
+      hostRefusal.fix.map((f) => `  - ${f}\n`).join(''));
+    return 2;
   }
 
   // Build RunOptions
