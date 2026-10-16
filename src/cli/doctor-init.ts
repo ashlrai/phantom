@@ -311,7 +311,7 @@ async function _legacyOnboard(
 ): Promise<OnboardResult> {
   const { spawnSync } = await import('node:child_process');
   const { existsSync } = await import('node:fs');
-  const { saveConfig, firstRunConfig, CONFIG_PATH } = await import('../core/config.js');
+  const { saveConfig, defaultConfig, CONFIG_PATH } = await import('../core/config.js');
   const { getPhantomStatus } = await import('../core/phantom.js');
   const { getProviderRegistry } = await import('../core/providers.js');
 
@@ -323,7 +323,7 @@ async function _legacyOnboard(
   // Step 1: config
   const configExisted = existsSync(CONFIG_PATH);
   if (!configExisted) {
-    const defaults = firstRunConfig();
+    const defaults = defaultConfig();
     Object.assign(cfg, defaults);
     saveConfig(cfg);
     steps.push({ name: 'config', status: 'ok', detail: `Created ${CONFIG_PATH}` });
