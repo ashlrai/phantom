@@ -11,6 +11,7 @@
  */
 
 import type { BackendResourceState } from '../core/fabric/resource-monitor.js';
+import { noColorRequested } from './ui.js';
 
 // ---------------------------------------------------------------------------
 // ANSI color helpers (inline — avoids circular dep on cli/ui.ts)
@@ -19,7 +20,7 @@ import type { BackendResourceState } from '../core/fabric/resource-monitor.js';
 const _isTTY = process.stdout.isTTY;
 
 function color(code: string, s: string): string {
-  return _isTTY ? `\x1b[${code}m${s}\x1b[0m` : s;
+  return _isTTY && !noColorRequested() ? `\x1b[${code}m${s}\x1b[0m` : s;
 }
 
 const green  = (s: string) => color('32', s);
