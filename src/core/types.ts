@@ -3962,6 +3962,12 @@ export interface Sandbox {
   ownerPid?: number;
   /** Last bounded cleanup attempt retained only while recovery is incomplete. */
   cleanup?: SandboxCleanupEvidence;
+  /**
+   * Set (ISO time) when a failed creation could not roll its sandbox back and
+   * gave it up: the sweeps then treat the owner as not live and reclaim it,
+   * although `ownerPid` may still be running.
+   */
+  abandonedAt?: string;
 }
 
 export type SandboxCleanupPostcondition = 'absent' | 'present' | 'unknown' | 'unsafe';

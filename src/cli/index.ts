@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -1117,7 +1118,7 @@ function printItemSummary(item: IndexedItem): void {
 function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(yellow('  No git repos are being tracked yet.'));
   console.log('');
-  console.log(`  ashlr scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
+  console.log(`  phm scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
   console.log('');
   if (cfg.roots.length === 0) {
     console.log(`    ${red('✗')} ${dim('(no roots configured)')}`);
@@ -1130,19 +1131,22 @@ function printNoReposHelp(cfg: AshlrConfig): void {
     }
   }
   console.log('');
-  console.log(`  ${bold('Fix it')} ${dim('— point ashlr at the folder that holds your repos')}`);
+  console.log(`  ${bold('Fix it')} ${dim('— point phm at the folder that holds your repos')}`);
   console.log(`  ${dim('(repos must be direct children, e.g.')} ${cyan('<root>/my-app/.git')}${dim('):')}`);
   console.log('');
   console.log(`    ${cyan('1.')} Set your roots:`);
-  console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
-  console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  // Only this platform's quoting: a Linux user should not have to skip past PowerShell.
+  if (process.platform === 'win32') {
+    console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
+    console.log(`       ${cyan('phm config set roots --json \'[""C:/Users/you/code""]\'')}`);
+  } else {
+    console.log(`       ${cyan(`phm config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
+  }
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
-  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);
+  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('phm index --refresh')}`);
   console.log('');
-  console.log(`  ${dim('Then re-run')} ${cyan('ashlr status')}${dim('.')}`);
+  console.log(`  ${dim('Then re-run')} ${cyan('phm status')}${dim('.')}`);
   console.log('');
 }
 
@@ -2015,7 +2019,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
