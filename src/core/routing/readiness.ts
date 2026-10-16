@@ -402,7 +402,7 @@ function cloudRow(input: ReadinessInput): ResourceReadinessRow {
   let chat: ReadinessVerdict;
   if (!cloud.seatReady) {
     chat = verdict(false, 'blocked', 'Not set up',
-      `${cloud.seatReason ?? "The Claude seat isn't set up on this Mac."} Create the claude-a profile, then sign it in with the command it prints.`,
+      `${cloud.seatReason ?? "The Claude seat isn't set up on this computer."} Create the claude-a profile, then sign it in with the command it prints.`,
       command('Set up the Claude seat', CLOUD_SEAT_SETUP_COMMAND));
   } else if (cloud.signedOutSeatId !== null) {
     chat = verdict(false, 'blocked', 'Signed out', 'The claude-a profile the cloud lane launches through is signed out.', reconnect(cloud.signedOutSeatId));

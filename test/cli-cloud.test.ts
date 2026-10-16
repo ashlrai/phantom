@@ -370,9 +370,9 @@ describe('budget', () => {
   });
 
   it('mentions a seat that is not ready', async () => {
-    const h = harness({ seat: vi.fn(() => ({ id: 'claude-a', ready: false, reason: 'The Claude seat isn\'t set up on this Mac.' })) });
+    const h = harness({ seat: vi.fn(() => ({ id: 'claude-a', ready: false, reason: 'The Claude seat isn\'t set up on this computer.' })) });
     await runCloudCli(['budget'], h.deps);
-    expect(text(h.out)).toContain('Seat claude-a: not ready — The Claude seat isn\'t set up on this Mac.');
+    expect(text(h.out)).toContain('Seat claude-a: not ready — The Claude seat isn\'t set up on this computer.');
   });
 
   it('--json prints the budget view', async () => {

@@ -470,6 +470,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cloud-timeline-api.test.ts', // 3.13: real loopback http server bind for GET /api/verse/cloud/tasks/<id>/timeline under a relocated HOME
   'test/routing-capacity-history.test.ts', // 3.10.1: real loopback http server + real authenticated web server bind for /api/verse/budget/history under a relocated HOME; real mkfifo + a tsx child with a deadline for the FIFO guard; multi-MiB compaction fixtures
   'test/setup/home-isolation-guard.test.ts', // spawns a nested real `vitest run` to prove the guard fails a leaking fixture
+  'test/setup/git-env.test.ts', // spawns real git to prove a worker's child git sees no environment-injected config
   // Track A/C — Verse server surfaces.
   'test/verse-activity-310.test.ts', // real web server bind for /api/verse/activity + a 300-chat warm-read latency bound
   'test/verse-apps-310.test.ts', // real web server bind for /api/verse/apps
