@@ -236,7 +236,7 @@ export function Swimlane({
     return `${lane.label}${engine}: ${lane.items.length} run${lane.items.length === 1 ? '' : 's'}${parts.length ? ` (${parts.join(', ')})` : ''}`;
   }
 
-  const summary = ariaLabel ?? `${title}: ${itemCount} runs across ${lanes.length} lanes from ${formatTime(from)} to ${formatTime(to)}.`;
+  const summary = ariaLabel ?? `${title}: ${itemCount} run${itemCount === 1 ? '' : 's'} across ${lanes.length} lane${lanes.length === 1 ? '' : 's'} from ${formatTime(from)} to ${formatTime(to)}.`;
 
   const columns: TableColumn<FlatItem>[] = [
     { key: 'lane', label: 'Lane', render: (r) => r.lane },
