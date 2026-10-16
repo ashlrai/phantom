@@ -269,12 +269,24 @@
   line-height: var(--text-sm-line);
 }
 
-/* Running: a pulsing dot, never a spinner. */
+/* Running: a pulsing dot, never a spinner. The ring is a scaled, fading copy
+   of the dot: transform and opacity run on the compositor, where the old
+   box-shadow pulse repainted the whole page every frame while any chat ran. */
 .running {
+  position: relative;
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--status-running-solid);
+}
+.running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--status-running-solid);
+  opacity: 0;
+  pointer-events: none;
   animation: verse-pulse 1.8s ease-out infinite;
 }
 .errored {
@@ -350,9 +362,10 @@
    same right-aligned Cancel / Disconnect pair as Settings ▸ Connection. */
 .confirmActions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 
+/* 6px dot to a 16px ring (the old 5px shadow spread), 55% to clear. */
 @keyframes verse-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-running-solid) 55%, transparent); }
-  100% { box-shadow: 0 0 0 5px transparent; }
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(2.667); opacity: 0; }
 }
 /* Two triggers, the same pattern as the duration tokens in tokens.css and the
    shimmer in global.css: the OS preference applies unless Settings explicitly
@@ -360,9 +373,9 @@
    whose OS says nothing. A persistent `animation` has a hardcoded duration, so
    collapsing --duration-* does NOT reach it — it needs both rules by name. */
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .running { animation: none; }
+  :root:not([data-motion="full"]) .running::after { animation: none; }
 }
-:root[data-motion="reduce"] .running { animation: none; }
+:root[data-motion="reduce"] .running::after { animation: none; }
 
 /* ---- 3.10: filter chips ------------------------------------------------- */
 .filters {
