@@ -5,7 +5,7 @@ import {
   lstatSync,
   mkdirSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, uptime as osUptime } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import type { EngineId } from './types.js';
@@ -17,12 +17,18 @@ import { isSafeExecutionIdentity } from './fleet/attempt-identity.js';
 import { readStableRegularFile } from './util/stable-file-read.js';
 import { assurePrivateStoragePath } from './util/private-storage.js';
 import { writePrivateFileAtomically } from './util/private-file-write.js';
+import { PID_REUSE_SLACK_MS, pidProvablyReusedSince, processStartedAtMs } from './daemon/pid-reuse-proof.js';
 
 const TASK_GENERATION_DOMAIN = 'ashlr:simple-conductor-task-generation:v1';
 const MAX_TASK_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_TASKS = 10_000;
 const MAX_TEXT_BYTES = 1_000_000;
 const LEASE_DURATION_MS = 24 * 60 * 60_000;
+// The conductor's longest retry window is 15 min * 2^8 = 64 h. A persisted
+// deadline further ahead than these horizons was written under a skewed clock.
+const MAX_RETRY_HORIZON_MS = 72 * 60 * 60_000;
+// A live lease is written exactly LEASE_DURATION_MS ahead; allow an hour for a backward clock step.
+const MAX_LEASE_HORIZON_MS = LEASE_DURATION_MS + 60 * 60_000;
 const LEASE_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ENGINE_IDS = new Set<EngineId>([
   'builtin', 'local-coder', 'ashlrcode', 'aw', 'claude', 'codex',
@@ -34,6 +40,8 @@ export interface SimpleConductorDispatchLease {
   generationId: string;
   claimedAt: string;
   expiresAt: string;
+  /** Pid of the claiming process. Absent on leases written before owner recording. */
+  ownerPid?: number;
 }
 
 export interface TaskSpec {
@@ -136,8 +144,13 @@ function validIso(value: unknown): value is string {
 function validLease(value: unknown): value is SimpleConductorDispatchLease {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const lease = value as Record<string, unknown>;
-  return Object.keys(lease).sort().join(',') === 'claimedAt,expiresAt,generationId,token' &&
-    typeof lease['token'] === 'string' && LEASE_TOKEN_RE.test(lease['token']) &&
+  const keys = Object.keys(lease).sort().join(',');
+  if (keys === 'claimedAt,expiresAt,generationId,ownerPid,token') {
+    if (!Number.isSafeInteger(lease['ownerPid']) || Number(lease['ownerPid']) <= 0) return false;
+  } else if (keys !== 'claimedAt,expiresAt,generationId,token') {
+    return false;
+  }
+  return typeof lease['token'] === 'string' && LEASE_TOKEN_RE.test(lease['token']) &&
     typeof lease['generationId'] === 'string' && /^[a-f0-9]{64}$/.test(lease['generationId']) &&
     validIso(lease['claimedAt']) && validIso(lease['expiresAt']) &&
     Date.parse(lease['expiresAt']) > Date.parse(lease['claimedAt']);
@@ -244,6 +257,12 @@ export function simpleConductorTaskGenerationId(
   })).digest('hex');
 }
 
+/** A future deadline beyond what this store ever writes cannot hold work after a clock correction. */
+function pendingUntil(at: string, nowMs: number, horizonMs: number): boolean {
+  const remaining = Date.parse(at) - nowMs;
+  return remaining > 0 && remaining <= horizonMs;
+}
+
 export function readSimpleConductorTasks(): TaskStoreReadResult {
   const result = withTaskLock(readTasksUnlocked);
   return result ?? { ok: false, reason: 'task store lock is unavailable' };
@@ -264,11 +283,11 @@ export function claimSimpleConductorTask(
     if (simpleConductorTaskGenerationId(current) !== expectedGenerationId) {
       return { ok: false, reason: 'changed', detail: 'task generation changed before dispatch' };
     }
-    if (current.retryAfter && Date.parse(current.retryAfter) > nowMs) {
+    if (current.retryAfter && pendingUntil(current.retryAfter, nowMs, MAX_RETRY_HORIZON_MS)) {
       return { ok: false, reason: 'cooling', detail: 'task retry window has not opened' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId) {
-      return Date.parse(current.dispatchLease.expiresAt) > nowMs
+      return pendingUntil(current.dispatchLease.expiresAt, nowMs, MAX_LEASE_HORIZON_MS)
         ? { ok: false, reason: 'busy', detail: 'task has an active dispatch lease' }
         : {
             ok: false,
@@ -283,6 +302,7 @@ export function claimSimpleConductorTask(
       generationId: expectedGenerationId,
       claimedAt: now,
       expiresAt: new Date(nowMs + LEASE_DURATION_MS).toISOString(),
+      ownerPid: process.pid,
     };
     const revision = (current.revision ?? 0) + 1;
     const claimed: TaskSpec = {
@@ -371,7 +391,7 @@ export function reconcileSimpleConductorTask(
       return { ok: false, reason: 'changed', detail: 'task generation changed during reconciliation' };
     }
     if (current.dispatchLease && current.dispatchLease.generationId === expectedGenerationId &&
-      Date.parse(current.dispatchLease.expiresAt) > nowMs) {
+      pendingUntil(current.dispatchLease.expiresAt, nowMs, MAX_LEASE_HORIZON_MS)) {
       return { ok: false, reason: 'changed', detail: 'task has an active dispatch lease' };
     }
     const nextTask: TaskSpec = {
@@ -395,6 +415,205 @@ export function reconcileSimpleConductorTask(
       };
     }
     return { ok: true, task: nextTask };
+  });
+  return result ?? { ok: false, reason: 'unavailable', detail: 'task store lock is unavailable' };
+}
+
+// ---------------------------------------------------------------------------
+// Operator recovery of reconciliation-required leases
+// ---------------------------------------------------------------------------
+
+export type LeaseState = 'active' | 'expired' | 'skewed';
+
+export interface ReconciliationRequiredTask {
+  task: TaskSpec;
+  generationId: string;
+  lease: SimpleConductorDispatchLease;
+  /** expired: past expiresAt; skewed: expiresAt beyond any horizon this store writes. */
+  leaseState: Exclude<LeaseState, 'active'>;
+}
+
+export type LeaseOwnerProof = 'owner-dead' | 'owner-pid-reused' | 'claimed-before-boot';
+
+/** Injectable process probes; defaults read the real host. */
+export interface LeaseOwnerProbe {
+  selfPid?: number;
+  /** 'dead' only on ESRCH; EPERM and any other error count as 'exists'. */
+  signal?: (pid: number) => 'exists' | 'dead';
+  startedAtMs?: (pid: number, nowMs: number) => number | null;
+  bootTimeMs?: (nowMs: number) => number | null;
+}
+
+export type ClearReconciliationResult =
+  | {
+      ok: true;
+      changed: boolean;
+      task: TaskSpec;
+      proof: LeaseOwnerProof;
+      leaseState: Exclude<LeaseState, 'active'>;
+    }
+  | {
+      ok: false;
+      reason: 'not-found' | 'not-reconciliation-required' | 'owner-not-disproved' | 'changed' | 'unavailable';
+      detail: string;
+    };
+
+function leaseState(lease: SimpleConductorDispatchLease, nowMs: number): LeaseState {
+  if (pendingUntil(lease.expiresAt, nowMs, MAX_LEASE_HORIZON_MS)) return 'active';
+  return Date.parse(lease.expiresAt) - nowMs > 0 ? 'skewed' : 'expired';
+}
+
+/** The task as the conductor sees it when claim answers `reconciliation-required`, or null. */
+function reconciliationRequired(task: TaskSpec, nowMs: number): ReconciliationRequiredTask | null {
+  const lease = task.dispatchLease;
+  if (task.done || !lease) return null;
+  let generationId: string;
+  try {
+    generationId = simpleConductorTaskGenerationId(task);
+  } catch {
+    return null;
+  }
+  if (lease.generationId !== generationId) return null;
+  const state = leaseState(lease, nowMs);
+  return state === 'active' ? null : { task, generationId, lease, leaseState: state };
+}
+
+export function listReconciliationRequiredSimpleConductorTasks(
+  nowMs = Date.now(),
+): { ok: true; tasks: ReconciliationRequiredTask[] } | { ok: false; reason: string } {
+  const read = readSimpleConductorTasks();
+  if (!read.ok) return read;
+  return {
+    ok: true,
+    tasks: read.tasks.flatMap((task) => {
+      const found = reconciliationRequired(task, nowMs);
+      return found ? [found] : [];
+    }),
+  };
+}
+
+function defaultSignal(pid: number): 'exists' | 'dead' {
+  try {
+    process.kill(pid, 0);
+    return 'exists';
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | undefined)?.code === 'ESRCH' ? 'dead' : 'exists';
+  }
+}
+
+function defaultBootTimeMs(nowMs: number): number | null {
+  try {
+    const seconds = osUptime();
+    return Number.isFinite(seconds) && seconds > 0 ? nowMs - seconds * 1_000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prove the process that claimed `lease` is not running, or explain why not.
+ *  - owner-dead: the recorded owner pid answers ESRCH.
+ *  - owner-pid-reused: the lease outlived its full duration and the process
+ *    now holding the owner pid started after the claim (the shared daemon
+ *    pid-reuse proof), so it cannot be the claimant.
+ *  - claimed-before-boot: the claim predates the host's current boot.
+ * Anything else (live owner pid, unprovable start time, a legacy lease without
+ * an owner pid and no reboot since the claim) is not a proof.
+ */
+export function proveLeaseOwnerNotRunning(
+  lease: SimpleConductorDispatchLease,
+  nowMs = Date.now(),
+  probe: LeaseOwnerProbe = {},
+): { ok: true; proof: LeaseOwnerProof } | { ok: false; detail: string } {
+  const claimedMs = Date.parse(lease.claimedAt);
+  if (!Number.isFinite(claimedMs)) return { ok: false, detail: 'lease claim time is unparsable' };
+  const ownerPid = lease.ownerPid;
+  if (ownerPid !== undefined) {
+    if (ownerPid === (probe.selfPid ?? process.pid)) {
+      return { ok: false, detail: `lease owner pid ${ownerPid} is this process` };
+    }
+    if ((probe.signal ?? defaultSignal)(ownerPid) === 'dead') return { ok: true, proof: 'owner-dead' };
+    if (pidProvablyReusedSince({
+      pid: ownerPid,
+      acquiredAtMs: claimedMs,
+      heartbeatAtMs: claimedMs,
+      staleMs: LEASE_DURATION_MS,
+      nowMs,
+      startedAtMs: probe.startedAtMs ?? processStartedAtMs,
+    })) return { ok: true, proof: 'owner-pid-reused' };
+  }
+  const bootMs = (probe.bootTimeMs ?? defaultBootTimeMs)(nowMs);
+  if (bootMs !== null && Number.isFinite(bootMs) && claimedMs < bootMs - PID_REUSE_SLACK_MS) {
+    return { ok: true, proof: 'claimed-before-boot' };
+  }
+  return {
+    ok: false,
+    detail: ownerPid === undefined
+      ? 'lease predates owner-pid recording and the host has not rebooted since the claim; the owner cannot be proven gone'
+      : `lease owner pid ${ownerPid} is still running or its identity cannot be disproved`,
+  };
+}
+
+/**
+ * Clear one reconciliation-required lease back to a claimable row, only when
+ * its owner is provably not running. The lease is removed and the revision
+ * bumps; attempts and any candidate/proposal ids are kept, so the conductor
+ * still reconciles known proposals before it ever redispatches. `dryRun`
+ * proves and reports without writing. The process probes run outside the
+ * task lock; the write re-checks under the lock that the row is unchanged.
+ */
+export function clearReconciliationRequiredSimpleConductorTask(
+  taskId: string,
+  opts: { dryRun?: boolean; nowMs?: number; probe?: LeaseOwnerProbe } = {},
+): ClearReconciliationResult {
+  const nowMs = opts.nowMs ?? Date.now();
+  const read = readSimpleConductorTasks();
+  if (!read.ok) return { ok: false, reason: 'unavailable', detail: read.reason };
+  const current = read.tasks.find((task) => task.id === taskId);
+  if (!current) return { ok: false, reason: 'not-found', detail: `no task with id ${taskId}` };
+  const found = reconciliationRequired(current, nowMs);
+  if (!found) {
+    return {
+      ok: false,
+      reason: 'not-reconciliation-required',
+      detail: current.done
+        ? 'task is already complete'
+        : current.dispatchLease
+          ? 'task lease is active or belongs to a superseded generation'
+          : 'task has no dispatch lease',
+    };
+  }
+  const owner = proveLeaseOwnerNotRunning(found.lease, nowMs, opts.probe);
+  if (!owner.ok) return { ok: false, reason: 'owner-not-disproved', detail: owner.detail };
+  const cleared: TaskSpec = {
+    ...current,
+    revision: (current.revision ?? 0) + 1,
+    lastError: `dispatch lease cleared by operator (${owner.proof}); task is claimable again`,
+  };
+  delete cleared.dispatchLease;
+  if (opts.dryRun) {
+    return { ok: true, changed: false, task: cleared, proof: owner.proof, leaseState: found.leaseState };
+  }
+  const result = withTaskLock<ClearReconciliationResult>(() => {
+    const locked = readTasksUnlocked();
+    if (!locked.ok) return { ok: false, reason: 'unavailable', detail: locked.reason };
+    const index = locked.tasks.findIndex((task) => task.id === taskId);
+    if (index < 0) return { ok: false, reason: 'changed', detail: 'task row disappeared' };
+    if (stableJson(locked.tasks[index]) !== stableJson(current)) {
+      return { ok: false, reason: 'changed', detail: 'task row changed while the owner was being proven' };
+    }
+    const next = [...locked.tasks];
+    next[index] = cleared;
+    try {
+      writeTasksUnlocked(next);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'unavailable',
+        detail: error instanceof Error ? error.message : 'task lease clear persistence failed',
+      };
+    }
+    return { ok: true, changed: true, task: cleared, proof: owner.proof, leaseState: found.leaseState };
   });
   return result ?? { ok: false, reason: 'unavailable', detail: 'task store lock is unavailable' };
 }

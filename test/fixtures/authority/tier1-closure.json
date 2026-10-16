@@ -255,6 +255,7 @@
     "src/core/daemon/outcome-proposal-admission.ts",
     "src/core/daemon/overnight-status.ts",
     "src/core/daemon/pause.ts",
+    "src/core/daemon/pid-reuse-proof.ts",
     "src/core/daemon/post-merge-halt.ts",
     "src/core/daemon/public-observation.ts",
     "src/core/daemon/reset-spending-park-delay.ts",

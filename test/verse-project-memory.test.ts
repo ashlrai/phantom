@@ -41,6 +41,10 @@ import {
   projectMemoryDir,
   readProjectMemory,
   renderMemoryBlock,
+  markStaleReferences,
+  memoryPathChecker,
+  staleReferenceNote,
+  type MemoryPathChecker,
   stripUnsafeControlChars,
   writeProjectMemory,
 } from '../src/core/verse/project-memory.js';
@@ -318,5 +322,79 @@ describe('readProjectMemory / writeProjectMemory', () => {
     writeProjectMemory(project, 'one', root);
     writeProjectMemory(project, 'two', root);
     expect(readdirSync(projectMemoryDir(project, root))).toEqual(['MEMORY.md']);
+  });
+});
+
+describe('stale path references', () => {
+  const checker = (present: string[], memory: string[] = []): MemoryPathChecker => ({
+    pathMissing: (ref) => ['src', 'docs', 'test'].includes(ref.split('/')[0] ?? '') && !present.includes(ref),
+    linkMissing: (ref) => !memory.includes(ref) && !present.includes(ref),
+  });
+
+  it('marks a line that cites a file that is gone and leaves present ones alone', () => {
+    const { text, marked } = markStaleReferences(
+      '- Retry logic lives in `src/net/retry.ts:42`, called from src/net/client.ts.\n- Tests: test/net.test.ts',
+      checker(['src/net/client.ts', 'test/net.test.ts']),
+    );
+    expect(marked).toBe(1);
+    expect(text.split('\n')[0]).toBe(
+      `- Retry logic lives in \`src/net/retry.ts:42\`, called from src/net/client.ts.${staleReferenceNote(['src/net/retry.ts'])}`,
+    );
+    expect(text.split('\n')[1]).toBe('- Tests: test/net.test.ts');
+  });
+
+  it('never flags prose, URLs, globs, placeholders or build output', () => {
+    const content = [
+      '- Use and/or CI/CD carefully; see https://example.com/src/gone.ts',
+      '- Pattern `test/h*.test.ts` and `docs/contracts/CONTRACT-M<N>.md`',
+      '- The test/release-authoring helper is internal',
+      '- Built into `src/../dist/app.js` and node_modules/x/package.json, `target/release/bin`',
+      '- Paths in other projects: lib/foo.ts',
+    ].join('\n');
+    const { text, marked } = markStaleReferences(content, checker([]));
+    expect(marked).toBe(0);
+    expect(text).toBe(content);
+  });
+
+  it('checks a backticked or slash-terminated directory', () => {
+    const { marked, text } = markStaleReferences('- Adapters in `src/adapters` and src/plugins/', checker(['src/adapters']));
+    expect(marked).toBe(1);
+    expect(text).toContain(staleReferenceNote(['src/plugins']));
+  });
+
+  it('marks an index link to a detail file that is gone from the memory directory', () => {
+    const { text, marked } = markStaleReferences(
+      '- See [debugging](debugging.md) and [deploys](deploys.md#prod)',
+      checker([], ['debugging.md']),
+    );
+    expect(marked).toBe(1);
+    expect(text).toContain(staleReferenceNote(['deploys.md']));
+  });
+
+  it('marks stale lines in the block and tells the agent what the mark means', () => {
+    mkdirSync(join(project, 'src'), { recursive: true });
+    writeFileSync(join(project, 'src', 'kept.ts'), '');
+    writeProjectMemory(project, '- Entry point is `src/kept.ts`.\n- Old router in `src/router.ts`.\n', root);
+    const writable = prepareProjectMemory(project, { writable: true, root }).block;
+    expect(writable).toContain('- Entry point is `src/kept.ts`.\n');
+    expect(writable).toContain(`- Old router in \`src/router.ts\`.${staleReferenceNote(['src/router.ts'])}`);
+    expect(writable).toMatch(/verify them before relying on the fact, then fix or delete the line/);
+    const readOnly = prepareProjectMemory(project, { writable: false, root }).block;
+    expect(readOnly).toMatch(/treat those facts as possibly out of date/);
+    // The file is never rewritten, and the block stays deterministic.
+    expect(readProjectMemory(project, true, root).content).not.toContain('stale?');
+    expect(prepareProjectMemory(project, { writable: true, root }).block).toBe(writable);
+  });
+
+  it('adds no instruction when nothing is stale', () => {
+    writeProjectMemory(project, '- Use pnpm.', root);
+    expect(prepareProjectMemory(project, { writable: true, root }).block).not.toContain('stale?');
+  });
+
+  it('never probes a reference that climbs out of the project', () => {
+    mkdirSync(join(project, 'src'), { recursive: true });
+    const paths = memoryPathChecker(project, projectMemoryDir(project, root));
+    expect(paths.pathMissing('src/../../../etc/definitely-not-here')).toBe(false);
+    expect(paths.pathMissing('src/definitely-not-here.ts')).toBe(true);
   });
 });
