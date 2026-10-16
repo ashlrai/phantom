@@ -266,6 +266,8 @@ async function correlateProposal(run: RunState, repo: string, workItemId: string
   return proposal;
 }
 async function verifyProposal(proposal: Proposal, config: AshlrConfig): Promise<{ passed: boolean; commands: string[]; baseHead?: string }> {
-  const result = await (await import('../inbox/merge.js')).verifyAndPersistProposal(proposal, config, 'cortex-bridge', { requireConfinement: true });
+  const result = await (await import('../inbox/merge.js')).verifyAndPersistProposal(proposal, config, 'cortex-bridge', {
+    requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true,
+  });
   return { passed: result.persisted && result.authorityLive && result.verify.ok, commands: result.verify.ran.map(v => v.cmd.join(' ')), baseHead: result.verify.baseHead };
 }

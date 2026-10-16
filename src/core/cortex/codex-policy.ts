@@ -27,7 +27,7 @@ export function assertNoCortexProjectConfig(repo: string): void {
 export function cortexCodexConfig(config: AshlrConfig): AshlrConfig {
   return { ...config, notify: undefined, foundry: { ...config.foundry,
     autoMerge: { ...config.foundry?.autoMerge, enabled: false, allowWithoutVerification: false },
-    confinement: { ...config.foundry?.confinement, codex: autonomousConfinementProfile('codex') },
+    confinement: { ...config.foundry?.confinement, codex: { ...autonomousConfinementProfile('codex'), denyCodexProjectConfig: true } },
     engines: { ...config.foundry?.engines, codex: { ...BUILTIN_ENGINE_REGISTRY.codex!,
       argv: [...BUILTIN_ENGINE_REGISTRY.codex!.argv!], autonomousArgv: [...CORTEX_CODEX_RESTRICTED_ARGS] } },
   } };

@@ -68,6 +68,12 @@ describe('forced while a standing policy is live', () => {
     expect(confinementProfileFor('local-coder', cfg)).toMatchObject({ autonomous: true, networkEgress: false, loopbackPorts: [11434, 8080] });
   });
 
+  it('preserves an additive Cortex project-config write denial under standing policy', () => {
+    standing.live = true;
+    expect(confinementProfileFor('codex', { foundry: { confinement: { codex: { mode: 'off', denyCodexProjectConfig: true } } } } as AshlrConfig))
+      .toMatchObject({ mode: 'os', autonomous: true, denyCodexProjectConfig: true });
+  });
+
   it('confines when the authority state cannot be read', () => {
     standing.live = 'throw';
     expect(confinementProfileFor('grok-cli', cfg)).toMatchObject({ autonomous: true });

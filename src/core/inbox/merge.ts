@@ -2453,9 +2453,16 @@ export function confinedWorkspaceBins(
  * a suite that writes caches outside its worktree (e.g. into a symlinked
  * `node_modules/.vite`) fails — closed — until the repo points them inside.
  */
+export interface ProposalVerificationIsolationOptions {
+  requireConfinement?: boolean;
+  /** A remote-request consumer may refuse local services as well as public egress. */
+  allowLoopback?: boolean;
+  denyCodexProjectConfig?: boolean;
+}
+
 export async function openStandingVerificationConfinement(
   worktree: string,
-  opts: { readOnlyPaths?: readonly string[]; cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment; requireConfinement?: boolean } = {},
+  opts: ProposalVerificationIsolationOptions & { readOnlyPaths?: readonly string[]; cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment } = {},
 ): Promise<StandingVerificationConfinement | null> {
   let live: boolean;
   if (opts.requireConfinement === true) live = true;
@@ -2535,7 +2542,10 @@ export async function openStandingVerificationConfinement(
         ...(cargo ? { CARGO_HOME: cargoRuntimeHome!, CARGO_NET_OFFLINE: 'true', RUSTC: join(cargo.toolchainBin, 'rustc'), RUSTDOC: join(cargo.toolchainBin, 'rustdoc') } : {}),
       }),
     };
-    const launcher = confine.buildSandboxLauncher(confine.autonomousVerificationProfile(), {
+    const profile = confine.autonomousVerificationProfile();
+    if (opts.allowLoopback === false) profile.loopbackServers = false;
+    if (opts.denyCodexProjectConfig === true) profile.denyCodexProjectConfig = true;
+    const launcher = confine.buildSandboxLauncher(profile, {
       worktree,
       home,
       env: process.env,
@@ -2615,7 +2625,7 @@ function verificationSlotKey(repo: string): string {
 export async function verifyProposal(
   proposal: Proposal,
   cfg: AshlrConfig,
-  options?: { requireConfinement?: boolean },
+  options?: ProposalVerificationIsolationOptions,
 ): Promise<VerifyProposalResult> {
   // 3.14: a fleet mirror with `file:../<sibling>` dependencies verifies
   // against pinned sibling snapshots (fleet/mirrors.ts). The pins must be
@@ -2649,7 +2659,7 @@ export async function verifyProposal(
 async function verifyProposalAgainstCurrentPins(
   proposal: Proposal,
   cfg: AshlrConfig,
-  options?: { requireConfinement?: boolean },
+  options?: ProposalVerificationIsolationOptions,
 ): Promise<VerifyProposalResult> {
   const repo = proposal.repo;
   if (!repo || !isRepo(repo)) {
@@ -2749,7 +2759,9 @@ async function verifyProposalAgainstCurrentPins(
     // their existing behavior when no grant is present.
     try {
       confined = await openStandingVerificationConfinement(tmpDir, { readOnlyPaths: installGrants,
-        ...(options?.requireConfinement === true ? { requireConfinement: true } : {}) });
+        ...(options?.requireConfinement === true ? { requireConfinement: true } : {}),
+        ...(options?.allowLoopback === false ? { allowLoopback: false } : {}),
+        ...(options?.denyCodexProjectConfig === true ? { denyCodexProjectConfig: true } : {}) });
     } catch (err) {
       return {
         ok: false,
@@ -3032,7 +3044,7 @@ export async function verifyAndPersistProposal(
   expected: Proposal,
   cfg: AshlrConfig,
   source: ProposalVerifyResult['source'] = 'auto-merge',
-  options?: { requireConfinement?: boolean },
+  options?: ProposalVerificationIsolationOptions,
 ): Promise<VerifyAndPersistProposalResult> {
   const refused = (
     reason: string,

@@ -66,7 +66,7 @@ describe('openStandingVerificationConfinement', () => {
 
   it.skipIf(!onDarwin)('forces OS isolation and denies direct TCP for Cortex verification without standing authority', async () => {
     standing.policy = null;
-    const confined = await openStandingVerificationConfinement(worktree, { requireConfinement: true });
+    const confined = await openStandingVerificationConfinement(worktree, { requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true });
     expect(confined).not.toBeNull();
     try {
       const opts = { _runSubprocess: confined!.runSubprocess, timeoutMs: 10_000 };
@@ -80,6 +80,12 @@ describe('openStandingVerificationConfinement', () => {
         s.on('error',e=>{s.destroy();console.log(e.code);process.exit(['EPERM','EACCES'].includes(e.code)?0:1)});
         s.on('connect',()=>{s.destroy();process.exit(2)});setTimeout(()=>process.exit(3),2000);`), worktree, cfg, opts);
       expect(network.ok, network.output).toBe(true); expect(network.output).toMatch(/EPERM|EACCES/);
+      const local = await runVerifyCommandAsync(nodeCommand(`const s=require('net').createConnection({host:'127.0.0.1',port:9});
+        s.on('error',e=>{s.destroy();console.log(e.code);process.exit(['EPERM','EACCES'].includes(e.code)?0:1)});
+        s.on('connect',()=>{s.destroy();process.exit(2)});setTimeout(()=>process.exit(3),2000);`), worktree, cfg, opts);
+      expect(local.ok, local.output).toBe(true); expect(local.output).toMatch(/EPERM|EACCES/);
+      const configWrite = await runVerifyCommandAsync(nodeCommand("require('fs').mkdirSync('.codex')"), worktree, cfg, opts);
+      expect(configWrite.ok).toBe(false); expect(existsSync(join(worktree, '.codex'))).toBe(false);
     } finally { confined!.close(); }
   });
 

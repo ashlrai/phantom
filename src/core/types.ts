@@ -1296,6 +1296,8 @@ export interface AshlrConfig {
        * audited) | 'fail' (terminal). Default 'fallback'.
        */
       onUnsupported?: 'fallback' | 'fail';
+      /** Restrict generated project MCP config in all descendants and repair attempts. */
+      denyCodexProjectConfig?: boolean;
     }>>;
     /**
      * M247 / SPEC-INFERENCE-FABRIC Phase F1: InferenceGateway config.

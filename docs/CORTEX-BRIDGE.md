@@ -74,6 +74,11 @@ fail the invocation. The native macOS regression probe runs without inference or
 provider credentials and checks successful workspace writes, denied outside
 writes, and a direct TCP connect returning an OS permission denial.
 
+The OS wrapper also denies creating or modifying root or nested `.codex`
+directories and files for every producer attempt, repair, descendant and verifier.
+Generated test code cannot plant a project MCP configuration for a later host
+invocation. The added deny rule stays in force under existing standing policies.
+
 See the [official permissions documentation](https://learn.chatgpt.com/docs/permissions)
 for command network and filesystem behavior. Other agent backends need equivalent
 enforced isolation before they can handle company evidence through this bridge.
@@ -125,9 +130,11 @@ patches or company repository files to Cortex.
 ## Cancellation and uncertain results
 
 The separate proposal verifier is also required to use Phantom's existing OS
-confinement with network disabled, even when no standing authority grant exists.
+confinement with public and loopback network access disabled, even when no standing authority grant exists.
 If the platform cannot construct that sandbox, verification fails closed. The
 bridge does not enable a standing grant to obtain this isolation.
+Suites that require localhost listeners are held for an explicitly reviewed
+verification setup; they do not silently get broader local-service access.
 
 A fresh heartbeat is required before producing work and before returning a
 receipt. The producer receives an abort signal on revocation, lost heartbeat,

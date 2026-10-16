@@ -100,6 +100,15 @@ describe.runIf(process.platform === 'darwin')('autonomous confinement under real
     expect(r).toMatchObject({ status: 0, stdout: 'ok\n' });
   });
 
+  it('Cortex protection denies root and nested Codex config creation across child processes', () => {
+    const r = confined('local-coder', ['/bin/sh', '-c',
+      'mkdir .codex 2>/dev/null; a=$?; mkdir -p nested; /bin/sh -c "mkdir nested/.codex" 2>/dev/null; b=$?; test "$a" -ne 0 && test "$b" -ne 0'],
+    { profile: { denyCodexProjectConfig: true } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(worktree, '.codex'))).toBe(false);
+    expect(existsSync(join(worktree, 'nested', '.codex'))).toBe(false);
+  });
+
   it('reading ~/.ashlr/authority or the custody dir fails — and kills the reader', () => {
     for (const target of [authorityFile, custodyBlob]) {
       const r = confined('local-coder', ['/bin/sh', '-c', `/bin/cat "${target}"; echo "status=$?"`]);
