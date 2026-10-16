@@ -2016,7 +2016,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
