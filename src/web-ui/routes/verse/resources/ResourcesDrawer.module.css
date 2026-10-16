@@ -672,3 +672,13 @@
 .usageDetailBody { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) 0; min-width: 0; overflow-wrap: anywhere; }
 .schedulingEvidence { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
 .schedulingEvidence p { margin: 0; }
+.card[data-usage-state="retained"] .meterFill, .card[data-usage-state="historical"] .meterFill,
+.card[data-usage-state="signed-out"] .meterFill { background: var(--text-tertiary); }
+.groupingControls { display: flex; gap: var(--space-2); margin-block: var(--space-3); font-size: var(--text-sm-size); }
+.groupingControls button { padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--text-secondary); }
+.groupingControls button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.groupingControls button:focus-visible, .providerGroup summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.providerGroup { padding-block: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.providerGroup > summary { font-size: var(--text-sm-size); font-weight: 600; cursor: pointer; overflow-wrap: anywhere; }
+.accountGroup { margin: var(--space-3) 0 0 var(--space-2); }
+.accountGroup > summary { font-size: var(--text-sm-size); cursor: pointer; overflow-wrap: anywhere; }

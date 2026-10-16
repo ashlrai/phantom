@@ -1,8 +1,8 @@
-# ashlr plugins — authoring guide + trust model
+# Phantom plugins — authoring guide + trust model
 
-ashlr can be extended with plugins that contribute **backlog scanners**,
+Phantom can be extended with plugins that contribute **backlog scanners**,
 **project templates**, **model providers**, and **CLI commands** — without
-forking the hub.
+forking Phantom. Commands are shown as `ashlr …`; `phm` runs the same CLI.
 
 ## The trust model (read this first)
 
@@ -12,7 +12,7 @@ claim an OS-level sandbox. The safety posture is *gating + least-privilege
 API + tamper evidence + auditability*, not containment:
 
 1. **Default-deny.** `plugins.enabled` defaults to `[]`. Discovery
-   (`ashlr plugins list`) reads `manifest.json` files only — **no plugin code
+   (`ashlr plugins list`, `ashlr plugins info <name>`) reads `manifest.json` files only — **no plugin code
    executes** until you have explicitly enabled the name.
 2. **Explicit, informed enablement.** `ashlr plugins enable <name>` shows the
    declared capabilities and a trust warning, requires confirmation, and pins
@@ -45,6 +45,8 @@ API + tamper evidence + auditability*, not containment:
 ashlr plugins init my-scanner --capability scanner   # working skeleton, ready to edit
 ```
 
+`--capability` accepts `scanner` (the default), `template`, `provider` or `command`.
+
 This scaffolds a proven-loadable plugin under `~/.ashlr/plugins/my-scanner/`
 (every skeleton is integration-tested in test/m33.plugin-init.test.ts). Or by
 hand:
@@ -68,8 +70,8 @@ hand:
 }
 ```
 
-`index.js` (plain ESM; for typed authoring `npm i -D @ashlr/hub` and import
-from `@ashlr/hub/plugin`):
+`index.js` (plain ESM; for typed authoring `npm i -D @ashlr/phantom` and import
+from `@ashlr/phantom/plugin`):
 
 ```js
 export default {
@@ -96,6 +98,7 @@ Then:
 
 ```bash
 ashlr plugins list             # discovery — reads manifests only
+ashlr plugins info my-scanner  # manifest detail for one plugin
 ashlr plugins enable my-scanner   # confirm + integrity pin
 ashlr backlog refresh          # plugin items appear tagged [plugin]
 ashlr plugins disable my-scanner
@@ -107,7 +110,7 @@ ashlr plugins disable my-scanner
 
 | Field | What it is |
 |---|---|
-| `host.apiVersion` | The hub's `PLUGIN_API_VERSION` (`manifest.apiVersion` is matched against it) |
+| `host.apiVersion` | Phantom's `PLUGIN_API_VERSION` (currently `1.0.0`) (`manifest.apiVersion` is matched against it) |
 | `host.pluginName` | Your manifest name |
 | `host.log(msg)` | stderr line prefixed `[plugin:<name>]` |
 | `host.audit(action, summary)` | Append to the ashlr audit trail (secret-scrubbed) |
@@ -117,8 +120,8 @@ ashlr plugins disable my-scanner
 
 ## Contribution kinds
 
-- **scanner** — `{ id, scan(repo, { signal }) }` → `WorkItem[]`. Wrapped by the
-  hub: 15s timeout, 100-item cap, value/effort clamped, score recomputed,
+- **scanner** — `{ id, scan(repo, { signal }) }` → `WorkItem[]`. Wrapped by
+  Phantom: 15s timeout, 100-item cap, value/effort clamped, score recomputed,
   titles/details secret-scrubbed, ids namespaced, `source: 'plugin'` forced.
 - **template** — a `ProjectTemplate` for `ashlr new`. Id is prefixed
   `<plugin>:`; file paths must be relative, no `..`, never under `.git/`.

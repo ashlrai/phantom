@@ -1,12 +1,12 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.29.14",
+  "version": "3.29.15",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
   },
   "license": "MIT",
-  "author": "Mason Wyatt <mason@evero-consulting.com>",
+  "author": "Mason Wyatt <mason@ashlr.ai>",
   "homepage": "https://phm.dev",
   "repository": {
     "type": "git",

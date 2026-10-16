@@ -473,22 +473,21 @@ describe('storage failures, crash interruption, registry, reasoning tap', () => 
     const s = engine.createSession({ projectPath: project, seatId: CLAUDE.id }, launchFor(CLAUDE));
     const seen = collect(engine, s.id);
     engine.sendTurn(s.id, 'x');
-    // Pull the log out from under the running turn and make it impossible to recreate.
-    const sessions = join(root, 'sessions');
-    rmSync(join(sessions, `${s.id}.events.jsonl`));
-    chmodSync(sessions, 0o500);
-    try {
-      children[0]!.line({ type: 'text-delta', text: 'lost' });
-      await waitFor(() => seen.some((e) => e.type === 'error' && (e as { code?: string }).code === 'storage'));
-      expect(engine.getSession(s.id)).toMatchObject({ status: 'error', lastError: expect.stringContaining('storage error') });
-      expect(logged.some((m) => m.includes('event log write failed'))).toBe(true);
-      // One notice per turn, however many writes fail after it.
-      children[0]!.line({ type: 'text-delta', text: 'also lost' });
-      await new Promise((r) => setTimeout(r, 20));
-      expect(seen.filter((e) => e.type === 'error')).toHaveLength(1);
-    } finally {
-      chmodSync(sessions, 0o700);
-    }
+    // Pull the log out from under the running turn and put a DIRECTORY in its
+    // place, so no append can recreate it. (A chmod 0500 sessions dir only
+    // blocks a normal user; root ignores the mode bits and recreates the log.)
+    const log = join(root, 'sessions', `${s.id}.events.jsonl`);
+    rmSync(log);
+    mkdirSync(log, { mode: 0o700 });
+    children[0]!.line({ type: 'text-delta', text: 'lost' });
+    await waitFor(() => seen.some((e) => e.type === 'error' && (e as { code?: string }).code === 'storage'));
+    expect(engine.getSession(s.id)).toMatchObject({ status: 'error', lastError: expect.stringContaining('storage error (EISDIR)') });
+    expect(logged.some((m) => m.includes('event log write failed (EISDIR)'))).toBe(true);
+    // One notice per turn, however many writes fail after it.
+    children[0]!.line({ type: 'text-delta', text: 'also lost' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen.filter((e) => e.type === 'error')).toHaveLength(1);
+    expect(statSync(log).isDirectory()).toBe(true);
   });
 
   it('interruptAll settles running turns synchronously as failed and clears the registry', () => {

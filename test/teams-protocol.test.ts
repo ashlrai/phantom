@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   acquireClaim, addContext, appendEvent, claimsOverlap, decideApproval, foldTeam, importEvents,
   readEvents, releaseClaim, requestHandoff, retrieveContext, teamState, transitionHandoff, type TeamActor,
@@ -17,7 +17,7 @@ const grok: TeamActor = { kind: 'agent', id: 'agent:grok-bot/mason', provider: '
 const codex: TeamActor = { kind: 'agent', id: 'agent:codex/acct-2', provider: 'codex' };
 const T = 'ashlr';
 function pinOwner(human: string) { const p = ownerConfigPath(); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, JSON.stringify({ human })); }
-const AGENT_MARKERS = ['PHM_AGENT_ID','ASHLR_AGENT_ID','ASHLR_AGENT','CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX','CODEX_THREAD_ID','CODEX_SESSION_ID','GROK_BOT_AGENT','CURSOR_AGENT'];
+const AGENT_MARKERS = ['PHM_AGENT_ID','ASHLR_AGENT_ID','ASHLR_AGENT','CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX','CODEX_THREAD_ID','CODEX_SESSION_ID','GROK_BOT_AGENT','CURSOR_AGENT','ASHLR_IN_DAEMON','ASHLR_IN_SWARM','AI_AGENT','CODEX_SANDBOX_NETWORK_DISABLED'];
 const saved: Record<string, string | undefined> = {};
 let home: string; let prev: string | undefined;
 
@@ -49,6 +49,64 @@ describe('team protocol', () => {
     appendEvent(T, mason, 'member.joined', {});
     appendEvent(T, evan, 'member.joined', { role: 'owner' });
     expect(teamState(T).members.find((m) => m.id === evan.id)?.role).toBe('member');
+  });
+
+  it('reserves ownership for the first human after agents have registered and requested approval', () => {
+    pinOwner('mason');
+    appendEvent(T, codex, 'agent.registered', {});
+    appendEvent(T, grok, 'member.joined', { role: 'owner' });
+    const h = requestHandoff(T, codex, { title: 'Synthetic release', action: 'release' }) as { approvalId: string };
+    expect(teamState(T).members.every(member => member.role === 'agent')).toBe(true);
+    appendEvent(T, mason, 'member.joined', {});
+    appendEvent(T, evan, 'member.joined', { role: 'owner' });
+    expect(teamState(T).members.find(member => member.id === mason.id)?.role).toBe('owner');
+    expect(teamState(T).members.find(member => member.id === evan.id)?.role).toBe('member');
+    expect(decideApproval(T, mason, h.approvalId, 'approve').state).toBe('approved');
+  });
+
+  it.each(AGENT_MARKERS)('refuses human approval from %s without changing the pending log', marker => {
+    pinOwner('mason');
+    appendEvent(T, mason, 'member.joined', {});
+    const h = requestHandoff(T, codex, { title: 'Synthetic deployment', action: 'deploy' }) as { approvalId: string };
+    const before = readEvents(T);
+    const previous = process.env[marker];
+    process.env[marker] = '1';
+    try {
+      expect(() => localHumanActor({ [marker]: '1' })).toThrow(/agent process/);
+      expect(() => decideApproval(T, mason, h.approvalId, 'approve')).toThrow(/agent process/);
+      expect(readEvents(T)).toEqual(before);
+      expect(teamState(T).approvals[0]?.state).toBe('pending');
+    } finally {
+      if (previous === undefined) delete process.env[marker]; else process.env[marker] = previous;
+    }
+  });
+
+  it('does not promote agents even when a human owner supplies a role event', () => {
+    appendEvent(T, mason, 'member.joined', {});
+    appendEvent(T, grok, 'agent.registered', {});
+    appendEvent(T, mason, 'member.joined', { memberId: grok.id, role: 'admin' });
+    appendEvent(T, mason, 'member.joined', { memberId: codex.id, role: 'owner' });
+    appendEvent(T, grok, 'member.joined', { role: 'owner' });
+    expect(teamState(T).members.find(member => member.id === grok.id)?.role).toBe('agent');
+    expect(teamState(T).members.find(member => member.id === codex.id)).toBeUndefined();
+  });
+
+  it('does not found ownership by changing the actor kind of an existing agent identity', () => {
+    appendEvent(T, codex, 'agent.registered', {});
+    appendEvent(T, { kind: 'human', id: codex.id }, 'member.joined', {});
+    appendEvent(T, codex, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === codex.id)?.role).toBe('agent');
+    expect(teamState(T).members.find(member => member.id === evan.id)).toBeUndefined();
+    appendEvent(T, mason, 'member.joined', {});
+    expect(teamState(T).members.find(member => member.id === mason.id)?.role).toBe('owner');
+  });
+
+  it('does not grant human roles through an agent event reusing an existing human owner identity', () => {
+    appendEvent(T, mason, 'member.joined', {});
+    appendEvent(T, { kind: 'agent', id: mason.id }, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === evan.id)).toBeUndefined();
+    appendEvent(T, mason, 'member.joined', { memberId: evan.id, role: 'admin' });
+    expect(teamState(T).members.find(member => member.id === evan.id)?.role).toBe('admin');
   });
 
   it('claims prevent collisions and release', () => {
@@ -179,7 +237,57 @@ describe('MCP team tools', () => {
 });
 
 describe('phm team CLI', () => {
+  it.each(AGENT_MARKERS)('refuses joining from %s before appending a member event', async marker => {
+    pinOwner('mason');
+    const { cmdTeam } = await import('../src/cli/team.js');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const previous = process.env[marker];
+    process.env[marker] = '1';
+    try {
+      expect(await cmdTeam(['join', '--as', 'mason'])).toBe(1);
+      expect(readEvents('default')).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env[marker]; else process.env[marker] = previous;
+      error.mockRestore();
+    }
+  });
+
+  it('joins as the actual local human after MCP registration, ignoring claimed identities', async () => {
+    pinOwner('mason');
+    const { cmdTeam } = await import('../src/cli/team.js');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const previous = process.env.PHM_TEAM_USER;
+    process.env.PHM_TEAM_USER = 'claimed-owner';
+    try {
+      await callNativeTool('phm_team_register', { agentId: 'synthetic-codex' });
+      expect(await cmdTeam(['join', '--as', 'another-claimed-owner'])).toBe(0);
+      expect(teamState('default').members.map(member => [member.id, member.role])).toEqual([
+        ['agent:synthetic-codex', 'agent'], ['human:mason', 'owner'],
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.PHM_TEAM_USER; else process.env.PHM_TEAM_USER = previous;
+      log.mockRestore(); err.mockRestore();
+    }
+  });
+
+  it('keeps earlier claimed identities as members until the actual local human joins', async () => {
+    pinOwner('mason');
+    const { cmdTeam } = await import('../src/cli/team.js');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await cmdTeam(['say', 'Synthetic note', '--as', 'claimed-owner'])).toBe(0);
+      expect(await cmdTeam(['claim', 'synthetic/repo', '--as', 'claimed-owner'])).toBe(0);
+      expect(teamState('default').members[0]?.role).toBe('member');
+      expect(await cmdTeam(['join', '--as', 'claimed-owner'])).toBe(0);
+      expect(teamState('default').members.map(member => [member.id, member.role])).toEqual([
+        ['human:claimed-owner', 'member'], ['human:mason', 'owner'],
+      ]);
+    } finally { log.mockRestore(); }
+  });
+
   it('join, claim conflict, approve', async () => {
+    pinOwner('mason');
     const { cmdTeam } = await import('../src/cli/team.js');
     const log = console.log; const err = console.error; console.log = () => {}; console.error = () => {};
     try {

@@ -469,6 +469,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cloud-timeline-api.test.ts', // 3.13: real loopback http server bind for GET /api/verse/cloud/tasks/<id>/timeline under a relocated HOME
   'test/routing-capacity-history.test.ts', // 3.10.1: real loopback http server + real authenticated web server bind for /api/verse/budget/history under a relocated HOME; real mkfifo + a tsx child with a deadline for the FIFO guard; multi-MiB compaction fixtures
   'test/setup/home-isolation-guard.test.ts', // spawns a nested real `vitest run` to prove the guard fails a leaking fixture
+  'test/setup/git-env.test.ts', // spawns real git to prove a worker's child git sees no environment-injected config
   // Track A/C — Verse server surfaces.
   'test/verse-activity-310.test.ts', // real web server bind for /api/verse/activity + a 300-chat warm-read latency bound
   'test/verse-apps-310.test.ts', // real web server bind for /api/verse/apps
@@ -483,6 +484,7 @@ export const REAL_IO_TEST_FILES = [
   'test/standing-merge-pass-310b.test.ts', // real git rebase/squash through FakeGithub — guard cannot see it
   'test/verse-sources-api.test.ts', // 3.15: real loopback http server bind for POST /api/verse/sources/open
   'test/verse-agents-workspace-316.test.ts', // 3.16: real git worktrees, snapshot refs, archive/restore under a temp HOME
+  'test/verse-automerge-redteam.test.ts', // real git origin + clone: diffs exact commits and proves tracked hooks never run
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes
