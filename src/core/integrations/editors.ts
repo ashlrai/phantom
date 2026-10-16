@@ -782,6 +782,101 @@ export function detectEditors(opts: DetectEditorsOptions = {}): string[] {
   return detected;
 }
 
+export interface EditorWiringStatus {
+  target: EditorTarget;
+  configPath: string;
+  /** Editor config directory or CLI binary present (same rule as detectEditors). */
+  detected: boolean;
+  configFound: boolean;
+  /** A server named ashlr-hub is registered. */
+  wired: boolean;
+  /** The registered entry equals what `wire` would write. */
+  matchesExpected: boolean;
+  /** A `<config>.bak` exists, the file `wire` leaves before it writes. */
+  backupFound: boolean;
+  /** Set when the config could not be read or parsed; other flags are then false. */
+  error?: string;
+}
+
+export interface InspectEditorOptions {
+  configPath?: string;
+  /** Overrides the home used for detection (tests). */
+  home?: string;
+  pathEnv?: string;
+}
+
+/** Quoted or bare TOML key for the gateway server inside a [mcp_servers.<name>] header. */
+function codexSectionBody(text: string): string | undefined {
+  const lines = text.split(/\r?\n/);
+  const header = new RegExp(`^\\s*\\[mcp_servers\\.(?:"${ASHLR_HUB_MCP_SERVER}"|${ASHLR_HUB_MCP_SERVER})\\]\\s*(?:#.*)?$`);
+  const anyHeader = /^\s*\[/;
+  const start = lines.findIndex(line => header.test(line));
+  if (start < 0) return undefined;
+  const body: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (anyHeader.test(line)) break;
+    body.push(line);
+  }
+  return body.join('\n');
+}
+
+/**
+ * Read-only wiring report. Never writes, never creates directories, never runs
+ * a vendor CLI, and never returns env values or other entry contents.
+ */
+export function inspectEditorWiring(
+  target: EditorTarget,
+  opts: InspectEditorOptions = {},
+): EditorWiringStatus {
+  const configPath = opts.configPath ?? DEFAULT_CONFIG_PATHS[target];
+  const detected = detectEditors({
+    ...(opts.home !== undefined ? { home: opts.home } : {}),
+    ...(opts.pathEnv !== undefined ? { pathEnv: opts.pathEnv } : {}),
+  }).includes(target);
+  const status: EditorWiringStatus = {
+    target,
+    configPath,
+    detected,
+    configFound: false,
+    wired: false,
+    matchesExpected: false,
+    backupFound: false,
+  };
+  try {
+    status.backupFound = readConfigSnapshot(`${configPath}.bak`).found;
+  } catch { /* an unreadable backup is reported as not found */ }
+  try {
+    if (target === 'codex') {
+      const snapshot = readConfigSnapshot(configPath);
+      status.configFound = snapshot.found;
+      if (!snapshot.found) return status;
+      const body = codexSectionBody(snapshot.bytes.toString('utf8'));
+      if (body === undefined) return status;
+      status.wired = true;
+      const command = /^\s*command\s*=\s*"([^"]*)"\s*(?:#.*)?$/m.exec(body)?.[1];
+      const args = /^\s*args\s*=\s*\[([^\]]*)\]\s*(?:#.*)?$/m.exec(body)?.[1]?.trim();
+      status.matchesExpected = command === 'ashlr' && args === '"mcp"';
+      return status;
+    }
+    const { config, snapshot } = parseJsonConfig(configPath);
+    status.configFound = snapshot.found;
+    const entry = config.mcpServers?.[ASHLR_HUB_MCP_SERVER];
+    if (entry === undefined) return status;
+    status.wired = true;
+    const expected: McpServerEntry = target === 'claude'
+      ? { type: 'stdio', command: 'ashlr', args: ['mcp'], env: {} }
+      : { command: 'ashlr', args: ['mcp'] };
+    status.matchesExpected = isRecord(entry) && sameJsonEntry(entry as unknown as McpServerEntry, expected);
+    return status;
+  } catch (err) {
+    status.wired = false;
+    status.matchesExpected = false;
+    status.error = err instanceof Error ? err.message : String(err);
+    return status;
+  }
+}
+
 export async function wireEditor(
   target: EditorTarget,
   opts: WireEditorOptions,
