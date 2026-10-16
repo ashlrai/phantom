@@ -26,6 +26,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const privateStorageMocks = vi.hoisted(() => ({ assure: vi.fn() }));
 
+// Observes (and can fail) fs.accessSync. root bypasses DAC mode bits, so a
+// chmod 0500 directory still passes accessSync(W_OK) as uid 0; the hook lets
+// the non-writeable case raise the same EACCES the kernel raises for a user.
+const accessHook = vi.hoisted(() => ({
+  current: null as ((path: string, mode: number | undefined) => void) | null,
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const accessSync = (path: import('node:fs').PathLike, mode?: number): void => {
+    accessHook.current?.(String(path), mode);
+    actual.accessSync(path, mode);
+  };
+  return { ...actual, default: { ...actual, accessSync }, accessSync };
+});
+
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
   return {
@@ -65,7 +80,7 @@ import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { withPlatform } from './helpers/platform.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
-import { existsSync, readFileSync, readdirSync, chmodSync, statSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, chmodSync, statSync, mkdirSync, renameSync, symlinkSync, writeFileSync, constants as fsConstants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -398,6 +413,23 @@ describe('h7 preflight — READ-ONLY readiness check', () => {
     if (!existsSync(ashlrDir)) mkdirSync(ashlrDir, { recursive: true });
     const before = statSync(ashlrDir).mode;
     chmodSync(ashlrDir, 0o500); // r-x: no write
+    // As root the mode bits do not deny access, so raise the EACCES a user gets
+    // from the kernel for this exact path. The probe still runs its real
+    // ownership/guard checks and fails in the same accessSync branch.
+    const denied: string[] = [];
+    if (process.getuid?.() === 0) {
+      accessHook.current = (path, mode) => {
+        if (path === ashlrDir && mode !== undefined && (mode & fsConstants.W_OK) !== 0) {
+          denied.push(path);
+          throw Object.assign(new Error(`EACCES: permission denied, access '${path}'`), {
+            code: 'EACCES',
+            errno: -13,
+            syscall: 'access',
+            path,
+          });
+        }
+      };
+    }
     let report: import('../src/core/readiness.js').ReadinessReport;
     try {
       const cfg = makeCfg({
@@ -405,9 +437,11 @@ describe('h7 preflight — READ-ONLY readiness check', () => {
       } as Partial<import('../src/core/types.js').AshlrConfig>);
       report = await buildReadiness(cfg);
     } finally {
+      accessHook.current = null;
       // Restore writeability so the fixture cleanup (rm -rf) can proceed.
       chmodSync(ashlrDir, before);
     }
+    if (process.getuid?.() === 0) expect(denied).toEqual([ashlrDir]);
 
     const writeBlocker = report.blockers.find((f) => f.id === 'ashlr-writeable');
     expect(writeBlocker).toBeDefined();

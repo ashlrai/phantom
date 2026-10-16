@@ -951,7 +951,17 @@ beforeEach(() => {
   process.env.ASHLR_HOME = home;
 });
 
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it): the ledger partitions by each event's UTC day and bounds
+ * cross-day acceptance by the current day, so a case that derives the day
+ * itself must not straddle 00:00 UTC. Timers stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   _setDispatchProductionLedgerRetentionHooksForTest(undefined);
   useNativePrivateStorageFixture();
   if (prevAshlrHome === undefined) delete process.env.ASHLR_HOME;
@@ -1999,6 +2009,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('retires an uncommitted intent so a cross-day retry can acquire authority', () => {
+    freezeDate();
     useWindowsSemanticPrivateStorageFixture();
     seedUnrelatedDatedPartitions(40);
     const currentDayStart = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -2296,6 +2307,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('accepts a bounded cross-midnight run while rejecting an older legacy replay', () => {
+    freezeDate();
     seedUnrelatedDatedPartitions(40);
     const currentDayStart = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
     const crossing = makeProofEvent({
@@ -4786,6 +4798,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('propagates bounded read quality while withholding yield wrappers', () => {
+    freezeDate();
     const dir = dispatchProductionDir();
     mkdirSync(dir, { recursive: true });
     writeFileSync(

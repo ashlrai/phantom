@@ -65,3 +65,28 @@ describe('sanitizePublicJson — home paths', () => {
     expect(s(`${home}/${secret}`)).toBe('~/[REDACTED]');
   });
 });
+
+describe('sanitizePublicJson — repeated strings (per-call scrub memo)', () => {
+  it('scrubs a repeated key, value and home path on every occurrence, short or long', () => {
+    // A credential-shaped value assembled at runtime, so no literal sits in the source.
+    const secret = ['sk', 'abcdefghijklmnopqrstuvwxyz012345'].join('-');
+    const long = `${secret} ${'x'.repeat(400)}`;
+    const events = Array.from({ length: 50 }, (_, i) => ({
+      seq: i,
+      type: 'tool-result',
+      output: secret,
+      big: long,
+      path: `${home}/proj`,
+      [`token=${secret}`]: true,
+    }));
+    const out = sanitizePublicJson({ events }) as { events: Array<Record<string, unknown>> };
+    expect(out.events).toHaveLength(50);
+    for (const event of out.events) {
+      expect(event.output).toBe('[REDACTED]');
+      expect(event.big).toBe(`[REDACTED] ${'x'.repeat(400)}`);
+      expect(event.path).toBe('~/proj');
+      expect(Object.keys(event)).toContain('token=[REDACTED]');
+    }
+    expect(JSON.stringify(out)).not.toContain(secret);
+  });
+});

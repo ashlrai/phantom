@@ -46,7 +46,7 @@ function NotSetUp({ credits, sessions }: { credits: CloudCreditsView; sessions: 
   );
 }
 
-const SEAT_NOT_SET_UP = "The Claude seat isn't set up on this Mac.";
+const SEAT_NOT_SET_UP = "The Claude seat isn't set up on this computer.";
 
 function Credits({ credits }: { credits: CloudCreditsView }) {
   const left = credits.remainingPercent;
