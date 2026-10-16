@@ -68,6 +68,10 @@ HIGH review finding) is a positive liveness marker:
   live in-flight worktree (same- OR cross-process, any age) is NEVER force-removed out from under a
   running swarm. `process.kill(pid, 0)` never sends a real signal (error-check only) and never
   throws out of the guard.
+- Exception: `Sandbox.abandonedAt` (optional ISO time). A creation whose post-registration
+  rollback could not run (fence or repo lease unavailable, or the rollback incomplete) marks its
+  own sandbox abandoned; the owner then reads as not live and the next sweep reclaims it through
+  the ordinary removal path, instead of skipping it for the owner's whole lifetime.
 - The `ORPHAN_STALE_MS` age guard is the FALLBACK for a sandbox with NO usable `ownerPid` (older
   metadata, or a crash fixture that models a GONE owner). It is set FAR above any plausible
   200-step run — **`ORPHAN_STALE_MS = 6 * 60 * 60_000` (6 hours)** — as belt-and-suspenders for the
