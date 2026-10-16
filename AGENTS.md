@@ -7,7 +7,7 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 
 ## Agents may
 - Create branches, commit, and open pull requests.
-- Turn on GitHub auto-merge (`phm improve --auto-merge` / `gh pr merge --auto`). A PR merges only after every required CI check is green. Never bypass a failing or pending check, and never use an admin override.
+- Turn on GitHub auto-merge (`gh pr merge --auto`; `phm improve propose` opens draft PRs only and refuses `--auto-merge`). A PR merges only after every required CI check is green. Never bypass a failing or pending check, and never use an admin override.
 - Fix CI, tests, docs, and dependencies, and iterate on review feedback.
 
 ## Reserved for Mason (owner approval required)
@@ -21,3 +21,9 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 - Keep diffs small and reviewable, with one concern per PR.
 - Never commit secrets. Use Phantom Secrets placeholders.
 - Never force-push to the default branch.
+
+## Working in this repository
+- Node `>=22.15.0`. Install with `npm ci`, build with `npm run build`, run the CLI from source with `npm run dev -- <command>`.
+- Before a PR: `npm run typecheck`, `npm run lint`, `npm run check:docs`, and the affected tests (`npx vitest run test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together.
+- Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
+- Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md).
