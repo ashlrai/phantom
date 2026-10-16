@@ -470,7 +470,7 @@ describe('H4 · CONTAINMENT · robustness', () => {
     expect(resolve(link)).not.toBe(resolve(escapeTarget)); // resolve() ≠ realpath
     const src = worktreeSource();
     expect(src).toContain('lstatSync(safeWorktree).isSymbolicLink()');
-    expect(src).toContain("'remove', '--force', safeWorktree");
+    expect(src).toContain("'remove', '--force', '--force', safeWorktree");
     expect(src).not.toMatch(/'remove',\s*'--force',\s*sb\.worktreePath/);
 
     removeSandbox(sb); // reclaim the genuine scratch ref
