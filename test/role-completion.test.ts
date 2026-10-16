@@ -153,7 +153,7 @@ describe.runIf(process.platform === 'darwin' && typeof process.execve === 'funct
     expect(existsSync(output.cwd!)).toBe(false);expect(countLiveExecutionLeases()).toBe(0);
     expect(metrics).toHaveLength(1);expect(metrics[0]).toMatchObject({seatId:'codex-a',model:'gpt-fixture',engine:'codex',role:'leader',providerContacted:true,outcome:'completed',tokensIn:11,tokensOut:5});
     expect(metrics[0]!.outputTokensPerWallSecond).toBe(5000/metrics[0]!.elapsedMs);
-  });
+  },20_000); // spawns a real child; hosted Macs hit the 5s default
   it('holds missing exact seat role; Stop retains its lease when group cleanup cannot be proven',async()=>{
     const f=fixture();host.policy!.spend.seats['codex-a']!.roles=['producer'];
     const metrics:RoleCompletionMetrics[]=[];
