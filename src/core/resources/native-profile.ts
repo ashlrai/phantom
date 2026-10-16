@@ -42,6 +42,24 @@ function executable(path: string): void {
   if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path || stat.mode & 0o022) throw new Error();
   accessSync(path, constants.X_OK);
 }
+/** Why `executable` refuses a path, naming the canonical target for symlinks; never throws. */
+function executableProblem(path: string): string {
+  const prefix = 'Invalid native profile executable';
+  const stat = (() => { try { return lstatSync(path); } catch { return null; } })();
+  if (!stat) return `${prefix}: it does not exist`;
+  let real: string | null = null; try { real = realpathSync(path); } catch { /* dangling */ }
+  // Install symlinks are refused by design: the profile pins one canonical file.
+  if (stat.isSymbolicLink()) return real ? `${prefix}: it is a symlink; pass its real path: ${real}` : `${prefix}: it is a dangling symlink`;
+  if (real !== path) return real ? `${prefix}: its path goes through a symlink; pass its real path: ${real}` : `${prefix}: its path cannot be resolved`;
+  if (!stat.isFile()) return `${prefix}: it is not a regular file`;
+  if (stat.mode & 0o022) return `${prefix}: it is group- or world-writable`;
+  try { accessSync(path, constants.X_OK); } catch { return `${prefix}: it is not executable by this user`; }
+  return `${prefix}: it failed validation`;
+}
+/** Fixed or operator-supplied-path text that the CLI may show; never authentication material. */
+export class ResourceNativeProfilePrepareError extends Error {
+  constructor(message: string) { super(message); this.name = 'ResourceNativeProfilePrepareError'; }
+}
 function same(left: BigIntStats, right: BigIntStats): boolean { return left.dev === right.dev && left.ino === right.ino; }
 
 // The generated launcher's fixed landmarks. `repinResourceNativeProfile` edits
@@ -186,6 +204,7 @@ ${brokerSafety ? `    // Fixed nonsecret native safety flags. Ambient auth/proxy
  */
 export function prepareResourceNativeProfile(options: ResourceNativeProfileOptions): ResourceNativeProfile {
   let parent: string; let parentStat: BigIntStats; let nodeExecutable: string;
+  let stage: 'options' | 'parent' | 'executable' | 'runtime' = 'options';
   try {
     if (options === null || typeof options !== 'object' || Array.isArray(options) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(options)) || Reflect.ownKeys(options).length !== 3 ||
@@ -193,9 +212,15 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
         'value' in Object.getOwnPropertyDescriptor(options, key)!) || !['codex', 'claude', 'grok'].includes(options.provider) ||
       !path(options.directory) || !path(options.executable) || typeof process.execve !== 'function' ||
       process.platform === 'win32' || process.platform === 'aix') throw new Error();
-    parent = dirname(options.directory); inspectPrivateDirectory(parent); parentStat = lstatSync(parent, { bigint: true });
-    executable(options.executable); nodeExecutable = realpathSync(process.execPath); executable(nodeExecutable);
-  } catch { throw new Error('Invalid native profile configuration, executable, runtime or private parent'); }
+    stage = 'parent'; parent = dirname(options.directory); inspectPrivateDirectory(parent); parentStat = lstatSync(parent, { bigint: true });
+    stage = 'executable'; executable(options.executable);
+    stage = 'runtime'; nodeExecutable = realpathSync(process.execPath); executable(nodeExecutable);
+  } catch {
+    throw new ResourceNativeProfilePrepareError(stage === 'executable' ? executableProblem(options.executable)
+      : stage === 'parent' ? 'Invalid native profile parent: it must already exist as an owned, canonical mode-0700 directory'
+        : stage === 'runtime' ? 'Invalid native profile runtime: the Node executable must be a canonical, non-writable regular file'
+          : 'Invalid native profile configuration, executable, runtime or private parent');
+  }
   const profile: ResourceNativeProfile = { schemaVersion: 1, scope: 'native-profile-preparation', status: 'prepared', authentication: 'not-checked',
     provider: options.provider, directory: options.directory, executable: options.executable, nodeExecutable,
     commandPath: join(options.directory, 'command.json'), launcherPath: join(options.directory, 'launcher.mjs'),
@@ -208,7 +233,7 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
     inspectPrivateDirectory(parent);
     if (!same(parentStat, lstatSync(parent, { bigint: true }))) throw new Error();
     mkdirSync(profile.directory, { mode: 0o700 });
-  } catch { throw new Error('Native profile directory must be new and its private parent unchanged'); }
+  } catch { throw new ResourceNativeProfilePrepareError('Native profile directory must be new and its private parent unchanged'); }
   const owned: Array<{ path: string; stat: BigIntStats }> = [];
   try {
     inspectPrivateDirectory(profile.directory); owned.push({ path: profile.directory, stat: lstatSync(profile.directory, { bigint: true }) });
@@ -247,7 +272,7 @@ export function prepareResourceNativeProfile(options: ResourceNativeProfileOptio
     for (const row of owned) fsyncDirectory(row.path, { expectedIdentity: row.stat });
     fsyncDirectory(parent, { expectedIdentity: parentStat }); assertOwned();
     return profile;
-  } catch { throw new Error('Native profile preparation failed; the partial directory remains for inspection'); }
+  } catch { throw new ResourceNativeProfilePrepareError('Native profile preparation failed; the partial directory remains for inspection'); }
 }
 
 // ---------------------------------------------------------------------------

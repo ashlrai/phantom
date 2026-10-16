@@ -353,10 +353,7 @@ const DEFAULT_CATEGORIES: Record<string, string> = {
   'dev-tools': join(HOME, 'Desktop/github/dev-tools'),
   'side-projects': join(HOME, 'Desktop/github/side-projects'),
   'professional-tools': join(HOME, 'Desktop/github/professional-tools'),
-  'artist-encyclopedias': join(HOME, 'Desktop/github/artist-encyclopedias'),
-  'client-engagements': join(HOME, 'Desktop/github/client-engagements'),
   forks: join(HOME, 'Desktop/github/forks'),
-  ashlrai: join(HOME, 'Desktop/github/ashlrai'),
 
   // Desktop document folders
   Business: join(HOME, 'Desktop/Business'),
@@ -370,18 +367,13 @@ const DEFAULT_CATEGORIES: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Keeper list
 // These basenames / absolute paths must NEVER be moved or deleted by tidy.
+// Ships generic only: every install writes this list into its own
+// ~/.ashlr/config.json, so personal file or folder names never belong here.
+// Add your own keepers in that file.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_KEEPERS: string[] = [
-  'Rent Application.pdf',
-  'ASHLRAI',
-  'rde-other',
-  'Keys & Recovery',
   'github',
-  'Evero Notes',
-  'OneDrive - James Madison University',
-  // Top-level symlinks that happen to mirror github/ structure — never double-count
-  'tts agents',
 ];
 
 // ---------------------------------------------------------------------------

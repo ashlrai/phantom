@@ -206,7 +206,7 @@ describe('launchCloudTask — gates come before persisting and launching', () =>
   it('refuses when the seat is not set up (seat-unavailable), persisting nothing', async () => {
     const h = harness({ seat: null });
     const res = await launchCloudTask({ ...REQ, baseBranch: 'master' }, h.deps);
-    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this Mac.", failure: 'seat-unavailable' });
+    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this computer.", failure: 'seat-unavailable' });
     expect(listCloudTasks()).toEqual([]);
     expect(h.events).toEqual([]);
   });
@@ -356,7 +356,7 @@ describe('runSelfImprove', () => {
 
 describe('cloudOverview and cloudSeatStatus', () => {
   it('seat: not ready without command.json, ready once it parses to an argv array — without running anything', () => {
-    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this Mac." });
+    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this computer." });
     const file = cloudSeatCommandPath();
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, '"node launcher.mjs"', { mode: 0o600 });
