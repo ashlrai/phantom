@@ -405,11 +405,11 @@ jobs:
           retention-days: 7
 
   ci-shared-macos:
-    # Queues with the isolated lane instead of after it. PRs no longer run the
-    # general Mac matrix, so waiting on mac-isolated only added a second Mac
-    # queue wait to every PR.
-    needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    # Queues with the isolated lane instead of after it (one Mac queue wait, not
+    # two). All Mac jobs wait for the Linux/Windows `ci` job to succeed, so a PR
+    # that is already red on the cheap lane never occupies the Mac queue.
+    needs: [classify, ci]
+    if: needs.classify.outputs.lane == 'full' && needs.ci.result == 'success'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -437,7 +437,7 @@ jobs:
     steps: *node_ci_steps
 
   mac-general:
-    needs: classify
+    needs: [classify, ci]
     # Cost: this 4-shard macos-15 lane was ~95% of CI billing (macOS bills
     # ~10x Linux; median 15 min/shard, tail 155 min) and the main Mac queue
     # bottleneck for agents. The same suites run on Linux/Windows in `ci` and
@@ -446,7 +446,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && needs.ci.result == 'success' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -512,8 +512,8 @@ jobs:
         run: node scripts/cleanup-launchd-test.mjs
 
   mac-isolated:
-    needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    needs: [classify, ci]
+    if: needs.classify.outputs.lane == 'full' && needs.ci.result == 'success'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -577,8 +577,9 @@ jobs:
     name: Native macOS broker foundation (Rust 1.97.1)
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
-    needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    # Like every Mac job it starts only after `ci` succeeds.
+    needs: [classify, ci]
+    if: needs.classify.outputs.lane == 'full' && needs.ci.result == 'success'
     runs-on: macos-latest
     steps:
       - name: Checkout
