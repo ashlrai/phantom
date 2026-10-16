@@ -2455,10 +2455,11 @@ export function confinedWorkspaceBins(
  */
 export async function openStandingVerificationConfinement(
   worktree: string,
-  opts: { readOnlyPaths?: readonly string[]; cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment } = {},
+  opts: { readOnlyPaths?: readonly string[]; cargoAttachment?: import('../fleet/maintainer-cargo-dependencies.js').MaintainerCargoAttachment; requireConfinement?: boolean } = {},
 ): Promise<StandingVerificationConfinement | null> {
   let live: boolean;
-  try {
+  if (opts.requireConfinement === true) live = true;
+  else try {
     const { currentStandingPolicy } = await import('../authority/effective-config.js');
     live = currentStandingPolicy() !== null;
   } catch {
@@ -2614,6 +2615,7 @@ function verificationSlotKey(repo: string): string {
 export async function verifyProposal(
   proposal: Proposal,
   cfg: AshlrConfig,
+  options?: { requireConfinement?: boolean },
 ): Promise<VerifyProposalResult> {
   // 3.14: a fleet mirror with `file:../<sibling>` dependencies verifies
   // against pinned sibling snapshots (fleet/mirrors.ts). The pins must be
@@ -2628,7 +2630,7 @@ export async function verifyProposal(
       failureCategory: 'infra',
     };
   }
-  const result = await verifyProposalAgainstCurrentPins(proposal, cfg);
+  const result = await verifyProposalAgainstCurrentPins(proposal, cfg, options);
   const digest = before?.ok ? before.digest : null;
   if (digest === null) return result;
   const after = mirrorSiblingPins(proposal.repo!);
@@ -2647,6 +2649,7 @@ export async function verifyProposal(
 async function verifyProposalAgainstCurrentPins(
   proposal: Proposal,
   cfg: AshlrConfig,
+  options?: { requireConfinement?: boolean },
 ): Promise<VerifyProposalResult> {
   const repo = proposal.repo;
   if (!repo || !isRepo(repo)) {
@@ -2741,10 +2744,12 @@ async function verifyProposalAgainstCurrentPins(
   const ran: VerifyCommand[] = [];
   let confined: StandingVerificationConfinement | null = null;
   try {
-    // V3.10 G3: under a standing grant every verify command runs confined
-    // (see openStandingVerificationConfinement); no grant ⇒ null ⇒ unchanged.
+    // A live standing grant, or an explicitly isolated remote-request consumer
+    // such as Cortex, requires confinement. Ordinary manual callers retain
+    // their existing behavior when no grant is present.
     try {
-      confined = await openStandingVerificationConfinement(tmpDir, { readOnlyPaths: installGrants });
+      confined = await openStandingVerificationConfinement(tmpDir, { readOnlyPaths: installGrants,
+        ...(options?.requireConfinement === true ? { requireConfinement: true } : {}) });
     } catch (err) {
       return {
         ok: false,
@@ -3027,6 +3032,7 @@ export async function verifyAndPersistProposal(
   expected: Proposal,
   cfg: AshlrConfig,
   source: ProposalVerifyResult['source'] = 'auto-merge',
+  options?: { requireConfinement?: boolean },
 ): Promise<VerifyAndPersistProposalResult> {
   const refused = (
     reason: string,
@@ -3055,7 +3061,7 @@ export async function verifyAndPersistProposal(
 
     let verify: VerifyProposalResult;
     try {
-      verify = await withVerificationSlot(verificationSlotKey(repo), () => verifyProposal(current!, cfg));
+      verify = await withVerificationSlot(verificationSlotKey(repo), () => options ? verifyProposal(current!, cfg, options) : verifyProposal(current!, cfg));
     } catch (err) {
       if (err instanceof VerificationCapacityError) {
         return refused(`verification capacity unavailable: ${err.message}`, {

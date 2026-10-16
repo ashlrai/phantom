@@ -1,10 +1,12 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseCortexBridgeConfig, readCortexBridgeConfig, runCortexBridgeOnce, validateCortexProposalDiff, type CortexBridgeConfig } from '../src/core/cortex/bridge.js';
+import { assertCortexVerifiedProposalSnapshot, parseCortexBridgeConfig, readCortexBridgeConfig, runCortexBridgeOnce, validateCortexProposalDiff, type CortexBridgeConfig } from '../src/core/cortex/bridge.js';
+import { CORTEX_CODEX_RESTRICTED_ARGS, cortexCodexConfig } from '../src/core/cortex/codex-policy.js';
+import { buildEngineCommand } from '../src/core/run/engines.js';
 import { engineeringAssignmentDigest, engineeringAssignmentSignature, parseEngineeringAssignmentV1, type EngineeringAssignmentV1 } from '../src/core/cortex/engineering-assignment.js';
 import type { AshlrConfig, Proposal, RunState } from '../src/core/types.js';
 
@@ -32,7 +34,8 @@ function fixture() {
     authority: { effect: 'proposal-only', requiredTenantRef: 'company-fixture' } } as const;
   const assignmentDigest = engineeringAssignmentDigest(unsigned);
   const assignment = { ...unsigned, assignmentDigest, assignmentSignature: engineeringAssignmentSignature(assignmentDigest, privateKey)! };
-  const proposal = { id: 'proposal-fixture', repo, status: 'pending', diff, title: 'Feature proposal', summary: 'One isolated feature', runId: 'local-fixture' } as Proposal;
+  const proposal = { id: 'proposal-fixture', repo, status: 'pending', diff, diffHash: createHash('sha256').update(diff).digest('hex'),
+    title: 'Feature proposal', summary: 'One isolated feature', runId: 'local-fixture' } as Proposal;
   const ops: Array<Record<string, unknown>> = [];
   const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)); ops.push(body);
@@ -48,11 +51,22 @@ function fixture() {
     return { id: 'local-fixture', status: 'done' } as RunState;
   });
   const host = { fetchImpl: fetchImpl as typeof fetch, execute, loadConfig: () => ({}) as AshlrConfig, correlate: () => proposal,
-    verify: vi.fn(async () => ({ passed: true, commands: ['npm test'], baseHead: commit })) };
+    verify: vi.fn(async () => {
+      proposal.verifyResult = { passed: true, diffHash: proposal.diffHash, baseHead: commit };
+      return { passed: true, commands: ['npm test'], baseHead: commit };
+    }) };
   return { root, repo, store, commit, config, assignment, proposal, ops, fetchImpl, execute, host };
 }
 
 describe('Cortex foreground proposal bridge', () => {
+  it('overrides unsafe caller engine settings with the exact narrowed Codex command and mandatory OS isolation', () => {
+    const config = cortexCodexConfig({ foundry: { engines: { codex: { id: 'codex', kind: 'cli-agent', tier: 'frontier',
+      bin: 'sh', argv: ['-c', 'untrusted-command'], autonomousArgv: ['--dangerously-bypass-approvals-and-sandbox'] } } } } as AshlrConfig);
+    const command = buildEngineCommand('codex', 'Fixture objective', config, { cwd: '/fixture', autonomous: true });
+    expect(command?.bin).toBe('codex'); expect(command?.args).toEqual(expect.arrayContaining([...CORTEX_CODEX_RESTRICTED_ARGS]));
+    expect(command?.args).not.toContain('--dangerously-bypass-approvals-and-sandbox'); expect(command?.args).not.toContain('untrusted-command');
+    expect(config.foundry?.confinement?.codex).toMatchObject({ mode: 'os', onUnsupported: 'fail', autonomous: true });
+  });
   it('accepts the compatibility fixture minted by the Cortex API signing implementation', () => {
     const fixture = JSON.parse(readFileSync(new URL('./fixtures/cortex-engineering-assignment-v1.json', import.meta.url), 'utf8'));
     const assignment = parseEngineeringAssignmentV1(fixture.assignment, { verifier: fixture.verifier, now: new Date(fixture.now) });
@@ -63,9 +77,12 @@ describe('Cortex foreground proposal bridge', () => {
   });
   it('verifies a signed assignment, runs only the existing sandbox, returns real artifact hashes, and refuses replay', async () => {
     const f = fixture(); expect(parseEngineeringAssignmentV1(f.assignment, { verifier: f.config.verifier })).not.toBeNull();
-    await expect(runCortexBridgeOnce(f.config, f.host)).resolves.toEqual({ state: 'proposed', runId: 'run-fixture', proposalId: 'proposal-fixture' });
+    await expect(runCortexBridgeOnce(f.config, f.host)).resolves.toEqual({ state: 'proposed', runId: 'run-fixture', proposalId: 'proposal-fixture', cortexProposalId: 'cortex-proposal-fixture' });
     expect(f.execute).toHaveBeenCalledOnce(); expect(f.execute.mock.calls[0]?.[2]).toMatchObject({ sandboxEngine: true, requireSandbox: true,
       noMemory: true, noCapture: true, tools: false, delegationScope: { memoryMode: 'none', allowedFiles: { include: ['feature.txt'], enforceWrites: true } } });
+    const cfg = f.execute.mock.calls[0]?.[1];
+    expect(cfg?.foundry?.engines?.codex?.autonomousArgv).toEqual([...CORTEX_CODEX_RESTRICTED_ARGS]);
+    expect(cfg?.foundry?.engines?.codex?.autonomousArgv).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     const finish = f.ops.find(v => v.op === 'finish')!; expect(finish.ok).toBe(true);
     const receipt = JSON.parse(finish.text as string).engineeringReceipt;
     expect(receipt.assignmentDigest).toBe(f.assignment.assignmentDigest); expect(receipt.verification.status).toBe('passed');
@@ -97,6 +114,31 @@ describe('Cortex foreground proposal bridge', () => {
     const f = fixture(); f.host.verify.mockResolvedValue({ passed: true, commands: ['npm test'], baseHead: 'f'.repeat(40) });
     await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('signed source');
     expect(f.ops.filter(v => v.op === 'finish').map(v => v.ok)).toEqual([false]);
+  });
+  it('holds changed or re-signed proposal bytes after verification and never returns an old diff receipt', async () => {
+    const f = fixture(); const before = JSON.parse(JSON.stringify(f.proposal));
+    f.host.verify.mockImplementation(async () => {
+      f.proposal.diff = diff.replace('+hello', '+changed');
+      f.proposal.diffHash = createHash('sha256').update(f.proposal.diff).digest('hex');
+      f.proposal.verifyResult = { passed: true, diffHash: f.proposal.diffHash, baseHead: f.commit };
+      return { passed: true, commands: ['npm test'], baseHead: f.commit };
+    });
+    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('changed after verification');
+    expect(() => assertCortexVerifiedProposalSnapshot(before, f.proposal, f.commit)).toThrow();
+    expect(f.ops.filter(v => v.op === 'finish').map(v => v.ok)).toEqual([false]);
+  });
+  it('refuses old protocol-v2 generic success without an Approval Inbox identity', async () => {
+    const f = fixture(); const original = f.fetchImpl.getMockImplementation()!;
+    f.fetchImpl.mockImplementation(async (url, init) => JSON.parse(String(init?.body)).op === 'finish' ?
+      Response.json({ ok: true, status: 'succeeded', proposalId: null }) : original(url, init));
+    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('Approval Inbox');
+    const attempt = join(f.store, readdirSync(f.store)[0]!); expect(readdirSync(attempt)).toContain('receipt.json');
+    expect(readdirSync(attempt)).not.toContain('accepted.json');
+  });
+  it('rejects project Codex/MCP configuration and unsupported runtimes before any producer starts', async () => {
+    const f = fixture(); expect(() => parseCortexBridgeConfig({ ...f.config, runtimes: ['claude-code'] })).toThrow('Codex only');
+    mkdirSync(join(f.repo, '.codex'));
+    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('project .codex'); expect(f.execute).not.toHaveBeenCalled();
   });
   it('checks captured changed paths and line budgets, including whole-segment wildcard handling', () => {
     const f = fixture(); expect(() => validateCortexProposalDiff(diff, f.assignment)).not.toThrow();

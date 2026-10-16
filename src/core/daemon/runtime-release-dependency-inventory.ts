@@ -512,6 +512,7 @@ function rootPackageIsPortable(
     'docs/ARCHITECTURE.md',
     'docs/ELITE-AGENT-EFFICIENCY.md',
     'docs/OPENAI-AGENTS-INTEGRATION.md',
+    'docs/CORTEX-BRIDGE.md',
     'docs/DOTS-COMPANION.md',
     'docs/AGENT-HARNESS-EVOLUTION.md',
     'docs/RESET-AWARE-SCHEDULING.md',

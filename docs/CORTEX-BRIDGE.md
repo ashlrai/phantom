@@ -51,13 +51,32 @@ local paths. Example values below are fictional:
 }
 ```
 
-`runtimes` supports `codex` and `claude-code`. Runtime authentication, repository
+`runtimes` must be exactly `["codex"]` for the current Cortex engineering queue.
+Claude Code is not admitted by this bridge. Runtime authentication, repository
 enrollment and normal Phantom KILL/policy checks remain required. The mapped
 repository must have the signed GitHub origin, a clean worktree, and HEAD equal
 to the assignment's exact source commit. A signed assignment permits at most
 32 allowed-file patterns of 220 characters each on this worker. Changes to
 build/CI/manifests may be refused by the existing proposal verifier and require
 normal manual review.
+
+The bridge replaces Codex's usual unattended bypass flags with an explicit
+`cortex-proposal` native permission profile: minimal runtime reads, workspace
+writes, and no command network access. It forces Phantom's existing hardened
+outer confinement, ignores Codex user configuration and execpolicy rules, and
+disables apps, plugins, hooks, browsers, computer use, memory and subagents.
+Repositories containing a project `.codex` directory are refused because project
+configuration can launch MCP tools outside the command sandbox. Codex's own
+model transport still connects to OpenAI; shell subprocesses cannot use it as
+general outbound access. These controls require a Codex CLI supporting the
+named permissions configuration and ignore-user-config flags. Unsupported flags
+fail the invocation. The native macOS regression probe runs without inference or
+provider credentials and checks successful workspace writes, denied outside
+writes, and a direct TCP connect returning an OS permission denial.
+
+See the [official permissions documentation](https://learn.chatgpt.com/docs/permissions)
+for command network and filesystem behavior. Other agent backends need equivalent
+enforced isolation before they can handle company evidence through this bridge.
 
 Check the configuration offline:
 
@@ -80,13 +99,21 @@ memory is recalled or captured by the bridge's model invocation.
 ## Review the result
 
 An empty queue returns `{"state":"idle"}`. A successful round trip returns
-`{"state":"proposed","runId":"…","proposalId":"…"}`. This means a signed,
+`{"state":"proposed","runId":"…","proposalId":"…","cortexProposalId":"…"}`.
+The two proposal IDs name the local patch and the confirmed Cortex Approval Inbox
+item respectively. This means a signed,
 complete pending Phantom proposal was correlated to the producer's durable run,
 and the existing separate-worktree verifier accepted it at the signed base
 commit. Captured changed paths, changed files and added/deleted lines are checked
 against the signed assignment. Cortex receives a proposal receipt and creates
 its own review item; the receipt is authenticated worker evidence, not an
 independent attestation or a completed business outcome.
+
+After verification, the bridge locks the local proposal, reloads its signed
+pending identity, and requires the persisted verification to match the original
+diff bytes and source commit before saving receipt artifacts. A generic successful
+worker response without a Cortex proposal ID is held, preserving `receipt.json`
+without writing `accepted.json`.
 
 Each attempt has a private directory named by SHA-256 of the Cortex run ID:
 `assignment.json`, `proposal.diff`, `proposal.json`, `verification.json`,
@@ -96,6 +123,11 @@ Artifact paths are local relative references; this version does not upload raw
 patches or company repository files to Cortex.
 
 ## Cancellation and uncertain results
+
+The separate proposal verifier is also required to use Phantom's existing OS
+confinement with network disabled, even when no standing authority grant exists.
+If the platform cannot construct that sandbox, verification fails closed. The
+bridge does not enable a standing grant to obtain this isolation.
 
 A fresh heartbeat is required before producing work and before returning a
 receipt. The producer receives an abort signal on revocation, lost heartbeat,

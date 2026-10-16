@@ -10,7 +10,9 @@ proposal. Once uses configured Codex/Claude subscription resources and writes
 private artifacts under the configured root. It never installs a service, merges,
 pushes, deploys, or exposes a local listener. The source repository must be clean,
 enrolled, explicitly mapped and at the signed commit. No private memory is loaded.
-Token environment variables must match CORTEX_*TOKEN; never put tokens in argv.
+Current engineering assignments require Codex with native no-network permissions;
+project .codex configurations are refused. Token environment variables must match
+CORTEX_*TOKEN; never put tokens in argv.
 An uncertain attempt is retained and never automatically executed again.
 `;
 
