@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      mac: ${{ steps.lane.outputs.mac }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -409,7 +410,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.mac == 'run'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -446,7 +447,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.mac == 'run' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -513,7 +514,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.mac == 'run'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -578,7 +579,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.mac == 'run'
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -827,8 +828,15 @@ jobs:
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'site' ? ['site'] : full;
-          const excluded = lane === 'site' ? full : ['site'];
+          const mac = jobs.classify.outputs?.mac;
+          if (lane === 'full' && mac !== 'run' && mac !== 'skip') throw new Error('CI mac lane is missing or unknown');
+          // Docs-only and site-only PRs skip every Mac job. Skipped is accepted
+          // for exactly these jobs and only when the classifier said 'skip';
+          // any other combination fails closed.
+          const macJobs = ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'];
+          const macSkipped = lane === 'full' && mac === 'skip';
+          const selected = lane === 'site' ? ['site'] : full.filter((name) => !(macSkipped && macJobs.includes(name)));
+          const excluded = lane === 'site' ? full : ['site', ...(macSkipped ? macJobs : [])];
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
           const deferred = process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
           for (const name of selected) {
