@@ -12,9 +12,11 @@ function kill0(pid: number): boolean {
 
 describe.skipIf(process.platform === 'win32')('process liveness helper', () => {
   it('treats an unreaped zombie as exited and its live parent as running', async () => {
-    // `sh` backgrounds `true`, prints its pid, then execs `sleep`, which never
-    // waits for children: the exited `true` stays a zombie child of `sleep`.
-    const parent = spawn('/bin/sh', ['-c', 'true & echo $!; exec sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // perl forks a child that exits at once, prints its pid, then sleeps without
+    // ever calling wait: the child stays a zombie of the live parent. (A shell
+    // that backgrounds a job before `exec sleep` may reap it first if the job
+    // exits before the exec, which made this case flaky on loaded runners.)
+    const parent = spawn('perl', ['-e', '$| = 1; my $pid = fork(); exit 0 unless $pid; print "$pid\\n"; sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
     try {
       const zombiePid = await new Promise<number>((resolvePid, reject) => {
         parent.stdout.once('data', (chunk: Buffer) => resolvePid(Number(String(chunk).trim())));
