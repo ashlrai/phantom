@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, clearReadSession, getAuthSnapshot, getMutationToken, hasMutationHold, markCheckComplete } from '../data/auth-store.js';
 import { evictAll } from '../data/cache.js';
 import { MockEventSource, verseFetch } from '../routes/verse/fixtures.test-support.js';
@@ -7,7 +7,8 @@ import * as verseQueries from '../routes/verse/verse-queries.js';
 import { resetVerseStore } from '../routes/verse/verse-store.js';
 import { reloadVerseUiForTest, resetVerseUi, VERSE_UI_STORAGE_KEY } from '../routes/verse/verse-ui-store.js';
 import { isScopedConsolePath, isVerseConsolePath } from './console-mode.js';
-import { listenForSidecarRestart, preloadVerseFirstPaint, preloadVerseFonts, SIDECAR_RESTARTED_EVENT, VerseConsoleApp } from './VerseConsoleApp.js';
+import { listenForSidecarRestart, SIDECAR_RESTARTED_EVENT } from './sidecar-restart.js';
+import { preloadVerseFirstPaint, preloadVerseFonts, VerseConsoleApp } from './VerseConsoleApp.js';
 
 const READ = 'c'.repeat(64);
 const MUT = 'd'.repeat(64);
@@ -25,6 +26,13 @@ async function expectShellOnChat(): Promise<void> {
   expect(within(modes).getByRole('button', { name: 'Work with me' })).toHaveAttribute('aria-pressed', 'true');
   expect(within(modes).getByRole('button', { name: 'Work for me' })).toHaveAttribute('aria-pressed', 'false');
 }
+
+// The signed-in shell mounts once its first-paint chunks are in (or after a
+// bounded wait); load them once here so a cold transform does not eat a test's
+// findBy timeout.
+beforeAll(async () => {
+  await (await import('./verse-first-paint.js')).firstPaintSurface(30_000);
+});
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/verse/');
