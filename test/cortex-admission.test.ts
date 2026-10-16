@@ -78,6 +78,9 @@ describe('owner-approved Cortex foreground admission', () => {
       expect(() => gate(f.repo, {})).toThrow('forged'); expect(() => gate(f.repo, JSON.parse(JSON.stringify(producer)))).toThrow();
       expect(() => gate(f.repo, verifier)).toThrow('purpose'); expect(() => gate(other.repo, producer)).toThrow('repository');
       expect(() => assertMayMutate(other.repo)).not.toThrow(); // Existing unrelated authority is neither added nor removed.
+      for (const malformed of [null, false, 0, '', {}]) {
+        expect(() => createSandbox(other.repo, { cortexAdmission: malformed as CortexAdmissionToken })).toThrow('forged');
+      }
       expect(() => createSandbox(f.repo, { cortexAdmission: verifier })).toThrow();
       await expect(runEngineSandboxed('claude', 'No contact', {} as AshlrConfig, { sourceRepo: f.repo, cortexAdmission: producer })).rejects.toThrow('only Codex');
       await expect(runApiModelSandboxed('codex', 'No contact', {} as AshlrConfig, { sourceRepo: f.repo, cortexAdmission: producer })).rejects.toThrow('API-model');
@@ -93,9 +96,13 @@ describe('owner-approved Cortex foreground admission', () => {
     });
   });
   it('revokes detached async descendants after the foreground owner settles', async () => {
-    const f = fixture(); admitCortexConfiguration(f.configPath); let release!: () => void; const wait = new Promise<void>(r => { release = r; }); let detached!: Promise<boolean>;
+    const f = fixture(); admitCortexConfiguration(f.configPath); enroll(f.repo); let release!: () => void; const wait = new Promise<void>(r => { release = r; }); let detached!: Promise<boolean>;
     await withCortexForegroundAdmission(f.configPath, f.assignment, async ({ producer }) => {
-      detached = wait.then(() => { expect(() => gate(f.repo, producer)).toThrow('closed'); return true; });
+      detached = wait.then(() => {
+        expect(() => gate(f.repo, producer)).toThrow('closed');
+        expect(() => createSandbox(f.repo, { cortexAdmission: producer })).toThrow('closed');
+        return true;
+      });
     });
     release(); expect(await detached).toBe(true);
   });

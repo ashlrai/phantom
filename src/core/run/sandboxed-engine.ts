@@ -142,6 +142,7 @@ import { autonomousVendorIdentityCurrent, autonomousDevinIdentityCurrent, captur
 import { recordSandboxEvidenceUnknown } from '../authority/rollout.js';
 import { audit as auditConfinement } from '../sandbox/audit.js';
 import {
+  assertMayMutate,
   assertMayExecuteWithCortexAdmission,
   canonicalEnrollmentPath,
   isEnrolled,
@@ -1338,6 +1339,16 @@ class ProducerAuthority {
     return process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1';
   }
 
+  private assertPolicy(): void {
+    // Keep the ordinary producer on its existing policy seam. An explicitly
+    // supplied capability (even malformed) must never fall back to enrollment.
+    if (this.cortexAdmission !== undefined) {
+      assertMayExecuteWithCortexAdmission(this.sourceRepo, { cortexAdmission: this.cortexAdmission });
+    } else {
+      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+    }
+  }
+
   /**
    * Fence + gate + lease. Returns the refusal reason, or undefined when
    * admitted (fence still held — release it before inference).
@@ -1358,7 +1369,7 @@ class ProducerAuthority {
       return `outward mutation fence unavailable before ${this.phase}`;
     }
     try {
-      assertMayExecuteWithCortexAdmission(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo(), ...(this.cortexAdmission !== undefined ? { cortexAdmission: this.cortexAdmission } : {}) });
+      this.assertPolicy();
       this.cleanupAuthority = this.wt.borrowSandboxCleanupAuthority(this.fence);
       if (!this.cleanupAuthority) throw new Error(`outward mutation authority became invalid before ${this.phase}`);
       const registration = registerExecutionLease(this.fence, {
@@ -1437,7 +1448,7 @@ class ProducerAuthority {
       };
     };
     try {
-      assertMayExecuteWithCortexAdmission(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo(), ...(this.cortexAdmission !== undefined ? { cortexAdmission: this.cortexAdmission } : {}) });
+      this.assertPolicy();
     } catch (err) {
       return revoked(`: ${err instanceof Error ? err.message : String(err)}`);
     }

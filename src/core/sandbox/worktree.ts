@@ -58,6 +58,7 @@ import type {
 } from '../types.js';
 import { isRepo } from '../git.js';
 import {
+  assertMayMutate,
   assertMayExecuteWithCortexAdmission,
   canonicalFilesystemPathIdentity,
   killSwitchOn,
@@ -1620,7 +1621,8 @@ function createSandboxWhileFenced(
   // runner independently verifies this source inode before using its cwd, so
   // a pathname replacement cannot carry policy authority into Git effects.
   try {
-    assertMayExecuteWithCortexAdmission(canonicalSourceRepo, opts);
+    if (opts?.cortexAdmission !== undefined) assertMayExecuteWithCortexAdmission(canonicalSourceRepo, opts);
+    else assertMayMutate(canonicalSourceRepo, opts);
   } catch (err) {
     audit({
       action: 'sandbox:create',

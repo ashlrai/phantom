@@ -19,6 +19,7 @@ interface CancellationHarness {
   actions: Array<Record<string, unknown>>;
   createCalls: unknown[];
   lifecycle: string[];
+  policyCalls: string[];
 }
 
 function durableInboxStore(
@@ -75,6 +76,7 @@ function installHarness(opts: {
   const actions: Array<Record<string, unknown>> = [];
   const createCalls: unknown[] = [];
   const lifecycle: string[] = [];
+  const policyCalls: string[] = [];
 
   vi.doMock('../src/core/sandbox/worktree.js', () => {
     const double = {
@@ -145,7 +147,7 @@ function installHarness(opts: {
 
   vi.doMock('../src/core/sandbox/policy.js', () => ({
     killSwitchOn: () => false,
-    assertMayMutate: () => {},
+    assertMayMutate: (repo: string) => { policyCalls.push(repo); },
   }));
 
   vi.doMock('../src/core/run/agent-loop.js', () => ({
@@ -204,7 +206,7 @@ function installHarness(opts: {
     recordDecision: vi.fn(),
   }));
 
-  return { actions, createCalls, lifecycle };
+  return { actions, createCalls, lifecycle, policyCalls };
 }
 
 afterEach(() => {
@@ -213,6 +215,21 @@ afterEach(() => {
 });
 
 describe('sandbox proposal cancellation commit point', () => {
+  it('keeps ordinary producers on the legacy policy seam without Cortex capability exports', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'ashlr-legacy-policy-seam-'));
+    mkdirSync(join(repo, '.git'));
+    writeFileSync(join(repo, 'seed.ts'), 'export const seed = true;\n');
+    const harness = installHarness({ repo, controller: new AbortController(), abortAt: 'gate', proposalId: 'must-not-file' });
+    try {
+      const { runApiModelSandboxed } = await import('../src/core/run/sandboxed-engine.js?legacy-policy=' + randomUUID()) as typeof import('../src/core/run/sandboxed-engine.js');
+      const result = await runApiModelSandboxed('local-coder', 'ordinary isolated producer', {
+        foundry: { completenessGate: false, models: { 'local-coder': 'qwen2.5:72b-instruct-q4_K_M' } },
+      } as never, { sourceRepo: repo, propose: false });
+      expect(result.state.status).toBe('done');
+      expect(harness.policyCalls).toContain(repo);
+      expect(harness.createCalls).toHaveLength(0);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
   it('propagates cancellation before create as an aborted api-model run with usage', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'ashlr-capture-cancel-before-'));
     mkdirSync(join(repo, '.git'));
