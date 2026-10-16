@@ -16,6 +16,21 @@ import { validateResourcePool } from '../src/core/resources/pool-policy.js';
 import { validateResourceBindings } from '../src/core/resources/worker.js';
 
 const roots: string[] = [];
+// Setup only prepares and reads private receipts; no Universe run, seed
+// evaluation or evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'engineering-setup-evidence-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => {
   const writable = (file: string): void => { if (!lstatSync(file).isDirectory()) return;
@@ -45,7 +60,7 @@ function fixture() {
   const projectsFile = join(base, 'projects.json'); save(projectsFile, { schemaVersion: 1, projects: [] });
   const recipe: ResourceEngineeringRecipe = { schemaVersion: 1, id: 'repair', name: 'Bounded repair', objective: 'Improve a measured value', projectId: 'default',
     seedRevision: git(workspace, 'rev-parse', 'HEAD'), metric: { name: 'value', direction: 'maximize', minImprovement: 0 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1000 },
     trialBudget: { maxTrials: 2, maxParallel: 1, maxDurationMs: 10_000, trialTimeoutMs: 5000 },
     campaignBudget: { maxGenerations: 1, maxDurationMs: 20_000, maxModelRequests: 2, maxStagnantGenerations: 1, maxReportedTokens: null },
     generation: { files: ['value.json'], contextFiles: ['evaluate.mjs'], allowedWorkerIds: ['worker'], maxOutputTokens: 128,

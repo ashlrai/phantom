@@ -6,7 +6,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -27,12 +27,18 @@ import {
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fsyncDirectory } from '../util/durability.js';
+import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock, verifiedProcessStartRef } from '../fleet/local-store-lock.js';
 
 const MAX_PARTITION_BYTES = 2 * 1024 * 1024;
 const MAX_ROWS = 5_000;
 const MAX_ROW_BYTES = 768;
 const MAX_PARTITIONS = 8;
+/** Compaction keeps the newest rows within these budgets so appends never stop. */
+const COMPACT_KEEP_ROWS = MAX_ROWS / 2;
+const COMPACT_KEEP_BYTES = MAX_PARTITION_BYTES / 2;
+const COMPACT_PINNED_INSTANCES = 16;
+const COMPACT_TEMP_PREFIX = '.activity-compact-';
 const FUTURE_TOLERANCE_MS = 5_000;
 export const DAEMON_ACTIVITY_STALE_MS = 90_000;
 
@@ -270,6 +276,60 @@ function prunePartitions(directory: string): boolean {
   }
 }
 
+function rowLine(row: DaemonActivityRowV1): string {
+  return `${JSON.stringify(row)}\n`;
+}
+
+/**
+ * Select the rows a compacted partition retains, in original order: the newest
+ * rows within the compaction budgets, the first row of the latest row's
+ * contiguous instance+phase run (so `phaseStartedAt` is unchanged), and the most
+ * recent `starting`/`stopping` lifecycle row of each recent instance.
+ */
+export function selectCompactedDaemonActivityRows(rows: readonly DaemonActivityRowV1[]): DaemonActivityRowV1[] {
+  if (rows.length === 0) return [];
+  const keep = new Set<number>();
+  let bytes = 0;
+  for (let index = rows.length - 1; index >= 0 && keep.size < COMPACT_KEEP_ROWS; index--) {
+    const size = Buffer.byteLength(rowLine(rows[index]!), 'utf8');
+    if (keep.size > 0 && bytes + size > COMPACT_KEEP_BYTES) break;
+    keep.add(index);
+    bytes += size;
+  }
+  const latest = rows.at(-1)!;
+  let runStart = rows.length - 1;
+  while (runStart > 0 && rows[runStart - 1]!.instanceId === latest.instanceId &&
+    rows[runStart - 1]!.phase === latest.phase) runStart--;
+  keep.add(runStart);
+  const pinned = new Map<string, Set<DaemonActivityPhase>>();
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index]!;
+    if (row.phase !== 'starting' && row.phase !== 'stopping') continue;
+    let phases = pinned.get(row.instanceId);
+    if (!phases) {
+      if (pinned.size >= COMPACT_PINNED_INSTANCES) continue;
+      phases = new Set();
+      pinned.set(row.instanceId, phases);
+    }
+    if (phases.has(row.phase)) continue;
+    phases.add(row.phase);
+    keep.add(index);
+  }
+  return [...keep].sort((left, right) => left - right).map((index) => rows[index]!);
+}
+
+function removeStaleCompactionTemporaries(directory: string): void {
+  try {
+    for (const name of readdirSync(directory)) {
+      if (!name.startsWith(COMPACT_TEMP_PREFIX) || !name.endsWith('.tmp')) continue;
+      const path = join(directory, name);
+      try {
+        if (privateFile(lstatSync(path))) unlinkSync(path);
+      } catch { /* best effort; never block the journal on cleanup */ }
+    }
+  } catch { /* best effort */ }
+}
+
 export function readDaemonActivity(options: { nowMs?: number; staleMs?: number } = {}): DaemonActivityReadResult {
   const missing: DaemonActivityReadResult = {
     sourceState: 'missing', freshness: 'unknown', ownerState: 'unknown',
@@ -354,9 +414,26 @@ export function writeDaemonActivity(input: {
     let prior: Stats | null = null;
     if (existsSync(path)) {
       prior = lstatSync(path);
-      if (!privateFile(prior) || prior.size + bytes.length > MAX_PARTITION_BYTES) return false;
+      if (!privateFile(prior)) return false;
       const priorRows = readPartition(path, directories.directory);
-      if (!priorRows || priorRows.length >= MAX_ROWS) return false;
+      if (!priorRows) return false;
+      if (priorRows.length >= MAX_ROWS || prior.size + bytes.length > MAX_PARTITION_BYTES) {
+        // Full partition: atomically replace it with its newest rows plus this
+        // row (temp + fsync + rename under the writer lock) instead of refusing.
+        const directory = daemonActivityDirectory();
+        removeStaleCompactionTemporaries(directory);
+        const retained = selectCompactedDaemonActivityRows(priorRows);
+        const content = Buffer.from(`${retained.map(rowLine).join('')}${bytes.toString('utf8')}`, 'utf8');
+        if (retained.length + 1 > MAX_ROWS || content.length > MAX_PARTITION_BYTES) return false;
+        const rebound = lstatSync(path);
+        if (!privateFile(rebound) || !sameNode(prior, rebound) || rebound.size !== prior.size) return false;
+        writePrivateFileAtomically(join(directory, `${COMPACT_TEMP_PREFIX}${randomUUID()}.tmp`), path, content, {
+          anchorPath: directory, label: 'daemon activity compaction',
+        });
+        const installed = lstatSync(path);
+        if (!privateFile(installed) || installed.size !== content.length) return false;
+        return prunePartitions(directory);
+      }
       fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW);
     } else {
       fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
