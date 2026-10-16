@@ -29,6 +29,7 @@ import { RefreshIndicator } from '../../../components/primitives/RefreshIndicato
 import { SkeletonRow } from '../../../components/primitives/Skeleton.js';
 import type { RunState } from '../../../data/api-types.js';
 import styles from './RunsView.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 type SortKey = 'createdAt' | 'updatedAt' | 'tokens' | 'estCostUsd' | 'steps' | 'status';
 type SortDir = 'asc' | 'desc';
@@ -46,7 +47,7 @@ function matchesSearch(run: RunState, query: string): boolean {
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatDateTime(d, undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function RunsView() {

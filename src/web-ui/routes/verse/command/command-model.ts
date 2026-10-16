@@ -23,6 +23,7 @@ import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import type { EffectivePolicy } from '../../../../core/authority/types.js';
 import type { StatTileDelta } from '../../../components/charts/StatTile.js';
 import { asSentence, localTimes, parseLegacyReason } from '../fleet/why-seat-model.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -551,7 +552,7 @@ export function burnTimeFormat(window: 'session' | 'weekly' | null): (ms: number
       : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
   return (ms) => {
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', opts);
+    return Number.isNaN(d.getTime()) ? '' : formatDateTime(d, 'en-US', opts);
   };
 }
 

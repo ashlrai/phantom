@@ -46,6 +46,7 @@ import { useChartMotion } from './motion.js';
 import { useChartWidth } from './useChartWidth.js';
 import { useTextScale } from './useTextScale.js';
 import plot from './plot.module.css';
+import { formatDateTime } from '../format/locale-format.js';
 
 export interface BurnDownProps {
   title: string;
@@ -74,7 +75,7 @@ const PAD_R = 14;
 
 function defaultFormatTime(ms: number): string {
   const d = new Date(ms);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return Number.isNaN(d.getTime()) ? '' : formatDateTime(d, 'en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 }
 
 export function formatLead(ms: number): string {

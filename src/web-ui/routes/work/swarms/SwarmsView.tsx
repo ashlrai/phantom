@@ -16,6 +16,7 @@ import { RefreshIndicator } from '../../../components/primitives/RefreshIndicato
 import { SkeletonRow } from '../../../components/primitives/Skeleton.js';
 import type { SwarmRun } from '../../../data/api-types.js';
 import styles from './SwarmsView.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 type SortKey = 'createdAt' | 'updatedAt' | 'progress' | 'tokens' | 'estCostUsd';
 type SortDir = 'asc' | 'desc';
@@ -43,7 +44,7 @@ function swarmTokens(sw: SwarmRun): number {
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatDateTime(d, undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function SwarmsView() {

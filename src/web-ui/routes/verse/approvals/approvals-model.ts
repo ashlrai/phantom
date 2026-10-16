@@ -10,6 +10,7 @@
  */
 import type { Proposal, ProposalKind } from '../../../data/api-types.js';
 import { ENGINE_LABEL } from '../verse-model.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 /** Pending first, then newest first within each group. Stable and total. */
 export function orderProposals(rows: readonly Proposal[]): Proposal[] {
@@ -274,7 +275,7 @@ export function longAgo(iso: string | null | undefined, now: number = Date.now()
   if (hours < 24) return rtf.format(-hours, 'hour');
   const days = Math.round(hours / 24);
   if (days <= 60) return rtf.format(-days, 'day');
-  return `on ${new Date(then).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  return `on ${formatDateTime(new Date(then), 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
 /** A local date and time for a tooltip: "Mon, Aug 17, 3:12 PM". */

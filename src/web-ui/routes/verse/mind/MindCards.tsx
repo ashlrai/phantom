@@ -18,12 +18,13 @@ import { KIND_LABEL } from './mind-model.js';
 import { OUTCOME_WORD, expectedDeltaText, isVetoable, outcomeMark } from './leader-model.js';
 import { projectLabel, type ProjectLabel } from './project-label.js';
 import styles from './mind.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 const MARK: Record<ReturnType<typeof outcomeMark>, string> = { hit: '✓', miss: '✗', pending: '…', ungraded: '—' };
 
 function dayHeading(iso: string): string {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
+  return Number.isFinite(t) ? formatDateTime(new Date(t), 'en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
 }
 
 export function MemoTimeline({ read, actions }: { read: OptionalRead<LeaderStateV1> | undefined; actions: SurfaceActions }) {

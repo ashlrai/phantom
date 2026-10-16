@@ -20,6 +20,7 @@
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import type { AuthorityGrantDraft, AuthorityStatusV1, AutonomySwitch, GrantState } from '../../../../core/authority/types.js';
 import { darkSinceLabel } from '../fleet/dark-since.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export const SWITCH_RANK: Readonly<Record<AutonomySwitch, number>> = { off: 0, propose: 1, autonomous: 2 };
 
@@ -124,7 +125,7 @@ export function grantChip(status: AuthorityStatusV1 | null, now: number): GrantC
       return {
         label: timeLeft(left),
         tone,
-        detail: `Grant active until ${new Date(expires).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${left < 3 * DAY ? ' — renew soon' : ''}.`,
+        detail: `Grant active until ${formatDateTime(new Date(expires), 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${left < 3 * DAY ? ' — renew soon' : ''}.`,
         action: left < 3 * DAY ? 'grant' : null,
       };
     }

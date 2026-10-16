@@ -25,6 +25,7 @@ import { fleetDarkStatus } from './dark-since.js';
 import { LANE_ENGINE, LANE_LABEL, funnelStages, laneChipText, laneNotes, laneReason, laneRows, latestDecision, parkedGantt, refusalStack, runTone } from './live-model.js';
 import { asSentence, decisionSummary, describeEligibleAgain, eligibleAgain, heldBackText } from './why-seat-model.js';
 import styles from './fleet.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 const HOUR = 3_600_000;
 
@@ -124,7 +125,7 @@ export function GateFunnelCards({ read }: { read: OptionalRead<FleetLiveSnapshot
   const funnel = live?.funnel ?? null;
   const stages = funnelStages(funnel);
   const refusals = refusalStack(funnel);
-  const window = funnel ? `${new Date(funnel.from).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(funnel.to).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : undefined;
+  const window = funnel ? `${formatDateTime(new Date(funnel.from), 'en-US', { month: 'short', day: 'numeric' })} – ${formatDateTime(new Date(funnel.to), 'en-US', { month: 'short', day: 'numeric' })}` : undefined;
   return (
     <div className={styles.stack}>
       <Funnel
@@ -236,7 +237,7 @@ export function ParkedCard({ read, now }: { read: OptionalRead<FleetLiveSnapshot
       to={gantt.to}
       now={now}
       toneOf={runTone}
-      formatTick={(ms) => new Date(ms).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })}
+      formatTick={(ms) => formatDateTime(new Date(ms), 'en-US', { weekday: 'short', hour: 'numeric' })}
     />
   );
 }

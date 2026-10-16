@@ -32,6 +32,7 @@ import {
   type LeaderThreadPage,
   type DirectiveChip,
 } from './thread-types.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 // ---------------------------------------------------------------------------
 // Narrowing
@@ -227,7 +228,7 @@ export function dayLabel(iso: string, now: number = Date.now()): string {
   if (dayKey(t) === dayKey(now - 86_400_000)) return 'Yesterday';
   const d = new Date(t);
   const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+  return formatDateTime(d, 'en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
 }
 
 export function groupThread(entries: readonly ThreadEntry[], now: number = Date.now()): ThreadRow[] {
@@ -360,7 +361,7 @@ export function previewText(text: string, max = 140): string {
 /** "9:14 AM" */
 export function clockTime(iso: string): string {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+  return Number.isFinite(t) ? formatDateTime(new Date(t), 'en-US', { hour: 'numeric', minute: '2-digit' }) : '';
 }
 
 /** Longest message the composer sends (the server may cap lower and say so). */

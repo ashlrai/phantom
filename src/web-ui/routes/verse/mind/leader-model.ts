@@ -10,6 +10,7 @@
  */
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import type { LeaderAction, LeaderExpectedDelta, LeaderMemoSummary, LeaderStateV1 } from '../../../../core/vision/leader-types.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 /** Actions a Veto can still act on: applied (undo) or scheduled (cancel). */
 export function isVetoable(action: LeaderAction): boolean {
@@ -51,7 +52,7 @@ const METRIC_UNIT: Record<string, string> = { 'merges/day': 'merges/day' };
 export function expectedDeltaText(d: LeaderExpectedDelta | null): string | null {
   if (!d) return null;
   const by = Date.parse(d.byDate);
-  const when = Number.isFinite(by) ? new Date(by).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : d.byDate;
+  const when = Number.isFinite(by) ? formatDateTime(new Date(by), 'en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : d.byDate;
   const n = formatMetric(Math.abs(d.delta));
   return `${d.delta >= 0 ? '+' : '−'}${n} ${METRIC_UNIT[d.metric] ?? d.metric} by ${when}`;
 }

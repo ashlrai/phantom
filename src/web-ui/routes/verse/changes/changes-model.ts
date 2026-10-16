@@ -9,6 +9,7 @@ import type {
   VerseCheckpointResolution,
   VerseCheckpointTurn,
 } from '../../../../core/verse/checkpoint-types.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 // ---------------------------------------------------------------------------
 // Word-level diff
@@ -139,7 +140,7 @@ export const STATUS_WORD: Record<VerseCheckpointDiffFile['status'], string> = { 
 export function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return formatDateTime(d, undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 export function turnLabel(turn: VerseCheckpointTurn): string {

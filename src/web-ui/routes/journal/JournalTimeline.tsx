@@ -7,6 +7,7 @@
  */
 import { bucketByHour, type JournalEntry } from './journal-model.js';
 import styles from './JournalTimeline.module.css';
+import { formatDateTime } from '../../components/format/locale-format.js';
 
 export interface JournalTimelineProps {
   entries: JournalEntry[];
@@ -22,7 +23,7 @@ export function JournalTimeline({ entries, hours, onScrubTo }: JournalTimelinePr
     <div className={styles.strip} role="group" aria-label={`Activity density over the last ${hours} hours`}>
       {buckets.map((b) => {
         const pct = Math.round((b.count / max) * 100);
-        const label = new Date(b.bucketStartMs).toLocaleTimeString(undefined, { hour: 'numeric' });
+        const label = formatDateTime(new Date(b.bucketStartMs), undefined, { hour: 'numeric' });
         return (
           <button
             key={b.bucketStartMs}
