@@ -151,7 +151,7 @@ describe('Run in cloud — disabled, with the reason', () => {
   it('when the Claude seat is not ready', async () => {
     stubCloudFetch(overview({ seat: { id: 'claude-a', ready: false, reason: null } }), { routes: rootsRoute(roots('ashlrai/ashlr-hub')) });
     mount('Do it.');
-    await expectBlocked("The Claude seat isn't set up on this Mac.");
+    await expectBlocked("The Claude seat isn't set up on this computer.");
   });
 
   it('when the budget gate is closed', async () => {

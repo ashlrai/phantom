@@ -439,7 +439,14 @@ jobs:
 
   mac-general:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    # Cost: this 4-shard macos-15 lane was ~95% of CI billing (macOS bills
+    # ~10x Linux; median 15 min/shard, tail 155 min) and the main Mac queue
+    # bottleneck for agents. The same suites run on Linux/Windows in `ci` and
+    # the macOS-specific authority suites still run per PR (mac-isolated,
+    # ci-shared-macos, native-macos-broker-foundation). The exhaustive Mac
+    # partition runs on every master push, reusable workflow_call runs and any PR
+    # labelled `ci:full-mac`.
+    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -806,6 +813,7 @@ jobs:
       - name: Require selected CI lane
         env:
           GATE_NEEDS: ${{ toJSON(needs) }}
+          MAC_GENERAL_DEFERRED: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}
         run: |
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
@@ -821,7 +829,10 @@ jobs:
           if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
           const selected = lane === 'site' ? ['site'] : full;
           const excluded = lane === 'site' ? full : ['site'];
+          // mac-general is deferred to post-merge on unlabelled PRs (see job).
+          const deferred = process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
           for (const name of selected) {
+            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to post-merge`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           for (const name of excluded) {
