@@ -13,10 +13,27 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     else console.log(proposals.length ? proposals.map((p) => renderProposal(p, { includeLocal: true })).join('\n---\n') : 'No proposals: no qualifying evidence yet.');
     return 0;
   }
+  // --json with --open-pr: stdout carries one JSON object, never bare PR lines or human errors.
+  const json = args.includes('--json');
   const repo = val('--repo');
-  if (!repo) { console.error('--open-pr needs --repo <checkout>'); return 2; }
-  for (const p of proposals) {
-    try { console.log(openProposalPr(p, repo)); } catch (err) { console.error(`${p.id}: ${err instanceof Error ? err.message : String(err)}`); return 1; }
+  if (!repo) {
+    if (json) console.log(JSON.stringify({ opened: [], error: '--open-pr needs --repo <checkout>' }, null, 2));
+    else console.error('--open-pr needs --repo <checkout>');
+    return 2;
   }
+  const opened: Array<{ id: string; pr: string }> = [];
+  for (const p of proposals) {
+    try {
+      const pr = openProposalPr(p, repo);
+      if (json) opened.push({ id: p.id, pr });
+      else console.log(pr);
+    } catch (err) {
+      const error = `${p.id}: ${err instanceof Error ? err.message : String(err)}`;
+      if (json) console.log(JSON.stringify({ opened, error }, null, 2));
+      else console.error(error);
+      return 1;
+    }
+  }
+  if (json) console.log(JSON.stringify({ opened }, null, 2));
   return 0;
 }
