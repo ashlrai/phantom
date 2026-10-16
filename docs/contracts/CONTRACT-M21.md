@@ -93,7 +93,10 @@ Rules:
     outward mutation fence; POPULATE (checkout, post-create writer, validation, the gate again)
     runs after the fence is released, holding a creation execution lease (so kill / unenroll
     drain it) and an own-removal right. A POPULATE failure, an aborted lease, KILL or a lost
-    enrollment rolls the registration back under the fence (and the repo lease) and throws.
+    enrollment rolls the registration back under the fence (and the repo lease) and throws; a
+    rollback that cannot run marks the sandbox `abandonedAt` so the orphan sweep reclaims it.
+    The checkout may take a transient `refs/heads/<branch>.lock` in the common directory outside
+    the repo lease (the ref value is unchanged); a concurrent pack-refs / gc fails it closed.
   - `createSandboxAsync(..., { repoLease })`: the caller's lease on this repo is released once
     REGISTER is done and re-taken only for a rollback; releasing it again is harmless.
   - Persist sandbox metadata (so `listSandboxes()` can recover it) and audit `result:'ok'`.

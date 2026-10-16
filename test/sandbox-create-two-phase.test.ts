@@ -24,8 +24,10 @@ import { makeFixture, type DisposableRepo, type H1Fixture } from './helpers/h1-f
 import {
   createSandbox,
   createSandboxAsync,
+  listSandboxes,
   removeSandbox,
   sandboxesDir,
+  sweepOrphanSandboxes,
 } from '../src/core/sandbox/worktree.js';
 import { acquireRepoLease, countLiveExecutionLeases } from '../src/core/sandbox/execution-leases.js';
 import {
@@ -51,7 +53,7 @@ function git(dir: string, args: string[]): string {
 }
 
 /** `checkout`: what the shim does to `reset --hard`: pass, sleep first, or fail. */
-function installShim(checkout: 'slow' | 'fail'): void {
+function installShim(checkout: 'slow' | 'fail' | 'slow-fail'): void {
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   const script = join(shimDir, 'git');
   writeFileSync(script, [
@@ -59,7 +61,7 @@ function installShim(checkout: 'slow' | 'fail'): void {
     'for a in "$@"; do',
     '  if [ "$a" = "reset" ]; then',
     `    : > "${marker}"`,
-    checkout === 'fail' ? '    exit 1' : '    sleep 1.5',
+    checkout === 'fail' ? '    exit 1' : checkout === 'slow' ? '    sleep 1.5' : '    sleep 1.5; exit 1',
     '  fi',
     'done',
     `exec "${realGit}" "$@"`,
@@ -187,5 +189,33 @@ describe.skipIf(!posix)('sandbox creation: REGISTER fenced, POPULATE outside the
     const again = await acquireRepoLease(repo.dir, { waitMs: 1_000 });
     expect(again.ok).toBe(true);
     if (again.ok) again.lease.release();
+  }, TIMEOUT);
+
+  it('a rollback that cannot get the fence marks the sandbox abandoned so the sweep reclaims it', async () => {
+    installShim('slow-fail');
+    const creating = createSandboxAsync(repo.dir, { allowAnyRepo: true, fenceWaitMs: 500 });
+    const settled = creating.then(() => null, (e: Error) => e);
+    await waitFor(() => existsSync(marker));
+    // Hold the fence across the failed checkout's rollback.
+    const fence = acquireOutwardMutationFence(2_000);
+    expect(ownsOutwardMutationFence(fence)).toBe(true);
+    let error: Error | null;
+    try {
+      error = await settled;
+    } finally {
+      releaseOutwardMutationFence(fence);
+    }
+    expect(error?.message).toMatch(/git worktree checkout failed/u);
+    expect(readAudit().some((a) => a.action === 'sandbox:create' &&
+      /rollback deferred: outward mutation fence unavailable; marked abandoned/u.test(a.summary ?? ''))).toBe(true);
+    expect(countLiveExecutionLeases(null)).toBe(0);
+
+    // Owned by this live process, yet not stranded: the next sweep reclaims it.
+    const left = listSandboxes();
+    expect(left).toHaveLength(1);
+    expect(left[0]!.ownerPid).toBe(process.pid);
+    expect(left[0]!.abandonedAt).toEqual(expect.any(String));
+    expect(sweepOrphanSandboxes()).toEqual([left[0]!.id]);
+    expectNothingLeft();
   }, TIMEOUT);
 });
