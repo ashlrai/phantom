@@ -64,6 +64,12 @@ describe('autopilot plan', () => {
     // A test that prints the phrase mid-line keeps its failure its own.
     const printed = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: '  expected "Candidate tree differs from the original GitHub event tree" to equal ""' } });
     expect(plan(printed, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
+    // On its own timestamped line, the phrase counts only when the source binding step is what failed.
+    const ownLine = '2026-10-15T04:40:00.0000000Z Candidate tree differs from the original GitHub event tree';
+    const inTest = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: ownLine }, failedSteps: { 1: ['Run tests'] } });
+    expect(plan(inTest, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
+    const inBinding = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: ownLine }, failedSteps: { 1: ['Bind candidate source'] } });
+    expect(plan(inBinding, guards, emptyState())).toMatchObject({ action: 'rerun' });
   });
 
   it('merges the base on conflict before anything else, at most once per head and base', () => {

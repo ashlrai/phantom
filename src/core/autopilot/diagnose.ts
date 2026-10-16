@@ -78,6 +78,8 @@ export interface Observation {
    * or never runs (scheduled audits, post-merge lanes).
    */
   baseHistory: Record<string, string>;
+  /** Names of the steps that failed, per failing Actions job id; a job missing here is unknown. */
+  failedSteps?: Record<number, string[]>;
   /** Paths the PR changes (capped); empty when unknown. */
   files: string[];
   /** Log tails by check-run id, for failing runs only. Already scrubbed. */
@@ -145,10 +147,22 @@ const INFRA_PATTERNS: RegExp[] = [
   /npm ERR! (?:code (?:ECONNRESET|ETIMEDOUT|EAI_AGAIN)|network)/i,
   /\bAPI rate limit exceeded\b/i,
   /Error: The operation was canceled\./i,
-  // Phantom's CI refuses a run whose PR merge tree moved after the event (the base or head was pushed meanwhile).
-  // Anchored to the start of a log line, so a test that merely prints the phrase cannot turn its own failure into a re-run.
-  /^(?:\S+Z\s+)?(?:Error: )?Candidate tree differs from the original GitHub event tree/m,
 ];
+
+/**
+ * Phantom's CI refuses a run whose PR merge tree moved after the event (the
+ * base or head was pushed meanwhile). It counts only when the step that failed
+ * is the source binding, so a test that prints the phrase keeps its failure;
+ * when the failed steps are unknown, only a line that starts with it counts.
+ */
+const MOVED_TREE = /^(?:\S+Z\s+)?(?:Error: )?Candidate tree differs from the original GitHub event tree/m;
+const BINDING_STEP = /^Bind candidate source$/;
+
+function movedTree(check: CheckRun, log: string, failedSteps: Record<number, string[]> | undefined): boolean {
+  if (!MOVED_TREE.test(log)) return false;
+  const steps = failedSteps?.[check.id];
+  return steps === undefined || steps.some((s) => BINDING_STEP.test(s));
+}
 
 const isFailing = (c: CheckRun) => c.status === 'completed' && c.conclusion !== null && FAILING.has(c.conclusion);
 const isPassing = (c: CheckRun) => c.status === 'completed' && c.conclusion !== null && PASSING.has(c.conclusion);
@@ -165,7 +179,7 @@ export function latestByName(runs: readonly CheckRun[]): CheckRun[] {
 
 const DEPENDENCY_FILE = /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.(toml|lock)|go\.(mod|sum)|requirements[^/]*\.txt|poetry\.lock|uv\.lock|Gemfile(\.lock)?)$/;
 
-export function classifyFailure(check: CheckRun, obs: Pick<Observation, 'headChecks' | 'baseChecks' | 'logs' | 'baseHistory' | 'files'>): Failure {
+export function classifyFailure(check: CheckRun, obs: Pick<Observation, 'headChecks' | 'baseChecks' | 'logs' | 'baseHistory' | 'files' | 'failedSteps'>): Failure {
   const log = obs.logs[check.id] ?? '';
   const baseSame = latestByName(obs.baseChecks).find((c) => c.name === check.name);
   if (baseSame && isFailing(baseSame)) return { check, cause: 'base-red', why: `${check.name} is also red on the base branch head`, log };
@@ -179,6 +193,7 @@ export function classifyFailure(check: CheckRun, obs: Pick<Observation, 'headChe
     return { check, cause: 'base-red', why: `${check.name} failed but this PR changes no dependency manifest or lockfile (a new advisory affects the base too)`, log };
   }
   if (check.conclusion === 'startup_failure' || check.conclusion === 'stale') return { check, cause: 'infra', why: `${check.name} never started (${check.conclusion})`, log };
+  if (movedTree(check, log, obs.failedSteps)) return { check, cause: 'infra', why: `${check.name} was refused because the PR's merge tree moved after the event`, log };
   const infra = INFRA_PATTERNS.find((p) => p.test(log));
   if (infra) return { check, cause: 'infra', why: `${check.name} failed in the runner, not the code (${infra.source.slice(0, 60)})`, log };
   if (obs.headChecks.some((c) => c.name === check.name && c.id !== check.id && isPassing(c))) {

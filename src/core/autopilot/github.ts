@@ -104,6 +104,17 @@ export async function readJobLogTail(repo: string, jobId: number, gh: Gh = defau
   }
 }
 
+/** Names of the steps that failed in one Actions job; null when the job cannot be read. */
+export async function readFailedSteps(repo: string, jobId: number, gh: Gh = defaultGh): Promise<string[] | null> {
+  try {
+    const raw = obj(await api(gh, `repos/${assertRepo(repo)}/actions/jobs/${jobId}`));
+    return (Array.isArray(raw['steps']) ? raw['steps'] : []).map(obj)
+      .filter((st) => st['conclusion'] === 'failure').map((st) => str(st['name']).slice(0, 160));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Only people with write access steer the fixer. The repository is public: a
  * comment from anyone else is text an attacker chose, and the fixer acts on it.
@@ -187,9 +198,14 @@ export async function observe(repo: string, number: number, gh: Gh = defaultGh):
   for (const c of headChecks) if (!latest.has(c.name) || c.id > latest.get(c.name)!.id) latest.set(c.name, c);
   const failing = [...latest.values()].filter((c) => c.status === 'completed' && c.conclusion !== null && !['success', 'neutral', 'skipped'].includes(c.conclusion) && c.app === 'github-actions');
   const logs: Record<number, string> = {};
-  for (const c of failing.slice(0, 6)) logs[c.id] = await readJobLogTail(repo, c.id, gh);
+  const failedSteps: Record<number, string[]> = {};
+  for (const c of failing.slice(0, 6)) {
+    logs[c.id] = await readJobLogTail(repo, c.id, gh);
+    const steps = await readFailedSteps(repo, c.id, gh);
+    if (steps) failedSteps[c.id] = steps;
+  }
   const baseHistory = failing.length ? await readBaseHistory(repo, pr.baseRef, gh) : {};
-  return { pr, viewer, headChecks, baseChecks, baseHistory, files, logs, reviews, droppedReviews: dropped };
+  return { pr, viewer, headChecks, baseChecks, baseHistory, files, logs, failedSteps, reviews, droppedReviews: dropped };
 }
 
 /** Open PRs in `repo` authored by `viewer` from branches in the same repository whose name starts with one of `prefixes`. */
