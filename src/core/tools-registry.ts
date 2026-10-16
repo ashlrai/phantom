@@ -4,11 +4,17 @@
  * Probes each known tool via the platform PATH locator + a `--version` invocation
  * (version string). Fast, synchronous, and NEVER throws — a missing or broken
  * tool yields { installed: false, version: null, path: null }.
+ *
+ * A located file that is an npm bootstrap launcher (it installs or downloads
+ * the real tool even for `--version`) is never executed and is reported as not
+ * installed; detection is shared with `phm companions` (companion-inventory).
+ * The running ashlr binary itself is not a companion and is not listed.
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join, win32 } from 'node:path';
+import { existsSync } from 'node:fs';
+import { win32 } from 'node:path';
+import { companionExecutableKind } from './companion-inventory.js';
 import type { ToolInfo, ToolsRegistry } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -92,9 +98,9 @@ function findBinary(binary: string): string | null {
 }
 
 /**
- * Run a command and return its combined stdout+stderr as a trimmed string.
- * Returns null on any failure (non-zero exit, timeout, ENOENT, etc.).
- * Never throws.
+ * Run a command and return its trimmed stdout.
+ * Returns null on any failure (non-zero exit, timeout, ENOENT, etc.): output
+ * from a failed probe is never parsed as a version. Never throws.
  */
 function runVersionCmd(args: string[]): string | null {
   if (args.length === 0) return null;
@@ -104,19 +110,10 @@ function runVersionCmd(args: string[]): string | null {
       encoding: 'utf8',
       timeout: VERSION_TIMEOUT_MS,
       killSignal: PROBE_KILL_SIGNAL,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return stdout.trim() || null;
-  } catch (err: unknown) {
-    // execFileSync throws on non-zero exit; stderr is often in err.stderr
-    if (err !== null && typeof err === 'object') {
-      const e = err as { stderr?: unknown; stdout?: unknown };
-      const combined = [e.stdout, e.stderr]
-        .map((v) => (typeof v === 'string' ? v.trim() : ''))
-        .filter(Boolean)
-        .join('\n');
-      return combined || null;
-    }
+    return stdout.trim();
+  } catch {
     return null;
   }
 }
@@ -157,31 +154,6 @@ function probeAppPath(appPaths: string[]): string | null {
   return null;
 }
 
-/**
- * Try to read a version from a local package.json for the ashlr-hub binary,
- * walking up from the resolved executable's location.
- * Returns null on any failure.
- */
-function ashlrHubVersionFromPackageJson(resolvedPath: string | null): string | null {
-  if (!resolvedPath) return null;
-  // The binary lives at <root>/bin/ashlr; package.json is at <root>/package.json
-  // Try a few levels up.
-  let dir = resolvedPath;
-  for (let i = 0; i < 5; i++) {
-    const parent = join(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-    try {
-      const raw = readFileSync(join(dir, 'package.json'), 'utf8');
-      const pkg = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof pkg['version'] === 'string') return pkg['version'];
-    } catch {
-      // keep climbing
-    }
-  }
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // Tool catalogue
 // ---------------------------------------------------------------------------
@@ -203,13 +175,12 @@ const TOOL_SPECS: ToolSpec[] = [
     parseVersion: extractSemver,
   },
 
-  // ── ashlr-hub (this binary) ───────────────────────────────────────────────
+  // ── lexicon (voice correction CLI) ────────────────────────────────────────
   {
-    id: 'ashlr-hub',
-    name: 'ashlr-hub',
-    binaries: ['ashlr'],
-    // `ashlr --version` may work; if not, probeTool falls back to package.json.
-    // No parseVersion override needed — probeTool defaults to extractSemver.
+    id: 'lexicon',
+    name: 'Lexicon (voice lexicon)',
+    binaries: ['lexicon'],
+    parseVersion: extractSemver,
   },
 
   // ── ashlrcode CLI ─────────────────────────────────────────────────────────
@@ -224,10 +195,12 @@ const TOOL_SPECS: ToolSpec[] = [
   },
 
   // ── ashlr-plugin (Claude Code MCP plugin) ─────────────────────────────────
+  // Not `ashlr`: that is the running hub binary, and probing it here counted
+  // the hub itself as an installed companion.
   {
     id: 'ashlr-plugin',
     name: 'ashlr-plugin (Claude Code MCP)',
-    binaries: ['ashlr', 'ashlr-plugin'],
+    binaries: ['ashlr-plugin'],
     parseVersion: extractSemver,
   },
 
@@ -325,6 +298,13 @@ function probeTool(spec: ToolSpec): ToolInfo {
     return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
   }
 
+  // A bootstrap launcher installs or downloads the real tool even for
+  // `--version` (e.g. the npm locus-cli launcher runs `cargo install`). Never
+  // execute it; it is not an installed tool.
+  if (companionExecutableKind(resolvedPath) === 'bootstrap') {
+    return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
+  }
+
   // 2. Version probe.
   let version: string | null = null;
 
@@ -333,15 +313,12 @@ function probeTool(spec: ToolSpec): ToolInfo {
     // different file. Windows script shims fail closed because no shell is used.
     const args: string[] = spec.versionArgs ?? [resolvedPath, '--version'];
     const raw = runVersionCmd(args);
-
+    // A failed probe (non-zero exit, timeout, spawn error) is not an install.
+    if (raw === null) {
+      return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
+    }
     if (raw) {
       version = spec.parseVersion ? spec.parseVersion(raw) : extractSemver(raw);
-    }
-
-    // Special case: ashlr-hub / ashlr-plugin share the `ashlr` binary, whose
-    // `--version` may be unsupported; fall back to a nearby package.json.
-    if (!version && (spec.id === 'ashlr-hub' || spec.id === 'ashlr-plugin')) {
-      version = ashlrHubVersionFromPackageJson(resolvedPath);
     }
   }
 
@@ -365,8 +342,8 @@ function probeTool(spec: ToolSpec): ToolInfo {
  * Detect installed ecosystem tools + versions via PATH lookup + --version or
  * filesystem presence for desktop app tools (e.g. ashlr-md .app bundle).
  * Fast and NEVER throws — a missing tool yields { installed:false, version:null,
- * path:null }. Detects: phantom, locus, ashlr/ashlr-plugin, stack, pulse/pulse-agent,
- * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app), ashlr-hub.
+ * path:null }. Detects: phantom, locus, lexicon, ashlr-plugin, stack, pulse/pulse-agent,
+ * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app).
  */
 export function getToolsRegistry(): ToolsRegistry {
   const tools: ToolInfo[] = [];

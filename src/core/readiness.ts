@@ -605,7 +605,7 @@ function locusSnapshotFromReport(probe: LocusProbeResult): ReadinessLocusSnapsho
 
 /** Install/setup fix for the Locus identity plane (no secrets). */
 const LOCUS_INSTALL_FIX =
-  'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)';
+  'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)';
 const LOCUS_PIN_FIX =
   'locus enter <alias> && locus agent setup --apply --client all';
 

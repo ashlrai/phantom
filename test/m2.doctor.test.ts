@@ -849,7 +849,7 @@ describe('runDoctor — fix hints', () => {
     expect(hasFix).toBe(true);
     expect(report.checks.find(c => c.id === 'phantom')).toMatchObject({
       label: 'Phantom Secrets CLI (phantom)',
-      fix: 'Install Phantom Secrets (phantom): https://github.com/ashlrai/phantom-secrets#installation',
+      fix: 'Install Phantom Secrets (phantom): https://github.com/ashlrai/phantom-secrets#install',
     });
   });
 });

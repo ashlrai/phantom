@@ -58,7 +58,7 @@ Skip for a solo monorepo that only needs occasional local autonomy.
 # Prefer package manager when available
 brew install ashlrai/tap/locus
 # or
-cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked
+cargo install --git https://github.com/ashlrai/locus locus-cli --locked
 
 locus --version
 locus init --with-samples   # or your firm binding pack
