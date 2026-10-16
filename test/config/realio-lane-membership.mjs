@@ -196,6 +196,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-review-benchmark.test.ts', // fixed calibration through real ledger and loopback transport
   'test/resource-pool-cli.test.ts', // explicit private manifests and CLI output files
   'test/resource-codex-account-probe.test.ts', // native metadata protocol and owned subprocess cleanup
+  'test/role-completion.test.ts', // Mac cases launch a fixture app-server, the metadata helper and a sandboxed exec child (~2.9 s on Mac CI)
   'test/codex-selected-producer.test.ts', // real pinned inert Codex processes, private login copies and captured Git edits
   'test/resource-probe-cli.test.ts', // private commissioning reports and signal ownership
   'test/resource-quota-console.test.ts', // actual foreground collector, HTTP and subprocess lifecycle
