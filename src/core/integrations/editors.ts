@@ -36,7 +36,16 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fsyncDirectory } from '../util/durability.js';
 import { isOwnGatewayEntry, legacyGatewayKeys } from './gateway-entry.js';
 
-export type EditorTarget = 'claude' | 'codex' | 'cursor';
+/** Targets `wire` can write. */
+export type WritableEditorTarget = 'claude' | 'codex' | 'cursor';
+/**
+ * Every client `wire status` can report. `gemini` is status-only for now:
+ * Gemini CLI reads MCP servers from `mcpServers` in ~/.gemini/settings.json
+ * (https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
+ */
+export type EditorTarget = WritableEditorTarget | 'gemini';
+export const WRITABLE_EDITOR_TARGETS: readonly WritableEditorTarget[] = ['claude', 'codex', 'cursor'];
+export const ALL_EDITOR_TARGETS: readonly EditorTarget[] = ['claude', 'codex', 'cursor', 'gemini'];
 
 export const ASHLR_HUB_MCP_SERVER = 'ashlr-hub';
 const MAX_COMMAND_OUTPUT_BYTES = 256 * 1024;
@@ -52,12 +61,14 @@ const DEFAULT_CONFIG_PATHS: Record<EditorTarget, string> = {
   claude: join(HOME, '.claude.json'),
   codex: join(HOME, '.codex', 'config.toml'),
   cursor: join(HOME, '.cursor', 'mcp.json'),
+  gemini: join(HOME, '.gemini', 'settings.json'),
 };
 
 const DETECTION_PATHS: Record<EditorTarget, string[]> = {
   claude: [join(HOME, '.claude'), join(HOME, '.claude.json')],
   codex: [join(HOME, '.codex')],
   cursor: [join(HOME, '.cursor')],
+  gemini: [join(HOME, '.gemini')],
 };
 
 interface McpServerEntry {
@@ -728,6 +739,7 @@ const EDITOR_BINARIES: Record<EditorTarget, string> = {
   claude: 'claude',
   codex: 'codex',
   cursor: 'cursor',
+  gemini: 'gemini',
 };
 
 export interface DetectEditorsOptions {
@@ -737,6 +749,8 @@ export interface DetectEditorsOptions {
   pathEnv?: string;
   /** Platform used for executable suffixes (defaults to process.platform). */
   platform?: NodeJS.Platform;
+  /** Include status-only clients (gemini). Used by `wire status`, never by `wire`. */
+  includeStatusOnly?: boolean;
 }
 
 function isRegularFile(candidate: string): boolean {
@@ -779,9 +793,11 @@ export function detectEditors(opts: DetectEditorsOptions = {}): string[] {
           claude: [join(home, '.claude'), join(home, '.claude.json')],
           codex: [join(home, '.codex')],
           cursor: [join(home, '.cursor')],
+          gemini: [join(home, '.gemini')],
         };
   const detected: string[] = [];
-  const targets: EditorTarget[] = ['claude', 'codex', 'cursor'];
+  // Only writable targets: `wire` with no target must never try a read-only client.
+  const targets: readonly EditorTarget[] = opts.includeStatusOnly ? ALL_EDITOR_TARGETS : WRITABLE_EDITOR_TARGETS;
   for (const target of targets) {
     if (
       detectionPaths[target].some(configPath => existsSync(configPath)) ||
@@ -844,6 +860,7 @@ export function inspectEditorWiring(
   const detected = detectEditors({
     ...(opts.home !== undefined ? { home: opts.home } : {}),
     ...(opts.pathEnv !== undefined ? { pathEnv: opts.pathEnv } : {}),
+    includeStatusOnly: true,
   }).includes(target);
   const status: EditorWiringStatus = {
     target,
@@ -893,6 +910,12 @@ export async function wireEditor(
   opts: WireEditorOptions,
 ): Promise<{ ok: boolean; detail: string }> {
   const configPath = opts.configPath ?? DEFAULT_CONFIG_PATHS[target];
+  if (target === 'gemini') {
+    return {
+      ok: false,
+      detail: 'gemini is status-only for now; run `wire status gemini` to inspect it. No file was changed.',
+    };
+  }
   try {
     if (target === 'codex') {
       return await wireCodex(configPath, opts.runCommand ?? defaultCommandRunner);

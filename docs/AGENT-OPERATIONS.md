@@ -128,6 +128,8 @@ example `phm wire claude --config /tmp/x/.claude.json` or
 
 `phm wire status [claude|codex|cursor|all] [--config <path>] [--json]` is read-only: for each client it reports the config path, whether the client is detected, whether the `ashlr-hub` entry is registered, whether it matches what `wire` writes, and whether a `<config>.bak` exists. It reports all three clients unless one is named, never writes or creates files, never runs a vendor CLI (Codex is read from `config.toml`), and never prints entry env values. Exit code 1 means a config could not be read or parsed.
 
+`phm wire status gemini` (also included in the default all-client report) reads Gemini CLI's `mcpServers` object from `~/.gemini/settings.json` ([source](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md)). Gemini is status-only for now: `phm wire gemini` refuses and changes nothing, and `phm wire` with no target never includes it. A write path will be dry-run by default with a backup.
+
 The Codex check matches `[mcp_servers.ashlr-hub]` in `config.toml` with line-based regexes, not a TOML parser. An entry that uses multi-line `args` or an inline table is reported as `wired, entry differs` even if it is equivalent; re-run `phm wire codex` or inspect it with `codex mcp get ashlr-hub --json`.
 
 ### Daemon
