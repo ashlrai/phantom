@@ -280,6 +280,20 @@ describe('list', () => {
     expect(out).not.toContain(home);
   });
 
+  it('shows the companion tools a report names, and nothing when it names none', async () => {
+    const h = harness();
+    h.tasks = [
+      task({ state: 'pr-open', title: 'With tools', report: { status: 'done', summary: 'Done.', testsRun: [], risks: [], toolsUsed: ['phantom_check'] } }),
+      task({ state: 'pr-open', title: 'No tools', report: { status: 'done', summary: 'Done.', testsRun: [], risks: [], toolsUsed: [] } }),
+      task({ state: 'pr-open', title: 'Old report', report: { status: 'done', summary: 'Done.', testsRun: [], risks: [] } }),
+    ];
+    expect(await runCloudCli(['list'], h.deps)).toBe(0);
+    const out = text(h.out);
+    expect(out).toContain('Companion tools: phantom_check');
+    expect(out).toContain('Companion tools: none called');
+    expect(out.match(/Companion tools:/g)).toHaveLength(2);
+  });
+
   it('explains an empty list', async () => {
     const h = harness();
     await runCloudCli(['list'], h.deps);

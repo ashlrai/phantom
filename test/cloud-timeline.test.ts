@@ -245,6 +245,15 @@ describe('buildCloudTimeline — the session report is a claim', () => {
     expect(s.checks!.detail).toContain('are its own claim');
   });
 
+  it('names the companion tools the session says it called, only when it reported them', () => {
+    const used = byKind(buildCloudTimeline(sources({ task: task({ state: 'pr-open', pr: openPr, report: { ...report, toolsUsed: ['phantom_check', 'locus_whoami'] } }) }), NOW).steps);
+    expect(used.report!.detail).toContain('Companion tools it says it called: phantom_check, locus_whoami.');
+    const none = byKind(buildCloudTimeline(sources({ task: task({ state: 'pr-open', pr: openPr, report: { ...report, toolsUsed: [] } }) }), NOW).steps);
+    expect(none.report!.detail).toContain('It says it called no companion tools.');
+    const absent = byKind(buildCloudTimeline(sources({ task: task({ state: 'pr-open', pr: openPr, report }) }), NOW).steps);
+    expect(absent.report!.detail).not.toMatch(/companion/i);
+  });
+
   it('scrubs secrets out of report text', () => {
     const leaky = { ...report, summary: `Used sk-ant-${'x'.repeat(30)} to test.` };
     const s = byKind(buildCloudTimeline(sources({ task: task({ state: 'pr-open', pr: openPr, report: leaky }) }), NOW).steps);
