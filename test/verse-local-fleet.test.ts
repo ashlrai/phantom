@@ -136,7 +136,23 @@ describe('deriveLocalFleetConcurrency — parallelism derives from measured slot
   it.each([33, 64, 128, Number.MAX_SAFE_INTEGER])('preserves %s measured slots without a product ceiling', (slots) => {
     const derived = deriveLocalFleetConcurrency(capacity({ slots }), null);
     expect(derived).toMatchObject({ slots, effective: slots, limiter: 'serving-slots' });
-    expect(derived.reason).toContain(`${slots} slot(s)`);
+    expect(derived.reason).toContain(`${slots} slots`);
+    expect(derived.reason).not.toContain('slot(s)');
+  });
+
+  // Reasons are operator-facing sentences: the noun is pluralised by the count
+  // at the source, never "N slot(s)". Machine fields (slots/effective) are unchanged.
+  it('pluralises the runtime slot count in every reason', () => {
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), null).reason)
+      .toBe("derived from the serving runtime's 1 slot; no operator cap configured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 2 }), null).reason)
+      .toBe("derived from the serving runtime's 2 slots; no operator cap configured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 4 }), 2).reason)
+      .toBe("operator cap 2 is below the runtime's 4 slots");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), 3).reason)
+      .toContain("exceeds the runtime's 1 slot and is NOT honoured");
+    expect(deriveLocalFleetConcurrency(capacity({ slots: 1 }), null, { fenceSerialized: true }).reason)
+      .toContain("the runtime's 1 slot cannot be used");
   });
 
   it.each([NaN, Infinity, -Infinity, -1, 0, 33.5, Number.MAX_SAFE_INTEGER + 1])('rejects malformed measured slot count %s', (slots) => {
@@ -214,6 +230,12 @@ describe('capacityFromRuntimeSnapshot — adapting the runtime lane answer', () 
     expect(observed.slots).toBe(4);
     expect(observed.busySlots).toBe(1);
     expect(observed.endpoint).toBe('127.0.0.1:8080');
+  });
+
+  it('words the up detail as a pluralised sentence, never "slot(s)"', () => {
+    expect(capacityFromRuntimeSnapshot(runtimeSnapshot()).detail).toBe('llama-server up with 4 slots (source=props)');
+    const one = runtimeSnapshot({ slots: { configured: 1, busy: 0, idle: 1, source: 'props' } });
+    expect(capacityFromRuntimeSnapshot(one).detail).toBe('llama-server up with 1 slot (source=props)');
   });
 
   it('never publishes a URL, only host:port', () => {
