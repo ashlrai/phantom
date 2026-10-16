@@ -362,3 +362,5 @@ docs/
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module map and the autonomous loop.
+
+<!-- ci test: docs-only run for PR 811, will be closed -->
