@@ -17,6 +17,21 @@ const scratch: string[] = [];
 const handles: Handle[] = [];
 const sha256 = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const UNIVERSE_ID = 'same-console-universe';
+// The only controller pass holds a paused campaign (attempted: false, no
+// runs); no Universe run or evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'console-acceptance-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 
 function temporary(): string {
   const path = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-console-acceptance-')));
@@ -38,7 +53,7 @@ function fixture(marker: string) {
   initUniverse({ schemaVersion: 1, id: UNIVERSE_ID, name: marker, objective: `Observe ${marker} without running work`,
     seed: { repo, revision }, metric: { name: 'measured', direction: 'maximize', minImprovement: 1 },
     budget: { maxTrials: 1, maxParallel: 1, maxDurationMs: 10_000, trialTimeoutMs: 1_000 },
-    evaluation: { command: [process.execPath, 'never-run.mjs'], timeoutMs: 1_000 },
+    evaluation: { command: [pinnedEvaluator, 'never-run.mjs'], timeoutMs: 1_000 },
     variants: [{ id: 'inert', niche: 'scope', hypothesis: marker, command: [process.execPath, 'never-run.mjs'] }] }, { root });
   initUniverseCampaign({ schemaVersion: 1, id: 'same-console-campaign', universeId: UNIVERSE_ID, feedback: false,
     budget: { maxGenerations: 1, maxDurationMs: 10_000, maxModelRequests: 0, maxStagnantGenerations: 1, maxReportedTokens: null } }, { root });

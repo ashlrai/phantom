@@ -8,7 +8,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { artifactDigest, copyArtifact, digest, freezeArtifact } from '../src/core/universe/artifacts.js';
 import { resolveBuiltinEvaluator } from '../src/core/universe/builtin-evaluator-registry.js';
 import { deliverCompletedUniverseCampaign } from '../src/core/universe/campaign-delivery.js';
@@ -34,14 +34,27 @@ const scoreOutput = (score: number, passed = true): string => JSON.stringify({ p
   metrics: { preparation_processes: score, baseline_processes: 150, candidate_processes: score,
     process_delta: score - 150, improved: passed && score < 150 ? 1 : 0 } });
 
+// The evaluator below is mocked and never launches its pinned executable, so the
+// pin is a tiny inert script rather than the ~100 MB node binary: the real store
+// still freshly hashes and compares these bytes on every comparator check, but
+// each check no longer re-reads the whole node runtime.
+let inertRoot = '';
+let inertEvaluator = '';
+beforeAll(() => {
+  inertRoot = realpathSync(mkdtempSync(join(tmpdir(), 'calibrated-campaign-evaluator-')));
+  inertEvaluator = join(inertRoot, 'inert-evaluator');
+  writeFileSync(inertEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { rmSync(inertRoot, { recursive: true, force: true }); });
+
 beforeEach(() => {
   vi.mocked(readKillSwitch).mockReturnValue({ state: 'inactive', sourceState: 'healthy' } as ReturnType<typeof readKillSwitch>);
   // No score installation is fabricated. The isolated registry transport is a
   // fixed synthetic pin whose executable bytes remain independently checked by
   // the real store; the fixed evaluator below never launches it.
-  const nodeDigest = digest(readFileSync(process.execPath));
+  const inertDigest = digest(readFileSync(inertEvaluator));
   vi.mocked(resolveBuiltinEvaluator).mockReturnValue({ id: 'preparation-process-score-v1', digest: 'a'.repeat(64),
-    executableDigest: nodeDigest, command: [process.execPath, '-e', 'throw new Error("inert evaluator must not execute")'],
+    executableDigest: inertDigest, command: [inertEvaluator, '-e', 'throw new Error("inert evaluator must not execute")'],
     files: [], tools: [], git: { path: '/usr/bin/git', digest: 'b'.repeat(64) } });
   evaluator.mockImplementation(async (...args) => {
     args[9]?.();
@@ -83,7 +96,7 @@ function fixture(minImprovement = 1, maxGenerations = 1, configuration: {
     // The closed process scorer permits minimize only. Generic maximize proof
     // coverage uses a synthetic command evaluator, not a forged scorer policy.
     evaluation: configuration.direction === 'maximize'
-      ? { command: [process.execPath, '-e', 'void 0'], timeoutMs: 1000 }
+      ? { command: [inertEvaluator], timeoutMs: 1000 }
       : { builtin: 'preparation-process-score-v1', timeoutMs: 1000 },
     variants: [{ id: 'change', niche: 'processes', hypothesis: 'Batch immutable reads', command: [process.execPath, '-e', 'void 0'] }] };
   initUniverse(manifest, { root });

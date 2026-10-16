@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import { validateResourcePool } from '../src/core/resources/pool-policy.js';
 import { validateResourceBindings } from '../src/core/resources/worker.js';
@@ -14,6 +14,21 @@ import type { ResourceEngineeringRecipe } from '../src/core/resources/engineerin
 import * as campaignStore from '../src/core/universe/campaign-store.js';
 
 const roots: string[] = [];
+// Preparation only plans and registers; no Universe run or evaluator launch
+// is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'engineering-preparation-boundaries-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 afterEach(() => {
   vi.restoreAllMocks();
   const writable = (file: string): void => {
@@ -68,7 +83,7 @@ function fixture() {
 function recipe(f: ReturnType<typeof fixture>): ResourceEngineeringRecipe {
   return { schemaVersion: 1, id: 'boundary-plan', name: 'Private preparation fixture', objective: 'Measure an explicitly bounded value',
     projectId: 'default', seedRevision: f.revision, metric: { name: 'value', direction: 'maximize', minImprovement: 0 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1000 },
     trialBudget: { maxTrials: 1, maxParallel: 1, maxDurationMs: 20_000, trialTimeoutMs: 10_000 },
     campaignBudget: { maxGenerations: 1, maxDurationMs: 40_000, maxModelRequests: 1, maxStagnantGenerations: 1, maxReportedTokens: 500 },
     generation: { files: ['value.json'], contextFiles: [], allowedWorkerIds: ['fixture-worker'], maxOutputTokens: 128,
