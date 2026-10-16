@@ -69,6 +69,7 @@ import {
 // creates NO import cycle (re-verified by an H6 [STATIC] test). Metadata only:
 // action verb + repo abs path (a path is NOT a secret) + 'ok'.
 import { audit } from './audit.js';
+import { assertCortexAdmission, type CortexAdmissionPurpose, type CortexAdmissionToken } from '../cortex/admission.js';
 
 // ---------------------------------------------------------------------------
 // Path helpers (re-resolved at call time so tests can relocate HOME)
@@ -2207,4 +2208,16 @@ export function assertMayMutate(
     throw new Error(`repo not enrolled for autonomous work: ${canonicalEnrollmentPath(repo) ?? resolve(repo)}` +
       (lenses.length > 0 ? ` (enrollment narrowed to: ${lenses.join('; ')})` : ''));
   }
+}
+
+/** Explicit foreground producer/verification admission; generic enrollment is unchanged.
+ * An invalid explicit capability never falls back to a machine-wide enrollment.
+ */
+export function assertMayExecuteWithCortexAdmission(repo: string,
+  opts?: { allowAnyRepo?: boolean; cortexAdmission?: CortexAdmissionToken }, purpose: CortexAdmissionPurpose = 'produce'): void {
+  if (opts?.cortexAdmission === undefined) return assertMayMutate(repo, opts);
+  if (killSwitchOn()) throw new Error('autonomy kill switch is ON');
+  const canonical = canonicalEnrollmentPath(repo);
+  if (canonical !== repo || !lensAdmits(repo)) throw new Error('Cortex foreground repository is outside the current enrollment lens');
+  assertCortexAdmission(repo, opts.cortexAdmission, purpose);
 }

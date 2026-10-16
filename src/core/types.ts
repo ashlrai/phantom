@@ -2249,6 +2249,8 @@ export interface ProviderInferenceQuotaSession {
 
 /** Options accepted by `runGoal` / the `ashlr run` CLI. */
 export interface RunOptions {
+  /** Opaque foreground Cortex producer authority; never serialized or passed to a model. */
+  cortexAdmission?: import('./cortex/admission.js').CortexAdmissionToken;
   /** Optional caller-owned cancellation signal for this run. */
   signal?: AbortSignal;
   /**

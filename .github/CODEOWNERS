@@ -129,6 +129,8 @@
 /docs/**/*AUTHORITY* @masonwyatt23
 /docs/**/*authority* @masonwyatt23
 # tier1-authority-code: Tier-1 authority code: the fleet may never change the code that decides what the fleet may do
+/src/core/cortex/** @masonwyatt23
+/src/cli/cortex.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
 /src/core/integrations/locus.ts @masonwyatt23
 /src/core/vision/leader-display-text.ts @masonwyatt23
@@ -264,6 +266,9 @@
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
 /test/confine-autonomous-310b.test.ts @masonwyatt23
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
+/test/cortex-admission.test.ts @masonwyatt23
+/test/cortex-bridge.test.ts @masonwyatt23
+/test/cortex-codex-native-sandbox.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23

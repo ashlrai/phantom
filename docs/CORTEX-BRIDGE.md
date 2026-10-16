@@ -21,9 +21,12 @@ signing private key onto the worker. The token's current organization membership
 and workstream permissions are checked by Cortex on every request.
 
 Create an owned private directory for bridge records and a private JSON
-configuration (mode `0600`). Paths must be absolute physical paths without
+configuration (mode `0600`, with an owned `0700` parent directory). Paths must be absolute physical paths without
 symlink aliases. Repository mapping is explicit; a server cannot choose arbitrary
-local paths. Example values below are fictional:
+local paths. The configuration, its admission sidecar and the records directory
+must be outside the execution repository. Current foreground admission supports
+one Company-only repository per configuration on POSIX systems; Windows ACL
+assurance is not implemented. Example values below are fictional:
 
 ```json
 {
@@ -53,7 +56,7 @@ local paths. Example values below are fictional:
 
 `runtimes` must be exactly `["codex"]` for the current Cortex engineering queue.
 Claude Code is not admitted by this bridge. Runtime authentication, repository
-enrollment and normal Phantom KILL/policy checks remain required. The mapped
+admission and normal Phantom KILL/policy checks remain required. The mapped
 repository must have the signed GitHub origin, a clean worktree, and HEAD equal
 to the assignment's exact source commit. A signed assignment permits at most
 32 allowed-file patterns of 220 characters each on this worker. Changes to
@@ -88,6 +91,40 @@ Check the configuration offline:
 ```sh
 phm cortex check --config /absolute/private/cortex.json --json
 ```
+
+Checking never creates authority. Before the first execution, explicitly admit
+this exact private configuration, local repository/source and installed bridge:
+
+```sh
+phm cortex admit --config /absolute/private/cortex.json --execute --json
+```
+
+This writes an owner-private `.cortex.json.cortex-admission.json` sidecar beside
+the example configuration. It does not add the repository to shared Phantom
+enrollment, alter standing authority or global configuration, enable a daemon,
+or start execution. Ambient workers, MCP and ordinary inbox/apply/merge paths
+cannot use this admission. Only an explicit `cortex once` invocation can activate
+runtime-opaque, purpose-bound producer and independent-verification capabilities
+for one valid signed Company assignment. Ordinary enrollment readers and mutation
+checks are unchanged, and global KILL and any inherited restrictive enrollment
+lens still apply.
+
+The record binds configuration bytes and file identity, private storage-directory
+identities, the repository's physical root and Git common directory, exact HEAD
+and origin, and the bridge implementation/release identity. Source upgrades,
+configuration changes or replacements invalidate admission; they are not silently
+accepted even if a repository also happens to be globally enrolled. Revoke the
+old record and explicitly admit again after reviewing changes:
+
+```sh
+phm cortex revoke --config /absolute/private/cortex.json --execute --json
+```
+
+Revocation does not remove shared enrollment or standing grants. It invalidates
+active bridge capabilities and signals the producer to stop; scopes also close
+when the foreground owner exits, including detached asynchronous descendants.
+These checks provide cooperative operator/source continuity, not protection
+against a hostile process with the same operating-system identity or root access.
 
 With the worker token supplied in the selected environment variable by the
 operator's secret manager, explicitly execute one prepared request:

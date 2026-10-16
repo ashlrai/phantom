@@ -1,23 +1,20 @@
 /** One foreground Cortex assignment. Remote instructions never confer merge authority. */
 import { execFileSync } from 'node:child_process';
-import { createHash, createPublicKey } from 'node:crypto';
-import { constants, closeSync, fstatSync, mkdirSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { acquireProposalMutationLock, releaseProposalMutationLock, type ProposalMutationLock } from '../inbox/proposal-mutation-lock.js';
-import { parseEngineeringAssignmentV1, type EngineeringAssignmentV1, type EngineeringAssignmentVerifier } from './engineering-assignment.js';
+import { parseEngineeringAssignmentV1, type EngineeringAssignmentV1 } from './engineering-assignment.js';
 import { assertNoCortexProjectConfig, cortexCodexConfig } from './codex-policy.js';
+import { assertCortexAdmission, inspectCortexAdmission, withCortexForegroundAdmission, type CortexAdmissionToken } from './admission.js';
 import type { AshlrConfig, Proposal, RunOptions, RunState } from '../types.js';
 
-export interface CortexBridgeConfig {
-  schemaVersion: 1; url: string; organizationId: string; tokenEnv: string; root: string;
-  verifier: EngineeringAssignmentVerifier;
-  repositories: Array<{ repository: string; path: string; workstreams: EngineeringAssignmentV1['workstream'][] }>;
-  runtimes: Array<'codex'>;
-  budget: { maxTokens: number; maxSteps: number; allowCloud: boolean };
-}
+export { parseCortexBridgeConfig, readCortexBridgeConfig } from './config.js';
+export type { CortexBridgeConfig } from './config.js';
+import { parseCortexBridgeConfig, type CortexBridgeConfig } from './config.js';
 export interface BridgeReceipt {
   protocol: 'ashlr-engineering-receipt/v1'; assignmentDigest: string; runId: string; sourceCommit: string;
   proposalId: string; proposalStatus: 'pending'; summary: string;
@@ -27,52 +24,10 @@ export interface BridgeReceipt {
 }
 type Json = Record<string, unknown>;
 const record = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v);
-const keys = (v: Json, names: string[]): boolean => Object.keys(v).sort().join(',') === names.sort().join(',');
 const id = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,159}$/.test(v);
 const hash = (v: string): string => createHash('sha256').update(v).digest('hex');
 const integer = (v: unknown, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= 1 && (v as number) <= max;
-const workstreams = ['personal', 'company', 'govcon', 'commercial'];
 function requireFact(value: unknown, reason: string): asserts value { if (!value) throw new Error(reason); }
-
-export function parseCortexBridgeConfig(raw: unknown): CortexBridgeConfig {
-  requireFact(record(raw) && keys(raw, ['schemaVersion', 'url', 'organizationId', 'tokenEnv', 'root', 'verifier', 'repositories', 'runtimes', 'budget']), 'Invalid Cortex configuration');
-  requireFact(raw.schemaVersion === 1 && id(raw.organizationId) && typeof raw.url === 'string' &&
-    typeof raw.tokenEnv === 'string' && /^CORTEX_[A-Z0-9_]{0,80}TOKEN$/.test(raw.tokenEnv) &&
-    typeof raw.root === 'string' && isAbsolute(raw.root), 'Invalid Cortex identity or storage');
-  const url = new URL(raw.url);
-  requireFact(url.protocol === 'https:' && !url.username && !url.password && raw.url === url.origin, 'Cortex requires an exact HTTPS origin');
-  requireFact(record(raw.verifier) && keys(raw.verifier, ['issuer', 'audience', 'publicKeys']) &&
-    id(raw.verifier.issuer) && id(raw.verifier.audience) && record(raw.verifier.publicKeys) &&
-    Object.keys(raw.verifier.publicKeys).length >= 1 && Object.keys(raw.verifier.publicKeys).length <= 8 &&
-    Object.entries(raw.verifier.publicKeys).every(([key, pem]) => id(key) && typeof pem === 'string' && pem.length <= 4000 &&
-      pem.startsWith('-----BEGIN PUBLIC KEY-----\n')), 'Invalid Cortex public key pin');
-  for (const pem of Object.values(raw.verifier.publicKeys)) {
-    const publicKey = createPublicKey(pem as string);
-    requireFact(publicKey.asymmetricKeyType === 'ed25519' && publicKey.export({ format: 'pem', type: 'spki' }).toString() === pem, 'Cortex key pin must be canonical public Ed25519');
-  }
-  requireFact(Array.isArray(raw.repositories) && raw.repositories.length >= 1 && raw.repositories.length <= 32 && raw.repositories.every(row =>
-    record(row) && keys(row, ['repository', 'path', 'workstreams']) && typeof row.repository === 'string' &&
-    /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(row.repository) &&
-    typeof row.path === 'string' && isAbsolute(row.path) && Array.isArray(row.workstreams) && row.workstreams.length >= 1 &&
-    row.workstreams.every(v => workstreams.includes(String(v)))), 'Invalid Cortex repository map');
-  requireFact(new Set(raw.repositories.map(v => v.repository)).size === raw.repositories.length, 'Duplicate Cortex repository');
-  requireFact(Array.isArray(raw.runtimes) && raw.runtimes.length === 1 && raw.runtimes[0] === 'codex', 'Cortex engineering assignments currently require Codex only');
-  requireFact(record(raw.budget) && keys(raw.budget, ['maxTokens', 'maxSteps', 'allowCloud']) &&
-    integer(raw.budget.maxTokens, 200_000) && integer(raw.budget.maxSteps, 40) && typeof raw.budget.allowCloud === 'boolean', 'Invalid Cortex budget');
-  return raw as unknown as CortexBridgeConfig;
-}
-
-/** Never accepts a symlink or a shared-readable configuration containing local identity. */
-export function readCortexBridgeConfig(path: string): CortexBridgeConfig {
-  requireFact(isAbsolute(path), 'Cortex configuration requires an absolute path');
-  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  try {
-    const stat = fstatSync(fd);
-    requireFact(stat.isFile() && stat.nlink === 1 && stat.size <= 64 * 1024 &&
-      (process.getuid === undefined || stat.uid === process.getuid()) && (process.platform === 'win32' || (stat.mode & 0o077) === 0), 'Cortex configuration must be private');
-    return parseCortexBridgeConfig(JSON.parse(readFileSync(fd, 'utf8')));
-  } finally { closeSync(fd); }
-}
 
 function git(path: string, args: string[]): string {
   return execFileSync('git', ['-C', path, ...args], { encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
@@ -126,12 +81,14 @@ export function validateCortexProposalDiff(diff: string, assignment: Engineering
 }
 
 export interface BridgeHost {
+  /** Actual owner-private file. Parsed or host-injected objects are not admission proof. */
+  configPath?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   execute?(objective: string, config: AshlrConfig, options: RunOptions): Promise<RunState>;
   loadConfig?(): AshlrConfig;
   correlate?(run: RunState, repo: string, workItemId: string, config: AshlrConfig): Proposal;
-  verify?(proposal: Proposal, config: AshlrConfig): Promise<{ passed: boolean; commands: string[]; baseHead?: string }>;
+  verify?(proposal: Proposal, config: AshlrConfig, authority: CortexAdmissionToken): Promise<{ passed: boolean; commands: string[]; baseHead?: string }>;
 }
 
 /** Pin both pending identity and the persisted verification to the same bytes. */
@@ -155,7 +112,10 @@ async function boundedJson(response: Response): Promise<Json> {
 }
 
 export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: BridgeHost = {}): Promise<{ state: 'idle' | 'proposed'; runId?: string; proposalId?: string; cortexProposalId?: string }> {
-  config = parseCortexBridgeConfig(config);
+  requireFact(host.configPath, 'Cortex requires an explicitly admitted private configuration path');
+  const admitted = inspectCortexAdmission(host.configPath);
+  requireFact(JSON.stringify(parseCortexBridgeConfig(config)) === JSON.stringify(admitted.config), 'Cortex configuration differs from its admission');
+  config = admitted.config;
   inspectPrivateDirectory(config.root);
   const token = process.env[config.tokenEnv]; requireFact(token && /^[\x21-\x7e]{20,4096}$/.test(token), 'Cortex worker token environment is missing or invalid');
   const worker = { id: `phantom-${hash(`${config.url}\0${config.organizationId}\0${config.root}`).slice(0, 40)}`,
@@ -187,6 +147,10 @@ export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: Brid
       Array.isArray(raw.scope) && raw.scope.length === 1 && raw.scope[0] === assignment.workstream &&
       raw.runtimeId === 'codex' && integer(raw.maxWallClockMs, 20 * 60_000), 'Invalid signed Cortex handoff');
     claimedRunId = assignment.runId;
+    const maxWallClockMs = raw.maxWallClockMs;
+    return await withCortexForegroundAdmission(host.configPath, raw.engineeringAssignment, async authority => {
+    authority.signal.addEventListener('abort', stop, { once: true });
+    try {
     const repo = matchCortexRepository(config, assignment);
     const attempt = join(config.root, hash(assignment.runId));
     // Atomic exclusive reservation: a lost response/crash never dispatches the same assignment twice.
@@ -200,12 +164,12 @@ export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: Brid
       requireFact(ack.cancelled === false && ack.status === 'running' && Date.now() < Date.parse(assignment.expiresAt), 'Cortex assignment revoked, expired or stopped'); };
     await heartbeat();
     timer = setInterval(() => { if (beat) return; beat = heartbeat().catch(stop).finally(() => { beat = undefined; }); }, 10_000);
-    deadline = setTimeout(stop, Math.min(raw.maxWallClockMs, Date.parse(assignment.expiresAt) - Date.now()));
+    deadline = setTimeout(stop, Math.min(maxWallClockMs, Date.parse(assignment.expiresAt) - Date.now()));
     const cfg = host.loadConfig ? host.loadConfig() : (await import('../config.js')).loadConfig();
     const isolated = cortexCodexConfig(cfg);
-    (await import('../sandbox/policy.js')).assertMayMutate(repo);
+    (await import('../sandbox/policy.js')).assertMayExecuteWithCortexAdmission(repo, { cortexAdmission: authority.producer });
     const workItemId = `cortex-${hash(assignment.assignmentDigest).slice(0, 48)}`;
-    const options: RunOptions = { engine: 'codex', sandboxEngine: true, requireSandbox: true,
+    const options: RunOptions = { cortexAdmission: authority.producer, engine: 'codex', sandboxEngine: true, requireSandbox: true,
       cwd: repo, signal: control.signal, noMemory: true, noCapture: true, tools: false, budget: config.budget, workItemId,
       delegationScope: { schemaVersion: 1, sourceRepo: repo, memoryMode: 'none', allowedFiles: { include: [...assignment.mission.allowedFiles], enforceWrites: true },
         resultContract: { ...assignment.resultContract }, contextBudget: { memoryChars: 0, resultChars: 4000 } } };
@@ -216,7 +180,7 @@ export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: Brid
     requireFact(proposal.status === 'pending' && proposal.diff && proposal.repo === repo, 'Cortex proposal identity mismatch');
     const changes = validateCortexProposalDiff(proposal.diff, assignment);
     const original = JSON.parse(JSON.stringify(proposal)) as Proposal;
-    const verification = host.verify ? await host.verify(proposal, isolated) : await verifyProposal(proposal, isolated);
+    const verification = host.verify ? await host.verify(proposal, isolated, authority.verifier) : await verifyProposal(proposal, isolated, authority.verifier);
     if (timer) { clearInterval(timer); timer = undefined; } if (beat) await beat;
     await heartbeat(); matchCortexRepository(config, assignment);
     requireFact(verification.passed && verification.baseHead === assignment.repo.sourceCommit && verification.commands.length >= 1 &&
@@ -235,16 +199,20 @@ export async function runCortexBridgeOnce(config: CortexBridgeConfig, host: Brid
       verification: { status: 'passed', commands: verification.commands }, artifacts };
     const text = JSON.stringify({ outcome: receipt.summary, engineeringReceipt: receipt }); save('receipt.json', `${text}\n`);
     if (proposalLock) { releaseProposalMutationLock(proposalLock); proposalLock = null; }
+    assertCortexAdmission(repo, authority.verifier, 'verify');
     const finish = await post('finish', { runId: assignment.runId, ok: true, text });
     requireFact(finish.status === 'succeeded' && id(finish.proposalId), 'Cortex did not confirm an Approval Inbox proposal');
     save('accepted.json', `${JSON.stringify(finish)}\n`);
-    return { state: 'proposed', runId: assignment.runId, proposalId: proposal.id, cortexProposalId: finish.proposalId };
+    return { state: 'proposed' as const, runId: assignment.runId, proposalId: proposal.id, cortexProposalId: finish.proposalId };
+    } finally { authority.signal.removeEventListener('abort', stop); }
+    });
   } catch (error) {
     if (claimedRunId && !control.signal.aborted) {
       await post('finish', { runId: claimedRunId, ok: false, text: 'Phantom could not produce a verified proposal. Inspect retained local bridge artifacts; no merge or release was invoked.' }).catch(() => {});
     }
     throw error;
   } finally {
+    control.abort();
     if (timer) clearInterval(timer); if (deadline) clearTimeout(deadline); host.signal?.removeEventListener('abort', stop);
     if (proposalLock) releaseProposalMutationLock(proposalLock);
     process.env[config.tokenEnv] = token;
@@ -265,9 +233,9 @@ async function correlateProposal(run: RunState, repo: string, workItemId: string
     ...(original ? { diff: original.diff, diffHash: original.diffHash, provenanceSig: original.provenanceSig } : {}) }, config), 'Cortex pending proposal authority invalid');
   return proposal;
 }
-async function verifyProposal(proposal: Proposal, config: AshlrConfig): Promise<{ passed: boolean; commands: string[]; baseHead?: string }> {
+async function verifyProposal(proposal: Proposal, config: AshlrConfig, cortexAdmission: CortexAdmissionToken): Promise<{ passed: boolean; commands: string[]; baseHead?: string }> {
   const result = await (await import('../inbox/merge.js')).verifyAndPersistProposal(proposal, config, 'cortex-bridge', {
-    requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true,
+    cortexAdmission, requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true,
   });
   return { passed: result.persisted && result.authorityLive && result.verify.ok, commands: result.verify.ran.map(v => v.cmd.join(' ')), baseHead: result.verify.baseHead };
 }

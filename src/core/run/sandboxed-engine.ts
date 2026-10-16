@@ -142,7 +142,7 @@ import { autonomousVendorIdentityCurrent, autonomousDevinIdentityCurrent, captur
 import { recordSandboxEvidenceUnknown } from '../authority/rollout.js';
 import { audit as auditConfinement } from '../sandbox/audit.js';
 import {
-  assertMayMutate,
+  assertMayExecuteWithCortexAdmission,
   canonicalEnrollmentPath,
   isEnrolled,
   killSwitchOn,
@@ -231,6 +231,8 @@ export interface SandboxRetentionEvidence {
 }
 
 export interface RunEngineSandboxedOptions {
+  /** Opaque foreground Cortex producer authority, never durable or model input. */
+  cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken;
   /** Absolute source repo the worktree forks from. */
   sourceRepo: string;
   /** Model id for the backend (else cfg.foundry.models[engine]). */
@@ -300,6 +302,7 @@ export interface RunEngineSandboxedOptions {
 }
 
 export interface CaptureSandboxedProposalOptions {
+  cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken;
   /** Absolute source repo the worktree forks from. */
   sourceRepo: string;
   /** Existing sandbox worktree whose diff should be captured. */
@@ -1239,7 +1242,7 @@ function sandboxLeaseRepoKey(sourceRepo: string): string {
  * Errors read as "no stop" — the fence re-check before filing is the gate;
  * the probe only makes the stop prompt.
  */
-function executionLeaseStopProbe(sourceRepo: string, runId?: string): () => string | null {
+function executionLeaseStopProbe(sourceRepo: string, runId?: string, cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken): () => string | null {
   const allowAnyRepo = process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1';
   return () => {
     try {
@@ -1251,7 +1254,10 @@ function executionLeaseStopProbe(sourceRepo: string, runId?: string): () => stri
       const cancel = runCancelRequested(runId);
       if (cancel) return `stopped by you: ${cancel.reason}`;
     }
-    if (!allowAnyRepo) {
+    if (cortexAdmission !== undefined) {
+      try { assertMayExecuteWithCortexAdmission(sourceRepo, { cortexAdmission }); }
+      catch { return 'Cortex foreground admission revoked'; }
+    } else if (!allowAnyRepo) {
       try {
         if (isEnrolled(sourceRepo) === false) return 'repo unenrolled';
       } catch { /* see above */ }
@@ -1325,6 +1331,7 @@ class ProducerAuthority {
     readonly repoKey: string,
     /** "engine execution" / "api-model execution" — keeps the historical refusal wording. */
     private readonly phase: string,
+    private readonly cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken,
   ) {}
 
   private allowAnyRepo(): boolean {
@@ -1351,7 +1358,7 @@ class ProducerAuthority {
       return `outward mutation fence unavailable before ${this.phase}`;
     }
     try {
-      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+      assertMayExecuteWithCortexAdmission(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo(), ...(this.cortexAdmission !== undefined ? { cortexAdmission: this.cortexAdmission } : {}) });
       this.cleanupAuthority = this.wt.borrowSandboxCleanupAuthority(this.fence);
       if (!this.cleanupAuthority) throw new Error(`outward mutation authority became invalid before ${this.phase}`);
       const registration = registerExecutionLease(this.fence, {
@@ -1359,7 +1366,7 @@ class ProducerAuthority {
         repoKey: this.repoKey,
         engine: spec.engine,
         ...(spec.parentSignal ? { parentSignal: spec.parentSignal } : {}),
-        shouldAbort: executionLeaseStopProbe(this.sourceRepo, spec.runId),
+        shouldAbort: executionLeaseStopProbe(this.sourceRepo, spec.runId, this.cortexAdmission),
       });
       if (!registration.ok) throw new Error(`execution lease unavailable: ${registration.reason}`);
       this.lease = registration.lease;
@@ -1430,7 +1437,7 @@ class ProducerAuthority {
       };
     };
     try {
-      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+      assertMayExecuteWithCortexAdmission(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo(), ...(this.cortexAdmission !== undefined ? { cortexAdmission: this.cortexAdmission } : {}) });
     } catch (err) {
       return revoked(`: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1502,6 +1509,8 @@ export async function captureSandboxedProposal(
   cfg: AshlrConfig,
   opts: CaptureSandboxedProposalOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined && engine !== 'codex') throw new Error('Cortex foreground admission permits only Codex');
+  if (opts.cortexAdmission !== undefined) cfg = (await import('../cortex/codex-policy.js')).cortexCodexConfig(cfg);
   const model = opts.model ?? cfg.foundry?.models?.[engine];
   // 3.15: record the model that ran (see runEngineSandboxed).
   const engineModel = `${engine}:${model ?? resolveConcreteModel(engine, cfg)}`;
@@ -1563,6 +1572,7 @@ export async function captureSandboxedProposal(
       opts.contextSummary,
     ),
   });
+  let cortexCaptureFence: OutwardMutationFence | null = null;
   let proposalCreationStarted = false;
   let createdProposal: Proposal | undefined;
   let capturedDiff: SandboxDiff | undefined;
@@ -1723,6 +1733,13 @@ export async function captureSandboxedProposal(
         };
       }
     }
+    if (opts.cortexAdmission !== undefined) {
+      if (!opts.beforeFiling) {
+        cortexCaptureFence = await acquireOutwardMutationFenceAsync(FENCE_REACQUIRE_WAIT_MS, opts.signal ? { signal: opts.signal } : undefined);
+        if (!ownsOutwardMutationFence(cortexCaptureFence)) throw new Error('Cortex capture mutation fence unavailable');
+      }
+      assertMayExecuteWithCortexAdmission(opts.sourceRepo, { cortexAdmission: opts.cortexAdmission });
+    }
     const inbox = selectInboxStore(cfg);
     proposalCreationStarted = true;
     const proposal = inbox.create(proposalInput);
@@ -1847,6 +1864,7 @@ export async function captureSandboxedProposal(
       proposalOutcome: outcome,
     };
   }
+  finally { releaseOutwardMutationFence(cortexCaptureFence); }
 }
 
 /** Mirrors run-monitor.ts's shared no-diff default (NO_DIFF_MIN_EVENTS × 5). */
@@ -1906,6 +1924,8 @@ export async function runEngineSandboxed(
   cfg: AshlrConfig,
   opts: RunEngineSandboxedOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined && engine !== 'codex') throw new Error('Cortex foreground admission permits only Codex');
+  if (opts.cortexAdmission !== undefined) cfg = (await import('../cortex/codex-policy.js')).cortexCodexConfig(cfg);
   if (engine === GROK_CLI_ENGINE_ID) cfg = configForGrokCliSeat(cfg, opts.seatId);
   // V3.10 (INT4): a seat CLI gets its model NAMED (grok-cli's default when
   // nothing else says), so the argv and the recorded `grok-cli:<model>` agree.
@@ -2100,6 +2120,7 @@ export async function runEngineSandboxed(
       // anyway. This queues off the loop instead.
       sb = await wt.createSandboxAsync(opts.sourceRepo, {
         allowAnyRepo: process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1',
+        ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
       createdHere = true;
@@ -2183,7 +2204,7 @@ export async function runEngineSandboxed(
   // while this agent runs; and proposal filing re-takes the fence (after
   // re-checking KILL and enrollment) in `reacquireCaptureAuthority`, so an
   // agent that ignores its abort still files nothing after a Stop.
-  const authority = new ProducerAuthority(wt, opts.sourceRepo, leaseRepoKey, 'engine execution');
+  const authority = new ProducerAuthority(wt, opts.sourceRepo, leaseRepoKey, 'engine execution', opts.cortexAdmission);
   const executionAuthorityFailure = await authority.admit({
     runId: id,
     engine,
@@ -2883,6 +2904,7 @@ export async function runEngineSandboxed(
             workSource: opts.workSource,
             delegationScope,
             ...(opts.signal ? { signal: opts.signal } : {}),
+            ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
             isPartial: true,
             usage,
             durationMs: _spawnDurationMs,
@@ -3527,6 +3549,7 @@ export async function runApiModelSandboxed(
   cfg: AshlrConfig,
   opts: RunEngineSandboxedOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined) throw new Error('Cortex foreground admission cannot authorize API-model execution');
   const actionCounts: RunActionCounts = {};
   const runCancelled = (): boolean => opts.signal?.aborted === true ||
     (!opts.localShadowBinding && !selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission));

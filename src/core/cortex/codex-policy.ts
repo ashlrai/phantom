@@ -1,5 +1,4 @@
-import { lstatSync } from 'node:fs';
-import { join } from 'node:path';
+export { assertNoCortexProjectConfig } from './config.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../run/engine-registry.js';
 import { autonomousConfinementProfile } from '../sandbox/confine.js';
 import type { AshlrConfig } from '../types.js';
@@ -16,13 +15,6 @@ export const CORTEX_CODEX_RESTRICTED_ARGS = Object.freeze([
     'plugins', 'hooks', 'memories', 'multi_agent', 'multi_agent_v2', 'image_generation', 'realtime_conversation']
     .flatMap(feature => ['--disable', feature]),
 ]);
-
-/** Project config can declare MCPs outside the shell sandbox; this bridge admits none. */
-export function assertNoCortexProjectConfig(repo: string): void {
-  try { lstatSync(join(repo, '.codex')); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  throw new Error('Cortex bridge cannot run a repository with project .codex configuration');
-}
 
 export function cortexCodexConfig(config: AshlrConfig): AshlrConfig {
   return { ...config, notify: undefined, foundry: { ...config.foundry,

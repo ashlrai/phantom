@@ -131,7 +131,7 @@ import type {
 } from '../types.js';
 import { loadProposal, recordRealizedMerge, setStatus, updateProposalField } from './store.js';
 import { canonicalModelTag } from '../run/model-catalog.js';
-import { assertMayMutate, killSwitchOn } from '../sandbox/policy.js';
+import { assertMayMutate, assertMayExecuteWithCortexAdmission, killSwitchOn } from '../sandbox/policy.js';
 import { audit } from '../sandbox/audit.js';
 import {
   isRepo,
@@ -366,10 +366,11 @@ function cleanupOwnedMergeBranch(
   });
 }
 
-function finalMutationAuthorityFailure(repo: string): string | null {
+function finalMutationAuthorityFailure(repo: string, cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken): string | null {
   if (killSwitchOn()) return 'autonomy kill switch is ON';
   try {
-    assertMayMutate(repo);
+    if (cortexAdmission !== undefined) assertMayExecuteWithCortexAdmission(repo, { cortexAdmission }, 'verify');
+    else assertMayMutate(repo);
     return null;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
@@ -2454,6 +2455,8 @@ export function confinedWorkspaceBins(
  * `node_modules/.vite`) fails — closed — until the repo points them inside.
  */
 export interface ProposalVerificationIsolationOptions {
+  /** Opaque Cortex verification capability, not merge/apply authority. */
+  cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken;
   requireConfinement?: boolean;
   /** A remote-request consumer may refuse local services as well as public egress. */
   allowLoopback?: boolean;
@@ -2627,6 +2630,12 @@ export async function verifyProposal(
   cfg: AshlrConfig,
   options?: ProposalVerificationIsolationOptions,
 ): Promise<VerifyProposalResult> {
+  if (options?.cortexAdmission !== undefined) {
+    try {
+      assertMayExecuteWithCortexAdmission(proposal.repo ?? '', { cortexAdmission: options.cortexAdmission }, 'verify');
+      options = { ...options, requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true };
+    } catch { return { ok: false, ran: [], detail: 'Cortex foreground verification authority unavailable' }; }
+  }
   // 3.14: a fleet mirror with `file:../<sibling>` dependencies verifies
   // against pinned sibling snapshots (fleet/mirrors.ts). The pins must be
   // intact before the run and unchanged after it; their digest is recorded
@@ -2718,6 +2727,7 @@ async function verifyProposalAgainstCurrentPins(
   let installGrants: string[] = [];
   try {
     added = await underMirrorLease(repo, () => {
+      if (options?.cortexAdmission !== undefined) assertMayExecuteWithCortexAdmission(repo, { cortexAdmission: options.cortexAdmission }, 'verify');
       try {
         gitRun(repo, ['worktree', 'add', '-b', tmpBranch, tmpDir, baseHead]);
         installGrants = linkVerifyNodeModules(repo, tmpDir);
@@ -3068,7 +3078,7 @@ export async function verifyAndPersistProposal(
 
     // Cheap refusal before spending a slot (no fence: this is advisory; the
     // binding check is the fenced one after verification).
-    const initialAuthorityFailure = finalMutationAuthorityFailure(repo);
+    const initialAuthorityFailure = finalMutationAuthorityFailure(repo, options?.cortexAdmission);
     if (initialAuthorityFailure) return refused(initialAuthorityFailure);
 
     let verify: VerifyProposalResult;
@@ -3093,7 +3103,7 @@ export async function verifyAndPersistProposal(
     current = loadProposal(expected.id);
     const finalConflict = verificationProposalConflict(expected, current);
     if (finalConflict) return refused(finalConflict, verify);
-    const finalAuthorityFailure = finalMutationAuthorityFailure(repo);
+    const finalAuthorityFailure = finalMutationAuthorityFailure(repo, options?.cortexAdmission);
     if (finalAuthorityFailure) return refused(finalAuthorityFailure, verify);
 
     const verifyResult = verifyResultFromProposalResult(
@@ -3106,13 +3116,13 @@ export async function verifyAndPersistProposal(
       return {
         verify,
         persisted: false,
-        authorityLive: ownsOutwardMutationFence(outwardFence) && finalMutationAuthorityFailure(repo) === null,
+        authorityLive: ownsOutwardMutationFence(outwardFence) && finalMutationAuthorityFailure(repo, options?.cortexAdmission) === null,
         reason: 'verification evidence could not be persisted',
       };
     }
 
     const authorityLive = ownsOutwardMutationFence(outwardFence) &&
-      finalMutationAuthorityFailure(repo) === null;
+      finalMutationAuthorityFailure(repo, options?.cortexAdmission) === null;
     return {
       verify,
       verifyResult,

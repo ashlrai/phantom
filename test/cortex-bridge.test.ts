@@ -9,8 +9,9 @@ import { CORTEX_CODEX_RESTRICTED_ARGS, cortexCodexConfig } from '../src/core/cor
 import { buildEngineCommand } from '../src/core/run/engines.js';
 import { engineeringAssignmentDigest, engineeringAssignmentSignature, parseEngineeringAssignmentV1, type EngineeringAssignmentV1 } from '../src/core/cortex/engineering-assignment.js';
 import type { AshlrConfig, Proposal, RunState } from '../src/core/types.js';
+import { admitCortexConfiguration, revokeCortexConfiguration } from '../src/core/cortex/admission.js';
 
-vi.mock('../src/core/sandbox/policy.js', () => ({ assertMayMutate: vi.fn() }));
+vi.mock('../src/core/sandbox/policy.js', () => ({ assertMayMutate: vi.fn(), assertMayExecuteWithCortexAdmission: vi.fn() }));
 const roots: string[] = [];
 const diff = 'diff --git a/feature.txt b/feature.txt\nnew file mode 100644\nindex 0000000..ce01362\n--- /dev/null\n+++ b/feature.txt\n@@ -0,0 +1 @@\n+hello\n';
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.unstubAllEnvs(); });
@@ -50,12 +51,13 @@ function fixture() {
     expect(process.env.CORTEX_WORKER_TOKEN).toBeUndefined();
     return { id: 'local-fixture', status: 'done' } as RunState;
   });
-  const host = { fetchImpl: fetchImpl as typeof fetch, execute, loadConfig: () => ({}) as AshlrConfig, correlate: () => proposal,
+  const configPath = join(root, 'config.json'); writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 }); admitCortexConfiguration(configPath);
+  const host = { configPath, fetchImpl: fetchImpl as typeof fetch, execute, loadConfig: () => ({}) as AshlrConfig, correlate: () => proposal,
     verify: vi.fn(async () => {
       proposal.verifyResult = { passed: true, diffHash: proposal.diffHash, baseHead: commit };
       return { passed: true, commands: ['npm test'], baseHead: commit };
     }) };
-  return { root, repo, store, commit, config, assignment, proposal, ops, fetchImpl, execute, host };
+  return { root, repo, store, commit, config, configPath, assignment, proposal, ops, fetchImpl, execute, host };
 }
 
 describe('Cortex foreground proposal bridge', () => {
@@ -93,6 +95,7 @@ describe('Cortex foreground proposal bridge', () => {
   });
   it('does not claim when the authenticated tenant differs', async () => {
     const f = fixture(); f.config.organizationId = 'different-company';
+    revokeCortexConfiguration(f.configPath); writeFileSync(f.configPath, JSON.stringify(f.config)); admitCortexConfiguration(f.configPath);
     f.fetchImpl.mockImplementationOnce(async () => Response.json({ ok: true, protocolVersion: 2, organizationId: 'company-fixture' }));
     await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('organization mismatch');
     expect(f.ops).toHaveLength(0); expect(f.execute).not.toHaveBeenCalled();
@@ -102,7 +105,7 @@ describe('Cortex foreground proposal bridge', () => {
     expect(parseEngineeringAssignmentV1({ ...f.assignment, organizationRef: 'other' }, { verifier: f.config.verifier })).toBeNull();
     expect(parseEngineeringAssignmentV1(f.assignment, { verifier: f.config.verifier, now: new Date(Date.now() + 90_000) })).toBeNull();
     f.config.repositories[0]!.workstreams = ['commercial'];
-    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('not admitted'); expect(f.execute).not.toHaveBeenCalled();
+    await expect(runCortexBridgeOnce(f.config, f.host)).rejects.toThrow('differs from its admission'); expect(f.execute).not.toHaveBeenCalled();
   });
   it('fails before dispatch when Cortex cancels the claimed run', async () => {
     const f = fixture(); const original = f.fetchImpl.getMockImplementation()!;

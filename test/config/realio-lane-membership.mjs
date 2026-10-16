@@ -44,6 +44,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/cortex-bridge.test.ts', // Real disposable Git repositories, private bridge artifacts, and immutable attempt reservations.
+  'test/cortex-admission.test.ts', // Real policy, private owner records, disposable Git and confined verification; no production enrollment or inference.
   'test/cortex-codex-native-sandbox.test.ts', // Native macOS Codex sandbox write and network denial probes with isolated config and no inference.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
 

@@ -58,7 +58,7 @@ import type {
 } from '../types.js';
 import { isRepo } from '../git.js';
 import {
-  assertMayMutate,
+  assertMayExecuteWithCortexAdmission,
   canonicalFilesystemPathIdentity,
   killSwitchOn,
 } from './policy.js';
@@ -1537,7 +1537,7 @@ let sandboxCreationChain: Promise<unknown> = Promise.resolve();
  */
 export async function createSandboxAsync(
   sourceRepo: string,
-  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number; signal?: AbortSignal },
+  opts?: { cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken; allowAnyRepo?: boolean; fenceWaitMs?: number; signal?: AbortSignal },
 ): Promise<Sandbox> {
   const waitMs = opts?.fenceWaitMs ?? SANDBOX_ASYNC_FENCE_WAIT_MS;
   const run = async (): Promise<Sandbox> => {
@@ -1574,7 +1574,7 @@ export async function createSandboxAsync(
 
 export function createSandbox(
   sourceRepo: string,
-  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number },
+  opts?: { cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken; allowAnyRepo?: boolean; fenceWaitMs?: number },
 ): Sandbox {
   const waitMs = opts?.fenceWaitMs ?? SANDBOX_FENCE_WAIT_MS;
   const outwardFence = acquireOutwardMutationFence(waitMs);
@@ -1601,7 +1601,7 @@ export function createSandbox(
 function createSandboxWhileFenced(
   sourceRepo: string,
   outwardFence: OutwardMutationFence | null,
-  opts?: { allowAnyRepo?: boolean },
+  opts?: { cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken; allowAnyRepo?: boolean },
 ): Sandbox {
   const sourceIdentity = pinDirectoryIdentity(sourceRepo);
   if (!sourceIdentity) {
@@ -1620,7 +1620,7 @@ function createSandboxWhileFenced(
   // runner independently verifies this source inode before using its cwd, so
   // a pathname replacement cannot carry policy authority into Git effects.
   try {
-    assertMayMutate(canonicalSourceRepo, opts);
+    assertMayExecuteWithCortexAdmission(canonicalSourceRepo, opts);
   } catch (err) {
     audit({
       action: 'sandbox:create',
