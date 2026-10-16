@@ -818,8 +818,8 @@ async function tryGetIdentity(): Promise<GetIdentityFn | null> {
 
 // ─── ANSI helpers ──────────────────────────────────────────────────────────────
 
-// index.ts colorizes unconditionally (output is always color-coded regardless
-// of TTY), so we bind the shared colorizers with tty=true.
+// index.ts colorizes regardless of TTY, so we bind the shared colorizers with
+// tty=true; NO_COLOR still turns them off (makeColors honors it).
 const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(true);
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

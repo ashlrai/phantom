@@ -65,11 +65,22 @@ export interface Colors {
 }
 
 /**
- * Build a colorizer set bound to a TTY flag. When `tty` is false every helper
- * returns its input unchanged — identical to the inlined per-file behavior.
+ * True when the user asked for no color (https://no-color.org): NO_COLOR is
+ * set to any non-empty value. It wins over every other signal, including a
+ * caller that colors unconditionally.
  */
-export function makeColors(tty: boolean): Colors {
-  const colorize = (code: string, s: string): string => (tty ? `${code}${s}${C.reset}` : s);
+export function noColorRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env['NO_COLOR'];
+  return value !== undefined && value !== '';
+}
+
+/**
+ * Build a colorizer set bound to a TTY flag. When `tty` is false, or NO_COLOR
+ * is set, every helper returns its input unchanged.
+ */
+export function makeColors(tty: boolean, env: NodeJS.ProcessEnv = process.env): Colors {
+  const on = tty && !noColorRequested(env);
+  const colorize = (code: string, s: string): string => (on ? `${code}${s}${C.reset}` : s);
   return {
     colorize,
     bold:    (s) => colorize(C.bold,    s),
