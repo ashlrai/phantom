@@ -158,13 +158,19 @@ async function verifyInstalledUniverse(fixtureRoot, bin, packageName) {
   git('add', 'never-run.mjs');
   git('-c', 'user.name=Package Smoke', '-c', 'user.email=package-smoke@example.invalid',
     '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'private smoke fixture');
+  // The pinned evaluator is never executed, but every comparator check freshly
+  // hashes its bytes. Pin a tiny inert script instead of the ~100 MB node
+  // runtime so each SDK/CLI read does not re-read the whole binary; Windows
+  // has no executable bit for a script, so it keeps the runtime pin.
+  const evaluator = process.platform === 'win32' ? process.execPath : join(fixtureRoot, 'never-run-evaluator');
+  if (evaluator !== process.execPath) writeFileSync(evaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
   const root = join(fixtureRoot, 'store');
   const manifest = { schemaVersion: 1, id: 'pack-universe', name: 'Installed package smoke',
     objective: 'Verify registration and observation without executing work',
     seed: { repo: seed, revision: git('rev-parse', 'HEAD') },
     metric: { name: 'score', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxDurationMs: 1000, trialTimeoutMs: 1000, maxParallel: 1 },
-    evaluation: { command: [process.execPath, 'never-run.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [evaluator, 'never-run.mjs'], timeoutMs: 1000 },
     variants: [{ id: 'never-run', niche: 'smoke', hypothesis: 'No execution is expected',
       command: [process.execPath, 'never-run.mjs'] }] };
   // Pure SDK contract fixture only: no model store, connection, or dispatch.
