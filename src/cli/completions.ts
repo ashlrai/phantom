@@ -239,10 +239,10 @@ function editDistance(a: string, b: string): number {
  * Closest known command for a typo, or null when nothing is plausibly close
  * (distance must be ≤ 2 and less than half the input length).
  */
-export function didYouMean(input: string): string | null {
+export function didYouMean(input: string, candidates: readonly string[] = TOP_LEVEL_COMMANDS): string | null {
   let best: string | null = null;
   let bestDist = Infinity;
-  for (const cmd of TOP_LEVEL_COMMANDS) {
+  for (const cmd of candidates) {
     const d = editDistance(input.toLowerCase(), cmd);
     if (d < bestDist) {
       bestDist = d;

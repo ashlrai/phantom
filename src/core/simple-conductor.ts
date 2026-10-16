@@ -36,6 +36,7 @@ import type { AshlrConfig, EngineId, Proposal } from './types.js';
 import type { SandboxedEngineResult } from './run/sandboxed-engine.js';
 import type { AuthoritativePendingProposalExpectation } from './inbox/pending-authority.js';
 import { isSafeExecutionIdentity } from './fleet/attempt-identity.js';
+import { buildTaskBrief } from './teams/context.js';
 import {
   LocusMintError,
   LocusSessionConfigError,
@@ -390,7 +391,7 @@ export async function runSimpleConductor(
         'AND typecheck (`npx tsc --noEmit`). Confirm there are ZERO new failures ' +
         '(pre-existing failures that were already failing before your change are exempt). ' +
         'Do NOT mark the task complete or file a proposal until both commands pass cleanly.';
-      const instruction = task.instruction + fullSuiteDirective;
+      const instruction = task.instruction + buildTaskBrief({ repo: task.repo, title: task.instruction, cfg }) + fullSuiteDirective;
 
       // M300: route to the correct runner — cli-agents (claude/codex) via runEngineSandboxed,
       // api-models (nim/kimi/local-coder) via runApiModelSandboxed.
