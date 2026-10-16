@@ -41,7 +41,7 @@ These are separate executable paths, not one automatically commissioned loop:
 | `universe` → `src/core/universe/` | Generate local candidates, evaluate artifacts, retain diverse winners, run bounded campaigns and deliver an artifact to a new local branch | Fixed evaluator and persisted lineage; operator, direct-local or explicitly bound resource-pool generation. No automatic remote release | [Universe](ASHLR-UNIVERSE.md) |
 | `resources pool` → `src/core/resources/` | Admit explicit native/local workers against quota, rolling task and shared concurrency limits; supervise a foreground queue | Durable assignments, output and reported usage. Worker completion is not verified engineering acceptance | [Resource Pools](RESOURCE-POOLS.md) |
 | `runtime` → `src/core/local-runtime/` | Install, verify, select and roll back trusted exact local packages | A selected unsigned candidate is not npm publication or resident-service qualification; forwarded commands remain explicitly scoped | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
-| `serve` / `verse` → `src/core/web/` + `src/core/verse/` + `src/web-ui/` | Loopback dashboard and JSON API (default port 7777); `verse` starts it with dispatch enabled for the `/verse/` workbench | Authenticated reads; mutations need dispatch enablement plus a separate token | [Verse](VERSE.md) |
+| `serve` / `verse` → `src/core/web/` + `src/core/verse/` + `src/web-ui/` | Loopback dashboard and JSON API (default port 7777); `verse` starts it with dispatch enabled for the `/verse/` workbench | Authenticated reads; mutations need dispatch enablement plus a separate token | [Phantom console](VERSE.md) |
 | Scoped consoles → `src/core/web/` + `src/web-ui/` | Observe one Universe store or inspect/control one explicit resource pool | Loopback authentication; Universe console is read-only, resource mutations require execution enablement and separate authority | [Universe console](ASHLR-UNIVERSE.md#observe-one-universe-store), [resource console](RESOURCE-POOLS.md#operate-the-resource-console) |
 | General Phantom / legacy fleet | Shared configuration, enrolled-repository status, proposal and goal workflows | General dashboard is distinct from the scoped consoles; resident dispatch remains dormant as described below | [General Phantom setup](QUICKSTART.md#general-hub-and-legacy-fleet-setup) |
 
@@ -315,14 +315,14 @@ Transports: `src/core/integrations/telegram.ts` and `src/core/integrations/imess
 | `src/core/mcp-registry.ts` | Discovers MCP servers from known client config paths (see the home layout) and dedupes them by name. |
 | `src/core/mcp-native.ts` | SDK-free native tool definitions with a structural `read` / `append` / `proposal` safety class; non-read tools refuse while `KILL` is present and every call is audited by argument keys only. |
 
-The Verse workbench separately serves one per-turn authenticated MCP endpoint
+The Phantom console separately serves one per-turn authenticated MCP endpoint
 for chat seats (`src/core/verse/verse-mcp-types.ts`).
 
 ### `src/core/web/` — Mission Control web dashboard
 
 | File | Responsibility |
 |------|---------------|
-| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`; mounts the Verse routes from `src/core/verse/verse-api.ts`. |
+| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`; mounts the Phantom console routes from `src/core/verse/verse-api.ts`. |
 | `server.ts` | Loopback HTTP server plus separate read and mutation capabilities: read header/cookie for content, independent raw token for enabled actions. |
 | `control.ts` | Control endpoints: pause, resume, approve, reject. |
 
@@ -466,7 +466,7 @@ root; `ashlr loop --dry-run` remains available.
 
 This is a batched, series-level view. For an ID-by-ID lookup (including
 milestone numbers that were spec'd for one thing and shipped as another),
-see the [source milestone index](https://github.com/ashlrai/ashlr-hub/blob/master/docs/MILESTONE-INDEX.md).
+see the [source milestone index](https://github.com/ashlrai/phantom/blob/master/docs/MILESTONE-INDEX.md).
 
 | Milestones | Theme | Primary modules |
 |-----------|-------|-----------------|

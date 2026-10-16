@@ -106,12 +106,33 @@ function strictClaim(value: unknown, nowMs: number): PendingCaseOwnershipClaim |
   return claim as unknown as PendingCaseOwnershipClaim;
 }
 
+/**
+ * Concurrent saves of OTHER records rename into the same store directory (and
+ * other stores write under the anchor), moving the directory snapshots the
+ * stable read binds to, so it reports `changed-during-read` although this
+ * claim is guarded by its folded-id write lock. Re-read a bounded number of
+ * times on exactly that reason; each attempt is a complete stable read, any
+ * other failure is returned at once, and persistent instability still fails
+ * closed.
+ */
+const CLAIM_STABLE_READ_ATTEMPTS = 5;
+const CLAIM_RETRY_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+function readClaimFile(path: string, anchorPath: string): ReturnType<typeof readStableRegularFile> {
+  for (let attempt = 1; ; attempt += 1) {
+    const loaded = readStableRegularFile(path, {
+      anchorPath,
+      maxFileBytes: MAX_CLAIM_BYTES,
+      remainingBytes: MAX_CLAIM_BYTES,
+    });
+    if (loaded.ok || loaded.reason !== 'changed-during-read' ||
+      attempt >= CLAIM_STABLE_READ_ATTEMPTS) return loaded;
+    Atomics.wait(CLAIM_RETRY_SLEEP, 0, 0, attempt * 2);
+  }
+}
+
 function readClaim(path: string, anchorPath: string, nowMs: number): PendingCaseOwnershipClaim {
-  const loaded = readStableRegularFile(path, {
-    anchorPath,
-    maxFileBytes: MAX_CLAIM_BYTES,
-    remainingBytes: MAX_CLAIM_BYTES,
-  });
+  const loaded = readClaimFile(path, anchorPath);
   if (!loaded.ok) throw new Error(`Unsafe case-folded ownership claim: ${loaded.reason}`);
   let parsed: unknown;
   try { parsed = JSON.parse(loaded.text); }
@@ -122,11 +143,7 @@ function readClaim(path: string, anchorPath: string, nowMs: number): PendingCase
 }
 
 function readLegacyClaim(path: string, anchorPath: string): string {
-  const loaded = readStableRegularFile(path, {
-    anchorPath,
-    maxFileBytes: MAX_CLAIM_BYTES,
-    remainingBytes: MAX_CLAIM_BYTES,
-  });
+  const loaded = readClaimFile(path, anchorPath);
   if (!loaded.ok || !/^[\w.-]+$/.test(loaded.text)) {
     throw new Error('Invalid legacy case-folded ownership claim');
   }

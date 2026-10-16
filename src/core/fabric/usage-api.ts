@@ -9,7 +9,7 @@
  *  - Never throws. Network/parse errors return null (triggers transcript fallback).
  *  - 60-second module-level cache (endpoint rate-limits HARD — confirmed 429 on burst).
  *  - No token when absent → null immediately (no probe attempt).
- *  - 3-second AbortController timeout on the fetch.
+ *  - 3-second AbortController deadline covering the fetch AND the body read.
  *  - NEVER logs or surfaces the token value.
  *  - No retries on any error (429, auth failure, network).
  *
@@ -108,23 +108,34 @@ export async function fetchClaudeUsageApi(): Promise<ClaudeApiUsageResult | null
 
   let result: ClaudeApiUsageResult | null = null;
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  // One deadline covers the whole exchange: headers AND body. A server that
+  // sends headers and then stalls the body must not hang the caller, so the
+  // abort timer stays armed until the body is fully read and is always
+  // cleared afterwards.
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error('usage api request timed out'));
+    }, FETCH_TIMEOUT_MS);
+  });
+  // The deadline only ever rejects; mark it handled so an abort that lands
+  // after the exchange settled never surfaces as an unhandled rejection.
+  deadline.catch(() => undefined);
 
-    let resp: Response;
-    try {
-      resp = await fetch(USAGE_ENDPOINT, {
+  try {
+    const resp = await Promise.race([
+      fetch(USAGE_ENDPOINT, {
         method: 'GET',
         headers: {
           'x-api-key': token,
           'Content-Type': 'application/json',
         },
         signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
+      }),
+      deadline,
+    ]);
 
     if (!resp.ok) {
       // 429, 401, 403, etc — do NOT retry, cache null
@@ -132,11 +143,13 @@ export async function fetchClaudeUsageApi(): Promise<ClaudeApiUsageResult | null
       return null;
     }
 
-    const body = await resp.json() as unknown;
+    const body = await Promise.race([resp.json() as Promise<unknown>, deadline]);
     result = parseUsageResponse(body);
   } catch {
-    // Network error, abort, parse error — all → null, no retry
+    // Network error, abort, timeout, parse error — all → null, no retry
     result = null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   _apiCache = { result, expiresAt: now + API_CACHE_TTL_MS };

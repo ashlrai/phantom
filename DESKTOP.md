@@ -7,7 +7,7 @@ in a native window with a tray icon.
 See `desktop/README.md` for full setup, build, and open-item details, and
 `docs/VERSE.md` for what the console is and how to use it.
 
-## The Verse window
+## The Phantom window
 
 - On launch the app spawns the bundled `ashlr` sidecar as
   `ashlr verse --port 7777 --no-open --json` (dispatch enabled, no browser tab).
@@ -33,8 +33,8 @@ Chat seats can drive apps on this Mac through the `computer_*` tools
 `desktop/src-tauri/src/computer.rs`). What keeps it safe:
 
 - **Per-app grants, per chat, memory only.** The agent calls
-  `computer_request_access`; you tick apps in a Verse sheet. Browsers can only be
-  granted *read only* (the Verse Browser pane is how agents use the web),
+  `computer_request_access`; you tick apps in a Phantom sheet. Browsers can only be
+  granted *read only* (the Phantom Browser pane is how agents use the web),
   terminals and editors *click only*, everything else *full*. Password managers,
   Keychain Access / Passwords, macOS authentication prompts, the custody
   helper, System Settings' Privacy & Security panes and Phantom itself are never
@@ -43,17 +43,17 @@ Chat seats can drive apps on this Mac through the `computer_*` tools
   an "Agent controlling <app> — Esc to stop" pill sit on every screen (never in
   a screenshot). **Esc** is KILL: every grant of every chat is revoked.
 - **Instant takeover.** Touch the mouse or keyboard and the agent pauses; its
-  calls answer "Operator took over" until you press **Resume** in Verse.
+  calls answer "Operator took over" until you press **Resume** in Phantom.
 - **Confirmation.** Acting on a control labelled delete / send / pay / publish
   / confirm / buy (and kin), or any action after the turn read another app's
   or a web page's content, waits for [Allow once] [Allow for chat] [Deny].
   Password fields are never typed into.
-- **The Verse window must be open.** The relay runs through it; closed Verse →
+- **The Phantom window must be open.** The relay runs through it; closed Phantom →
   the tools fail at once.
 
 **One-time setup.** macOS needs two grants for Phantom: *Screen Recording*
 (System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording) and
-*Accessibility*. Verse's onboarding sheet deep-links to both. Screen Recording
+*Accessibility*. Phantom's onboarding sheet deep-links to both. Screen Recording
 only takes effect after Phantom **quits and relaunches**, and macOS re-asks about
 it roughly monthly. Grants stick across rebuilds only because `ship:local`
 signs every build with the stable "Ashlr Local" identity

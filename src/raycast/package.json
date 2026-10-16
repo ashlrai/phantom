@@ -41,14 +41,14 @@
       "name": "attention-board",
       "title": "Attention Board",
       "subtitle": "Ashlr",
-      "description": "Surface active repos with dirty git status, recent activity, and stale items needing attention. Auto-refreshes every 2 s.",
+      "description": "Surface repos needing attention from the Ashlr index: uncommitted changes, commits ahead of upstream, and stale repos with git state. Auto-refreshes every 2 s.",
       "mode": "view"
     },
     {
       "name": "ceo-dashboard",
       "title": "CEO Dashboard",
       "subtitle": "Ashlr",
-      "description": "High-level overview of all projects by category, org, and activity.",
+      "description": "Command-centre overview from the Ashlr index: client deliverables, company docs, and recently modified or dirty repos, with an optional Pulse cost note.",
       "mode": "view"
     },
     {

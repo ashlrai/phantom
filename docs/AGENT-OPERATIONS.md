@@ -20,7 +20,7 @@ either name.
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |
-| Lint (ESLint + real-I/O lane + Verse sync-I/O guards) | `npm run lint` |
+| Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
 | Backend tests with isolated homes and a runtime cap | `npm run test:ci -- <files>` |
 | Web console tests | `npm run test:web` |
@@ -34,6 +34,13 @@ either name.
 the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
+
+**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
+succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
+unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
+deferred to post-merge; they always run on master pushes. `Mac exhaustive
+(isolated)` and the other macOS checks run on every pull request
+(`.github/workflows/ci.yml`).
 
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
@@ -73,7 +80,9 @@ phm verse             # console at http://127.0.0.1:7777/verse/
 - `phm init [--wire] [--yes] [--json]` is idempotent onboarding. It writes the
   config, creates `~/.ashlr/genome`, symlinks `ashlr` into `~/.local/bin`, and
   with `--wire` registers the MCP gateway in detected editors. It has no
-  `--help`: any invocation runs it.
+  `--help`: any invocation runs it. A new `config.json` carries only generic
+  defaults (one tidy keeper, `github`); an existing one keeps its saved keepers
+  and categories.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `phm onboard --rollback <repo> [--kill]` undoes it.
@@ -94,13 +103,24 @@ and `ecosystem [--write]`.
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
 up the target config first and is idempotent.
 
+Use one registration command, not both. `phm mcp install claude` also writes
+`~/.claude.json`, and in 3.29.15 and earlier it registers the gateway as a
+second server, `ashlr`, with an absolute command path. Running both gives the
+agent every gateway tool twice. If that happened, delete one of the two entries
+from `mcpServers`.
+
 | Client | Default config | How `wire` writes it |
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | JSON merge into `mcpServers` |
 | Codex | `~/.codex/config.toml` | runs `codex mcp add ashlr-hub -- ashlr mcp` |
 | Cursor | `~/.cursor/mcp.json` | JSON merge into `mcpServers` |
 
-Without a target, or with `all`, it wires only the editors it detects. To test
+Without a target, or with `all`, it wires only the editors it detects. An
+editor counts as detected when its config exists (`~/.claude` or
+`~/.claude.json`, `~/.codex`, `~/.cursor`) or its CLI (`claude`, `codex`,
+`cursor`) is on `PATH`, so a fresh Claude Code install is found before its
+first run. `phm init --wire` and `phm doctor --fix` use the same
+detection. To test
 without touching real configs, pass one explicit target with `--config`, for
 example `phm wire claude --config /tmp/x/.claude.json` or
 `phm wire codex --config /tmp/x/config.toml` (Codex still needs the `codex` CLI).
@@ -123,7 +143,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | --- | --- |
 | `config.json` | configuration (`phm config path`, `phm config effective --json`) |
 | `KILL` | the global kill switch / Stop marker |
-| `account-connections/connections.json` | native account roster that Verse seats come from |
+| `account-connections/connections.json` | native account roster that Phantom seats come from |
 | `authority/ledger.jsonl` | hash-chained authority ledger |
 | `manager/<ts>.json` | `phm manager` reports |
 | `logs/` | supervised local-runtime stdout and stderr |
@@ -167,6 +187,40 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm daemon stop` | Orderly shutdown; also sets the global kill switch |
 | `phm website pause` | Pause automatic site publication |
 
+### Per-agent Auto-merge
+
+Agents started from the Agents board in the Phantom app can Auto-fix CI and
+Auto-merge their PR. Both are off for each agent until the operator turns them
+on. Auto-merge also needs `ASHLR_VERSE_AUTOMERGE_CHECKS` set to the exact,
+comma-separated names of the required code checks; an unset or malformed value
+holds every automatic merge. The gates run in this order, and the first refusal
+is shown on the agent (`src/core/verse/agents/checks.ts`):
+
+1. Auto-merge is on for this agent.
+2. Stop (`~/.ashlr/KILL`) and pause (daemon or comms) are both clear.
+3. The PR is open, not a draft, mergeable, and green on the head the checks
+   ran on.
+4. Git's own diff from the merge base to that head is readable, not empty,
+   does not weaken tests (deleted tests, removed `it(` or `expect(`, added
+   `.skip` or `.only`), and touches no protected path: CI, manifests,
+   lockfiles, CODEOWNERS, hooks and, in Phantom itself, its Tier-1 authority
+   code.
+5. In Phantom's own repository, the standing grant's self-land policy is
+   `merge-non-authority`. The repository is recognised by package name
+   (`@ashlr/phantom` or `@ashlr/hub`) or by an `ashlrai/phantom` or
+   `ashlrai/ashlr-hub` origin.
+6. GitHub's branch protection. The squash merge is pinned to the head commit
+   and never uses `--admin` or `--auto`.
+
+The merge runs under the machine-wide outward-mutation fence, and Stop and
+pause are read again inside it, so Stop or unenroll cannot report quiescence
+while a merge is in flight. A busy fence holds the merge for a later pass.
+
+Seats are not allowed to merge on their own. A seat's terminal asks the
+operator before `gh pr merge`, a `gh api` merge or auto-merge call, or
+`gh pr review --approve` (rule `gh-merge`). When Auto-fix sends failing CI log
+tails back to the seat, they arrive fenced and labelled as untrusted data.
+
 ### Authority
 
 `phm authority status [--json]` shows grant state, the switch, Stop, the
@@ -184,7 +238,7 @@ Phase 0. Agents do not sign grants. The policy reserved for the owner is in
 
 There are two registries:
 
-- **Verse chat routing** (`ROUTABLE_ENGINES` in
+- **Phantom chat routing** (`ROUTABLE_ENGINES` in
   `src/core/verse/multimodel/advisor.ts`): `claude`, `codex`, `devin`, `grok`,
   `local`. Native seats (claude, codex, grok) come from
   `~/.ashlr/account-connections/connections.json`. Local seats are Ollama
@@ -225,7 +279,10 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm` not found after install | `phm doctor` checks `~/.local/bin` on `PATH`; from source run `./install.sh` |
 | Agent does not see Phantom tools | `phm mcp doctor`, `phm mcp list`, then `phm wire <client>` |
 | No local provider reachable | `phm models`, `phm models start`, `phm local-runtime status\|logs` |
-| An engine is not ready | `phm fleet doctor` and its `fix:` line |
+| `phm run --engine claude --sandbox-engine` refuses with exit 2 | Run as a non-root user (Claude Code refuses unattended mode as root), or hand the task to `phm cloud launch "<task>"`. Inside a Claude Code cloud container the session's sign-in is not passed into the sandbox: export `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) first |
+| `repo not enrolled for autonomous work` | `phm enroll add <repo>` |
+| An engine is not ready | `phm fleet doctor` and its `fix:` line. For a Claude engine with no credential under the daemon, the line names this platform's way to set `CLAUDE_CODE_OAUTH_TOKEN` (`launchctl setenv`, `systemctl --user set-environment` or `setx`) |
+| `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
