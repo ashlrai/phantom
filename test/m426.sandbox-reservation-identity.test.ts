@@ -134,7 +134,8 @@ function installGitShim(
     'retarget-source' | 'retarget-common-dir' | 'retarget-during-worktree-add' |
     'retarget-sandbox-home' | 'retarget-sandbox-parent' | 'observe-pinned-argv' |
     'hang-worktree-descendant' | 'retarget-after-worktree-add' |
-    'retarget-source-path-during-discovery' | 'fail-add-then-appear-on-remove',
+    'retarget-source-path-during-discovery' | 'fail-add-then-appear-on-remove' |
+    'switch-branch-after-worktree-add' | 'detach-after-worktree-add',
 ): string {
   const dir = mkdtempSync(join(tmpdir(), 'ashlr-m426-git-'));
   cleanupPaths.add(dir);
@@ -170,7 +171,7 @@ if (mode === 'fail-add-then-appear-on-remove' && worktreeIndex >= 0 &&
 
 if (mode === 'fail-add-then-appear-on-remove' && worktreeIndex >= 0 &&
     args[worktreeIndex + 1] === 'remove') {
-  const worktree = args[worktreeIndex + 3];
+  const worktree = args[args.length - 1];
   fs.writeFileSync(process.env.M426_MARKER, worktree);
   fs.mkdirSync(worktree, { recursive: true });
   // The destination monitor owns termination once it observes the appeared path.
@@ -280,6 +281,27 @@ if (mode === 'retarget-after-worktree-add' && worktreeIndex >= 0 &&
   fs.mkdirSync(home);
   fs.mkdirSync(path.join(home, 'worktree'));
   process.stdout.write(result.stdout);
+  process.exit(0);
+}
+
+if ((mode === 'switch-branch-after-worktree-add' || mode === 'detach-after-worktree-add') &&
+    worktreeIndex >= 0 && args[worktreeIndex + 1] === 'add') {
+  const added = cp.spawnSync(process.env.M426_REAL_GIT, args, { stdio: 'inherit' });
+  if (added.error) throw added.error;
+  if (added.status !== 0) process.exit(added.status ?? 1);
+  // Leave HEAD on the right commit but NOT on the sandbox branch, so only the
+  // branch half of the post-add validation can notice.
+  const worktree = args[worktreeIndex + 4];
+  const worktreeEnv = { ...process.env };
+  delete worktreeEnv.GIT_DIR;
+  delete worktreeEnv.GIT_WORK_TREE;
+  const moved = cp.spawnSync(process.env.M426_REAL_GIT,
+    mode === 'detach-after-worktree-add'
+      ? ['checkout', '-q', '--detach']
+      : ['checkout', '-q', '-b', process.env.M426_OTHER_BRANCH],
+    { cwd: worktree, env: worktreeEnv, stdio: 'inherit' });
+  if (moved.error) throw moved.error;
+  fs.writeFileSync(process.env.M426_MARKER, String(moved.status));
   process.exit(0);
 }
 
@@ -517,6 +539,40 @@ describe('M426 sandbox reservation and path identity', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  // The post-add validation reads HEAD's commit and HEAD's symbolic ref in one
+  // rev-parse. A worktree left on the right commit but off the sandbox branch
+  // must still be refused and rolled back, exactly as the separate
+  // `branch --show-current` check refused it.
+  it.each([
+    ['switch-branch-after-worktree-add', 'another branch at the base commit'],
+    ['detach-after-worktree-add', 'a detached HEAD at the base commit'],
+  ] as const)('refuses and rolls back a created worktree left on %s (%s)', (mode) => {
+    const source = fx.makeRepo();
+    const marker = join(fx.home, `${mode}.txt`);
+    const otherBranch = 'm426-not-the-sandbox-branch';
+    const branchesBefore = branches(source.dir);
+    installGitShim(mode);
+    process.env.M426_MARKER = marker;
+    process.env.M426_OTHER_BRANCH = otherBranch;
+
+    try {
+      expect(() => createSandbox(source.dir, { allowAnyRepo: true }))
+        .toThrow(/identity changed during worktree creation/u);
+      expect(readFileSync(marker, 'utf8')).toBe('0');
+      process.env.PATH = originalPath;
+      expect(listSandboxes()).toEqual([]);
+      const after = branches(source.dir);
+      expect(after.filter((name) => name.startsWith('ashlr/sandbox/'))).toEqual([]);
+      expect(after.filter((name) => name !== otherBranch).sort()).toEqual([...branchesBefore].sort());
+      expect(git(source.dir, ['worktree', 'list', '--porcelain'])
+        .split(/\r?\n/u).filter((line) => line.startsWith('worktree '))).toHaveLength(1);
+    } finally {
+      process.env.PATH = originalPath;
+      delete process.env.M426_OTHER_BRANCH;
+      if (branches(source.dir).includes(otherBranch)) git(source.dir, ['branch', '-D', otherBranch]);
+    }
+  });
+
   it('does not report cleanup complete when Git retains an alias-spelled registration', () => {
     const repo = fx.makeRepo();
     prepareSandboxAuthorityRoot();
@@ -568,7 +624,7 @@ describe('M426 sandbox reservation and path identity', () => {
         .toContain(`worktree ${gitAliasWorktree}`);
       expect(branches(repo.dir)).not.toContain(sandbox.branch);
       expect(attemptedCleanup).toEqual([
-        { cwd: repo.dir, args: ['worktree', 'remove', '--force', sandbox.worktreePath] },
+        { cwd: repo.dir, args: ['worktree', 'remove', '--force', '--force', sandbox.worktreePath] },
         { cwd: repo.dir, args: ['worktree', 'prune'] },
       ]);
     } finally {

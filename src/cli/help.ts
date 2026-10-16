@@ -570,6 +570,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'goal "<objective>"',           desc: 'Live owner-invoked objective → plan → one sandboxed proposal-only advance; never resident or unattended authority.', topic: 'autonomy' },
   { cmd: 'goal "<objective>" --direct',  desc: 'One owner-invoked proposal-only run with bounded --json output; no unattended authority or verification proof.', topic: 'autonomy' },
   { cmd: 'loop',                         desc: 'Dormant non-dry conductor loop: compiled conductor trust roots are empty; use loop --dry-run.', topic: 'autonomy' },
+  { cmd: 'loop leases [clear <task-id>] [--dry-run]', desc: 'List simple-conductor leases needing reconciliation; clear one only when its owner is provably not running.', topic: 'autonomy' },
   { cmd: 'conductor-permit request|mint|inspect|stage', desc: 'Dormant signed one-shot goal-conductor permit operator; fail-closed while source trust roots are empty.', topic: 'autonomy' },
   { cmd: 'website status|auto|pause|off', desc: 'Inspect or pause automatic phm.dev publication; Auto resumes within its existing signed website scope.', topic: 'autonomy' },
   { cmd: 'website prepare --image <digest>', desc: 'Qualify the fixed website publisher and a real offline Linux x64 production build before one-time commissioning.', topic: 'autonomy' },
