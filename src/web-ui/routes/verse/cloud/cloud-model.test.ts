@@ -110,7 +110,7 @@ describe('the counting lines', () => {
   it('puts the seat ahead of the budget gate', () => {
     const refused = budgetView({ canLaunch: { ok: false, reason: '20 of 20 sessions used today.' } });
     expect(launchBlock({ id: 'claude-a', ready: true, reason: null }, refused)).toBe('20 of 20 sessions used today.');
-    expect(launchBlock({ id: 'claude-a', ready: false, reason: null }, refused)).toBe("The Claude seat isn't set up on this Mac.");
+    expect(launchBlock({ id: 'claude-a', ready: false, reason: null }, refused)).toBe("The Claude seat isn't set up on this computer.");
     expect(launchBlock({ id: 'claude-a', ready: true, reason: null }, budgetView())).toBeNull();
   });
 });
@@ -219,7 +219,7 @@ describe('runInCloudBlock', () => {
 
   it('says why, most fundamental first', () => {
     expect(runInCloudBlock({ ...base, overview: null, overviewReason: 'The cloud lane is not in this build yet.' })).toBe('The cloud lane is not in this build yet.');
-    expect(runInCloudBlock({ ...base, overview: overview({ seat: { id: 'claude-a', ready: false, reason: null } }) })).toBe("The Claude seat isn't set up on this Mac.");
+    expect(runInCloudBlock({ ...base, overview: overview({ seat: { id: 'claude-a', ready: false, reason: null } }) })).toBe("The Claude seat isn't set up on this computer.");
     expect(runInCloudBlock({ ...base, repo: null })).toBe("This chat's project has no GitHub origin, so a cloud session has nothing to clone.");
     expect(runInCloudBlock({ ...base, repo: null, rootsLoading: true })).toBe("Reading this chat's project…");
     expect(runInCloudBlock({ ...base, overview: overview({ budget: budgetView({ canLaunch: { ok: false, reason: '4 of 4 running.' } }) }) })).toBe('4 of 4 running.');

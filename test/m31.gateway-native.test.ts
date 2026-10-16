@@ -4,11 +4,12 @@
  *
  * Uses the m3 probeServer pattern: spawn the gateway as a child under an
  * isolated tmp HOME (so no real downstream MCP servers are discovered), list
- * its tools, tear down. Builds dist/ once if missing (cli-tidy-json pattern).
+ * its tools, tear down. Requires a prior `npm run build` and never builds
+ * dist/ itself: a lazy in-suite build rewrites the shared dist/ while sibling
+ * files in the parallel unit lane spawn or hash it (see cli-tidy-json).
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,9 +29,9 @@ let fx: H1Fixture;
 
 beforeAll(() => {
   if (!existsSync(cliEntry)) {
-    execSync('npm run build', { cwd: repoRoot, stdio: 'pipe' });
+    throw new Error(`${cliEntry} is missing; run \`npm run build\` before this suite`);
   }
-}, 120_000);
+});
 
 beforeEach(() => {
   expect.hasAssertions();
