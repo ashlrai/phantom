@@ -112,6 +112,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
+    ['table',             'Print the shared client table as JSON (read-only; same data as docs/client-table.json).'],
     ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
@@ -164,6 +165,13 @@ export async function cmdWire(args: string[]): Promise<number> {
   }
 
   if (sub === 'status') return cmdWireStatus(args.slice(1));
+
+  // Read-only: print the shared client table (same data as docs/client-table.json).
+  if (sub === 'table') {
+    const { clientTableJson } = await import('../core/integrations/client-table.js');
+    process.stdout.write(JSON.stringify(clientTableJson(), null, 2) + '\n');
+    return 0;
+  }
 
   const parsed = parseWireArgs(args);
 

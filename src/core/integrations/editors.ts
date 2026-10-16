@@ -35,17 +35,14 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { fsyncDirectory } from '../util/durability.js';
 import { isOwnGatewayEntry, legacyGatewayKeys } from './gateway-entry.js';
+import { CLIENT_TABLE, getClient, type ClientId, type ClientOs } from './client-table.js';
 
-/** Targets `wire` can write. */
+export type EditorTarget = ClientId;
+/** Targets `wire` can write (table entries with wire: 'write'). */
 export type WritableEditorTarget = 'claude' | 'codex' | 'cursor';
-/**
- * Every client `wire status` can report. `gemini` is status-only for now:
- * Gemini CLI reads MCP servers from `mcpServers` in ~/.gemini/settings.json
- * (https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md).
- */
-export type EditorTarget = WritableEditorTarget | 'gemini';
-export const WRITABLE_EDITOR_TARGETS: readonly WritableEditorTarget[] = ['claude', 'codex', 'cursor'];
-export const ALL_EDITOR_TARGETS: readonly EditorTarget[] = ['claude', 'codex', 'cursor', 'gemini'];
+export const ALL_EDITOR_TARGETS: readonly EditorTarget[] = CLIENT_TABLE.map(c => c.id);
+export const WRITABLE_EDITOR_TARGETS: readonly WritableEditorTarget[] =
+  CLIENT_TABLE.filter(c => c.wire === 'write').map(c => c.id as WritableEditorTarget);
 
 export const ASHLR_HUB_MCP_SERVER = 'ashlr-hub';
 const MAX_COMMAND_OUTPUT_BYTES = 256 * 1024;
@@ -57,19 +54,22 @@ const PRIVATE_FILE_MODE = 0o600;
 
 const HOME = homedir();
 
-const DEFAULT_CONFIG_PATHS: Record<EditorTarget, string> = {
-  claude: join(HOME, '.claude.json'),
-  codex: join(HOME, '.codex', 'config.toml'),
-  cursor: join(HOME, '.cursor', 'mcp.json'),
-  gemini: join(HOME, '.gemini', 'settings.json'),
-};
+function clientOs(platform: NodeJS.Platform = process.platform): ClientOs {
+  return platform === 'win32' || platform === 'darwin' ? platform : 'linux';
+}
 
-const DETECTION_PATHS: Record<EditorTarget, string[]> = {
-  claude: [join(HOME, '.claude'), join(HOME, '.claude.json')],
-  codex: [join(HOME, '.codex')],
-  cursor: [join(HOME, '.cursor')],
-  gemini: [join(HOME, '.gemini')],
-};
+function defaultConfigPath(target: EditorTarget, home: string = HOME): string {
+  return join(home, ...getClient(target).configPath[clientOs()]);
+}
+
+/** The entry `wire` writes for a target, from the shared client table. */
+function expectedEntry(target: EditorTarget): McpServerEntry {
+  return structuredClone(getClient(target).wiredEntry) as unknown as McpServerEntry;
+}
+
+function detectionPathsFor(target: EditorTarget, home: string): string[] {
+  return getClient(target).detection.homePaths.map(segments => join(home, ...segments));
+}
 
 interface McpServerEntry {
   type?: 'stdio';
@@ -663,9 +663,7 @@ function wireJsonEditor(
   target: 'claude' | 'cursor',
   configPath: string,
 ): { ok: boolean; detail: string } {
-  const gatewayEntry: McpServerEntry = target === 'claude'
-    ? { type: 'stdio', command: 'ashlr', args: ['mcp'], env: {} }
-    : { command: 'ashlr', args: ['mcp'] };
+  const gatewayEntry = expectedEntry(target);
 
   let existing: ConfigFileShape;
   let snapshot: ConfigSnapshot;
@@ -734,14 +732,6 @@ function wireJsonEditor(
   };
 }
 
-/** CLI binaries whose presence on PATH means the editor is installed. */
-const EDITOR_BINARIES: Record<EditorTarget, string> = {
-  claude: 'claude',
-  codex: 'codex',
-  cursor: 'cursor',
-  gemini: 'gemini',
-};
-
 export interface DetectEditorsOptions {
   /** Home directory to probe for config paths (defaults to os.homedir()). */
   home?: string;
@@ -786,22 +776,13 @@ export function detectEditors(opts: DetectEditorsOptions = {}): string[] {
   const home = opts.home ?? HOME;
   const platform = opts.platform ?? process.platform;
   const pathEnv = opts.pathEnv ?? process.env['PATH'] ?? process.env['Path'] ?? '';
-  const detectionPaths: Record<EditorTarget, string[]> =
-    opts.home === undefined
-      ? DETECTION_PATHS
-      : {
-          claude: [join(home, '.claude'), join(home, '.claude.json')],
-          codex: [join(home, '.codex')],
-          cursor: [join(home, '.cursor')],
-          gemini: [join(home, '.gemini')],
-        };
   const detected: string[] = [];
   // Only writable targets: `wire` with no target must never try a read-only client.
   const targets: readonly EditorTarget[] = opts.includeStatusOnly ? ALL_EDITOR_TARGETS : WRITABLE_EDITOR_TARGETS;
   for (const target of targets) {
     if (
-      detectionPaths[target].some(configPath => existsSync(configPath)) ||
-      binaryOnPath(EDITOR_BINARIES[target], pathEnv, platform)
+      detectionPathsFor(target, home).some(configPath => existsSync(configPath)) ||
+      binaryOnPath(getClient(target).detection.binary, pathEnv, platform)
     ) {
       detected.push(target);
     }
@@ -856,7 +837,7 @@ export function inspectEditorWiring(
   target: EditorTarget,
   opts: InspectEditorOptions = {},
 ): EditorWiringStatus {
-  const configPath = opts.configPath ?? DEFAULT_CONFIG_PATHS[target];
+  const configPath = opts.configPath ?? defaultConfigPath(target);
   const detected = detectEditors({
     ...(opts.home !== undefined ? { home: opts.home } : {}),
     ...(opts.pathEnv !== undefined ? { pathEnv: opts.pathEnv } : {}),
@@ -892,9 +873,7 @@ export function inspectEditorWiring(
     const entry = config.mcpServers?.[ASHLR_HUB_MCP_SERVER];
     if (entry === undefined) return status;
     status.wired = true;
-    const expected: McpServerEntry = target === 'claude'
-      ? { type: 'stdio', command: 'ashlr', args: ['mcp'], env: {} }
-      : { command: 'ashlr', args: ['mcp'] };
+    const expected = expectedEntry(target);
     status.matchesExpected = isRecord(entry) && sameJsonEntry(entry as unknown as McpServerEntry, expected);
     return status;
   } catch (err) {
@@ -909,7 +888,7 @@ export async function wireEditor(
   target: EditorTarget,
   opts: WireEditorOptions,
 ): Promise<{ ok: boolean; detail: string }> {
-  const configPath = opts.configPath ?? DEFAULT_CONFIG_PATHS[target];
+  const configPath = opts.configPath ?? defaultConfigPath(target);
   if (target === 'gemini') {
     return {
       ok: false,
