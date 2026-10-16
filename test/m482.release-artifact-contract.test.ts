@@ -981,7 +981,7 @@ describe('release artifact contract v1', () => {
     });
   });
 
-  it.each(['README.md', 'QUICKSTART.md', 'COMPANIONS.md', 'ARCHITECTURE.md', 'ASHLR-UNIVERSE.md', 'UNIVERSE-RESEARCH.md', 'UNIVERSE-AUTONOMY-RESEARCH.md', 'NORTH-STAR.md', 'RESOURCE-POOLS.md'])(
+  it.each(['README.md', 'QUICKSTART.md', 'COMPANIONS.md', 'ARCHITECTURE.md', 'ASHLR-UNIVERSE.md', 'UNIVERSE-RESEARCH.md', 'UNIVERSE-AUTONOMY-RESEARCH.md', 'NORTH-STAR.md', 'RESOURCE-POOLS.md', 'CORTEX-BRIDGE.md'])(
     'admits shipped documentation %s without opening arbitrary package paths',
     (documentName) => {
       const release = fixture();

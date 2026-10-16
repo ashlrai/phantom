@@ -161,6 +161,8 @@ export interface ConfinementProfile {
    * the verified code. Use only with networkEgress false.
    */
   loopbackServers?: boolean;
+  /** Narrow remote engineering workers: no generated project MCP configuration, including on retries. */
+  denyCodexProjectConfig?: boolean;
 }
 
 export interface ConfinementCtx {
@@ -786,6 +788,9 @@ export function buildAutonomousSbplProfile(profile: ConfinementProfile, ctx: Con
       ' (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/stdout") (literal "/dev/stderr")' +
       ' (regex #"^/dev/fd/[0-9]+$") (regex #"^/dev/ttys[0-9]+$"))',
     `(deny file-write* ${lit(join(worktree, '.git'))} ${sub(join(worktree, '.git'))})`,
+    ...(profile.denyCodexProjectConfig === true ? [
+      `(deny file-write* (regex #"^${sbplRegexLiteral(worktree)}/(.*/)?\\.[cC][oO][dD][eE][xX](/.*)?$"))`,
+    ] : []),
     '',
     '; --- protected paths (last, so nothing above can re-allow them)',
   );
@@ -959,8 +964,10 @@ export function confinementProfileFor(
   engine: EngineId,
   cfg: AshlrConfig,
 ): ConfinementProfile {
-  if (standingPolicyLive()) return autonomousConfinementProfile(engine);
   const confinement = cfg.foundry?.confinement;
+  if (standingPolicyLive()) return { ...autonomousConfinementProfile(engine),
+    ...(confinement?.[engine]?.denyCodexProjectConfig === true || confinement?.['*']?.denyCodexProjectConfig === true
+      ? { denyCodexProjectConfig: true } : {}) };
   if (!confinement) return { mode: 'off' };
 
   // Per-engine key overrides the fleet-wide `*` default.

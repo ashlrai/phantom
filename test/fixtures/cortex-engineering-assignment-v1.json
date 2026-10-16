@@ -1,0 +1,56 @@
+{
+  "source": "ashlrai/ashlr-cortex@add6a82ecb277b97422531af9871dbec5cfeac31",
+  "now": "2026-10-15T21:00:00.000Z",
+  "verifier": {
+    "issuer": "ashlr-cortex",
+    "audience": "ashlr-phantom",
+    "publicKeys": {
+      "fixture-key-1": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAI4KNH0x5w0Y/ju6bc7l7U0ME1efLE1hBGMojluU7NcQ=\n-----END PUBLIC KEY-----\n"
+    }
+  },
+  "assignment": {
+    "protocol": "ashlr-engineering-assignment/v1",
+    "version": 1,
+    "issuer": "ashlr-cortex",
+    "audience": "ashlr-phantom",
+    "keyId": "fixture-key-1",
+    "assignmentId": "contract-fixture",
+    "runId": "contract-fixture",
+    "issuedAt": "2026-10-15T21:00:00.000Z",
+    "expiresAt": "2026-10-15T22:00:00.000Z",
+    "organizationRef": "company-fixture",
+    "workstream": "company",
+    "repo": {
+      "owner": "example-company",
+      "name": "example-repository",
+      "defaultBranch": "main",
+      "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "mission": {
+      "objective": "Implement the fictional fixture feature",
+      "successSignals": [
+        "Fixture tests pass"
+      ],
+      "guardrails": [
+        "Do not merge or deploy"
+      ],
+      "allowedFiles": [
+        "src/**"
+      ]
+    },
+    "resultContract": {
+      "kind": "verified-proposal",
+      "requireDiff": true,
+      "requireProposal": true,
+      "requireVerification": true,
+      "maxChangedFiles": 4,
+      "maxChangedLines": 100
+    },
+    "authority": {
+      "effect": "proposal-only",
+      "requiredTenantRef": "company-fixture"
+    },
+    "assignmentDigest": "sha256:a8981377498e64fd40b08b439921a726c674837fd7afb07f92b445783e12ae72",
+    "assignmentSignature": "ed25519:Gbo4yntlVuqR5Hyg_NFHmw6fKuhlG4gJTTqp72MKZBgEd-z9z6sZS9t7rCgPW-NfkiEnw7R8xL7lwPuldTBtBg"
+  }
+}

@@ -13,6 +13,7 @@
  *   doctor                     One-glance health check (config, phantom, providers).
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
+ *   cortex check|once          Signed Cortex request → verified pending local proposal.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
@@ -2471,6 +2472,12 @@ async function main(): Promise<void> {
         // M253: Resource Control Plane god-view — per-backend availability/used%/cap/resets.
         const cmdResources = await loadResourcesCmd();
         process.exitCode = await cmdResources(rest);
+        break;
+      }
+
+      case 'cortex': {
+        const { cmdCortex } = await import('./cortex.js');
+        process.exitCode = await cmdCortex(rest);
         break;
       }
 

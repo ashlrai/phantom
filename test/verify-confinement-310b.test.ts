@@ -58,6 +58,37 @@ describe('openStandingVerificationConfinement', () => {
     await expect(openStandingVerificationConfinement(worktree)).resolves.toBeNull();
   });
 
+  it('fails closed for an explicitly required Cortex verifier without a standing grant', async () => {
+    standing.policy = null;
+    await expect(openStandingVerificationConfinement(join(root, 'missing'), { requireConfinement: true }))
+      .rejects.toBeInstanceOf(VerificationConfinementError);
+  });
+
+  it.skipIf(!onDarwin)('forces OS isolation and denies direct TCP for Cortex verification without standing authority', async () => {
+    standing.policy = null;
+    const confined = await openStandingVerificationConfinement(worktree, { requireConfinement: true, allowLoopback: false, denyCodexProjectConfig: true });
+    expect(confined).not.toBeNull();
+    try {
+      const opts = { _runSubprocess: confined!.runSubprocess, timeoutMs: 10_000 };
+      const cfg = {} as AshlrConfig;
+      const inside = await runVerifyCommandAsync(nodeCommand("require('fs').writeFileSync('cortex-inside.txt','fixture')"), worktree, cfg, opts);
+      expect(inside.ok, inside.output).toBe(true);
+      const outside = join(root, 'cortex-outside.txt');
+      const escape = await runVerifyCommandAsync(nodeCommand(`require('fs').writeFileSync(${JSON.stringify(outside)},'fixture')`), worktree, cfg, opts);
+      expect(escape.ok).toBe(false); expect(existsSync(outside)).toBe(false);
+      const network = await runVerifyCommandAsync(nodeCommand(`const s=require('net').createConnection({host:'1.1.1.1',port:443});
+        s.on('error',e=>{s.destroy();console.log(e.code);process.exit(['EPERM','EACCES'].includes(e.code)?0:1)});
+        s.on('connect',()=>{s.destroy();process.exit(2)});setTimeout(()=>process.exit(3),2000);`), worktree, cfg, opts);
+      expect(network.ok, network.output).toBe(true); expect(network.output).toMatch(/EPERM|EACCES/);
+      const local = await runVerifyCommandAsync(nodeCommand(`const s=require('net').createConnection({host:'127.0.0.1',port:9});
+        s.on('error',e=>{s.destroy();console.log(e.code);process.exit(['EPERM','EACCES'].includes(e.code)?0:1)});
+        s.on('connect',()=>{s.destroy();process.exit(2)});setTimeout(()=>process.exit(3),2000);`), worktree, cfg, opts);
+      expect(local.ok, local.output).toBe(true); expect(local.output).toMatch(/EPERM|EACCES/);
+      const configWrite = await runVerifyCommandAsync(nodeCommand("require('fs').mkdirSync('.codex')"), worktree, cfg, opts);
+      expect(configWrite.ok).toBe(false); expect(existsSync(join(worktree, '.codex'))).toBe(false);
+    } finally { confined!.close(); }
+  });
+
   it('fails CLOSED (throws) when a policy is live but no sandbox can be built', async () => {
     standing.policy = { grantId: 'g' };
     // A worktree that does not exist cannot be confined: the caller must not run unconfined.

@@ -143,6 +143,7 @@ import { recordSandboxEvidenceUnknown } from '../authority/rollout.js';
 import { audit as auditConfinement } from '../sandbox/audit.js';
 import {
   assertMayMutate,
+  assertMayExecuteWithCortexAdmission,
   canonicalEnrollmentPath,
   isEnrolled,
   killSwitchOn,
@@ -231,6 +232,8 @@ export interface SandboxRetentionEvidence {
 }
 
 export interface RunEngineSandboxedOptions {
+  /** Opaque foreground Cortex producer authority, never durable or model input. */
+  cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken;
   /** Absolute source repo the worktree forks from. */
   sourceRepo: string;
   /** Model id for the backend (else cfg.foundry.models[engine]). */
@@ -300,6 +303,7 @@ export interface RunEngineSandboxedOptions {
 }
 
 export interface CaptureSandboxedProposalOptions {
+  cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken;
   /** Absolute source repo the worktree forks from. */
   sourceRepo: string;
   /** Existing sandbox worktree whose diff should be captured. */
@@ -1282,7 +1286,7 @@ function sandboxLeaseRepoKey(sourceRepo: string): string {
  * Errors read as "no stop" — the fence re-check before filing is the gate;
  * the probe only makes the stop prompt.
  */
-function executionLeaseStopProbe(sourceRepo: string, runId?: string): () => string | null {
+function executionLeaseStopProbe(sourceRepo: string, runId?: string, cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken): () => string | null {
   const allowAnyRepo = process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1';
   return () => {
     try {
@@ -1294,7 +1298,10 @@ function executionLeaseStopProbe(sourceRepo: string, runId?: string): () => stri
       const cancel = runCancelRequested(runId);
       if (cancel) return `stopped by you: ${cancel.reason}`;
     }
-    if (!allowAnyRepo) {
+    if (cortexAdmission !== undefined) {
+      try { assertMayExecuteWithCortexAdmission(sourceRepo, { cortexAdmission }); }
+      catch { return 'Cortex foreground admission revoked'; }
+    } else if (!allowAnyRepo) {
       try {
         if (isEnrolled(sourceRepo) === false) return 'repo unenrolled';
       } catch { /* see above */ }
@@ -1368,10 +1375,21 @@ class ProducerAuthority {
     readonly repoKey: string,
     /** "engine execution" / "api-model execution" — keeps the historical refusal wording. */
     private readonly phase: string,
+    private readonly cortexAdmission?: import('../cortex/admission.js').CortexAdmissionToken,
   ) {}
 
   private allowAnyRepo(): boolean {
     return process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1';
+  }
+
+  private assertPolicy(): void {
+    // Keep the ordinary producer on its existing policy seam. An explicitly
+    // supplied capability (even malformed) must never fall back to enrollment.
+    if (this.cortexAdmission !== undefined) {
+      assertMayExecuteWithCortexAdmission(this.sourceRepo, { cortexAdmission: this.cortexAdmission });
+    } else {
+      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+    }
   }
 
   /**
@@ -1394,7 +1412,7 @@ class ProducerAuthority {
       return `outward mutation fence unavailable before ${this.phase}`;
     }
     try {
-      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+      this.assertPolicy();
       this.cleanupAuthority = this.wt.borrowSandboxCleanupAuthority(this.fence);
       if (!this.cleanupAuthority) throw new Error(`outward mutation authority became invalid before ${this.phase}`);
       const registration = registerExecutionLease(this.fence, {
@@ -1402,7 +1420,7 @@ class ProducerAuthority {
         repoKey: this.repoKey,
         engine: spec.engine,
         ...(spec.parentSignal ? { parentSignal: spec.parentSignal } : {}),
-        shouldAbort: executionLeaseStopProbe(this.sourceRepo, spec.runId),
+        shouldAbort: executionLeaseStopProbe(this.sourceRepo, spec.runId, this.cortexAdmission),
       });
       if (!registration.ok) throw new Error(`execution lease unavailable: ${registration.reason}`);
       this.lease = registration.lease;
@@ -1473,7 +1491,7 @@ class ProducerAuthority {
       };
     };
     try {
-      assertMayMutate(this.sourceRepo, { allowAnyRepo: this.allowAnyRepo() });
+      this.assertPolicy();
     } catch (err) {
       return revoked(`: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1545,6 +1563,8 @@ export async function captureSandboxedProposal(
   cfg: AshlrConfig,
   opts: CaptureSandboxedProposalOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined && engine !== 'codex') throw new Error('Cortex foreground admission permits only Codex');
+  if (opts.cortexAdmission !== undefined) cfg = (await import('../cortex/codex-policy.js')).cortexCodexConfig(cfg);
   const model = opts.model ?? cfg.foundry?.models?.[engine];
   // 3.15: record the model that ran (see runEngineSandboxed).
   const engineModel = `${engine}:${model ?? resolveConcreteModel(engine, cfg)}`;
@@ -1606,6 +1626,7 @@ export async function captureSandboxedProposal(
       opts.contextSummary,
     ),
   });
+  let cortexCaptureFence: OutwardMutationFence | null = null;
   let proposalCreationStarted = false;
   let createdProposal: Proposal | undefined;
   let capturedDiff: SandboxDiff | undefined;
@@ -1766,6 +1787,13 @@ export async function captureSandboxedProposal(
         };
       }
     }
+    if (opts.cortexAdmission !== undefined) {
+      if (!opts.beforeFiling) {
+        cortexCaptureFence = await acquireOutwardMutationFenceAsync(FENCE_REACQUIRE_WAIT_MS, opts.signal ? { signal: opts.signal } : undefined);
+        if (!ownsOutwardMutationFence(cortexCaptureFence)) throw new Error('Cortex capture mutation fence unavailable');
+      }
+      assertMayExecuteWithCortexAdmission(opts.sourceRepo, { cortexAdmission: opts.cortexAdmission });
+    }
     const inbox = selectInboxStore(cfg);
     proposalCreationStarted = true;
     const proposal = inbox.create(proposalInput);
@@ -1890,6 +1918,7 @@ export async function captureSandboxedProposal(
       proposalOutcome: outcome,
     };
   }
+  finally { releaseOutwardMutationFence(cortexCaptureFence); }
 }
 
 /** Mirrors run-monitor.ts's shared no-diff default (NO_DIFF_MIN_EVENTS × 5). */
@@ -1949,6 +1978,8 @@ export async function runEngineSandboxed(
   cfg: AshlrConfig,
   opts: RunEngineSandboxedOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined && engine !== 'codex') throw new Error('Cortex foreground admission permits only Codex');
+  if (opts.cortexAdmission !== undefined) cfg = (await import('../cortex/codex-policy.js')).cortexCodexConfig(cfg);
   if (engine === GROK_CLI_ENGINE_ID) cfg = configForGrokCliSeat(cfg, opts.seatId);
   // V3.10 (INT4): a seat CLI gets its model NAMED (grok-cli's default when
   // nothing else says), so the argv and the recorded `grok-cli:<model>` agree.
@@ -2143,6 +2174,7 @@ export async function runEngineSandboxed(
       // anyway. This queues off the loop instead.
       sb = await wt.createSandboxAsync(opts.sourceRepo, {
         allowAnyRepo: process.env.ASHLR_TEST_ALLOW_ANY_REPO === '1',
+        ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
       createdHere = true;
@@ -2226,7 +2258,7 @@ export async function runEngineSandboxed(
   // while this agent runs; and proposal filing re-takes the fence (after
   // re-checking KILL and enrollment) in `reacquireCaptureAuthority`, so an
   // agent that ignores its abort still files nothing after a Stop.
-  const authority = new ProducerAuthority(wt, opts.sourceRepo, leaseRepoKey, 'engine execution');
+  const authority = new ProducerAuthority(wt, opts.sourceRepo, leaseRepoKey, 'engine execution', opts.cortexAdmission);
   const executionAuthorityFailure = await authority.admit({
     runId: id,
     engine,
@@ -2318,10 +2350,27 @@ export async function runEngineSandboxed(
   const selectedCodexCurrent = (spawn: AutonomousSpawn | null): boolean => selectedCodexLaunchCurrent() &&
     selectedCodexAccountEpoch !== null && roleAccountEpoch(cfg,selectedCodexLaunch!,opts.selectedCodexAccount!.accountHint) === selectedCodexAccountEpoch &&
     spawn !== null && autonomousVendorIdentityCurrent(spawn.overlay);
+  const cortexCodexContact = async <T>(executable: string,
+    contact: (qualified: string, current: () => boolean, signal: AbortSignal) => Promise<T>): Promise<T> => {
+    if (opts.cortexAdmission === undefined) return contact(executable, () => true, opts.signal!);
+    const { assertCortexCodexConfig } = await import('../cortex/codex-policy.js');
+    const { withCortexCodexRuntime } = await import('../cortex/codex-runtime.js');
+    try { return await withCortexCodexRuntime(executable, { signal: opts.signal, assertCurrent: () => {
+      if (runCancelled() || !selectedCodexLaunchCurrent()) throw new Error('Cortex selected Codex admission changed');
+      assertMayExecuteWithCortexAdmission(opts.sourceRepo, { cortexAdmission: opts.cortexAdmission });
+      assertCortexCodexConfig(cfg);
+    } }, async (qualified, current, signal) => {
+      // Native account manifests already require a physical executable. Never
+      // silently rewrite a launcher or resolve another executable from PATH.
+      if (qualified !== executable) throw new Error('Cortex Codex runtime unsupported: repin the selected native executable to its physical path');
+      return contact(qualified, current, signal);
+    }); } catch (error) { codexCaptureDenied = true; throw error; }
+  };
   const observeSelectedCodex = async (): Promise<boolean> => {
     if (!selectedCodexLaunchCurrent()) return false;
-    const account = await observeRoleAccount({cfg,launch:selectedCodexLaunch!,accountHint:opts.selectedCodexAccount!.accountHint,
-      cwd:sb.worktreePath,signal:opts.signal!,admitted:selectedCodexLaunchCurrent});
+    const account = await cortexCodexContact(selectedCodexLaunch!.executable, async (_qualified, current, signal) =>
+      observeRoleAccount({cfg,launch:selectedCodexLaunch!,accountHint:opts.selectedCodexAccount!.accountHint,
+        cwd:sb.worktreePath,signal,admitted:() => current() && selectedCodexLaunchCurrent()}));
     if (account.uncertain) {
       // Metadata descendants are not proven stopped: retain the existing
       // drain lease as well as files, rather than reporting false quiescence.
@@ -2548,7 +2597,11 @@ export async function runEngineSandboxed(
           selectedCodexLaunchEpoch = nativeLaunchEpoch(found.launch);
           if (!await observeSelectedCodex()) return refuse('engine-unsupported','the selected Codex native account observation is unavailable or changed');
           cmd = {...cmd,bin:found.launch.executable};
-        } catch { return refuse('engine-unsupported','the selected Codex native launch cannot be qualified'); }
+        } catch (error) {
+          const detail = error instanceof Error && error.message.startsWith('Cortex Codex runtime unsupported:')
+            ? error.message : 'the selected Codex native launch cannot be qualified';
+          return refuse('engine-unsupported', detail);
+        }
       }
       if (!selectedStandingClaude) {
       let seatId: string | null = opts.seatId ?? null;
@@ -2684,7 +2737,12 @@ export async function runEngineSandboxed(
       const codexSpawnsBefore = selectedCodexSpawns;
       res = selectedStandingClaude
         ? await runSelectedClaude(goalWithContext,cfg.foundry?.timeoutMs ?? DEFAULT_TIMEOUT_MS,observeEngineEvent)
-        : await spawnEngine(cmd, spawnCfg, {
+        : await (selectedCodexLaunch ? cortexCodexContact(cmd.bin, async (qualified, current, signal) => spawnEngine({ ...cmd, bin: qualified }, spawnCfg, {
+          nativeEngine: 'codex', selectedOutcomeAdmission: () => current() && selectedCodexCurrent(autonomousSpawn),
+          env: spawnEnv, onSpawn: () => { selectedCodexSpawns++; },
+          timeoutMs: cfg.foundry?.timeoutMs ?? DEFAULT_TIMEOUT_MS, launcher: launcher ?? undefined,
+          signal, onEvent: observeEngineEvent,
+        })) : spawnEngine(cmd, spawnCfg, {
         ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(autonomousSpawn)}
           : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && selectedDevinCurrent() }
           : opts.selectedOutcomeAdmission ? { selectedOutcomeAdmission: opts.selectedOutcomeAdmission } : {}),
@@ -2696,7 +2754,7 @@ export async function runEngineSandboxed(
         // v333: forward per-line engine stdout into the durable file sink as
         // it arrives — see the comment on `streamSink` above.
         onEvent: observeEngineEvent,
-      });
+      }));
       terminationDiagnostics = res.terminationDiagnostics;
       if ((selectedDevinBinding || (!autonomousRun && engineKey === DEVIN_CLI_ENGINE_ID && isDevinCliFreeModel(model))) && res.usage) {
         // 3.15: the Devin CLI reports no token usage; a usage-shaped line in
@@ -2929,6 +2987,7 @@ export async function runEngineSandboxed(
             workSource: opts.workSource,
             delegationScope,
             ...(opts.signal ? { signal: opts.signal } : {}),
+            ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
             isPartial: true,
             usage,
             durationMs: _spawnDurationMs,
@@ -3154,7 +3213,12 @@ export async function runEngineSandboxed(
                   try {
                     r = selectedStandingClaude
                       ? await runSelectedClaude(repairGoal,_v2g.perRunTimeoutMs ?? 180_000,observeEngineEvent)
-                      : await spawnEngine(repairCmd, cfg, {
+                      : await (selectedCodexLaunch ? cortexCodexContact(repairCmd.bin, async (qualified, current, signal) => spawnEngine({ ...repairCmd, bin: qualified }, cfg, {
+                        nativeEngine: 'codex', selectedOutcomeAdmission: () => current() && selectedCodexCurrent(repairSpawn),
+                        env: repairSpawn?.env ?? env, onSpawn: () => { selectedCodexSpawns++; },
+                        timeoutMs: _v2g.perRunTimeoutMs ?? 180_000, onEvent: observeEngineEvent,
+                        launcher: repairSpawn?.launcher ?? launcher ?? undefined, signal,
+                      })) : spawnEngine(repairCmd, cfg, {
                       ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(repairSpawn)}
                         : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) &&
                         repairSpawn !== null && selectedDevinCurrent(repairSpawn) }
@@ -3165,7 +3229,7 @@ export async function runEngineSandboxed(
                       onEvent: observeEngineEvent,
                       launcher:repairSpawn?.launcher ?? launcher ?? undefined,
                       ...(opts.signal ? { signal:opts.signal } : {}),
-                    });
+                    }));
                   } finally {
                     if (repairSpawn) {
                       const finished = finishAutonomousSpawn(repairSpawn,{output:r ? `${r.output}\n${r.error ?? ''}` : '',tripwireKill:r ? engineResultTripwireKill(r) : false});
@@ -3573,6 +3637,7 @@ export async function runApiModelSandboxed(
   cfg: AshlrConfig,
   opts: RunEngineSandboxedOptions,
 ): Promise<SandboxedEngineResult> {
+  if (opts.cortexAdmission !== undefined) throw new Error('Cortex foreground admission cannot authorize API-model execution');
   const actionCounts: RunActionCounts = {};
   const runCancelled = (): boolean => opts.signal?.aborted === true ||
     (!opts.localShadowBinding && !selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission));

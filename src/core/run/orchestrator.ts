@@ -2237,6 +2237,14 @@ export async function runGoal(
   cfg: AshlrConfig,
   opts: RunOptions,
 ): Promise<RunState> {
+  if (opts.cortexAdmission !== undefined) {
+    if (opts.engine !== 'codex' || opts.sandboxEngine !== true || opts.requireSandbox !== true || opts.tools !== false || !opts.noMemory || !opts.noCapture || opts.resumeId) {
+      throw new Error('Cortex foreground authority permits only a fresh isolated Codex proposal');
+    }
+    const { assertMayExecuteWithCortexAdmission } = await import('../sandbox/policy.js');
+    assertMayExecuteWithCortexAdmission(opts.cwd ?? '', { cortexAdmission: opts.cortexAdmission });
+    cfg = (await import('../cortex/codex-policy.js')).cortexCodexConfig(cfg);
+  }
   // Retention is independent of capture activation and must not wait for a
   // later write (including cancelled/default-off runs).
   gcRunStreams(true);
@@ -2930,7 +2938,7 @@ async function runGoalInternal(
           const wtMod = await import('../sandbox/worktree.js');
           let titrrSandbox: Sandbox | null = null;
           try {
-            titrrSandbox = wtMod.createSandbox(cwd);
+            titrrSandbox = wtMod.createSandbox(cwd, opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : undefined);
           } catch {
             // handled below
           }
@@ -2957,6 +2965,7 @@ async function runGoalInternal(
               workSource: opts.workSource,
               delegationScope,
               ...(opts.signal ? { signal: opts.signal } : {}),
+              ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
               ...(opts.runId ? { runId: opts.runId } : {}),
               // Preserve the router's exact native account through sandbox delegation.
               ...(opts.seatId ? { seatId: opts.seatId } : {}),
@@ -3014,6 +3023,7 @@ async function runGoalInternal(
               workSource: opts.workSource,
               delegationScope,
               ...(opts.signal ? { signal: opts.signal } : {}),
+              ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
               ...(options.isPartial ? { isPartial: true } : {}),
               ...(options.forceGateBlockReason ? { forceGateBlockReason: options.forceGateBlockReason } : {}),
               sourceLabel: 'TITRR',
@@ -3061,6 +3071,7 @@ async function runGoalInternal(
                 workSource: opts.workSource,
                 delegationScope,
                 ...(opts.signal ? { signal: opts.signal } : {}),
+                ...(opts.cortexAdmission !== undefined ? { cortexAdmission: opts.cortexAdmission } : {}),
                 ...(opts.runId ? { runId: opts.runId } : {}),
                 ...(opts.seatId ? { seatId: opts.seatId } : {}),
                 ...(opts.selectedGrokAdmission ? { selectedGrokAdmission: opts.selectedGrokAdmission } : {}),

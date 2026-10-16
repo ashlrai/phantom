@@ -78,6 +78,9 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // Explicit foreground-only repository admission is owner-reviewed authority.
+  'src/core/cortex/**',
+  'src/cli/cortex.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',

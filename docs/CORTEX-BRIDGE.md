@@ -1,0 +1,215 @@
+# Cortex engineering bridge
+
+Use Cortex to prepare a company engineering request and Phantom to produce one
+pending patch proposal on an explicitly selected local repository. The bridge
+uses Cortex's authenticated worker protocol v2 at `/api/fleet/worker` and the
+signed `ashlr-engineering-assignment/v1` contract. A worker advertising
+`engineering-assignment-v1` receives engineering assignments only.
+
+The command runs in the foreground once. It creates private local artifacts and
+returns their hashes plus a bounded summary to the original Cortex run. It does
+not install a resident worker, push a branch, merge a proposal, or deploy code.
+Google/provider activation and proactive-assistant adapters are separate from
+this engineering transport.
+
+## Configure a worker
+
+The operator must obtain a worker-scoped Cortex API token, the organization ID,
+and the issuer/audience/key ID and Ed25519 public key from the Cortex deployment
+owner. Pin that public key independently of the claim response. Never copy a
+signing private key onto the worker. The token's current organization membership
+and workstream permissions are checked by Cortex on every request.
+
+Create an owned private directory for bridge records and a private JSON
+configuration (mode `0600`, with an owned `0700` parent directory). Paths must be absolute physical paths without
+symlink aliases. Repository mapping is explicit; a server cannot choose arbitrary
+local paths. The configuration, its admission sidecar and the records directory
+must be outside the execution repository. Current foreground admission supports
+one Company-only repository per configuration on POSIX systems; Windows ACL
+assurance is not implemented. Example values below are fictional:
+
+```json
+{
+  "schemaVersion": 1,
+  "url": "https://cortex.example.invalid",
+  "organizationId": "company-example",
+  "tokenEnv": "CORTEX_WORKER_TOKEN",
+  "root": "/absolute/private/cortex-bridge",
+  "verifier": {
+    "issuer": "ashlr-cortex",
+    "audience": "ashlr-phantom",
+    "publicKeys": {
+      "company-key-1": "-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_OPERATOR_PINNED_ED25519_PUBLIC_KEY\n-----END PUBLIC KEY-----\n"
+    }
+  },
+  "repositories": [
+    {
+      "repository": "example-company/example-project",
+      "path": "/absolute/repositories/example-project",
+      "workstreams": ["company"]
+    }
+  ],
+  "runtimes": ["codex"],
+  "budget": { "maxTokens": 200000, "maxSteps": 40, "allowCloud": true }
+}
+```
+
+`runtimes` must be exactly `["codex"]` for the current Cortex engineering queue.
+Claude Code is not admitted by this bridge. Runtime authentication, repository
+admission and normal Phantom KILL/policy checks remain required. The mapped
+repository must have the signed GitHub origin, a clean worktree, and HEAD equal
+to the assignment's exact source commit. A signed assignment permits at most
+32 allowed-file patterns of 220 characters each on this worker. Changes to
+build/CI/manifests may be refused by the existing proposal verifier and require
+normal manual review.
+
+The bridge replaces Codex's usual unattended bypass flags with an explicit
+`cortex-proposal` native permission profile: root denied, minimal runtime reads,
+workspace writes, host-forced private run/tmp writes, and no command network access.
+Shared `/tmp` and unrelated user temp paths are denied. It forces Phantom's existing hardened
+outer confinement, ignores Codex user configuration and execpolicy rules, and
+disables apps, plugins, hooks, browsers, computer use, memory and subagents.
+Repositories containing a project `.codex` directory are refused because project
+configuration can launch MCP tools outside the command sandbox. Codex's own
+model transport still connects to OpenAI; shell subprocesses cannot use it as
+general outbound access. Before each account observation, initial producer and
+repair contact, a bounded synthetic proof qualifies the exact selected executable
+and source-owned policy. It uses only self-created private fixtures, stripped
+environment and a local loopback listener: workspace/private scratch writes must
+succeed; sibling temp, unrelated `/tmp`, symlink escape and private-marker reads
+must be OS-denied; TCP must return an OS permission denial. Host-side effect checks
+also reject an invented guest success report. No inference or provider credentials
+are used for this proof. Executable physical path, file identity and SHA-256 are
+revalidated before use and throughout contact; policy/admission/KILL checks remain
+independent requirements. No successful qualification is cached across contacts.
+
+Version strings and accepted flags are not sufficient: the installed Homebrew
+Codex 0.136 can accept the profile while permitting unrelated temp writes and is
+therefore refused before provider contact. There is no automatic executable
+fallback or upgrade. Native regression tests explicitly target available binaries;
+passing the synthetic shell probe does not prove every JavaScript toolchain is
+usable. The root-deny inner profile currently blocks the Homebrew Node 24 shared
+library; this bridge does not silently widen toolchain read grants. Keep live
+commissioning held until the selected runtime and required tools qualify under
+both inner and existing outer confinement. If probe shutdown is unconfirmed its
+exact private fixtures are retained rather than reused or removed under a process.
+
+The OS wrapper also denies creating or modifying root or nested `.codex`
+directories and files for every producer attempt, repair, descendant and verifier.
+Generated test code cannot plant a project MCP configuration for a later host
+invocation. The added deny rule stays in force under existing standing policies.
+
+See the [official permissions documentation](https://learn.chatgpt.com/docs/permissions)
+for command network and filesystem behavior. Other agent backends need equivalent
+enforced isolation before they can handle company evidence through this bridge.
+
+Check the configuration offline:
+
+```sh
+phm cortex check --config /absolute/private/cortex.json --json
+```
+
+Checking never creates authority. Before the first execution, explicitly admit
+this exact private configuration, local repository/source and installed bridge:
+
+```sh
+phm cortex admit --config /absolute/private/cortex.json --execute --json
+```
+
+This writes an owner-private `.cortex.json.cortex-admission.json` sidecar beside
+the example configuration. It does not add the repository to shared Phantom
+enrollment, alter standing authority or global configuration, enable a daemon,
+or start execution. Ambient workers, MCP and ordinary inbox/apply/merge paths
+cannot use this admission. Only an explicit `cortex once` invocation can activate
+runtime-opaque, purpose-bound producer and independent-verification capabilities
+for one valid signed Company assignment. Ordinary enrollment readers and mutation
+checks are unchanged, and global KILL and any inherited restrictive enrollment
+lens still apply.
+
+The record binds configuration bytes and file identity, private storage-directory
+identities, the repository's physical root and Git common directory, exact HEAD
+and origin, and the bridge implementation/release identity. Source upgrades,
+configuration changes or replacements invalidate admission; they are not silently
+accepted even if a repository also happens to be globally enrolled. Revoke the
+old record and explicitly admit again after reviewing changes:
+
+```sh
+phm cortex revoke --config /absolute/private/cortex.json --execute --json
+```
+
+Revocation does not remove shared enrollment or standing grants. It invalidates
+active bridge capabilities and signals the producer to stop; scopes also close
+when the foreground owner exits, including detached asynchronous descendants.
+These checks provide cooperative operator/source continuity, not protection
+against a hostile process with the same operating-system identity or root access.
+
+With the worker token supplied in the selected environment variable by the
+operator's secret manager, explicitly execute one prepared request:
+
+```sh
+phm cortex once --config /absolute/private/cortex.json --execute --json
+```
+
+The token is sent only in the HTTPS authorization header. Redirects are refused.
+The foreground process removes that token from its environment while executing
+the producer and verification commands, restoring it before exit. No company
+memory is recalled or captured by the bridge's model invocation.
+
+## Review the result
+
+An empty queue returns `{"state":"idle"}`. A successful round trip returns
+`{"state":"proposed","runId":"…","proposalId":"…","cortexProposalId":"…"}`.
+The two proposal IDs name the local patch and the confirmed Cortex Approval Inbox
+item respectively. This means a signed,
+complete pending Phantom proposal was correlated to the producer's durable run,
+and the existing separate-worktree verifier accepted it at the signed base
+commit. Captured changed paths, changed files and added/deleted lines are checked
+against the signed assignment. Cortex receives a proposal receipt and creates
+its own review item; the receipt is authenticated worker evidence, not an
+independent attestation or a completed business outcome.
+
+After verification, the bridge locks the local proposal, reloads its signed
+pending identity, and requires the persisted verification to match the original
+diff bytes and source commit before saving receipt artifacts. A generic successful
+worker response without a Cortex proposal ID is held, preserving `receipt.json`
+without writing `accepted.json`.
+
+Each attempt has a private directory named by SHA-256 of the Cortex run ID:
+`assignment.json`, `proposal.diff`, `proposal.json`, `verification.json`,
+`receipt.json`, and (after acceptance) `accepted.json`. The three artifact hashes
+in the receipt identify the exact local diff, proposal, and verification record.
+Artifact paths are local relative references; this version does not upload raw
+patches or company repository files to Cortex.
+
+## Cancellation and uncertain results
+
+The separate proposal verifier is also required to use Phantom's existing OS
+confinement with public and loopback network access disabled, even when no standing authority grant exists.
+If the platform cannot construct that sandbox, verification fails closed. The
+bridge does not enable a standing grant to obtain this isolation.
+Suites that require localhost listeners are held for an explicitly reviewed
+verification setup; they do not silently get broader local-service access.
+
+A fresh heartbeat is required before producing work and before returning a
+receipt. The producer receives an abort signal on revocation, lost heartbeat,
+SIGINT/SIGTERM, assignment expiry, or the bounded wall-clock deadline. Existing
+verification commands do not accept this signal: a verification already running
+may finish its locally bounded checks, but the bridge cannot publish its receipt
+without another successful heartbeat.
+
+Every assignment reserves its local attempt directory exclusively before model
+execution. A replay or uncertain crash is held rather than dispatched again.
+Do not delete this directory to retry. Inspect the Cortex run and retained local
+proposal, then make a new reviewed assignment if needed. If the final network
+response is lost, `receipt.json` is retained and `accepted.json` may be absent;
+that absence does not prove Cortex rejected it. Reconcile the run in Cortex
+before creating replacement work. Invalid local configuration, failed checks,
+or unsuccessful receipt acceptance exit nonzero.
+
+## Implementation references
+
+- [Foreground bridge and receipt construction](https://github.com/ashlrai/phantom/blob/master/src/core/cortex/bridge.ts)
+- [Portable signed assignment codec](https://github.com/ashlrai/phantom/blob/master/src/core/cortex/engineering-assignment.ts)
+- [Existing sandboxed producer](https://github.com/ashlrai/phantom/blob/master/src/core/run/sandboxed-engine.ts)
+- [Existing pending-proposal authority](https://github.com/ashlrai/phantom/blob/master/src/core/inbox/pending-authority.ts)
+- [Existing separate-worktree verification](https://github.com/ashlrai/phantom/blob/master/src/core/inbox/merge.ts)
