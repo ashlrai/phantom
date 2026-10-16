@@ -44,6 +44,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
+  'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
   'test/proactive-coordination.test.ts', // immutable ledger/watermark fsync, prefix-loss detection and ownership recovery
@@ -56,6 +57,8 @@ export const REAL_IO_TEST_FILES = [
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
+  'test/usage-api-body-stall.test.ts', // actual loopback HTTP server that sends headers and then stalls the body
+  'test/simple-conductor-lease-clear.test.ts', // private HOME task stores plus real live/exited child processes as lease owners
   'test/claude-api-grant.test.ts', // real child processes and private-store financial reservation races
   'test/m54.self-eval.test.ts', // real temporary Git repositories for source-bound legacy/canonical self-target discovery
   'test/authority-claude-native-adapter.test.ts', // real inert native profile, bounded stdin, metadata and separately jailed tools
@@ -97,6 +100,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-session-handoff.test.ts', // real temp git repos for the handoff note's `git diff --stat`
   'test/verse-control-api.test.ts', // real web server bind + real enrollment/audit/kill-switch state in a tmp HOME
   'test/verse-daemon-pause.test.ts', // real web server bind + real git repos, pause/kill sentinels and audit in a tmp HOME
+  'test/verse-git-runner-hung-child.test.ts', // real temp git repo whose pre-commit hook forks a pipe-holding grandchild
   'test/universe-control-execution.test.ts', // private signed effect and interrupted settlement records
   'test/universe-firm-resource-control-handler.test.ts', // enrolled graph dispatch to real inert transports
   'test/universe-firm-cli-integration.test.ts', // real CLI processes with test-owned provenance
@@ -469,6 +473,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cloud-timeline-api.test.ts', // 3.13: real loopback http server bind for GET /api/verse/cloud/tasks/<id>/timeline under a relocated HOME
   'test/routing-capacity-history.test.ts', // 3.10.1: real loopback http server + real authenticated web server bind for /api/verse/budget/history under a relocated HOME; real mkfifo + a tsx child with a deadline for the FIFO guard; multi-MiB compaction fixtures
   'test/setup/home-isolation-guard.test.ts', // spawns a nested real `vitest run` to prove the guard fails a leaking fixture
+  'test/setup/git-env.test.ts', // spawns real git to prove a worker's child git sees no environment-injected config
   // Track A/C — Verse server surfaces.
   'test/verse-activity-310.test.ts', // real web server bind for /api/verse/activity + a 300-chat warm-read latency bound
   'test/verse-apps-310.test.ts', // real web server bind for /api/verse/apps
@@ -498,6 +503,7 @@ export const REAL_IO_TEST_FILES = [
   'test/execution-leases-310b.test.ts', // cross-process lease cases via real tsx children (test/helpers/throughput-310b.ts)
   'test/throughput-310b.test.ts', // real tsx children + h1 temp repos; only the model is faked
   'test/mirrors-310b.test.ts', // real mirror clones/fetches in h1 temp repos via the throughput helper
+  'test/mirror-git-bounded.test.ts', // real fake-git child forking a SIGTERM-ignoring grandchild; POSIX process-group kill
   'test/safe-git-310b.test.ts', // real `git init` mirrors to prove hooks/fsmonitor are forced off
   'test/confine-autonomous-darwin-310b.test.ts', // real sandbox-exec children + a real net server as an egress target
   'test/engines-judges-310b.test.ts', // execs the grok-cli launcher (fake pinned binary in a seat fixture) exactly as the fleet would, to inspect env scrubbing

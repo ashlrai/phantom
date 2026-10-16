@@ -182,6 +182,7 @@ import {
   writeDaemonActivity,
   type DaemonActivityPhase,
 } from './activity.js';
+import { residentPidProvablyReused } from './pid-reuse-proof.js';
 import { beginTickProgress, noteTickPhase, readTickProgress } from './tick-progress.js';
 import { boundedBeforeTick } from './tick-deadline.js';
 import {
@@ -1706,7 +1707,8 @@ function staleResidentProof(state: DaemonState): 'dead' | 'reused' | null {
   try {
     process.kill(state.pid, 0);
   } catch (error) {
-    return (error as NodeJS.ErrnoException | undefined)?.code === 'ESRCH' ? 'dead' : null;
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ESRCH' ? 'dead' : code === 'EPERM' && residentPidProvablyReused(state, readDaemonActivity()) ? 'reused' : null;
   }
   const activity = readDaemonActivity();
   return activity.ownerState === 'reused' &&
@@ -4952,8 +4954,10 @@ export async function tick(
               routeCurrent: managerRouteCurrent,
               // Recovery cannot admit another provider contact or start a new stage.
               routeAllowed: () => false,
-            }));
-            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) });
+            // Only the singleton lock holder can prove a crashed daemon's stage has no live owner.
+            }), { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
+            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) },
+              { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
             materializeOutcomeIntents(outcome.id, { stillAuthorized: authorized, cfg: routingCfg });
             const fresh = new OutcomeStore(outcomeDirectory(outcome.id)).read();
             if (fresh.sourceState === 'healthy' && authorized()) {

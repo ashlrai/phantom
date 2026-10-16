@@ -92,6 +92,11 @@ let fx: H1Fixture;
 let repo: DisposableRepo;
 
 beforeEach(() => {
+  // Every case here compares a seeded or expected budget day with the day the
+  // daemon re-derives: freeze Date at the real current instant so a run that
+  // crosses 00:00 UTC observes one day. Timers stay real; afterEach restores.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
   // H2/H3 false-green guard: every it() MUST run at least one real assertion, so
   // an unfilled (TODO) body FAILS loudly instead of passing vacuously.
   expect.hasAssertions();
@@ -127,6 +132,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fx.cleanup();
 });
 

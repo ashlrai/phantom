@@ -111,6 +111,8 @@ export function checkpointChildEnv(extra: Record<string, string> = {}): Record<s
 
 const DEFAULT_MAX_STDOUT = 32 * 1024 * 1024;
 const MAX_STDERR = 16 * 1024;
+/** After SIGTERM to the group: SIGKILL, then settle without waiting for 'close'. */
+const CHECKPOINT_KILL_GRACE_MS = 2_000;
 
 export const defaultCheckpointGit: CheckpointGitRunner = (gitRoot, args, opts = {}) =>
   new Promise<CheckpointRunResult>((resolveRun) => {
@@ -137,15 +139,32 @@ export const defaultCheckpointGit: CheckpointGitRunner = (gitRoot, args, opts = 
         env: checkpointChildEnv(opts.env),
         stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        // Own process group on POSIX, so a stop reaches git's filters, hooks
+        // and helpers too, not only git (same as git-ops' runner).
+        detached: process.platform !== 'win32',
       });
     } catch {
       resolveRun({ code: null, stdout: Buffer.alloc(0), stderr: '', timedOut: false, truncated: false, missing: true });
       return;
     }
+    const killTree = (signal: NodeJS.Signals): void => {
+      if (process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+        try { process.kill(-child.pid, signal); return; } catch { /* group gone: fall back to the child */ }
+      }
+      try { child.kill(signal); } catch { /* already exited */ }
+    };
     clock.timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      killTree('SIGTERM');
+      // A helper that ignores SIGTERM must not hold the checkpoint open
+      // forever, nor may a grandchild that left the group but still holds a
+      // pipe: after the SIGKILL, stop waiting for 'close' and settle.
+      setTimeout(() => {
+        killTree('SIGKILL');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null, false);
+      }, CHECKPOINT_KILL_GRACE_MS).unref();
     }, timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       if (truncated) return;
@@ -154,7 +173,7 @@ export const defaultCheckpointGit: CheckpointGitRunner = (gitRoot, args, opts = 
         out.push(chunk.subarray(0, Math.max(0, room)));
         outBytes = maxStdout;
         truncated = true;
-        child.kill('SIGTERM');
+        killTree('SIGTERM');
         return;
       }
       out.push(chunk);
