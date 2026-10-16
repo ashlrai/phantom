@@ -17,8 +17,11 @@ use std::{
 
 pub const FLAG: &str = "--_phantom-native-metadata-launch";
 // Test-process fork windows must not inherit another fixture's held flock.
-// Readers keep broker fixtures concurrent; only pre_exec spawn crosses the
-// exclusive window, ending when exec closes its inherited CLOEXEC descriptors.
+// Readers keep broker fixtures concurrent; every spawn in the test process
+// crosses the exclusive window, ending when exec closes its inherited CLOEXEC
+// descriptors. That includes plain posix_spawn: XNU copies the descriptor
+// table into the child before image activation closes CLOEXEC entries, so a
+// lease the parent just closed can stay locked until the spawn returns.
 #[cfg(test)]
 pub(crate) static TEST_FORK_LEASE_BARRIER: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
@@ -313,7 +316,8 @@ fn write(p: &Path, bytes: &[u8]) -> Result<()> {
 }
 // Only fixed metadata programs. Bounded wait; no raw argv/env or output is exported.
 fn metadata(bin: &str, args: &[String]) -> Result<String> {
-    let mut child = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -321,9 +325,12 @@ fn metadata(bin: &str, args: &[String]) -> Result<String> {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
+        .stderr(Stdio::null());
+    let mut child = {
+        #[cfg(test)]
+        let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
+        command.spawn().map_err(|_| ())?
+    };
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match child.try_wait().map_err(|_| ())? {
@@ -765,7 +772,8 @@ thread_local! { static ACCEPTANCE_CHILD: std::cell::Cell<Option<u32>> = const { 
 // malformed output cannot turn a pipe into a deadline-extending wait.
 fn bounded_acceptance_command(bin: &Path, args: &[&str], budget: Duration) -> Result<Vec<u8>> {
     use std::os::unix::io::AsRawFd;
-    let mut child = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -774,9 +782,12 @@ fn bounded_acceptance_command(bin: &Path, args: &[&str], budget: Duration) -> Re
         .current_dir("/")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
+        .stderr(Stdio::null());
+    let mut child = {
+        #[cfg(test)]
+        let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
+        command.spawn().map_err(|_| ())?
+    };
     // Test-only direct spawn witness; no callback or diagnostic port exists in
     // production, and cancellation tests need not wait for child script output.
     #[cfg(test)]
@@ -1460,15 +1471,18 @@ mod tests {
                 }
             }
         }
-        let owner = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", &selected, "--nocapture"])
-            .env("PHANTOM_INERT_HANDOFF", &handoff)
-            .env("PHANTOM_INERT_OWNER_DEATH_BEFORE_NOTICE", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let owner = {
+            let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &selected, "--nocapture"])
+                .env("PHANTOM_INERT_HANDOFF", &handoff)
+                .env("PHANTOM_INERT_OWNER_DEATH_BEFORE_NOTICE", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        };
         let mut processes = OwnedProcesses {
             owner,
             handoff: handoff.clone(),

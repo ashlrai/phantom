@@ -51,15 +51,26 @@ mod tests {
             return;
         }
         // A separate test process prevents another TLS test from masking startup.
-        let output = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "native_update_client::tests::updater_client_constructs_in_a_fresh_process_without_network",
                 "--nocapture",
             ])
             .env(CHILD, "1")
-            .output()
-            .unwrap();
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        // Spawn under the fork barrier so the child cannot briefly share a
+        // broker fixture's lifecycle flock; wait outside it.
+        let child = {
+            let _fork = crate::native_metadata_launch::TEST_FORK_LEASE_BARRIER
+                .write()
+                .unwrap();
+            command.spawn().unwrap()
+        };
+        let output = child.wait_with_output().unwrap();
         assert!(
             output.status.success(),
             "fresh updater client failed: {}{}",
