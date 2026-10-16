@@ -82,6 +82,7 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/core/memory/**',
   'src/core/local-eval/memory-*.ts',
   'scripts/evaluate-memory.ts',
+  'scripts/benchmark-memory.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',

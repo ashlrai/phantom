@@ -132,6 +132,7 @@
 /src/core/memory/** @masonwyatt23
 /src/core/local-eval/memory-*.ts @masonwyatt23
 /scripts/evaluate-memory.ts @masonwyatt23
+/scripts/benchmark-memory.ts @masonwyatt23
 /src/core/integrations/locus-job-env.ts @masonwyatt23
 /src/core/integrations/locus.ts @masonwyatt23
 /src/core/vision/leader-display-text.ts @masonwyatt23
