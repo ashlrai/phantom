@@ -54,6 +54,9 @@ export const REAL_IO_TEST_FILES = [
   'test/proactive-replay-watermark.test.ts', // real private watermark fsync, orphan stages, file links and bounded custody
   'test/candidate-version-sync.test.ts', // real bounded CLI subprocesses; the subprocess case retains its original 5s deadline
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
+  'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
+  'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
+  'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
@@ -587,4 +590,5 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-terminal-shell-integration-315.test.ts', // spawns real /bin/zsh and /bin/bash on the generated shell-integration scripts
   'test/verse-terminal-mux-315.test.ts', // binds a real loopback HTTP server for the multiplexed stream, history, settings and assist routes
   'test/verse-terminal-agents-routes-315.test.ts', // binds a real loopback HTTP server and runs the generated agent hook script (/bin/sh + curl) against it
+  'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
 ];
