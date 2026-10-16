@@ -706,7 +706,7 @@ const postCreateWriterSource = ${JSON.stringify(PINNED_POST_CREATE_WRITER)};
 const [commonDev, commonIno, expectedCommonPath, sourceDev, sourceIno, sourceRepo,
   parentDev, parentIno, sandboxParent, homeDev, homeIno, sandboxHome,
   metadataDev, metadataIno, metadataPath, worktreePath, branch, baseHead,
-  mode, pinnedWorktreeDev, pinnedWorktreeIno, pinnedAdminPath, pinnedAdminDev, pinnedAdminIno] = process.argv.slice(1);
+  mode, pinnedWorktreeDev, pinnedWorktreeIno, pinnedAdminPath, pinnedAdminDev, pinnedAdminIno] = process.argv.slice(2);
 const childEnv = { ...process.env };
 if (childEnv.ASHLR_PINNED_GIT_NODE_OPTIONS) {
   childEnv.NODE_OPTIONS = childEnv.ASHLR_PINNED_GIT_NODE_OPTIONS;
@@ -1046,6 +1046,14 @@ function markStep(name) {
   stepTiming.last = now;
 }
 
+// One bounded line naming what went wrong, for the caller's error and audit.
+function describeError(error) {
+  const text = error && typeof error === 'object'
+    ? [error.code, error.message].filter(Boolean).join(' ')
+    : String(error);
+  return text.replace(/\s+/g, ' ').slice(0, 300) || 'unknown error';
+}
+
 function worktreeIdentityResult(admin) {
   try {
     const worktree = lstatSync(worktreePath, { bigint: true });
@@ -1259,22 +1267,22 @@ async function rollbackWorktree() {
         : mode === 'rollback'
           ? await rollbackWorktree()
           : { ok: false, cleanupComplete: false, error: 'unknown pinned worktree runner mode' };
-  } catch {
+  } catch (error) {
     let cleanupComplete = false;
     // Only REGISTER rolls back in place; the other modes run without (populate)
     // or already are (rollback) the rollback.
     if (mode === 'register') {
       try { cleanupComplete = await rollback(); } catch { /* retain recovery metadata */ }
     }
-    result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed' };
+    result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed: ' + describeError(error) };
   }
   if (stepTiming !== null) result.timing = stepTiming.steps;
   process.stdout.write(JSON.stringify(result));
-})().catch(() => {
+})().catch((error) => {
   process.stdout.write(JSON.stringify({
     ok: false,
     cleanupComplete: false,
-    error: 'pinned worktree runner failed',
+    error: 'pinned worktree runner failed: ' + describeError(error),
   }));
 });
 `;
@@ -1301,8 +1309,44 @@ interface PinnedAdministrativeDirectory {
 
 interface PinnedWorktreeRunnerInvocation {
   argv: string[];
+  /** The runner source, written to the child's stdin (`node -`). */
+  script: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Windows caps a whole command line (CreateProcess lpCommandLine) at 32,767
+ * characters. The runner embeds the supervisor and post-create writer and is
+ * itself ~34k, so it is fed on stdin (`node -`) and only its arguments ride
+ * the command line. The supervisor and writer the runner spawns with `-e`
+ * must each stay under this bound (test/sandbox-create-two-phase.test.ts).
+ */
+export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+
+/** Sizes the Windows command-line bound applies to (tests only). */
+export function _pinnedRunnerCommandLineSizesForTest(): {
+  runnerArgvChars: number;
+  supervisorScriptChars: number;
+  writerScriptChars: number;
+  runnerScriptOnCommandLine: boolean;
+} {
+  const long = 'C:\\' + 'x'.repeat(250);
+  const dir = { path: long, dev: 1n, ino: 1n };
+  const invocation = pinnedWorktreeRunnerInvocation(
+    'populate',
+    { source: dir, commonDirectory: dir },
+    { parent: dir, home: dir, metadata: dir },
+    { id: 'x', sourceRepo: long, worktreePath: long, branch: long, baseHead: 'f'.repeat(64), createdAt: '' },
+    dir,
+    { path: long, dev: '1', ino: '1' },
+  );
+  return {
+    runnerArgvChars: [process.execPath, ...invocation.argv].reduce((n, a) => n + a.length + 3, 0),
+    supervisorScriptChars: PINNED_GIT_SUPERVISOR.length,
+    writerScriptChars: PINNED_POST_CREATE_WRITER.length,
+    runnerScriptOnCommandLine: invocation.argv.some((a) => a.includes('registerWorktree')),
+  };
 }
 
 /**
@@ -1326,9 +1370,7 @@ function pinnedWorktreeRunnerInvocation(
   delete env.NODE_OPTIONS;
   return {
     argv: [
-      '-e',
-      PINNED_WORKTREE_RUNNER,
-      '--',
+      '-',
       String(identity.commonDirectory.dev),
       String(identity.commonDirectory.ino),
       identity.commonDirectory.path,
@@ -1354,17 +1396,34 @@ function pinnedWorktreeRunnerInvocation(
       admin?.dev ?? '',
       admin?.ino ?? '',
     ],
+    script: PINNED_WORKTREE_RUNNER,
     cwd: identity.source.path,
     env,
   };
 }
 
+/** One bounded line on why the runner process itself failed. */
+function runnerFailureDetail(
+  error: Error | undefined,
+  status: number | null,
+  signal: string | null,
+  stderr: unknown,
+): string {
+  const parts: string[] = [];
+  if (error) parts.push(`spawn ${(error as NodeJS.ErrnoException).code ?? ''} ${error.message}`.trim());
+  if (status !== null && status !== 0) parts.push(`exit ${status}`);
+  if (signal) parts.push(`signal ${signal}`);
+  const tail = typeof stderr === 'string' ? stderr.replace(/\s+/gu, ' ').trim().slice(-300) : '';
+  if (tail) parts.push(`stderr: ${tail}`);
+  return parts.join('; ') || 'no result';
+}
+
 function parsePinnedWorktreeResult(
-  failed: boolean,
+  failure: string | null,
   stdout: unknown,
 ): PinnedWorktreeCreationResult {
-  if (failed || typeof stdout !== 'string') {
-    return { ok: false, cleanupComplete: false, error: 'pinned worktree runner failed' };
+  if (failure !== null || typeof stdout !== 'string') {
+    return { ok: false, cleanupComplete: false, error: `pinned worktree runner failed (${failure ?? 'no output'})` };
   }
   try {
     const parsed = JSON.parse(stdout) as Partial<PinnedWorktreeCreationResult>;
@@ -1390,8 +1449,13 @@ function parsePinnedWorktreeResult(
       ...(typeof parsed.adminIno === 'string' ? { adminIno: parsed.adminIno } : {}),
       ...(timing ? { timing } : {}),
     };
-  } catch {
-    return { ok: false, cleanupComplete: false, error: 'invalid pinned worktree result' };
+  } catch (error) {
+    return {
+      ok: false,
+      cleanupComplete: false,
+      error: `invalid pinned worktree result (${error instanceof Error ? error.message : String(error)}: ` +
+        `${stdout.replace(/\s+/gu, ' ').slice(0, 200)})`,
+    };
   }
 }
 
@@ -1400,10 +1464,16 @@ function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): Pi
     cwd: invocation.cwd,
     encoding: 'utf8',
     env: invocation.env,
+    input: invocation.script,
     maxBuffer: 64 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
   });
-  return parsePinnedWorktreeResult(Boolean(result.error) || result.status !== 0, result.stdout);
+  const failed = Boolean(result.error) || result.status !== 0;
+  return parsePinnedWorktreeResult(
+    failed ? runnerFailureDetail(result.error, result.status, result.signal, result.stderr) : null,
+    result.stdout,
+  );
 }
 
 /**
@@ -1421,14 +1491,18 @@ function runPinnedWorktreeRunnerAsync(
       child = spawn(process.execPath, invocation.argv, {
         cwd: invocation.cwd,
         env: invocation.env,
-        stdio: ['ignore', 'pipe', 'ignore'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
-    } catch {
-      resolveResult(parsePinnedWorktreeResult(true, null));
+    } catch (error) {
+      resolveResult(parsePinnedWorktreeResult(
+        runnerFailureDetail(error instanceof Error ? error : new Error(String(error)), null, null, ''),
+        null,
+      ));
       return;
     }
     let stdout = '';
+    let stderr = '';
     let overflow = false;
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
@@ -1436,14 +1510,26 @@ function runPinnedWorktreeRunnerAsync(
       stdout += chunk;
       if (stdout.length > 64 * 1024) overflow = true;
     });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-4 * 1024);
+    });
+    // The script goes over stdin (see WINDOWS_COMMAND_LINE_LIMIT). A write
+    // error surfaces as the child's own failure below.
+    child.stdin?.on('error', () => { /* reported through close / error */ });
+    child.stdin?.end(invocation.script);
     let settled = false;
-    const settle = (failed: boolean): void => {
+    const settle = (error: Error | undefined, status: number | null, signal: string | null): void => {
       if (settled) return;
       settled = true;
-      resolveResult(parsePinnedWorktreeResult(failed || overflow, stdout));
+      const failed = error !== undefined || status !== 0 || overflow;
+      resolveResult(parsePinnedWorktreeResult(
+        failed ? (overflow ? 'output limit exceeded' : runnerFailureDetail(error, status, signal, stderr)) : null,
+        stdout,
+      ));
     };
-    child.once('error', () => settle(true));
-    child.once('close', (status) => settle(status !== 0));
+    child.once('error', (error) => settle(error, null, null));
+    child.once('close', (status, signal) => settle(undefined, status, signal));
   });
 }
 

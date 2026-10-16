@@ -28,6 +28,8 @@ import {
   removeSandbox,
   sandboxesDir,
   sweepOrphanSandboxes,
+  WINDOWS_COMMAND_LINE_LIMIT,
+  _pinnedRunnerCommandLineSizesForTest,
 } from '../src/core/sandbox/worktree.js';
 import { acquireRepoLease, countLiveExecutionLeases } from '../src/core/sandbox/execution-leases.js';
 import {
@@ -117,6 +119,20 @@ afterEach(() => {
   try { setKill(false, { waitMs: 500 }); } catch { /* fixture cleanup retries */ }
   fx.cleanup();
   rmSync(shimDir, { recursive: true, force: true });
+});
+
+describe('pinned worktree runner command lines fit Windows', () => {
+  // CreateProcess caps a command line at 32,767 characters. The runner (~34k
+  // with the supervisor and writer embedded) passed as `-e` failed every
+  // creation on Windows with "pinned worktree runner failed".
+  it('feeds the runner over stdin and keeps every -e script under the limit', () => {
+    const sizes = _pinnedRunnerCommandLineSizesForTest();
+    expect(sizes.runnerScriptOnCommandLine).toBe(false);
+    expect(sizes.runnerArgvChars).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT / 2);
+    // The supervisor / writer ride `node -e <script> -- <args>`; leave room for args.
+    expect(sizes.supervisorScriptChars + 4_096).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT);
+    expect(sizes.writerScriptChars + 4_096).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT);
+  });
 });
 
 describe.skipIf(!posix)('sandbox creation: REGISTER fenced, POPULATE outside the fence', () => {
