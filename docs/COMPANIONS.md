@@ -28,6 +28,8 @@ artifact provenance, runtime contract support or installed readiness. Verify
 the selected release artifacts before a separate manual installation. The
 workbench command is `phm` (compatible `ashlr`); `phantom` belongs to Secrets.
 
+See also [SECRETS-FOR-ENROLLED-REPOS.md](https://github.com/ashlrai/phantom/blob/master/docs/SECRETS-FOR-ENROLLED-REPOS.md) for per-repo setup and the autonomy boundary.
+
 ## Select an installation explicitly
 
 Default discovery examines absolute directories in PATH. Empty/relative PATH
