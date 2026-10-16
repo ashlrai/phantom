@@ -191,7 +191,9 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
 
   if (args[0] === 'approve') {
     const subId = args[1];
-    if (!subId) {
+    // approve resumes agent execution: take exactly one id, never a flag, and
+    // refuse anything after it rather than ignoring a mistyped option.
+    if (!subId || subId.startsWith('-') || args.length > 2) {
       return {
         subcommand: 'run',
         background: false,
@@ -219,7 +221,7 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
 
   if (args[0] === 'rollback') {
     const subId = args[1];
-    if (!subId) {
+    if (!subId || subId.startsWith('-')) {
       return {
         subcommand: 'run',
         background: false,
@@ -1192,8 +1194,9 @@ async function promptConfirm(question: string): Promise<boolean> {
  * - rollback is the ONLY potentially-destructive op; ALWAYS confirm-gated.
  */
 export async function cmdSwarm(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit. `--help`/`-h` anywhere prints usage and runs nothing:
+  // `swarm approve <id> --help` resumed the swarm's agents.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printSwarmHelp();
     return 0;
   }

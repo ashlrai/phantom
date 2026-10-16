@@ -220,9 +220,22 @@ async function cmdWorkerStatus(_args: string[]): Promise<number> {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+const WORKER_USAGE = [
+  'usage:',
+  '  ashlr worker setup ...  (temporarily unavailable; performs no setup mutation)',
+  '  ashlr worker status',
+];
+
 export async function cmdWorker(args: string[]): Promise<number> {
   const sub = args[0];
   const rest = args.slice(1);
+
+  // Help wins anywhere: `worker setup --help` must print usage, never reach
+  // the setup path (config, enrollment and service install).
+  if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    for (const line of WORKER_USAGE) console.log(line);
+    return 0;
+  }
 
   switch (sub) {
     case 'setup':
@@ -235,9 +248,7 @@ export async function cmdWorker(args: string[]): Promise<number> {
       const colors = makeColors(isTty());
       console.error(colors.red('error: ') + `unknown worker subcommand: ${sub ?? '(none)'}`);
       console.error('');
-      console.error('usage:');
-      console.error('  ashlr worker setup ...  (temporarily unavailable; performs no setup mutation)');
-      console.error('  ashlr worker status');
+      for (const line of WORKER_USAGE) console.error(line);
       console.error('');
       return 1;
     }

@@ -190,16 +190,32 @@ const spawnGitChild: GitRunner = (bin, args, opts) =>
         env: gitChildEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        // Own process group on POSIX, so a stop reaches git's hooks, ssh and
+        // credential helpers too, not only git.
+        detached: process.platform !== 'win32',
       });
     } catch {
       resolveRun({ code: null, stdout: '', stderr: '', timedOut: false, truncated: false, missing: true });
       return;
     }
+    const killTree = (signal: NodeJS.Signals): void => {
+      if (process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+        try { process.kill(-child.pid, signal); return; } catch { /* group gone: fall back to the child */ }
+      }
+      try { child.kill(signal); } catch { /* already exited */ }
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-      // A git hook that ignores SIGTERM must not hold the route open forever.
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      killTree('SIGTERM');
+      // A git hook that ignores SIGTERM must not hold the route open forever,
+      // nor may a grandchild that left the group but still holds a pipe: after
+      // the SIGKILL, stop waiting for 'close' and settle.
+      setTimeout(() => {
+        killTree('SIGKILL');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish({ code: null, missing: false });
+      }, 2_000).unref();
     }, timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       if (truncated) return;
@@ -208,7 +224,7 @@ const spawnGitChild: GitRunner = (bin, args, opts) =>
         out.push(chunk.subarray(0, Math.max(0, room)));
         outBytes = maxStdout;
         truncated = true;
-        child.kill('SIGTERM');
+        killTree('SIGTERM');
         return;
       }
       out.push(chunk);

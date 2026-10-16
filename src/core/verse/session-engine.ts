@@ -671,6 +671,8 @@ const REDACT_LAUNCHER_MIN_CHARS = 4;
 const REDACT_ENV_MIN_CHARS = 8;
 const INTERRUPTED_MESSAGE = 'turn interrupted: server restarted';
 const INTERRUPTED_LAST_ERROR = 'interrupted by server restart';
+/** Persisted CLI output that proves a turn engaged the vendor conversation (reconcileInterrupted). */
+const ENGAGED_EVENTS: ReadonlySet<VerseEvent['type']> = new Set(['text-delta', 'assistant-message', 'thinking', 'tool-use', 'tool-result']);
 const DEFAULT_WATCHDOG_MS = 3 * 60_000;
 /**
  * 3.15. A Devin CLOUD turn waits on a remote session that may work for hours
@@ -1605,9 +1607,13 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
    */
   function reconcileInterrupted(session: VerseSession): void {
     let orphanTurnId: string | null = null;
+    let engaged = false;
     for (const event of store.readEvents(session.id)) {
-      if (event.type === 'user-message' || event.type === 'turn-started') orphanTurnId = event.turnId;
-      else if ((event.type === 'turn-done' || event.type === 'cancelled') && event.turnId === orphanTurnId) orphanTurnId = null;
+      if (event.type === 'user-message' || event.type === 'turn-started') {
+        if (event.turnId !== orphanTurnId) engaged = false;
+        orphanTurnId = event.turnId;
+      } else if ((event.type === 'turn-done' || event.type === 'cancelled') && event.turnId === orphanTurnId) orphanTurnId = null;
+      else if (orphanTurnId !== null && event.turnId === orphanTurnId && ENGAGED_EVENTS.has(event.type)) engaged = true;
     }
     emit(session.id, { type: 'error', turnId: orphanTurnId, message: INTERRUPTED_MESSAGE });
     if (orphanTurnId) {
@@ -1619,6 +1625,9 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         durationMs: 0,
       });
     }
+    // `finalize`'s rule: a turn the CLI engaged in exists on the vendor side,
+    // so the next launch resumes that conversation instead of starting cold.
+    if (orphanTurnId && engaged) session.turnCount += 1;
     session.status = 'error';
     session.lastError = INTERRUPTED_LAST_ERROR;
     save(session);
@@ -1997,10 +2006,29 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     }
   }
 
+  /**
+   * A vendor-named conversation (codex `thread.started`, a Devin task id) is
+   * recorded the moment the CLI prints it, not at `turn-done`: a server killed
+   * mid-turn never reaches `finalize`, and a first turn's id kept only in
+   * memory would be lost — the next turn would start a cold thread (or, for a
+   * Devin cloud chat, launch a second task while the first keeps running).
+   * Same fill-only-when-unset rule as `finalize`.
+   */
+  function adoptNativeSessionId(id: string, turn: RunningTurn): void {
+    let observed: string | null = null;
+    try { observed = turn.parser.nativeSessionId(); } catch { observed = null; }
+    if (!observed) return;
+    const session = store.get(id);
+    if (!session || session.nativeSessionId) return;
+    session.nativeSessionId = observed;
+    save(session);
+  }
+
   function pushLine(id: string, turn: RunningTurn, line: string): void {
     if (turn.settled) return;
     let events: VerseParsedEvent[];
     try { events = turn.parser.push(line); } catch { events = []; }
+    adoptNativeSessionId(id, turn);
     if (turn.termination !== null) {
       // We signalled this process ourselves (Stop / timeout / shutdown). The
       // vendor CLI then reports the interruption as a failure; that is not an
