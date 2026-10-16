@@ -51,7 +51,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MaintainerVerificationResult; exit 0 verified, 1 withheld, 2 usage',
   },
   {
-    usage: 'ashlr cortex check|once --config ABS [--execute] --json',
+    usage: 'phm cortex check|once --config ABS [--execute] --json',
     description: 'Check a private Cortex bridge config, or execute one signed engineering assignment in the existing sandbox and return a verified pending proposal receipt. No resident service, merge, push or deployment.',
     safety: 'proposal',
     jsonShape: '{state:"checked"|"idle"|"proposed",runId?,proposalId?,cortexProposalId?}; check is offline and read-only; once requires --execute',
@@ -496,6 +496,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },
 
   { cmd: 'run "<goal>" [opts]',          desc: 'Decompose goal into tasks; execute via local model (Ollama/LM Studio).', topic: 'run' },
+  { cmd: 'cortex check|once --config ABS [--execute] --json', desc: 'Check the Cortex bridge or produce one verified pending proposal from a signed company engineering request.', topic: 'run' },
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List local models (Ollama/LM Studio); marks the active one.', topic: 'run' },

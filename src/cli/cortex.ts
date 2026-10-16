@@ -1,8 +1,8 @@
 import { readCortexBridgeConfig, runCortexBridgeOnce } from '../core/cortex/bridge.js';
 import { resourceCheckOptions, resourceCheckPath } from './resource-check-options.js';
 
-const HELP = `usage: ashlr cortex check --config ABS [--json]
-       ashlr cortex once --config ABS --execute [--json]
+const HELP = `usage: phm cortex check --config ABS [--json]
+       phm cortex once --config ABS --execute [--json]
 
 Check the private, explicitly selected bridge configuration offline, or claim one
 signed engineering assignment from Cortex and produce a verified pending local

@@ -86,14 +86,14 @@ enforced isolation before they can handle company evidence through this bridge.
 Check the configuration offline:
 
 ```sh
-ashlr cortex check --config /absolute/private/cortex.json --json
+phm cortex check --config /absolute/private/cortex.json --json
 ```
 
 With the worker token supplied in the selected environment variable by the
 operator's secret manager, explicitly execute one prepared request:
 
 ```sh
-ashlr cortex once --config /absolute/private/cortex.json --execute --json
+phm cortex once --config /absolute/private/cortex.json --execute --json
 ```
 
 The token is sent only in the HTTPS authorization header. Redirects are refused.
@@ -154,8 +154,8 @@ or unsuccessful receipt acceptance exit nonzero.
 
 ## Implementation references
 
-- [Foreground bridge and receipt construction](../src/core/cortex/bridge.ts)
-- [Portable signed assignment codec](../src/core/cortex/engineering-assignment.ts)
-- [Existing sandboxed producer](../src/core/run/sandboxed-engine.ts)
-- [Existing pending-proposal authority](../src/core/inbox/pending-authority.ts)
-- [Existing separate-worktree verification](../src/core/inbox/merge.ts)
+- [Foreground bridge and receipt construction](https://github.com/ashlrai/phantom/blob/master/src/core/cortex/bridge.ts)
+- [Portable signed assignment codec](https://github.com/ashlrai/phantom/blob/master/src/core/cortex/engineering-assignment.ts)
+- [Existing sandboxed producer](https://github.com/ashlrai/phantom/blob/master/src/core/run/sandboxed-engine.ts)
+- [Existing pending-proposal authority](https://github.com/ashlrai/phantom/blob/master/src/core/inbox/pending-authority.ts)
+- [Existing separate-worktree verification](https://github.com/ashlrai/phantom/blob/master/src/core/inbox/merge.ts)
