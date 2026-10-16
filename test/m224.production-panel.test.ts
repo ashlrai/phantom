@@ -16,7 +16,7 @@
  *   - Pre-M224 snapshots remain valid (production is optional)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AshlrConfig, DashboardSnapshot, ProductionSummary } from '../src/core/types.js';
 import type { DashboardProductionSummary as DashboardProductionSummaryLike } from '../src/core/dashboard.js';
 
@@ -288,8 +288,17 @@ import { buildSnapshot } from '../src/core/dashboard.js';
 // Reset mocks before each test
 // ---------------------------------------------------------------------------
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(async () => {
   vi.clearAllMocks();
+  // Fixtures derive "today" from NOW at import time and production re-derives
+  // the UTC day per snapshot: freeze Date at NOW so a run crossing 00:00 UTC
+  // between import and a snapshot still observes one day. Timers stay real.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
 
   const { loadIndex } = await import('../src/core/index-engine.js');
   const { getToolsRegistry } = await import('../src/core/tools-registry.js');
