@@ -50,10 +50,10 @@ If the bug involves the autonomous operator, please fill in:
 
 ## Environment
 
-- ashlr-hub version: <!-- output of `ashlr --version` -->
+- Phantom version: <!-- output of `phm --version` -->
 - Node.js version: <!-- output of `node --version` -->
 - OS: <!-- e.g. macOS 15.5, Ubuntu 24.04 -->
-- Install method: <!-- install.sh / npm install -g @ashlr/hub / source -->
+- Install method: <!-- install.sh / npm install -g @ashlr/phantom / source -->
 
 ## Additional context
 
