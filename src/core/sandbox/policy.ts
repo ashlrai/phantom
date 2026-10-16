@@ -2205,6 +2205,8 @@ export function assertMayMutate(
     // lane" is a different fix from "not enrolled".
     const lenses = activeEnrollmentLenses();
     throw new Error(`repo not enrolled for autonomous work: ${canonicalEnrollmentPath(repo) ?? resolve(repo)}` +
-      (lenses.length > 0 ? ` (enrollment narrowed to: ${lenses.join('; ')})` : ''));
+      (lenses.length > 0
+        ? ` (enrollment narrowed to: ${lenses.join('; ')})`
+        : '; enroll it with `ashlr enroll add <repo>`'));
   }
 }
