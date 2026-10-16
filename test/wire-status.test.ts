@@ -88,6 +88,14 @@ describe('inspectEditorWiring', () => {
     expect(inspectEditorWiring('cursor', { configPath: cursor, home: dir, pathEnv: '' }).backupFound).toBe(true);
   });
 
+  it('reports multi-line args in the codex entry as wired but differing (regex limit)', () => {
+    const dir = root();
+    const toml = path.join(dir, 'config.toml');
+    fs.writeFileSync(toml, '[mcp_servers.ashlr-hub]\ncommand = "ashlr"\nargs = [\n  "mcp",\n]\n');
+    expect(inspectEditorWiring('codex', { configPath: toml, home: dir, pathEnv: '' }))
+      .toMatchObject({ wired: true, matchesExpected: false });
+  });
+
   it('reads the codex config.toml section for the gateway server', () => {
     const dir = root();
     const toml = path.join(dir, 'config.toml');
