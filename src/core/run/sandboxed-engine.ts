@@ -2350,10 +2350,27 @@ export async function runEngineSandboxed(
   const selectedCodexCurrent = (spawn: AutonomousSpawn | null): boolean => selectedCodexLaunchCurrent() &&
     selectedCodexAccountEpoch !== null && roleAccountEpoch(cfg,selectedCodexLaunch!,opts.selectedCodexAccount!.accountHint) === selectedCodexAccountEpoch &&
     spawn !== null && autonomousVendorIdentityCurrent(spawn.overlay);
+  const cortexCodexContact = async <T>(executable: string,
+    contact: (qualified: string, current: () => boolean, signal: AbortSignal) => Promise<T>): Promise<T> => {
+    if (opts.cortexAdmission === undefined) return contact(executable, () => true, opts.signal!);
+    const { assertCortexCodexConfig } = await import('../cortex/codex-policy.js');
+    const { withCortexCodexRuntime } = await import('../cortex/codex-runtime.js');
+    try { return await withCortexCodexRuntime(executable, { signal: opts.signal, assertCurrent: () => {
+      if (runCancelled() || !selectedCodexLaunchCurrent()) throw new Error('Cortex selected Codex admission changed');
+      assertMayExecuteWithCortexAdmission(opts.sourceRepo, { cortexAdmission: opts.cortexAdmission });
+      assertCortexCodexConfig(cfg);
+    } }, async (qualified, current, signal) => {
+      // Native account manifests already require a physical executable. Never
+      // silently rewrite a launcher or resolve another executable from PATH.
+      if (qualified !== executable) throw new Error('Cortex Codex runtime unsupported: repin the selected native executable to its physical path');
+      return contact(qualified, current, signal);
+    }); } catch (error) { codexCaptureDenied = true; throw error; }
+  };
   const observeSelectedCodex = async (): Promise<boolean> => {
     if (!selectedCodexLaunchCurrent()) return false;
-    const account = await observeRoleAccount({cfg,launch:selectedCodexLaunch!,accountHint:opts.selectedCodexAccount!.accountHint,
-      cwd:sb.worktreePath,signal:opts.signal!,admitted:selectedCodexLaunchCurrent});
+    const account = await cortexCodexContact(selectedCodexLaunch!.executable, async (_qualified, current, signal) =>
+      observeRoleAccount({cfg,launch:selectedCodexLaunch!,accountHint:opts.selectedCodexAccount!.accountHint,
+        cwd:sb.worktreePath,signal,admitted:() => current() && selectedCodexLaunchCurrent()}));
     if (account.uncertain) {
       // Metadata descendants are not proven stopped: retain the existing
       // drain lease as well as files, rather than reporting false quiescence.
@@ -2580,7 +2597,11 @@ export async function runEngineSandboxed(
           selectedCodexLaunchEpoch = nativeLaunchEpoch(found.launch);
           if (!await observeSelectedCodex()) return refuse('engine-unsupported','the selected Codex native account observation is unavailable or changed');
           cmd = {...cmd,bin:found.launch.executable};
-        } catch { return refuse('engine-unsupported','the selected Codex native launch cannot be qualified'); }
+        } catch (error) {
+          const detail = error instanceof Error && error.message.startsWith('Cortex Codex runtime unsupported:')
+            ? error.message : 'the selected Codex native launch cannot be qualified';
+          return refuse('engine-unsupported', detail);
+        }
       }
       if (!selectedStandingClaude) {
       let seatId: string | null = opts.seatId ?? null;
@@ -2716,7 +2737,12 @@ export async function runEngineSandboxed(
       const codexSpawnsBefore = selectedCodexSpawns;
       res = selectedStandingClaude
         ? await runSelectedClaude(goalWithContext,cfg.foundry?.timeoutMs ?? DEFAULT_TIMEOUT_MS,observeEngineEvent)
-        : await spawnEngine(cmd, spawnCfg, {
+        : await (selectedCodexLaunch ? cortexCodexContact(cmd.bin, async (qualified, current, signal) => spawnEngine({ ...cmd, bin: qualified }, spawnCfg, {
+          nativeEngine: 'codex', selectedOutcomeAdmission: () => current() && selectedCodexCurrent(autonomousSpawn),
+          env: spawnEnv, onSpawn: () => { selectedCodexSpawns++; },
+          timeoutMs: cfg.foundry?.timeoutMs ?? DEFAULT_TIMEOUT_MS, launcher: launcher ?? undefined,
+          signal, onEvent: observeEngineEvent,
+        })) : spawnEngine(cmd, spawnCfg, {
         ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(autonomousSpawn)}
           : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) && selectedDevinCurrent() }
           : opts.selectedOutcomeAdmission ? { selectedOutcomeAdmission: opts.selectedOutcomeAdmission } : {}),
@@ -2728,7 +2754,7 @@ export async function runEngineSandboxed(
         // v333: forward per-line engine stdout into the durable file sink as
         // it arrives — see the comment on `streamSink` above.
         onEvent: observeEngineEvent,
-      });
+      }));
       terminationDiagnostics = res.terminationDiagnostics;
       if ((selectedDevinBinding || (!autonomousRun && engineKey === DEVIN_CLI_ENGINE_ID && isDevinCliFreeModel(model))) && res.usage) {
         // 3.15: the Devin CLI reports no token usage; a usage-shaped line in
@@ -3187,7 +3213,12 @@ export async function runEngineSandboxed(
                   try {
                     r = selectedStandingClaude
                       ? await runSelectedClaude(repairGoal,_v2g.perRunTimeoutMs ?? 180_000,observeEngineEvent)
-                      : await spawnEngine(repairCmd, cfg, {
+                      : await (selectedCodexLaunch ? cortexCodexContact(repairCmd.bin, async (qualified, current, signal) => spawnEngine({ ...repairCmd, bin: qualified }, cfg, {
+                        nativeEngine: 'codex', selectedOutcomeAdmission: () => current() && selectedCodexCurrent(repairSpawn),
+                        env: repairSpawn?.env ?? env, onSpawn: () => { selectedCodexSpawns++; },
+                        timeoutMs: _v2g.perRunTimeoutMs ?? 180_000, onEvent: observeEngineEvent,
+                        launcher: repairSpawn?.launcher ?? launcher ?? undefined, signal,
+                      })) : spawnEngine(repairCmd, cfg, {
                       ...(selectedCodexLaunch ? {nativeEngine:'codex' as const,selectedOutcomeAdmission:() => selectedCodexCurrent(repairSpawn)}
                         : selectedDevinBinding ? { selectedOutcomeAdmission:() => selectedOutcomeAdmissionCurrent(opts.selectedOutcomeAdmission) &&
                         repairSpawn !== null && selectedDevinCurrent(repairSpawn) }
@@ -3198,7 +3229,7 @@ export async function runEngineSandboxed(
                       onEvent: observeEngineEvent,
                       launcher:repairSpawn?.launcher ?? launcher ?? undefined,
                       ...(opts.signal ? { signal:opts.signal } : {}),
-                    });
+                    }));
                   } finally {
                     if (repairSpawn) {
                       const finished = finishAutonomousSpawn(repairSpawn,{output:r ? `${r.output}\n${r.error ?? ''}` : '',tripwireKill:r ? engineResultTripwireKill(r) : false});

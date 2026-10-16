@@ -5,7 +5,7 @@ import type { AshlrConfig } from '../types.js';
 
 /** Native model transport stays available; model-authored shell commands have no network. */
 export const CORTEX_CODEX_PERMISSION_PROFILE = 'cortex-proposal';
-export const CORTEX_CODEX_PERMISSION_CONFIG = 'permissions.cortex-proposal={filesystem={":minimal"="read",":workspace_roots"={"."="write"}},network={enabled=false}}';
+export const CORTEX_CODEX_PERMISSION_CONFIG = 'permissions.cortex-proposal={filesystem={":root"="deny",":minimal"="read",":slash_tmp"="deny",":tmpdir"="write",":workspace_roots"={"."="write"}},network={enabled=false}}';
 export const CORTEX_CODEX_RESTRICTED_ARGS = Object.freeze([
   '--ignore-user-config', '--ignore-rules', '--ephemeral',
   '-c', 'default_permissions="cortex-proposal"', '-c', CORTEX_CODEX_PERMISSION_CONFIG,
@@ -23,4 +23,14 @@ export function cortexCodexConfig(config: AshlrConfig): AshlrConfig {
     engines: { ...config.foundry?.engines, codex: { ...BUILTIN_ENGINE_REGISTRY.codex!,
       argv: [...BUILTIN_ENGINE_REGISTRY.codex!.argv!], autonomousArgv: [...CORTEX_CODEX_RESTRICTED_ARGS] } },
   } };
+}
+
+/** Recheck source-owned launch policy after awaits; caller edits cannot reopen it. */
+export function assertCortexCodexConfig(config: AshlrConfig): void {
+  const expected = cortexCodexConfig({} as AshlrConfig).foundry!;
+  if (JSON.stringify(config.foundry?.engines?.codex) !== JSON.stringify(expected.engines?.codex) ||
+      JSON.stringify(config.foundry?.confinement?.codex) !== JSON.stringify(expected.confinement?.codex) ||
+      config.foundry?.autoMerge?.enabled !== false || config.foundry?.autoMerge?.allowWithoutVerification !== false) {
+    throw new Error('Cortex Codex execution policy changed; no provider contact is allowed');
+  }
 }

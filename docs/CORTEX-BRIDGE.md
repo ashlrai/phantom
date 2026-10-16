@@ -64,18 +64,35 @@ build/CI/manifests may be refused by the existing proposal verifier and require
 normal manual review.
 
 The bridge replaces Codex's usual unattended bypass flags with an explicit
-`cortex-proposal` native permission profile: minimal runtime reads, workspace
-writes, and no command network access. It forces Phantom's existing hardened
+`cortex-proposal` native permission profile: root denied, minimal runtime reads,
+workspace writes, host-forced private run/tmp writes, and no command network access.
+Shared `/tmp` and unrelated user temp paths are denied. It forces Phantom's existing hardened
 outer confinement, ignores Codex user configuration and execpolicy rules, and
 disables apps, plugins, hooks, browsers, computer use, memory and subagents.
 Repositories containing a project `.codex` directory are refused because project
 configuration can launch MCP tools outside the command sandbox. Codex's own
 model transport still connects to OpenAI; shell subprocesses cannot use it as
-general outbound access. These controls require a Codex CLI supporting the
-named permissions configuration and ignore-user-config flags. Unsupported flags
-fail the invocation. The native macOS regression probe runs without inference or
-provider credentials and checks successful workspace writes, denied outside
-writes, and a direct TCP connect returning an OS permission denial.
+general outbound access. Before each account observation, initial producer and
+repair contact, a bounded synthetic proof qualifies the exact selected executable
+and source-owned policy. It uses only self-created private fixtures, stripped
+environment and a local loopback listener: workspace/private scratch writes must
+succeed; sibling temp, unrelated `/tmp`, symlink escape and private-marker reads
+must be OS-denied; TCP must return an OS permission denial. Host-side effect checks
+also reject an invented guest success report. No inference or provider credentials
+are used for this proof. Executable physical path, file identity and SHA-256 are
+revalidated before use and throughout contact; policy/admission/KILL checks remain
+independent requirements. No successful qualification is cached across contacts.
+
+Version strings and accepted flags are not sufficient: the installed Homebrew
+Codex 0.136 can accept the profile while permitting unrelated temp writes and is
+therefore refused before provider contact. There is no automatic executable
+fallback or upgrade. Native regression tests explicitly target available binaries;
+passing the synthetic shell probe does not prove every JavaScript toolchain is
+usable. The root-deny inner profile currently blocks the Homebrew Node 24 shared
+library; this bridge does not silently widen toolchain read grants. Keep live
+commissioning held until the selected runtime and required tools qualify under
+both inner and existing outer confinement. If probe shutdown is unconfirmed its
+exact private fixtures are retained rather than reused or removed under a process.
 
 The OS wrapper also denies creating or modifying root or nested `.codex`
 directories and files for every producer attempt, repair, descendant and verifier.

@@ -73,7 +73,7 @@ function configuration(configPath: string) {
 }
 function implementationSha256(): string {
   const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-  const paths = ['admission', 'config', 'bridge', 'codex-policy', 'engineering-assignment', '../sandbox/policy', '../sandbox/worktree',
+  const paths = ['admission', 'config', 'bridge', 'codex-policy', 'codex-runtime', 'engineering-assignment', '../sandbox/policy', '../sandbox/worktree',
     '../run/orchestrator', '../run/sandboxed-engine', '../inbox/merge', '../authority/protected-paths', '../types', '../../cli/cortex'];
   const digest = createHash('sha256');
   for (const path of paths) { digest.update(path); digest.update(readFileSync(fileURLToPath(new URL(`${path}${extension}`, import.meta.url)))); }
