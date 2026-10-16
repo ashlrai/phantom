@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -68,6 +69,7 @@ import { openInEditor } from './open.js';
 import { pick } from './picker.js';
 import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
+import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
@@ -1136,7 +1138,7 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
   console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
   console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  console.log(`       ${cyan(`ashlr config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
   console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);
@@ -2014,7 +2016,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
@@ -2389,6 +2393,12 @@ async function main(): Promise<void> {
       case 'authority': {
         // V3.10: standing authority — Touch ID grants, the autonomy switch,
         // Stop, revoke, the ledger, rulesets and the guided Phase-0 setup.
+        const offMac = authoritySetupPlatformRefusal(rest);
+        if (offMac) {
+          for (const line of offMac) console.error(`  ${line}`);
+          process.exitCode = 1;
+          break;
+        }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
         break;

@@ -75,6 +75,21 @@ export function noColorRequested(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 /**
+ * The raw palette for lines that splice `${C.red}…${C.reset}` directly. Each
+ * code reads NO_COLOR when the line is built, so those lines honour it the
+ * same way makeColors() does; without NO_COLOR they are unchanged.
+ */
+export const ansi: { readonly [K in keyof typeof C]: string } = Object.defineProperties(
+  {},
+  Object.fromEntries(
+    (Object.keys(C) as Array<keyof typeof C>).map((key) => [
+      key,
+      { enumerable: true, get: (): string => (noColorRequested() ? '' : C[key]) },
+    ]),
+  ),
+) as { readonly [K in keyof typeof C]: string };
+
+/**
  * Build a colorizer set bound to a TTY flag. When `tty` is false, or NO_COLOR
  * is set, every helper returns its input unchanged.
  */

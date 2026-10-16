@@ -411,6 +411,19 @@ export async function cmdDocs(args: string[]): Promise<number> {
   }
 
   if (!agent) {
+    if (json) {
+      // --json never prints the human help: one JSON object, same exit code.
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        error: 'ashlr docs needs a surface; pass --agent --json',
+        surfaces: [
+          { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
+          { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
+          { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
+        ],
+      }, null, 2) + '\n');
+      return 2;
+    }
     printDocsHelp();
     return 2;
   }
@@ -478,6 +491,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
+  { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
   { cmd: 'runtime install --store <absolute> --artifact <absolute> --sha256 <hash> --revision <sha> --version <version>', desc: 'Install exact offline candidate bytes into a private store; not production qualification or service activation.', topic: 'core' },
   { cmd: 'runtime status|rollback --store <absolute> [--json]', desc: 'Verify local candidate selection or explicitly restore the previous verified installation.', topic: 'core' },
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
