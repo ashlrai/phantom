@@ -1,3 +1,4 @@
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/Sidebar.tsx — the chat list (3.10, SPEC-310C §2; model:
  * chat/sidebar-model.ts).
@@ -117,6 +118,7 @@ const NO_SEEN: ReadonlyMap<string, number> = new Map();
 const SessionSearch = lazy(() => import('./context/SessionSearch.js').then((m) => ({ default: m.SessionSearch })));
 
 export function Sidebar(props: SidebarProps) {
+  useCapacityClock(undefined, props.seats.map(seat => seat.capacity));
   const { sessions, sessionsStatus, sessionsError, projects, seats, selectedId, query, onQuery, onSelect, onNew,
     onRetry, onCollapse, onDisconnect, activity = null, selectedTerminal = null, meta = null, metaError = null, localSeen = NO_SEEN, actions } = props;
   const searchId = useId();
@@ -136,7 +138,9 @@ export function Sidebar(props: SidebarProps) {
     () => buildSidebar({ sessions, projects, query, filter, activity, meta, localSeen, selectedId, selectedTerminal }),
     [sessions, projects, query, filter, activity, meta, localSeen, selectedId, selectedTerminal],
   );
-  const loading = sessionsStatus === 'loading' || (sessionsStatus === 'idle' && sessions.length === 0);
+  // Chats already in hand (the bootstrap read carries the list) draw at once;
+  // the dedicated sessions read then refreshes them in place.
+  const loading = sessions.length === 0 && (sessionsStatus === 'loading' || sessionsStatus === 'idle');
   const searching = query.trim().length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
 

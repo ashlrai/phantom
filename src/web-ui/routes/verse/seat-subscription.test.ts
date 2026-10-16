@@ -66,7 +66,7 @@ describe('seatSubscription — the binding window leads', () => {
   });
 
   it('formats a machine-readable reset, and only a machine-readable one', () => {
-    const view = seatSubscription(GROK_SEAT);
+    const view = seatSubscription(GROK_SEAT, Date.parse('2026-09-25T12:00:00.000Z'));
     expect(view.binding?.resetsAt).toBe('2026-09-26T12:43:50.000Z');
     expect(view.binding?.resetText).toMatch(/^resets /);
     expect(view.cls).toBe('ready');
@@ -120,7 +120,7 @@ describe('seatCapacityWindowLabel', () => {
 
 describe('seatSubscription — credits are not the window', () => {
   it('does not report a spent Codex week with a spendable balance as blocked', () => {
-    const view = seatSubscription(CODEX_CREDITS_SEAT);
+    const view = seatSubscription(CODEX_CREDITS_SEAT, Date.parse('2026-09-20T20:00:00.000Z'));
     expect(view.cls).toBe('tight');
     expect(view.summary).toBe('primary window limit reached · credits available');
     // Round only the label; retain exact native units separately without currency inference.

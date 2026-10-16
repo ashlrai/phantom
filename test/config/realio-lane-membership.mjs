@@ -46,6 +46,11 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
+  'test/proactive-coordination.test.ts', // immutable ledger/watermark fsync, prefix-loss detection and ownership recovery
+  'test/proactive-coordination-api.test.ts', // scoped private packets/profiles plus immutable replay journals
+  'test/proactive-planning-api.test.ts', // durable offline receipts, exact request recovery and scoped packet loss
+  'test/proactive-routing-lab.test.ts', // immutable intent/settlement and independent replay custody with truncation faults
+  'test/proactive-replay-watermark.test.ts', // real private watermark fsync, orphan stages, file links and bounded custody
   'test/candidate-version-sync.test.ts', // real bounded CLI subprocesses; the subprocess case retains its original 5s deadline
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
@@ -115,6 +120,10 @@ export const REAL_IO_TEST_FILES = [
   'test/m442.runtime-release-launch-revalidation.test.ts', // large dependency fixtures, permissions and recursive cleanup
   'test/m444.external-skill-audit.test.ts', // large real audit trees and recursive cleanup
   'test/m466.host-merge-revocation-protocol.test.ts', // 4097-file store bounds and competing subprocess CAS
+  'test/resource-pool-commissioning-independent.test.ts', // witnessed metadata, custody loss and crash recovery
+  'test/resource-pool-commissioning-apply.test.ts',
+  'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
+  'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
   'test/resource-native-profile.test.ts', // exclusive profile preparation and inert native execve
   'test/resource-claude-account-status.test.ts', // native auth status with inert private process fixtures
   'test/resource-claude-account-usage.test.ts', // private scratch and bounded native usage mocks
@@ -177,6 +186,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-worker-process.test.ts', // real bounded stdin and process ownership
   'test/resource-worker.test.ts', // native worker fixtures and numeric-loopback model transport
   'test/resource-pool-runtime.test.ts', // durable admission, concurrent tasks, and replay
+  'test/resource-pool-ledger-read-race.test.ts', // real atomic ledger commits, read races and custody refusal
   'test/resource-admission-preflight.test.ts', // read-only admission parity against private persisted ledgers
   'test/resource-performance-runtime.test.ts', // monotonic measurements in the private task ledger
   'test/resource-review-benchmark.test.ts', // fixed calibration through real ledger and loopback transport
@@ -459,6 +469,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cloud-timeline-api.test.ts', // 3.13: real loopback http server bind for GET /api/verse/cloud/tasks/<id>/timeline under a relocated HOME
   'test/routing-capacity-history.test.ts', // 3.10.1: real loopback http server + real authenticated web server bind for /api/verse/budget/history under a relocated HOME; real mkfifo + a tsx child with a deadline for the FIFO guard; multi-MiB compaction fixtures
   'test/setup/home-isolation-guard.test.ts', // spawns a nested real `vitest run` to prove the guard fails a leaking fixture
+  'test/setup/git-env.test.ts', // spawns real git to prove a worker's child git sees no environment-injected config
   // Track A/C — Verse server surfaces.
   'test/verse-activity-310.test.ts', // real web server bind for /api/verse/activity + a 300-chat warm-read latency bound
   'test/verse-apps-310.test.ts', // real web server bind for /api/verse/apps
@@ -473,6 +484,7 @@ export const REAL_IO_TEST_FILES = [
   'test/standing-merge-pass-310b.test.ts', // real git rebase/squash through FakeGithub — guard cannot see it
   'test/verse-sources-api.test.ts', // 3.15: real loopback http server bind for POST /api/verse/sources/open
   'test/verse-agents-workspace-316.test.ts', // 3.16: real git worktrees, snapshot refs, archive/restore under a temp HOME
+  'test/verse-automerge-redteam.test.ts', // real git origin + clone: diffs exact commits and proves tracked hooks never run
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes

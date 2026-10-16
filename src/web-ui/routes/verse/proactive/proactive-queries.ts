@@ -1,5 +1,8 @@
+import type { CompanionCandidate } from '../../../../core/proactive/planning.js';
+import { decodeCompanionWire, projectCompanionWire } from '../../../../core/proactive/coordination-wire.js';
+import type { CompanionTask, CompanionCommand, CompanionWrite, CompanionTaskInput } from '../../../../core/proactive/coordination-types.js';
 import type { ProactiveProfile, ProactiveProfileInput, ProactiveProfilePatch, ProactiveProfilesResponse } from '../../../../core/proactive/types.js';
-import { PROACTIVE_PROVIDERS, VERSE_PROACTIVE_AGENTS_PATH } from '../../../../core/proactive/types.js';
+import { VERSE_PROACTIVE_AGENTS_PATH } from '../../../../core/proactive/types.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { invalidate } from '../../../data/cache.js';
 import { apiGet, apiPost } from '../../../data/client.js';
@@ -11,7 +14,7 @@ function validProfile(value: unknown): value is ProactiveProfile {
   if (!value || typeof value !== 'object') return false;
   const row = value as ProactiveProfile;
   return typeof row.id === 'string' && !!row.id && Number.isSafeInteger(row.version) && row.version > 0 && !!row.identity
-    && PROACTIVE_PROVIDERS.includes(row.identity.provider) && typeof row.identity.accountId === 'string' && !!row.identity.accountId
+    && typeof row.identity.provider === 'string' && row.identity.provider.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(row.identity.provider) && typeof row.identity.accountId === 'string' && !!row.identity.accountId
     && typeof row.identity.agentId === 'string' && !!row.identity.agentId && typeof row.displayName === 'string'
     && typeof row.responsibility === 'string' && !!row.avatar && /^#[a-fA-F0-9]{6}$/.test(row.avatar.color)
     && ['classic', 'round', 'pixel'].includes(row.avatar.variant) && !!row.computer
@@ -20,6 +23,10 @@ function validProfile(value: unknown): value is ProactiveProfile {
     && Array.isArray(row.services) && row.services.every(service => !!service && typeof service.id === 'string' && typeof service.label === 'string')
     && (row.fundingReference === null || !!row.fundingReference && ['subscription', 'promotional-api', 'unknown'].includes(row.fundingReference.kind)
       && row.fundingReference.accountId === row.identity.accountId && (row.fundingReference.poolId === null || typeof row.fundingReference.poolId === 'string'))
+    && Array.isArray(row.capabilityIds) && row.capabilityIds.every(id => typeof id === 'string' && !!id) && row.capabilityVerification === 'declared-unverified'
+    && !!row.preferences && Number.isInteger(row.preferences.priority) && row.preferences.priority >= 0 && row.preferences.priority <= 100
+    && Number.isInteger(row.preferences.maxConcurrent) && row.preferences.maxConcurrent >= 1 && row.preferences.maxConcurrent <= 32
+    && Array.isArray(row.preferences.projectBindingIds) && row.preferences.projectBindingIds.every(id => typeof id === 'string' && !!id)
     && typeof row.enabled === 'boolean' && row.connection === 'configured' && row.lastRun === null
     && typeof row.createdAt === 'string' && typeof row.updatedAt === 'string' && !!row.operations
     && ['dispatch', 'status', 'cancel', 'result'].every(key => {
@@ -63,4 +70,57 @@ export async function deleteProactiveProfile(id: string, expectedVersion: number
   const result = await write<{ ok: true }>(`${VERSE_PROACTIVE_AGENTS_PATH}/${encodeURIComponent(id)}/delete`, { expectedVersion });
   if (result?.ok !== true) throw new Error('Profile deletion could not be confirmed. Refresh before trying again.');
   return result;
+}
+
+export interface CoordinationResponse {
+  schemaVersion: 1; revision: number | null; tasks: CompanionTask[];
+  routing?: { taskId: string; candidates: CompanionCandidate[] }[];
+  packetDestinations: { taskId: string; identity: ProactiveProfile['identity'] }[];
+  sourceState: 'healthy' | 'missing' | 'degraded'; planningOnly: true; transport: 'unavailable';
+}
+export const COORDINATION_KEY = 'verse-proactive-coordination';
+export const COORDINATION_PATH = `${VERSE_PROACTIVE_AGENTS_PATH}/coordination`;
+function validTask(value: unknown): value is CompanionTask {
+  if (!value || typeof value !== 'object') return false;
+  const task = value as CompanionTask;
+  return typeof task.id === 'string' && typeof task.goal === 'string' && typeof task.tenantId === 'string'
+    && typeof task.projectBindingId === 'string' && typeof task.taskKey === 'string' && /^[a-f0-9]{64}$/.test(task.packetDigest)
+    && ['draft', 'assigned', 'handoff-intent', 'cancel-requested', 'reported', 'verified', 'needs-attention'].includes(task.state)
+    && Array.isArray(task.acceptance) && task.acceptance.every(item => typeof item === 'string')
+    && Array.isArray(task.capabilityIds) && task.capabilityIds.every(item => typeof item === 'string')
+    && Array.isArray(task.attempts) && task.attempts.every(item => !!item && typeof item.id === 'string' && !!item.assignee && typeof item.assignee.provider === 'string' && typeof item.assignee.accountId === 'string' && typeof item.assignee.agentId === 'string')
+    && Array.isArray(task.reports) && task.reports.every(item => !!item && typeof item.id === 'string' && typeof item.result === 'string' && typeof item.resultDigest === 'string' && typeof item.report === 'string')
+    && Array.isArray(task.verifications) && task.verifications.every(item => !!item && typeof item.id === 'string' && !!item.reviewer)
+    && Array.isArray(task.events) && task.events.every(item => !!item && typeof item.type === 'string')
+    && (task.notification === null || !!task.notification && typeof task.notification.eventId === 'string' && ['pending', 'acknowledged'].includes(task.notification.state));
+}
+export const coordinationQuery: QueryDef<CoordinationResponse> = {
+  key: COORDINATION_KEY,
+  async fetch(signal) {
+    const result = decodeCompanionWire(await apiGet<unknown>(COORDINATION_PATH, signal)) as CoordinationResponse;
+    if (!result || result.schemaVersion !== 1 || result.planningOnly !== true || result.transport !== 'unavailable'
+      || !['healthy', 'missing', 'degraded'].includes(result.sourceState)
+      || !(result.revision === null || Number.isSafeInteger(result.revision) && result.revision >= 0)
+      || result.routing !== undefined && (!Array.isArray(result.routing) || !result.routing.every(row => !!row && typeof row.taskId === 'string' && Array.isArray(row.candidates) && row.candidates.every(candidate => !!candidate && typeof candidate.profileId === 'string' && typeof candidate.localAssignmentEligible === 'boolean' && candidate.executionEligible === false && Array.isArray(candidate.reasons) && candidate.reasons.every(reason => typeof reason === 'string'))))
+      || !Array.isArray(result.packetDestinations) || !result.packetDestinations.every(item => !!item && typeof item.taskId === 'string' && !!item.identity && typeof item.identity.provider === 'string' && typeof item.identity.accountId === 'string' && typeof item.identity.agentId === 'string')
+      || !Array.isArray(result.tasks) || !result.tasks.every(validTask)
+      || new Set(result.tasks.map(task => task.id)).size !== result.tasks.length) throw new Error('Local coordination records are incompatible. Refresh or update Phantom.');
+    return result;
+  },
+};
+export async function recordCoordination(command: CompanionCommand): Promise<CompanionWrite> {
+  const result = decodeCompanionWire(await write<unknown>(COORDINATION_PATH, projectCompanionWire(command))) as CompanionWrite;
+  invalidate(COORDINATION_KEY);
+  if (!result || result.dispatchAuthorized !== false || typeof result.ok !== 'boolean'
+    || result.ok && (!validTask(result.task) || result.taskId !== result.task.id || !Number.isSafeInteger(result.revision))) {
+    throw new Error('The local record could not be confirmed. Retry the same command or refresh before continuing.');
+  }
+  return result;
+}
+
+export interface CoordinationPacketInput extends Omit<CompanionTaskInput, 'packetDigest'> { profileId: string }
+export async function prepareCoordinationPacket(input: CoordinationPacketInput): Promise<string> {
+  const result = decodeCompanionWire(await write<unknown>(`${COORDINATION_PATH}/packet`, input)) as { packetDigest: string; dispatchAuthorized: false };
+  if (result?.dispatchAuthorized !== false || !/^[a-f0-9]{64}$/.test(result.packetDigest)) throw new Error('The local evidence packet could not be confirmed. No task was created.');
+  return result.packetDigest;
 }

@@ -300,6 +300,8 @@ export interface VerseSeatCapacity {
   windows: VerseSeatWindow[];
   /** Codex only; null for every other provider and when no signal exists. */
   credits: VerseSeatCredits | null;
+  /** Original native quota expiry. Missing legacy evidence remains unconfirmed. */
+  quotaExpiresAt?: string | null;
   /** Original native credit-reading expiry; never renewed by cached display. */
   creditsExpiresAt?: string | null;
   usability: VerseSeatUsability;

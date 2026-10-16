@@ -553,6 +553,8 @@ export interface RunStreamReadChunk {
   bytes: Buffer;
   nextOffset: number;
   identity: RunStreamReadIdentity;
+  /** EOF for the validated size snapshot, including appends during this read. */
+  eof: boolean;
 }
 
 let runStreamReadAfterOpenHook: (() => void) | undefined;
@@ -571,29 +573,40 @@ export function setRunStreamReadAfterOpenHookForTests(hook?: () => void): void {
  * allocation, and re-binds the descriptor, path, parent and private root after
  * the read. Any race or identity change fails closed without advancing offset.
  */
+export type RunStreamReadResult = { chunk: RunStreamReadChunk; reason?: never } |
+  { chunk?: never; reason: 'stream-missing' | 'stream-unreadable' };
+
+/** Compatibility wrapper for consumers which do not need gap diagnostics. */
 export function readRunStreamChunk(
+  runId: string, offset: number, expected?: RunStreamReadIdentity,
+): RunStreamReadChunk | undefined {
+  return readRunStreamChunkResult(runId, offset, expected).chunk;
+}
+
+export function readRunStreamChunkResult(
   runId: string,
   offset: number,
   expected?: RunStreamReadIdentity,
-): RunStreamReadChunk | undefined {
+): RunStreamReadResult {
   gcRunStreams();
   const filePath = runStreamFilePath(runId);
-  if (!filePath || !Number.isSafeInteger(offset) || offset < 0) return undefined;
+  if (!filePath || !Number.isSafeInteger(offset) || offset < 0) return { reason: 'stream-unreadable' };
   let fd: number | undefined;
   try {
     const noFollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
     fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
     runStreamReadAfterOpenHook?.();
     const before = bindStreamPath(fd, filePath);
-    if (!before || before.file.size > BigInt(MAX_STREAM_FILE_BYTES)) return undefined;
+    if (!before || before.file.size > BigInt(MAX_STREAM_FILE_BYTES)) return { reason: 'stream-unreadable' };
     const identity = { dev: before.file.dev, ino: before.file.ino };
-    if (expected && (expected.dev !== identity.dev || expected.ino !== identity.ino)) return undefined;
-    if (BigInt(offset) >= before.file.size) {
+    if (expected && (expected.dev !== identity.dev || expected.ino !== identity.ino)) return { reason: 'stream-unreadable' };
+    if (BigInt(offset) > before.file.size) return { reason: 'stream-unreadable' };
+    if (BigInt(offset) === before.file.size) {
       const afterEmpty = bindStreamPath(fd, filePath);
       if (!afterEmpty || !sameStreamFile(before.file, afterEmpty.file) ||
         !sameStreamFile(before.directory, afterEmpty.directory) ||
-        !sameStreamFile(before.root, afterEmpty.root)) return undefined;
-      return { bytes: Buffer.alloc(0), nextOffset: offset, identity };
+        !sameStreamFile(before.root, afterEmpty.root)) return { reason: 'stream-unreadable' };
+      return { chunk: { bytes: Buffer.alloc(0), nextOffset: offset, identity, eof: BigInt(offset) >= afterEmpty.file.size } };
     }
     const available = Number(before.file.size - BigInt(offset));
     const readLen = Math.min(available, MAX_STREAM_READ_BYTES);
@@ -601,18 +614,18 @@ export function readRunStreamChunk(
     let total = 0;
     while (total < readLen) {
       const read = fs.readSync(fd, bytes, total, readLen - total, offset + total);
-      if (read <= 0) return undefined;
+      if (read <= 0) return { reason: 'stream-unreadable' };
       total += read;
     }
     const after = bindStreamPath(fd, filePath);
     if (!after || !sameStreamFile(before.file, after.file) ||
       !sameStreamFile(before.directory, after.directory) ||
       !sameStreamFile(before.root, after.root) || after.file.size > BigInt(MAX_STREAM_FILE_BYTES)) {
-      return undefined;
+      return { reason: 'stream-unreadable' };
     }
-    return { bytes, nextOffset: offset + total, identity };
-  } catch {
-    return undefined;
+    return { chunk: { bytes, nextOffset: offset + total, identity, eof: BigInt(offset + total) >= after.file.size } };
+  } catch (error) {
+    return { reason: fd === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'stream-missing' : 'stream-unreadable' };
   } finally {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch { /* best-effort */ }

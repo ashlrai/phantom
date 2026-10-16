@@ -5,7 +5,7 @@ import { runInLocusJobEnv } from '../src/core/integrations/locus-job-env.js';
 import { startGateway, probeServer, callBrowserTool } from '../src/core/mcp-gateway.js';
 import type { McpRegistry } from '../src/core/types.js';
 
-type Listed = { tools: { name: string; description?: string; inputSchema?: object }[] };
+type Listed = { tools: { name: string; description?: string; inputSchema?: object }[]; nextCursor?: string; _meta?: Record<string, unknown> };
 type Request = { params: { name: string; arguments?: Record<string, unknown> } };
 type Handler = (request?: Request) => Promise<unknown>;
 type Peer = {
@@ -386,5 +386,225 @@ it('scrubs one-off browser call errors and closes the peer without replaying its
   expect(result.ok).toBe(false);
   expect(result.detail).not.toContain(raw);
   expect(state.peers.get('alpha')!.callTool).toHaveBeenCalledTimes(1);
+  expect(state.peers.get('alpha')!.close).toHaveBeenCalledTimes(1);
+});
+
+
+describe('complete and unambiguous downstream inventories', () => {
+  it('reads later pages in order and calls their original tool names', async () => {
+    const g = await gateway(['alpha']);
+    const peer = state.peers.get('alpha')!;
+    peer.listTools.mockResolvedValueOnce({ tools: [{ name: 'first' }], nextCursor: 'opaque/page 2' })
+      .mockResolvedValueOnce({ tools: [{ name: 'later__tool' }] });
+    expect((await g.list()).tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__first', 'alpha__later__tool']);
+    expect(peer.listTools.mock.calls.slice(1).map(([params]) => params)).toEqual([{}, { cursor: 'opaque/page 2' }]);
+    await g.call('alpha__later__tool');
+    expect(peer.callTool).toHaveBeenCalledWith({ name: 'later__tool', arguments: {} }, undefined, { timeout: 800 });
+  });
+
+  it('rejects all concatenation collisions while preserving unrelated routes', async () => {
+    const g = await gateway(['alpha', 'alpha__nested']);
+    const alpha = state.peers.get('alpha')!, nested = state.peers.get('alpha__nested')!;
+    alpha.listTools.mockResolvedValueOnce({ tools: [{ name: 'nested__effect' }, { name: 'safe' }] });
+    nested.listTools.mockResolvedValueOnce({ tools: [{ name: 'effect' }] });
+    expect((await g.list()).tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__safe']);
+    await expect(g.call('alpha__nested__effect')).rejects.toThrow('Unknown tool');
+    expect(alpha.callTool).not.toHaveBeenCalled();
+    expect(nested.callTool).not.toHaveBeenCalled();
+    await g.call('alpha__safe');
+    expect(alpha.callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects duplicate registry names independent of connection completion order', async () => {
+    const registry: McpRegistry = { servers: ['one', 'two'].map(command => ({ name: 'same', command, args: [], source: 'test' })) };
+    const g = await gateway(['one', 'two'], registry);
+    expect((await g.list()).tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+    await expect(g.call('same__initial')).rejects.toThrow('Unknown tool');
+    for (const peer of state.peers.values()) expect(peer.callTool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['repeated cursor', { tools: [], nextCursor: 'repeat' }, { tools: [], nextCursor: 'repeat' }],
+    ['invalid cursor', { tools: [], nextCursor: '' }],
+    ['oversized cursor', { tools: [], nextCursor: 'x'.repeat(4097) }],
+    ['long cursor cycle', { tools: [], nextCursor: 'a' }, { tools: [], nextCursor: 'b' }, { tools: [], nextCursor: 'a' }],
+    ['duplicate tool', { tools: [{ name: 'same' }], nextCursor: 'next' }, { tools: [{ name: 'same' }] }],
+    ['invalid tool name', { tools: [{ name: '   ' }] }],
+    ['oversized inventory', { tools: Array.from({ length: 4097 }, (_, index) => ({ name: `tool${index}` })) }],
+    ['oversized body', { tools: [{ name: 'large', description: 'x'.repeat(4 * 1024 * 1024) }] }],
+  ] as const)('fails closed on %s and reports retained inventory as stale', async (_reason, ...pages) => {
+    const g = await gateway(['alpha']);
+    const peer = state.peers.get('alpha')!;
+    for (const page of pages) peer.listTools.mockResolvedValueOnce(page as Listed);
+    const result = await g.list();
+    expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+    expect(result._meta?.['ashlr/discovery']).toMatchObject({ servers: [{ name: 'alpha', status: 'stale', lastKnownToolCount: 1, error: expect.any(String) }] });
+    await expect(g.call('alpha__initial')).rejects.toThrow('Unknown tool');
+    expect(peer.callTool).not.toHaveBeenCalled();
+    expect(peer.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps an endless sequence of unique cursors', async () => {
+    const g = await gateway(['alpha']);
+    const peer = state.peers.get('alpha')!;
+    let page = 0;
+    peer.listTools.mockImplementation(async () => ({ tools: [], nextCursor: `page${++page}` }));
+    const result = await g.list();
+    expect(page).toBe(64);
+    expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+    expect(result._meta?.['ashlr/discovery']).toMatchObject({ servers: [{ status: 'stale', error: expect.stringContaining('page limit') }] });
+  });
+
+  it('never exposes a partial replacement while a later page is pending or fails', async () => {
+    const g = await gateway(['alpha']);
+    const peer = state.peers.get('alpha')!;
+    const later = deferred<Listed>();
+    peer.listTools.mockResolvedValueOnce({ tools: [{ name: 'partial' }], nextCursor: 'later' })
+      .mockImplementationOnce(() => later.promise);
+    const listing = g.list();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await expect(g.call('alpha__partial')).rejects.toThrow('Unknown tool');
+    await g.call('alpha__initial');
+    later.reject(new Error('later page failed'));
+    expect((await listing).tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+    await expect(g.call('alpha__initial')).rejects.toThrow('Unknown tool');
+  });
+
+  it('uses the complete paginated inventory for one-off browser/server probes too', async () => {
+    state.connectPlans.set('alpha', [async () => {
+      state.peers.get('alpha')!.listTools.mockResolvedValueOnce({ tools: [], nextCursor: 'later' })
+        .mockResolvedValueOnce({ tools: [{ name: 'navigate' }] });
+    }]);
+    expect(await probeServer({ name: 'alpha', command: 'alpha', args: [], source: 'test' }, 800))
+      .toMatchObject({ ok: true, tools: ['navigate'], toolCount: 1 });
+    expect(state.peers.get('alpha')!.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+it('shares one deadline across pages instead of granting each page a fresh timeout', async () => {
+  const g = await gateway(['alpha'], undefined, 80);
+  const peer = state.peers.get('alpha')!;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  try {
+    peer.listTools.mockImplementationOnce(() => new Promise(resolve => {
+      setTimeout(() => resolve({ tools: [{ name: 'partial' }], nextCursor: 'slow' }), 50);
+    })).mockImplementationOnce(() => new Promise(() => {}));
+    const listing = g.list();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(peer.listTools.mock.calls.at(-1)).toEqual([{ cursor: 'slow' }, { timeout: 30 }]);
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await listing;
+    expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+    expect(result._meta?.['ashlr/discovery']).toMatchObject({ servers: [{ status: 'stale', error: expect.stringContaining('timed out') }] });
+    await expect(g.call('alpha__partial')).rejects.toThrow('Unknown tool');
+    await expect(g.call('alpha__initial')).rejects.toThrow('Unknown tool');
+    expect(peer.callTool).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+it('counts discovery bytes cumulatively across individually allowed pages', async () => {
+  const g = await gateway(['alpha']);
+  const peer = state.peers.get('alpha')!;
+  peer.listTools.mockResolvedValueOnce({ tools: [{ name: 'one', description: 'x'.repeat(2 * 1024 * 1024) }], nextCursor: 'next' })
+    .mockResolvedValueOnce({ tools: [{ name: 'two', description: 'x'.repeat(2 * 1024 * 1024) }] });
+  const result = await g.list();
+  expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+  expect(result._meta?.['ashlr/discovery']).toMatchObject({ servers: [{ error: expect.stringContaining('byte limit') }] });
+  await expect(g.call('alpha__one')).rejects.toThrow('Unknown tool');
+});
+
+it('keeps ambiguous names reserved by a stale peer until a complete replacement removes them', async () => {
+  let now = 10_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const g = await gateway(['alpha', 'alpha__nested']);
+  const alpha = state.peers.get('alpha')!, nested = state.peers.get('alpha__nested')!;
+  alpha.listTools.mockResolvedValue({ tools: [{ name: 'nested__effect' }] });
+  nested.listTools.mockResolvedValueOnce({ tools: [{ name: 'effect' }] });
+  await g.list();
+  nested.listTools.mockRejectedValueOnce(new Error('offline'));
+  const stale = await g.list();
+  expect(stale.tools.map(tool => tool.name)).toEqual(['ashlr_native']);
+  expect(stale._meta?.['ashlr/discovery']).toMatchObject({ rejectedRoutes: ['alpha__nested__effect'] });
+  await expect(g.call('alpha__nested__effect')).rejects.toThrow('Unknown tool');
+  expect(alpha.callTool).not.toHaveBeenCalled();
+  now += 500;
+  state.connectPlans.set('alpha__nested', [async () => {
+    state.peers.get('alpha__nested')!.listTools.mockResolvedValue({ tools: [] });
+  }]);
+  const recovered = await g.list();
+  expect(recovered.tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__nested__effect']);
+  expect(recovered._meta?.['ashlr/discovery']).toMatchObject({ servers: [{ status: 'ready' }, { status: 'ready', lastKnownToolCount: 0 }], rejectedRoutes: [] });
+  await g.call('alpha__nested__effect');
+  expect(alpha.callTool).toHaveBeenCalledWith({ name: 'nested__effect', arguments: {} }, undefined, { timeout: 800 });
+});
+
+it('single-flights concurrent paginated refreshes and atomically replaces every route', async () => {
+  const g = await gateway(['alpha']);
+  const peer = state.peers.get('alpha')!;
+  const later = deferred<Listed>();
+  peer.listTools.mockResolvedValueOnce({ tools: [{ name: 'first' }], nextCursor: 'next' })
+    .mockImplementationOnce(() => later.promise);
+  const first = g.list(), second = g.list();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(peer.listTools).toHaveBeenCalledTimes(3); // startup + one shared two-page refresh
+  await expect(g.call('alpha__first')).rejects.toThrow('Unknown tool');
+  later.resolve({ tools: [{ name: 'second' }] });
+  for (const result of await Promise.all([first, second])) {
+    expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__first', 'alpha__second']);
+  }
+  await expect(g.call('alpha__initial')).rejects.toThrow('Unknown tool');
+  await g.call('alpha__first');
+  await g.call('alpha__second');
+  expect(peer.callTool.mock.calls.map(([request]) => request.name)).toEqual(['first', 'second']);
+});
+
+
+it('never activates retained stale tools on a reconnected peer before its replacement finishes', async () => {
+  let now = 10_000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const g = await gateway();
+  const old = state.peers.get('alpha')!;
+  old.listTools.mockRejectedValueOnce(new Error('offline'));
+  await g.list();
+  now += 500;
+  const replacement = deferred<Listed>();
+  state.connectPlans.set('alpha', [async () => {
+    state.peers.get('alpha')!.listTools.mockImplementationOnce(() => replacement.promise);
+  }]);
+  const listing = g.list();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const reconnected = state.peers.get('alpha')!;
+  expect(reconnected).not.toBe(old);
+  try {
+    await expect(g.call('alpha__initial')).rejects.toThrow('Unknown tool');
+    expect(reconnected.callTool).not.toHaveBeenCalled();
+    replacement.resolve({ tools: [{ name: 'replacement' }] });
+    expect((await listing).tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__replacement', 'beta__initial']);
+    await g.call('alpha__replacement');
+    expect(reconnected.callTool).toHaveBeenCalledWith({ name: 'replacement', arguments: {} }, undefined, { timeout: 800 });
+  } finally { replacement.resolve({ tools: [] }); await listing; }
+});
+
+
+it('preserves native dispatch when a downstream shadows a native tool on a later page', async () => {
+  const g = await gateway(['alpha']);
+  const peer = state.peers.get('alpha')!;
+  peer.listTools.mockResolvedValueOnce({ tools: [], nextCursor: 'later' })
+    .mockResolvedValueOnce({ tools: [{ name: 'reserved' }, { name: 'safe' }] });
+  const result = await g.list();
+  expect(result.tools.map(tool => tool.name)).toEqual(['ashlr_native', 'alpha__safe']);
+  expect(result._meta?.['ashlr/discovery']).toMatchObject({ rejectedRoutes: ['alpha__reserved'] });
+  expect(await g.call('alpha__reserved')).toEqual({ content: [] });
+  expect(peer.callTool).not.toHaveBeenCalled();
+});
+
+it('marks a one-off probe unhealthy on incomplete pagination without returning its partial tools', async () => {
+  state.connectPlans.set('alpha', [async () => {
+    state.peers.get('alpha')!.listTools.mockResolvedValueOnce({ tools: [{ name: 'partial' }], nextCursor: 'later' })
+      .mockRejectedValueOnce(new Error('later page unavailable'));
+  }]);
+  expect(await probeServer({ name: 'alpha', command: 'alpha', args: [], source: 'test' }, 800))
+    .toMatchObject({ ok: false, tools: [], toolCount: 0, error: 'later page unavailable' });
   expect(state.peers.get('alpha')!.close).toHaveBeenCalledTimes(1);
 });

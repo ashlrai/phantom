@@ -334,7 +334,7 @@ export function buildCapacityOverview(input: {
   const unread = count('unread');
 
   const { instants, prose } = collectResets(
-    input.cards.map((c) => ({ label: c.label, windows: c.allWindows })),
+    input.cards.filter(c => c.quotaCurrent !== false).map((c) => ({ label: c.label, windows: c.allWindows })),
     nowMs,
   );
 

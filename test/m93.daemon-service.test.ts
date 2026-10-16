@@ -257,6 +257,12 @@ function successfulServiceCommands() {
 }
 
 describe('daemonServiceInstallOptions', () => {
+  it('maps the optional awake preference without enabling it by default', () => {
+    expect(daemonServiceInstallOptions({ daemon: {} }).keepAwake).toBe(false);
+    expect(daemonServiceInstallOptions({ daemon: { keepAwake: true } }).keepAwake).toBe(true);
+    expect(daemonServiceInstallOptions({ daemon: { keepAwake: false } }).keepAwake).toBe(false);
+  });
+
   it('uses responsive effective daemon defaults when config omits interval and parallel', () => {
     expect(daemonServiceInstallOptions({ daemon: { dailyBudgetUsd: 5 } })).toMatchObject({
       budget: 5,
@@ -1481,6 +1487,24 @@ describe('serviceStatus() — mocked OS query output', () => {
     expect(s.runtimeState).toBe('running');
     expect(s.platformSpec).toBe('launchd');
     expect(s.registrationState).toBe('present');
+  });
+
+  it('darwin: awake wrapper is a distinct exact launchd program and PID; plain Node argv is drift', () => {
+    const wrapperArgs = ['caffeinate', '-i', '-s', ...launchdArguments];
+    const wrapperPrint = `${[
+      `${launchdTarget} = {`, `\tpath = ${launchdPlist}`, '\tstate = running', '\tprogram = caffeinate',
+      '\targuments = {', ...wrapperArgs.map((argument) => `\t\t${argument}`), '\t}', '\tpid = 4242', '}',
+    ].join('\n')}\n`;
+    existsSyncMock.mockReturnValue(true);
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: wrapperPrint, stderr: '' });
+    expect(serviceStatus({ ...baseOpts('darwin'), keepAwake: true })).toMatchObject({
+      running: true, runtimeState: 'running', registrationState: 'present',
+    });
+    // The launchd PID belongs to caffeinate, not the daemon's separate lock
+    // owner. A plain service must not accept this wrapper as its process.
+    expect(serviceStatus({ ...baseOpts('darwin'), keepAwake: false })).toMatchObject({
+      running: false, runtimeState: 'unknown', registrationState: 'present',
+    });
   });
 
   it('darwin: runtime is unknown when native running state has PID zero', () => {

@@ -1,3 +1,4 @@
+import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/usage/accounts-model.ts — the "can I use this account right
  * now" decision, in one pure module.
@@ -329,7 +330,7 @@ export function accountCreditDetail(credits: NonNullable<Account['credits']>, hi
   if (credits.spendControlReached === true) return 'Balance reported; the provider reports credit spending held. Separate from subscription usage.';
   if (credits.spendControlReached !== false) return 'Balance reported; credit spending control is unconfirmed. Separate from subscription usage.';
   return creditsSpendable(credits)
-    ? 'The provider reports credits available. Separate from subscription usage; automatic credit spending is not enabled.'
+    ? 'The provider reports credits available. Separate from subscription usage; automatic dispatch requires separate spending authorization.'
     : 'The provider reports no available credits. Separate from subscription usage.';
 }
 
@@ -338,7 +339,7 @@ function describeCredits(credits: NonNullable<Account['credits']>): string {
   return `a credit balance of ${credits.balance ?? 'an unreported amount'} is still spendable`;
 }
 
-export function accountVerdict(account: Account, binding: AccountWindow | null): AccountVerdict {
+export function accountVerdict(account: Account, binding: AccountWindow | null, now: number = Date.now()): AccountVerdict {
   if (account.authentication === 'signed-out' || account.state === 'signed-out') {
     return {
       state: 'signed-out',
@@ -370,6 +371,16 @@ export function accountVerdict(account: Account, binding: AccountWindow | null):
         ? `${reasonSentence(account.reason, 'The latest account check did not succeed.')} Current access and headroom are unconfirmed.`
         : `${reasonSentence(account.reason, 'The latest account check did not succeed.')} The window shown is a prior verified reading for context only; current access and headroom are unconfirmed.`,
       code: account.reason,
+    };
+  }
+
+  if (!currentQuotaReading(account.observedAt, account.expiresAt, now, account.windows.map(window => window.resetsAt))) {
+    if (currentQuotaReading(account.observedAt, account.expiresAt, now) && creditsSpendable(account.credits)) return {
+      state: 'credits', headline: 'Usable on credits', detail: 'Native credit balance remains current; subscription usage and resets are unconfirmed.', code: account.reason,
+    };
+    return {
+    state: 'unknown', headline: binding === null ? 'No current reading' : 'Last reading',
+    detail: 'Last known usage; current access, headroom and resets are unconfirmed.', code: account.reason,
     };
   }
 
@@ -466,6 +477,8 @@ export interface AccountCardModel {
    * the same data in one list so the detail view never re-derives an order.
    */
   allWindows: WindowView[];
+  quotaCurrent?: boolean;
+  creditsCurrent?: boolean;
   /** Probe evidence, shown in the detail view rather than on the card face. */
   evidence: AccountEvidence;
   /** The binding window, already viewified. Null when nothing was measured. */
@@ -510,9 +523,9 @@ export interface AccountEvidence {
   unsupported: Account['unsupported'];
 }
 
-export function buildAccountCard(account: Account, sourceNote: string | null = null): AccountCardModel {
+export function buildAccountCard(account: Account, sourceNote: string | null = null, now: number = Date.now()): AccountCardModel {
   const binding = bindingWindow(account);
-  const verdict = accountVerdict(account, binding);
+  const verdict = accountVerdict(account, binding, now);
   const engine: VerseEngine = account.provider;
   const others = account.windows.filter((w) => w.id !== binding?.id).map((w) => toWindowView(w));
   const bindingView = binding ? toWindowView(binding) : null;
@@ -532,6 +545,8 @@ export function buildAccountCard(account: Account, sourceNote: string | null = n
     color: ENGINE_COLOR[engine],
     plan: account.planType,
     verdict,
+    creditsCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now),
+    quotaCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now, account.windows.map(window => window.resetsAt)),
     allWindows: bindingView ? [bindingView, ...others] : others,
     evidence,
     hasDetail:
@@ -567,10 +582,10 @@ export function collectAccountNotes(snapshot: { accounts: Account[] } | null): s
 }
 
 /** Most usable first; ties keep a stable alphabetical order so cards do not shuffle. */
-export function buildAccountCards(snapshot: { accounts: Account[] } | null): AccountCardModel[] {
+export function buildAccountCards(snapshot: { accounts: Account[] } | null, now: number = Date.now()): AccountCardModel[] {
   if (!snapshot) return [];
   return snapshot.accounts
-    .map((account) => buildAccountCard(account))
+    .map((account) => buildAccountCard(account, null, now))
     .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
 }
 
