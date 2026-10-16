@@ -17,6 +17,7 @@ import {
   extractLocusConfigFirm,
   locusAgentReport,
   locusAvailable,
+  resolveLocusEnforceMode,
 } from './integrations/locus.js';
 // H7 — 5 NEW read-only probes share the SAME read-only readiness facets that
 // `ashlr preflight` uses, from the shared readiness module (single source of
@@ -510,18 +511,23 @@ function checkPhantom(): DoctorCheck {
  * Locus identity plane (agent report).
  * id: 'locus'
  *
- * Fail closed for missing CLI / status=unsafe. Soft-warn when protected or
- * unpinned (human must `locus enter` / `locus agent setup`). Pass only when
- * ready + healthy oneline. Names/status only — never secret values.
+ * Locus is an optional companion: a missing CLI soft-warns, matching
+ * `ashlr preflight`, unless LOCUS_ENFORCE=enforce makes it a hard failure.
+ * An installed Locus that reports status=unsafe always fails. Soft-warn when
+ * protected or unpinned (human must `locus enter` / `locus agent setup`). Pass
+ * only when ready + healthy oneline. Names/status only — never secret values.
  */
 export function checkLocus(): DoctorCheck {
   try {
     if (!locusAvailable()) {
+      const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
         'locus',
         'Locus identity plane',
-        'fail',
-        'locus not found on PATH',
+        enforce ? 'fail' : 'warn',
+        enforce
+          ? 'locus not found on PATH (required: LOCUS_ENFORCE=enforce)'
+          : 'locus not found on PATH (optional identity plane)',
         'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
@@ -1333,15 +1339,16 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
       }
     }
 
-    // At least one local provider must be up
+    // No reachable local provider only limits local-first runs; connected CLI
+    // accounts and the console still work. Warn, matching `ashlr preflight`.
     if (registry.activeProvider === null) {
       checks.push(
         check(
           'provider:active',
           'Active local provider',
-          'fail',
-          'No local provider is reachable — cannot run local-first AI',
-          'Start LM Studio or Ollama (ollama serve)',
+          'warn',
+          'No local provider is reachable — local-first runs need --allow-cloud or a local model',
+          'Start LM Studio or Ollama (ollama serve), or use a connected Claude Code/Codex account',
         ),
       );
     } else {
