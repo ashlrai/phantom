@@ -28,6 +28,9 @@ import { parseRoadmap } from '../core/goal-loop/parse.js';
 import { loadState } from '../core/goal-loop/state.js';
 import { runGoalLoop } from '../core/goal-loop/runner.js';
 
+const USAGE =
+  'Usage: ashlr roadmap <run|resume|status> [--dir <d>] [--roadmap <f>] [--engine <id>] [--allow-cloud] [--dry-run] [--json]';
+
 interface ParsedFlags {
   dir: string;
   roadmapFile?: string;
@@ -37,7 +40,8 @@ interface ParsedFlags {
   json: boolean;
 }
 
-function parseFlags(args: string[]): ParsedFlags {
+/** Parse flags; an unknown flag or a flag missing its value is a usage error. */
+function parseFlags(args: string[]): ParsedFlags | { error: string } {
   let dir = process.cwd();
   let roadmapFile: string | undefined;
   let engine: EngineId | undefined;
@@ -47,12 +51,17 @@ function parseFlags(args: string[]): ParsedFlags {
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--dir') dir = resolve(args[++i] ?? '.');
-    else if (a === '--roadmap') roadmapFile = args[++i];
-    else if (a === '--engine') engine = args[++i] as EngineId;
-    else if (a === '--allow-cloud') allowCloud = true;
+    if (a === '--dir' || a === '--roadmap' || a === '--engine') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('-')) return { error: `${a} needs a value` };
+      i++;
+      if (a === '--dir') dir = resolve(value);
+      else if (a === '--roadmap') roadmapFile = value;
+      else engine = value as EngineId;
+    } else if (a === '--allow-cloud') allowCloud = true;
     else if (a === '--dry-run') dryRun = true;
     else if (a === '--json') json = true;
+    else return { error: `Unknown argument: ${a}` };
   }
   return { dir, roadmapFile, engine, allowCloud, dryRun, json };
 }
@@ -62,11 +71,15 @@ export const cmdRoadmap = async (args: string[]): Promise<number> => {
   const sub = args[0];
   const rest = args.slice(1);
 
-  if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
-    console.log(
-      'Usage: ashlr roadmap <run|resume|status> [--dir <d>] [--roadmap <f>] [--engine <id>] [--allow-cloud] [--dry-run] [--json]',
-    );
-    return sub ? 0 : 2;
+  // Help wins anywhere: `roadmap run --help` must print usage, never start
+  // the loop (run executes milestones in fresh agent processes).
+  if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(USAGE);
+    return 0;
+  }
+  if (!sub) {
+    console.error(USAGE);
+    return 2;
   }
 
   if (sub !== 'run' && sub !== 'resume' && sub !== 'status') {
@@ -76,6 +89,11 @@ export const cmdRoadmap = async (args: string[]): Promise<number> => {
   }
 
   const flags = parseFlags(rest);
+  if ('error' in flags) {
+    console.error(c.red(flags.error));
+    console.error(c.dim(USAGE));
+    return 2;
+  }
 
   try {
     if (sub === 'status') {
