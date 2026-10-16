@@ -350,15 +350,21 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci-shared-macos', 'native-macos-broker-foundation']) {
       expect(jobs[id]!['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+    for (const id of ['ci', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
     }
+    // Mac jobs start only after the Linux/Windows ci job succeeded, so a red PR
+    // never occupies the Mac queue. A failed ci still fails Merge Gate.
+    for (const id of ['ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation']) {
+      expect(jobs[id]!.needs).toEqual(['classify', 'ci']);
+      expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full' && needs.ci.result == 'success'");
+    }
     // The exhaustive Mac partition runs on master pushes, reusable calls and
     // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
-    expect(jobs['mac-general']!.needs).toBe('classify');
+    expect(jobs['mac-general']!.needs).toEqual(['classify', 'ci']);
     expect(jobs['mac-general']!.if).toBe(
-      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+      "needs.classify.outputs.lane == 'full' && needs.ci.result == 'success' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
     );
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
