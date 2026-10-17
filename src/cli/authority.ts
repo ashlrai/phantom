@@ -574,9 +574,12 @@ async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> 
     deps.err(`Stop could not be armed: ${result.reason}`);
     return 1;
   }
-  deps.out(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
-  for (const line of drainSummary(result)) deps.out(line);
-  if (parsed.flags.has('--json')) deps.out(JSON.stringify(result, null, 2));
+  // With --json, stdout carries only the JSON; the prose goes to stderr.
+  const json = parsed.flags.has('--json');
+  const say = json ? deps.err : deps.out;
+  say(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
+  for (const line of drainSummary(result)) say(line);
+  if (json) deps.out(JSON.stringify(result, null, 2));
   return 0;
 }
 

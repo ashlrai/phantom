@@ -34,12 +34,19 @@ function fixture(direction: 'maximize' | 'minimize' = 'maximize') {
     { encoding: 'utf8', env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LC_ALL: 'C' } }).trim();
   writeFileSync(join(repo, 'value.txt'), 'seed\n');
   writeFileSync(join(repo, 'eval.mjs'), 'console.log(JSON.stringify({passed:true,score:1}))\n');
+  // Every campaign here is settled before delivery, so the pinned evaluator is
+  // never launched. Pin a tiny inert script (outside the seed) instead of the
+  // ~100 MB node runtime: the real store still freshly hashes and compares the
+  // pinned bytes on every comparator check, without re-reading node each time.
+  // Windows has no executable bit for a script, so it keeps the runtime pin.
+  const evaluator = process.platform === 'win32' ? process.execPath : join(root, 'never-executed-evaluator');
+  if (evaluator !== process.execPath) writeFileSync(evaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
   git(['init', '-q']); git(['add', '.']);
   git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'seed']);
   const manifest: UniverseManifest = { schemaVersion: 1, id: 'fixture', name: 'Campaign delivery fixture', objective: 'Improve measured quality',
     seed: { repo, revision: git(['rev-parse', 'HEAD']) }, metric: { name: 'quality', direction, minImprovement: 0 },
     budget: { maxTrials: 1, maxDurationMs: 5000, trialTimeoutMs: 1000, maxParallel: 1 },
-    evaluation: { command: [process.execPath, 'eval.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [evaluator, 'eval.mjs'], timeoutMs: 1000 },
     variants: [{ id: 'repair', niche: 'quality', hypothesis: 'Improve the source', command: [process.execPath, '-e', ''] }] };
   initUniverse(manifest, { root });
   const directory = join(root, 'universes', manifest.id);

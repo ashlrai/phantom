@@ -730,7 +730,7 @@ export async function buildReadiness(cfg: AshlrConfig): Promise<ReadinessReport>
         id: 'kill-switch',
         severity: 'warning',
         detail: 'kill switch is ON — all autonomy is paused (nothing will run)',
-        fix: 'Clear it with `ashlr kill off` when you are ready to resume.',
+        fix: 'Clear it with `ashlr enroll kill off` when you are ready to resume.',
       });
     } else {
       info.push({

@@ -441,6 +441,17 @@ function printCloudRefusal(err: Error, jsonMode: boolean): void {
   ].join('\n');
 
   if (jsonMode) {
+    // --json promises a machine-readable result on stdout, refusal included.
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      status: 'refused',
+      reason: 'local-first',
+      error: err.message,
+      fix: [
+        'Start a local model: ollama serve (or LM Studio\'s local server)',
+        'Or re-run with --allow-cloud and the provider API key set',
+      ],
+    }, null, 2) + '\n');
     process.stderr.write(msg + '\n');
   } else {
     process.stdout.write(msg + '\n');
@@ -692,6 +703,9 @@ export async function cmdRun(args: string[]): Promise<number> {
       return 3;
     }
     const msg = err instanceof Error ? err.message : String(err);
+    if (parsed.json) {
+      process.stdout.write(JSON.stringify({ ok: false, status: 'error', error: msg }, null, 2) + '\n');
+    }
     process.stderr.write(red('error: ') + msg + '\n');
     return 1;
   }

@@ -22,7 +22,7 @@ import { tokenEvidenceLabel } from '../core/run/token-evidence.js';
 // ANSI helpers (non-TTY safe)
 // ---------------------------------------------------------------------------
 
-import { C, pad, makeColors, isTty } from './ui.js';
+import { ansi as C, pad, makeColors, isTty } from './ui.js';
 
 const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(isTty());
 

@@ -229,7 +229,7 @@ export function NewAgentScreen() {
                 id={repoFilterId}
                 className={ui.input}
                 type="search"
-                placeholder={`${projects.length} repos`}
+                placeholder={`${projects.length} repo${projects.length === 1 ? '' : 's'}`}
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}

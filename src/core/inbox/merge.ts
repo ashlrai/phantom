@@ -231,6 +231,12 @@ import {
   REMOTE_HANDOFF_RECOVERY_MARKER,
 } from './remote-handoff.js';
 import { findLocalRealizedMergeDescendant } from './realized-merge.js';
+import {
+  ashlrTmpDir,
+  reapLeakedTempWorktrees,
+  releaseTempWorktreeOwner,
+  writeTempWorktreeOwner,
+} from './temp-worktree-reaper.js';
 
 function auditAutoMergeCanaryFailure(repo: string, sandboxId: string): void {
   try {
@@ -2695,7 +2701,7 @@ async function verifyProposalAgainstCurrentPins(
   }
 
   const tmpBranch = `ashlr/verify/${randomBytes(6).toString('hex')}`;
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `vwt-${randomBytes(6).toString('hex')}`);
+  const tmpDir = join(ashlrTmpDir(), `vwt-${randomBytes(6).toString('hex')}`);
 
   // Create the isolated worktree on a scratch branch off the default-branch head.
   // V3.10 (U6): in a fleet mirror this is a ref + worktree mutation, so it
@@ -2706,11 +2712,16 @@ async function verifyProposalAgainstCurrentPins(
   try {
     added = await underMirrorLease(repo, () => {
       try {
+        // Reap crash leftovers (SIGKILL/OOM mid-verify skips the finally below)
+        // under the same lease, then mark this worktree's owner before creating it.
+        reapLeakedTempWorktrees(repo);
+        writeTempWorktreeOwner(tmpDir);
         gitRun(repo, ['worktree', 'add', '-b', tmpBranch, tmpDir, baseHead]);
         installGrants = linkVerifyNodeModules(repo, tmpDir);
         return null;
       } catch (err) {
         gitTry(repo, ['worktree', 'prune']);
+        releaseTempWorktreeOwner(tmpDir);
         return err instanceof Error ? err.message : String(err);
       }
     });
@@ -2973,6 +2984,7 @@ async function verifyProposalAgainstCurrentPins(
       gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
       gitTry(repo, ['worktree', 'prune']);
       gitTry(repo, ['branch', '-D', tmpBranch]);
+      releaseTempWorktreeOwner(tmpDir);
     };
     // Under the mirror lease when it comes free; otherwise anyway — a stranded
     // worktree and scratch branch in the mirror are worse than an unleased
@@ -3207,10 +3219,12 @@ function buildMergeBranch(
     };
   }
 
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `mwt-${randomBytes(6).toString('hex')}`);
+  const tmpDir = join(ashlrTmpDir(), `mwt-${randomBytes(6).toString('hex')}`);
   try {
     const authorityFailure = finalAuthority?.();
     if (authorityFailure) return { branch: null, head: null, detail: authorityFailure };
+    reapLeakedTempWorktrees(repo);
+    writeTempWorktreeOwner(tmpDir);
     // Build detached so a crash cannot leave a half-built named branch that
     // permanently blocks reconstruction on the next attempt.
     gitRun(repo, ['worktree', 'add', '--detach', tmpDir, expectedBaseHead ?? baseHead]);
@@ -3221,6 +3235,7 @@ function buildMergeBranch(
     // Cleanup belongs to the already-authorized fenced operation. KILL may be
     // armed while waiting for this fence and must not strand its temp worktree.
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
     return {
       branch: null,
       head: null,
@@ -3275,6 +3290,7 @@ function buildMergeBranch(
     }
     gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
   }
   if (ok && !head) {
     return { branch: null, head: null, detail: 'staged branch head could not be resolved' };
@@ -3361,13 +3377,17 @@ function mergeLocally(
     };
   }
 
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `mergewt-${randomBytes(6).toString('hex')}`);
+  const tmpDir = join(ashlrTmpDir(), `mergewt-${randomBytes(6).toString('hex')}`);
   // Check out the default branch into a dedicated worktree so we never touch the
   // user's tree, merge the staging branch, then the worktree's branch ref (base)
   // advances in the shared object store.
   try {
     const worktreeAuthorityFailure = finalAuthority?.();
     if (worktreeAuthorityFailure) return { ok: false, detail: worktreeAuthorityFailure };
+    // A leaked mergewt- from a killed daemon keeps `base` checked out and would
+    // fail this add forever: reap provably-orphaned ones first, then mark ours.
+    reapLeakedTempWorktrees(repo);
+    writeTempWorktreeOwner(tmpDir);
     gitRun(repo, ['worktree', 'add', tmpDir, base]);
     const linkAuthorityFailure = finalAuthority?.();
     if (linkAuthorityFailure) throw new Error(linkAuthorityFailure);
@@ -3377,6 +3397,7 @@ function mergeLocally(
       if (checkedOutHead !== expectedBaseHead) {
         gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
         gitTry(repo, ['worktree', 'prune']);
+        releaseTempWorktreeOwner(tmpDir);
         return {
           ok: false,
           detail: `default branch '${base}' moved while preparing local merge (verified ${expectedBaseHead.slice(0, 8)}, checked out ${checkedOutHead?.slice(0, 8) ?? 'unknown'}) — branch '${branch}' left for manual reverify`,
@@ -3385,6 +3406,7 @@ function mergeLocally(
     }
   } catch (err) {
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
     return {
       ok: false,
       detail: `git worktree add for '${base}' failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -3440,6 +3462,7 @@ function mergeLocally(
   } finally {
     gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
   }
   return { ok: false, detail };
 }

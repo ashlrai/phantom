@@ -18,6 +18,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   createSandbox,
   listSandboxes,
@@ -255,5 +256,25 @@ describe('H5 · sandbox disk/count cap · DISK-CAP-BOUNDED', () => {
     const branches = repo.branches();
     expect(branches).toContain(`ashlr/sandbox/${a.id}`);
     expect(branches).toContain(`ashlr/sandbox/${b.id}`);
+  });
+  it('a FRESH sandbox whose recorded owner pid is DEAD is reclaimed at the cap (a crashed daemon cannot block creation for ORPHAN_STALE_MS)', () => {
+    expect.hasAssertions();
+    const CAP = 2;
+    setup(CAP);
+    const ids = [createSandbox(repo.dir, { allowAnyRepo: true }).id, createSandbox(repo.dir, { allowAnyRepo: true }).id];
+    // Model a SIGKILLed owner: a real, exited (reaped) child pid; createdAt stays just-now.
+    const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+    expect(typeof deadPid === 'number' && deadPid > 0).toBe(true);
+    const metaFile = join(sandboxesDir(), ids[0]!, 'sandbox.json');
+    const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
+    meta['ownerPid'] = deadPid;
+    writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+
+    const fresh = createSandbox(repo.dir, { allowAnyRepo: true });
+    const after = listSandboxes().map((s) => s.id);
+    expect(after).not.toContain(ids[0]);
+    expect(after).toContain(ids[1]); // live (this process) owner untouched
+    expect(after).toContain(fresh.id);
+    expect(existsSync(join(sandboxesDir(), ids[0]!))).toBe(false);
   });
 });

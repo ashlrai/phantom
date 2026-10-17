@@ -302,3 +302,27 @@ describe('Claude rate_limit_event engine capture', () => {
     expect(readFileSync(claudeRateLimitEventsPath(), 'utf8')).not.toContain('secret prompt');
   });
 });
+
+describe('Claude rate_limit_event store stays bounded', () => {
+  it('keeps the JSONL store bounded across weeks of runs without changing what readers see', async () => {
+    const {
+      claudeRateLimitEventsPath,
+      recordClaudeRateLimitEventLine,
+      readLatestClaudeRateLimitEvent,
+    } = await import('../src/core/fabric/claude-rate-limit-event.js');
+    const { statSync } = await import('node:fs');
+    const nowSec = Math.floor(Date.now() / 1000);
+    // One weekly reading, then the five_hour reading every Claude run emits, as an
+    // unattended fleet produces over days. resource-monitor reads this file whole.
+    recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'seven_day', resetsAt: nowSec + 6 * 86_400, utilization: 0.93 }));
+    for (let i = 0; i < 20_000; i++) {
+      recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'five_hour', resetsAt: nowSec - 20_000 + i, utilization: (i % 100) / 100 }));
+    }
+    recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'five_hour', resetsAt: nowSec + 3_600, utilization: 0.42 }));
+
+    expect(statSync(claudeRateLimitEventsPath()).size).toBeLessThanOrEqual(256 * 1024);
+    expect(readLatestClaudeRateLimitEvent({ rateLimitType: 'seven_day' })).toMatchObject({ utilization: 0.93, resetsAt: nowSec + 6 * 86_400 });
+    expect(readLatestClaudeRateLimitEvent({ rateLimitType: 'five_hour' })).toMatchObject({ utilization: 0.42, resetsAt: nowSec + 3_600 });
+    expect(readLatestClaudeRateLimitEvent()).toMatchObject({ rateLimitType: 'five_hour', utilization: 0.42 });
+  });
+});

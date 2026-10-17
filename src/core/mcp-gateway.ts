@@ -38,8 +38,27 @@ import { withHeal, defaultHealPolicy } from './run/self-heal.js';
 import { listNativeTools, isNativeTool, callNativeTool } from './mcp-native.js';
 import { listFirmResources, listFirmResourceTemplates, readFirmResource } from './mcp-firm-resources.js';
 import { hasSecretLikeArgv, redactedCommand } from './mcp-argv-safety.js';
+import { createRequire } from 'node:module';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
+
+/**
+ * Phantom's package version for MCP serverInfo/clientInfo, so clients and
+ * agents see the real release instead of a placeholder. Same lookup as
+ * `phm --version` (ASHLR_VERSION covers the Bun SEA build).
+ */
+let cachedGatewayVersion: string | undefined;
+export function gatewayVersion(): string {
+  if (cachedGatewayVersion) return cachedGatewayVersion;
+  let version = process.env.ASHLR_VERSION;
+  if (!version) {
+    try {
+      version = (createRequire(import.meta.url)('../../package.json') as { version?: string }).version;
+    } catch { /* fall through */ }
+  }
+  cachedGatewayVersion = typeof version === 'string' && version.trim() ? version.trim() : '0.0.0-unknown';
+  return cachedGatewayVersion;
+}
 
 // ---------------------------------------------------------------------------
 // M105: Browser MCP probe + tool-call helpers
@@ -297,7 +316,7 @@ async function connectDownstream(spec: McpServerSpec, timeoutMs: number, cfg?: R
   });
 
   const client = new Client(
-    { name: 'ashlr-gateway', version: '0.1.0' },
+    { name: 'ashlr-gateway', version: gatewayVersion() },
     { capabilities: {} },
   );
 
@@ -549,7 +568,7 @@ export async function startGateway(
   };
 
   await Promise.all(downstreams.map((d) => refresh(d, true)));
-  const server = new Server({ name: 'ashlr', version: '0.1.0' }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
     if (closed) throw new Error('MCP gateway is closed');

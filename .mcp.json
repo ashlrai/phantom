@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "phantom-secrets": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "phantom-secrets-mcp@0.7.9"
+      ]
+    },
+    "locus": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.5.0"
+      ]
+    },
+    "lexicon": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/lexicon@0.5.4",
+        "lexicon-mcp"
+      ]
+    },
+    "stack": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/stack@0.1.1",
+        "-p",
+        "ashlr-stack-mcp@0.1.1",
+        "-p",
+        "phantom-secrets@0.7.9",
+        "ashlr-stack-mcp"
+      ]
+    }
+  }
+}

@@ -39,6 +39,14 @@ describe('buildCloudPrompt', () => {
   it('its own example block is a report the parser accepts', () => {
     expect(parseCloudReport(prompt)).toMatchObject({ status: 'done', filesChanged: 3 });
   });
+
+  it('places the companion-tools block after the lessons, before the contract, and asks for toolsUsed', () => {
+    const withTools = buildCloudPrompt(TASK, 'LESSONS', '', 'COMPANION TOOLS (x)');
+    expect(withTools.indexOf('LESSONS')).toBeLessThan(withTools.indexOf('COMPANION TOOLS'));
+    expect(withTools.indexOf('COMPANION TOOLS')).toBeLessThan(withTools.indexOf('DELIVERY CONTRACT'));
+    expect(withTools).toContain('"toolsUsed"');
+    expect(prompt).not.toContain('toolsUsed');
+  });
 });
 
 describe('parseCloudReport', () => {
@@ -47,6 +55,15 @@ describe('parseCloudReport', () => {
     expect(parseCloudReport(body)).toEqual({
       status: 'done', summary: 'Fixed it.', testsRun: ['npx vitest run test/x.test.ts (4 passed)'], risks: [], filesChanged: 2,
     });
+  });
+
+  it('keeps a reported toolsUsed list and drops a malformed one without rejecting the report', () => {
+    const used = JSON.stringify({ status: 'done', summary: 'S.', testsRun: [], risks: [], toolsUsed: ['phantom_check', ' '] });
+    expect(parseCloudReport(fence(used))).toMatchObject({ toolsUsed: ['phantom_check'] });
+    const bad = JSON.stringify({ status: 'done', summary: 'S.', testsRun: [], risks: [], toolsUsed: 'phantom_check' });
+    const parsed = parseCloudReport(fence(bad));
+    expect(parsed).toMatchObject({ status: 'done' });
+    expect(parsed).not.toHaveProperty('toolsUsed');
   });
 
   it('handles CRLF bodies and longer fences containing ``` in strings', () => {

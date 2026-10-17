@@ -150,7 +150,15 @@ function renderRelease(result: AutonomousReleaseResult): void {
 
 /** `ashlr mirror …` entry point. Never throws for expected failures; returns the exit code. */
 export async function runMirrorCli(args: string[]): Promise<number> {
-  const [sub = 'list', ...rest] = args;
+  // `--help` / `-h` anywhere prints usage, so `mirror sync --help` never runs
+  // a sync and never reports "unknown option". A leading option means the
+  // default verb, matching the usage line `ashlr mirror [list] [--json]`.
+  if (args.includes('--help') || args.includes('-h')) {
+    print(USAGE);
+    return 0;
+  }
+  const leadingOption = args[0]?.startsWith('-') ?? false;
+  const [sub = 'list', ...rest] = leadingOption ? ['list', ...args] : args;
   const parsed = parseArgs(rest);
   if (parsed.error) return fail(parsed.error);
   const mirrors = await import('../core/fleet/mirrors.js');
@@ -237,8 +245,6 @@ export async function runMirrorCli(args: string[]): Promise<number> {
     }
 
     case 'help':
-    case '--help':
-    case '-h':
       print(USAGE);
       return 0;
 
