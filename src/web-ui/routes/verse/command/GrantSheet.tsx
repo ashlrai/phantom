@@ -30,6 +30,7 @@ import { ActionStatus, type SurfaceActions } from './actions.js';
 import { GrantDiff, GrantScopeEditor, postGrantDraft, type EditableGrantDraft } from './GrantScopeEditor.js';
 import { setVerseResourcesOpen, setVerseSection } from '../verse-ui-store.js';
 import styles from './command.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export type GrantIntent = 'grant' | 're-approve';
 
@@ -59,7 +60,7 @@ const DAY = 86_400_000;
 
 function fmtDate(iso: string): string {
   const t = Date.parse(iso);
-  return Number.isFinite(t) ? new Date(t).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+  return Number.isFinite(t) ? formatDateTime(new Date(t), 'en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 }
 
 export function grantDays(g: Pick<StandingGrantV1, 'issuedAt' | 'expiresAt'>): number | null {

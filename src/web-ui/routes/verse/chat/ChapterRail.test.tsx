@@ -93,4 +93,36 @@ describe('ChapterRail', () => {
     await user.click(ticks[1]!);
     expect(onJumpTurn).toHaveBeenLastCalledWith('t2');
   });
+
+  it('holds a px height that tracks its box: the box minus the equal top and bottom insets', () => {
+    const observers: Array<{ fire: () => void; disconnected: boolean }> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      private readonly entry: { fire: () => void; disconnected: boolean };
+      constructor(callback: () => void) {
+        this.entry = { fire: callback, disconnected: false };
+        observers.push(this.entry);
+      }
+      observe() {}
+      disconnect() { this.entry.disconnected = true; }
+    });
+    let boxHeight = 600;
+    const box = document.createElement('div');
+    box.getBoundingClientRect = () => ({ height: boxHeight } as DOMRect);
+    document.body.appendChild(box);
+    try {
+      const { unmount } = render(<ChapterRail model={buildChapters(TURNS)} onJumpTurn={() => {}} />, { container: box });
+      const rail = screen.getByRole('toolbar', { name: 'Chapters' });
+      rail.style.top = '24px';
+      observers[0]!.fire();
+      expect(rail.style.height).toBe('552px');
+      boxHeight = 400.5;
+      observers[0]!.fire();
+      expect(rail.style.height).toBe('352.5px');
+      unmount();
+      expect(observers[0]!.disconnected).toBe(true);
+    } finally {
+      box.remove();
+      vi.unstubAllGlobals();
+    }
+  });
 });

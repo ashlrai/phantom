@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -41,20 +42,63 @@ async function terminate(child, killAfterMs) {
   try { process.kill(-child.pid, 'SIGKILL'); } catch { /* process group is already gone */ }
 }
 
-function processGroupExists(child) {
+// Linux only: true when /proc lists at least one member of the group and every
+// member is a zombie (Z) or dead (X). kill(-pgid, 0) still succeeds for such a
+// group, because a killed descendant was reparented to init and stays a zombie
+// until init reaps it, which a container init may do late or never (`docker
+// run` without --init). A zombie runs nothing, so the group has exited. Any
+// live member, unreadable entry or non-Linux platform answers false.
+function processGroupHasOnlyZombies(pgid) {
+  if (process.platform !== 'linux') return false;
+  let entries;
+  try { entries = readdirSync('/proc'); } catch { return false; }
+  let members = 0;
+  for (const entry of entries) {
+    if (!/^[1-9][0-9]*$/u.test(entry)) continue;
+    let stat;
+    try {
+      stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT' || error?.code === 'ESRCH') continue;
+      return false;
+    }
+    // "pid (comm) state ppid pgrp ...": comm may contain ") ", use the last.
+    const fields = stat.slice(stat.lastIndexOf(') ') + 2).split(' ');
+    if (Number(fields[2]) !== pgid) continue;
+    if (fields[0] !== 'Z' && fields[0] !== 'X') return false;
+    members += 1;
+  }
+  return members > 0;
+}
+
+export function processGroupExists(child) {
   if (!child.pid || process.platform === 'win32') return false;
   try {
     process.kill(-child.pid, 0);
-    return true;
   } catch {
     return false;
+  }
+  // Two scans: a member forking between reads cannot slip past both.
+  return !(processGroupHasOnlyZombies(child.pid) && processGroupHasOnlyZombies(child.pid));
+}
+
+// SIGKILL takes effect asynchronously, when each member is next scheduled.
+const GROUP_EXIT_POLL_MS = 25;
+const GROUP_EXIT_DEADLINE_MS = 2_000;
+
+async function processGroupExitedWithin(child, deadlineMs) {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    if (!processGroupExists(child)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolveDelay) => globalThis.setTimeout(resolveDelay, GROUP_EXIT_POLL_MS));
   }
 }
 
 async function ensureProcessTreeGone(child, killAfterMs) {
   if (process.platform === 'win32') return;
   if (processGroupExists(child)) await terminate(child, killAfterMs);
-  if (processGroupExists(child)) fail('descendant process group survived SIGKILL');
+  if (!await processGroupExitedWithin(child, GROUP_EXIT_DEADLINE_MS)) fail('descendant process group survived SIGKILL');
 }
 
 export async function runBoundedCommand(options) {
