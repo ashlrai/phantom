@@ -1,10 +1,19 @@
 /** `phm improve propose [--team t] [--open-pr --repo <dir>] [--json]` — draft PRs; merges use the existing protected approval process. */
 import { gatherProposals, openProposalPr, renderProposal } from '../core/improve/loop.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
+import { rejectUnknownOptions } from './args.js';
 
 export async function cmdImprove(argv: string[]): Promise<number> {
   const args = [...argv];
   if (args[0] !== 'propose') { console.error('Usage: phm improve propose [--team <id>] [--open-pr --repo <dir>] [--json]'); return 2; }
+  // Refuse an option propose does not read before the steward runs: a typo like
+  // `--open-p` used to fall through to a normal proposal run.
+  const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--open-pr', '--auto-merge'], values: ['--team', '--repo'] });
+  if (bad) {
+    if (args.includes('--json') && args.includes('--open-pr')) console.log(JSON.stringify({ opened: [], error: bad.message }, null, 2));
+    else { console.error(bad.message); console.error('Usage: phm improve propose [--team <id>] [--open-pr --repo <dir>] [--json]'); }
+    return 2;
+  }
   if (args.includes('--auto-merge')) { console.error('Self-improvement auto-merge lacks protected-policy admission. Open a draft and use the existing protected merge process.'); return 2; }
   const val = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const proposals = gatherProposals(val('--team') ?? 'default', runSteward(defaultStewardPolicy()));
