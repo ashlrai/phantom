@@ -9,7 +9,54 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.29.15] — Unreleased
+## [3.29.16] — Unreleased
+
+Entries below each cite a pull request merged into `master` after the
+3.29.15 candidate (#712). The release date is filled in at release time.
+
+### Added
+- Add a read-only `phm wire status` report of which coding clients are wired to Phantom (#798).
+- Add `phm upgrade`, which runs `phm update` (#806).
+- Add `--json` output to `onboard`, `enroll add`, `mcp ecosystem` and `docs`, and portable default roots for first runs on any machine (#788).
+- Add `status --json`, clearer port errors, correct help exit codes, a single MCP entry and headless `open` (#777).
+- Detect Claude Code, Codex and Cursor from their CLI on PATH (#756).
+- Give agents working on Phantom its companion tools and its own task context (#772).
+- Show which companion tools a cloud session says it called (#803).
+- Connect companion discovery to reviewed setup guides (#740).
+- Mark project-memory lines that cite paths that are gone (#779).
+- Add `AGENTS.md`, `CLAUDE.md` and an agent operations guide (#700, #750, #753).
+- Enroll lexicon and locus as core-fleet repos (#699).
+
+### Changed
+- Phantom app: faster cold load, long chats and first ⌘K, with less work per agent update (#778).
+- Bound the fabric run cache and make its rewrites crash-safe (#804).
+- Recover unattended runs from crashes, hangs, leaks and clock skew, and lift concurrent-agent throughput (#745).
+- Hold the sandbox creation locks only for worktree registration (#808).
+- Stop shipping personal folder names in the default config (#749).
+- Update the author contact address (#689).
+- Add a one-line tagline to the README (#797).
+- CI: the four-shard exhaustive Mac lane runs on master pushes or with the `ci:full-mac` label (#701), and Mac test shards run with two workers (#760).
+
+### Fixed
+- Make first-run guidance plain and correct off macOS for `phm setup`, `phm authority setup`, Devin connect and the cloud seat hint (#795, #759, #775).
+- Make first-run hints for `doctor`, `init` and `status` lead somewhere (#807).
+- Respect `NO_COLOR` for the CLI lines that bypassed it (#802).
+- Make `--help` never act, for setup, the Goal Loop, fleet pause and resume, vision approve, leader say, notify test, `gh pr create` and swarm approve (#783, #785).
+- Keep `authority stop --json` stdout pure JSON, and fix the ecosystem anchor and local-runtime usage (#791).
+- Refuse Land on test tampering, not only show the chip (#793).
+- Keep the post-merge watch open while CI is still running (#789).
+- Reap verify and merge worktrees leaked by a killed daemon, and keep the activity journal writable all day (#799).
+- Close per-agent Auto-merge gaps: self-repo detection, exact-diff gate, Stop and Pause, merge prompt injection (#771).
+- Give actionable refusals for sandboxed Claude runs (root, host-managed sign-in, unenrolled repo) (#757).
+- Say why `resources profile prepare` refused the executable (#758).
+- Retire no-change backlog items and the stale 3.10.1 backlog (#768).
+- Cloud summaries and meters: apply the one percent rule (#766), pluralise slot counts (#774) and fix "1 runs / 1 days / 1 repos" and the dead kill-switch hint (#782).
+
+### Tests and docs
+- Fix environment-dependent and flaky tests (#752) and deflake the grok capacity e2e (#711).
+- Align repo docs with master (#750).
+
+## [3.29.15] — 2026-10-14
 
 ### Added
 - Group resource displays by provider while keeping configured references,
@@ -40,7 +87,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   unverified GitHub evidence, and scrub public titles consistently. Proposals
   remain drafts; automatic merging requires the existing protected process.
 
-## [3.29.14] — Unreleased
+## [3.29.14] — 2026-10-13
 
 ### Added
 - Add an optional desktop-only Devin dashboard observation. In a separate
