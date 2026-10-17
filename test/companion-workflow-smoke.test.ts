@@ -219,6 +219,68 @@ createInterface({ input: process.stdin }).on('line', line => {
     expect(resolved.packages).toContainEqual({ name: 'ashlr-plugin', version: '1.36.4' });
   });
 
+  it('accepts --cortex-url only as an http(s) URL, kept verbatim', () => {
+    expect(smoke.parseArgs(['--cortex-url', 'https://cortex.example/api/mcp'])).toMatchObject({ cortexUrl: 'https://cortex.example/api/mcp' });
+    expect(() => smoke.parseArgs(['--cortex-url', 'cortex.example'])).toThrow('http(s) URL');
+  });
+
+  it('passes Cortex only on a non-cacheable 401 Bearer challenge that never echoes the token', async () => {
+    const { createServer } = await import('node:http');
+    let reply = (_auth: string | undefined) => ({ status: 401, headers: { 'www-authenticate': 'Bearer realm="cortex"', 'cache-control': 'no-store' }, body: { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null } as unknown });
+    const server = createServer((req, res) => {
+      const answer = reply(req.headers.authorization);
+      res.writeHead(answer.status, { 'content-type': 'application/json', ...answer.headers });
+      res.end(JSON.stringify(answer.body));
+    });
+    await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/mcp`;
+    try {
+      expect(await smoke.cortexMcpAuth(url)).toMatchObject({ status: 'pass' });
+      const base = reply;
+      reply = auth => ({ ...base(auth), body: { error: { code: -32001, message: `bad ${auth}` } } });
+      expect((await smoke.cortexMcpAuth(url)).detail).toContain('echoed the token');
+      reply = auth => ({ ...base(auth), headers: { 'cache-control': 'no-store' } });
+      expect((await smoke.cortexMcpAuth(url)).detail).toContain('no Bearer challenge');
+      reply = () => ({ status: 503, headers: {}, body: { error: { code: -32002, message: 'no database' } } });
+      expect(await smoke.cortexMcpAuth(url)).toMatchObject({ status: 'fail', detail: expect.stringContaining('503 no database') });
+      reply = () => ({ status: 200, headers: {}, body: { jsonrpc: '2.0', id: 1, result: {} } });
+      expect((await smoke.cortexMcpAuth(url)).detail).toContain('HTTP 200, expected 401');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('reads a Locus exec section as resolved only when the child saw the stored value', () => {
+    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\n', 'phm:')).toMatchObject({ status: 'pass' });
+    expect(smoke.evaluateLocusCredential('error: credential resolve failed: provider=github source=phantom code=unavailable\nPHM_SMOKE_EXIT 1\n', 'phm:'))
+      .toEqual({ status: 'fail', detail: 'the phm: credential did not resolve: error: credential resolve failed: provider=github source=phantom code=unavailable' });
+    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED different\n', 'env:')).toMatchObject({ status: 'fail', detail: expect.stringContaining('as different') });
+    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\n', 'phm:', 'sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef')).toMatchObject({ status: 'fail' });
+  });
+
+  it('wires Stack to the Phantom Secrets vault and checks its env diff through CLI and MCP', async () => {
+    const bin = join(dir, 'vault-bins');
+    mkdirSync(bin, { recursive: true });
+    const write = (name: string, body: string) => { writeFileSync(join(bin, name), `#!/usr/bin/env node\n${body}`, { mode: 0o755 }); return join(bin, name); };
+    const phantom = write('phantom', `const fs = require('node:fs');
+if (process.argv[2] === 'init') fs.writeFileSync('.phantom.toml', '');
+if (process.argv[2] === 'add') fs.writeFileSync('.env', process.argv[3] + '=phm_x\\n');`);
+    const diff = 'SUPABASE_URL\\nSUPABASE_ANON_KEY\\n';
+    const stack = write('stack', `const [cmd, sub] = process.argv.slice(2);
+if (cmd === 'status') console.log(JSON.stringify({ phantom: { installed: true, secret_count: require('node:fs').existsSync('.env') ? 1 : 0 } }));
+else if (cmd === 'env' && sub === 'diff') { process.stdout.write('${diff}'); process.exit(1); }`);
+    const stackMcp = fakeServer('stack-vault', { tools: ['stack_env_diff'] });
+    if (process.platform === 'win32') return;
+    const report = await smoke.runSmoke({ stackBin: stack, secretsBin: phantom, stackMcp });
+    const byId = (id: string) => report.checks.find((check: { id: string }) => check.id === id);
+    expect(byId('stack:phantom-vault')).toMatchObject({ status: 'pass' });
+    expect(byId('stack:env-diff')).toMatchObject({ status: 'pass' });
+    // The fake MCP server answers tools/call with nothing, which is not an env diff.
+    expect(byId('stack:mcp-env-diff')).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluateEnvDiff('SUPABASE_URL SUPABASE_ANON_KEY OPENAI_API_KEY', 'x')).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluateEnvDiff('SUPABASE_URL SUPABASE_ANON_KEY sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef', 'x').detail).toContain('printed the stored value');
+  });
+
   it('skips every check, and passes, when no companion binary is given', async () => {
     const report = await smoke.runSmoke({ json: true });
     expect(report.schema).toBe('phm.companion-workflow-smoke/v1');

@@ -135,7 +135,8 @@ node scripts/companion-workflow-smoke.mjs --phm bin/ashlr \
   --lexicon-hook /path/to/lexicon/plugin/hook.mjs \
   --stack-bin /path/to/stack --stack-mcp /path/to/stack-mcp \
   --mdopen /path/to/mdopen --mdopener-mcp /path/to/mdopener-mcp \
-  --plugin-dir /path/to/ashlr-plugin
+  --plugin-dir /path/to/ashlr-plugin \
+  --cortex-url https://cortex.ashlr.ai/api/mcp
 ```
 
 `--plugin-dir` is an Ashlr.AI Plugin checkout after `bun install`, or its
@@ -165,6 +166,19 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
   and lists `ashlr__grep`, `ashlr__read` and `ashlr__tree`. One `ashlr__grep`
   call with an explicit `cwd` must return a match from the project named by
   `CLAUDE_PROJECT_DIR`.
+- A Locus github binding whose `credential_ref` is `phm:NAME` gets the value
+  stored with `phantom add --stdin` into a `locus exec --strict-creds` child as
+  `GH_TOKEN`. The same binding with an `env:` ref is the control, so a failure
+  names the side that broke. Only a hash of the value is ever passed in argv.
+- Stack reads the project's Phantom Secrets vault: with one of the three secrets
+  declared in `.stack.toml` stored, `stack status --json` counts it, and
+  `stack env diff` and the `stack_env_diff` MCP tool name exactly the two
+  missing ones. No output may contain the stored value.
+- `--cortex-url` sends an anonymous `initialize` and one with an unknown
+  `ctx_pat_` token to a Cortex MCP endpoint. Both must get a non-cacheable 401
+  with a Bearer challenge that does not echo the token. Cortex verifies its
+  database before it authenticates, so a 503 means the deployment cannot check
+  tokens. No real token is ever sent.
 
 Exit 0 means no check failed; exit 1 names the broken seam; `--json` prints
 the `phm.companion-workflow-smoke/v1` report.

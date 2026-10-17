@@ -17,7 +17,12 @@
  *     --lexicon-bin /path/lexicon --lexicon-mcp /path/mcp-server.mjs --lexicon-hook /path/hook.mjs \
  *     --stack-bin /path/stack --stack-mcp /path/stack-mcp \
  *     --mdopen /path/mdopen --mdopener-mcp /path/mdopener-mcp \
- *     --plugin-dir /path/ashlr-plugin [--json]
+ *     --plugin-dir /path/ashlr-plugin --cortex-url https://cortex.ashlr.ai/api/mcp [--json]
+ *
+ * Workflow checks also drive tools together: Locus resolving a `phm:` credential
+ * through Phantom Secrets, and Stack reading a project's Phantom Secrets vault.
+ * --cortex-url sends two unauthenticated requests to a Cortex MCP endpoint and
+ * expects its 401 Bearer challenge; it never sends a real token.
  *
  * --plugin-dir is an ashlr-plugin checkout (after `bun install`) or installed
  * package; its MCP router needs Bun and ripgrep on PATH.
@@ -33,8 +38,10 @@
  *
  * Exit 0: no check failed (warn/skip allowed). Exit 1: a seam is broken. Exit 2: bad usage.
  */
+/* global fetch, AbortSignal */
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -53,6 +60,8 @@ const FLAGS = Object.freeze({
   '--stack-mcp': 'stackMcp', '--mdopen': 'mdopen', '--mdopener-mcp': 'mdopenerMcp',
   '--plugin-dir': 'pluginDir',
 });
+/** Flags whose value is a URL, not a path. */
+const URL_FLAGS = Object.freeze({ '--cortex-url': 'cortexUrl' });
 
 /** Tools each MCP server must list for the workflows Phantom and its docs rely on. */
 export const MCP_SERVERS = Object.freeze([
@@ -77,6 +86,12 @@ export function parseArgs(argv) {
       continue;
     }
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
+    if (URL_FLAGS[arg]) {
+      const value = argv[++i];
+      if (!value || !/^https?:\/\//u.test(value)) throw new Error(`${arg} requires an http(s) URL.`);
+      options[URL_FLAGS[arg]] = value;
+      continue;
+    }
     const key = FLAGS[arg];
     if (!key) throw new Error(`Unknown argument: ${arg}`);
     const value = argv[++i];
@@ -505,6 +520,23 @@ export async function runSmoke(options) {
     // match in the project Claude Code names (CLAUDE_PROJECT_DIR), via an explicit cwd.
     if (!present('pluginDir')) skip(`${PLUGIN_SERVER.id}:mcp`, why('pluginDir', 'no --plugin-dir'));
     else for (const [id, check] of await pluginRouter(options.pluginDir, env, box.home)) add(id, check);
+
+    // 9. Locus resolves a binding's `phm:` credential through Phantom Secrets into
+    // `locus exec`'s child (the composition both products document), and an `env:` control.
+    if (!present('locusBin') || !present('secretsBin')) skip('locus:phm-credential', why('locusBin', why('secretsBin', 'needs --locus-bin and --secrets-bin')));
+    else if (process.platform === 'win32') skip('locus:phm-credential', 'needs a POSIX shell for the pin hook');
+    else for (const [id, check] of await locusPhmCredential(options, env, box)) add(id, check);
+
+    // 10. Cortex's hosted MCP endpoint is up and challenges an anonymous or unknown token
+    // the way MCP clients expect (401 + Bearer), without echoing the token.
+    if (!options.cortexUrl) skip('cortex:mcp-auth', 'no --cortex-url');
+    else add('cortex:mcp-auth', await cortexMcpAuth(options.cortexUrl));
+
+    // 11. Stack reads the Phantom Secrets vault of a project (as its CLI and as its MCP tools):
+    // stored names count, declared-but-missing names are reported, and no value is printed.
+    if (!present('stackBin') || !present('secretsBin')) skip('stack:phantom-vault', why('stackBin', why('secretsBin', 'needs --stack-bin and --secrets-bin')));
+    else if (process.platform === 'win32') skip('stack:phantom-vault', 'needs a POSIX PATH shim for `phantom`');
+    else for (const [id, check] of await stackPhantomVault(options, env, box)) add(id, check);
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }
@@ -655,6 +687,183 @@ export async function secretsExecProxy(secretsBin, env, home) {
   return problems.length
     ? { status: 'fail', detail: problems.join('; ') }
     : { status: 'pass', detail: 'child saw a phm_ placeholder and a loopback proxy URL; value stayed in the vault' };
+}
+
+/** `phantom init --empty`, then each value over stdin (never argv), in `project`. */
+async function secretsProject(secretsBin, env, project, entries) {
+  mkdirSync(project, { recursive: true });
+  const init = await run(secretsBin, ['init', '--empty'], { env, cwd: project });
+  if (init.code !== 0) return `phantom init --empty exit ${init.code}: ${init.stderr.trim().slice(0, 200)}`;
+  for (const [name, value] of entries) {
+    const add = await run(secretsBin, ['add', name, '--stdin'], { env, cwd: project, input: value });
+    if (add.code !== 0) return `phantom add --stdin exit ${add.code}: ${add.stderr.trim().slice(0, 200)}`;
+  }
+  return null;
+}
+
+/**
+ * Stack calls `phantom` from PATH for everything vault-related. With one secret of
+ * three declared in `.stack.toml` stored, Stack must count it, name exactly the two
+ * missing ones, and never print the value: through `stack` and through `stack-mcp`.
+ */
+export async function stackPhantomVault(options, env, box) {
+  const project = join(box.home, 'stack-vault-project');
+  const shim = join(box.root, 'phantom-shim');
+  mkdirSync(shim, { recursive: true });
+  symlinkSync(options.secretsBin, join(shim, 'phantom'));
+  const vaultEnv = { ...env, PATH: [shim, env.PATH].join(delimiter), PHANTOM_VAULT_PASSPHRASE: 'phm-companion-smoke-passphrase' };
+  const setup = await secretsProject(options.secretsBin, vaultEnv, project, [['OPENAI_API_KEY', SECRET_SENTINEL]]);
+  if (setup) return [['stack:phantom-vault', { status: 'fail', detail: setup }]];
+  writeFileSync(join(project, '.stack.toml'), STACK_TOML);
+  const leaked = (...texts) => texts.some(text => typeof text === 'string' && text.includes(SECRET_SENTINEL));
+  const checks = [];
+
+  const status = await run(options.stackBin, ['status', '--json'], { env: vaultEnv, cwd: project, timeoutMs: 30_000 });
+  let report = null;
+  try { report = JSON.parse(status.stdout); } catch { /* reported below */ }
+  const count = report?.phantom?.secret_count;
+  checks.push(['stack:phantom-vault', leaked(status.stdout, status.stderr)
+    ? { status: 'fail', detail: 'stack status printed the stored value' }
+    : report?.phantom?.installed === true && count === 1
+      ? { status: 'pass', detail: 'stack status --json found Phantom and counted the 1 stored secret' }
+      : { status: 'fail', detail: report ? `phantom ${JSON.stringify(report.phantom ?? null)}, expected installed with secret_count 1` : `stack status --json exit ${status.code}: not JSON` }]);
+
+  const diff = await run(options.stackBin, ['env', 'diff'], { env: vaultEnv, cwd: project, timeoutMs: 30_000 });
+  checks.push(['stack:env-diff', evaluateEnvDiff(diff.stdout + diff.stderr, `exit ${diff.code}`)]);
+
+  if (!options.stackMcp || !existsSync(options.stackMcp)) checks.push(['stack:mcp-env-diff', { status: 'skip', detail: 'no --stack-mcp' }]);
+  else {
+    try {
+      const result = await mcpHandshake(options.stackMcp, { env: vaultEnv, cwd: project,
+        protocolVersion: CLIENT_PROTOCOL_VERSIONS[0], call: { name: 'stack_env_diff', arguments: {} }, timeoutMs: 30_000 });
+      const text = (result.call?.result?.content ?? []).map(part => part?.text ?? '').join('\n');
+      checks.push(['stack:mcp-env-diff', result.call?.error
+        ? { status: 'fail', detail: `tools/call error: ${JSON.stringify(result.call.error).slice(0, 200)}` }
+        : evaluateEnvDiff(text, 'stack_env_diff')]);
+    } catch (error) {
+      checks.push(['stack:mcp-env-diff', { status: 'fail', detail: error instanceof Error ? error.message : String(error) }]);
+    }
+  }
+  return checks;
+}
+
+const CREDENTIAL_PROBE = `const { createHash } = await import('node:crypto');
+const token = process.env.GH_TOKEN ?? '';
+const seen = !token ? 'unset' : createHash('sha256').update(token).digest('hex') === process.argv[1] ? 'match' : 'different';
+process.stdout.write('PHM_SMOKE_CRED ' + seen + '\\n');`;
+
+/**
+ * A github binding whose credential_ref is `phm:NAME` (and, as a control, `env:NAME`),
+ * pinned and run with `locus exec --strict-creds`: the child must get the stored value
+ * as GH_TOKEN. Only its sha256 is passed in argv, because Locus audits exec argv.
+ */
+export async function locusPhmCredential(options, env, box) {
+  const project = join(box.home, 'locus-credential-project');
+  const shim = join(box.root, 'locus-phantom-shim');
+  mkdirSync(shim, { recursive: true });
+  symlinkSync(options.secretsBin, join(shim, 'phantom'));
+  const credEnv = { ...env, PATH: [shim, dirname(options.locusBin), env.PATH].join(delimiter),
+    PHANTOM_VAULT_PASSPHRASE: 'phm-companion-smoke-passphrase',
+    // Its own Locus home: the pin-report check already initialised the default one.
+    LOCUS_HOME: join(box.home, '.locus-credential') };
+  const setup = await secretsProject(options.secretsBin, credEnv, project, [['GH_SMOKE_TOKEN', SECRET_SENTINEL]]);
+  if (setup) return [['locus:phm-credential', { status: 'fail', detail: setup }]];
+  const hash = createHash('sha256').update(SECRET_SENTINEL).digest('hex');
+  const probe = (label, ref) => [
+    `locus binding add ${label} --tenant ${label} --provider github --account ${label}-gh --credential-ref ${ref} --org smoke-org --non-interactive >/dev/null`,
+    `locus enter ${label} --force >/dev/null`,
+    `echo "PHM_SMOKE_STEP ${label}"`,
+    `locus exec --strict-creds -- "$PHM_SMOKE_NODE" --input-type=module -e "$PHM_SMOKE_PROBE" ${hash} 2>&1 || echo "PHM_SMOKE_EXIT $?"`,
+    'locus leave --force >/dev/null 2>&1 || true',
+  ];
+  const script = [
+    'set -e',
+    'locus init >/dev/null 2>&1',
+    'eval "$(locus hook bash)"',
+    'set +e',
+    ...probe('phmcred', 'phm:GH_SMOKE_TOKEN'),
+    ...probe('envcred', 'env:PHM_SMOKE_ENV_TOKEN'),
+    'exit 0',
+  ].join('\n');
+  const result = await run('bash', ['-c', script], { cwd: project, timeoutMs: 60_000,
+    env: { ...credEnv, PHM_SMOKE_NODE: process.execPath, PHM_SMOKE_PROBE: CREDENTIAL_PROBE, PHM_SMOKE_ENV_TOKEN: SECRET_SENTINEL } });
+  const output = (result.stdout + result.stderr).replaceAll(SECRET_SENTINEL, '<value>');
+  if (result.code !== 0 || !output.includes('PHM_SMOKE_STEP envcred')) {
+    return [['locus:phm-credential', { status: 'fail', detail: `binding flow ${result.timedOut ? 'did not finish within 60 s' : `exit ${result.code}`}: ${output.trim().slice(-200)}` }]];
+  }
+  const [phm, envSection] = output.split('PHM_SMOKE_STEP envcred');
+  return [
+    ['locus:phm-credential', evaluateLocusCredential(phm, 'phm:', result.stdout + result.stderr)],
+    ['locus:env-credential', evaluateLocusCredential(envSection, 'env:', result.stdout + result.stderr)],
+  ];
+}
+
+/** One `locus exec --strict-creds` section of the binding flow's output. */
+export function evaluateLocusCredential(section, scheme, raw = '') {
+  if (raw.includes(SECRET_SENTINEL)) return { status: 'fail', detail: 'the stored value was printed' };
+  const seen = section.match(/PHM_SMOKE_CRED (\w+)/u)?.[1];
+  if (seen === 'match') return { status: 'pass', detail: `the ${scheme} credential_ref reached the locus exec child as GH_TOKEN` };
+  const reason = section.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('PHM_SMOKE')).at(-1) ?? '';
+  return { status: 'fail', detail: `the ${scheme} credential ${seen ? `reached the child as ${seen}` : 'did not resolve'}${reason ? `: ${reason.slice(0, 200)}` : ''}` };
+}
+
+/** Cortex's JSON-RPC code for an unauthenticated MCP request (packages/api/src/mcp/http.ts). */
+const CORTEX_UNAUTHORIZED = -32001;
+
+/**
+ * Two requests, no credential: an anonymous `initialize` and one with a well-formed
+ * but unknown `ctx_pat_` token. Cortex attests its database before authenticating,
+ * so a 401 with a Bearer challenge also shows the deployment can verify tokens; a 503
+ * is its "no database" refusal.
+ */
+export async function cortexMcpAuth(url, { timeoutMs = 20_000 } = {}) {
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: CLIENT_PROTOCOL_VERSIONS[0], capabilities: {}, clientInfo: { name: 'phm-companion-smoke', version: '1' } } });
+  const fake = `ctx_pat_${randomBytes(32).toString('base64url').slice(0, 43)}`;
+  const problems = [];
+  for (const [label, token] of [['anonymous', null], ['unknown token', fake]]) {
+    let response, text;
+    try {
+      response = await fetch(url, { method: 'POST', body, signal: AbortSignal.timeout(timeoutMs), redirect: 'manual',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+          ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+      text = await response.text();
+    } catch (error) {
+      const cause = error?.cause?.code ?? error?.cause?.message;
+      return { status: 'fail', detail: `${label} request to ${url} failed: ${error instanceof Error ? error.message : String(error)}${cause ? ` (${cause})` : ''}` };
+    }
+    problems.push(...evaluateCortexChallenge(label, response.status, response.headers, text, token));
+  }
+  return problems.length
+    ? { status: 'fail', detail: problems.join('; ').slice(0, 300) }
+    : { status: 'pass', detail: 'anonymous and unknown-token requests got 401 with a Bearer challenge' };
+}
+
+export function evaluateCortexChallenge(label, status, headers, text, token) {
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* reported below */ }
+  if (status === 503) return [`${label}: 503 ${parsed?.error?.message ?? 'service unavailable'}`];
+  const problems = [];
+  if (status !== 401) problems.push(`${label}: HTTP ${status}, expected 401`);
+  else {
+    if (parsed?.error?.code !== CORTEX_UNAUTHORIZED) problems.push(`${label}: body is not a JSON-RPC ${CORTEX_UNAUTHORIZED} error`);
+    if (!/^Bearer\b/iu.test(headers.get('www-authenticate') ?? '')) problems.push(`${label}: no Bearer challenge`);
+    if (!/no-store/iu.test(headers.get('cache-control') ?? '')) problems.push(`${label}: 401 is cacheable`);
+  }
+  if (token && text.includes(token)) problems.push(`${label}: response echoed the token`);
+  return problems;
+}
+
+/** Stack's env diff for the smoke project: the two Supabase names, never the stored one or its value. */
+export function evaluateEnvDiff(text, label) {
+  if (text.includes(SECRET_SENTINEL)) return { status: 'fail', detail: `${label} printed the stored value` };
+  const missing = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'].filter(name => !text.includes(name));
+  const problems = [];
+  if (missing.length) problems.push(`did not report missing ${missing.join(', ')}`);
+  if (text.includes('OPENAI_API_KEY')) problems.push('reported the stored OPENAI_API_KEY as missing');
+  return problems.length
+    ? { status: 'fail', detail: `${label}: ${problems.join('; ')}: ${text.trim().slice(0, 200)}` }
+    : { status: 'pass', detail: `${label} named the 2 missing secrets and not the stored one` };
 }
 
 function printHuman(report) {
