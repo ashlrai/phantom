@@ -6,7 +6,8 @@
  * Acting happens in a throwaway detached worktree of the operator's checkout,
  * pinned to the exact head GitHub reported:
  *
- *   merge-base      `git merge origin/<base>`; conflicts go to the fixer, and
+ *   merge-base      `git merge origin/<base>`, on a conflict or on a head a strict
+ *                   base would refuse as behind; conflicts go to the fixer, and
  *                   every conflict marker must be gone before anything commits
  *   fix-ci          the fixer gets the failing checks' log tails
  *   address-review  the fixer gets the review items on this head

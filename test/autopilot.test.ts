@@ -78,6 +78,16 @@ describe('autopilot plan', () => {
     expect(plan(o, guards, { ...emptyState(), attempts: { [`merge-base:${HEAD}:${BASE}`]: 1 } }).action).toBe('stop');
   });
 
+  it('brings the base into a head that a strict base would refuse, even while checks run', () => {
+    const behind = (checks: ReturnType<typeof run>[]) => obs({ headChecks: checks }, { mergeableState: 'behind' });
+    expect(plan(behind([run(1, 'test', 'success')]), guards, emptyState())).toMatchObject({ action: 'merge-base', reason: expect.stringContaining('behind main') });
+    expect(plan(behind([run(1, 'test', null, 'in_progress')]), guards, emptyState()).action).toBe('merge-base');
+    expect(plan(behind([run(1, 'test', 'success')]), guards, { ...emptyState(), attempts: { [`merge-base:${HEAD}:${BASE}`]: 1 } }).action).toBe('stop');
+    expect(plan(behind([run(1, 'test', 'success')]), guards, { ...emptyState(), actedHeads: [HEAD] }).action).toBe('wait');
+    // Its own failure is fixed first; the fix push brings fresh CI anyway.
+    expect(plan(behind([run(1, 'test', 'failure')]), guards, emptyState()).action).toBe('fix-ci');
+  });
+
   it('never touches another owner\'s PR, and honors kill and pause', () => {
     expect(plan(obs({}, { headRef: 'codex/release' }), guards, emptyState())).toMatchObject({ action: 'stop', reason: expect.stringContaining('not an autopilot branch') });
     expect(plan(obs({}, { author: 'someone' }), guards, emptyState())).toMatchObject({ action: 'stop' });

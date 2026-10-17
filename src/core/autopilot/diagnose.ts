@@ -264,6 +264,14 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
   if (reviews.length) {
     return mutate() ?? { action: 'address-review', reason: `${reviews.length} review item(s) from ${[...new Set(reviews.map((r) => r.author))].join(', ')}`, reviews };
   }
+  // A base that requires up-to-date heads will refuse this one however its checks end, so
+  // bring the base in now: CI still running on the stale head, or a re-run of it, is wasted.
+  if (pr.mergeableState === 'behind') {
+    if ((state.attempts[`merge-base:${pr.headSha}:${pr.baseSha}`] ?? 0) >= 1) {
+      return { action: 'stop', reason: `bringing ${pr.baseRef} into this head already failed once; it needs a person` };
+    }
+    return mutate() ?? { action: 'merge-base', reason: `PR #${pr.number} is behind ${pr.baseRef}, which requires heads to be up to date` };
+  }
   if (pending.length) return { action: 'wait', reason: `${pending.length} check(s) still running: ${pending.slice(0, 4).map((c) => c.name).join(', ')}` };
   if (failures.length) {
     // Infrastructure gets exactly one re-run per check per head; a second failure is real.
