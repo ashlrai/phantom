@@ -231,7 +231,7 @@ export const CODEX_CONTEXT_SEAT: VerseSeat = {
   cliVersion: '0.155.0',
 };
 
-export const CODEX_CATALOG_NOTE = "Model list is Verse's built-in list until this seat's first turn fetches its own catalog.";
+export const CODEX_CATALOG_NOTE = "Model list is Phantom's built-in list until this seat's first turn fetches its own catalog.";
 
 /** codex-a: never ran a turn, so no catalog yet — the documented fallback list, and a note saying so. */
 export const CODEX_UNFETCHED_SEAT: VerseSeat = {

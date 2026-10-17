@@ -349,7 +349,7 @@ const STATUS_SENTENCES: Record<DevinFailureCode, string> = {
   'invalid-request': 'Devin refused the request.',
   server: 'Devin had a server error. Try again shortly.',
   network: "Devin's API could not be reached.",
-  unparsed: "Devin answered with something Verse doesn't recognise, so nothing was changed.",
+  unparsed: "Devin answered with something Phantom doesn't recognise, so nothing was changed.",
   'session-error': 'The Devin session ended in an error.',
   unknown: 'Something went wrong talking to Devin.',
 };
