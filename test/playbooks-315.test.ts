@@ -550,4 +550,22 @@ describe('ashlr playbook', () => {
     expect(await runPlaybookCli(['run', 'fix-issue'], c.deps)).toBe(2);
     expect(await runPlaybookCli(['run', 'fix-issue', '--repo', 'a/b', '--lane', 'moon'], c.deps)).toBe(2);
   });
+
+  it('--json refusals stay machine-readable on stdout with the same exit codes', async () => {
+    const c = cli();
+    expect(await runPlaybookCli(['show', 'nope-nope', '--json'], c.deps)).toBe(1);
+    expect(await runPlaybookCli(['show', 'fix-issue@v99', '--json'], c.deps)).toBe(1);
+    expect(await runPlaybookCli(['show', '--json'], c.deps)).toBe(2);
+    expect(await runPlaybookCli(['run', 'nope-nope', '--repo', 'a/b', '--json'], c.deps)).toBe(1);
+    expect(await runPlaybookCli(['run', 'fix-issue', '--json'], c.deps)).toBe(2);
+    expect(c.err).toEqual([]);
+    expect(c.launched).toEqual([]);
+    expect(c.out.map((line) => JSON.parse(line) as unknown)).toEqual([
+      { v: 1, error: 'No playbook named nope-nope.' },
+      { v: 1, error: 'fix-issue has no version 99.' },
+      { v: 1, error: 'name a playbook id, e.g. `fix-issue` or `fix-issue@v2`' },
+      { v: 1, error: 'No playbook named nope-nope.' },
+      { v: 1, error: 'pass --repo owner/name (this folder has no GitHub origin)' },
+    ]);
+  });
 });
