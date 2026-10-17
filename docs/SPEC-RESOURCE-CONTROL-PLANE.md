@@ -281,6 +281,15 @@ through the gateway. It applies its own rule from `planEngineDispatch` in
    with a `resource-pause:` reason and, when the snapshot carries one, the
    earliest known reset time among the candidates.
 
+`ashlr loop --watch` runs the simple conductor on `cfg.daemon.intervalMs`
+(default 5 minutes) through `runSimpleConductorWatch`. When a tick dispatched
+nothing, deferred at least one task and the earliest reset among the deferred
+tasks is in the future, the next tick waits for that reset instead
+(`simpleConductorNextWaitMs`): never less than the interval and never more than
+15 minutes, so new tasks and config changes are still picked up. The wait ends
+early on the kill switch, SIGINT or SIGTERM. Without a known reset the interval
+is unchanged, and the default single tick (no `--watch`) is unchanged.
+
 With `resourceAwareDispatch: false` the task's engine is always dispatched as is.
 
 ### 4.3 Production Velocity Runbook

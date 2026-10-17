@@ -101,8 +101,22 @@ See [product names](PHANTOM-BRAND.md) and [first-run guidance](QUICKSTART.md#ope
 
 ## Register an already installed MCP server
 
-`phm mcp ecosystem` inspects existing Secrets and Locus MCP executable paths
-and their registration entries. Detection does not execute, download or start
+`phm mcp ecosystem` inspects existing MCP executable paths and their
+registration entries for three companions:
+
+| Server name | Executable looked up on PATH | Launched as |
+| --- | --- | --- |
+| `phantom-secrets` | `phantom` | `phantom mcp serve` |
+| `locus` | `locus-mcp` | `locus-mcp` with the Locus identity environment |
+| `ashlr-md` (optional) | `mdopener-mcp` | `mdopener-mcp` |
+
+Ashlr MD is optional: `phm mcp doctor` only requires `ashlr`, `phantom-secrets`
+and `locus`, so a missing `mdopener-mcp` is reported and skipped, never an
+error. Once registered, the `phm mcp` gateway lists each server's tools with
+the server name as a prefix, for example `ashlr-md__<tool>`.
+
+Detection does not execute, download or start
+those servers. Detection does not execute, download or start
 those servers. It requires a regular executable with a native binary header,
 ignores relative PATH directories and deduplicates symlinks to the same physical
 file. Multiple distinct candidates or unsupported/bootstrap launchers are
@@ -117,6 +131,8 @@ existing identity-environment repair. Unreadable, empty or malformed existing se
 writing, so repair the file first. Valid unrelated keys and server entries are
 preserved. Registration alone does not initialize a vault or prove a handshake.
 
-This helper does not register Lexicon. Its project-bound stdio MCP server and the
-desktop's separately configured native voice service have different setup and
-trust requirements; neither is started by companion inventory.
+This helper does not register Lexicon or Stack. Their MCP servers start through
+Node or Bun launchers, which the native-executable rule above refuses. Lexicon's
+project-bound stdio MCP server and the desktop's separately configured native
+voice service also have different setup and trust requirements; neither is
+started by companion inventory.

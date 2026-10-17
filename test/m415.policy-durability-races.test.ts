@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SemanticPrivateStorageHarness } from './helpers/semantic-private-storage.js';
+
 const faults = vi.hoisted(() => ({
   establishPrivateRoot: null as (() => void) | null,
   secureAuthorityFile: null as ((path: string) => void) | null,
@@ -25,10 +27,22 @@ const faults = vi.hoisted(() => ({
 const privateStorageHarness = vi.hoisted(() => ({
   useSemanticAdapter: false,
   realCalls: 0,
+  adapter: undefined as SemanticPrivateStorageHarness | undefined,
 }));
 
+// Every enroll/setKill here runs the production assurance adapter end to end,
+// but on Windows its PowerShell DACL process is answered by the semantic
+// harness (M408's pattern) instead of a cold powershell.exe per path: those
+// launches, several per case plus two per beforeEach, were this suite's
+// Windows cost. The adapter request is still built, authenticated and
+// validated against the real on-disk path facts.
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
+  const { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } =
+    await import('./helpers/semantic-private-storage.js');
+  privateStorageHarness.adapter ??= createSemanticPrivateStorageHarness({
+    systemRoot: trustedWindowsSystemRootForTest(),
+  });
   return {
     ...actual,
     assurePrivateStoragePath: (
@@ -41,7 +55,14 @@ vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
         };
       }
       privateStorageHarness.realCalls += 1;
-      return actual.assurePrivateStoragePath(...args);
+      const options = args[3];
+      if (process.platform !== 'win32' || options?.runner !== undefined) {
+        return actual.assurePrivateStoragePath(...args);
+      }
+      return actual.assurePrivateStoragePath(args[0], args[1], args[2], {
+        ...options,
+        runner: privateStorageHarness.adapter!.runner,
+      });
     },
   };
 });
@@ -169,6 +190,11 @@ import {
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
 const policyModuleUrl = new URL('../src/core/sandbox/policy.ts', import.meta.url).href;
+const privateStorageModuleUrl = new URL('../src/core/util/private-storage.ts', import.meta.url).href;
+const semanticPrivateStorageHelperUrl = new URL(
+  './helpers/semantic-private-storage.ts',
+  import.meta.url,
+).href;
 let home: string;
 let previousHome: string | undefined;
 let previousUserProfile: string | undefined;
@@ -307,6 +333,11 @@ describe('M415 policy durability races', () => {
           '--input-type=module',
           '--eval',
           `import { isEnrolled, listEnrolled } from ${JSON.stringify(policyModuleUrl)};` +
+            `import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from ${JSON.stringify(privateStorageModuleUrl)};` +
+            `import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from ${JSON.stringify(semanticPrivateStorageHelperUrl)};` +
+            // The fresh process reads through the same semantic adapter, not
+            // one cold powershell.exe per authority path inside its 5s budget.
+            `if (process.platform === 'win32') _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, { runner: createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() }).runner });` +
             `process.stdout.write(JSON.stringify({ repos: listEnrolled(), enrolled: isEnrolled(${JSON.stringify(newlyEnrolledRepo)}) }));`,
         ],
         {

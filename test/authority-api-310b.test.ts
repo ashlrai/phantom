@@ -421,7 +421,12 @@ describe('Needs-you and the rail badge (R1)', () => {
   it.each(['paused', 'invalid'] as const)('keeps an unchanged %s alert arrival and one advisory pass across fresh 15s status reads', async (grantState) => {
     const envKeys = ['ASHLR_HOME', 'TYPESAFE_API_KEY', 'ASHLR_TYPESAFE_ENDPOINT', 'ASHLR_JEV_DISABLE', 'ASHLR_CLASSIFY_DISABLE'] as const;
     const saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
-    const start = Date.now();
+    // The case walks Date through start..start+120s and counts the Jev ledger,
+    // which is filed by local day. Keep the whole walk inside one local day,
+    // or a run started just before midnight counts only the new day's file.
+    const nextLocalMidnight = new Date();
+    nextLocalMidnight.setHours(24, 0, 0, 0);
+    const start = Math.min(Date.now(), nextLocalMidnight.getTime() - 121_000);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(start);
     process.env['ASHLR_HOME'] = join(process.env['HOME']!, '.ashlr');

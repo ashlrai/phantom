@@ -288,7 +288,7 @@ async function handleEndpoint(req: IncomingMessage, res: ServerResponse, method:
   const token = bearerOf(req);
   const turn = token ? turnForBearer(token) : null;
   if (!turn) {
-    writeRaw(res, 404, { error: 'Verse tools are not available to this caller (no live turn holds this token).' });
+    writeRaw(res, 404, { error: 'Phantom tools are not available to this caller (no live turn holds this token).' });
     return;
   }
   const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
@@ -379,7 +379,7 @@ export const handleVerseMcpApi: ApiModule = async (_ctx, req, res, path, method)
     if (!session) return true;
     const port = localPort(req);
     if (port === null) {
-      sendJson(res, 503, { code: 'VERSE_UNAVAILABLE', error: 'could not tell which port Verse is serving on' });
+      sendJson(res, 503, { code: 'VERSE_UNAVAILABLE', error: 'could not tell which port Phantom is serving on' });
       return true;
     }
     setAgentToolsGrant(session.id, patch, `http://127.0.0.1:${port}`);

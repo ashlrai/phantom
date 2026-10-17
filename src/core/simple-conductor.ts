@@ -631,3 +631,152 @@ export async function runSimpleConductor(
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Watch mode (reset-aware idle)
+// ---------------------------------------------------------------------------
+
+/** Default `--watch` cadence; matches the daemon's default tick interval. */
+export const SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS = 5 * 60_000;
+/**
+ * Longest a reset-aware idle may park. Bounded so new tasks and config changes
+ * are still picked up while every engine waits for its window to reopen.
+ */
+export const SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS = 15 * 60_000;
+/** How often a parked watch loop re-reads the kill switch. */
+const WATCH_KILL_SWITCH_POLL_MS = 250;
+
+/** The watch cadence: cfg.daemon.intervalMs when it is a positive finite number. */
+export function resolveSimpleConductorIntervalMs(cfg: AshlrConfig): number {
+  const configured = cfg.daemon?.intervalMs;
+  return typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+    ? configured
+    : SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS;
+}
+
+/**
+ * How long a watch loop waits before its next tick. Pure; never throws.
+ *
+ * When the tick dispatched nothing, some tasks were deferred for lack of engine
+ * capacity and the earliest known reset among them is in the future, the loop
+ * waits for that reset instead of ticking again on its interval. The wait is
+ * never shorter than `intervalMs` and never longer than
+ * SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS (unless the interval itself is longer).
+ * Every other outcome waits exactly `intervalMs`.
+ */
+export function simpleConductorNextWaitMs(
+  result: Pick<SimpleConductorResult, 'tasksAttempted' | 'deferred'>,
+  intervalMs: number,
+  nowMs: number,
+): number {
+  const interval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS;
+  if (result.tasksAttempted > 0 || !result.deferred?.length) return interval;
+  let earliestMs: number | null = null;
+  for (const deferral of result.deferred) {
+    if (!deferral.earliestResetAt) continue;
+    const resetMs = Date.parse(deferral.earliestResetAt);
+    if (!Number.isFinite(resetMs)) continue;
+    if (earliestMs === null || resetMs < earliestMs) earliestMs = resetMs;
+  }
+  if (earliestMs === null || earliestMs <= nowMs) return interval;
+  return Math.max(interval, Math.min(earliestMs - nowMs, SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS));
+}
+
+/** Options for runSimpleConductorWatch. The fields after onTick are test seams. */
+export interface SimpleConductorWatchOptions {
+  dryRun: boolean;
+  allowCloud: boolean;
+  /** Aborting stops the loop: an in-flight tick finishes, a park ends at once. */
+  signal?: AbortSignal;
+  /** Called after every tick; `nextWaitMs` is null when the loop is stopping. */
+  onTick?: (result: SimpleConductorResult, nextWaitMs: number | null) => void;
+  runTick?: (
+    cfg: AshlrConfig,
+    opts: { once: boolean; dryRun: boolean; allowCloud: boolean },
+  ) => Promise<SimpleConductorResult>;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<boolean>;
+  now?: () => number;
+  killSwitchOn?: () => boolean;
+  /** Install SIGINT/SIGTERM handlers that stop the loop (default true). */
+  handleSignals?: boolean;
+}
+
+/** Abortable sleep: resolves true when the time elapsed, false when aborted. */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolveSleep) => {
+    if (signal.aborted) {
+      resolveSleep(false);
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolveSleep(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolveSleep(true);
+    }, Math.max(0, ms));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * `ashlr loop --watch` for the simple conductor: tick, park, tick again until
+ * the kill switch, SIGINT/SIGTERM or the abort signal stops it, or a tick is
+ * refused (activation refused or kill switch on). The park between ticks is
+ * reset-aware (see simpleConductorNextWaitMs) and interruptible: the kill
+ * switch is polled while parked and any stop request ends the park at once.
+ * Returns the last tick's result. It adds no dispatch path of its own; every
+ * tick is a plain runSimpleConductor call with all of its gates.
+ */
+export async function runSimpleConductorWatch(
+  cfg: AshlrConfig,
+  opts: SimpleConductorWatchOptions,
+): Promise<SimpleConductorResult> {
+  const runTick = opts.runTick ?? runSimpleConductor;
+  const sleep = opts.sleep ?? abortableSleep;
+  const now = opts.now ?? Date.now;
+  const killSwitch = opts.killSwitchOn ?? (await import('./sandbox/policy.js')).killSwitchOn;
+  const intervalMs = resolveSimpleConductorIntervalMs(cfg);
+  const tickOpts = { once: false, dryRun: opts.dryRun, allowCloud: opts.allowCloud };
+
+  const stop = new AbortController();
+  const requestStop = (): void => {
+    if (!stop.signal.aborted) stop.abort();
+  };
+  if (opts.signal?.aborted) requestStop();
+  opts.signal?.addEventListener('abort', requestStop, { once: true });
+  const handleSignals = opts.handleSignals !== false;
+  if (handleSignals) {
+    // once: a second Ctrl-C falls through to the default handler and exits.
+    process.once('SIGINT', requestStop);
+    process.once('SIGTERM', requestStop);
+  }
+  const killPoll = setInterval(() => {
+    try {
+      if (killSwitch()) requestStop();
+    } catch {
+      // the next tick re-checks the kill switch itself
+    }
+  }, WATCH_KILL_SWITCH_POLL_MS);
+  (killPoll as { unref?: () => void }).unref?.();
+
+  try {
+    let last = await runTick(cfg, tickOpts);
+    while (!last.activationRefused && !last.killSwitchTripped && !stop.signal.aborted) {
+      const waitMs = simpleConductorNextWaitMs(last, intervalMs, now());
+      opts.onTick?.(last, waitMs);
+      if (!(await sleep(waitMs, stop.signal))) return last;
+      last = await runTick(cfg, tickOpts);
+    }
+    opts.onTick?.(last, null);
+    return last;
+  } finally {
+    clearInterval(killPoll);
+    opts.signal?.removeEventListener('abort', requestStop);
+    if (handleSignals) {
+      process.removeListener('SIGINT', requestStop);
+      process.removeListener('SIGTERM', requestStop);
+    }
+  }
+}

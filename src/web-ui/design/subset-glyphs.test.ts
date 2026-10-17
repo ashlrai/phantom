@@ -71,7 +71,7 @@ const KNOWN: Record<string, string> = {
   'routes/verse/autonomy/autonomy.module.css': '⊘',
 };
 
-describe('Verse UI text stays inside the Ashlr Sans subset', () => {
+describe('Phantom UI text stays inside the Ashlr Sans subset', () => {
   const ranges = subsetRanges();
   const inSubset = (cp: number) => cp < 0x80 || ranges.some(([a, b]) => cp >= a && cp <= b);
 
