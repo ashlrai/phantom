@@ -451,11 +451,66 @@ export const DAEMON_GIT_FORCED_CONFIG: readonly (readonly [string, string])[] = 
 ] as const);
 
 /**
- * `env` plus DAEMON_GIT_FORCED_CONFIG as GIT_CONFIG_COUNT entries. Existing
- * well-formed entries are kept and ours are appended AFTER them (the last
- * value wins, so ours hold); a malformed count is replaced rather than trusted.
+ * Content filter drivers (`filter.<name>.clean|smudge|process`) are the same
+ * kind of configured program, but under a name the attacker picks, so no
+ * fixed key can null them. `worktree add` runs smudge on checkout and `add -A`
+ * runs clean, for any path an attribute maps to the driver — `.gitattributes`
+ * in the checked-out tree, or `$GIT_DIR/info/attributes`, which
+ * `--attr-source` does not cover. The drivers defined in the repository's own
+ * config (local / worktree scope, includes counted where they are included)
+ * are read first and each is nulled at command scope; global and system
+ * drivers (git-lfs) are the operator's own and stay.
  */
-export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+const FILTER_DRIVER_KEY_RE = /^filter\.(.+)\.(?:clean|smudge|process|required)$/;
+const REPO_CONFIG_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+
+/** Driver names from `git config --show-scope --null --name-only --get-regexp '^filter\.'` output. */
+export function repoScopedFilterDrivers(listing: string): string[] {
+  const parts = listing.split('\0');
+  const names = new Set<string>();
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const match = FILTER_DRIVER_KEY_RE.exec(parts[i + 1]!);
+    if (match && REPO_CONFIG_SCOPES.has(parts[i]!)) names.add(match[1]!);
+  }
+  return [...names].sort();
+}
+
+/** Command-scope entries that leave each named filter driver with no program to run. */
+export function filterDriverOverrides(names: readonly string[]): (readonly [string, string])[] {
+  return names.flatMap((name) => [
+    [`filter.${name}.process`, ''],
+    [`filter.${name}.clean`, ''],
+    [`filter.${name}.smudge`, ''],
+    [`filter.${name}.required`, 'false'],
+  ] as const);
+}
+
+const FILTER_LISTING_ARGS = ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^filter\\.'] as const;
+
+/**
+ * The overrides for the repository `git <prefix> config` resolves from `cwd`.
+ * Reading config runs no program. Exit 1 is "no filter keys"; any other
+ * failure throws, so a call that cannot be hardened is never made.
+ */
+function repoFilterOverrides(file: string, prefix: readonly string[], cwd: string, env: NodeJS.ProcessEnv): (readonly [string, string])[] {
+  try {
+    const listing = execFileSync(file, [...prefix, ...FILTER_LISTING_ARGS], {
+      cwd, env: withDaemonGitHardening(env), timeout: GIT_TIMEOUT, stdio: 'pipe', encoding: 'utf8',
+    });
+    return filterDriverOverrides(repoScopedFilterDrivers(listing));
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 1) return [];
+    throw new Error('could not read the repository filter configuration');
+  }
+}
+
+/**
+ * `env` plus DAEMON_GIT_FORCED_CONFIG (and `extra`, e.g. filterDriverOverrides)
+ * as GIT_CONFIG_COUNT entries. Existing well-formed entries are kept and ours
+ * are appended AFTER them (the last value wins, so ours hold); a malformed
+ * count is replaced rather than trusted.
+ */
+export function withDaemonGitHardening(env: NodeJS.ProcessEnv, extra: readonly (readonly [string, string])[] = []): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env };
   const raw = out.GIT_CONFIG_COUNT;
   let count = raw !== undefined && /^\d{1,3}$/.test(raw) ? Number.parseInt(raw, 10) : 0;
@@ -465,7 +520,7 @@ export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   if (count === 0) {
     for (const key of Object.keys(out)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) delete out[key];
   }
-  for (const [key, value] of DAEMON_GIT_FORCED_CONFIG) {
+  for (const [key, value] of [...DAEMON_GIT_FORCED_CONFIG, ...extra]) {
     out[`GIT_CONFIG_KEY_${count}`] = key;
     out[`GIT_CONFIG_VALUE_${count}`] = value;
     count += 1;
@@ -480,10 +535,11 @@ function gitRun(cwd: string, args: string[]): string {
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_COMMON_DIR;
+  const filters = repoFilterOverrides('git', [], cwd, env);
   return execFileSync('git', args, {
-    // hooks / fsmonitor / pager / credential helpers off (see withDaemonGitHardening).
+    // hooks / fsmonitor / pager / credential helpers / repo filter drivers off (see withDaemonGitHardening).
     cwd,
-    env: withDaemonGitHardening(env),
+    env: withDaemonGitHardening(env, filters),
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
@@ -1440,6 +1496,8 @@ interface PinnedWorktreeRunnerInvocation {
   script: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Set when the call cannot be hardened; the runner is then never spawned. */
+  refusal: PinnedWorktreeCreationResult | null;
 }
 
 /**
@@ -1491,7 +1549,20 @@ function pinnedWorktreeRunnerInvocation(
 ): PinnedWorktreeRunnerInvocation {
   // The runner and its supervisors copy this env into every git they spawn,
   // so the forced config reaches `worktree add` and its validation calls too.
-  const env = withDaemonGitHardening({ ...process.env });
+  let filters: (readonly [string, string])[] = [];
+  let refusal: PinnedWorktreeCreationResult | null = null;
+  try {
+    filters = repoFilterOverrides('git', [], identity.source.path, { ...process.env });
+  } catch {
+    // Nothing ran. Only REGISTER has nothing to clean up; a refused populate
+    // or rollback leaves the registered worktree to the existing recovery.
+    refusal = {
+      ok: false,
+      cleanupComplete: mode === 'register',
+      error: 'could not read the source repository filter configuration',
+    };
+  }
+  const env = withDaemonGitHardening({ ...process.env }, filters);
   if (env.NODE_OPTIONS) env.ASHLR_PINNED_GIT_NODE_OPTIONS = env.NODE_OPTIONS;
   else delete env.ASHLR_PINNED_GIT_NODE_OPTIONS;
   delete env.NODE_OPTIONS;
@@ -1526,6 +1597,7 @@ function pinnedWorktreeRunnerInvocation(
     script: PINNED_WORKTREE_RUNNER,
     cwd: identity.source.path,
     env,
+    refusal,
   };
 }
 
@@ -1587,6 +1659,7 @@ function parsePinnedWorktreeResult(
 }
 
 function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): PinnedWorktreeCreationResult {
+  if (invocation.refusal) return invocation.refusal;
   const result = spawnSync(process.execPath, invocation.argv, {
     cwd: invocation.cwd,
     encoding: 'utf8',
@@ -1612,6 +1685,7 @@ function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): Pi
 function runPinnedWorktreeRunnerAsync(
   invocation: PinnedWorktreeRunnerInvocation,
 ): Promise<PinnedWorktreeCreationResult> {
+  if (invocation.refusal) return Promise.resolve(invocation.refusal);
   return new Promise((resolveResult) => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -2895,9 +2969,11 @@ function agentTreeGit(context: AgentTreeGitContext, cwd: string, args: string[])
     if (key.startsWith('GIT_')) delete env[key];
   }
   try {
+    const base = { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+    const filters = repoFilterOverrides(context.file, context.prefix, context.workTree, base);
     return execFileSync(context.file, [...context.prefix, ...args], {
       cwd: context.workTree,
-      env: withDaemonGitHardening({ ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }),
+      env: withDaemonGitHardening(base, filters),
       timeout: GIT_TIMEOUT,
       stdio: 'pipe',
       encoding: 'utf8',
