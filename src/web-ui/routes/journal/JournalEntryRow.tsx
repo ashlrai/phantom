@@ -12,6 +12,7 @@ import { EpistemicBadge } from '../../components/primitives/Epistemic.js';
 import { JournalEntryDetail } from './JournalEntryDetail.js';
 import type { JournalEntry } from './journal-model.js';
 import styles from './JournalEntryRow.module.css';
+import { formatDateTime } from '../../components/format/locale-format.js';
 
 const SOURCE_LABEL: Record<JournalEntry['source'], string> = {
   'daemon-tick': 'Daemon',
@@ -23,7 +24,7 @@ const SOURCE_LABEL: Record<JournalEntry['source'], string> = {
 
 function formatWhen(iso: string): string {
   const d = new Date(iso);
-  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  return `${formatDateTime(d, undefined, { month: 'short', day: 'numeric' })} ${formatDateTime(d, undefined, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 export function JournalEntryRow({ entry }: { entry: JournalEntry }) {
