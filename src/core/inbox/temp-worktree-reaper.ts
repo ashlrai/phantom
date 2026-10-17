@@ -23,7 +23,11 @@
  *     (marker or directory mtime), never when no timestamp is available;
  *   - only a `vwt-` entry's branch matching refs/heads/ashlr/verify/<hex> is
  *     deleted. `mwt-` is detached and `mergewt-` holds the default branch:
- *     their branches are never touched.
+ *     their branches are never touched;
+ *   - a marker recording this repo whose worktree git does not list (a kill
+ *     before or during `worktree add`, or after `worktree remove` in cleanup)
+ *     is reaped by the same owner rules with its directory, its `<dir>.patch`
+ *     and, for `vwt-<id>`, the branch `ashlr/verify/<id>`.
  *
  * Daemon start additionally runs {@link sweepLeakedTempWorktreesAtStart}: it
  * derives each leftover's owning repo from the leftover's own `.git` pointer
@@ -35,7 +39,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isMirrorPath, mirrorLeaseKey } from '../fleet/mirrors.js';
@@ -86,6 +90,17 @@ function markerPathFor(dir: string): string {
   return `${dir}.owner`;
 }
 
+/** Where inbox/merge.ts writes the patch it applies in the temp worktree at `dir`. */
+export function tempWorktreePatchPath(dir: string): string {
+  return `${dir}.patch`;
+}
+
+function unlinkQuietly(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch { /* absent */ }
+}
+
 let ownStart: VerifiedProcessStartIdentity | null | undefined;
 function ownStartIdentity(): VerifiedProcessStartIdentity | null {
   if (ownStart === undefined) ownStart = verifiedProcessStartIdentity(process.pid) ?? null;
@@ -118,9 +133,8 @@ export function releaseTempWorktreeOwner(dir: string): void {
     lstatSync(dir);
     return; // directory still there: keep the marker so a later reaper can judge it
   } catch { /* gone */ }
-  try {
-    unlinkSync(markerPathFor(dir));
-  } catch { /* best effort */ }
+  unlinkQuietly(tempWorktreePatchPath(dir));
+  unlinkQuietly(markerPathFor(dir));
 }
 
 type OwnerState = 'alive' | 'dead' | 'unknown';
@@ -229,9 +243,11 @@ export function reapLeakedTempWorktrees(
     const roots = tmpRoots();
     const tmpDir = ashlrTmpDir();
     let mutated = false;
+    const registered = new Set<string>();
     for (const entry of parsePorcelain(porcelain)) {
       const name = basename(entry.path);
       if (!TEMP_WORKTREE_NAME.test(name) || !roots.has(dirname(resolve(entry.path)))) continue;
+      registered.add(name);
       const markerPath = markerPathFor(join(tmpDir, name));
       let reap: boolean;
       const state = readOwnerState(markerPath);
@@ -260,18 +276,107 @@ export function reapLeakedTempWorktrees(
         continue;
       }
       result.reaped.push(entry.path);
-      try {
-        unlinkSync(markerPath);
-      } catch { /* absent */ }
+      unlinkQuietly(tempWorktreePatchPath(join(tmpDir, name)));
+      unlinkQuietly(markerPath);
       const branch = name.startsWith('vwt-') && entry.branch ? VERIFY_BRANCH_REF.exec(entry.branch)?.[1] : undefined;
       if (branch) {
         gitTry(repo, ['worktree', 'prune']);
         if (gitTry(repo, ['branch', '-D', branch]) !== null) result.branchesDeleted.push(branch);
       }
     }
+    if (reapUnregisteredLeftovers(repo, registered, now, maxAge, result)) mutated = true;
     if (mutated) gitTry(repo, ['worktree', 'prune']);
   } catch { /* never throws */ }
   return result;
+}
+
+function sameDirectory(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Leftovers of `repo` that git does not list: a kill before or during
+ * `worktree add` (the marker, maybe a directory and, for verify, the scratch
+ * branch `add -b` creates first) or during cleanup after `worktree remove`
+ * (marker, branch, patch). Only markers that record `repo` are considered and
+ * the same owner rules apply: a live or unprovable owner keeps everything. A
+ * verify worktree `vwt-<id>` owns exactly the branch `ashlr/verify/<id>`.
+ */
+function reapUnregisteredLeftovers(
+  repo: string,
+  registered: ReadonlySet<string>,
+  now: number,
+  maxAge: number,
+  result: ReapTempWorktreesResult,
+): boolean {
+  const tmpDir = ashlrTmpDir();
+  let names: string[];
+  try {
+    names = readdirSync(tmpDir);
+  } catch {
+    return false;
+  }
+  let mutated = false;
+  for (const markerName of names) {
+    if (!markerName.endsWith('.owner')) continue;
+    const name = markerName.slice(0, -'.owner'.length);
+    if (!TEMP_WORKTREE_NAME.test(name) || registered.has(name)) continue;
+    const markerPath = join(tmpDir, markerName);
+    const markerRepo = tempWorktreeMarkerRepo(markerPath);
+    if (!markerRepo || !sameDirectory(markerRepo, repo)) continue;
+    const dir = join(tmpDir, name);
+    const state = readOwnerState(markerPath);
+    let reap = state === 'dead';
+    if (state === 'unknown') {
+      const mtime = newestMtimeMs([markerPath, dir]);
+      reap = mtime !== null && now - mtime > maxAge;
+    }
+    if (!reap) {
+      result.kept.push(dir);
+      continue;
+    }
+    let dirPresent = true;
+    try {
+      if (!lstatSync(dir).isDirectory()) {
+        result.failed.push(dir);
+        continue;
+      }
+    } catch {
+      dirPresent = false;
+    }
+    if (dirPresent) {
+      // Not registered in `repo`: remove it unless it points at another repo.
+      const owningRepo = tempWorktreeOwningRepo(dir);
+      if (owningRepo !== null && !sameDirectory(owningRepo, repo)) {
+        result.kept.push(dir);
+        continue;
+      }
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch { /* checked below */ }
+      try {
+        lstatSync(dir);
+        result.failed.push(dir);
+        continue;
+      } catch { /* gone */ }
+    }
+    mutated = true;
+    if (name.startsWith('vwt-')) {
+      const branch = `ashlr/verify/${name.slice('vwt-'.length)}`;
+      if (gitTry(repo, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]) !== null) {
+        gitTry(repo, ['worktree', 'prune']);
+        if (gitTry(repo, ['branch', '-D', branch]) !== null) result.branchesDeleted.push(branch);
+      }
+    }
+    unlinkQuietly(tempWorktreePatchPath(dir));
+    unlinkQuietly(markerPath);
+    result.reaped.push(dir);
+  }
+  return mutated;
 }
 
 /** How long the start-time sweep waits for a busy mirror lease before skipping that repo. */
