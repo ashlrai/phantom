@@ -91,7 +91,7 @@ function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function fail(message: string): number {
+function failHuman(message: string): number {
   process.stderr.write(`${red('error')}: ${message}\n${dim(USAGE)}\n`);
   return 2;
 }
@@ -160,6 +160,13 @@ export async function runMirrorCli(args: string[]): Promise<number> {
   const leadingOption = args[0]?.startsWith('-') ?? false;
   const [sub = 'list', ...rest] = leadingOption ? ['list', ...args] : args;
   const parsed = parseArgs(rest);
+  // In --json mode a refusal is a JSON object on stdout (same shape as the
+  // reconcile refusal), still with the usage exit code 2.
+  const fail = (message: string): number => {
+    if (!parsed.json) return failHuman(message);
+    printJson({ ok: false, reason: message });
+    return 2;
+  };
   if (parsed.error) return fail(parsed.error);
   const mirrors = await import('../core/fleet/mirrors.js');
 
