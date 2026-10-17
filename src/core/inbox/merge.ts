@@ -455,7 +455,9 @@ function writeTmpFile(content: string, worktreeDir: string): string {
   // merge. Ensure a trailing newline on the apply temp file (does NOT touch the
   // stored proposal.diff or its provenance hash — only this throwaway apply file).
   const body = content.endsWith('\n') ? content : content + '\n';
-  writeFileSync(p, body, { encoding: 'utf8', mode: 0o600 });
+  // `wx`: the name is unique per temp worktree id, so an existing file there is
+  // never ours; fail instead of writing through whatever was planted at it.
+  writeFileSync(p, body, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return p;
 }
 
