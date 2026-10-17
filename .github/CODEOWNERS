@@ -845,6 +845,7 @@
 /test/sandbox-kernel-evidence-310.test.ts @masonwyatt23
 /test/sandbox-reservation-recovery.test.ts @masonwyatt23
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23
+/test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
