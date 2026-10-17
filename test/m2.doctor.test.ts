@@ -10,9 +10,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { AshlrConfig, ProviderRegistry, PhantomStatus } from '../src/core/types.js';
 import type { LocusProbeResult } from '../src/core/integrations/locus.js';
 import {
-  copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
+  copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
 } from 'node:fs';
-import { join, delimiter } from 'node:path';
+import { dirname, join, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -274,19 +274,38 @@ function installAshlrShim(tmpH: string, command: 'ashlr' | 'phm' | 'phantom' = '
   process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
 }
 
-/** Retain the real PATH locator but hide all host workbench executables. */
-function isolateCommandPath(): void {
+/** First match of `name` on the host PATH, resolved once per file. */
+function locateHostCommand(name: string): string {
   const finder = process.platform === 'win32' ? 'where' : 'which';
-  const located = spawnSync(finder, [finder], { encoding: 'utf8' });
+  const located = spawnSync(finder, [name], { encoding: 'utf8', env: { ...process.env, PATH: origPath } });
   expect(located.status).toBe(0);
-  const finderPath = located.stdout.trim().split(/\r?\n/)[0]!;
+  return located.stdout.trim().split(/\r?\n/)[0]!;
+}
+
+let hostFinder: string;
+let hostGit: string;
+
+/**
+ * Retain the real PATH locator and git but hide every other host executable.
+ * runDoctor shells out to `where`/`which` three times and to `git` once. On a
+ * hosted Windows runner every case on the full PATH took about 2.2s (91s for
+ * this file, and the first case passed its 15s deadline), while the cases that
+ * already used this PATH took 0.1s, and 11ms with PATH empty.
+ */
+function isolateCommandPath(): void {
   const binDir = join(tmpHome, 'bin');
+  mkdirSync(binDir, { recursive: true });
   if (process.platform === 'win32') {
-    copyFileSync(finderPath, join(binDir, 'where.exe'));
-  } else {
-    // Keep the platform binary in place; copied macOS system executables can
-    // be killed by code-signing enforcement outside their original location.
-    symlinkSync(finderPath, join(binDir, 'which'));
+    copyFileSync(hostFinder, join(binDir, 'where.exe'));
+    // Git for Windows' launcher resolves its runtime relative to itself, so it
+    // stays in its own directory, which holds only Git's own executables.
+    process.env.PATH = `${binDir}${delimiter}${dirname(hostGit)}`;
+    return;
+  }
+  // Keep the platform binaries in place; copied macOS system executables can
+  // be killed by code-signing enforcement outside their original location.
+  for (const [target, name] of [[hostFinder, 'which'], [hostGit, 'git']] as const) {
+    if (!existsSync(join(binDir, name))) symlinkSync(target, join(binDir, name));
   }
   process.env.PATH = binDir;
 }
@@ -332,6 +351,8 @@ function makeConfig(tmpH: string): AshlrConfig {
 }
 
 beforeAll(() => {
+  hostFinder = locateHostCommand(process.platform === 'win32' ? 'where' : 'which');
+  hostGit = locateHostCommand('git');
   if (process.platform !== 'win32') return;
 
   const proofHome = makeTmpHome();
@@ -360,6 +381,7 @@ beforeEach(() => {
   privateStorageHarness.adapterHome = tmpHome;
   privateStorageHarness.adapterAshlrHome = join(tmpHome, '.ashlr');
   installAshlrShim(tmpHome);
+  isolateCommandPath();
 
   // Reset to healthy defaults before each test.
   _phantomStatus = makePhantomStatus();
