@@ -4,7 +4,11 @@
  *   register <proposal.json>                                 record a proposal's hypothesis and deterministic metric
  *   measure  <id> --repo <dir> [--repeat N]                  measure the metric at the PR's exact merge base and head
  *   outcomes [--json]                                        measured outcomes and proposer comparison vs the deterministic baseline
+ *   sync-backlog                                             register cloud backlog PRs whose item declares a metric
+ *   observe  --repo <dir>                                    record merges of registered PRs and reverts that undo them
+ *   discover [--repo owner/name] [--dry-run] [--json]        add backlog items from member issues, a red default branch and proposals
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
+ *   lessons  [--json]                                        lessons trial: cloud runs with lessons vs the holdout without them
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -16,7 +20,11 @@ const USAGE = `Usage:
   phm improve register <proposal.json>
   phm improve measure <id> --repo <dir> [--repeat <1-5>]
   phm improve outcomes [--json]
-  phm improve promote <id> --repo <dir> [--queue-merge] [--json]`;
+  phm improve sync-backlog
+  phm improve discover [--repo <owner/name>] [--dry-run] [--json]
+  phm improve observe --repo <dir>
+  phm improve promote <id> --repo <dir> [--queue-merge] [--json]
+  phm improve lessons [--json]`;
 
 export async function cmdImprove(argv: string[]): Promise<number> {
   const args = [...argv];
@@ -26,7 +34,11 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     case 'register': return register(args[1]);
     case 'measure': return measure(args[1], val('--repo'), val('--repeat'));
     case 'outcomes': return outcomes(args.includes('--json'));
+    case 'sync-backlog': return syncBacklog();
+    case 'observe': return observe(val('--repo'));
+    case 'discover': return discover(val('--repo'), args.includes('--dry-run'), args.includes('--json'));
     case 'promote': return promote(args[1], val('--repo'), !args.includes('--queue-merge'), args.includes('--json'));
+    case 'lessons': return lessons(args.includes('--json'));
     default: console.error(USAGE); return 2;
   }
 }
@@ -115,6 +127,78 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
   return 0;
 }
 
+async function syncBacklog(): Promise<number> {
+  const { appendLedger, readLedger } = await import('../core/improve/outcomes.js');
+  const { backlogRegistrations } = await import('../core/improve/backlog-sync.js');
+  const { listCloudTasks } = await import('../core/cloud/store.js');
+  const { readCloudBacklog } = await import('../core/cloud/backlog.js');
+  try {
+    const read = readLedger();
+    if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
+    const tasks = listCloudTasks();
+    const events = backlogRegistrations(tasks, readCloudBacklog(tasks, new Date()).items, read.records);
+    for (const e of events) appendLedger(e);
+    const n = events.filter((e) => e.type === 'registered').length;
+    console.log(n ? `ok registered ${n} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
+    return 0;
+  } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
+}
+
+async function observe(repo: string | undefined): Promise<number> {
+  if (!repo) { console.error('Usage: phm improve observe --repo <dir>'); return 2; }
+  const { appendLedger, readLedger, scoreOutcomes } = await import('../core/improve/outcomes.js');
+  const { observeCloudReverts, observeOutcomes } = await import('../core/improve/observe.js');
+  const { defaultBranchOf, assertOriginIs } = await import('../core/improve/promote.js');
+  const read = readLedger();
+  if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
+  try {
+    // Only registered PRs and cloud tasks whose PR lives in this checkout's origin repository.
+    const { listCloudTasks, readCloudTask, writeCloudTask } = await import('../core/cloud/store.js');
+    const all = scoreOutcomes(read.records).filter((o) => o.pr);
+    const tasks = listCloudTasks(Number.MAX_SAFE_INTEGER);
+    const candidates = [...new Set([...all.map((o) => o.pr!.repository), ...tasks.filter((t) => t.state === 'merged').map((t) => t.repo)])];
+    const repository = candidates.find((r) => { try { assertOriginIs(r, repo); return true; } catch { return false; } });
+    if (!repository) { console.log('No registered PRs or merged cloud tasks belong to this checkout\'s origin.'); return 0; }
+    const branch = defaultBranchOf(repository, repo);
+    const mine = all.filter((o) => o.pr!.repository.toLowerCase() === repository.toLowerCase());
+    const res = observeOutcomes(mine, repo, branch);
+    for (const e of res.events) appendLedger(e);
+    for (const e of res.errors) console.log(`warn ${e}`);
+    const reverts = res.events.filter((e) => e.type === 'observed' && e.observation === 'reverted').length;
+    console.log(`ok ${res.events.length - reverts} merge(s) and ${reverts} revert(s) recorded`);
+    const cloud = observeCloudReverts(tasks, repository, repo, branch);
+    let written = 0;
+    for (const c of cloud.changes) {
+      const t = readCloudTask(c.taskId);
+      if (!t?.outcome) continue;
+      writeCloudTask({ ...t, outcome: { ...t.outcome, revertedBy: c.revertedBy } });
+      written += 1;
+    }
+    for (const e of cloud.errors) console.log(`warn ${e}`);
+    const cloudReverts = cloud.changes.filter((c) => c.revertedBy).length;
+    console.log(`ok ${cloudReverts} cloud task revert(s) and ${written - cloudReverts} re-land(s) recorded`);
+    return 0;
+  } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
+}
+
+async function discover(repoArg: string | undefined, dryRun: boolean, json: boolean): Promise<number> {
+  const { discoverBacklog } = await import('../core/improve/discover.js');
+  const { appendUserBacklogItems, validBacklogItem } = await import('../core/cloud/backlog.js');
+  const { readCloudBudget, CLOUD_REPO_PATTERN } = await import('../core/cloud/store.js');
+  const repo = repoArg ?? readCloudBudget().selfImprove.repo;
+  if (!CLOUD_REPO_PATTERN.test(repo)) { console.error('--repo must be owner/name'); return 2; }
+  const res = await discoverBacklog(repo, { proposals: gatherProposals('default', runSteward(defaultStewardPolicy())) });
+  const items = res.items.filter((i) => validBacklogItem(i) !== null);
+  const added = dryRun ? 0 : appendUserBacklogItems(items);
+  if (json) console.log(JSON.stringify({ repo, dryRun, found: items.length, added, items, errors: res.errors }, null, 2));
+  else {
+    for (const i of items) console.log(`${i.id.padEnd(28)} p${i.priority} ${i.area.padEnd(12)} ${i.title}`);
+    for (const e of res.errors) console.log(`warn ${e}`);
+    console.log(dryRun ? `-> ${items.length} item(s) found; dry run, nothing added` : `ok ${added} new backlog item(s) added (${items.length} found)`);
+  }
+  return res.errors.length && !items.length ? 1 : 0;
+}
+
 async function outcomes(json: boolean): Promise<number> {
   const { readLedger, scoreOutcomes, summarizeBySource } = await import('../core/improve/outcomes.js');
   const read = readLedger();
@@ -173,4 +257,16 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
     else console.log(['! not promoted:', ...decision.reasons.map((r) => `  - ${r}`)].join('\n'));
     return decision.admit ? 0 : 1;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
+}
+
+async function lessons(json: boolean): Promise<number> {
+  const [{ listCloudTasks }, { revertedPrKeys }, trial] = await Promise.all([
+    import('../core/cloud/store.js'), import('../core/improve/reverted.js'), import('../core/improve/lesson-trial.js')]);
+  const report = trial.lessonTrial(listCloudTasks(Number.MAX_SAFE_INTEGER), revertedPrKeys());
+  if (json) { console.log(JSON.stringify(report, null, 2)); return 0; }
+  console.log(`Lessons trial (holdout ${Math.round(report.holdout * 100)}% of eligible cloud launches run without lessons)`);
+  console.log(trial.renderLessonEffect(report.overall));
+  for (const e of report.byNote) console.log(`  ${trial.renderLessonEffect(e)}`);
+  if (report.excluded.launchFailed || report.excluded.unfinished) console.log(`Not counted: ${report.excluded.launchFailed} launch failure(s), ${report.excluded.unfinished} still running.`);
+  return 0;
 }
