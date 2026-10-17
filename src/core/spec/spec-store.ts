@@ -323,18 +323,44 @@ function buildStubSpec(hint: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Deterministic, model-free spec body for a goal string. Same six sections as
+ * a model-drafted spec, seeded with the goal text so a human can fill it in.
+ * NO model, NO network. Stable for a given goal.
+ */
+function buildDeterministicSpec(goal: string): string {
+  const lines = goal
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const quoted = lines.length > 0 ? lines.map((l) => `> ${l}`).join('\n') : '> _(empty goal)_';
+  const northStar = lines[0] ?? 'Define the desired end state here.';
+  return (
+    `## Context\n${quoted}\n\n` +
+    `_Drafted deterministically (no model). Fill in who this is for and the current state._\n\n` +
+    `## North Star\n${northStar}\n\n` +
+    `## Operating Principles\n- Local-first\n- No secrets in logs\n\n` +
+    `## Pillars\n- _Pillar 1_\n- _Pillar 2_\n\n` +
+    `## Roadmap\n### Phase 1\n- _Deliverable 1_\n\n` +
+    `## Verification\n- _Acceptance criterion 1_\n`
+  );
+}
+
+/**
  * Author a new spec from a goal string.
  *
  * Uses the LOCAL-first model provider to draft a structured end-state spec
  * with sections: Context / North Star / Operating Principles / Pillars /
  * Roadmap / Verification. Persists `<slug>-v1.md` + sidecar `<slug>-v1.json`.
  *
+ * `opts.offline: true` skips the model entirely (no provider probe, zero
+ * network) and writes a deterministic template seeded with the goal text.
+ *
  * The model call is BOUNDED (small output budget). Never throws.
  */
 export async function authorSpec(
   goal: string,
   cfg: AshlrConfig,
-  opts?: { project?: string; allowCloud?: boolean },
+  opts?: { project?: string; allowCloud?: boolean; offline?: boolean },
 ): Promise<SpecArtifact> {
   const project = opts?.project ?? null;
   const dir = specsDir(project ?? undefined);
@@ -358,12 +384,9 @@ export async function authorSpec(
     opts?.allowCloud ??
     (cfg.models?.providerChain ?? []).some((p: string) => !['ollama', 'lmstudio', 'builtin'].includes(p));
 
-  const { content } = await callModel(
-    cfg,
-    SPEC_SYSTEM_PROMPT,
-    buildAuthorPrompt(goal),
-    allowCloud,
-  );
+  const content = opts?.offline
+    ? buildDeterministicSpec(goal)
+    : (await callModel(cfg, SPEC_SYSTEM_PROMPT, buildAuthorPrompt(goal), allowCloud)).content;
 
   const bodyPath = mdPath(dir, id, version);
 
