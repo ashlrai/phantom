@@ -1198,7 +1198,7 @@ export async function startVerseAccountCollector(
       // rather than emitting something that claims freshness.
       publicationFailed = true;
       if (heartbeat !== null) { clearInterval(heartbeat); heartbeat = null; }
-      log('Verse account collector: shared quota evidence publication failed; readers fall back to the baseline.');
+      log('Phantom account collector: shared quota evidence publication failed; readers fall back to the baseline.');
     }
   }
 
@@ -1286,7 +1286,7 @@ export async function startVerseAccountCollector(
     } catch {
       state = 'blocked';
       reasonCode = 'collector-start-failed';
-      log('Verse account collector: could not start native metadata collection; account data will read as unknown.');
+      log('Phantom account collector: could not start native metadata collection; account data will read as unknown.');
     }
   }
 
@@ -1330,7 +1330,7 @@ export async function startVerseAccountCollector(
     ]);
     if (results.some((r) => r.status === 'rejected')) {
       cleanupUncertain = true;
-      log('Verse account collector: a native metadata sample ended uncertain; the durable fence is preserved.');
+      log('Phantom account collector: a native metadata sample ended uncertain; the durable fence is preserved.');
     }
     if (!closed) state = 'suspended';
   }
@@ -1344,7 +1344,7 @@ export async function startVerseAccountCollector(
       return;
     }
     if (Date.now() - lastRequestAt < idleSuspendMs) return;
-    log('Verse account collector: no client has asked for account data recently; pausing native polling.');
+    log('Phantom account collector: no client has asked for account data recently; pausing native polling.');
     void suspend().then(releaseIdleLease).catch(() => {});
   }
 
@@ -1384,7 +1384,7 @@ export async function startVerseAccountCollector(
       state = 'blocked';
       owner = 'none';
       reasonCode = 'collector-unavailable';
-      log('Verse account collector: the idle metadata lease could not be released cleanly; its marker stays durable.');
+      log('Phantom account collector: the idle metadata lease could not be released cleanly; its marker stays durable.');
       return;
     }
     mode = 'read-only';
@@ -1395,7 +1395,7 @@ export async function startVerseAccountCollector(
     // The very next touch() re-acquires: nobody should wait out a retry
     // spacing that exists to stop hammering a lock someone ELSE holds.
     lastLeaseAttemptAt = 0;
-    log('Verse account collector: polling paused and the metadata lease handed back so the fleet daemon can sample; it is re-acquired on the next request.');
+    log('Phantom account collector: polling paused and the metadata lease handed back so the fleet daemon can sample; it is re-acquired on the next request.');
   }
 
   /** Prune the rolling window and report whether another generation may start. */
@@ -1478,7 +1478,7 @@ export async function startVerseAccountCollector(
     if (!recoveryBudgetAvailable()) {
       recoveryHold = 'exhausted';
       state = 'blocked';
-      log('Verse account collector: native collection kept stopping; the recovery budget for this window is spent and polling stays stopped.');
+      log('Phantom account collector: native collection kept stopping; the recovery budget for this window is spent and polling stays stopped.');
       return;
     }
     // Anti-spin: never start two generations closer together than this, even
@@ -1492,7 +1492,7 @@ export async function startVerseAccountCollector(
     reasonCode = null;
     resume();
     if (state === 'running') {
-      log(`Verse account collector: native process cleanup confirmed; started collection generation ${generation}.`);
+      log(`Phantom account collector: native process cleanup confirmed; started collection generation ${generation}.`);
     }
   }
 
@@ -1540,8 +1540,8 @@ export async function startVerseAccountCollector(
       if (!retry || reasonCode !== previousCode) {
         log(
           typed?.code === 'collector-owned'
-            ? `Verse account collector: ${leaseHolderSentence(holderPid)}`
-            : `Verse account collector: metadata lease unavailable (${reasonCode}); reading shared evidence only.`,
+            ? `Phantom account collector: ${leaseHolderSentence(holderPid)}`
+            : `Phantom account collector: metadata lease unavailable (${reasonCode}); reading shared evidence only.`,
         );
       }
       return;
@@ -1578,7 +1578,7 @@ export async function startVerseAccountCollector(
       state = 'blocked';
       owner = 'none';
       reasonCode = 'collector-start-failed';
-      log('Verse account collector: the metadata lease was acquired but could not be marked pending; it has been released and no native polling is running.');
+      log('Phantom account collector: the metadata lease was acquired but could not be marked pending; it has been released and no native polling is running.');
       return;
     }
     if (watchdog === null) {
@@ -1587,8 +1587,8 @@ export async function startVerseAccountCollector(
     }
     if (retry) {
       log(resumedFromIdle
-        ? 'Verse account collector: a client asked for account data; native polling resumed under the metadata lease.'
-        : 'Verse account collector: the metadata lease was released by its previous owner; this server now collects live readings.');
+        ? 'Phantom account collector: a client asked for account data; native polling resumed under the metadata lease.'
+        : 'Phantom account collector: the metadata lease was released by its previous owner; this server now collects live readings.');
     }
   }
 
@@ -1842,7 +1842,7 @@ export async function startVerseAccountCollector(
         // it must survive this process exiting.
         lease?.close(publicationFailed || cleanupUncertain);
       } catch {
-        log('Verse account collector: the metadata lease could not be released cleanly; its marker stays durable.');
+        log('Phantom account collector: the metadata lease could not be released cleanly; its marker stays durable.');
       }
       lease = null;
     },

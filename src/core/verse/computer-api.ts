@@ -140,7 +140,7 @@ export const handleComputerApi: ApiModule = async (_ctx, req, res, path, method)
     res.off('close', onClose);
     if (res.writableEnded || res.destroyed) {
       // The window went away mid-poll: fail what it claimed so the agent hears now, not in a minute.
-      for (const command of commands) completeComputerCommand({ id: command.id, ok: false, code: 'failed', error: 'The Verse window closed.' });
+      for (const command of commands) completeComputerCommand({ id: command.id, ok: false, code: 'failed', error: 'The Phantom window closed.' });
       return true;
     }
     writeRaw(res, 200, { commands });
