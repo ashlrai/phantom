@@ -476,6 +476,7 @@
     "src/core/improve/discover.ts",
     "src/core/improve/lesson-trial.ts",
     "src/core/improve/outcomes.ts",
+    "src/core/improve/reverted.ts",
     "src/core/inbox/apply.ts",
     "src/core/inbox/merge.ts",
     "src/core/inbox/notify-proposal.ts",

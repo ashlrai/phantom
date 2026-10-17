@@ -1069,7 +1069,10 @@ prompt gets at most 8, and only notes that are about the task: a path or
 task-kind scope that matched, or words in common with the task text, rarer
 words counting more. A note scoped to paths also reaches a brief written
 before its files are known when its words are about the task. The Leader's
-evidence still carries every approved note. When nothing matches, the prompt
+evidence still carries every approved note. A note that cites the PRs and
+checks it was learned from shows the ones its text does not already name, and
+a note whose every cited PR was reverted after merging stays out of fleet goals
+and cloud briefs. When nothing matches, the prompt
 is exactly what it was before. **Propose for AGENTS.md** files an ordinary fleet task that
 goes through every gate; it never writes to a repository directly. The Leader's
 veto lessons are read back into its evidence and into tasks the Leader started.
