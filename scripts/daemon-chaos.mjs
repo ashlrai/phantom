@@ -36,6 +36,9 @@
  *   execMarks   run execution-authority markers left in phase `executing`
  *   execClaims  shared-queue claims left in phase `executing`
  *   running     run records still `running` with no live owner
+ *   pendingHomes metadata-free sandbox homes (a kill between the metadata unlink and
+ *               the rmdir); the orphan sweep reclaims them once a minute old. --settle
+ *               waits that minute after the last cycle and restarts once more
  *   queueWait   the queue is blocked now but recovers once the dead holder's lock is
  *               2x the lease old (the shared store spans machines, so it has no
  *               owner pid it could check)
@@ -44,7 +47,7 @@
  *
  * Usage:
  *   node scripts/daemon-chaos.mjs [--cycles 10] [--seed 1] [--n 4] [--files 120]
- *     [--think-ms 300] [--verify 1] [--queue local|shared] [--strict] [--json] [--keep]
+ *     [--think-ms 300] [--verify 1] [--queue local|shared] [--settle] [--strict] [--json] [--keep]
  * Several seeds: node scripts/daemon-chaos.mjs --seed 1,2,3 --cycles 10
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -69,9 +72,12 @@ const queueMode = opt('queue', 'local') === 'shared' ? 'shared' : 'local';
 const strict = args.includes('--strict');
 const asJson = args.includes('--json');
 const keep = args.includes('--keep') || Boolean(process.env.ASHLR_BENCH_KEEP);
+const settle = args.includes('--settle');
 
 const HARD = ['homes', 'worktrees', 'branches', 'gitLocks', 'tmp', 'wedged', 'strays'];
-const SOFT = ['queueWait', 'queueLitter', 'deadLocks', 'execMarks', 'execClaims', 'running'];
+const SOFT = ['pendingHomes', 'queueWait', 'queueLitter', 'deadLocks', 'execMarks', 'execClaims', 'running'];
+// worktree.ts reclaims a metadata-free sandbox home only once it is a minute old.
+const RESERVATION_RECOVERY_MS = 60_000;
 // Kill points and how long after entering the phase to strike (ms, uniform).
 const KILL_POINTS = {
   queueClaim: 40, runTerminal: 40, sandboxCreate: 900, admit: 60, engine: thinkMs, settle: 250, sandboxRemove: 250, verify: 2_500,
@@ -204,7 +210,9 @@ function readJson(path) {
 function audit(ctx) {
   const detail = {};
   const sandboxes = join(ctx.ashlr, 'sandboxes');
-  detail.homes = existsSync(sandboxes) ? readdirSync(sandboxes).filter((e) => !e.startsWith('.')) : [];
+  const homes = existsSync(sandboxes) ? readdirSync(sandboxes).filter((e) => !e.startsWith('.')) : [];
+  detail.homes = homes.filter((e) => existsSync(join(sandboxes, e, 'sandbox.json')));
+  detail.pendingHomes = homes.filter((e) => !existsSync(join(sandboxes, e, 'sandbox.json')));
   const porcelain = sh(ctx.repo, ctx.env, 'git', ['worktree', 'list', '--porcelain'], true);
   const blocks = porcelain.split('\n\n').filter((b) => b.startsWith('worktree '));
   detail.worktrees = blocks.slice(1).map((b) => {
@@ -293,6 +301,10 @@ async function runCycle(ctx, rnd, cycle) {
   }
   const results = await Promise.all(plans.map((plan, i) => runAgent(ctx, i, plan, crash)));
   const strays = results.reduce((s, r) => s + r.strays, 0);
+  return restartAndAudit(ctx, results, strays, cycle, daemonCrash ? `daemon@${crash.phase}/${crash.mode}` : 'agents');
+}
+
+function restartAndAudit(ctx, results, strays, cycle, kind) {
   const before = counts({ ...audit(ctx), wedged: [], queueWait: [] }, strays);
   const restarted = restart(ctx);
   const detail = audit(ctx);
@@ -307,7 +319,7 @@ async function runCycle(ctx, rnd, cycle) {
   const hard = HARD.reduce((s, k) => s + after[k], 0);
   const soft = SOFT.reduce((s, k) => s + after[k], 0);
   return {
-    cycle, kind: daemonCrash ? `daemon@${crash.phase}/${crash.mode}` : 'agents',
+    cycle, kind,
     kills: results.filter((r) => r.killedAt).map((r) => r.killedAt),
     completed: results.filter((r) => r.result?.ok).length,
     failures: results.filter((r) => r.result && !r.result.ok).map((r) => String(r.result.failure).slice(0, 120)),
@@ -329,6 +341,7 @@ for (const seed of seeds) {
   const rnd = mulberry32(seed);
   const ctx = setup();
   const rows = [];
+  let settled = null;
   if (!asJson) console.log(`\nseed ${seed}: ${cycles} cycles x ${agents} agents, ${queueMode} queue (residue AFTER restart + sweep)\n${header}`);
   try {
     for (let c = 1; c <= cycles; c++) {
@@ -338,6 +351,15 @@ for (const seed of seeds) {
         console.log(row(r));
         if (r.hard > 0 || (strict && r.soft > 0)) console.log(`       residue: ${JSON.stringify(r.residue)}`);
         if (r.restarted?.crash) console.log(`       restart crashed: ${r.restarted.crash}`);
+      }
+    }
+    if (settle) {
+      // No agents: wait out the age-gated recoveries, restart once more.
+      await sleep(RESERVATION_RECOVERY_MS + 2_000);
+      settled = restartAndAudit(ctx, [], 0, 'end', 'settle (+62s, no agents)');
+      if (!asJson) {
+        console.log(row(settled));
+        if (settled.hard > 0 || settled.soft > 0) console.log(`       residue: ${JSON.stringify(settled.residue)}`);
       }
     }
   } finally {
@@ -352,6 +374,7 @@ for (const seed of seeds) {
     // Peak per-cycle residue left AFTER restart + sweep, and what the last cycle ended with.
     peakAfterRestart: Object.fromEntries(keys.map((k) => [k, Math.max(0, ...rows.map((r) => r.after[k]))])),
     finalAfterRestart: rows.length ? rows[rows.length - 1].after : null,
+    afterSettle: settled ? settled.after : undefined,
     // Residue the kills produced before the restart ran (sum over cycles).
     producedBeforeRestart: Object.fromEntries(keys.map((k) => [k, rows.reduce((s, r) => s + Math.max(0, r.before[k] - (rows[rows.indexOf(r) - 1]?.after[k] ?? 0)), 0)])),
     failures: rows.flatMap((r) => r.failures).reduce((m, f) => {
@@ -361,6 +384,7 @@ for (const seed of seeds) {
   };
   summaries.push(summary);
   if (cyclesWithHard > 0 || (strict && cyclesWithSoft > 0)) failed = true;
+  if (settled && (settled.hard > 0 || settled.after.pendingHomes > 0)) failed = true;
 }
 
 if (asJson) {
@@ -372,6 +396,7 @@ if (asJson) {
     console.log(`    produced by kills (before restart): ${JSON.stringify(s.producedBeforeRestart)}`);
     console.log(`    peak left after restart + sweep:    ${JSON.stringify(s.peakAfterRestart)}`);
     console.log(`    final state:                        ${JSON.stringify(s.finalAfterRestart)}`);
+    if (s.afterSettle) console.log(`    after settle:                       ${JSON.stringify(s.afterSettle)}`);
     for (const [k, v] of Object.entries(s.failures)) console.log(`    agent failure x${v}: ${k}`);
   }
 }
