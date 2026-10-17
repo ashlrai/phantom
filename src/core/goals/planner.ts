@@ -397,11 +397,10 @@ function stripFences(s: string): string {
  * providerChain (closing the default-path cloud-egress gap). Cloud authoring
  * happens ONLY when the user explicitly passed --allow-cloud.
  *
- * NO MODEL BY DEFAULT: without `allowCloud` the spec is authored `offline`
- * (a deterministic template seeded with the milestone text), so the default
- * `goals plan` path makes no model call and no provider probe at all, matching
- * the "no model, zero network" planning promise. With `allowCloud` the
- * local-first provider chain drafts the spec.
+ * MODEL OPTIONAL: a reachable local model (Ollama/LM Studio) drafts the spec;
+ * when none is reachable the spec is a template seeded with the milestone
+ * text and nothing is logged (`quietIfNoProvider`), so a fresh install's
+ * `goals plan` prints no provider-failure noise.
  */
 export async function planMilestoneSpec(
   goal: Goal,
@@ -413,6 +412,6 @@ export async function planMilestoneSpec(
   return authorSpec(goalText, cfg, {
     ...(goal.project ? { project: goal.project } : {}),
     allowCloud: opts?.allowCloud ?? false,
-    offline: opts?.allowCloud !== true,
+    quietIfNoProvider: true,
   });
 }

@@ -285,9 +285,21 @@ async function callModel(
   systemPrompt: string,
   userPrompt: string,
   allowCloud: boolean,
-): Promise<{ content: string; usage: { tokensIn: number; tokensOut: number } }> {
+  quietIfNoProvider = false,
+): Promise<{ content: string; usage: { tokensIn: number; tokensOut: number }; noProvider?: true }> {
+  let client: Awaited<ReturnType<typeof getActiveClient>>;
   try {
-    const client = await getActiveClient(cfg, { allowCloud });
+    client = await getActiveClient(cfg, { allowCloud });
+  } catch (err: unknown) {
+    // No usable provider (none reachable, or the one found is not permitted).
+    // Callers that treat a model as optional ask for silence here.
+    if (!quietIfNoProvider) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[spec-store] model call failed (${msg}); returning stub spec\n`);
+    }
+    return { content: buildStubSpec(userPrompt), usage: { tokensIn: 0, tokensOut: 0 }, noProvider: true };
+  }
+  try {
     const result = await client.chat(
       [
         { role: 'system', content: systemPrompt },
@@ -323,9 +335,9 @@ function buildStubSpec(hint: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic, model-free spec body for a goal string. Same six sections as
- * a model-drafted spec, seeded with the goal text so a human can fill it in.
- * NO model, NO network. Stable for a given goal.
+ * Model-free spec body for a goal string, used when no provider is usable.
+ * Same six sections as a model-drafted spec, seeded with the goal text so a
+ * human can fill it in. Stable for a given goal.
  */
 function buildDeterministicSpec(goal: string): string {
   const lines = goal
@@ -336,7 +348,7 @@ function buildDeterministicSpec(goal: string): string {
   const northStar = lines[0] ?? 'Define the desired end state here.';
   return (
     `## Context\n${quoted}\n\n` +
-    `_Drafted deterministically (no model). Fill in who this is for and the current state._\n\n` +
+    `_No model was available, so this is a template. Fill in who this is for and the current state._\n\n` +
     `## North Star\n${northStar}\n\n` +
     `## Operating Principles\n- Local-first\n- No secrets in logs\n\n` +
     `## Pillars\n- _Pillar 1_\n- _Pillar 2_\n\n` +
@@ -352,15 +364,16 @@ function buildDeterministicSpec(goal: string): string {
  * with sections: Context / North Star / Operating Principles / Pillars /
  * Roadmap / Verification. Persists `<slug>-v1.md` + sidecar `<slug>-v1.json`.
  *
- * `opts.offline: true` skips the model entirely (no provider probe, zero
- * network) and writes a deterministic template seeded with the goal text.
+ * `opts.quietIfNoProvider: true` treats the model as optional: when no
+ * provider is usable it writes a template seeded with the goal text and logs
+ * nothing. A reachable local model (or cloud, with allowCloud) still drafts it.
  *
  * The model call is BOUNDED (small output budget). Never throws.
  */
 export async function authorSpec(
   goal: string,
   cfg: AshlrConfig,
-  opts?: { project?: string; allowCloud?: boolean; offline?: boolean },
+  opts?: { project?: string; allowCloud?: boolean; quietIfNoProvider?: boolean },
 ): Promise<SpecArtifact> {
   const project = opts?.project ?? null;
   const dir = specsDir(project ?? undefined);
@@ -384,9 +397,9 @@ export async function authorSpec(
     opts?.allowCloud ??
     (cfg.models?.providerChain ?? []).some((p: string) => !['ollama', 'lmstudio', 'builtin'].includes(p));
 
-  const content = opts?.offline
-    ? buildDeterministicSpec(goal)
-    : (await callModel(cfg, SPEC_SYSTEM_PROMPT, buildAuthorPrompt(goal), allowCloud)).content;
+  const quiet = opts?.quietIfNoProvider === true;
+  const drafted = await callModel(cfg, SPEC_SYSTEM_PROMPT, buildAuthorPrompt(goal), allowCloud, quiet);
+  const content = drafted.noProvider && quiet ? buildDeterministicSpec(goal) : drafted.content;
 
   const bodyPath = mdPath(dir, id, version);
 

@@ -1,14 +1,15 @@
 /**
- * M28 `goals plan` keeps its "no model, zero network" promise for spec
- * authoring. Hermetic: specs land in a temp project dir (HOME/ASHLR_HOME are
- * relocated by test/setup/home.ts), and the provider client is mocked so no
- * real model endpoint is ever contacted.
+ * M28 `goals plan` spec authoring treats the model as optional. Hermetic:
+ * specs land in a temp project dir (HOME/ASHLR_HOME are relocated by
+ * test/setup/home.ts), and the provider client is mocked so no real model
+ * endpoint is ever contacted.
  *
  * Covers:
- *   - planMilestoneSpec without allowCloud never constructs a provider client
- *     (no local-provider probe) and prints no `[spec-store] model call failed`
- *     line, yet still writes a v1 spec seeded with the milestone text.
- *   - planMilestoneSpec with allowCloud still drafts through the provider chain.
+ *   - With no usable provider, planMilestoneSpec prints no
+ *     `[spec-store] model call failed` line and still writes a v1 spec seeded
+ *     with the milestone text.
+ *   - A reachable local provider still drafts the spec, local-only by default.
+ *   - allowCloud is still passed through to the provider chain.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -92,11 +93,11 @@ afterEach(() => {
   fs.rmSync(project, { recursive: true, force: true });
 });
 
-describe('goals plan spec authoring: no model by default', () => {
-  it('authors a deterministic spec without probing any provider', async () => {
+describe('goals plan spec authoring: model optional', () => {
+  it('writes a seeded template silently when no provider is reachable', async () => {
     const spec = await planMilestoneSpec(makeGoal(project), makeMilestone(), makeConfig());
 
-    expect(getActiveClientMock).not.toHaveBeenCalled();
+    expect(getActiveClientMock).toHaveBeenCalledTimes(1);
     expect(stderrLines.join('')).not.toContain('[spec-store]');
     expect(stderrLines.join('')).not.toContain('model call failed');
 
@@ -115,6 +116,20 @@ describe('goals plan spec authoring: no model by default', () => {
     ]) {
       expect(body).toContain(section);
     }
+  });
+
+  it('drafts through a reachable local provider by default', async () => {
+    const chat = vi.fn(async () => ({
+      content: '## Context\nDrafted by the local model.',
+      usage: { tokensIn: 1, tokensOut: 1 },
+    }));
+    getActiveClientMock.mockImplementationOnce((async () => ({ chat })) as never);
+
+    const spec = await planMilestoneSpec(makeGoal(project), makeMilestone(), makeConfig());
+
+    expect((getActiveClientMock.mock.calls[0] as unknown[])[1]).toMatchObject({ allowCloud: false });
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(spec.path, 'utf8')).toContain('Drafted by the local model.');
   });
 
   it('still drafts through the provider chain when allowCloud is set', async () => {
