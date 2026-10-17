@@ -3,7 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
- *   ashlr wire status [claude|codex|cursor|gemini|all]  [--config <path>]  [--json]   (read-only)
+ *   ashlr wire status [claude|codex|cursor|windsurf|gemini|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
  * Target-aware, backup-first, idempotent, LOCAL only.
@@ -35,7 +35,7 @@ async function importEditors() {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-const VALID_TARGETS = ['claude', 'codex', 'cursor', 'gemini', 'all'] as const;
+const VALID_TARGETS = ['claude', 'codex', 'cursor', 'windsurf', 'gemini', 'all'] as const;
 type WireTarget = typeof VALID_TARGETS[number];
 
 interface ParsedWireArgs {
@@ -64,7 +64,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
       configPath = val;
     } else if (VALID_TARGETS.includes(arg as WireTarget)) {
       if (explicitTarget !== null) {
-        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor gemini all` };
+        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor windsurf gemini all` };
       }
       explicitTarget = arg as WireTarget;
     } else if (arg.startsWith('--')) {
@@ -112,6 +112,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
+    ['table',             'Print the shared client table as JSON (read-only; same data as docs/client-table.json).'],
     ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
@@ -164,6 +165,13 @@ export async function cmdWire(args: string[]): Promise<number> {
   }
 
   if (sub === 'status') return cmdWireStatus(args.slice(1));
+
+  // Read-only: print the shared client table (same data as docs/client-table.json).
+  if (sub === 'table') {
+    const { clientTableJson } = await import('../core/integrations/client-table.js');
+    process.stdout.write(JSON.stringify(clientTableJson(), null, 2) + '\n');
+    return 0;
+  }
 
   const parsed = parseWireArgs(args);
 
