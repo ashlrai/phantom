@@ -10,9 +10,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { AshlrConfig, ProviderRegistry, PhantomStatus } from '../src/core/types.js';
 import type { LocusProbeResult } from '../src/core/integrations/locus.js';
 import {
-  copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
+  copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
 } from 'node:fs';
-import { join, delimiter } from 'node:path';
+import { dirname, join, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -208,6 +208,17 @@ vi.mock('../src/core/providers.js', () => ({
 import { runDoctor, checkLocus, checkLocusFirm } from '../src/core/doctor.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
+// Loaded at collection time: runDoctor imports these probes lazily, so the
+// file's first runDoctor case would otherwise transform their graphs cold
+// inside its own 15s window. runDoctor still awaits the same modules, cached.
+import '../src/core/plugins/registry.js';
+import '../src/core/plugins/integrity.js';
+import '../src/core/mcp-registry.js';
+import '../src/core/observability/rollup.js';
+import '../src/core/observability/governance.js';
+import '../src/core/observability/telemetry-sink.js';
+import '../src/core/genome/store.js';
+
 // Doctor probes shell out even with provider and Phantom mocks. Windows CI can
 // spend more than Vitest's 5s default in process startup across a single probe.
 // Covered by the real-io lane's 60s default now — see scripts/realio-lane-membership.mjs.
@@ -263,19 +274,38 @@ function installAshlrShim(tmpH: string, command: 'ashlr' | 'phm' | 'phantom' = '
   process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
 }
 
-/** Retain the real PATH locator but hide all host workbench executables. */
-function isolateCommandPath(): void {
+/** First match of `name` on the host PATH, resolved once per file. */
+function locateHostCommand(name: string): string {
   const finder = process.platform === 'win32' ? 'where' : 'which';
-  const located = spawnSync(finder, [finder], { encoding: 'utf8' });
+  const located = spawnSync(finder, [name], { encoding: 'utf8', env: { ...process.env, PATH: origPath } });
   expect(located.status).toBe(0);
-  const finderPath = located.stdout.trim().split(/\r?\n/)[0]!;
+  return located.stdout.trim().split(/\r?\n/)[0]!;
+}
+
+let hostFinder: string;
+let hostGit: string;
+
+/**
+ * Retain the real PATH locator and git but hide every other host executable.
+ * runDoctor shells out to `where`/`which` three times and to `git` once. On a
+ * hosted Windows runner every case on the full PATH took about 2.2s (91s for
+ * this file, and the first case passed its 15s deadline), while the cases that
+ * already used this PATH took 0.1s, and 11ms with PATH empty.
+ */
+function isolateCommandPath(): void {
   const binDir = join(tmpHome, 'bin');
+  mkdirSync(binDir, { recursive: true });
   if (process.platform === 'win32') {
-    copyFileSync(finderPath, join(binDir, 'where.exe'));
-  } else {
-    // Keep the platform binary in place; copied macOS system executables can
-    // be killed by code-signing enforcement outside their original location.
-    symlinkSync(finderPath, join(binDir, 'which'));
+    copyFileSync(hostFinder, join(binDir, 'where.exe'));
+    // Git for Windows' launcher resolves its runtime relative to itself, so it
+    // stays in its own directory, which holds only Git's own executables.
+    process.env.PATH = `${binDir}${delimiter}${dirname(hostGit)}`;
+    return;
+  }
+  // Keep the platform binaries in place; copied macOS system executables can
+  // be killed by code-signing enforcement outside their original location.
+  for (const [target, name] of [[hostFinder, 'which'], [hostGit, 'git']] as const) {
+    if (!existsSync(join(binDir, name))) symlinkSync(target, join(binDir, name));
   }
   process.env.PATH = binDir;
 }
@@ -321,6 +351,8 @@ function makeConfig(tmpH: string): AshlrConfig {
 }
 
 beforeAll(() => {
+  hostFinder = locateHostCommand(process.platform === 'win32' ? 'where' : 'which');
+  hostGit = locateHostCommand('git');
   if (process.platform !== 'win32') return;
 
   const proofHome = makeTmpHome();
@@ -349,6 +381,7 @@ beforeEach(() => {
   privateStorageHarness.adapterHome = tmpHome;
   privateStorageHarness.adapterAshlrHome = join(tmpHome, '.ashlr');
   installAshlrShim(tmpHome);
+  isolateCommandPath();
 
   // Reset to healthy defaults before each test.
   _phantomStatus = makePhantomStatus();
@@ -479,6 +512,36 @@ describe('runDoctor — no local provider up', () => {
     const report = await runDoctor(cfg);
     expect(report.summary.fail).toBe(report.checks.filter(c => c.status === 'fail').length);
     expect(report.summary.warn).toBe(report.checks.filter(c => c.status === 'warn').length);
+  });
+
+  it('reports one provider warning, naming every probed endpoint, instead of one per endpoint', async () => {
+    const cfg = makeConfig(tmpHome);
+    const report = await runDoctor(cfg);
+    const providerWarns = report.checks.filter(c => c.id.startsWith('provider:') && c.status === 'warn');
+    expect(providerWarns.map(c => c.id)).toEqual(['provider:active']);
+    expect(providerWarns[0]?.detail).toContain('lmstudio http://localhost:1234/v1/models');
+    expect(providerWarns[0]?.detail).toContain('ollama http://localhost:11434/api/tags');
+  });
+});
+
+describe('runDoctor — one local provider up', () => {
+  beforeEach(() => {
+    _providerRegistry = {
+      providers: [
+        { id: 'lmstudio', url: 'http://localhost:1234/v1/models', up: false, models: [], error: 'ECONNREFUSED' },
+        { id: 'ollama',   url: 'http://localhost:11434/api/tags', up: true, models: ['llama3:8b'] },
+      ],
+      activeProvider: 'ollama',
+      chain: ['lmstudio', 'ollama'],
+    };
+  });
+
+  it('still lists each endpoint so a down one beside a working one stays visible', async () => {
+    const cfg = makeConfig(tmpHome);
+    const report = await runDoctor(cfg);
+    expect(report.checks.find(c => c.id === 'provider:ollama')?.status).toBe('pass');
+    expect(report.checks.find(c => c.id === 'provider:lmstudio')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'provider:active')?.status).toBe('pass');
   });
 });
 

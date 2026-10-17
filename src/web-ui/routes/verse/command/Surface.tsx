@@ -16,7 +16,7 @@
  *     column in DOM order — which is why every surface writes its cards in
  *     the order the phone should show them.
  */
-import { Children, cloneElement, isValidElement, useId, type CSSProperties, type ReactElement, type ReactNode } from 'react';
+import { Children, cloneElement, createElement, isValidElement, lazy, useId, useState, type ComponentType, type CSSProperties, type ReactElement, type ReactNode } from 'react';
 import { useViewport, type ViewportClass } from '../shell/viewport.js';
 import styles from './surface.module.css';
 
@@ -178,4 +178,38 @@ export function CardNote({ children, tone = 'muted' }: { children: ReactNode; to
 /** The micro-label (11/14 uppercase) used for group headings inside cards. */
 export function MicroLabel({ children }: { children: ReactNode }) {
   return <span className={styles.micro}>{children}</span>;
+}
+
+/** A surface panel whose code loads on first use; `preload()` fetches it ahead of time. */
+export type LazyPanel<P extends object> = ComponentType<P> & { preload: () => Promise<ComponentType<P>> };
+
+/**
+ * `lazy()` for a surface's panels, plus `preload()` for the idle warm-up
+ * (shell/surface-prefetch.ts). A plain lazy() suspends on its first render
+ * even when its chunk is already in, and React holds the fallback for its
+ * reveal throttle; at 4x CPU, Mind showed "Opening the conversation…" for
+ * ~0.4 s with the chunk loaded. A panel mounted after its preload renders
+ * directly; one mounted before keeps the lazy path for its whole life, so it
+ * never remounts when the chunk lands.
+ */
+export function lazyPanel<P extends object>(load: () => Promise<ComponentType<P>>): LazyPanel<P> {
+  let loaded: ComponentType<P> | null = null;
+  let pending: Promise<ComponentType<P>> | null = null;
+  const preload = (): Promise<ComponentType<P>> => {
+    pending ??= load().then(
+      (component) => (loaded = component),
+      (err: unknown) => {
+        // Not cached: a failed preload must not stop the panel's own load from trying again.
+        pending = null;
+        throw err;
+      },
+    );
+    return pending;
+  };
+  const Deferred = lazy(() => preload().then((component) => ({ default: component })));
+  function Panel(props: P) {
+    const [Direct] = useState(() => loaded);
+    return Direct ? createElement(Direct, props) : createElement(Deferred as ComponentType<P>, props);
+  }
+  return Object.assign(Panel, { preload });
 }

@@ -5,8 +5,9 @@
  *   1. the overlay chunks, one at a time, so the first ⌘K / ⌘J / ⌘/ never
  *      waits on the network;
  *   2. each rail surface not yet open, in rail order — its chunk (VerseApp's
- *      one-per-tab load, so the first visit mounts it directly) and then the
- *      reads it opens with (shell/surface-prefetch.ts, one read at a time).
+ *      one-per-tab load, so the first visit mounts it directly), the lazy
+ *      panels it mounts with, and then the reads it opens with
+ *      (shell/surface-prefetch.ts, one read at a time).
  *      A first visit then paints from cache instead of a skeleton.
  *
  * WHEN: every chunk and every read waits for the idle gate
@@ -53,7 +54,9 @@ export function warmUpAfterFirstPaint(deps: WarmupDeps, options: WarmupOptions =
     // Already open: its reads are live, and its chunk is in.
     if (getVerseUiState().mounted.includes(id)) return;
     await deps.loadSection(id);
-    const { prefetchSurfaceData } = await importSurfacePrefetch();
+    const { prefetchSurfacePanels, prefetchSurfaceData } = await importSurfacePrefetch();
+    if (!(await gate.wait())) return;
+    await prefetchSurfacePanels(id);
     await prefetchSurfaceData(id, { beforeEach: () => gate.wait() });
   };
   return runIdleSteps([...deps.overlays.map(overlay), ...RAIL_SECTIONS.map((s) => surface(s.id))], {
