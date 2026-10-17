@@ -207,6 +207,30 @@ describe('M73 cmdStack status (read-only)', () => {
     expect(_stackInternals.confirm).not.toHaveBeenCalled();
   });
 
+  it('`ashlr stack --json` (no sub) is status --json, not an unknown subcommand', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(true);
+    stackStatusSpy.mockReturnValue({ ok: true, services: ['postgres'], detail: '1 service(s)' });
+
+    const code = await cmdStack(['--json']);
+
+    expect(code).toBe(0);
+    expect(logged()).toBe('');
+    const parsed = JSON.parse(stdoutWritten()) as Record<string, unknown>;
+    expect(parsed['services']).toEqual(['postgres']);
+  });
+
+  it('status --json when stack is absent writes only JSON to stdout and exits 1', async () => {
+    expect.hasAssertions();
+    stackInstalledSpy.mockReturnValue(false);
+
+    const code = await cmdStack(['status', '--json']);
+
+    expect(code).toBe(1);
+    expect(logged()).toBe('');
+    expect(JSON.parse(stdoutWritten())).toEqual({ ok: false, detail: 'stack not installed' });
+  });
+
   it('lists wired services in output', async () => {
     expect.hasAssertions();
     stackInstalledSpy.mockReturnValue(true);
