@@ -117,7 +117,10 @@ stored task keeps only your text. The contract tells the session to:
    ````
 
    `status` is one of `done`, `partial`, `blocked` or `no-change`.
-   `filesChanged` is optional.
+   `filesChanged` is optional. When the repository's `.mcp.json` declares
+   Phantom's companion servers, the prompt also names each one and when to
+   call it, and the report may carry `"toolsUsed"`: the companion tools the
+   session called. `ashlr cloud list` prints it as a `Companion tools:` line.
 6. If nothing needs changing, still push an empty commit and open the PR with
    status `no-change`, so Phantom sees that the task finished.
 
