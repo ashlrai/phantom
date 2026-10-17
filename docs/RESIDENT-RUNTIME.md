@@ -86,7 +86,7 @@ Every tick then does the following:
 grant is already enough for `runDaemon` to run resident standing ticks. The same
 goes for the conductors: `liveConductorActivationAuthorized()`
 (`activation-permit.ts:295-301`) returns `currentStandingPolicy()?.conductorGoals === true`.
-It is consumed by `goals/conductor.ts:114` and `simple-conductor.ts:168`.
+It is consumed by `goals/conductor.ts:114` and `simple-conductor.ts:299`.
 
 What does **not** exist is a way to put that daemon under launchd so it
 survives logout and reboot:

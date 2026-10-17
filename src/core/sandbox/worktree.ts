@@ -42,7 +42,7 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { availableParallelism, homedir, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -183,32 +183,130 @@ function releaseSandboxCleanupAuthority(lease: SandboxCleanupAuthorityLease): vo
 // ---------------------------------------------------------------------------
 
 /**
- * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. Conservative default:
- * the daemon caps swarm concurrency at 8 (loop.ts) + runner MAX_PARALLEL=8, so
- * 16 leaves ~2x headroom for concurrent daemon swarms + a manual `ashlr swarm`
- * + transient overlap, while still bounding unbounded accumulation. createSandbox
- * sweeps STALE orphans first, then REFUSES (clean audited error) if still over.
+ * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. createSandbox sweeps
+ * STALE orphans first, then REFUSES (clean audited error) if still over.
+ *
+ * MACHINE-DERIVED DEFAULT: the default cap is sized to the host instead of a
+ * fixed number. Each live sandbox costs a full working-tree checkout (objects
+ * are shared), ~50 KB of git admin data, a scratch branch, O(n) cap-check and
+ * orphan-sweep work under the creation lock, and an agent process (~160 MB RSS
+ * measured). So the derived value is
+ *   min(cpus * SANDBOX_CAP_PER_CPU, floor(totalmem / SANDBOX_CAP_MEM_PER_AGENT))
+ * clamped to [SANDBOX_CAP_FLOOR, SANDBOX_CAP_CEILING]. The floor is the old
+ * fixed default (16): it already leaves ~2x headroom over the daemon's default
+ * total dispatch concurrency of 8 (daemon/count-preferences.ts), so a small
+ * machine never gets a tighter cap than before. The ceiling keeps the O(n)
+ * work under the creation lock and the worst-case disk footprint bounded on
+ * very large hosts. Free disk space is deliberately NOT an input: the floor
+ * means it could only ever move the cap between the derived value and 16, the
+ * per-sandbox checkout size depends on the repository being sandboxed, and a
+ * full disk already fails `git worktree add` cleanly. The machine-derived value
+ * is computed once per process (cpu count and total memory do not change).
  *
  * CONFIGURABLE: an operator (or a deterministic test) may override the default
  * via ASHLR_MAX_SANDBOXES (a positive integer). Resolved at CALL TIME — like the
  * HOME-sensitive path helpers — so a test can set a small cap without restarting
  * the process. An absent/blank/invalid/non-positive value falls back to the
- * conservative default; the override can only ever SET a finite positive bound
- * (it can never disable the cap), keeping this a strictly LOCAL resource guard.
+ * machine-derived default; the override can only ever SET a finite positive
+ * bound (it can never disable the cap), keeping this a strictly LOCAL resource
+ * guard. The override is not clamped: an operator may set it below the floor or
+ * above the ceiling.
  */
-const MAX_SANDBOXES_DEFAULT = 16;
+export const SANDBOX_CAP_FLOOR = 16;
+export const SANDBOX_CAP_CEILING = 64;
+/** Sandboxes allowed per logical CPU (agents mostly wait on inference). */
+export const SANDBOX_CAP_PER_CPU = 2;
+/** Memory budgeted per sandboxed agent (~3x the measured ~160 MB RSS). */
+export const SANDBOX_CAP_MEM_PER_AGENT = 512 * 1024 * 1024;
 
-/** Resolve the effective sandbox cap (env override, else conservative default). */
-function maxSandboxes(): number {
-  const raw = process.env.ASHLR_MAX_SANDBOXES;
+/** Host facts the default sandbox cap is derived from. */
+export interface SandboxCapMachine {
+  /** Logical CPUs available to this process (os.availableParallelism()). */
+  cpus: number;
+  /** Total system memory in bytes (os.totalmem()). */
+  totalMemBytes: number;
+}
+
+/** The effective sandbox cap and where it came from. */
+export interface SandboxCapResolution {
+  cap: number;
+  /** 'env' = ASHLR_MAX_SANDBOXES override; 'machine' = derived from the host. */
+  source: 'env' | 'machine';
+  /** One-line human explanation, for doctor and diagnostics. */
+  reason: string;
+}
+
+/**
+ * Pure derivation of the default cap from host facts. Non-finite or
+ * non-positive inputs count as the minimum (1 CPU, 0 bytes), which lands on
+ * the floor. Never throws.
+ */
+export function deriveSandboxCap(machine: SandboxCapMachine): SandboxCapResolution {
+  const cpus = Number.isFinite(machine.cpus) && machine.cpus >= 1 ? Math.floor(machine.cpus) : 1;
+  const mem = Number.isFinite(machine.totalMemBytes) && machine.totalMemBytes > 0 ? machine.totalMemBytes : 0;
+  const byCpu = cpus * SANDBOX_CAP_PER_CPU;
+  const byMem = Math.floor(mem / SANDBOX_CAP_MEM_PER_AGENT);
+  const derived = Math.min(byCpu, byMem);
+  const cap = Math.min(SANDBOX_CAP_CEILING, Math.max(SANDBOX_CAP_FLOOR, derived));
+  const gib = (mem / 1024 ** 3).toFixed(1);
+  const clamp = derived < SANDBOX_CAP_FLOOR
+    ? `, raised to the floor ${SANDBOX_CAP_FLOOR}`
+    : derived > SANDBOX_CAP_CEILING
+      ? `, lowered to the ceiling ${SANDBOX_CAP_CEILING}`
+      : '';
+  return {
+    cap,
+    source: 'machine',
+    reason: `derived from ${cpus} CPUs and ${gib} GiB RAM (min(${byCpu}, ${byMem}) = ${derived}${clamp})`,
+  };
+}
+
+function readSandboxCapMachine(): SandboxCapMachine {
+  let cpus = 1;
+  try {
+    cpus = availableParallelism();
+  } catch {
+    cpus = 1;
+  }
+  let totalMemBytes = 0;
+  try {
+    totalMemBytes = totalmem();
+  } catch {
+    totalMemBytes = 0;
+  }
+  return { cpus, totalMemBytes };
+}
+
+let machineSandboxCap: SandboxCapResolution | null = null;
+
+/**
+ * Resolve the effective sandbox cap: a valid ASHLR_MAX_SANDBOXES override wins
+ * (read on every call), else the machine-derived default (computed once per
+ * process). `machine` injects host facts for tests and bypasses the cache.
+ * Never throws.
+ */
+export function resolveSandboxCap(opts?: {
+  env?: NodeJS.ProcessEnv;
+  machine?: SandboxCapMachine;
+}): SandboxCapResolution {
+  const raw = (opts?.env ?? process.env).ASHLR_MAX_SANDBOXES;
   if (raw !== undefined && raw.trim() !== '') {
     const n = Number.parseInt(raw, 10);
     // Only a finite, positive integer override takes effect; anything else
-    // (NaN, <=0, non-numeric) falls back to the safe default. The override can
-    // never remove the bound — it can only set a different finite positive one.
-    if (Number.isInteger(n) && n > 0) return n;
+    // (NaN, <=0, non-numeric) falls back to the machine default. The override
+    // can never remove the bound — it can only set a different finite one.
+    if (Number.isInteger(n) && n > 0) {
+      return { cap: n, source: 'env', reason: `ASHLR_MAX_SANDBOXES=${n}` };
+    }
   }
-  return MAX_SANDBOXES_DEFAULT;
+  if (opts?.machine) return deriveSandboxCap(opts.machine);
+  machineSandboxCap ??= deriveSandboxCap(readSandboxCapMachine());
+  return machineSandboxCap;
+}
+
+/** Resolve the effective sandbox cap (env override, else machine-derived default). */
+function maxSandboxes(): number {
+  return resolveSandboxCap().cap;
 }
 
 /**
@@ -353,11 +451,66 @@ export const DAEMON_GIT_FORCED_CONFIG: readonly (readonly [string, string])[] = 
 ] as const);
 
 /**
- * `env` plus DAEMON_GIT_FORCED_CONFIG as GIT_CONFIG_COUNT entries. Existing
- * well-formed entries are kept and ours are appended AFTER them (the last
- * value wins, so ours hold); a malformed count is replaced rather than trusted.
+ * Content filter drivers (`filter.<name>.clean|smudge|process`) are the same
+ * kind of configured program, but under a name the attacker picks, so no
+ * fixed key can null them. `worktree add` runs smudge on checkout and `add -A`
+ * runs clean, for any path an attribute maps to the driver — `.gitattributes`
+ * in the checked-out tree, or `$GIT_DIR/info/attributes`, which
+ * `--attr-source` does not cover. The drivers defined in the repository's own
+ * config (local / worktree scope, includes counted where they are included)
+ * are read first and each is nulled at command scope; global and system
+ * drivers (git-lfs) are the operator's own and stay.
  */
-export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+const FILTER_DRIVER_KEY_RE = /^filter\.(.+)\.(?:clean|smudge|process|required)$/;
+const REPO_CONFIG_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+
+/** Driver names from `git config --show-scope --null --name-only --get-regexp '^filter\.'` output. */
+export function repoScopedFilterDrivers(listing: string): string[] {
+  const parts = listing.split('\0');
+  const names = new Set<string>();
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const match = FILTER_DRIVER_KEY_RE.exec(parts[i + 1]!);
+    if (match && REPO_CONFIG_SCOPES.has(parts[i]!)) names.add(match[1]!);
+  }
+  return [...names].sort();
+}
+
+/** Command-scope entries that leave each named filter driver with no program to run. */
+export function filterDriverOverrides(names: readonly string[]): (readonly [string, string])[] {
+  return names.flatMap((name) => [
+    [`filter.${name}.process`, ''],
+    [`filter.${name}.clean`, ''],
+    [`filter.${name}.smudge`, ''],
+    [`filter.${name}.required`, 'false'],
+  ] as const);
+}
+
+const FILTER_LISTING_ARGS = ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^filter\\.'] as const;
+
+/**
+ * The overrides for the repository `git <prefix> config` resolves from `cwd`.
+ * Reading config runs no program. Exit 1 is "no filter keys"; any other
+ * failure throws, so a call that cannot be hardened is never made.
+ */
+function repoFilterOverrides(file: string, prefix: readonly string[], cwd: string, env: NodeJS.ProcessEnv): (readonly [string, string])[] {
+  try {
+    const listing = execFileSync(file, [...prefix, ...FILTER_LISTING_ARGS], {
+      cwd, env: withDaemonGitHardening(env), timeout: GIT_TIMEOUT, stdio: 'pipe', encoding: 'utf8',
+    });
+    return filterDriverOverrides(repoScopedFilterDrivers(listing));
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 1) return [];
+    throw new Error('could not read the repository filter configuration');
+  }
+}
+
+/**
+ * `env` plus DAEMON_GIT_FORCED_CONFIG (and `extra`, e.g. filterDriverOverrides)
+ * as GIT_CONFIG_COUNT entries. Existing well-formed entries are kept and ours
+ * are appended AFTER them (the last value wins, so ours hold); a malformed
+ * count is replaced rather than trusted.
+ */
+export function withDaemonGitHardening(env: NodeJS.ProcessEnv, extra: readonly (readonly [string, string])[] = []): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env };
   const raw = out.GIT_CONFIG_COUNT;
   let count = raw !== undefined && /^\d{1,3}$/.test(raw) ? Number.parseInt(raw, 10) : 0;
@@ -367,7 +520,7 @@ export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   if (count === 0) {
     for (const key of Object.keys(out)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) delete out[key];
   }
-  for (const [key, value] of DAEMON_GIT_FORCED_CONFIG) {
+  for (const [key, value] of [...DAEMON_GIT_FORCED_CONFIG, ...extra]) {
     out[`GIT_CONFIG_KEY_${count}`] = key;
     out[`GIT_CONFIG_VALUE_${count}`] = value;
     count += 1;
@@ -382,10 +535,11 @@ function gitRun(cwd: string, args: string[]): string {
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_COMMON_DIR;
+  const filters = repoFilterOverrides('git', [], cwd, env);
   return execFileSync('git', args, {
-    // hooks / fsmonitor / pager / credential helpers off (see withDaemonGitHardening).
+    // hooks / fsmonitor / pager / credential helpers / repo filter drivers off (see withDaemonGitHardening).
     cwd,
-    env: withDaemonGitHardening(env),
+    env: withDaemonGitHardening(env, filters),
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
@@ -1342,6 +1496,8 @@ interface PinnedWorktreeRunnerInvocation {
   script: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Set when the call cannot be hardened; the runner is then never spawned. */
+  refusal: PinnedWorktreeCreationResult | null;
 }
 
 /**
@@ -1393,7 +1549,20 @@ function pinnedWorktreeRunnerInvocation(
 ): PinnedWorktreeRunnerInvocation {
   // The runner and its supervisors copy this env into every git they spawn,
   // so the forced config reaches `worktree add` and its validation calls too.
-  const env = withDaemonGitHardening({ ...process.env });
+  let filters: (readonly [string, string])[] = [];
+  let refusal: PinnedWorktreeCreationResult | null = null;
+  try {
+    filters = repoFilterOverrides('git', [], identity.source.path, { ...process.env });
+  } catch {
+    // Nothing ran. Only REGISTER has nothing to clean up; a refused populate
+    // or rollback leaves the registered worktree to the existing recovery.
+    refusal = {
+      ok: false,
+      cleanupComplete: mode === 'register',
+      error: 'could not read the source repository filter configuration',
+    };
+  }
+  const env = withDaemonGitHardening({ ...process.env }, filters);
   if (env.NODE_OPTIONS) env.ASHLR_PINNED_GIT_NODE_OPTIONS = env.NODE_OPTIONS;
   else delete env.ASHLR_PINNED_GIT_NODE_OPTIONS;
   delete env.NODE_OPTIONS;
@@ -1428,6 +1597,7 @@ function pinnedWorktreeRunnerInvocation(
     script: PINNED_WORKTREE_RUNNER,
     cwd: identity.source.path,
     env,
+    refusal,
   };
 }
 
@@ -1489,6 +1659,7 @@ function parsePinnedWorktreeResult(
 }
 
 function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): PinnedWorktreeCreationResult {
+  if (invocation.refusal) return invocation.refusal;
   const result = spawnSync(process.execPath, invocation.argv, {
     cwd: invocation.cwd,
     encoding: 'utf8',
@@ -1514,6 +1685,7 @@ function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): Pi
 function runPinnedWorktreeRunnerAsync(
   invocation: PinnedWorktreeRunnerInvocation,
 ): Promise<PinnedWorktreeCreationResult> {
+  if (invocation.refusal) return Promise.resolve(invocation.refusal);
   return new Promise((resolveResult) => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -2464,7 +2636,7 @@ function registerSandboxWhileFenced(
   // clean error) rather than accumulate unboundedly. This removes NOTHING in-use
   // and opens no outward capability — it only bounds on-disk worktree growth so a
   // pathological crash/restart loop can never fill the disk. The cap is resolved
-  // at call time (env-overridable; conservative default) — see maxSandboxes().
+  // at call time (env-overridable; machine-derived default) — see maxSandboxes().
   const creationLock = acquireCleanupLock('creation');
   if (!creationLock) throw new Error('sandbox creation lock unavailable');
   let id: string;
@@ -2797,9 +2969,11 @@ function agentTreeGit(context: AgentTreeGitContext, cwd: string, args: string[])
     if (key.startsWith('GIT_')) delete env[key];
   }
   try {
+    const base = { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+    const filters = repoFilterOverrides(context.file, context.prefix, context.workTree, base);
     return execFileSync(context.file, [...context.prefix, ...args], {
       cwd: context.workTree,
-      env: withDaemonGitHardening({ ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }),
+      env: withDaemonGitHardening(base, filters),
       timeout: GIT_TIMEOUT,
       stdio: 'pipe',
       encoding: 'utf8',
