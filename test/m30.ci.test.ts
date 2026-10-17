@@ -172,10 +172,20 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.COMMIT_SHA).toBe('${{ github.sha }}');
     expect(steps[0]!.run).toContain('refs/heads/master | cut -f1) || head=\'\'');
     expect(steps[0]!.run).toContain('if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi');
+    // github.job is empty in job-level concurrency, so each PR group names its
+    // lane literally; a shared group would let one Mac lane cancel another.
+    const prGroups = {
+      'ci-shared-macos': "format('ci-mac-{0}-shared', github.run_id)",
+      'mac-general': "format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard)",
+      'mac-isolated': "format('ci-mac-{0}-isolated', github.run_id)",
+      'native-macos-broker-foundation': "format('ci-mac-{0}-broker', github.run_id)",
+    } as Record<string, string>;
     for (const id of mac) {
       const concurrency = jobs[id]!.concurrency as { group: string; 'cancel-in-progress': boolean };
       expect(concurrency['cancel-in-progress'], id).toBe(false);
-      expect(concurrency.group, id).toMatch(/^\$\{\{ github\.event_name == 'push' && .+ \|\| format\('ci-mac-\{0\}-\{1\}', github\.run_id, github\.job\) \}\}$/);
+      expect(concurrency.group, id).toMatch(/^\$\{\{ github\.event_name == 'push' && .+ \|\| format\('ci-mac-.+\) \}\}$/);
+      expect(concurrency.group.endsWith(`|| ${prGroups[id]} }}`), id).toBe(true);
+      expect(concurrency.group, id).not.toContain('github.job');
     }
     expect(jobs['mac-general']!.concurrency).toMatchObject({ group: expect.stringContaining("format('ci-master-mac-general-{0}', matrix.shard)") });
     expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(

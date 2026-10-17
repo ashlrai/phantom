@@ -438,7 +438,7 @@ jobs:
     # ahead of every PR. Merge Gate accepts that replacement only once master
     # has moved past this commit. PR runs get a group of their own.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-shared', github.run_id) }}
       cancel-in-progress: false
     env: *node_ci_environment
     steps: *node_ci_steps
@@ -462,7 +462,7 @@ jobs:
     # ahead of every PR. Merge Gate accepts that replacement only once master
     # has moved past this commit. PR runs get a group of their own.
     concurrency:
-      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard) }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -536,7 +536,7 @@ jobs:
     # ahead of every PR. Merge Gate accepts that replacement only once master
     # has moved past this commit. PR runs get a group of their own.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-isolated', github.run_id) }}
       cancel-in-progress: false
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
@@ -606,7 +606,7 @@ jobs:
     # ahead of every PR. Merge Gate accepts that replacement only once master
     # has moved past this commit. PR runs get a group of their own.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-broker', github.run_id) }}
       cancel-in-progress: false
     steps:
       - name: Checkout
