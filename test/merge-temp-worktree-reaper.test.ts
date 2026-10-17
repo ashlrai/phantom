@@ -117,7 +117,7 @@ describe('temp worktree reaper', () => {
 
   it('keeps a worktree whose owner is alive (marker written by this process)', () => {
     const dir = path.join(ashlrTmpDir(), 'vwt-123456abcdef');
-    writeTempWorktreeOwner(dir);
+    writeTempWorktreeOwner(dir, repo);
     git(repo, ['worktree', 'add', '-b', 'ashlr/verify/123456abcdef', dir, 'main']);
     const res = reapLeakedTempWorktrees(repo, { now: Date.now() + 10 * MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS });
     expect(res.reaped).toEqual([]);

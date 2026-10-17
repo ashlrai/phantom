@@ -27,6 +27,8 @@
  *
  * Daemon start additionally runs {@link sweepLeakedTempWorktreesAtStart}: it
  * derives each leftover's owning repo from the leftover's own `.git` pointer
+ * and from the `repo` recorded in its owner marker (so a leftover whose
+ * directory is already gone but is still registered in git is traced too),
  * and runs the same reaper there under that repo's mirror lease, so a crashed
  * daemon's leftovers do not wait for the next merge in that repo.
  */
@@ -84,16 +86,20 @@ function ownStartIdentity(): VerifiedProcessStartIdentity | null {
 }
 
 /**
- * Write the owner marker for a temp worktree about to be created at `dir`.
+ * Write the owner marker for a temp worktree about to be created at `dir` in
+ * `repo`. The marker records the repo's absolute path so the daemon-start
+ * sweep can find the registration even after the directory is gone; markers
+ * written before that field existed are still read exactly as before.
  * Throws on failure so the caller refuses to create an unmarked worktree.
  */
-export function writeTempWorktreeOwner(dir: string): void {
+export function writeTempWorktreeOwner(dir: string, repo: string): void {
   mkdirSync(dirname(dir), { recursive: true, mode: 0o700 });
   const start = ownStartIdentity();
   const body = {
     schemaVersion: 1,
     pid: process.pid,
     ...(start ? { startRef: start.ref, startSource: start.source } : {}),
+    repo: resolve(repo),
     createdAt: new Date().toISOString(),
   };
   writeFileSync(markerPathFor(dir), `${JSON.stringify(body)}\n`, { mode: 0o600, flag: 'wx' });
@@ -293,7 +299,46 @@ export function tempWorktreeOwningRepo(dir: string): string | null {
   }
 }
 
-/** Every repo owning at least one `vwt-` / `mwt-` / `mergewt-` directory in the ashlr tmp dir. */
+/** True when `dir` is itself a git repo root: a work tree with its own `.git`, or a bare repo. */
+function isGitRepoRoot(dir: string): boolean {
+  const commonDir = gitTry(dir, ['rev-parse', '--git-common-dir']);
+  if (!commonDir) return false;
+  try {
+    const common = realpathSync(resolve(dir, commonDir));
+    const root = realpathSync(dir);
+    return common === root || common === join(root, '.git');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The repo recorded in a temp worktree's owner marker (`<dir>.owner`), when it
+ * is an absolute path to an existing directory that is a git repo root. Null
+ * for an old-format marker without the field, and for anything else.
+ */
+export function tempWorktreeMarkerRepo(markerPath: string): string | null {
+  try {
+    const name = basename(markerPath);
+    if (!name.endsWith('.owner') || !TEMP_WORKTREE_NAME.test(name.slice(0, -'.owner'.length))) return null;
+    const st = lstatSync(markerPath);
+    if (!st.isFile() || st.size < 1 || st.size > MAX_MARKER_BYTES) return null;
+    const owner = JSON.parse(readFileSync(markerPath, 'utf8')) as unknown;
+    if (typeof owner !== 'object' || owner === null || Array.isArray(owner)) return null;
+    const repo = (owner as Record<string, unknown>)['repo'];
+    if (typeof repo !== 'string' || repo.length === 0 || !isAbsolute(repo)) return null;
+    if (!lstatSync(repo).isDirectory()) return null;
+    return isGitRepoRoot(repo) ? repo : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every repo owning at least one `vwt-` / `mwt-` / `mergewt-` leftover in the
+ * ashlr tmp dir: from each leftover directory's `.git` pointer and from each
+ * owner marker's recorded repo (which still works once the directory is gone).
+ */
 export function leakedTempWorktreeRepos(): string[] {
   let names: string[];
   try {
@@ -301,13 +346,26 @@ export function leakedTempWorktreeRepos(): string[] {
   } catch {
     return [];
   }
-  const repos = new Set<string>();
+  const repos: string[] = [];
+  const seen = new Set<string>();
+  const add = (repo: string | null): void => {
+    if (!repo) return;
+    let key = repo;
+    try {
+      key = realpathSync(repo);
+    } catch { /* keep the literal path */ }
+    if (seen.has(key)) return;
+    seen.add(key);
+    repos.push(repo);
+  };
   for (const name of names.sort()) {
-    if (!TEMP_WORKTREE_NAME.test(name)) continue;
-    const repo = tempWorktreeOwningRepo(join(ashlrTmpDir(), name));
-    if (repo) repos.add(repo);
+    if (TEMP_WORKTREE_NAME.test(name)) {
+      add(tempWorktreeOwningRepo(join(ashlrTmpDir(), name)));
+    } else if (name.endsWith('.owner')) {
+      add(tempWorktreeMarkerRepo(join(ashlrTmpDir(), name)));
+    }
   }
-  return [...repos];
+  return repos;
 }
 
 /** `fn` under the repo's mirror lease when it is a fleet mirror, directly otherwise; null when busy. */

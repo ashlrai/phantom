@@ -2715,7 +2715,7 @@ async function verifyProposalAgainstCurrentPins(
         // Reap crash leftovers (SIGKILL/OOM mid-verify skips the finally below)
         // under the same lease, then mark this worktree's owner before creating it.
         reapLeakedTempWorktrees(repo);
-        writeTempWorktreeOwner(tmpDir);
+        writeTempWorktreeOwner(tmpDir, repo);
         gitRun(repo, ['worktree', 'add', '-b', tmpBranch, tmpDir, baseHead]);
         installGrants = linkVerifyNodeModules(repo, tmpDir);
         return null;
@@ -3224,7 +3224,7 @@ function buildMergeBranch(
     const authorityFailure = finalAuthority?.();
     if (authorityFailure) return { branch: null, head: null, detail: authorityFailure };
     reapLeakedTempWorktrees(repo);
-    writeTempWorktreeOwner(tmpDir);
+    writeTempWorktreeOwner(tmpDir, repo);
     // Build detached so a crash cannot leave a half-built named branch that
     // permanently blocks reconstruction on the next attempt.
     gitRun(repo, ['worktree', 'add', '--detach', tmpDir, expectedBaseHead ?? baseHead]);
@@ -3387,7 +3387,7 @@ function mergeLocally(
     // A leaked mergewt- from a killed daemon keeps `base` checked out and would
     // fail this add forever: reap provably-orphaned ones first, then mark ours.
     reapLeakedTempWorktrees(repo);
-    writeTempWorktreeOwner(tmpDir);
+    writeTempWorktreeOwner(tmpDir, repo);
     gitRun(repo, ['worktree', 'add', tmpDir, base]);
     const linkAuthorityFailure = finalAuthority?.();
     if (linkAuthorityFailure) throw new Error(linkAuthorityFailure);
