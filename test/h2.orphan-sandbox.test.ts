@@ -27,6 +27,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -277,4 +278,67 @@ describe('H2 orphan sandbox — crash-leftover worktree is surfaced and swept', 
     expect(repo.shasumTree()).toBe(treeBefore);
     expect(repo.gitStatus()).toBe('');
   });
+
+  it('a removal killed between `worktree remove` and `branch -D` is finished by the sweep (scripts/daemon-chaos.mjs)', () => {
+    // The chaos harness SIGKILLed an agent inside removeSandbox: the worktree
+    // and its registration were gone, the scratch branch and the home were not.
+    // With no worktree left to prove repo authority, every sweep refused the
+    // home as unsafe metadata, so it leaked and counted against the cap forever.
+    const treeBefore = repo.shasumTree();
+    const sb = makeOrphanSandbox(repo.dir);
+    git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
+    git(repo.dir, ['worktree', 'prune']);
+    expect(repo.branches()).toContain(scratchBranch(sb.id));
+
+    expect(sweepOrphanSandboxes()).toEqual([sb.id]);
+    expect(sandboxHomeExists(sb.id)).toBe(false);
+    expect(repo.branches()).not.toContain(scratchBranch(sb.id));
+    expect(repo.shasumTree()).toBe(treeBefore);
+    expect(repo.gitStatus()).toBe('');
+  });
+
+  it('a home left holding only its metadata (kill while deleting the home) is reclaimed at once', () => {
+    // removeSandbox now deletes the metadata last, so a kill while it empties
+    // the home leaves this state, which the restart sweep finishes with the
+    // ORPHAN_STALE_MS guard on (a metadata-free home would wait a minute).
+    const sb = makeOrphanSandbox(repo.dir);
+    git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
+    git(repo.dir, ['worktree', 'prune']);
+    git(repo.dir, ['branch', '-D', scratchBranch(sb.id)]);
+    const metaFile = join(sandboxesDir(), sb.id, 'sandbox.json');
+    const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
+    meta['ownerPid'] = deadPid();
+    writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+
+    expect(sweepOrphanSandboxes({ staleMs: 6 * 60 * 60_000 })).toEqual([sb.id]);
+    expect(sandboxHomeExists(sb.id)).toBe(false);
+  });
+
+  it('a stranded scratch branch is NOT deleted when it does not descend from the recorded base', () => {
+    // Fail closed: metadata pointing at another repository that happens to hold
+    // a same-named branch with unrelated history proves nothing, so the branch
+    // and the home are kept.
+    const sb = makeOrphanSandbox(repo.dir);
+    git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
+    git(repo.dir, ['worktree', 'prune']);
+    const other = fx.makeRepo();
+    git(other.dir, ['branch', scratchBranch(sb.id)]);
+    const metaFile = join(sandboxesDir(), sb.id, 'sandbox.json');
+    const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
+    meta['sourceRepo'] = other.dir;
+    writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+
+    expect(sweepOrphanSandboxes()).toEqual([]);
+    expect(sandboxHomeExists(sb.id)).toBe(true);
+    expect(other.branches()).toContain(scratchBranch(sb.id));
+  });
 });
+
+/** A pid that provably belonged to a process which has already exited. */
+function deadPid(): number {
+  return spawnSync(process.execPath, ['-e', '0']).pid as number;
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, stdio: 'pipe', encoding: 'utf8' }).trim();
+}

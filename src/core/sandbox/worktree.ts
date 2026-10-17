@@ -3124,6 +3124,17 @@ function worktreeBelongsToRepo(repo: string, worktreePath: string): boolean {
   return worktreeIdentity !== null && repoIdentity !== null && worktreeIdentity === repoIdentity;
 }
 
+/**
+ * Whether the scratch branch in `repo` descends from the sandbox's recorded
+ * base commit. With no worktree left to prove which repository a sandbox
+ * belongs to, this is the proof that a leftover scratch branch is the one this
+ * sandbox created there: `worktree add -b` started it at baseHead.
+ */
+function scratchBranchDescendsFromBase(repo: string, branch: string, baseHead: string): boolean {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseHead)) return false;
+  return gitTry(repo, ['merge-base', '--is-ancestor', baseHead, `refs/heads/${branch}`]) !== null;
+}
+
 function processStartRef(pid: number): string | undefined {
   try {
     const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
@@ -3463,9 +3474,17 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
     : registrationBefore === 'present';
   const recoverableReservation = canonicalMatches && sourceRepoAvailable &&
     !existsSync(safeWorktree) && registrationBefore === 'absent' && branchBefore === 'absent';
+  // A kill between `git worktree remove` and `git branch -D` (or between
+  // `worktree add` creating the branch and registering the worktree) leaves
+  // only the scratch branch. Without this, no sweep could ever prove repo
+  // authority again and the home stayed counted against the cap forever.
+  const strandedScratchBranch = canonicalMatches && sourceRepoAvailable &&
+    !existsSync(safeWorktree) && registrationBefore === 'absent' && branchBefore === 'present' &&
+    scratchBranchDescendsFromBase(sb.sourceRepo, safeBranch, sb.baseHead);
   const guardsPass = branchInNamespace && branchMatches && worktreeContained &&
     rootState === 'present' && homeBefore === 'present' && canonicalMatches &&
-    !worktreeSymlink && (!sourceRepoAvailable || repoAuthority || recoverableReservation);
+    !worktreeSymlink &&
+    (!sourceRepoAvailable || repoAuthority || recoverableReservation || strandedScratchBranch);
   const lock = guardsPass ? acquireCleanupLock(sb.id) : undefined;
   let result: SandboxCleanupResult;
 
@@ -3532,6 +3551,14 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
     if (registration === 'unknown' || branch === 'unknown') failureClasses.push('postcondition-unavailable');
 
     if (registration === 'absent' && branch === 'absent') {
+      // Metadata goes last: a kill part-way through leaves a home whose
+      // metadata the next sweep still recognizes (finished at once) instead of
+      // a metadata-free home the reservation sweep must age for a minute.
+      try {
+        for (const entry of readdirSync(home)) {
+          if (entry !== META_FILE) rmSync(join(home, entry), { recursive: true, force: true });
+        }
+      } catch { /* verified below */ }
       try { rmSync(home, { recursive: true, force: true }); } catch { /* verified below */ }
     }
     const homeAfter = sandboxHomeState(home);
