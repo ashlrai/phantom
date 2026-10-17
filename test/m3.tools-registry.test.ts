@@ -387,6 +387,30 @@ describe('getToolsRegistry — ashlr-hub entry', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ashlr-plugin is not this product's `ashlr` alias
+// ---------------------------------------------------------------------------
+
+describe('getToolsRegistry — ashlr-plugin detection', () => {
+  it('the bare ashlr alias alone does not mark ashlr-plugin installed', () => {
+    mockInstalled('ashlr', '3.29.15', '/usr/local/bin/ashlr');
+    const reg = getToolsRegistry();
+    expect(reg.tools.find(t => t.id === 'ashlr-hub')?.installed).toBe(true);
+    const plugin = reg.tools.find(t => t.id === 'ashlr-plugin');
+    expect(plugin?.installed).toBe(false);
+    expect(plugin?.version).toBeNull();
+  });
+
+  it('the ashlr-plugin binary reports the plugin and its own version', () => {
+    mockInstalled('ashlr', '3.29.15', '/usr/local/bin/ashlr');
+    mockInstalled('ashlr-plugin', '1.36.5', '/usr/local/bin/ashlr-plugin');
+    const plugin = getToolsRegistry().tools.find(t => t.id === 'ashlr-plugin');
+    expect(plugin?.installed).toBe(true);
+    expect(plugin?.version).toBe('1.36.5');
+    expect(plugin?.path).toBe('/usr/local/bin/ashlr-plugin');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // spawnSync throws unexpectedly — never propagates
 // ---------------------------------------------------------------------------
 

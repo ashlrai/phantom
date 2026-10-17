@@ -447,6 +447,34 @@ describe('M262 — buildVisibilitySnapshot sections', () => {
     expect(cs.todaySpendUsd).toBeCloseTo(0.035, 4);
   });
 
+  it('costSavings plugin savings use the lifetime total, not only open sessions', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ashlr-m262-plugin-stats-'));
+    const prevHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      mkdirSync(join(home, '.ashlr'), { recursive: true });
+      const statsPath = join(home, '.ashlr', 'stats.json');
+      // The plugin drops a session's bucket at SessionEnd; the lifetime
+      // bucket keeps the running total.
+      writeFileSync(statsPath, JSON.stringify({
+        schemaVersion: 2,
+        sessions: { open: { tokensSaved: 1_000 } },
+        lifetime: { calls: 40, tokensSaved: 2_000_000, byTool: {}, byDay: {} },
+      }));
+      let cs = (await makeVisSnap()).costSavings;
+      expect(cs.pluginSavingsLifetimeTokens).toBe(2_000_000);
+      expect(cs.pluginSavingsLifetimeUsd).toBeCloseTo(6, 6);
+
+      writeFileSync(statsPath, JSON.stringify({ sessions: { a: { tokensSaved: 300 }, b: { tokensSaved: 200 } } }));
+      cs = (await makeVisSnap()).costSavings;
+      expect(cs.pluginSavingsLifetimeTokens).toBe(500);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('costSavings spendByBackend sorted by cost desc', async () => {
     const vis = await makeVisSnap();
     const backends = vis.costSavings.spendByBackend;
