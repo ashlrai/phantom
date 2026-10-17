@@ -692,6 +692,84 @@ describe('M126 Gate 7.5 — self-target escalation', () => {
     expect(loadProposal(p.id)!.status).toBe('applied');
   });
 
+  /** Commit a test that imports Tier-1 source (its name matches no Tier-1 stem) and return a diff that edits it. */
+  function tier1ImportingTestEdit(file: string): string {
+    const before = [
+      "import { autoMergeProposal } from '../src/core/inbox/merge.js';",
+      "it('renders', () => { expect(typeof autoMergeProposal).toBe('function'); });",
+      '',
+    ].join('\n');
+    fs.mkdirSync(path.join(tmpRepo, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRepo, file), before, 'utf8');
+    git(tmpRepo, ['add', file]);
+    git(tmpRepo, ['commit', '-m', 'tier-1 importing test']);
+    git(tmpRepo, ['push', 'origin', 'main']);
+    // Same call counts, weaker assertion: detectTestTampering alone passes it.
+    fs.writeFileSync(path.join(tmpRepo, file), before.replace("toBe('function')", 'toBeDefined()'), 'utf8');
+    const diff = execFileSync('git', ['-C', tmpRepo, 'diff', '--', file], { encoding: 'utf8' });
+    git(tmpRepo, ['checkout', '--', file]);
+    return diff;
+  }
+
+  it('[12b] self-target: an edit to a test that imports Tier-1 code is never auto-merged', async () => {
+    initRepo(tmpRepo, 'main');
+    attachOrigin(tmpRepo, 'main');
+    git(tmpRepo, ['checkout', '-b', 'work']);
+    enroll(tmpRepo);
+    git(tmpRepo, ['checkout', 'main']);
+    const diff = tier1ImportingTestEdit('test/widget-render.test.ts');
+    git(tmpRepo, ['checkout', 'work']);
+    git(tmpRepo, ['merge', '--ff-only', 'main']);
+    makeSelfTarget();
+    const p = frontierPatch(diff);
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+
+    mockJudgeProposal.mockResolvedValueOnce(shipVerdict(p.id));
+
+    const r = await autoMergeProposal(p.id, baseCfg({ allowSelfMerge: true, maxRisk: 'medium' }));
+
+    expect(r.ok).toBe(false);
+    expect(r.merged).toBe(false);
+    expect(r.reason).toMatch(/protected path: test\/widget-render\.test\.ts \(tier1-test\)/);
+    expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
+  });
+
+  // A Tier-1-importing test moved out of test/ (into docs/, say) would leave
+  // the suite without a changed line. Both diff forms of that move stop
+  // before the judge: git's rename form as an unreadable scope, the
+  // delete-plus-add form as test tampering.
+  for (const [label, renameFlag, reason] of [
+    ['[12c] rename form', '-M', /malformed diff scope \(mode-ambiguous-file\)/],
+    ['[12d] delete-plus-add form', '--no-renames', /test tampering: test file test\/widget-render\.test\.ts/],
+  ] as const) {
+    it(`${label}: moving a Tier-1-importing test out of test/ is never auto-merged`, async () => {
+      initRepo(tmpRepo, 'main');
+      attachOrigin(tmpRepo, 'main');
+      git(tmpRepo, ['checkout', '-b', 'work']);
+      enroll(tmpRepo);
+      git(tmpRepo, ['checkout', 'main']);
+      tier1ImportingTestEdit('test/widget-render.test.ts');
+      fs.mkdirSync(path.join(tmpRepo, 'docs'), { recursive: true });
+      git(tmpRepo, ['mv', 'test/widget-render.test.ts', 'docs/widget-render.test.ts']);
+      const diff = execFileSync('git', ['-C', tmpRepo, 'diff', '--cached', renameFlag], { encoding: 'utf8' });
+      git(tmpRepo, ['reset', '--hard', 'HEAD']);
+      expect(diff).toContain('docs/widget-render.test.ts');
+      git(tmpRepo, ['checkout', 'work']);
+      git(tmpRepo, ['merge', '--ff-only', 'main']);
+      makeSelfTarget();
+      const p = frontierPatch(diff);
+      const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+
+      const r = await autoMergeProposal(p.id, baseCfg({ allowSelfMerge: true, maxRisk: 'high' }));
+
+      expect(r.ok).toBe(false);
+      expect(r.merged).toBe(false);
+      expect(r.reason).toMatch(reason);
+      expect(mockJudgeProposal).not.toHaveBeenCalled();
+      expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
+    });
+  }
+
   it('[13] self-target + review + allowSelfMerge=true → pending (Gate 7 blocks first)', async () => {
     initRepo(tmpRepo, 'main');
     attachOrigin(tmpRepo, 'main');

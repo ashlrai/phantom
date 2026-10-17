@@ -116,7 +116,6 @@ error. Once registered, the `phm mcp` gateway lists each server's tools with
 the server name as a prefix, for example `ashlr-md__<tool>`.
 
 Detection does not execute, download or start
-those servers. Detection does not execute, download or start
 those servers. It requires a regular executable with a native binary header,
 ignores relative PATH directories and deduplicates symlinks to the same physical
 file. Multiple distinct candidates or unsupported/bootstrap launchers are

@@ -137,7 +137,7 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
   const repository = outcome.pr.repository;
   const { appendLedger } = await import('../core/improve/outcomes.js');
   const { measureAt } = await import('../core/improve/measure.js');
-  const { readPr, defaultBranchOf, assertOriginIs, prMergeBase, prDiff, evaluatePromotion, queueMerge, confirmQueued, NOT_REMEASURED } = await import('../core/improve/promote.js');
+  const { readPr, defaultBranchOf, assertOriginIs, prMergeBase, prDiff, evaluatePromotion, queueMerge, confirmQueued, NOT_REMEASURED, npmMetricFiles, readFileAt } = await import('../core/improve/promote.js');
   const guards = async () => {
     const [{ killSwitchOn }, { isPaused }] = await Promise.all([import('../core/sandbox/policy.js'), import('../core/comms/pause.js')]);
     return { killSwitch: killSwitchOn(), paused: isPaused() };
@@ -147,7 +147,8 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
     const pr = readPr(repository, outcome.pr.number, repo);
     const defaultBranch = defaultBranchOf(repository, repo);
     const mergeBase = prMergeBase(repo, pr, defaultBranch);
-    const facts = { outcome, pr, defaultBranch, mergeBase, ledgerIntact: read.intact, diff: prDiff(repo, mergeBase, pr.headRefOid) };
+    const facts = { outcome, pr, defaultBranch, mergeBase, ledgerIntact: read.intact, diff: prDiff(repo, mergeBase, pr.headRefOid),
+      npmMetricFiles: outcome.metric.runner.kind === 'npm' ? npmMetricFiles(readFileAt(repo, mergeBase, 'package.json'), outcome.metric.runner.script) : undefined };
     let decision = evaluatePromotion({ ...facts, guards: await guards() });
     // Measuring runs the PR's code; only spend it on a PR that passes every other gate.
     if (decision.reasons.length === 1 && decision.reasons[0] === NOT_REMEASURED) {

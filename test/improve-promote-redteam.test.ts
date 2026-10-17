@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendLedger, readLedger, scoreOutcomes, type LedgerEvent, type MetricSpec } from '../src/core/improve/outcomes.js';
 import { measureAt } from '../src/core/improve/measure.js';
 import {
-  assertOriginIs, confirmQueued, defaultBranchOf, evaluatePromotion, NOT_REMEASURED, normalizeChecks, prDiff, readPr,
+  assertOriginIs, confirmQueued, defaultBranchOf, evaluatePromotion, NOT_REMEASURED, normalizeChecks, npmMetricFiles, prDiff, readPr,
   type DiffEvidence, type PromoteExec, type PrSnapshot,
 } from '../src/core/improve/promote.js';
 
@@ -75,6 +75,36 @@ describe('red team: forged improvement metric', () => {
     const npm = write({ type: 'registered', proposalId: '1111111111', title: 't', proposalKind: 'k', source: { kind: 'deterministic', rule: 'k' },
       metric: { ...metric, runner: { kind: 'npm', script: 'bench' } }, predictedDelta: null })[0]!;
     expect(why({ outcome: { ...npm, pr: { repository: 'acme/p', number: 7 } }, diff: diff(['package.json']) })).toMatch(/touches package\.json/);
+  });
+});
+
+describe('red team: npm metric yardstick', () => {
+  const pkg = JSON.stringify({ scripts: { bench: 'npm run -s prep && node ./scripts/bench.mjs --out=bench/out.json', prep: 'node scripts/prep.mjs', prebench: 'sh scripts/warm.sh' } });
+  const npmOutcome = () => ({ ...write({ type: 'registered', proposalId: '2222222222', title: 't', proposalKind: 'k', source: { kind: 'deterministic', rule: 'k' },
+    metric: { ...metric, runner: { kind: 'npm', script: 'bench' } }, predictedDelta: null },
+  { type: 'pr', proposalId: '2222222222', repository: 'acme/p', number: 7 },
+  { type: 'measured', proposalId: '2222222222', phase: 'base', sha: A, value: 1, reason: null },
+  { type: 'measured', proposalId: '2222222222', phase: 'head', sha: B, value: 2, reason: null })[0]! });
+
+  it('resolves the files an npm script runs, through pre scripts and chained npm run', () => {
+    expect(npmMetricFiles(pkg, 'bench')?.sort()).toEqual(['bench/out.json', 'scripts/bench.mjs', 'scripts/prep.mjs', 'scripts/warm.sh']);
+    expect(npmMetricFiles(pkg, 'missing')).toBeNull();
+    expect(npmMetricFiles(null, 'bench')).toBeNull();
+    expect(npmMetricFiles('{not json', 'bench')).toBeNull();
+  });
+
+  it('a PR that rewrites the file its npm metric script runs cannot grade itself', () => {
+    expect(why({ outcome: npmOutcome(), diff: diff(['scripts/bench.mjs']), npmMetricFiles: npmMetricFiles(pkg, 'bench') }))
+      .toMatch(/changes the file its npm metric script runs \(scripts\/bench\.mjs\)/);
+    expect(why({ outcome: npmOutcome(), diff: diff(['scripts/prep.mjs']), npmMetricFiles: npmMetricFiles(pkg, 'bench') })).toMatch(/npm metric script runs/);
+  });
+
+  it('an npm metric the gate cannot resolve at the merge base refuses', () => {
+    expect(why({ outcome: npmOutcome(), npmMetricFiles: undefined })).toMatch(/could not resolve npm metric script bench/);
+  });
+
+  it('control: an npm metric with an untouched yardstick is admitted', () => {
+    expect(gate({ outcome: npmOutcome(), npmMetricFiles: npmMetricFiles(pkg, 'bench') })).toEqual({ admit: true, reasons: [] });
   });
 });
 

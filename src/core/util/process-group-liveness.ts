@@ -39,6 +39,12 @@ function scanOnlyZombies(pgid: number, proc: ProcStatReader): boolean {
     if (!fields[0] || !Number.isSafeInteger(memberPgid)) return false;
     if (memberPgid !== pgid) continue;
     if (fields[0] !== 'Z' && fields[0] !== 'X') return false;
+    // The stat line is the thread-group leader's. A leader that called
+    // pthread_exit shows Z while its other threads keep running, and
+    // num_threads (field 20) still counts them; an exited process counts at
+    // most itself.
+    const threads = Number(fields[17]);
+    if (!fields[17] || !Number.isSafeInteger(threads) || threads > 1) return false;
     members += 1;
   }
   return members > 0;
@@ -53,7 +59,9 @@ function scanOnlyZombies(pgid: number, proc: ProcStatReader): boolean {
  * whose members have all exited but are unreaped: a descendant reparented to
  * an init that reaps late or never (containers without --init) stays a
  * zombie. A zombie runs no code and holds no descriptors, and while it exists
- * the PGID stays allocated, so the numeric group cannot be recycled.
+ * the PGID stays allocated, so the numeric group cannot be recycled. A Z
+ * leader whose num_threads is above 1 is not such a zombie: its main thread
+ * exited (pthread_exit) and its other threads still run, so it counts as live.
  *
  * Fail closed: any live member, unreadable or malformed entry, a scan that
  * sees no member at all, or any platform other than Linux answers false

@@ -4,7 +4,7 @@
  * succeeds. Containers whose init reaps orphans late or never (`docker run`
  * without --init) leave a killed descendant in exactly that state.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
@@ -45,4 +45,19 @@ describe.runIf(process.platform === 'linux')('bounded command process-group live
       for (const child of [zombieParent, liveParent]) child.kill('SIGKILL');
     }
   });
+
+  it.runIf(spawnSync('python3', ['-c', 'import ctypes, threading'], { stdio: 'ignore' }).status === 0)(
+    'counts a Z leader whose other thread still runs as present', async () => {
+      const script = 'import ctypes,threading,time\nthreading.Thread(target=time.sleep,args=(5,)).start()\nctypes.CDLL(None).pthread_exit(None)';
+      const child = spawn('python3', ['-c', script], { detached: true, stdio: 'ignore' });
+      try {
+        const pid = child.pid!;
+        const deadline = Date.now() + 5_000;
+        while (state(pid) !== 'Z' && Date.now() < deadline) await delay(10);
+        expect(state(pid)).toBe('Z');
+        expect(processGroupExists({ pid })).toBe(true);
+      } finally {
+        try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
+      }
+    });
 });

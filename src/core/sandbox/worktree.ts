@@ -1751,6 +1751,16 @@ function pinnedWorktreeRunnerInvocation(
   let refusal: PinnedWorktreeCreationResult | null = null;
   try {
     filters = repoFilterOverrides('git', [], identity.source.path, { ...process.env });
+    if (admin) {
+      // POPULATE / ROLLBACK run git with GIT_DIR = the worktree's admin dir,
+      // where `includeIf "gitdir:"` / `"onbranch:"` can resolve differently
+      // than in the source repo. Null the drivers that context sees too.
+      const linked = repoFilterOverrides('git', [], identity.source.path, {
+        ...process.env, GIT_DIR: admin.path, GIT_WORK_TREE: sb.worktreePath,
+      });
+      const seen = new Set(filters.map(([key]) => key));
+      filters = [...filters, ...linked.filter(([key]) => !seen.has(key))];
+    }
   } catch {
     // Nothing ran. Only REGISTER has nothing to clean up; a refused populate
     // or rollback leaves the registered worktree to the existing recovery.

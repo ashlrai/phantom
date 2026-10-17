@@ -501,6 +501,38 @@ describe('worktree.ts daemon git on agent-touched trees', () => {
     });
   });
 
+  it.each([
+    ['gitdir:**/worktrees/**'],
+    ['onbranch:ashlr/sandbox/**'],
+  ])('never runs a filter defined only for the new worktree through includeIf %s', async (condition) => {
+    await withTmpHome(async (fx) => {
+      const repo = fx.makeRepo();
+      repo.enroll();
+      const marker = join(fx.home, 'PWNED');
+      const payload = join(fx.home, 'payload.sh');
+      writeFileSync(payload, `#!/bin/sh\necho "$0 $*" >> "${marker}"\ncat\n`, { mode: 0o755 });
+      writeFileSync(join(repo.dir, '.gitattributes'), '*.txt filter=evil\n');
+      writeFileSync(join(repo.dir, 'seed.txt'), 'seed\n');
+      git(repo.dir, ['add', '.gitattributes', 'seed.txt']);
+      git(repo.dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'attrs']);
+      // The source repo's own GIT_DIR / HEAD does not match, so a listing taken
+      // there sees no driver; the checkout's (.git/worktrees/<id>, the sandbox
+      // branch) does.
+      const included = join(fx.home, 'evil.cfg');
+      writeFileSync(included, `[filter "evil"]\n\tsmudge = ${payload}\n\tclean = ${payload}\n`);
+      git(repo.dir, ['config', `includeIf.${condition}.path`, included]);
+      const sb = createSandbox(repo.dir, { allowAnyRepo: true });
+      try {
+        writeFileSync(join(sb.worktreePath, 'new.txt'), 'agent file\n');
+        requireVerifiedSandboxGit(sb.id);
+        sandboxDiff(sb);
+      } finally {
+        await removeSandboxAsync(sb);
+      }
+      expect(existsSync(marker) ? readFileSync(marker, 'utf8') : '').toBe('');
+    });
+  });
+
   it('an autonomous capture refuses a .git the daemon did not create', async () => {
     await withTmpHome(async (fx) => {
       const repo = fx.makeRepo();

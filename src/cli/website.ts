@@ -14,8 +14,10 @@ export async function cmdWebsite(args: string[]): Promise<number> {
   // written: `website pause --help` recorded the pause.
   if (args.includes('--help') || args.includes('-h')) { console.log(WEBSITE_USAGE); return 0; }
   try {
-    if (command === 'status') { console.log(JSON.stringify(websiteStatus())); return 0; }
-    if (['auto','pause','off'].includes(command)) {
+    // Exact grammar like the other verbs: `website pause --help` / `off -h`
+    // used to change the publication mode because extra tokens were ignored.
+    if (command === 'status' && args.length <= 1) { console.log(JSON.stringify(websiteStatus())); return 0; }
+    if (['auto','pause','off'].includes(command) && args.length === 1) {
       setWebsiteMode(command === 'pause' ? 'paused' : command as 'auto' | 'off');
       console.log(JSON.stringify(websiteStatus())); return 0;
     }
