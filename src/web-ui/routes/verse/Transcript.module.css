@@ -266,7 +266,10 @@
 .copy:active { background: var(--bg-active); }
 
 /* Streaming: a 2px × 1em accent caret trailing the text. (V3.10: the
-   standalone "waiting" caret became chat/LiveStatus.) */
+   standalone "waiting" caret became chat/LiveStatus.) It holds steady, as an
+   editor's caret does while text arrives: blinking it cost an extra frame of
+   the whole page per streamed token (the animated caret moved with every
+   token), while the live line under the chat already shows the turn is alive. */
 .streaming > :last-child::after {
   content: '';
   display: inline-block;
@@ -275,7 +278,6 @@
   margin-left: 2px;
   vertical-align: -0.15em;
   background: var(--accent-500);
-  animation: verse-caret 1.2s var(--ease-standard) infinite;
 }
 
 /* ---- thinking: see chat/ThinkingBlock.module.css (V3.10) --------------- */
@@ -478,18 +480,13 @@
 .jump:active { background: var(--bg-active); }
 .jumpUnseen { border-color: var(--accent-500); color: var(--text-primary); }
 
-@keyframes verse-caret { 50% { opacity: 0.15; } }
-
 /* Two triggers, the same pattern as the duration tokens in tokens.css and the
    shimmer in global.css: the OS preference applies unless Settings explicitly
    asked for full motion, and data-motion="reduce" forces it on for an operator
-   whose OS says nothing. A persistent `animation` has a hardcoded duration, so
-   collapsing --duration-* does NOT reach it — it needs both rules by name. */
+   whose OS says nothing. */
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .transcript { scroll-behavior: auto; }
-  :root:not([data-motion="full"]) .streaming > :last-child::after { animation: none; }
 }
-:root[data-motion="reduce"] .streaming > :last-child::after { animation: none; }
 :root[data-motion="reduce"] .transcript { scroll-behavior: auto; }
 @media (max-width: 900px) {
   .transcript { padding: var(--space-5) var(--space-4); }

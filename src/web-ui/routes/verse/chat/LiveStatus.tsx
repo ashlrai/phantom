@@ -30,7 +30,11 @@ import { formatMetric } from '../../../components/charts/format-metric.js';
 import { formatElapsed, summarizeToolInput } from '../verse-model.js';
 import type { TranscriptItem, VerseLiveState } from '../verse-store.js';
 import { inputPath, useDisplayPath } from './path-display.js';
+import { pulse } from '../../../components/motion/pulse.js';
 import styles from './LiveStatus.module.css';
+
+/** The live line's dot breathing (easing: --ease-standard). */
+const LIVE_PULSE = pulse({ keyframes: [{ opacity: 1 }, { opacity: 0.3 }, { opacity: 1 }], duration: 1400, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
 
 export interface LivePhase {
   phase: VerseProgressPhase;
@@ -135,7 +139,7 @@ export const LiveStatus = memo(function LiveStatus({ live, derived, onStop, show
   return (
     <div className={styles.live} data-phase={line.phase}>
       <div className={styles.line}>
-        <span className={styles.pulse} aria-hidden="true" />
+        <span className={styles.pulse} ref={LIVE_PULSE} aria-hidden="true" />
         <span className={styles.text} aria-hidden="true">
           <span className={styles.word}>{line.word}</span>
           {line.elapsedMs !== null ? <><span className={styles.sep}>·</span><span className={styles.figure}>{formatLiveElapsed(line.elapsedMs)}</span></> : null}
