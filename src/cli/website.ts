@@ -6,8 +6,13 @@ import { describeGrantScope, installStandingGrant, parseStandingGrantPayload } f
 import { prepareWebsiteCommission } from '../core/website/host-adapter.js';
 import { requestWebsitePublication, saveWebsiteCommission, readWebsiteCommission, websiteScope, websiteStatus, setWebsiteMode, scheduleWebsitePublication } from '../core/website/host-release.js';
 
+const WEBSITE_USAGE = 'Usage: phm website status|auto|pause|off|request <merge SHA>|run|prepare --image <sha256:digest>|commission --yes';
+
 export async function cmdWebsite(args: string[]): Promise<number> {
   const command = args[0] ?? 'status';
+  // `--help` / `-h` anywhere prints usage before any publication state is read or
+  // written: `website pause --help` recorded the pause.
+  if (args.includes('--help') || args.includes('-h')) { console.log(WEBSITE_USAGE); return 0; }
   try {
     if (command === 'status') { console.log(JSON.stringify(websiteStatus())); return 0; }
     if (['auto','pause','off'].includes(command)) {
@@ -34,6 +39,6 @@ export async function cmdWebsite(args: string[]): Promise<number> {
       setWebsiteMode('auto');
       console.log(JSON.stringify(websiteStatus())); return 0;
     }
-    console.error('Usage: phm website status|auto|pause|off|request <merge SHA>|run|prepare --image <sha256:digest>|commission --yes'); return 2;
+    console.error(WEBSITE_USAGE); return 2;
   } catch (error) { console.error(error instanceof Error ? error.message : 'Website publication is unavailable'); return 1; }
 }

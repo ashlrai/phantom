@@ -401,6 +401,37 @@ describe('cmdGoals — read-only tracking', () => {
   });
 });
 
+describe('cmdGoals — status <id>', () => {
+  it('rolls up only the named goal', async () => {
+    enroll(tmpRepo);
+    captureIO();
+    await cmdGoals(['add', 'First tracked goal', '--project', tmpRepo]);
+    await cmdGoals(['add', 'Second tracked goal', '--project', tmpRepo]);
+    stdout = '';
+    await cmdGoals(['status', '--json']);
+    const all = (JSON.parse(stdout) as { goalId: string }[]).map((r) => r.goalId);
+    expect(all).toHaveLength(2);
+
+    stdout = '';
+    expect(await cmdGoals(['status', all[1]!, '--json'])).toBe(0);
+    const rolled = JSON.parse(stdout) as { goalId: string }[];
+    expect(rolled.map((r) => r.goalId)).toEqual([all[1]]);
+  });
+
+  it('an unknown id exits 1 with a next step instead of an empty board', async () => {
+    captureIO();
+    expect(await cmdGoals(['status', 'no-such-goal'])).toBe(1);
+    expect(stdout).not.toMatch(/No goals to track yet/);
+    expect(stderr).toMatch(/goal not found: no-such-goal/);
+    expect(stderr).toMatch(/phm goals list/);
+
+    stdout = '';
+    stderr = '';
+    expect(await cmdGoals(['status', 'no-such-goal', '--json'])).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({ ok: false, error: 'goal not found: no-such-goal' });
+  });
+});
+
 describe('cmdGoals — steering', () => {
   it('pause / resume / skip mutate only the local goal record', async () => {
     enroll(tmpRepo);

@@ -549,6 +549,8 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
  *     that is a different layer from the MCP server key.
  *   - Locus write path uses `locusServerSpec()` so env (LOCUS_HOME, LOCUS_CLIENT,
  *     LOCUS_NOTIFY) is always present — not command-only.
+ *   - Lexicon and Stack ship Node/Bun launchers for MCP, which the
+ *     native-executable rule refuses, so they are deliberately absent.
  */
 interface EcosystemServer {
   name: string;         // Key used in mcpServers map
@@ -583,6 +585,15 @@ const ECOSYSTEM_SERVERS: EcosystemServer[] = [
     command: 'locus-mcp',
     args: [],
     label: 'Locus (identity plane)',
+  },
+  {
+    // Optional Markdown viewer: a native Rust stdio server, so the native-only
+    // launcher rule admits it. Not in REQUIRED_SERVERS; `mcp doctor` stays green without it.
+    name: 'ashlr-md',
+    probe: 'mdopener-mcp',
+    command: 'mdopener-mcp',
+    args: [],
+    label: 'Ashlr MD (mdopener-mcp)',
   },
 ];
 
@@ -717,6 +728,28 @@ export function mergeEcosystemServers(
   return added;
 }
 
+/**
+ * Why a PATH candidate was not registered, and what to do. Phantom Secrets and
+ * Locus ship as native binaries, so only a native executable is the reviewed
+ * product: a bootstrap launcher downloads or installs code on first run, and a
+ * Node script is not the release binary. Neither is ever run or registered.
+ */
+function ecosystemRefusalDetail(
+  srv: EcosystemServer,
+  candidates: string[],
+  kind: 'ambiguous' | 'script' | 'bootstrap' | 'unknown',
+): string {
+  if (kind === 'ambiguous') {
+    return `${candidates.length} different ${srv.probe} executables on PATH (${candidates.join(', ')}); ashlr will not guess. Leave exactly one native binary on PATH, then re-run \`ashlr mcp ecosystem\`.`;
+  }
+  const what = kind === 'bootstrap'
+    ? 'is a bootstrap launcher that downloads or installs code on first run, so it is never executed or registered'
+    : kind === 'script'
+      ? `is a Node script, not the native ${srv.probe} binary; only native executables are registered`
+      : 'is not a recognized native executable; only native executables are registered';
+  return `${candidates[0]!} ${what}. Install the native ${srv.probe} binary, make it the only ${srv.probe} on PATH, then re-run \`ashlr mcp ecosystem\`.`;
+}
+
 async function cmdMcpEcosystem(args: string[]): Promise<number> {
   const writeMode = args.includes('--write');
   const json = args.includes('--json');
@@ -731,16 +764,20 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
   // Detect which ecosystem servers are available in PATH.
   const detected: Array<EcosystemServer & { resolvedBin: string }> = [];
   const missing: EcosystemServer[] = [];
-  const refused: Array<{ server: EcosystemServer; reason: 'ambiguous' | 'unsupported-launcher' }> = [];
+  const refused: Array<{ server: EcosystemServer; reason: 'ambiguous' | 'unsupported-launcher'; detail: string }> = [];
   const directories = (process.env['PATH'] ?? '').split(delimiter).filter(isAbsolute);
 
   for (const srv of ECOSYSTEM_SERVERS) {
     const candidates = companionExecutableCandidates(srv.probe, directories);
     if (candidates.length === 0) missing.push(srv);
-    else if (candidates.length > 1) refused.push({ server: srv, reason: 'ambiguous' });
-    else if (companionExecutableKind(candidates[0]!) !== 'native') {
-      refused.push({ server: srv, reason: 'unsupported-launcher' });
-    } else detected.push({ ...srv, resolvedBin: candidates[0]! });
+    else if (candidates.length > 1) {
+      refused.push({ server: srv, reason: 'ambiguous', detail: ecosystemRefusalDetail(srv, candidates, 'ambiguous') });
+    } else {
+      const kind = companionExecutableKind(candidates[0]!);
+      if (kind !== 'native') {
+        refused.push({ server: srv, reason: 'unsupported-launcher', detail: ecosystemRefusalDetail(srv, candidates, kind) });
+      } else detected.push({ ...srv, resolvedBin: candidates[0]! });
+    }
   }
 
   // Load current settings to check registration state.
@@ -789,8 +826,8 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
 
   if (refused.length > 0) {
     console.log(bold('  Not selected (skipped):'));
-    for (const { server, reason } of refused) {
-      console.log('    ' + dim(server.label) + gray(` — ${reason}; choose one installed native executable through PATH.`));
+    for (const { server, reason, detail } of refused) {
+      console.log('    ' + dim(server.label) + gray(` — ${reason}: ${detail}`));
     }
     console.log('');
   }

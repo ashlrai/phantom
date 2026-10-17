@@ -16,7 +16,8 @@
  *              from its text) must be listed.
  *
  * Most specific notes first (repo + path + kind), then most used, then
- * newest; the rendered block never exceeds KNOWLEDGE_INJECT_CAP_BYTES of
+ * newest; past KNOWLEDGE_INJECT_MAX_NOTES matches, only notes about the task
+ * (selectKnowledge); the rendered block never exceeds KNOWLEDGE_INJECT_CAP_BYTES of
  * UTF-8, and a note that does not fit whole is left out, never cut.
  *
  * Veto deltas (vision/playbook.ts, section `strategy`, written by the
@@ -113,14 +114,114 @@ function specificity(scope: KnowledgeScope): number {
   return (scope.repo ? 4 : 0) + (scope.pathGlobs.length > 0 ? 2 : 0) + (scope.taskKinds.length > 0 ? 1 : 0);
 }
 
-/** Approved notes that match, most specific / most used / newest first. Pure. */
+// ---------------------------------------------------------------------------
+// Relevance
+// ---------------------------------------------------------------------------
+
+/**
+ * Topical relevance between an approved lesson and a task (pure, deterministic, offline).
+ *
+ * Scope matching alone (repo, path globs, task kinds) lets every open-scoped lesson into every
+ * prompt. This scores how much a lesson is about the task: the shared word stems of the lesson
+ * text and the task text, paths and repo, each weighted by how rare it is across the lessons
+ * being considered (a stem every lesson uses says little).
+ */
+const STOP = new Set(('a an and are as at be been but by can do does for from has have how i if in into is it its '
+  + 'may must not of on or our should so than that the their them then there these they this those to too under up '
+  + 'use used uses using was we were what when where which while who why will with without you your add adds new make '
+  + 'run runs only also any each every before after first again via one two just like get set need needs instead').split(' '));
+
+/** Light suffix stripping so "pins/pinned/pinning" and "importer/importers" meet. */
+export function stem(word: string): string {
+  let w = word;
+  for (const [suffix, min] of [['ations', 5], ['ation', 5], ['ments', 5], ['ment', 5], ['ings', 5], ['ing', 5], ['ers', 5], ['er', 5],
+    ['ies', 4], ['ied', 4], ['es', 5], ['ed', 4], ['ly', 5], ['s', 4]] as const) {
+    if (w.length >= suffix.length + min - 1 && w.endsWith(suffix)) { w = w.slice(0, -suffix.length); break; }
+  }
+  if (w.length > 4 && w.endsWith('e')) w = w.slice(0, -1);
+  return w.replace(/(.)\1$/, '$1');
+}
+
+/** Distinct stems of free text, paths and identifiers (camelCase, snake_case and path segments split). */
+export function relevanceTerms(...parts: Array<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const part of parts) {
+    if (!part) continue;
+    const words = part.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/);
+    for (const word of words) if (word.length >= 2 && !STOP.has(word) && !/^\d+$/.test(word)) out.add(stem(word));
+  }
+  return out;
+}
+
+function noteTerms(note: KnowledgeNoteV1, repoTerms: ReadonlySet<string>): Set<string> {
+  // Glob segments name the code a note is about; a segment that is only the repo's own name ("phantom" in
+  // crates/phantom-vault) would tie the note to every task in that repo, so those count only from the note's text.
+  const text = relevanceTerms(note.text);
+  for (const word of relevanceTerms(...note.scope.pathGlobs.map(glob => glob.replace(/[*?{}]/g, ' ')))) if (!repoTerms.has(word)) text.add(word);
+  return text;
+}
+
+export interface ScoredKnowledge { note: KnowledgeNoteV1; score: number }
+
+/** Relevance of each note to the task, weighted by rarity across `notes`. Pure. */
+export function scoreKnowledge(notes: readonly KnowledgeNoteV1[], target: KnowledgeTarget): ScoredKnowledge[] {
+  const repoTerms = relevanceTerms(target.repo ? target.repo.split(/[\\/]/).pop()!.replace(/^.*__/, '') : null);
+  const task = relevanceTerms(target.text, ...target.paths, ...repoTerms);
+  const termsByNote = notes.map(note => noteTerms(note, repoTerms));
+  const df = new Map<string, number>();
+  for (const set of termsByNote) for (const word of set) df.set(word, (df.get(word) ?? 0) + 1);
+  return notes.map((note, index) => {
+    let score = 0;
+    // Each shared stem counts at most 1 (when only this note uses it), so the score reads as "rare words in common"
+    // whatever the number of notes.
+    for (const word of termsByNote[index]) if (task.has(word)) score += notes.length > 1 ? Math.log(1 + notes.length / df.get(word)!) / Math.log(1 + notes.length) : 1;
+    return { note, score: Math.round(score * 1000) / 1000 };
+  });
+}
+
+/** At most this many notes reach one task prompt once more than this many match its scope. */
+export const KNOWLEDGE_INJECT_MAX_NOTES = 8;
+/** Rare-word weight a note must share with the task text when nothing in its scope ties it to the task. */
+export const KNOWLEDGE_RELEVANCE_MIN = 0.75;
+
+/**
+ * Approved notes that match, most specific / most used / newest first. Pure.
+ *
+ * With the task text known, scope alone is not the whole test:
+ * - Past KNOWLEDGE_INJECT_MAX_NOTES matches, an open-scoped note would otherwise reach every prompt. A note is then kept
+ *   only with evidence that it bears on this task (a path or task-kind scope that matched, or wording that names the
+ *   task's kind) or enough rare words in common with the task (scoreKnowledge).
+ * - A brief is written before its paths are known, so a path-scoped note whose glob prefix the text does not spell out
+ *   would never match. Such a note is also kept when its words (glob segments included) are about the task.
+ * Evidence first, then relevance, at most MAX notes.
+ */
 export function selectKnowledge(notes: readonly KnowledgeNoteV1[], target: KnowledgeTarget): KnowledgeNoteV1[] {
-  return notes
-    .filter((n) => n.status === 'approved' && scopeMatches(n.scope, target))
-    .sort((a, b) => specificity(b.scope) - specificity(a.scope)
-      || b.hits - a.hits
-      || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
-      || a.id.localeCompare(b.id));
+  const order = (a: KnowledgeNoteV1, b: KnowledgeNoteV1): number => specificity(b.scope) - specificity(a.scope)
+    || b.hits - a.hits
+    || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
+    || a.id.localeCompare(b.id);
+  const approved = notes.filter((n) => n.status === 'approved');
+  const matched = approved.filter((n) => scopeMatches(n.scope, target)).sort(order);
+  if (!target.text?.trim()) return matched;
+  const strict = new Set(matched);
+  const pathsUnknown = target.paths.length === 0;
+  const candidates = approved.filter((n) => strict.has(n)
+    || (pathsUnknown && n.scope.pathGlobs.length > 0 && scopeMatches({ ...n.scope, pathGlobs: [] }, target))).sort(order);
+  if (candidates.length === matched.length && matched.length <= KNOWLEDGE_INJECT_MAX_NOTES) return matched;
+  const kind = target.kind ?? classifyTaskKind(target.text);
+  const wordedKind = (note: KnowledgeNoteV1): TaskKind | null => {
+    const k = classifyTaskKind(note.text);
+    return k === 'feature' || k === 'other' ? null : k;
+  };
+  const few = matched.length <= KNOWLEDGE_INJECT_MAX_NOTES;
+  // The sort is stable, so equal entries keep the specificity / hits / recency order above.
+  return scoreKnowledge(candidates, target)
+    .map((s) => ({ ...s, evidence: strict.has(s.note)
+      && (s.note.scope.pathGlobs.length > 0 || s.note.scope.taskKinds.length > 0 || wordedKind(s.note) === kind) }))
+    .filter((s) => s.evidence || s.score >= KNOWLEDGE_RELEVANCE_MIN || (few && strict.has(s.note)))
+    .sort((a, b) => Number(b.evidence) - Number(a.evidence) || b.score - a.score)
+    .slice(0, KNOWLEDGE_INJECT_MAX_NOTES)
+    .map((s) => s.note);
 }
 
 // ---------------------------------------------------------------------------

@@ -21,9 +21,15 @@ const EDITABLE = ['displayName', 'avatar', 'responsibility', 'computer', 'servic
 const ID = /^pa_[a-f0-9]{24}$/;
 function invalid(message = 'Invalid proactive agent profile.'): never { throw new ProactiveProfileError('INVALID_INPUT', message); }
 function unavailable(): never { throw new ProactiveProfileError('UNAVAILABLE', 'Proactive agent profiles are unavailable; existing data was preserved.'); }
-function object(value: unknown, keys: string[]): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
-  if (Object.keys(value).some(key => !keys.includes(key))) invalid('Unexpected proactive agent profile field.');
+/** `what` names the object in errors so a caller can see which part to fix. */
+function object(value: unknown, keys: string[], what?: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(what ? `${what} must be an object with: ${keys.join(', ')}.` : undefined);
+  const unexpected = Object.keys(value).find(key => !keys.includes(key));
+  if (unexpected !== undefined) {
+    // Echo the key only when it is a plain identifier; never reflect arbitrary text.
+    const field = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(unexpected) ? ` "${unexpected}"` : '';
+    invalid(`Unexpected proactive agent profile field${field}${what ? ` in ${what}` : ''}. Allowed: ${keys.join(', ')}.`);
+  }
   return value as Record<string, unknown>;
 }
 function text(value: unknown, max: number, empty = false, multiline = false): string {
@@ -64,8 +70,8 @@ function avatar(value: unknown): ProactiveProfile['avatar'] {
   return { color: raw['color'].toLowerCase(), variant: choice(raw['variant'], ['classic', 'round', 'pixel']) };
 }
 export function parseProactiveProfileInput(value: unknown): ProactiveProfileInput {
-  const raw = object(value, ['identity', ...EDITABLE]);
-  const identity = object(raw['identity'], ['provider', 'accountId', 'agentId']);
+  const raw = object(value, ['identity', ...EDITABLE], 'profile');
+  const identity = object(raw['identity'], ['provider', 'accountId', 'agentId'], 'profile.identity');
   const result: ProactiveProfileInput = {
     // Keep existing account/agent reference syntax (including provider hash IDs) stable across v1 migration.
     identity: { provider: parseProactiveSlug(identity['provider']), accountId: text(identity['accountId'], 256), agentId: text(identity['agentId'], 256) },

@@ -2,7 +2,7 @@
  * M121: `ashlr vision` — Mason's touchpoint for the end-state spec + strategist.
  *
  * Subcommands:
- *   show [id]              Print the current EndStateSpec (default: ecosystem).
+ *   show [id] [--json]     Print the current EndStateSpec (default: ecosystem).
  *   review [--project P]   V3.10: alias of `ashlr leader tick --wait` (budget-gated Leader).
  *   preview                Compile the latest briefing into a read-only adoption plan.
  *   approve                adoptBriefing for the latest briefing → evolve spec + create goals.
@@ -103,11 +103,34 @@ function printSpec(spec: EndStateSpec): void {
 // ---------------------------------------------------------------------------
 
 async function cmdShow(args: string[]): Promise<number> {
-  const id = args[0] ?? 'ecosystem';
+  // `show [id] [--json]`: a flag is never a spec id (`show --json` used to
+  // look up a spec named "--json" and report it missing).
+  const json = args.includes('--json');
+  const operands: string[] = [];
+  for (const arg of args) {
+    if (arg === '--json') continue;
+    if (arg.startsWith('-')) {
+      console.error(`vision show: unknown option '${arg}'. Usage: phm vision show [id] [--json]`);
+      return 2;
+    }
+    operands.push(arg);
+  }
+  if (operands.length > 1) {
+    console.error(`vision show: takes at most one spec id (got ${operands.length}). Usage: phm vision show [id] [--json]`);
+    return 2;
+  }
+  const id = operands[0] ?? 'ecosystem';
   const spec = loadSpec(id);
   if (!spec) {
-    console.error(`vision: spec '${id}' not found. Use 'phm vision show' to see the ecosystem spec.`);
+    const error = `spec '${id}' not found`;
+    const next = "Use 'phm vision show' to see the ecosystem spec.";
+    if (json) console.log(JSON.stringify({ ok: false, error, next }));
+    else console.error(`vision: ${error}. ${next}`);
     return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify(spec, null, 2));
+    return 0;
   }
   printSpec(spec);
   return 0;
@@ -591,7 +614,7 @@ Usage: phm vision <subcommand> [options]
 Compatible alias: ashlr vision <subcommand> [options]
 
 Subcommands:
-  show [id]              Print the EndStateSpec (default: ecosystem).
+  show [id] [--json]     Print the EndStateSpec (default: ecosystem).
   review [--project P]   Run the Leader tick (alias of 'phm leader tick --wait'; budget-gated).
   preview                Read-only compile: exact targets, dedupe, caps, and skip reasons.
   shadow [--json]        Record an evidence snapshot and show one zero-effect reconcile suggestion.

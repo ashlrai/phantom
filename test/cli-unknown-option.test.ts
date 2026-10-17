@@ -159,7 +159,7 @@ describe('CLI verbs refuse unknown options before side effects', () => {
   it('improve propose --auto-merge passes the option check and keeps its own refusal', () => {
     const r = run(['improve', 'propose', '--auto-merge', '--json']);
     expect(r.status, r.stderr).toBe(2);
-    expect(r.stderr).toContain('auto-merge lacks protected-policy admission');
+    expect(r.stderr).toContain('cannot request auto-merge');
     expect(r.homeEntries).toEqual([]);
   });
 
