@@ -486,6 +486,20 @@ function clean(text: string): string {
   return noHome.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
+const HELP_VALUE_OPTIONS = new Set([
+  '--acu', '--fleet-concurrent', '--fleet-per-day', '--max-concurrent', '--max-per-day', '--pause-at', '--per-day',
+  '--per-session', '--reserve', '--spent', '--usd-per-acu', '--base', '--email', '--org', '--repo', '--title',
+]);
+
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (HELP_VALUE_OPTIONS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDeps>): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -499,6 +513,13 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
+  }
+  // `devin <verb> --help` / `-h` explains itself before any deps load: `devin
+  // launch -h` took "-h" as the task and resolved the git origin to launch a
+  // session. A value of a value-taking option is an operand.
+  if (wantsHelp(args)) {
+    print(USAGE);
+    return 0;
   }
   const deps: DevinCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
   try {
