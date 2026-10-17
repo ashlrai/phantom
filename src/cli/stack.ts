@@ -7,8 +7,12 @@
  *     ashlr stack [status] [--json]   Print stack status via stackStatus().
  *     ashlr stack list   [...]        Passthrough: `stack list`.
  *     ashlr stack providers [...]     Passthrough: `stack providers`.
- *     ashlr stack recommend [...]     Passthrough: `stack recommend`.
- *     ashlr stack scan  [...]         Passthrough: `stack scan`.
+ *     ashlr stack recommend "<what you're building>"  Passthrough: `stack recommend`.
+ *     ashlr stack scan  [...]         Passthrough: `stack scan --json` (Stack refuses
+ *                                     to scan without a TTY otherwise). Refuses
+ *                                     --yes/-y/--auto, which provision ungated.
+ *
+ *   Passthroughs capture output (bounded); Stack's stderr is forwarded to stderr.
  *     ashlr stack doctor [...]        Passthrough: `stack doctor`.
  *
  *   MUTATING — confirm-gated (require explicit y/N in TTY, or --yes):
@@ -16,6 +20,8 @@
  *     ashlr stack apply [recipe] [--yes]   Apply a recipe via `stack apply`.
  *
  *   Non-TTY without --yes → REFUSED (never silent-provision, ever).
+ *   After confirmation they run attached to the terminal (stackRunInteractive)
+ *   so Stack can prompt and complete OAuth.
  *
  * Safety rules:
  *  - When `stack` is not installed: prints a clear install message, exits 1.
@@ -29,6 +35,7 @@ import {
   stackInstalled,
   stackStatus,
   stackRun,
+  stackRunInteractive,
 } from '../core/integrations/stack.js';
 import { makeColors, isTty } from './ui.js';
 import { promptConfirm } from './onboard.js';
@@ -78,7 +85,7 @@ function cmdStackStatus(jsonMode: boolean): number {
   const svcs = status.services ?? [];
   if (svcs.length === 0) {
     console.log('  ' + dim('no services wired yet'));
-    console.log('    ' + cyan('→') + ' ' + dim('run') + ' ' + cyan('ashlr stack recommend') + ' ' + dim('to see what fits this repo'));
+    console.log('    ' + cyan('→') + ' ' + dim('run') + ' ' + cyan('ashlr stack recommend "<what you\'re building>"') + ' ' + dim('to see what fits'));
     console.log('    ' + cyan('→') + ' ' + dim('or') + ' ' + cyan('ashlr stack add <service>') + ' ' + dim('to provision one directly'));
   } else {
     console.log('  ' + green(String(svcs.length)) + ' service(s) wired:');
@@ -100,9 +107,29 @@ function cmdStackPassthrough(sub: string, rest: string[]): number {
     return printNotInstalled();
   }
 
-  const result = stackRun([sub, ...rest]);
+  // `stack scan --yes` writes .stack.toml and provisions services without
+  // prompting, so the read-only scan passthrough refuses the auto-accept
+  // flags; provisioning goes through the confirm-gated add/apply path.
+  // Stack also refuses to scan without a TTY (and exits 0), and this
+  // passthrough captures output, so the machine-readable mode is forced.
+  const args = [sub, ...rest];
+  if (sub === 'scan') {
+    const autoFlag = rest.find((a) => a === '--yes' || a === '-y' || a === '--auto' || a.startsWith('--yes=') || a.startsWith('--auto='));
+    if (autoFlag !== undefined) {
+      process.stderr.write(red('error: ') + `ashlr stack scan is read-only and does not accept ${autoFlag}\n`);
+      process.stderr.write(dim('  To provision what scan finds, use the confirm-gated `ashlr stack apply` or `ashlr stack add <service>`.') + '\n');
+      return 2;
+    }
+    if (!rest.includes('--json')) {
+      args.push('--json');
+    }
+  }
+  const result = stackRun(args);
   if (result.stdout) {
     process.stdout.write(result.stdout + '\n');
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr + '\n');
   }
   return result.ok ? 0 : (result.code ?? 1);
 }
@@ -156,11 +183,8 @@ async function cmdStackMutate(action: 'add' | 'apply', positional: string[], yes
   console.log('');
 
   const args: string[] = [action, ...positional];
-  const result = stackRun(args);
-
-  if (result.stdout) {
-    process.stdout.write(result.stdout + '\n');
-  }
+  // Attached to the terminal: `stack add` may prompt and run an OAuth flow.
+  const result = stackRunInteractive(args);
 
   if (result.ok) {
     console.log('');
@@ -184,8 +208,8 @@ function printNotInstalled(): number {
   console.log('  ' + red('✗') + ' ' + bold('stack is not installed'));
   console.log('');
   console.log(dim('  Install it to provision services (OAuth → provider → secrets, Phantom-wired):'));
-  console.log('    ' + cyan('npm install -g @evero/stack') + dim('  # or your package manager'));
-  console.log('    ' + cyan('https://docs.evero.io/stack') + dim('  # docs'));
+  console.log('    ' + cyan('npm install -g @ashlr/stack') + dim('  # or your package manager'));
+  console.log('    ' + cyan('https://stack.ashlr.ai') + dim('  # docs'));
   console.log('');
   return 1;
 }
@@ -199,8 +223,8 @@ function printStackHelp(): void {
   console.log(`    ashlr stack [status] [--json]   ${cyan('# read-only — stack status + wired services')}`);
   console.log(`    ashlr stack list                ${cyan('# read-only — list available services')}`);
   console.log(`    ashlr stack providers           ${cyan('# read-only — list configured providers')}`);
-  console.log(`    ashlr stack recommend           ${cyan('# read-only — recommend services for this repo')}`);
-  console.log(`    ashlr stack scan                ${cyan('# read-only — scan repo for service needs')}`);
+  console.log(`    ashlr stack recommend "<what you're building>"  ${cyan('# read-only — recommend services')}`);
+  console.log(`    ashlr stack scan                ${cyan('# read-only — scan repo for service needs (JSON)')}`);
   console.log(`    ashlr stack doctor              ${cyan('# read-only — diagnose stack configuration')}`);
   console.log('');
   console.log(`    ashlr stack add <service> [--yes]    ${yellow('# MUTATING')} ${dim('— provision a service (confirm-gated)')}`);
