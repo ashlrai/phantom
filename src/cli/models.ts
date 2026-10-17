@@ -22,7 +22,7 @@
 
 import { createInterface } from 'node:readline';
 import type { AshlrConfig, LocalModelInfo } from '../core/types.js';
-import { C, pad, makeColors, isTty } from './ui.js';
+import { ansi as C, pad, makeColors, isTty } from './ui.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
 import { probeApiModelEngine } from '../core/providers.js';
 import type { ApiModelReadiness } from '../core/providers.js';

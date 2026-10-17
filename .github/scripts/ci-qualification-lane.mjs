@@ -27,7 +27,13 @@ export function normalizeReport(raw, root) {
     if (file.startsWith('../') || !file || isAbsolute(file) || seen.has(file)) throw new Error('Invalid or duplicate test module');
     seen.add(file); const occurrences = new Map();
     const cases = module.assertionResults.map((item) => {
-      if (typeof item.fullName !== 'string' || !item.fullName || !Object.hasOwn(totals, item.status) || (item.failureMessages?.length ?? 0) !== 0) throw new Error('Invalid test case result');
+      if (typeof item.fullName !== 'string' || !item.fullName || !Object.hasOwn(totals, item.status)) throw new Error('Invalid test case result');
+      // Qualification wants a clean first-attempt pass. Vitest keeps a retried
+      // case's earlier errors, so a pass that needed `retry` still fails the
+      // lane; name it so the flaky test can be fixed rather than rerun.
+      if ((item.failureMessages?.length ?? 0) !== 0) {
+        throw new Error(`Test case passed only after a failed attempt (flaky): ${file} > ${item.fullName}`);
+      }
       // Parameterized rows can share a full title. Keep every occurrence in
       // reporter order instead of silently discarding those distinct cases.
       const occurrence = occurrences.get(item.fullName) ?? 0;

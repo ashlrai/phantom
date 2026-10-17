@@ -89,7 +89,7 @@ async function stepModels(cfg: AshlrConfig): Promise<OnboardStep> {
     return step(
       'models',
       'manual',
-      'No local models detected (Ollama/LM Studio not running or not installed). Run: ashlr models pull <model>',
+      'No local model runtime found. Install Ollama (https://ollama.com) or LM Studio, then: phm models pull <model>',
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -666,7 +666,10 @@ export async function onboard(
     nextSteps.push('Fix config first: ashlr doctor --fix');
   }
   if (modelsStep.status === 'manual') {
-    nextSteps.push('Pull a local model: ashlr models pull llama3:8b');
+    // Pulling needs a runtime first; without one the pull line is a dead end.
+    nextSteps.push(ollamaInstalled()
+      ? 'Pull a local model: phm models pull llama3:8b'
+      : 'For local runs, install Ollama (https://ollama.com) or LM Studio, then: phm models pull llama3:8b');
   }
   if (editorsStep.status === 'detected' && !opts.wire) {
     nextSteps.push('Wire your editor: ashlr init --wire');

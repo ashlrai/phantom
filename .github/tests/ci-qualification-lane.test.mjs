@@ -153,6 +153,10 @@ const invalidReports = {
   'pending disagreement': (r) => { r.numPendingTests++; },
   'todo disagreement': (r) => { r.numTodoTests++; },
 };
+test('report normalization names a case that passed only after a retry', () => {
+  const raw = report('/fixture/source'); raw.testResults[0].assertionResults[0].failureMessages = ['first attempt failed'];
+  assert.throws(() => normalizeReport(raw, '/fixture/source'), /passed only after a failed attempt \(flaky\): .+ > suite case 0$/);
+});
 for (const [kind, mutate] of Object.entries(invalidReports)) {
   test(`report normalization rejects ${kind}`, () => { const raw = report('/fixture/source'); mutate(raw); assert.throws(() => normalizeReport(raw, '/fixture/source')); });
 }
