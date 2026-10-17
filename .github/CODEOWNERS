@@ -362,6 +362,7 @@
 /test/helpers/h1-fixture.ts @masonwyatt23
 /test/helpers/h2-faults.ts @masonwyatt23
 /test/helpers/leader-310b-fakes.ts @masonwyatt23
+/test/helpers/policy-child-bundle.ts @masonwyatt23
 /test/helpers/preparation-workflow-manager-fixture.ts @masonwyatt23
 /test/helpers/process-liveness.ts @masonwyatt23
 /test/host-merge-310b.test.ts @masonwyatt23
