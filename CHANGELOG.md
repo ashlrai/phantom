@@ -36,6 +36,8 @@ Entries below each cite a pull request merged into `master` after the
 - Update the author contact address (#689).
 - Add a one-line tagline to the README (#797).
 - CI: the four-shard exhaustive Mac lane runs on master pushes or with the `ci:full-mac` label (#701), and Mac test shards run with two workers (#760).
+- Sweep leaked temp worktrees at daemon start, size the sandbox cap to the machine and defer tasks when no engine has capacity (#818).
+- Drop the desktop updater's `zip` feature, which clears RUSTSEC-2026-0367, -0368 and -0369 (#817).
 
 ### Fixed
 - Make first-run guidance plain and correct off macOS for `phm setup`, `phm authority setup`, Devin connect and the cloud seat hint (#795, #759, #775).
@@ -51,6 +53,10 @@ Entries below each cite a pull request merged into `master` after the
 - Say why `resources profile prepare` refused the executable (#758).
 - Retire no-change backlog items and the stale 3.10.1 backlog (#768).
 - Cloud summaries and meters: apply the one percent rule (#766), pluralise slot counts (#774) and fix "1 runs / 1 days / 1 repos" and the dead kill-switch hint (#782).
+- Null repository content-filter drivers on the daemon's git calls in sandbox worktrees (#796).
+- Detect ashlr-plugin by the binaries it ships rather than Phantom's own `ashlr` alias, and keep its lifetime savings total after sessions end (#820).
+- Show one doctor warning, not four, when no local model is running (#824).
+- Keep `--json` output machine-readable on refusals for stack, mirror, playbook, roadmap, inbox and improve (#794).
 
 ### Tests and docs
 - Fix environment-dependent and flaky tests (#752) and deflake the grok capacity e2e (#711).
