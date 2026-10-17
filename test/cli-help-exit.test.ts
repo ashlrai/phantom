@@ -1,7 +1,8 @@
 /**
  * `phm help <unknown-topic>` must fail (exit 2, like an unknown command) so agents
  * can tell a typo from success; known topics keep exit 0. The top-level summary
- * points first-run users at init, doctor and verse.
+ * points first-run users at init, doctor and verse. `phm config <typo>` fails
+ * the same way instead of printing the config summary.
  */
 
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
@@ -97,5 +98,25 @@ describe('CLI process exit codes', () => {
     const r = run(['frobnicate']);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('Unknown command: frobnicate');
+  });
+
+  it('phm config <typo> exits 2 with usage instead of printing the summary', () => {
+    const r = run(['config', 'gt', 'roots']);
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain('Unknown config subcommand: gt');
+    expect(r.stderr).toContain('Usage: ashlr config');
+    expect(r.stdout).not.toContain('staleDays');
+  });
+
+  it('phm config --help prints usage; list and the no-arg path keep working', () => {
+    const help = run(['config', '--help']);
+    expect(help.status, help.stderr).toBe(0);
+    expect(help.stdout).toContain('Usage: ashlr config');
+    const list = run(['config', 'list']);
+    expect(list.status, list.stderr).toBe(0);
+    expect(list.stdout).toContain('staleDays');
+    const path = run(['config']);
+    expect(path.status, path.stderr).toBe(0);
+    expect(path.stdout.trim()).toMatch(/config\.json$/);
   });
 });
