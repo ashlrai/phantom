@@ -246,7 +246,9 @@ function printStackHelp(): void {
 export async function cmdStack(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
 
-  if (sub === '--help' || sub === '-h' || sub === 'help') {
+  // `stack <verb> --help` / `-h` explains itself before the stack binary is
+  // looked up: the verbs took the flag as a passthrough arg or a service name.
+  if (sub === '--help' || sub === '-h' || sub === 'help' || rest.includes('--help') || rest.includes('-h')) {
     printStackHelp();
     return 0;
   }

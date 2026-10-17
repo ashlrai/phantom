@@ -1062,11 +1062,12 @@ function resolveProposal(idOrPrefix: string): Proposal | null {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-const INBOX_USAGE: Record<'list' | 'show' | 'approve' | 'reject' | 'automerge', string> = {
+const INBOX_USAGE: Record<'list' | 'show' | 'approve' | 'submit' | 'reject' | 'automerge', string> = {
   list: 'Usage: ashlr inbox [list] [--status <pending|approved|rejected|awaiting-host-merge|applied|failed|all>]\n' +
     '                    [--since <ISO|YYYY-MM-DD>] [--limit N] [--json]',
   show: 'Usage: ashlr inbox show <id> [--open] [--json]',
   approve: 'Usage: ashlr inbox approve <id> [--yes] [--json]',
+  submit: 'Usage: ashlr inbox submit <id> [--yes] [--json]',
   reject: 'Usage: ashlr inbox reject <id> [--json]',
   automerge: 'Usage: ashlr inbox automerge <id> [--json]',
 };
