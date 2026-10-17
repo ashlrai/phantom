@@ -304,6 +304,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-file-operations-runner.test.ts', // frozen snapshot admission with private Git fixtures
   'test/universe-campaign-integration.test.ts', // native multi-generation ownership, feedback and durable resource limits
   'test/universe-portfolio-integration.test.ts', // native cross-Universe dependency ordering and concurrent campaign settlement
+  'test/cli-help-no-side-effects.test.ts', // ~750 real CLI subprocesses (every command/verb x --help/-h) in private sandboxes; one bounded beforeAll
   'test/universe-portfolio-resource-integration.test.ts', // shared resource ledger and confined cross-Universe dependency execution
   'test/universe-resource-quota-integration.test.ts', // inert native metadata capture before confined Universe generation
   'test/universe-capacity-wait-integration.test.ts', // parallel inert campaigns sharing collector and worker capacity
@@ -364,6 +365,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m42.engineer-tools.test.ts', // real git worktree/merge/apply subprocess work — 7.1s slowest test in the quiet baseline
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
   'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
+  'test/daemon-start-temp-worktree-sweep.test.ts', // real git worktrees, dead-pid child processes and a real runDaemon start
   'test/m48.automerge-pass.test.ts', // real git worktree/merge/apply subprocess work — 5.2s slowest test in the quiet baseline
   'test/m56.branch-apply.test.ts', // real git worktree/merge/apply subprocess work — 3.2s slowest test in the quiet baseline
   'test/m85.fleet-continuity.test.ts', // real git worktree/merge/apply subprocess work — 5.3s slowest test in the quiet baseline
