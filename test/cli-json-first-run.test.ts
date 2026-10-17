@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 const mocks = vi.hoisted(() => ({
   readiness: vi.fn(),
@@ -177,6 +178,16 @@ describe('onboard --json', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('first safe activation (steps)');
     expect(() => JSON.parse(r.stdout)).toThrow();
+  });
+
+  it('lines up the step columns whatever the repo path length', async () => {
+    const repo = '/tmp/a/much/longer/repository/path/than/the/fixed/columns/allowed';
+    const r = await capture(() => cmdOnboard([repo, '--yes']));
+    const plain = stripVTControlCharacters(r.stdout);
+    const steps = plain.split('\n').filter(line => /^ {2}[1-5]\. /.test(line));
+    expect(steps).toHaveLength(5);
+    expect(new Set(steps.map(line => line.indexOf('ashlr '))).size).toBe(1);
+    expect(new Set(steps.map(line => line.indexOf('— '))).size).toBe(1);
   });
 });
 
