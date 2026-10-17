@@ -23,7 +23,12 @@ tauri = { version = "2", features = [
     "image-png",
 ] }
 tauri-plugin-shell = "2"
-tauri-plugin-updater = "2"
+# Without the default `zip` feature: it pulls in zip 4.x (RUSTSEC-2026-0367,
+# -0368, -0369; fixed only in zip 9) and serves only v1-style zipped Windows
+# updates and Linux AppImage tarballs. Phantom ships raw .msi/.exe updates on
+# Windows and no Linux desktop build; macOS .app.tar.gz extraction does not
+# depend on this feature.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 # Native file/directory chooser. Used by exactly one thing: the Verse
 # "Open folder…" button, which needs a real macOS/Windows/Linux directory
 # picker instead of asking the operator to type an absolute path. Only
