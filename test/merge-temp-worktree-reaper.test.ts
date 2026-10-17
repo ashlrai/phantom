@@ -269,8 +269,11 @@ describe('temp worktree reaper: leftovers git does not list (scripts/daemon-chao
     const dir = leak(`vwt-${id}`, null);
     git(repo, ['branch', `ashlr/verify/${id}`]);
     mark(dir, deadPid());
+    // git lists a registered worktree by its real path (macOS tmpdir is
+    // /var -> /private/var), so compare against the resolved directory.
+    const listed = path.join(real(path.dirname(dir)), path.basename(dir));
     const res = reapLeakedTempWorktrees(repo);
-    expect(res.reaped).toEqual([dir]);
+    expect(res.reaped).toEqual([listed]);
     expect(res.branchesDeleted).toEqual([`ashlr/verify/${id}`]);
     expect(branches(repo)).toEqual(['main']);
   });
