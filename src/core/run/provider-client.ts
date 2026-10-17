@@ -1085,6 +1085,13 @@ export function buildOpenAICompatibleClient(
     maxResponseBytes?: number;
     maxOutputTokens?: number;
     /**
+     * Send `Connection: close` so no request from this client leaves a pooled keep-alive
+     * socket for a later request. A POST on a stale pooled socket that the
+     * server closed while this process ran synchronous work fails before it
+     * reaches the server, and a non-idempotent completion must not be retried.
+     */
+    freshConnection?: boolean;
+    /**
      * `top_p` / top-level `reasoning_effort` for every request — how an
      * adopted harness's local-lane sampling and effort reach the wire
      * (run/harness-dispatch.ts). Absent = the provider's default, byte-identical
@@ -1120,6 +1127,7 @@ export function buildOpenAICompatibleClient(
   function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    if (transport?.freshConnection) headers['Connection'] = 'close';
     return headers;
   }
 

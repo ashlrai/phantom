@@ -378,7 +378,9 @@ export async function cmdPlugins(args: string[]): Promise<number> {
   const jsonMode = args.includes('--json');
   const yes = args.includes('--yes');
 
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  // `plugins <verb> --help` / `-h` prints usage before any plugin is read or
+  // scaffolded: the verbs took the flag as a plugin name.
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printPluginsHelp();
     return 0;
   }

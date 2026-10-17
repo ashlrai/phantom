@@ -549,6 +549,8 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
  *     that is a different layer from the MCP server key.
  *   - Locus write path uses `locusServerSpec()` so env (LOCUS_HOME, LOCUS_CLIENT,
  *     LOCUS_NOTIFY) is always present — not command-only.
+ *   - Lexicon and Stack ship Node/Bun launchers for MCP, which the
+ *     native-executable rule refuses, so they are deliberately absent.
  */
 interface EcosystemServer {
   name: string;         // Key used in mcpServers map
@@ -583,6 +585,15 @@ const ECOSYSTEM_SERVERS: EcosystemServer[] = [
     command: 'locus-mcp',
     args: [],
     label: 'Locus (identity plane)',
+  },
+  {
+    // Optional Markdown viewer: a native Rust stdio server, so the native-only
+    // launcher rule admits it. Not in REQUIRED_SERVERS; `mcp doctor` stays green without it.
+    name: 'ashlr-md',
+    probe: 'mdopener-mcp',
+    command: 'mdopener-mcp',
+    args: [],
+    label: 'Ashlr MD (mdopener-mcp)',
   },
 ];
 
