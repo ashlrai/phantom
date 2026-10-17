@@ -504,14 +504,18 @@ async function cmdInboxShow(id: string, jsonMode: boolean, openMd: boolean): Pro
   }
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox show <id> [--open]');
+    const msg = 'Usage: ashlr inbox show <id> [--open] [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
   // Resolve by prefix (mirrors approve/reject)
   const p = resolveProposal(id);
   if (!p) {
-    console.error(col.red('error: ') + `Proposal not found: ${id}`);
+    // Same JSON refusal shape as approve / reject / automerge / submit.
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
+    else console.error(col.red('error: ') + `Proposal not found: ${id}`);
     return 1;
   }
 
@@ -743,7 +747,9 @@ async function cmdInboxApprove(id: string, yes: boolean, jsonMode: boolean): Pro
   }
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox approve <id> [--yes]');
+    const msg = 'Usage: ashlr inbox approve <id> [--yes] [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
@@ -880,7 +886,9 @@ async function cmdInboxReject(id: string, jsonMode: boolean): Promise<number> {
   const col = makeColors(tty);
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox reject <id>');
+    const msg = 'Usage: ashlr inbox reject <id> [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
@@ -943,7 +951,9 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
   const col = makeColors(tty);
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox automerge <id> [--json]');
+    const msg = 'Usage: ashlr inbox automerge <id> [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
