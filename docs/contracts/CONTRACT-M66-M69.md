@@ -8,7 +8,9 @@ verified locally (clean-HOME full suite), pushed once. Read-only/advisory + neve
 - `knownConfigPaths()` += `~/.ashlr/settings.json`, so any server registered there
   is auto-aggregated by the gateway alongside the 11 native `ashlr_*` tools.
 - `ashlr mcp ecosystem [--write]` detects installed ecosystem MCP servers
-  (phantom-mcp `phantom mcp serve`; stack/ashlr-md/ashlr-plugin when present) and
+  (phantom-mcp `phantom mcp serve`, `locus-mcp`, and the optional Ashlr MD
+  `mdopener-mcp` when present; native executables only, so Node/Bun launchers
+  such as Lexicon's and Stack's are skipped) and
   merges them into `~/.ashlr/settings.json mcpServers` (idempotent, no clobber).
   ⇒ an agent pointed at the hub gateway gets EVERY tool through one endpoint.
 - Test: `m66.mcp-ecosystem` (15).
