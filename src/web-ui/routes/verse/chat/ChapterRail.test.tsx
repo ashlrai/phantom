@@ -94,6 +94,20 @@ describe('ChapterRail', () => {
     expect(onJumpTurn).toHaveBeenLastCalledWith('t2');
   });
 
+  it('breathes only the running turn\'s tick, as a Web Animation', () => {
+    const original = Element.prototype.animate;
+    const animate = vi.fn(() => ({ cancel: vi.fn() }) as unknown as Animation);
+    Element.prototype.animate = animate as unknown as typeof Element.prototype.animate;
+    try {
+      render(<ChapterRail model={buildChapters(TURNS, { handoff: false })} onJumpTurn={() => {}} />);
+      expect(animate).toHaveBeenCalledTimes(1);
+      const bar = animate.mock.contexts[0] as unknown as HTMLElement;
+      expect(bar.closest('[data-status]')).toHaveAttribute('data-status', 'running');
+    } finally {
+      Element.prototype.animate = original;
+    }
+  });
+
   it('holds a px height that tracks its box: the box minus the equal top and bottom insets', () => {
     const observers: Array<{ fire: () => void; disconnected: boolean }> = [];
     vi.stubGlobal('ResizeObserver', class {
