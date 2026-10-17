@@ -27,7 +27,11 @@ import { formatDuration } from '../verse-model.js';
 import { defaultActivityView, focusMembers, foldReadRuns, summarizeActivity, type ActivityRow, type ActivityView } from './activity-model.js';
 import { LiveTimer } from './LiveTimer.js';
 import { fileBasename, toolAnchorId, type ToolFacts } from './tool-semantics.js';
+import { PULSE_MS, pulse } from '../../../components/motion/pulse.js';
 import styles from './ActivityGroup.module.css';
+
+/** A running group's dot breathing. */
+const RUNNING_PULSE = pulse({ keyframes: [{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }], duration: PULSE_MS, easing: 'ease-in-out' });
 
 // ---------------------------------------------------------------------------
 // Reveal: a jump to a call folded inside a group
@@ -103,7 +107,7 @@ export function ActivityGroupView({ item, facts, renderMember }: ActivityGroupPr
           <span className={styles.state} aria-hidden="true">
             {summary.failed > 0 ? <span className={styles.failed}>{summary.failed} failed</span> : null}
             {summary.failed > 0 && running ? <span className={styles.sep}>, </span> : null}
-            {running ? <span className={styles.running}><span className={styles.pulse} />{summary.running} running</span> : null}
+            {running ? <span className={styles.running}><span className={styles.pulse} ref={RUNNING_PULSE} />{summary.running} running</span> : null}
           </span>
         ) : null}
         <span className={styles.time} aria-hidden="true">

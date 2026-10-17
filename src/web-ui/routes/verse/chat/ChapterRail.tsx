@@ -16,7 +16,11 @@
  */
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { describeTick, type ChapterMarkerKind, type ChapterModel } from './chapter-model.js';
+import { PULSE_MS, pulse } from '../../../components/motion/pulse.js';
 import styles from './ChapterRail.module.css';
+
+/** The running turn's tick breathing. */
+const RUNNING_BAR = pulse({ keyframes: [{ opacity: 1 }, { opacity: 0.4 }, { opacity: 1 }], duration: PULSE_MS, easing: 'ease-in-out' });
 
 export interface ChapterRailProps {
   /**
@@ -132,7 +136,7 @@ export const ChapterRail = memo(function ChapterRail({ model, onJumpTurn }: Chap
               onBlur={() => setPeek((p) => (p === tick.index ? null : p))}
               onClick={() => { setActive(tick.index); onJumpTurn(tick.turnKey); }}
             >
-              <span className={styles.bar} aria-hidden="true" />
+              <span className={styles.bar} ref={tick.status === 'running' ? RUNNING_BAR : undefined} aria-hidden="true" />
               {markers.length > 0 ? (
                 <span className={styles.markers} aria-hidden="true">
                   {markers.map((m) => <span key={m} className={styles.marker} data-marker={m}><MarkerIcon kind={m} /></span>)}

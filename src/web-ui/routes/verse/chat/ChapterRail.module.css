@@ -66,7 +66,7 @@
 .tick[data-status='running'] .bar {
   height: 3px;
   background: var(--status-running-solid);
-  animation: rail-pulse var(--duration-pulse) ease-in-out infinite;
+  /* Breathes: ChapterRail.tsx plays RUNNING_BAR (components/motion/pulse.ts). */
 }
 .tick[data-status='stopped'] .bar { background: var(--text-tertiary); }
 
@@ -115,15 +115,9 @@
   overflow-wrap: anywhere;
 }
 
-@keyframes rail-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion='full']) .tick[data-status='running'] .bar { animation: none; }
   :root:not([data-motion='full']) .bar { transition: none; }
 }
-:root[data-motion='reduce'] .tick[data-status='running'] .bar { animation: none; }
 
 @media (max-width: 767.98px) {
   .rail { display: none; }
