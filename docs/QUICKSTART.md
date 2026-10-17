@@ -110,6 +110,10 @@ chat and fleet readiness. Signed out, missing usage, exhausted quota, reserved
 capacity or missing authority can hold work; connection alone is not readiness.
 See [Automatic work](AUTOMATIC-OUTCOMES.md) for resource boundaries and recovery.
 
+To give Claude Code, Codex or Cursor the tools of Phantom Secrets, Locus and
+Ashlr MD through one MCP connection, see
+[One connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
+
 ### Make your first useful turn
 
 1. Choose **Work with me**, open **New chat** and choose a scratch project or
