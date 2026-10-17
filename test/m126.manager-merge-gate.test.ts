@@ -734,6 +734,42 @@ describe('M126 Gate 7.5 — self-target escalation', () => {
     expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
   });
 
+  // A Tier-1-importing test moved out of test/ (into docs/, say) would leave
+  // the suite without a changed line. Both diff forms of that move stop
+  // before the judge: git's rename form as an unreadable scope, the
+  // delete-plus-add form as test tampering.
+  for (const [label, renameFlag, reason] of [
+    ['[12c] rename form', '-M', /malformed diff scope \(mode-ambiguous-file\)/],
+    ['[12d] delete-plus-add form', '--no-renames', /test tampering: test file test\/widget-render\.test\.ts/],
+  ] as const) {
+    it(`${label}: moving a Tier-1-importing test out of test/ is never auto-merged`, async () => {
+      initRepo(tmpRepo, 'main');
+      attachOrigin(tmpRepo, 'main');
+      git(tmpRepo, ['checkout', '-b', 'work']);
+      enroll(tmpRepo);
+      git(tmpRepo, ['checkout', 'main']);
+      tier1ImportingTestEdit('test/widget-render.test.ts');
+      fs.mkdirSync(path.join(tmpRepo, 'docs'), { recursive: true });
+      git(tmpRepo, ['mv', 'test/widget-render.test.ts', 'docs/widget-render.test.ts']);
+      const diff = execFileSync('git', ['-C', tmpRepo, 'diff', '--cached', renameFlag], { encoding: 'utf8' });
+      git(tmpRepo, ['reset', '--hard', 'HEAD']);
+      expect(diff).toContain('docs/widget-render.test.ts');
+      git(tmpRepo, ['checkout', 'work']);
+      git(tmpRepo, ['merge', '--ff-only', 'main']);
+      makeSelfTarget();
+      const p = frontierPatch(diff);
+      const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+
+      const r = await autoMergeProposal(p.id, baseCfg({ allowSelfMerge: true, maxRisk: 'high' }));
+
+      expect(r.ok).toBe(false);
+      expect(r.merged).toBe(false);
+      expect(r.reason).toMatch(reason);
+      expect(mockJudgeProposal).not.toHaveBeenCalled();
+      expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
+    });
+  }
+
   it('[13] self-target + review + allowSelfMerge=true → pending (Gate 7 blocks first)', async () => {
     initRepo(tmpRepo, 'main');
     attachOrigin(tmpRepo, 'main');
