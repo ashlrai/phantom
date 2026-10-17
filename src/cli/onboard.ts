@@ -353,11 +353,19 @@ function printSteps(repoHint: string): void {
   console.log('');
   console.log(`  ${dim('Run these in order. Each step is the explicit human gate — nothing runs on its own.')}`);
   console.log('');
-  console.log(`  ${cyan('1.')} ${bold('Preflight')}   ${dim('ashlr preflight')}                      ${dim('— read-only readiness check')}`);
-  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr enroll add ${repoHint}`)}       ${dim('— the explicit enrollment gate')}`);
-  console.log(`  ${cyan('3.')} ${bold('Dry-run')}     ${dim('ashlr daemon start --dry-run --once')}    ${dim('— preview the plan; NO proposal, $0')}`);
-  console.log(`  ${cyan('4.')} ${bold('Review')}      ${dim('ashlr inbox')}                          ${dim('— review + approve; NEVER auto-applied')}`);
-  console.log(`  ${cyan('5.')} ${bold('Rollback')}    ${dim(`ashlr onboard --rollback ${repoHint}`)}  ${dim('— one-command undo')}`);
+  const rows: Array<[string, string, string]> = [
+    ['Preflight', 'ashlr preflight', 'read-only readiness check'],
+    ['Enroll ONE', `ashlr enroll add ${repoHint}`, 'the explicit enrollment gate'],
+    ['Dry-run', 'ashlr daemon start --dry-run --once', 'preview the plan; NO proposal, $0'],
+    ['Review', 'ashlr inbox', 'review + approve; NEVER auto-applied'],
+    ['Rollback', `ashlr onboard --rollback ${repoHint}`, 'one-command undo'],
+  ];
+  // Pad before coloring so the columns line up whatever the repo path length.
+  const nameWidth = Math.max(...rows.map(([name]) => name.length));
+  const cmdWidth = Math.max(...rows.map(([, cmd]) => cmd.length));
+  rows.forEach(([name, cmd, note], i) => {
+    console.log(`  ${cyan(`${i + 1}.`)} ${bold(name.padEnd(nameWidth))}  ${dim(cmd.padEnd(cmdWidth))}  ${dim(`— ${note}`)}`);
+  });
   console.log('');
   console.log(`  ${dim('Re-run interactively (a TTY, no --yes) to be guided through steps 1–3 automatically.')}`);
   console.log('');
