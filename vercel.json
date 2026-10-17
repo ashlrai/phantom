@@ -4,5 +4,37 @@
   "buildCommand": "echo 'Static Verse site: source files are ready'",
   "installCommand": "",
   "framework": null,
-  "cleanUrls": true
+  "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://phm.dev/",
+      "permanent": true
+    },
+    {
+      "source": "/index",
+      "destination": "https://phm.dev/",
+      "permanent": true
+    },
+    {
+      "source": "/index.html",
+      "destination": "https://phm.dev/",
+      "permanent": true
+    },
+    {
+      "source": "/ecosystem",
+      "destination": "https://phm.dev/ecosystem",
+      "permanent": true
+    },
+    {
+      "source": "/ecosystem.html",
+      "destination": "https://phm.dev/ecosystem",
+      "permanent": true
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "https://phm.dev/sitemap.xml",
+      "permanent": true
+    }
+  ]
 }
