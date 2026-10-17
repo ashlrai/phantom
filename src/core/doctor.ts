@@ -30,8 +30,10 @@ import {
   readKillState,
   checkAshlrWriteable,
   readSandboxHealth,
+  readGitLockHealth,
   SANDBOX_ORPHAN_WARN_THRESHOLD,
 } from './readiness.js';
+import { describeStaleGitLocks } from './sandbox/stale-git-locks.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1243,6 +1245,34 @@ function checkSandboxHealth(): DoctorCheck {
   }
 }
 
+/**
+ * Probe: stale git lock files.
+ * id: 'git-locks'
+ *
+ * READ-ONLY via readGitLockHealth(): WARNs when an enrolled or sandbox source
+ * repo holds a git lock file (packed-refs.lock, a ref .lock, HEAD/index/config
+ * .lock) older than STALE_GIT_LOCK_MIN_AGE_MS, which blocks every later ref
+ * update there. Git records no owner, so the fix hint asks the owner to check
+ * for a running git process before removing it. Mutates nothing. Never throws.
+ */
+function checkGitLocks(): DoctorCheck {
+  try {
+    const { repos, locks } = readGitLockHealth();
+    if (locks.length > 0) {
+      return check(
+        'git-locks',
+        'Git lock files',
+        'warn',
+        describeStaleGitLocks(locks),
+        `If no git process is running in ${locks[0]!.repo}, remove the lock: rm '${locks[0]!.path}'`,
+      );
+    }
+    return check('git-locks', 'Git lock files', 'pass', `no stale git lock files in ${repos} repo${repos !== 1 ? 's' : ''}`);
+  } catch (err) {
+    return check('git-locks', 'Git lock files', 'pass', `git lock scan unreadable: ${String(err)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // runDoctor
 // ---------------------------------------------------------------------------
@@ -1310,6 +1340,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkKillSwitch());
   checks.push(checkAshlrWriteableProbe());
   checks.push(checkSandboxHealth());
+  checks.push(checkGitLocks());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(await checkPlugins(cfg));
