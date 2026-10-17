@@ -6,17 +6,18 @@ way a user would. This page says what is wired, how, and where each tool stops.
 
 ## What is wired
 
-[`.mcp.json`](../.mcp.json) at the repo root declares four stdio MCP servers,
+[`.mcp.json`](../.mcp.json) at the repo root declares five stdio MCP servers,
 each launched through `npx` at an exact version. The Secrets, Locus and Lexicon
 pins match the reviewed releases in `src/core/companion-inventory.ts`;
 `test/agent-toolchain-mcp.test.ts` fails if they drift.
 
 | Server | Package | Use it to | Limit today |
 | --- | --- | --- | --- |
-| `phantom-secrets` | `phantom-secrets-mcp@0.7.9` | `phantom_check` before committing (no raw keys in `.env` files), `phantom_list_secrets` / `phantom_doctor` for value-blind vault state | Values never reach the agent; a run that needs a key uses `phantom exec`. The published 0.7.9 npm wrapper fails as root (fixed in ashlrai/phantom-secrets#191, unpublished), so a fresh root container needs a non-root user or the fixed wrapper. |
+| `phantom-secrets` | `phantom-secrets-mcp@0.7.9` | `phantom_check` before committing (no raw keys in `.env` files), `phantom_list_secrets` / `phantom_doctor` for value-blind vault state | Values never reach the agent; a run that needs a key uses `phantom exec`. The published 0.7.9 npm wrapper fails as root (fixed on Secrets main in ashlrai/phantom-secrets#206, unpublished), so a fresh root container needs a non-root user or the fixed wrapper. |
 | `locus` | `@ashlrai/locus-mcp@0.5.0` | `locus_whoami` / `locus_safe_next` before acting for an account, `locus_request_pin` when the wrong identity is pinned | Agents cannot pin. Without a human `locus pin`, every tool answers "no active pin" and the agent must say so. |
 | `lexicon` | `@ashlr/lexicon@0.5.4` (`lexicon-mcp`) | `normalize_transcript` on dictated tasks, `learn_correction` when a user corrects a word | Project terms apply only after `lexicon trust` on this repo's [`.lexicon.yaml`](../.lexicon.yaml), and only when the server's working directory (or `LEXICON_CWD`) is this repo. |
 | `stack` | `ashlr-stack-mcp@0.1.1` with `@ashlr/stack@0.1.1` and `phantom-secrets@0.7.9` on its PATH | `stack_status`, `stack_doctor`, `stack_list` to see which services a project uses and whether their keys are in the vault | npm still has 0.1.1; `stack status --json` (ashlrai/ashlr-stack#30) is not published. `stack_apply` and `stack_add` provision real services; leave them to a human. |
+| `ashlr` | `ashlr-plugin@1.36.4` (`ashlr-mcp`), the Ashlr.AI Plugin | `ashlr__grep`, `ashlr__read`, `ashlr__tree` and `ashlr__bash` for compact search, reads and command output; `ashlr__savings` for token accounting | Needs Bun and ripgrep on PATH. The router runs from its package directory, so `.mcp.json` names the project in `ASHLR_ALLOW_PROJECT_PATHS` (`${PWD}`, the directory Claude Code started in). Pass absolute paths and an explicit `cwd`; a relative path or a missing `cwd` resolves inside the plugin's own install. |
 
 Not wired, and why:
 
@@ -43,19 +44,18 @@ binary from the GitHub release. Later launches use the npm and binary caches.
 
 ## What Phantom's own runs get
 
-Phantom's sandboxed runs do not read this file:
+Phantom's sandboxed runs do not start servers from this file directly:
 
 - Autonomous Claude runs on macOS go through the native broker with only file
   tools (`src/core/sandbox/claude-native-broker.ts`); no MCP server is added.
-- Non-autonomous sandboxed runs add only the `ashlr` efficiency sidecar with
-  `--strict-mcp-config` when `ashlr-mcp` is on PATH
-  (`src/core/run/sandboxed-engine.ts`).
+- Non-autonomous sandboxed runs write a fleet sidecar config with
+  `--strict-mcp-config` (`prepareFleetMcpConfig` in
+  `src/core/run/sandboxed-engine.ts`). It adds the Ashlr.AI Plugin when
+  `ashlr-mcp` is installed, plus the Secrets, Locus and Lexicon entries of this
+  file when they match the reviewed specs exactly. Set
+  `foundry.fleetCompanionMcp=false` to leave the companions out.
 - `phm cloud launch` starts a Claude Code cloud session on the repository, which
   sees `.mcp.json` like any other session.
-
-So this file covers people and Claude Code sessions working on Phantom,
-including cloud sessions. Giving Phantom's confined runs the same tools is a
-separate change to the run path.
 
 ## Check it
 
