@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import * as registry from '../src/core/universe/builtin-evaluator-registry.js';
 import { PREPARATION_CALIBRATION_IMPLEMENTATION_FILES, parsePreparationMeasurementCalibration } from '../src/core/universe/preparation-measurement-calibration.js';
@@ -20,6 +20,21 @@ import { manifestRecord, universePath } from '../src/core/universe/store.js';
 
 const TARGET = 'src/core/resources/engineering-preparation.ts';
 const roots: string[] = [];
+// Preparation only pins the (spied, synthetic) installed scorer; no Universe
+// run or evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'engineering-preparation-builtin-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 const save = (file: string, value: unknown) => writeFileSync(file, canonical(value) + '\n', { mode: 0o600 });
 function git(repo: string, ...args: string[]) {
   return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-C', repo, ...args], {
@@ -63,7 +78,7 @@ function fixture() {
   const calibrationFile = join(base, 'calibration.json'); save(calibrationFile, calibration);
   parsePreparationMeasurementCalibration(readFileSync(calibrationFile, 'utf8'));
   const installed: registry.InstalledBuiltinEvaluator = { id: 'preparation-process-score-v1', digest: digest('synthetic installed'),
-    executableDigest: digest(readFileSync(process.execPath)), command: [process.execPath, '--experimental-vm-modules', '--no-warnings', join(base, 'never-run.mjs')],
+    executableDigest: digest(readFileSync(pinnedEvaluator)), command: [pinnedEvaluator, '--experimental-vm-modules', '--no-warnings', join(base, 'never-run.mjs')],
     files: [{ name: 'calibration.json', path: calibrationFile, digest: digest(readFileSync(calibrationFile)) }],
     tools: [{ path: gitPin.path, digest: gitPin.sha256 }], git: { path: gitPin.path, digest: gitPin.sha256 } };
   const resolve = vi.spyOn(registry, 'resolveBuiltinEvaluator').mockImplementation(() => structuredClone(installed));

@@ -82,6 +82,8 @@ never asks for the key in the page, and no HTTP route accepts one.
    with Devin (`GET /v3/self` and a one-item session list) before storing it.
    The key goes into the **macOS Keychain** (service `ai.ashlr.devin`, trusted
    only by `/usr/bin/security`), written on stdin and never on a command line.
+   On any other platform `connect` refuses before asking for the key and
+   stores nothing.
    It is never written to a file. `~/.ashlr/devin/connection.json` holds only
    the organization, principal and selected human member metadata. Selection
    reads Devin's direct organization-member endpoint and checks the key's
@@ -549,7 +551,8 @@ errors redact `cog_…` and `apk_…` keys.
 - **CLI chat usage is not reported to Phantom, and its PRs are unverified.**
   Those chats are not counted in the ACU budget; native account billing still
   applies. Their PRs get only Dismiss in Needs you.
-- **macOS only for the key.** Storing it needs the macOS Keychain.
+- **macOS only for the key.** Storing it needs the macOS Keychain, so
+  `ashlr devin connect` refuses on Linux and Windows before prompting.
 - **Spend is in ACUs; dollars are an estimate.** Only app.devin.ai knows the
   bill.
 - **Devin's side is Devin's.** Data controls, the GitHub integration's

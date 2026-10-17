@@ -1,6 +1,6 @@
 # Security & Safety
 
-ashlr-hub runs autonomous agents against real code, so safety is a first-class
+Phantom runs autonomous agents against real code, so safety is a first-class
 design goal, not an afterthought. This document describes the safety model and
 how to report a vulnerability.
 
