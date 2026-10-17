@@ -21,6 +21,7 @@ import { postLeader, type OptionalRead } from './surface-data.js';
 import { Card, CardNote, MicroLabel } from './Surface.js';
 import type { ConfirmSpec, SurfaceActions } from './actions.js';
 import styles from './command.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export function vetoConfirm(action: Pick<LeaderAction, 'summary' | 'status'>): ConfirmSpec {
   return {
@@ -114,7 +115,7 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
   return (
     <Card
       title="Leader"
-      caption={memo ? `Memo ${formatRelative(memo.at)}${memo.seatId ? ` · ${seatNames?.get(memo.seatId)?.trim() || 'Account unavailable'}` : ''}${state?.nextRunAt ? ` · next run ${new Date(state.nextRunAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}` : undefined}
+      caption={memo ? `Memo ${formatRelative(memo.at)}${memo.seatId ? ` · ${seatNames?.get(memo.seatId)?.trim() || 'Account unavailable'}` : ''}${state?.nextRunAt ? ` · next run ${formatDateTime(new Date(state.nextRunAt), 'en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}` : undefined}
       actions={
         <>
           {memo?.dryRun ? <span className={styles.dryRun}>Dry run</span> : null}
@@ -132,7 +133,7 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
         <CardNote>
           {/* The run's reason is server prose that may carry its own stop. */}
           {asSentence(`No memo yet${state.lastRun ? ` — last run ${formatRelative(state.lastRun.at)}: ${state.lastRun.reason ?? state.lastRun.outcome}` : ''}`)}
-          {state.nextRunAt ? ` Next run ${new Date(state.nextRunAt).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.` : ''}
+          {state.nextRunAt ? ` Next run ${formatDateTime(new Date(state.nextRunAt), 'en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.` : ''}
         </CardNote>
       ) : (
         <>

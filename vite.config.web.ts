@@ -97,6 +97,7 @@ const verseSharedModules = new Set<string>();
 const presentationFormatModules = new Set([
   fileURLToPath(new URL('./src/core/vision/leader-display-text.ts', import.meta.url)),
   fileURLToPath(new URL('./src/web-ui/components/charts/format-metric.ts', import.meta.url)),
+  fileURLToPath(new URL('./src/web-ui/components/format/locale-format.ts', import.meta.url)),
 ]);
 /** chunk file name → the chunk file names it imports statically, as Vite's preload pass sees the bundle. */
 const staticChunkImports = new Map<string, readonly string[]>();
