@@ -397,7 +397,8 @@ function printHelp(): void {
     out(`    ${cyan(pad(flag, 18))} ${desc}`);
   }
   out('');
-  out(dim('  Planning is deterministic + local-only by default (no model, zero network).'));
+  out(dim('  Planning is local-first: no cloud model calls without --allow-cloud. A running'));
+  out(dim('  Ollama or LM Studio drafts milestone specs; without one they are templates.'));
   out(dim('  `repair-timestamps` v1 is custody-validated on Linux/macOS and refuses other platforms.'));
   out(dim('  `advance` is SANDBOXED + PROPOSAL-ONLY: it produces a PENDING inbox proposal'));
   out(dim('  a human reviews with `ashlr inbox`. Nothing auto-applies; no real working'));
