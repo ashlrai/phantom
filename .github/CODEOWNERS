@@ -256,6 +256,7 @@
 /test/backpressure-310b.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
+/test/cli-json-first-run.test.ts @masonwyatt23
 /test/cli-mirror-args.test.ts @masonwyatt23
 /test/cloud-budget.test.ts @masonwyatt23
 /test/cloud-intake-313.test.ts @masonwyatt23
@@ -834,6 +835,7 @@
 /test/run-api-unavailable.test.ts @masonwyatt23
 /test/runtime-probe-event-loop.test.ts @masonwyatt23
 /test/safe-git-310b.test.ts @masonwyatt23
+/test/sandbox-create-two-phase.test.ts @masonwyatt23
 /test/sandbox-kernel-evidence-310.test.ts @masonwyatt23
 /test/sandbox-reservation-recovery.test.ts @masonwyatt23
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23

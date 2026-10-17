@@ -411,6 +411,19 @@ export async function cmdDocs(args: string[]): Promise<number> {
   }
 
   if (!agent) {
+    if (json) {
+      // --json never prints the human help: one JSON object, same exit code.
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        error: 'ashlr docs needs a surface; pass --agent --json',
+        surfaces: [
+          { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
+          { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
+          { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
+        ],
+      }, null, 2) + '\n');
+      return 2;
+    }
     printDocsHelp();
     return 2;
   }
@@ -478,6 +491,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
+  { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
   { cmd: 'runtime install --store <absolute> --artifact <absolute> --sha256 <hash> --revision <sha> --version <version>', desc: 'Install exact offline candidate bytes into a private store; not production qualification or service activation.', topic: 'core' },
   { cmd: 'runtime status|rollback --store <absolute> [--json]', desc: 'Verify local candidate selection or explicitly restore the previous verified installation.', topic: 'core' },
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
@@ -661,6 +675,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'gh pr create',                 desc: 'Create a PR via gh CLI — explicit + confirm-gated (the only gh mutation).', topic: 'integrations' },
   { cmd: 'vercel <ls|logs>',             desc: 'Read recent Vercel deployments or latest build logs (read-only).', topic: 'integrations' },
   { cmd: 'wire [claude|codex|cursor|all]', desc: 'Wire ashlr MCP gateway into editor config(s); defaults to detected editors.', topic: 'integrations' },
+  { cmd: 'wire status [claude|codex|cursor|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
   { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },

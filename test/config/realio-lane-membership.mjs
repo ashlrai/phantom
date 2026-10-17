@@ -54,6 +54,8 @@ export const REAL_IO_TEST_FILES = [
   'test/proactive-replay-watermark.test.ts', // real private watermark fsync, orphan stages, file links and bounded custody
   'test/candidate-version-sync.test.ts', // real bounded CLI subprocesses; the subprocess case retains its original 5s deadline
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
+  'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
+  'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
   'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
   'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
@@ -385,6 +387,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m412.sandbox-pre-effect-recovery.test.ts', // real fs lock/sandbox lifecycle work — 3.3s slowest test in the quiet baseline
   'test/m417.sandbox-cleanup-quiescence.test.ts', // real fs lock/sandbox lifecycle work — 4.8s slowest test in the quiet baseline
   'test/m426.sandbox-reservation-identity.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
+  'test/sandbox-create-two-phase.test.ts', // real git through a PATH shim: slow and failing checkouts, KILL armed during populate
   'test/m463.claimed-batch-admission.test.ts', // real fs lock/sandbox lifecycle work — 7.4s slowest test in the quiet baseline
   'test/m490.daemon-state-recovery-cli.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
 

@@ -15,33 +15,38 @@
 import { loadConfig } from '../core/config.js';
 import { loadSpec, applyEvolution } from '../core/vision/spec.js';
 import type { EndStateSpec, SpecPriority } from '../core/vision/spec.js';
+import { noColorRequested } from './ui.js';
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
+function paint(code: string, s: string): string {
+  return noColorRequested() ? s : `\x1b[${code}m${s}\x1b[0m`;
+}
+
 function bold(s: string): string {
-  return `\x1b[1m${s}\x1b[0m`;
+  return paint('1', s);
 }
 
 function dim(s: string): string {
-  return `\x1b[2m${s}\x1b[0m`;
+  return paint('2', s);
 }
 
 function cyan(s: string): string {
-  return `\x1b[36m${s}\x1b[0m`;
+  return paint('36', s);
 }
 
 function yellow(s: string): string {
-  return `\x1b[33m${s}\x1b[0m`;
+  return paint('33', s);
 }
 
 function green(s: string): string {
-  return `\x1b[32m${s}\x1b[0m`;
+  return paint('32', s);
 }
 
 function red(s: string): string {
-  return `\x1b[31m${s}\x1b[0m`;
+  return paint('31', s);
 }
 
 function visionHoldReason(reason: string): string {
