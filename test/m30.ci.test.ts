@@ -146,6 +146,38 @@ describe('M30 CI workflow', () => {
     for (const name of full.filter((name) => name !== 'mac-general')) {
       expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
     }
+    // Superseded master push: only a cancelled Mac lane is accepted, and only
+    // once master has moved past the commit. Mac failures and any non-Mac
+    // cancellation still fail the gate.
+    const mac = ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'];
+    const superseded = (outcomes: Record<string, string>) => {
+      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full', mac: 'run' } } : {}),
+      }]));
+      return () => runInNewContext(source!, {
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', MAC_SUPERSEDED: 'true' } }, console: { log: () => {} },
+      });
+    };
+    expect(superseded({ ...complete, ...Object.fromEntries(mac.map((name) => [name, 'cancelled'])), site: 'skipped' })).not.toThrow();
+    for (const name of mac) {
+      expect(execute('full', { ...complete, [name]: 'cancelled', site: 'skipped' }), `${name}: not superseded`).toThrow();
+      for (const outcome of ['failure', 'skipped', 'neutral']) {
+        expect(superseded({ ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
+      }
+    }
+    for (const name of full.filter((name) => !mac.includes(name))) {
+      expect(superseded({ ...complete, [name]: 'cancelled', site: 'skipped' }), `${name}: cancelled`).toThrow();
+    }
+    expect(steps[0]!.env.EVENT_NAME).toBe('${{ github.event_name }}');
+    expect(steps[0]!.env.COMMIT_SHA).toBe('${{ github.sha }}');
+    expect(steps[0]!.run).toContain('refs/heads/master | cut -f1) || head=\'\'');
+    expect(steps[0]!.run).toContain('if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi');
+    for (const id of mac) {
+      const concurrency = jobs[id]!.concurrency as { group: string; 'cancel-in-progress': boolean };
+      expect(concurrency['cancel-in-progress'], id).toBe(false);
+      expect(concurrency.group, id).toMatch(/^\$\{\{ github\.event_name == 'push' && .+ \|\| format\('ci-mac-\{0\}-\{1\}', github\.run_id, github\.job\) \}\}$/);
+    }
+    expect(jobs['mac-general']!.concurrency).toMatchObject({ group: expect.stringContaining("format('ci-master-mac-general-{0}', matrix.shard)") });
     expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
       "${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}",
     );

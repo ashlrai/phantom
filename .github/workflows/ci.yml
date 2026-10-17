@@ -433,6 +433,13 @@ jobs:
               test/m466.host-merge-revocation-protocol.test.ts
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
     env: *node_ci_environment
     steps: *node_ci_steps
 
@@ -450,6 +457,13 @@ jobs:
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -517,6 +531,13 @@ jobs:
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
@@ -580,6 +601,13 @@ jobs:
     needs: classify
     if: needs.classify.outputs.lane == 'full'
     runs-on: macos-latest
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -812,9 +840,22 @@ jobs:
     steps:
       - name: Require selected CI lane
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           GATE_NEEDS: ${{ toJSON(needs) }}
           MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
+          # A master Mac lane cancelled by its concurrency group counts as
+          # superseded only when master has really moved past this commit.
+          MAC_SUPERSEDED=false
+          if [ "$EVENT_NAME" = push ]; then
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            head=$(git -c http.extraheader="AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPOSITORY" refs/heads/master | cut -f1) || head=''
+            if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi
+          fi
+          export MAC_SUPERSEDED
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
@@ -831,8 +872,14 @@ jobs:
           const excluded = lane === 'site' ? full : ['site'];
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
           const deferred = process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
+          // A later master push's run replaced this Mac lane while it waited and
+          // covers this commit's code; the cancelled check still marks this
+          // commit's own Mac evidence incomplete.
+          const superseded = process.env.MAC_SUPERSEDED === 'true'
+            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'] : [];
           for (const name of selected) {
             if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to post-merge`); continue; }
+            if (superseded.includes(name) && outcome(name) === 'cancelled') { console.log(`${name} superseded by a later master push`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           for (const name of excluded) {
