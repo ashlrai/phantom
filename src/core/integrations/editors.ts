@@ -21,6 +21,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readSync,
   renameSync,
   statSync,
@@ -29,7 +30,7 @@ import {
   type BigIntStats,
 } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
@@ -904,4 +905,162 @@ export async function wireEditor(
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, detail: `editor wiring failed: ${msg}` };
   }
+}
+
+// ---------------------------------------------------------------------------
+// wire sync: dry-run by default, timestamped backups, undo
+// ---------------------------------------------------------------------------
+
+export type SyncAction =
+  | 'add'        // entry absent: would be added
+  | 'unchanged'  // our entry already present and identical
+  | 'conflict'   // a differing entry exists; never overwritten
+  | 'invalid'    // config is malformed or unsafe; never touched
+  | 'skip';      // not handled by sync (codex, or client not detected)
+
+export interface SyncClientPlan {
+  target: EditorTarget;
+  configPath: string;
+  detected: boolean;
+  action: SyncAction;
+  detail: string;
+}
+
+export interface PlanSyncOptions {
+  configPath?: string;
+  home?: string;
+  pathEnv?: string;
+  /** Plan even when the client is not detected (explicit target). */
+  force?: boolean;
+}
+
+/** Read-only plan for one client. Never writes or creates anything. */
+export function planEditorSync(target: EditorTarget, opts: PlanSyncOptions = {}): SyncClientPlan {
+  const entry = getClient(target);
+  const configPath = opts.configPath ?? defaultConfigPath(target, opts.home ?? HOME);
+  const detected = detectEditors({
+    ...(opts.home !== undefined ? { home: opts.home } : {}),
+    ...(opts.pathEnv !== undefined ? { pathEnv: opts.pathEnv } : {}),
+    includeStatusOnly: true,
+  }).includes(target);
+  const base = { target, configPath, detected };
+  if (entry.format !== 'json-mcpServers') {
+    return { ...base, action: 'skip', detail: `${target} is registered through its own CLI (use \`wire ${target}\`)` };
+  }
+  if (!detected && !opts.force) {
+    return { ...base, action: 'skip', detail: 'not detected; name it explicitly to plan it' };
+  }
+  let existing: ConfigFileShape;
+  try {
+    ({ config: existing } = parseJsonConfig(configPath));
+  } catch (err) {
+    return { ...base, action: 'invalid', detail: `refusing to touch: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const found = existing.mcpServers?.[entry.serverName];
+  if (found === undefined) return { ...base, action: 'add', detail: `would add ${entry.serverName}` };
+  if (isRecord(found) && sameJsonEntry(found as unknown as McpServerEntry, expectedEntry(target))) {
+    return { ...base, action: 'unchanged', detail: `${entry.serverName} already wired` };
+  }
+  return { ...base, action: 'conflict', detail: `${entry.serverName} exists with a different entry; not overwriting` };
+}
+
+interface SyncManifest {
+  version: 1;
+  target: EditorTarget;
+  configPath: string;
+  existed: boolean;
+  backupFile: string | null;
+  writtenSha256: string;
+}
+
+const SYNC_MANIFEST_RE = /^\.?(.+)\.wire-sync-(\d{13})-([0-9a-f]{8})\.json$/;
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function syncStem(configPath: string, stamp: string): string {
+  return join(dirname(configPath), `${basename(configPath)}.wire-sync-${stamp}`);
+}
+
+export interface SyncApplyResult extends SyncClientPlan {
+  applied: boolean;
+  backupPath?: string;
+}
+
+/** Apply one plan. Only `add` plans write; every other action is returned untouched. */
+export function applyEditorSync(plan: SyncClientPlan): SyncApplyResult {
+  if (plan.action !== 'add') return { ...plan, applied: false };
+  const entry = getClient(plan.target);
+  try {
+    const { config, snapshot } = parseJsonConfig(plan.configPath);
+    const merged: ConfigFileShape = {
+      ...config,
+      mcpServers: { ...(config.mcpServers ?? {}), [entry.serverName]: expectedEntry(plan.target) },
+    };
+    const bytes = Buffer.from(`${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    const stamp = `${String(Date.now()).padStart(13, '0')}-${randomBytes(4).toString('hex')}`;
+    const stem = syncStem(plan.configPath, stamp);
+    let backupFile: string | null = null;
+    if (snapshot.found) {
+      backupFile = `${stem}.bak`;
+      publishJsonConfig(backupFile, snapshot.bytes, { found: false });
+    }
+    const manifest: SyncManifest = {
+      version: 1, target: plan.target, configPath: plan.configPath,
+      existed: snapshot.found, backupFile, writtenSha256: sha256(bytes),
+    };
+    publishJsonConfig(`${stem}.json`, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'), { found: false });
+    publishJsonConfig(plan.configPath, bytes, snapshot, editorConfigTestHooks?.beforeJsonConfigPublish);
+    return { ...plan, action: 'add', detail: `wired ${entry.serverName}`, applied: true, ...(backupFile ? { backupPath: backupFile } : {}) };
+  } catch (err) {
+    return { ...plan, action: 'invalid', detail: `write failed: ${err instanceof Error ? err.message : String(err)}`, applied: false };
+  }
+}
+
+export interface UndoResult {
+  target: EditorTarget;
+  configPath: string;
+  restored: boolean;
+  detail: string;
+}
+
+/** Restore the newest un-undone sync for one config. Refuses if the config changed since. */
+export function undoEditorSync(target: EditorTarget, opts: { configPath?: string; home?: string } = {}): UndoResult {
+  const configPath = opts.configPath ?? defaultConfigPath(target, opts.home ?? HOME);
+  const base = { target, configPath, restored: false };
+  const dir = dirname(configPath);
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return { ...base, detail: 'no sync backup found' }; }
+  const mine = names
+    .map(name => ({ name, m: SYNC_MANIFEST_RE.exec(name) }))
+    .filter(x => x.m && x.m[1] === basename(configPath))
+    .sort((a, b) => a.m![2]!.localeCompare(b.m![2]!) || a.name.localeCompare(b.name));
+  const latest = mine[mine.length - 1];
+  if (!latest) return { ...base, detail: 'no sync backup found' };
+  const manifestPath = join(dir, latest.name);
+  try {
+    const manifest = JSON.parse(readConfigSnapshotText(manifestPath)) as SyncManifest;
+    const current = readConfigSnapshot(configPath);
+    if (!current.found || sha256(current.bytes) !== manifest.writtenSha256) {
+      return { ...base, detail: 'config changed since the sync; not restoring (backup kept)' };
+    }
+    if (manifest.existed) {
+      const backup = readConfigSnapshot(join(dir, basename(manifest.backupFile ?? '')));
+      if (!backup.found) return { ...base, detail: 'backup file is missing; nothing restored' };
+      publishJsonConfig(configPath, backup.bytes, current);
+    } else {
+      unlinkSync(configPath);
+    }
+    renameSync(manifestPath, `${manifestPath}.undone`);
+    return { ...base, restored: true, detail: manifest.existed ? 'restored previous config from backup' : 'removed config created by sync' };
+  } catch (err) {
+    return { ...base, detail: `undo failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+function readConfigSnapshotText(filePath: string): string {
+  const snap = readConfigSnapshot(filePath);
+  if (!snap.found) throw new Error(`missing ${filePath}`);
+  return snap.bytes.toString('utf8');
 }
