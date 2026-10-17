@@ -480,6 +480,36 @@ describe('runDoctor — no local provider up', () => {
     expect(report.summary.fail).toBe(report.checks.filter(c => c.status === 'fail').length);
     expect(report.summary.warn).toBe(report.checks.filter(c => c.status === 'warn').length);
   });
+
+  it('reports one provider warning, naming every probed endpoint, instead of one per endpoint', async () => {
+    const cfg = makeConfig(tmpHome);
+    const report = await runDoctor(cfg);
+    const providerWarns = report.checks.filter(c => c.id.startsWith('provider:') && c.status === 'warn');
+    expect(providerWarns.map(c => c.id)).toEqual(['provider:active']);
+    expect(providerWarns[0]?.detail).toContain('lmstudio http://localhost:1234/v1/models');
+    expect(providerWarns[0]?.detail).toContain('ollama http://localhost:11434/api/tags');
+  });
+});
+
+describe('runDoctor — one local provider up', () => {
+  beforeEach(() => {
+    _providerRegistry = {
+      providers: [
+        { id: 'lmstudio', url: 'http://localhost:1234/v1/models', up: false, models: [], error: 'ECONNREFUSED' },
+        { id: 'ollama',   url: 'http://localhost:11434/api/tags', up: true, models: ['llama3:8b'] },
+      ],
+      activeProvider: 'ollama',
+      chain: ['lmstudio', 'ollama'],
+    };
+  });
+
+  it('still lists each endpoint so a down one beside a working one stays visible', async () => {
+    const cfg = makeConfig(tmpHome);
+    const report = await runDoctor(cfg);
+    expect(report.checks.find(c => c.id === 'provider:ollama')?.status).toBe('pass');
+    expect(report.checks.find(c => c.id === 'provider:lmstudio')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'provider:active')?.status).toBe('pass');
+  });
 });
 
 // ---------------------------------------------------------------------------
