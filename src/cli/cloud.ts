@@ -276,6 +276,9 @@ function printTask(deps: CloudCliDeps, task: CloudTaskV1): void {
   if (task.pr) deps.out(`           PR #${task.pr.number}: ${task.pr.url}`);
   else if (task.sessionUrl) deps.out(`           Session: ${task.sessionUrl}`);
   if (task.report) deps.out(`           Report (${task.report.status}): ${task.report.summary}`);
+  if (task.report?.toolsUsed) {
+    deps.out(`           Companion tools: ${task.report.toolsUsed.length > 0 ? task.report.toolsUsed.join(', ') : 'none called'}`);
+  }
   if (task.stateReason) deps.out(`           ${task.stateReason}`);
 }
 

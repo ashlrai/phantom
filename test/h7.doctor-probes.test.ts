@@ -332,7 +332,7 @@ describe('h7 doctor probes — 5 NEW read-only checks', () => {
     const onProbe = probe(on, 'kill-switch');
     expect(onProbe?.status).toBe('warn');
     expect(onProbe?.detail).toMatch(/on/i);
-    expect(onProbe?.fix).toBeDefined();
+    expect(onProbe?.fix).toContain('`ashlr enroll kill off`');
 
     fx.setKill(false);
     mkdirSync(join(fx.ashlrDir, 'KILL'));

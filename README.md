@@ -2,6 +2,8 @@
 
 # Phantom
 
+**Give agents the work. Keep the evidence.**
+
 **The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**
 
 **Work with agents. Let agents work for you. One open-source workbench for your accounts, local models, chats and engineering fleet.**

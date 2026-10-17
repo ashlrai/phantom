@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 import { createResourcePoolSupervisor } from '../src/core/resources/pool-supervisor.js';
 import { validateResourcePool } from '../src/core/resources/pool-policy.js';
@@ -16,6 +16,21 @@ import { canonical, digest } from '../src/core/universe/artifacts.js';
 import { initUniverse, initUniverseCampaign, type UniverseManifest } from '../src/core/universe/index.js';
 
 const exec = promisify(execFile);
+// The commissioning check CLI is read-only (effectsExecuted: false, unchanged
+// tree); no Universe run or evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'console-engineering-inspect-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const save = (file: string, value: unknown) => writeFileSync(file, canonical(value) + '\n', { mode: 0o600 });
@@ -77,7 +92,7 @@ async function fixture(options: { key?: boolean; historical?: boolean } = {}) {
   const manifest: UniverseManifest = { schemaVersion: 1, id: 'inspect-app', name: 'Inspector fixture', objective: 'Check configuration without execution',
     seed: { repo, revision }, metric: { name: 'value', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxParallel: 1, maxDurationMs: 20_000, trialTimeoutMs: 10_000 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1000 }, variants: [{ id: 'repair', niche: 'value', hypothesis: 'Never invoked by inspection',
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1000 }, variants: [{ id: 'repair', niche: 'value', hypothesis: 'Never invoked by inspection',
       generation: { kind: 'resource-pool', poolId: pool.id, poolDigest: digest(canonical({ pool, bindings })), allowedWorkerIds: ['local-worker'],
         files: ['value.json'], maxOutputTokens: 128, fileOperations: { schemaVersion: 1, contextFiles: [] } } }] };
   initUniverse(manifest, { root: universeRoot });

@@ -53,6 +53,23 @@ async function timed<T>(name: string, fn: () => Promise<T> | T): Promise<T> {
   try { return await fn(); } finally { phases[name] = (phases[name] ?? 0) + (performance.now() - s); }
 }
 
+/** The same lease, recording how long it was held (first release wins). */
+function holdTimed(lease: RepoLease, name: string): RepoLease {
+  const s = performance.now();
+  let recorded = false;
+  return Object.freeze({
+    repoKey: lease.repoKey,
+    isHeld: () => lease.isHeld(),
+    release: () => {
+      if (!recorded && lease.isHeld()) {
+        recorded = true;
+        phases[name] = (phases[name] ?? 0) + (performance.now() - s);
+      }
+      lease.release();
+    },
+  });
+}
+
 function emit(ok: boolean, failure: string | null, extra: Record<string, unknown> = {}): void {
   process.stdout.write(`${JSON.stringify({
     idx, ok, failure, totalMs: performance.now() - t0, phases,
@@ -107,9 +124,10 @@ async function main(): Promise<void> {
     // 3. Worktree creation under the repo lease (runEngineSandboxed).
     const creation = await timed('repoLeaseWaitCreate', () => acquireRepoLease(repoKey));
     if (!creation.ok) throw new Error(`repo-lease-create: ${creation.reason}`);
+    const creationLease = holdTimed(creation.lease, 'repoLeaseHoldCreate');
     try {
-      sb = await timed('sandboxCreate', () => wt.createSandboxAsync(repo));
-    } finally { creation.lease.release(); }
+      sb = await timed('sandboxCreate', () => wt.createSandboxAsync(repo, { repoLease: creationLease }));
+    } finally { creationLease.release(); }
 
     // 4. Admission: fence -> policy gate -> cleanup authority -> execution lease; drop fence.
     fence = await timed('fenceWaitAdmit', () => acquireOutwardMutationFenceAsync(ADMIT_FENCE_WAIT_MS));

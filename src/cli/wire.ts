@@ -3,6 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
+ *   ashlr wire status [claude|codex|cursor|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
  * Target-aware, backup-first, idempotent, LOCAL only.
@@ -110,6 +111,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
+    ['status',            'Read-only report of whether each client is wired (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
   const w = Math.max(...opts.map(([o]) => o.length));
@@ -119,7 +121,7 @@ function printWireHelp(): void {
   console.log('');
   console.log('  ' + bold('What it does:'));
   console.log('');
-  console.log(`    ${dim('• Registers the distinct "ashlr-hub" MCP gateway; legacy "ashlr" plugin entries remain untouched.')}`);
+  console.log(`    ${dim('• Registers the "ashlr-hub" MCP gateway (same entry as mcp install); a duplicate legacy "ashlr" gateway entry is removed, other "ashlr" entries remain untouched.')}`);
   console.log(`    ${dim('• Uses codex mcp for config.toml; deep-merges supported JSON registries for Claude and Cursor.')}`);
   console.log(`    ${dim('• Backs up an existing target config before any write.')}`);
   console.log(`    ${dim('• Idempotent: re-running with the same config is a no-op.')}`);
@@ -159,6 +161,8 @@ export async function cmdWire(args: string[]): Promise<number> {
     process.stdout.write(claudeMdSnippet());
     return 0;
   }
+
+  if (sub === 'status') return cmdWireStatus(args.slice(1));
 
   const parsed = parseWireArgs(args);
 
@@ -245,4 +249,46 @@ export async function cmdWire(args: string[]): Promise<number> {
 
   const exitCode = results.some(r => !r.ok) ? 1 : 0;
   return exitCode;
+}
+
+// ---------------------------------------------------------------------------
+// wire status: read-only
+// ---------------------------------------------------------------------------
+
+async function cmdWireStatus(args: string[]): Promise<number> {
+  const parsed = parseWireArgs(args);
+  if (parsed.usageError) {
+    process.stderr.write(red('error: ') + parsed.usageError + '\n');
+    return 2;
+  }
+  let mod: Awaited<ReturnType<typeof importEditors>>;
+  try {
+    mod = await importEditors();
+  } catch {
+    process.stderr.write(red('error: ') + 'Editor integration module not yet available.\n');
+    return 1;
+  }
+  // Status reports every client, not just detected ones.
+  const targets: Array<'claude' | 'codex' | 'cursor'> =
+    parsed.targets.length > 0 ? parsed.targets : ['claude', 'codex', 'cursor'];
+  const rows = targets.map(target =>
+    mod.inspectEditorWiring(target, parsed.configPath ? { configPath: parsed.configPath } : {}));
+
+  if (parsed.json) {
+    process.stdout.write(JSON.stringify({ clients: rows }, null, 2) + '\n');
+  } else {
+    console.log('');
+    console.log(bold('  ashlr wire status') + gray('  (read-only)'));
+    console.log('');
+    for (const r of rows) {
+      const state = r.error ? red('error')
+        : !r.wired ? yellow('not wired')
+        : r.matchesExpected ? green('wired')
+        : yellow('wired, entry differs');
+      console.log(`  ${bold(pad(r.target, 7))} ${state}  ${dim(r.configPath)}`);
+      console.log(`    ${dim(`detected=${r.detected} config=${r.configFound} backup=${r.backupFound}`)}${r.error ? '  ' + red(r.error) : ''}`);
+    }
+    console.log('');
+  }
+  return rows.some(r => r.error) ? 1 : 0;
 }

@@ -24,7 +24,7 @@
  *   2  bad usage
  */
 
-import { parsePositiveInt } from './args.js';
+import { describeListenError, parsePortArg } from './port.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, red, green, cyan, yellow, gray } = makeColors(isTty());
@@ -73,7 +73,7 @@ function parseArgs(args: string[]): ServeOptions | { error: string; code: number
     const arg = args[i];
 
     if (arg === '--port' || arg === '-p') {
-      const result = parsePositiveInt('port', args[++i]);
+      const result = parsePortArg(args[++i]);
       if ('error' in result) return { error: result.error, code: 2 };
       port = result.n;
 
@@ -113,6 +113,13 @@ export async function openBrowser(url: string): Promise<void> {
     detached: true,
     stdio: 'ignore',
     shell: platform === 'win32', // 'start' requires shell on Windows
+  });
+  // A missing opener (headless Linux, containers, SSH) fails asynchronously
+  // with ENOENT. Without a listener that 'error' event kills the server, so
+  // settle here and let callers print the manual-navigation fallback.
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
   });
   child.unref();
 }
@@ -166,7 +173,7 @@ export async function cmdServe(args: string[]): Promise<number> {
   try {
     handle = await startServer(cfg, { port, open, allowDispatch });
   } catch (err) {
-    console.error(red('error: ') + 'Failed to start server: ' + String(err));
+    console.error(red('error: ') + (describeListenError(err, port) ?? 'Failed to start server: ' + String(err)));
     return 1;
   }
 
