@@ -145,6 +145,15 @@ fails-the-process for a merely-empty fresh install:**
 | 4 | `ashlr-writeable`  | `~/.ashlr` writeable   | `checkAshlrWriteable()` (sentinel write+unlink under `CONFIG_DIR`) | pass when writeable; **fail** when not (nothing can persist) |
 | 5 | `sandbox-health`   | Sandbox health         | `readSandboxHealth()` → `listSandboxes()`  | pass when 0/low; warn on high orphan count with `ashlr sandbox gc` fix hint; detail names the effective sandbox cap and its reason (`resolveSandboxCap()`) |
 
+A later read-only probe, `git-locks` (label "Git lock files"), reads `readGitLockHealth()` in
+`readiness.ts`, which calls `findStaleGitLocks(repos)` from `src/core/sandbox/stale-git-locks.ts`
+over the enrolled repos plus each sandbox's source repo, once per common git dir. It warns when a
+git lock file (`packed-refs.lock`, a `refs/**/*.lock`, or `HEAD`/`index`/`config`/`shallow.lock`,
+including per-worktree `HEAD.lock`/`index.lock`) is older than `STALE_GIT_LOCK_MIN_AGE_MS`
+(10 min); otherwise it passes. Git records no owner in a lock file, so the probe never removes one.
+Instead, its fix hint asks the owner to check that no git process is running before removing the
+lock.
+
 **READ-ONLY JUSTIFICATION.** Four of five are pure reads. The fifth (`ashlr-writeable`) writes +
 immediately `unlink`s a private sentinel under the ISOLATED `CONFIG_DIR` (no repo, no guard, no
 persistent artifact) — the same probe `preflight` uses, shared from `readiness.ts`. NONE of the 5

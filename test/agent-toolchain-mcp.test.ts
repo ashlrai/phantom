@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { COMPANION_RELEASES } from '../src/core/companion-inventory.js';
 
-interface McpServer { command: string; args: string[] }
+interface McpServer { command: string; args: string[]; env?: Record<string, string> }
 const config = JSON.parse(readFileSync(join(__dirname, '..', '.mcp.json'), 'utf8')) as { mcpServers: Record<string, McpServer> };
 const reviewed = (id: string): string => {
   const release = COMPANION_RELEASES.find(r => r.id === id);
@@ -32,5 +32,14 @@ describe('repo .mcp.json companion servers', () => {
     expect(args('lexicon')).toContain(`@ashlr/lexicon@${reviewed('lexicon')}`);
     // Stack reads the vault through the phantom CLI, so it carries the same Secrets pin.
     expect(args('stack')).toContain(`phantom-secrets@${reviewed('secrets')}`);
+  });
+
+  it('points the Ashlr.AI Plugin at the project it is launched in', () => {
+    // ashlr-mcp runs its router from the package directory and refuses every
+    // path outside it unless the project is named, so without this env the
+    // server answers with the plugin's own files.
+    const ashlr = config.mcpServers.ashlr;
+    expect(ashlr?.args).toContain('ashlr-mcp');
+    expect(ashlr?.env?.ASHLR_ALLOW_PROJECT_PATHS).toBe('${PWD:-.}');
   });
 });
