@@ -56,4 +56,13 @@ describe('lessons trial', () => {
     const t = { ...task('merged', 'served', ['n1'], 7), outcome: { observedAt: 'x', headSha: null, mergeSha: null, ci: null, failedChecks: [], reviewDecision: null, changesRequested: 0, revertedBy: 'd'.repeat(40) } } as CloudTaskV1;
     expect(lessonTrial([t, task('merged', 'served')]).overall.served).toEqual({ tasks: 2, landed: 1, rate: 0.5 });
   });
+
+  it('revertedPrKeys unions ledger reverts and cloud task reverts', async () => {
+    const { revertedPrKeys } = await import('../src/core/improve/reverted.js');
+    const base = task('merged', 'served', ['n1'], 9);
+    const outcome = { observedAt: 'x', headSha: null, mergeSha: null, ci: null, failedChecks: [], reviewDecision: null, changesRequested: 0 };
+    expect(revertedPrKeys([{ ...base, outcome } as CloudTaskV1], []).size).toBe(0);
+    const reverted = { ...base, outcome: { ...outcome, revertedBy: 'd'.repeat(40) } } as CloudTaskV1;
+    expect([...revertedPrKeys([reverted], [])]).toEqual(['ashlrai/phantom#9']);
+  });
 });

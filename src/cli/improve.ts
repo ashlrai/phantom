@@ -260,10 +260,9 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
 }
 
 async function lessons(json: boolean): Promise<number> {
-  const [{ listCloudTasks }, { readLedger, scoreOutcomes }, trial] = await Promise.all([
-    import('../core/cloud/store.js'), import('../core/improve/outcomes.js'), import('../core/improve/lesson-trial.js')]);
-  const reverted = new Set(scoreOutcomes(readLedger().records).filter((o) => o.reverted && o.pr).map((o) => trial.prKey(o.pr!.repository, o.pr!.number)));
-  const report = trial.lessonTrial(listCloudTasks(), reverted);
+  const [{ listCloudTasks }, { revertedPrKeys }, trial] = await Promise.all([
+    import('../core/cloud/store.js'), import('../core/improve/reverted.js'), import('../core/improve/lesson-trial.js')]);
+  const report = trial.lessonTrial(listCloudTasks(Number.MAX_SAFE_INTEGER), revertedPrKeys());
   if (json) { console.log(JSON.stringify(report, null, 2)); return 0; }
   console.log(`Lessons trial (holdout ${Math.round(report.holdout * 100)}% of eligible cloud launches run without lessons)`);
   console.log(trial.renderLessonEffect(report.overall));

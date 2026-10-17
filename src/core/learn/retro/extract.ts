@@ -19,8 +19,10 @@
  * (the chart shows it) so Mason can fix the setup.
  */
 import { cleanText, retroIdFor } from './store.js';
+import { KNOWLEDGE_EVIDENCE_MAX } from './types.js';
 import type {
   KnowledgeCandidate,
+  KnowledgeEvidenceRef,
   KnowledgeScope,
   RetroEndKind,
   RetroRootCause,
@@ -379,7 +381,7 @@ function baseRetro(parts: {
     doDifferently: parts.doDifferently.map((d) => cleanText(d, 300)).filter(Boolean).slice(0, 3),
     betterPrompt: parts.betterPrompt,
     candidates: parts.candidates
-      .map((c) => ({ text: cleanText(c.text, 600), scope: c.scope }))
+      .map((c) => ({ text: cleanText(c.text, 600), scope: c.scope, ...(c.evidence?.length ? { evidence: c.evidence.slice(0, KNOWLEDGE_EVIDENCE_MAX) } : {}) }))
       .filter((c) => c.text.length >= 12)
       .slice(0, 3),
     paths: parts.paths.slice(0, 20),
@@ -701,7 +703,9 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
         : ['Record a close reason next time so the lesson is not lost.'];
   const candidates: KnowledgeCandidate[] = [];
   if (ciFailed) {
-    candidates.push({ text: `${devin ? 'Devin' : 'Cloud'} ${kind === 'other' ? '' : `${kind} `}tasks in ${input.repo}: run ${checks.join(', ')} before opening the PR; ${checks.length > 1 ? 'they' : 'it'} failed and the PR closed without landing (${cite}).`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });
+    const at = { repository: input.repo, number: input.pr ?? null, sha: outcome!.headSha };
+    const evidence: KnowledgeEvidenceRef[] = [{ kind: 'pr', ...at, detail: 'closed without landing' }, ...checks.map((c) => ({ kind: 'ci' as const, ...at, detail: c }))];
+    candidates.push({ evidence, text: `${devin ? 'Devin' : 'Cloud'} ${kind === 'other' ? '' : `${kind} `}tasks in ${input.repo}: run ${checks.join(', ')} before opening the PR; ${checks.length > 1 ? 'they' : 'it'} failed and the PR closed without landing (${cite}).`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });
   } else if (blocked && report.summary) {
     candidates.push({ text: `${devin ? 'Devin' : 'Cloud'} ${kind === 'other' ? '' : `${kind} `}tasks in ${input.repo} got ${report.status}: ${cleanText(report.summary, 240)}`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });
   } else if (informative && cause.code === 'closed:by-mason') {
