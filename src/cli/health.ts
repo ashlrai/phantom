@@ -353,10 +353,11 @@ export async function cmdHealth(args: string[]): Promise<number> {
   if (parsed.repo !== null) {
     const abs = resolve(parsed.repo);
     if (!core.isEnrolled(abs)) {
-      process.stderr.write(
-        red('error: ') + `repo not enrolled for health review: ${abs}\n` +
-          '       Enroll it first with `ashlr enroll` (health only reads ENROLLED repos).\n',
-      );
+      const error = `repo not enrolled for health review: ${abs}`;
+      const next = `Enroll it first with \`phm enroll add ${abs}\` (health only reads ENROLLED repos).`;
+      // --json keeps stdout machine-readable on a refusal too.
+      if (parsed.json) process.stdout.write(JSON.stringify({ ok: false, error, next }, null, 2) + '\n');
+      else process.stderr.write(red('error: ') + error + '\n       ' + next + '\n');
       return 1;
     }
   }
