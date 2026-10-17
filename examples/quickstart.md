@@ -98,7 +98,7 @@ loop` and `ashlr loop --watch` refuse before producing proposals. To create a
 proposal through a live owner-invoked path, use one of:
 
 ```sh
-ashlr goal "<objective>"  # plan + advance one bounded proposal-only milestone
+ashlr goal "<objective>" --project <enrolled-repo>  # plan + advance one bounded proposal-only milestone
 ashlr run "<goal>"        # one owner-invoked run
 ashlr swarm "<goal>"      # one owner-invoked multi-agent run
 ```

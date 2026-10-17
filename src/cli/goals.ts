@@ -397,7 +397,8 @@ function printHelp(): void {
     out(`    ${cyan(pad(flag, 18))} ${desc}`);
   }
   out('');
-  out(dim('  Planning is deterministic + local-only by default (no model, zero network).'));
+  out(dim('  Planning is local-first: no cloud model calls without --allow-cloud. A running'));
+  out(dim('  Ollama or LM Studio drafts milestone specs; without one they are templates.'));
   out(dim('  `repair-timestamps` v1 is custody-validated on Linux/macOS and refuses other platforms.'));
   out(dim('  `advance` is SANDBOXED + PROPOSAL-ONLY: it produces a PENDING inbox proposal'));
   out(dim('  a human reviews with `ashlr inbox`. Nothing auto-applies; no real working'));
@@ -446,6 +447,15 @@ export async function cmdGoals(args: string[]): Promise<number> {
   const { red, green, yellow, bold, cyan, gray, dim } = makeColors(tty);
   const out = (s: string): void => {
     process.stdout.write(s + '\n');
+  };
+  // One shape for an unknown goal id on every subcommand: JSON on stdout under
+  // --json, otherwise an error plus the command that lists real ids.
+  const goalNotFound = (id: string): number => {
+    const msg = `goal not found: ${id}`;
+    const next = 'List goal ids with `phm goals list`.';
+    if (parsed.json) out(JSON.stringify({ ok: false, error: msg, next }, null, 2));
+    else process.stderr.write(red('error: ') + msg + '\n       ' + next + '\n');
+    return 1;
   };
 
   if (parsed.help) {
@@ -615,8 +625,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       const goal = core.loadGoal(id);
       if (!goal) {
-        process.stderr.write(red('error: ') + `goal not found: ${id}\n`);
-        return 1;
+        return goalNotFound(id);
       }
       if (parsed.json) {
         out(JSON.stringify(goal, null, 2));
@@ -655,8 +664,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       const goal = core.loadGoal(id);
       if (!goal) {
-        process.stderr.write(red('error: ') + `goal not found: ${id}\n`);
-        return 1;
+        return goalNotFound(id);
       }
 
       // IDEMPOTENCY GUARD: `plan` appends milestones, so re-planning an already-
@@ -734,8 +742,14 @@ export async function cmdGoals(args: string[]): Promise<number> {
         );
       }
       out('');
-      out(dim('  Next: `ashlr goals advance ' + working.id + '` to run the next milestone'));
-      out(dim('        (sandboxed + proposal-only).'));
+      if (working.project) {
+        out(dim('  Next: `ashlr goals advance ' + working.id + '` to run the next milestone'));
+        out(dim('        (sandboxed + proposal-only).'));
+      } else {
+        // `advance` refuses a goal with no project, so do not point at it.
+        out(dim('  This goal has no project, so `advance` will refuse it. To run it, add a goal'));
+        out(dim('  bound to an enrolled repo: `phm goals add "<objective>" --project <repo>`.'));
+      }
       return 0;
     }
 
@@ -748,8 +762,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       const goal = core.loadGoal(id);
       if (!goal) {
-        process.stderr.write(red('error: ') + `goal not found: ${id}\n`);
-        return 1;
+        return goalNotFound(id);
       }
 
       // ENROLLMENT-SCOPING (M25 lesson): re-check the goal's project HERE before
@@ -824,11 +837,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       if (parsed.arg1) {
         const one = core.loadGoal(parsed.arg1);
         if (!one) {
-          const msg = `goal not found: ${parsed.arg1}`;
-          const next = 'List goal ids with `phm goals list`.';
-          if (parsed.json) out(JSON.stringify({ ok: false, error: msg, next }, null, 2));
-          else process.stderr.write(red('error: ') + msg + '\n       ' + next + '\n');
-          return 1;
+          return goalNotFound(parsed.arg1);
         }
         goals = [one];
       } else {
@@ -968,8 +977,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       const updated = core.reorderMilestones(id, orderedIds);
       if (!updated) {
-        process.stderr.write(red('error: ') + `goal not found: ${id}\n`);
-        return 1;
+        return goalNotFound(id);
       }
       if (parsed.json) out(JSON.stringify(updated, null, 2));
       else {
@@ -992,8 +1000,7 @@ export async function cmdGoals(args: string[]): Promise<number> {
       }
       const goal = core.loadGoal(id);
       if (!goal) {
-        process.stderr.write(red('error: ') + `goal not found: ${id}\n`);
-        return 1;
+        return goalNotFound(id);
       }
       core.deleteGoal(id);
       if (parsed.json) out(JSON.stringify({ deleted: id }, null, 2));

@@ -294,7 +294,7 @@ proposal-only path that plans and advances one bounded milestone. It does not
 grant resident or unattended conductor authority:
 
 ```sh
-ashlr goal "harden the inbox apply path"
+ashlr goal "harden the inbox apply path" --project <enrolled-repo>
 ashlr goals list                         # track progress
 ashlr goals advance <id>                 # execute the goal's next milestone
 
