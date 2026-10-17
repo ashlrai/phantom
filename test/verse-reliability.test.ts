@@ -343,7 +343,7 @@ describe('native-thread recovery', () => {
     const retry = calls[2]!;
     expect(retry.session.turnCount).toBe(0);
     expect(retry.session.nativeSessionId).not.toBe(originalNative);
-    expect(retry.text).toContain('# Continuing from an earlier Verse session');
+    expect(retry.text).toContain('# Continuing from an earlier Phantom session');
     expect(retry.text).toContain('build the parser');
     expect(retry.text.endsWith('now add tests')).toBe(true);
     const after = engine.getSession(s.id)!;

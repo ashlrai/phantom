@@ -206,10 +206,10 @@ export function findVerseSyncIo(root = repoRoot) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const violations = findVerseSyncIo();
   if (violations.length === 0) {
-    console.log('verse-sync-io: no synchronous fs/child-process calls in Verse route files');
+    console.log('verse-sync-io: no synchronous fs/child-process calls in Phantom console route files');
     process.exit(0);
   }
-  console.error(`verse-sync-io: ${violations.length} synchronous call(s) in Verse route files — a macOS privacy prompt on the folder freezes the whole sidecar:`);
+  console.error(`verse-sync-io: ${violations.length} synchronous call(s) in Phantom console route files — a macOS privacy prompt on the folder freezes the whole sidecar:`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.call}(…)  → ${v.hint}`);
   console.error(`If the call can never touch an operator folder, say why on it or on the line above: // ${ALLOW_MARKER} <reason>`);
   process.exit(1);

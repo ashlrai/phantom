@@ -9,7 +9,7 @@ What exists, what does not, and the order to build it. Written after surveying t
 |---|---|
 | Pick a project for a chat | **exists** — `NewChatDialog` lists enrolled repos plus a free-text absolute path |
 | More than one folder per project | **missing** — `VerseSession.projectPath` is a single string, and the adapters pass one `--cwd` |
-| GitHub | **partly** — `src/core/integrations/github.ts` has PRs, issues, auto-merge; none of it is reachable from Verse |
+| GitHub | **partly** — `src/core/integrations/github.ts` has PRs, issues, auto-merge; none of it is reachable from the Phantom console |
 | MCP servers | **read-only** — `src/core/mcp-registry.ts` can `discoverMcpServers()` and `redactEnv()`; nothing can add, remove or scope one |
 | Per-account CLI health | **exists, unsurfaced** — the account probes already report auth state and version per account |
 | Identity / tenant scoping | **exists outside the hub** — Locus (`src/core/integrations/locus.ts`) already models principal, tenant and sealed sessions, and the hub treats it as the source of truth for scope |
@@ -37,7 +37,7 @@ activity summary already groups by path and is the natural place to show which r
 `github.ts` already does the hard part. What is missing is surfacing it per workspace root: the
 remote and default branch, open PRs and their CI state, and the issues that could seed work.
 
-The valuable seam is the one the hub already has and Verse does not expose: an approved proposal of
+The valuable seam is the one the hub already has and the Phantom console does not expose: an approved proposal of
 kind `pr` pushes a branch and opens a real pull request. The Approvals view names the repo and the
 kind; it should also show the branch it will create and the PR it will open, before the click.
 
