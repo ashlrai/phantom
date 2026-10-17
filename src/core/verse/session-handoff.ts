@@ -78,7 +78,9 @@ import {
 // ---------------------------------------------------------------------------
 
 /** First line of every handoff note. Also how a handoff OF a handoff is recognised. */
-export const VERSE_HANDOFF_HEADER = '# Continuing from an earlier Verse session';
+export const VERSE_HANDOFF_HEADER = '# Continuing from an earlier Phantom session';
+/** The header older handoff notes were written with; still recognised when reading one back. */
+const LEGACY_HANDOFF_HEADER = '# Continuing from an earlier Verse session';
 export const VERSE_HANDOFF_FOCUS_MAX_CHARS = 500;
 
 export const HANDOFF_MAX_FILES = 60;
@@ -380,7 +382,7 @@ function extract(session: VerseSession, events: readonly VerseEvent[]): Extracte
  * Its real goal is the "Original goal" section inside that note, not the note.
  */
 function goalFrom(firstUserText: string): string {
-  if (!firstUserText.startsWith(VERSE_HANDOFF_HEADER)) return firstUserText;
+  if (!firstUserText.startsWith(VERSE_HANDOFF_HEADER) && !firstUserText.startsWith(LEGACY_HANDOFF_HEADER)) return firstUserText;
   const match = /\n## Original goal\n+([\s\S]*?)(?:\n## |\n---\n|$)/.exec(firstUserText);
   if (!match) return firstUserText;
   return match[1].split('\n').map((line) => line.replace(/^> ?/, '')).join('\n').trim() || firstUserText;

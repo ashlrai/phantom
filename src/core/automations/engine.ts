@@ -876,7 +876,7 @@ export async function receiveTelegramTask(repo: string, text: string, deps: Auto
   for (const a of automations.filter((x) => x.enabled && x.trigger.kind === 'telegram').sort((x, y) => x.name.localeCompare(y.name))) {
     if (await repoInScope(a, repo, ctx)) { chosen = a; break; }
   }
-  if (!chosen) return { ok: false, message: `No enabled Telegram automation covers ${repo}. Add one in Verse → Automations.` };
+  if (!chosen) return { ok: false, message: `No enabled Telegram automation covers ${repo}. Add one in Phantom → Automations.` };
   const event = eventFromText(repo, { text });
   if (typeof event === 'string') return { ok: false, message: event };
   const res = await intake(chosen, candidatesFor(chosen, [event], 'telegram'), ctx, ctx.now());
@@ -954,7 +954,7 @@ export async function automationsOverview(opts: { schedulerRunning: boolean; now
     automations: automations.map((a) => automationView(a, state, now)),
     firings: [...state.firings].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, OVERVIEW_FIRINGS),
     templates: [...AUTOMATION_TEMPLATES],
-    blocked: opts.schedulerRunning ? lastBlockedReason() : 'The automations scheduler is not running in this process (Verse server off, test run, or ASHLR_AUTOMATIONS_AUTO=0).',
+    blocked: opts.schedulerRunning ? lastBlockedReason() : 'The automations scheduler is not running in this process (Phantom server off, test run, or ASHLR_AUTOMATIONS_AUTO=0).',
     schedulerRunning: opts.schedulerRunning,
   };
 }
