@@ -1315,8 +1315,12 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- Async: provider registry ---
   try {
     const registry = await getProviderRegistry(cfg);
+    // With every local endpoint down (the usual fresh install), one line says
+    // so; a warning per endpoint would repeat the same fact three times.
+    const anyLocalUp = registry.providers.some(p => p.up);
+    const probed = registry.providers.map(p => `${p.id} ${p.url}`).join(', ');
 
-    for (const provider of registry.providers) {
+    for (const provider of anyLocalUp ? registry.providers : []) {
       const id = `provider:${provider.id}`;
       const label = `Local provider: ${provider.id}`;
       if (provider.up) {
@@ -1353,8 +1357,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
           'provider:active',
           'Active local provider',
           'warn',
-          'No local provider is reachable — local-first runs need --allow-cloud or a local model',
-          'Start LM Studio or Ollama (ollama serve), or use a connected Claude Code/Codex account',
+          `No local provider is reachable (probed ${probed || 'none'}) — local-first runs need --allow-cloud or a local model`,
+          'Start or install Ollama (ollama serve) or LM Studio, or use a connected Claude Code/Codex account',
         ),
       );
     } else {
