@@ -28,6 +28,8 @@ function fire(cmd: string, args: string[]): void {
       detached: true,
       stdio: 'ignore',
     });
+    // A missing opener emits 'error' asynchronously; ignore it like a throw.
+    child.on('error', () => {});
     child.unref();
   } catch {
     // best-effort — never propagate

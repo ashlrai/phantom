@@ -17,6 +17,7 @@ import {
   extractLocusConfigFirm,
   locusAgentReport,
   locusAvailable,
+  resolveLocusEnforceMode,
 } from './integrations/locus.js';
 // H7 — 5 NEW read-only probes share the SAME read-only readiness facets that
 // `ashlr preflight` uses, from the shared readiness module (single source of
@@ -349,6 +350,12 @@ function checkLocalBin(): DoctorCheck {
   if (pathDirs.includes(localBin)) {
     return check('local-bin', '~/.local/bin on PATH', 'pass', `${localBin} is on PATH`);
   }
+  // A global npm install already puts phm on PATH; the ~/.local/bin link is then only a spare.
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const phm = runCmd(finder, ['phm']);
+  if (phm) {
+    return check('local-bin', '~/.local/bin on PATH', 'pass', `not needed: phm is on PATH at ${phm.split(/\r?\n/)[0]}`);
+  }
   return check(
     'local-bin',
     '~/.local/bin on PATH',
@@ -510,18 +517,23 @@ function checkPhantom(): DoctorCheck {
  * Locus identity plane (agent report).
  * id: 'locus'
  *
- * Fail closed for missing CLI / status=unsafe. Soft-warn when protected or
- * unpinned (human must `locus enter` / `locus agent setup`). Pass only when
- * ready + healthy oneline. Names/status only — never secret values.
+ * Locus is an optional companion: a missing CLI soft-warns, matching
+ * `ashlr preflight`, unless LOCUS_ENFORCE=enforce makes it a hard failure.
+ * An installed Locus that reports status=unsafe always fails. Soft-warn when
+ * protected or unpinned (human must `locus enter` / `locus agent setup`). Pass
+ * only when ready + healthy oneline. Names/status only — never secret values.
  */
 export function checkLocus(): DoctorCheck {
   try {
     if (!locusAvailable()) {
+      const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
         'locus',
         'Locus identity plane',
-        'fail',
-        'locus not found on PATH',
+        enforce ? 'fail' : 'warn',
+        enforce
+          ? 'locus not found on PATH (required: LOCUS_ENFORCE=enforce)'
+          : 'locus not found on PATH (optional identity plane)',
         'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
@@ -695,7 +707,7 @@ function checkMcpPlugin(mcpRegistry: McpRegistry | null): DoctorCheck {
     'Phantom MCP plugin registered (ashlr)',
     'warn',
     'ashlr MCP server not found in ~/.claude/settings.json, ~/.mcp.json, or ~/.claude.json',
-    'Add the Phantom MCP server via: ashlr init  or install the compatible ashlr Claude Code plugin',
+    'Register it for Claude Code: phm mcp install claude  (or install the compatible ashlr Claude Code plugin)',
   );
 }
 
@@ -715,7 +727,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
       'MCP servers discovered',
       'warn',
       'MCP registry module not available',
-      'configure MCP servers or run ashlr init',
+      'Register installed companions: phm mcp ecosystem --write',
     );
   }
 
@@ -734,7 +746,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
     'MCP servers discovered',
     'warn',
     'No MCP servers discovered in known config locations',
-    'configure MCP servers or run ashlr init',
+    'Register installed companions: phm mcp ecosystem --write  (and phm mcp install claude for the gateway)',
   );
 }
 
@@ -1146,7 +1158,7 @@ function checkKillSwitch(): DoctorCheck {
         'Kill switch',
         'warn',
         'Kill switch is ON — autonomy paused (nothing will run)',
-        'Clear it when ready: `ashlr kill off` (or remove ~/.ashlr/KILL)',
+        'Clear it when ready: `ashlr enroll kill off` (or remove ~/.ashlr/KILL)',
       );
     }
     return check('kill-switch', 'Kill switch', 'pass', 'Kill switch is OFF');
@@ -1333,15 +1345,16 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
       }
     }
 
-    // At least one local provider must be up
+    // No reachable local provider only limits local-first runs; connected CLI
+    // accounts and the console still work. Warn, matching `ashlr preflight`.
     if (registry.activeProvider === null) {
       checks.push(
         check(
           'provider:active',
           'Active local provider',
-          'fail',
-          'No local provider is reachable — cannot run local-first AI',
-          'Start LM Studio or Ollama (ollama serve)',
+          'warn',
+          'No local provider is reachable — local-first runs need --allow-cloud or a local model',
+          'Start LM Studio or Ollama (ollama serve), or use a connected Claude Code/Codex account',
         ),
       );
     } else {

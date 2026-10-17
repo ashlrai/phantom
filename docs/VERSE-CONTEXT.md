@@ -614,6 +614,13 @@ project one shared directory instead:
   to pass on a command line. The **same bytes** are sent every turn, so the prompt prefix stays
   cache-stable; agents read the live file from the directory. The snapshot is pinned in the launch
   record (`VerseSeatLaunch.memory`), like the roots.
+- **Stale paths are marked.** When the snapshot is taken, a memory line that cites a repository path
+  that no longer exists (a backticked or slash-ended directory, a file with an extension, or a
+  markdown link to a detail file that is gone from both the memory directory and the project) gets
+  `(stale? not in the project now: …)` appended, and the block tells the agent to verify the fact
+  before relying on it. Only paths whose first segment exists at the project root are checked, and
+  globs, placeholders, URLs and build output (`node_modules`, `target`, `dist` and the like) are
+  skipped, so prose like "and/or" is never flagged. The file itself is not changed.
 - **Per engine:**
 
 | Engine | Reach | How the block is delivered |

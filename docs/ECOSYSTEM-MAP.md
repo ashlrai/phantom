@@ -4,7 +4,7 @@
 > its [machine-readable index](./ecosystem-index.json) are not a current public
 > repository list, a live integration map or a current star-count source. Newer
 > independent projects such as Locus and Lexicon are absent. For the current
-> public focus projects, start with the [Phantom README](../README.md#the-ashlr-ecosystem)
+> public focus projects, start with the [Phantom README](../README.md#the-phantom-ecosystem)
 > and each linked repository. The composition ideas below remain design targets
 > until their individual integrations are verified.
 

@@ -110,6 +110,9 @@ through `createSandboxAsync`, which waits off the event loop. The synchronous
 `acquireOutwardMutationFence` spins on `Atomics.wait`: raising its timeout does not make a waiter
 more likely to win (the holder is in the same process and holds across awaits), it just freezes the
 hang watchdog, the queue-lease renewer, the shutdown handler and the control plane for the duration.
+Only the registration (`git worktree add --no-checkout` and its validation) runs under the fence
+and the repo lease; the checkout, the post-create writer and the second validation run after both
+are released, under a creation execution lease that kill and unenroll drain.
 
 Measured after the change, four concurrent agents on four real repos:
 
