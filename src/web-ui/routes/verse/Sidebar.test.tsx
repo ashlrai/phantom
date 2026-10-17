@@ -27,6 +27,13 @@ vi.mock('./context/context-queries.js', async (importOriginal) => {
   return { ...actual, ...search };
 });
 
+// Pass-through, counted: each row render labels its seat exactly once.
+const pillLabels = vi.hoisted(() => ({ calls: 0 }));
+vi.mock('./verse-model.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./verse-model.js')>();
+  return { ...actual, seatPillLabel: (...args: Parameters<typeof actual.seatPillLabel>) => { pillLabels.calls += 1; return actual.seatPillLabel(...args); } };
+});
+
 beforeEach(() => {
   localStorage.removeItem(SIDEBAR_COLLAPSE_KEY);
   resetSidebarCollapse();
@@ -79,6 +86,35 @@ describe('Sidebar — an exhausted seat under a running turn', () => {
     const row = within(nav).getByRole('button', { name: /Fix the login bug/ });
     await user.hover(row);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Fix the login bug · Claude Max · Opus 5');
+  });
+});
+
+describe('Sidebar — rows redraw only when they change', () => {
+  const onSelect = () => {};
+  function props(sessions: VerseSession[], seats: readonly VerseSeat[]) {
+    const boot = bootstrap();
+    return { sessions, sessionsStatus: 'success' as const, sessionsError: null, projects: boot.projects, seats, selectedId: null,
+      query: '', onQuery: () => {}, onSelect, onNew: () => {}, onRetry: () => {}, onCollapse: () => {}, onDisconnect: () => {} };
+  }
+
+  it('re-renders only the chat that changed when the list is re-read', () => {
+    const chats = [session({ id: 'vs_1', title: 'One' }), session({ id: 'vs_2', title: 'Two' }), session({ id: 'vs_3', title: 'Three' })];
+    const seats = [CLAUDE_SEAT];
+    const view = render(<Sidebar {...props(chats, seats)} />);
+    pillLabels.calls = 0;
+    // A fresh list (a re-read) in which only the second chat changed, from a
+    // parent re-render with new inline callbacks: the other two rows skip.
+    view.rerender(<Sidebar {...props([chats[0]!, { ...chats[1]!, title: 'Two, renamed' }, chats[2]!], seats)} />);
+    expect(pillLabels.calls).toBe(1);
+    expect(screen.getByRole('button', { name: /Two, renamed/ })).toBeInTheDocument();
+  });
+
+  it('still redraws a row when its seat runs out', () => {
+    const chats = [session({ status: 'running' })];
+    const view = render(<Sidebar {...props(chats, [CLAUDE_SEAT])} />);
+    expect(screen.queryByRole('img', { name: /Seat limit reached/ })).not.toBeInTheDocument();
+    view.rerender(<Sidebar {...props(chats, [SPENT])} />);
+    expect(screen.getByRole('img', { name: 'Seat limit reached: weekly fable window limit reached' })).toBeInTheDocument();
   });
 });
 

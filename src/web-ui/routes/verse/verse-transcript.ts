@@ -196,12 +196,72 @@ interface CachedSegment {
   finalized: { streaming: boolean; segment: TranscriptSegment } | null;
 }
 
+/**
+ * Where the last build's log split into segments. The store only appends or
+ * inserts (a sorted, seq-deduped log of immutable events), so when the new
+ * log still holds the same event objects at the old first and last index,
+ * that prefix is unchanged and only the events after it need scanning.
+ */
+interface SegmentScan {
+  first: VerseEvent;
+  last: VerseEvent;
+  length: number;
+  starts: number[];
+}
+
+/**
+ * Tool ids of every segment but the last, for the orphan-result check. Valid
+ * while those segments are the same builds; a streamed delta only rebuilds
+ * the last one, so the check costs that segment alone.
+ */
+interface EarlierTools {
+  builds: SegmentBuild[];
+  ids: Set<string>;
+}
+
 export interface TranscriptCache {
   segments: Map<string, CachedSegment>;
+  scan?: SegmentScan;
+  earlier?: EarlierTools;
 }
 
 export function createTranscriptCache(): TranscriptCache {
   return { segments: new Map() };
+}
+
+/** Indexes where a new turn opens: 0 and every user-message / manager-message. */
+function segmentStarts(events: readonly VerseEvent[], cache: TranscriptCache | undefined): number[] {
+  const prev = cache?.scan;
+  const reuse = prev !== undefined && events.length >= prev.length && events[0] === prev.first && events[prev.length - 1] === prev.last;
+  const starts = reuse ? prev.starts.slice() : [0];
+  for (let i = reuse ? prev.length : 1; i < events.length; i += 1) {
+    const type = events[i]!.type;
+    if (type === 'user-message' || type === 'manager-message') starts.push(i);
+  }
+  if (cache) cache.scan = { first: events[0]!, last: events[events.length - 1]!, length: events.length, starts };
+  return starts;
+}
+
+/** True when a segment's tool-result answers a tool-use from an earlier segment. */
+function hasCrossSegmentResult(builds: readonly { build: SegmentBuild }[], cache: TranscriptCache | undefined): boolean {
+  const lastIndex = builds.length - 1;
+  const prev = cache?.earlier;
+  let ids: Set<string>;
+  if (prev && prev.builds.length === lastIndex && prev.builds.every((build, i) => build === builds[i]!.build)) {
+    ids = prev.ids;
+  } else {
+    ids = new Set<string>();
+    for (let i = 0; i < lastIndex; i += 1) {
+      const build = builds[i]!.build;
+      if (build.orphanResults.some((id) => ids.has(id))) {
+        if (cache) cache.earlier = undefined;
+        return true;
+      }
+      for (const id of build.toolUseIds) ids.add(id);
+    }
+    if (cache) cache.earlier = { builds: builds.slice(0, lastIndex).map((b) => b.build), ids };
+  }
+  return builds[lastIndex]!.build.orphanResults.some((id) => ids.has(id));
 }
 
 export interface BuildTranscriptOptions {
@@ -427,8 +487,7 @@ export function buildTranscript(events: VerseEvent[], options: BuildTranscriptOp
 
   // Cut at every user-message: a new ask always opens a new turn, and the
   // derivation flushes its streamed text there, so nothing spans the cut.
-  const starts: number[] = [0];
-  for (let i = 1; i < events.length; i += 1) if (events[i]!.type === 'user-message' || events[i]!.type === 'manager-message') starts.push(i);
+  const starts = segmentStarts(events, cache);
 
   const builds: Array<{ key: string; build: SegmentBuild; cached: CachedSegment | null }> = [];
   const seenKeys = new Set<string>();
@@ -456,13 +515,7 @@ export function buildTranscript(events: VerseEvent[], options: BuildTranscriptOp
   // updated that earlier card in the single-pass derivation. It never
   // happens in a real log (a result follows its call inside one turn); if it
   // does, derive the whole log in one pass rather than render it differently.
-  if (builds.length > 1) {
-    const earlier = new Set<string>();
-    for (const b of builds) {
-      if (b.build.orphanResults.some((id) => earlier.has(id))) return singlePass(events, stats);
-      for (const id of b.build.toolUseIds) earlier.add(id);
-    }
-  }
+  if (builds.length > 1 && hasCrossSegmentResult(builds, cache)) return singlePass(events, stats);
 
   let live = false;
   let usage: VerseUsage | null = null;
