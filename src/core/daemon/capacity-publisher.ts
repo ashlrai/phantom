@@ -183,7 +183,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
       const ours = status.lastPublishedAt !== null && snapshot.publishedAt === status.lastPublishedAt;
       if (!ours && age <= FOREIGN_FRESH_MS) {
         recordHistory(snapshot);
-        return set('dormant', 'another publisher (the Verse server) keeps the capacity snapshot fresh');
+        return set('dormant', 'another publisher (the Phantom server) keeps the capacity snapshot fresh');
       }
       if (ours && age < SAMPLE_EVERY_MS) return set('fresh', 'this daemon published the capacity snapshot recently');
     }
@@ -232,7 +232,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
       }
       if (stopped) return set('idle', 'the publisher stopped before publishing');
       const publishedAt = await deps.publish(cfg, collector);
-      status = { state: 'published', reason: 'this daemon published a fresh capacity snapshot (no Verse server was publishing)', lastPublishedAt: publishedAt };
+      status = { state: 'published', reason: 'this daemon published a fresh capacity snapshot (no Phantom server was publishing)', lastPublishedAt: publishedAt };
       // Record exactly what was published: re-read it, and only when it is
       // still ours (another writer may have replaced it in between).
       let written: CapacitySnapshot | null = null;

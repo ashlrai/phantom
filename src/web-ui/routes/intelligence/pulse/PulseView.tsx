@@ -25,6 +25,7 @@ import {
 import type { ActivityRollup, ProjectActivity, ModelUsage } from '../../../data/api-types.js';
 import { calendarDayStart } from '../../verse/growth/calendar-day.js';
 import styles from './PulseView.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 const WINDOWS: PulseWindow[] = ['1d', '7d', '30d'];
 
@@ -161,7 +162,7 @@ function PulseBody({ rollup }: { rollup: ActivityRollup }) {
             series={costSeries}
             area
             ariaLabel="Estimated cost over time"
-            formatX={(x) => new Date(x).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            formatX={(x) => formatDateTime(new Date(x), undefined, { month: 'short', day: 'numeric' })}
             formatY={(y) => chartFormat.formatUsd(y)}
           />
         </ChartContainer>

@@ -1,4 +1,5 @@
 /** Actual inert wrapper processes and test-owned loopback HTTP only; never vendor CLIs. */
+import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -435,6 +436,38 @@ describe('resource local-chat worker transport', () => {
     expect(await pending).toMatchObject({ status: 'cancelled', inputTokens: null, outputTokens: null });
     expect(await executeResourceWorker(worker('local'), fixture.binding, task({ timeoutMs: 30 }))).toMatchObject({ status: 'timed-out' });
     expect(fixture.requests).toHaveLength(2);
+  });
+
+  it('opens a fresh connection per task so an event-loop stall cannot reuse a server-closed keep-alive socket', async () => {
+    // Out-of-process server: it closes each idle keep-alive socket shortly
+    // after responding and advertises no Keep-Alive hint, like a real local
+    // server whose idle timeout elapses while this process runs synchronous work.
+    const child = spawn(process.execPath, ['-e', [
+      "const http=require('node:http');",
+      "const s=http.createServer((req,res)=>{req.resume();req.on('end',()=>{",
+      "process.stdout.write('REQ '+req.socket.remotePort+' '+(req.headers.connection||'')+'\\n');",
+      "res.on('finish',()=>setTimeout(()=>req.socket.destroy(),100));",
+      `res.end(${JSON.stringify(JSON.stringify(completion()))});});});`,
+      "s.keepAliveTimeout=0;s.listen(0,'127.0.0.1',()=>process.stdout.write('PORT '+s.address().port+'\\n'));",
+    ].join('')], { stdio: ['ignore', 'pipe', 'inherit'] });
+    cleanups.push(async () => { if (child.exitCode === null) { child.kill(); await new Promise(resolve => child.once('exit', resolve)); } });
+    let stdout = ''; child.stdout.setEncoding('utf8'); child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    await vi.waitFor(() => expect(stdout).toMatch(/^PORT \d+\n/), { timeout: 10_000 });
+    const binding: ResourceBinding = { workerId: 'worker-a', capacityKey: 'local-a', kind: 'local-chat',
+      endpoint: `http://127.0.0.1:${/^PORT (\d+)/.exec(stdout)![1]}/v1` };
+    const expected = { status: 'completed', output: 'fixture completed', inputTokens: 12, outputTokens: 4,
+      usageScope: 'local-chat-completion', reason: 'worker-completed' };
+    for (let generation = 0; generation < 3; generation += 1) {
+      expect(await executeResourceWorker(worker('local'), binding, task())).toEqual(expected);
+      // Let the pool release the idle socket, then stall the event loop past
+      // the server's idle close so the FIN is unobserved at the next dispatch.
+      for (let tick = 0; tick < 2; tick += 1) await new Promise(resolve => setImmediate(resolve));
+      const stallUntil = performance.now() + 400; while (performance.now() < stallUntil) { /* synchronous work */ }
+    }
+    await vi.waitFor(() => expect(stdout.match(/^REQ /gm)).toHaveLength(3));
+    const requests = [...stdout.matchAll(/^REQ (\d+) (.*)$/gm)];
+    expect(requests.map(match => match[2])).toEqual(['close', 'close', 'close']);
+    expect(new Set(requests.map(match => match[1])).size).toBe(3);
   });
 
   it('rejects a completed response past monotonic deadline even before the timer callback and retains its usage', async () => {

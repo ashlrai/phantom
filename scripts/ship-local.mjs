@@ -344,7 +344,7 @@ export function planShip(ctx) {
     // Dictation: macOS kills an app that touches the mic without this key, and ship:local
     // patches an installed bundle rather than rebuilding it, so write it every time.
     appSteps.push({ id: 'plist-mic', title: 'Info.plist: NSMicrophoneUsageDescription', argv: ['plutil', '-replace', 'NSMicrophoneUsageDescription', '-string', MIC_USAGE, join(APP_PATH, 'Contents', 'Info.plist')] });
-    appSteps.push({ id: 'plist-local-network', title: 'Info.plist: allow local Verse networking', argv: ['plutil', '-replace', 'NSAppTransportSecurity', '-json', LOCAL_NETWORK_ATS, join(APP_PATH, 'Contents', 'Info.plist')] });
+    appSteps.push({ id: 'plist-local-network', title: 'Info.plist: allow local Phantom networking', argv: ['plutil', '-replace', 'NSAppTransportSecurity', '-json', LOCAL_NETWORK_ATS, join(APP_PATH, 'Contents', 'Info.plist')] });
     const valid = ctx.signing.hash;
     appSteps.push({
       id: 'codesign',

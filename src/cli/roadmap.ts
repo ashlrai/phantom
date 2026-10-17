@@ -145,7 +145,10 @@ export const cmdRoadmap = async (args: string[]): Promise<number> => {
     }
     return 0;
   } catch (err) {
-    console.error(c.red(err instanceof Error ? err.message : String(err)));
+    const message = err instanceof Error ? err.message : String(err);
+    // --json keeps stdout machine-readable on failure too.
+    if (flags.json) console.log(JSON.stringify({ error: message }, null, 2));
+    else console.error(c.red(message));
     return 1;
   }
 };
