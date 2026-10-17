@@ -1111,6 +1111,13 @@ function textResult(payload: unknown, isError = false): NativeToolResult {
   return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
 }
 
+/** A handler's `{ error: "<reason>" }` refusal (a non-empty string error). */
+function isRefusalPayload(payload: unknown): payload is { error: string } {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const error = (payload as Record<string, unknown>)['error'];
+  return typeof error === 'string' && error.trim().length > 0;
+}
+
 /**
  * Audit one native-tool outcome. Every call site shares the same
  * 'mcp:native-call' action with null repo/sandbox and a `${tool} keys=${keys}`
@@ -1175,6 +1182,12 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
 
   try {
     const payload = await tool.handler(args, cfg);
+    // Handlers refuse with a `{ error }` payload (not enrolled, bad kind, ...).
+    // That is a failed call: flag it so clients do not read it as success.
+    if (isRefusalPayload(payload)) {
+      auditNativeCall(`${tool.name} keys=${argKeys} — refused: ${payload.error}`, 'refused');
+      return textResult(payload, true);
+    }
     auditNativeCall(`${tool.name} keys=${argKeys} — ok`, 'ok');
     if (tool.name === 'phm_task_context') {
       const { renderOutcomeTaskContextText } = await import('./verse/outcome-task-context-output.js');
