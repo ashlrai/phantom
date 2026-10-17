@@ -3,7 +3,7 @@
 # Phantom — context windows, compaction and orchestration (V3.9)
 
 Verified on this machine, 2026-09-23, from the pinned CLI binaries, each seat's own model catalog,
-every September Codex rollout on disk (1,388), Verse's own session store and the providers' published
+every September Codex rollout on disk (1,388), Phantom's own session store and the providers' published
 documentation. **No paid model was prompted to produce any number on this page.**
 
 This page is the authority for every constant in `src/core/verse/context-math.ts` and for the V3.9
@@ -14,14 +14,14 @@ user-facing tour is in [`VERSE.md`](VERSE.md#chat).
 
 What 3.8 got wrong, and why this page exists:
 
-| What Verse showed | What was true | Effect |
+| What Phantom showed | What was true | Effect |
 |---|---|---|
 | Every Claude model at a 200k window | Six of the eight run a **1M** window and compact near 967k | The meter went red at 180k and then sat at 100 % while the session grew to 967k — hiding the most expensive range there is |
 | Grok at 256k | **500k**, compacting at 400k | The meter read about twice the real fill |
 | Codex at 272k | The CLI measures against **258.4k** (95 %) and compacts near 244.8k | The denominator was wrong |
 | Codex occupancy = the turn's summed input | Occupancy is the **last call's** prompt | Across 260 recent turns the sum was a median 28.8× the last call, so the meter was pinned at 100 % |
 | `claude-opus-5.5` labelled "Opus 5.5" | The CLI resolved the dotted id to **Opus 5** | Every "Opus 5.5" turn ran Opus 5 |
-| Local seats: the CLI trusted Verse's window | The CLI assumed **200k** for an Ollama tag | It never compacted before a 64k runner overflowed |
+| Local seats: the CLI trusted Phantom's window | The CLI assumed **200k** for an Ollama tag | It never compacted before a 64k runner overflowed |
 
 Every stored reading was also clamped to the window, so an overflow was erased on disk. V3.9 stores
 readings unclamped and lets the UI decide how to draw them.
@@ -108,7 +108,7 @@ events in `~/.ashlr/agent-logs` that carry `modelUsage`.
   invalid `--session-id`, and every flag got past option parsing to "Invalid session ID", while a
   control bogus flag was rejected as an unknown option. The flags are `--autocompact`, `--add-dir`,
   `--append-system-prompt=<block>` and `--exclude-dynamic-system-prompt-sections`.
-- **`claude-opus-5.5` is an alias, not a model.** Verse 3.5–3.8 offered the dotted id. Claude Code's id
+- **`claude-opus-5.5` is an alias, not a model.** Phantom 3.5–3.8 offered the dotted id. Claude Code's id
   parser rejects the `.5` suffix and then falls back to `includes('claude-opus-5')`, so the CLI gave it
   the identity `{"modelId":"claude-opus-5.5","marketingName":"Opus 5"}`: those turns ran Opus 5. The
   canonical id is `claude-opus-5-5` (the 2.1.280 binary contains it; no binary contains the dotted
@@ -341,7 +341,7 @@ running total:
   ("Make default for this seat" in the new-chat dialog), else standard, and **always record it** —
   `contextMode: 'standard'` is written explicitly — so a record with no `contextMode` is reliably one
   created before V3.9.
-- **Sessions from before V3.9 keep the window they ran with.** Verse 3.5–3.8 passed no
+- **Sessions from before V3.9 keep the window they ran with.** Phantom 3.5–3.8 passed no
   `--autocompact`, so an old Claude chat on a 1M model compacted near 967k. A Claude record with no
   `contextMode` therefore resolves to **expansive** when its model has an expansive budget; the engine
   writes `contextMode: 'expansive'` into the record the first time the session is loaded (engine

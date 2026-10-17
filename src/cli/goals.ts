@@ -14,7 +14,7 @@
  *   ashlr goals show <id> [--json]
  *   ashlr goals plan <id> [--allow-cloud] [--max <n>]   # decompose + author specs
  *   ashlr goals advance <id>                            # sandboxed, proposal-only run of the NEXT milestone
- *   ashlr goals status [--json]                         # tracking dashboard
+ *   ashlr goals status [id] [--json]                    # tracking dashboard (one goal with an id)
  *   ashlr goals recover-stale [--dry-run] [--max <n>]    # reset stale in-progress lanes
  *   ashlr goals repair-timestamps --dry-run --json
  *   ashlr goals repair-timestamps --apply --plan-id <sha256> --json
@@ -371,7 +371,7 @@ function printHelp(): void {
   out(`    ${cyan('ashlr goals show <id>')} [--json]`);
   out(`    ${cyan('ashlr goals plan <id>')} [--allow-cloud] [--max <n>] [--replace]`);
   out(`    ${cyan('ashlr goals advance <id>')}`);
-  out(`    ${cyan('ashlr goals status')} [--json]`);
+  out(`    ${cyan('ashlr goals status')} [id] [--json]`);
   out(`    ${cyan('ashlr goals recover-stale')} [--dry-run] [--max <n>] [--json]`);
   out(`    ${cyan('ashlr goals repair-timestamps --dry-run')} [--json]`);
   out(`    ${cyan('ashlr goals repair-timestamps --apply --plan-id <sha256>')} [--json]`);
@@ -818,8 +818,22 @@ export async function cmdGoals(args: string[]): Promise<number> {
 
     // ─────────────────────────────────────────────────────────────────────
     case 'status': {
-      // READ-ONLY tracking dashboard.
-      const goals = core.listGoals();
+      // READ-ONLY tracking dashboard. With an id, roll up that one goal; an
+      // unknown id is an error, not an empty board.
+      let goals: Goal[];
+      if (parsed.arg1) {
+        const one = core.loadGoal(parsed.arg1);
+        if (!one) {
+          const msg = `goal not found: ${parsed.arg1}`;
+          const next = 'List goal ids with `phm goals list`.';
+          if (parsed.json) out(JSON.stringify({ ok: false, error: msg, next }, null, 2));
+          else process.stderr.write(red('error: ') + msg + '\n       ' + next + '\n');
+          return 1;
+        }
+        goals = [one];
+      } else {
+        goals = core.listGoals();
+      }
       const rolled = goals.map((g) => ({ goal: g, progress: core.progressOf(g) }));
       if (parsed.json) {
         out(

@@ -87,7 +87,11 @@ async function confirmExact(effectId: string): Promise<boolean> {
 
 export async function cmdRecovery(args: string[]): Promise<number> {
   const sub = args[0] ?? 'list';
-  if (sub === 'help' || sub === '--help' || sub === '-h') {
+  // `recovery <verb> --help` / `-h` prints usage before the journal is read; it
+  // was refused as a malformed effect id. An option's value is an operand.
+  const valued = new Set(['--outcome', '--expect', '--evidence', '--reason']);
+  if (sub === 'help' || sub === '--help' || sub === '-h' ||
+    args.some((arg, index) => index > 0 && (arg === '--help' || arg === '-h') && !valued.has(args[index - 1] ?? ''))) {
     help();
     return 0;
   }

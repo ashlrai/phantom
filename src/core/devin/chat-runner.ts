@@ -173,7 +173,7 @@ export async function runDevinCloudTurn(payload: DevinTurnPayload, io: DevinTurn
     if (!gate.ok) return fail(`Devin budget: ${gate.reason ?? 'refused'}`);
     const repo = await (deps.resolveRepo ?? ((path: string) => resolveGitHubOriginAuthorityAsync(path)))(payload.projectPath).catch(() => null);
     if (!repo) {
-      return fail('Devin works on a GitHub repository, and this chat’s folder has no GitHub `origin` remote Verse can read. Open the repository’s folder, or check `git remote -v`.');
+      return fail('Devin works on a GitHub repository, and this chat’s folder has no GitHub `origin` remote Phantom can read. Open the repository’s folder, or check `git remote -v`.');
     }
     io.emit({ type: 'remote-status', state: 'starting', message: `Starting a Devin session on ${repo}…`, url: null, acusConsumed: null, acuCap: null });
     const launched = await launchDevinTask({
@@ -245,7 +245,7 @@ export async function runDevinCloudTurn(payload: DevinTurnPayload, io: DevinTurn
 
   while (!io.signal.aborted) {
     if (io.now() - started > maxTurnMs) {
-      io.emit({ type: 'remote-status', state: 'working', message: 'Devin is still working. Verse stopped watching this turn; send a message to check in.', url, acusConsumed: lastAcus, acuCap });
+      io.emit({ type: 'remote-status', state: 'working', message: 'Devin is still working. Phantom stopped watching this turn; send a message to check in.', url, acusConsumed: lastAcus, acuCap });
       persist();
       return DEVIN_TURN_EXIT.ok;
     }

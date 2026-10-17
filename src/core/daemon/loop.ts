@@ -10001,6 +10001,21 @@ async function runDaemonInEnrollmentScope(
     } catch (err) {
       console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
     }
+    // A git process killed mid-update leaves packed-refs.lock / a ref .lock
+    // that fails every later ref update in that repo. Git records no owner, so
+    // the daemon only reports old ones (read-only); `phm doctor` repeats it.
+    try {
+      const { readGitLockHealth } = await import('../readiness.js');
+      const { describeStaleGitLocks } = await import('../sandbox/stale-git-locks.js');
+      const { locks } = readGitLockHealth();
+      if (locks.length > 0) {
+        const summary = describeStaleGitLocks(locks);
+        console.warn(`[ashlr] daemon: ${summary}; remove only if no git process is running there`);
+        audit({ action: 'daemon:start', repo: locks[0]!.repo, sandboxId: null, summary, result: 'error' });
+      }
+    } catch {
+      // Best-effort report: never blocks daemon start.
+    }
   }
 
   let terminalFailure: string | undefined;

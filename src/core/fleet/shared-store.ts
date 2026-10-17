@@ -29,15 +29,23 @@ import {
   fstatSync,
   lstatSync,
   readSync,
+  readFileSync,
   linkSync,
+  readdirSync,
   writeFileSync,
   renameSync,
   unlinkSync,
   constants,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { fsyncDirectory } from '../util/durability.js';
+import {
+  verifiedProcessStartIdentity,
+  type ProcessStartIdentitySource,
+  type VerifiedProcessStartIdentity,
+} from './local-store-lock.js';
 import {
   isSuppressibleWorkedOutcome,
   isWorkedOutcome,
@@ -183,7 +191,12 @@ export interface SharedQueueHealth {
     present: boolean;
     ageMs: number | null;
     stale: boolean;
-    /** Extra hard links mean a crashed/paused exact-inode guard requires operator recovery. */
+    /**
+     * Extra hard links are guards. A stale `unlink-` guard, or a stale `commit-`
+     * guard whose holder is provably dead on THIS host, is dropped by the next
+     * acquirer; any other guard (live, foreign-host or unprovable holder) is a
+     * crashed or paused exact-inode guard that requires operator recovery.
+     */
     links?: number | null;
     recoveryRequired?: boolean;
   };
@@ -199,6 +212,49 @@ const MAX_WORKED     = 2000;
 const MAX_CLAIM_SAMPLES = 12;
 /** How long (ms) a lock file may be held before it is considered stale. */
 const STALE_LOCK_MULTIPLIER = 2;
+/** Guard links pinLock / safelyUnlinkLock create next to the lock (`<lock>.<suffix>`). */
+const GUARD_SUFFIX = /^(commit|unlink)-(\d+)-([0-9a-f-]{36})\.guard$/;
+const MAX_GUARD_OWNER_BYTES = 1_024;
+const START_SOURCES: readonly ProcessStartIdentitySource[] = [
+  'self-clock-epoch-second', 'ps-lstart', 'linux-proc-start-ticks', 'windows-start-ticks',
+];
+
+let ownGuardStart: VerifiedProcessStartIdentity | null | undefined;
+function ownStartIdentity(): VerifiedProcessStartIdentity | null {
+  if (ownGuardStart === undefined) ownGuardStart = verifiedProcessStartIdentity(process.pid) ?? null;
+  return ownGuardStart;
+}
+
+/**
+ * Whether the holder recorded in a commit guard's owner sidecar is provably
+ * dead: recorded on this host, and its pid is gone (ESRCH) or now belongs to a
+ * process with a different verified start. Anything else (another host, a
+ * live pid, a missing or unreadable sidecar) is not proof.
+ */
+function commitGuardHolderDead(ownerPath: string, guardPid: number): boolean {
+  try {
+    const st = lstatSync(ownerPath);
+    if (st.isSymbolicLink() || !st.isFile() || st.size < 2 || st.size > MAX_GUARD_OWNER_BYTES) return false;
+    const owner = JSON.parse(readFileSync(ownerPath, 'utf8')) as Record<string, unknown>;
+    if (owner['host'] !== hostname() || owner['pid'] !== guardPid) return false;
+    try {
+      process.kill(guardPid, 0);
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+    const startRef = owner['startRef'];
+    const startSource = owner['startSource'];
+    if (typeof startRef !== 'string' || !START_SOURCES.includes(startSource as ProcessStartIdentitySource)) return false;
+    const observe = (): string | undefined =>
+      verifiedProcessStartIdentity(guardPid, { requiredSource: startSource as ProcessStartIdentitySource })?.ref;
+    const first = observe();
+    if (!first || first === startRef) return false;
+    const confirmed = observe();
+    return confirmed !== undefined && confirmed !== startRef;
+  } catch {
+    return false;
+  }
+}
 const MIN_STALE_LOCK_MS = 30_000;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000; // 5 min
 const MODERN_QUEUE_SCHEMA_VERSION = 2 as const;
@@ -676,7 +732,7 @@ export class SharedStore {
    * Write the queue atomically (tmp + rename). Never throws.
    * Bounds worked events to MAX_WORKED.
    */
-  private writeQueue(q: SharedFleetQueue): boolean {
+  private writeQueue(q: SharedFleetQueue, pin?: { guard: string; lock: SharedStoreLock }): boolean {
     let tmp: string | null = null;
     let fd: number | undefined;
     try {
@@ -702,6 +758,12 @@ export class SharedStore {
       fsyncSync(fd);
       closeSync(fd);
       fd = undefined;
+      // Defence in depth: never publish once the pin is broken (another
+      // acquirer dropped our guard and may already own the queue).
+      if (pin && !this.pinIntact(pin.guard, pin.lock)) {
+        try { unlinkSync(tmp); } catch { /* best effort */ }
+        return false;
+      }
       renameSync(tmp, dest);
       tmp = null;
       fsyncDirectory(this.dirPath);
@@ -758,6 +820,79 @@ export class SharedStore {
     }
   }
 
+  /**
+   * The guard hard links (`<lock>.commit-*.guard`, `<lock>.unlink-*.guard`)
+   * naming `lock`'s exact inode, each with whether the next acquirer may drop
+   * it. Callers have already established that the lock and its newest link
+   * are older than the stale window.
+   *
+   * An `unlink-` guard is droppable by that age alone: a live unlinker that
+   * resumes fails its own nlink check and unlinks nothing. A `commit-` guard is
+   * NOT: on a store spanning machines, age cannot tell a dead committer from
+   * one paused inside writeQueue (suspend, NFS hang, SIGSTOP) that would then
+   * overwrite a newer queue. It is droppable only when its owner sidecar proves
+   * a dead holder on this host (see commitGuardHolderDead).
+   */
+  private guardLinks(lock: { dev: bigint; ino: bigint }): Array<{ path: string; owner: string | null; droppable: boolean }> | null {
+    try {
+      const prefix = `${LOCK_FILENAME}.`;
+      const out: Array<{ path: string; owner: string | null; droppable: boolean }> = [];
+      for (const name of readdirSync(this.dirPath)) {
+        if (!name.startsWith(prefix)) continue;
+        const match = GUARD_SUFFIX.exec(name.slice(prefix.length));
+        if (!match) continue;
+        const guard = join(this.dirPath, name);
+        const stat = lstatSync(guard, { bigint: true });
+        if (stat.isSymbolicLink() || !stat.isFile() || stat.dev !== lock.dev || stat.ino !== lock.ino) continue;
+        if (match[1] === 'unlink') {
+          out.push({ path: guard, owner: null, droppable: true });
+        } else {
+          const owner = guard.replace(/\.guard$/, '.owner');
+          out.push({ path: guard, owner, droppable: commitGuardHolderDead(owner, Number(match[2])) });
+        }
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Drop every guard of a stale lock when all are droppable. True when only the lock's own name is left. */
+  private dropStaleGuards(lockPath: string, lock: { dev: bigint; ino: bigint }): boolean {
+    try {
+      const guards = this.guardLinks(lock);
+      if (!guards || guards.some((g) => !g.droppable)) return false;
+      for (const g of guards) {
+        unlinkSync(g.path);
+        if (g.owner) { try { unlinkSync(g.owner); } catch { /* absent */ } }
+      }
+      const after = lstatSync(lockPath, { bigint: true });
+      return after.dev === lock.dev && after.ino === lock.ino && after.nlink === 1n;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Whether a lock with extra links is old enough and every guard on it droppable. */
+  private guardsRecoverable(stat: { mtimeMs: bigint; ctimeMs: bigint; dev: bigint; ino: bigint }, now: number): boolean {
+    if (now - Number(stat.mtimeMs) <= this.staleLockMs() || now - Number(stat.ctimeMs) <= this.staleLockMs()) return false;
+    const guards = this.guardLinks(stat);
+    return guards !== null && guards.length > 0 && guards.every((g) => g.droppable);
+  }
+
+  /** Our commit pin is still exactly in place: the lock has two names, both our inode. */
+  private pinIntact(guard: string, lock: SharedStoreLock): boolean {
+    try {
+      const named = lstatSync(lock.path, { bigint: true });
+      const pinned = lstatSync(guard, { bigint: true });
+      return !named.isSymbolicLink() && named.isFile() && named.nlink === 2n &&
+        named.dev === lock.dev && named.ino === lock.ino &&
+        pinned.dev === lock.dev && pinned.ino === lock.ino;
+    } catch {
+      return false;
+    }
+  }
+
   private ownsLock(lock: SharedStoreLock): boolean {
     let fd: number | undefined;
     try {
@@ -787,11 +922,21 @@ export class SharedStore {
 
   /** Pin the exact lock inode across the queue commit so stale takeover cannot overlap it. */
   private pinLock(lock: SharedStoreLock): string | null {
-    const guard = `${lock.path}.commit-${process.pid}-${randomUUID()}.guard`;
+    const stem = `${lock.path}.commit-${process.pid}-${randomUUID()}`;
+    const guard = `${stem}.guard`;
+    const ownerPath = `${stem}.owner`;
     let linked = false;
     let pinned = false;
     try {
       if (!this.ownsLock(lock)) return null;
+      // Who holds this pin, so a same-host acquirer can later prove the holder
+      // dead. Written before the link: a guard never exists without it.
+      const start = ownStartIdentity();
+      writeFileSync(ownerPath, `${JSON.stringify({
+        host: hostname(),
+        pid: process.pid,
+        ...(start ? { startRef: start.ref, startSource: start.source } : {}),
+      })}\n`, { mode: 0o600, flag: 'wx' });
       linkSync(lock.path, guard);
       linked = true;
       const named = lstatSync(lock.path, { bigint: true });
@@ -812,6 +957,9 @@ export class SharedStore {
           if (residue.dev === lock.dev && residue.ino === lock.ino) unlinkSync(guard);
         } catch { /* fail closed */ }
       }
+      if (!pinned && !existsSync(guard)) {
+        try { unlinkSync(ownerPath); } catch { /* absent */ }
+      }
     }
   }
 
@@ -820,6 +968,9 @@ export class SharedStore {
       const pinned = lstatSync(guard, { bigint: true });
       if (pinned.dev === lock.dev && pinned.ino === lock.ino) unlinkSync(guard);
     } catch { /* residue remains fail-closed */ }
+    if (!existsSync(guard)) {
+      try { unlinkSync(guard.replace(/\.guard$/, '.owner')); } catch { /* absent */ }
+    }
   }
 
   private acquireLock(): SharedStoreLock | null {
@@ -829,8 +980,21 @@ export class SharedStore {
       // Remove stale lock if it exists and is old enough.
       if (existsSync(lp)) {
         try {
-          const stale = lstatSync(lp, { bigint: true });
-          if (stale.isSymbolicLink() || !stale.isFile() || stale.nlink !== 1n) return null;
+          let stale = lstatSync(lp, { bigint: true });
+          if (stale.isSymbolicLink() || !stale.isFile()) return null;
+          if (stale.nlink !== 1n) {
+            // A holder killed inside pinLock/unpinLock or safelyUnlinkLock leaves
+            // its guard hard link behind; the lock then never reads as stale and
+            // the queue stays wedged for good (scripts/daemon-chaos.mjs). Once
+            // the lock and its newest link (a link sets ctime) are older than
+            // the stale window, drop the guards guardLinks() rules droppable;
+            // any other guard keeps the lock fail-closed (recoveryRequired).
+            if (!this.guardsRecoverable(stale, Date.now()) || !this.dropStaleGuards(lp, stale)) {
+              return null;
+            }
+            stale = lstatSync(lp, { bigint: true });
+            if (stale.isSymbolicLink() || !stale.isFile() || stale.nlink !== 1n) return null;
+          }
           const age = Date.now() - Number(stale.mtimeMs);
           if (age > this.staleLockMs()) {
             if (!this.safelyUnlinkLock(lp, stale)) return null;
@@ -927,7 +1091,7 @@ export class SharedStore {
       const pin = this.pinLock(lock);
       if (!pin) return fallback;
       try {
-        return this.writeQueue(queue) ? result : fallback;
+        return this.writeQueue(queue, { guard: pin, lock }) ? result : fallback;
       } finally {
         this.unpinLock(pin, lock);
       }
@@ -1533,7 +1697,9 @@ export class SharedStore {
           const stat = lstatSync(lp, { bigint: true });
           const ageMs = Math.max(0, now - Number(stat.mtimeMs));
           const links = Number(stat.nlink);
-          const recoveryRequired = stat.isSymbolicLink() || !stat.isFile() || links !== 1;
+          // Extra links the next acquirer will drop on its own need no operator.
+          const recoveryRequired = stat.isSymbolicLink() || !stat.isFile() ||
+            (links !== 1 && !this.guardsRecoverable(stat, now));
           lock = {
             present: true,
             ageMs,

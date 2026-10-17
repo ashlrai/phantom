@@ -263,7 +263,10 @@ describe('mcp ecosystem --json', () => {
       name: 'phantom-secrets', label: 'Phantom Secrets (phantom-mcp)', probe: 'phantom',
       command: bin, args: ['mcp', 'serve'], registered: false,
     }]);
-    expect(obj['missing']).toEqual([{ name: 'locus', label: 'Locus (identity plane)', probe: 'locus-mcp' }]);
+    expect(obj['missing']).toEqual([
+      { name: 'locus', label: 'Locus (identity plane)', probe: 'locus-mcp' },
+      { name: 'ashlr-md', label: 'Ashlr MD (mdopener-mcp)', probe: 'mdopener-mcp' },
+    ]);
   });
 
   it('--write --json registers and reports the added servers', async () => {

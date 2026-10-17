@@ -1,4 +1,4 @@
-# Ashlr Verse — real account telemetry (verified on this machine, 2026-09-19)
+# Phantom console — real account telemetry (verified on this machine, 2026-09-19)
 
 The V2 Usage section was specced to render Claude and Grok as "unknown". That was wrong: the
 load-balancer layer already probes every provider, and the data is rich, free, and fast. This
@@ -104,8 +104,8 @@ collector is currently running. Mason's is stale (`state: "closed"`, published 2
 ## The seam — `ashlr verse` owns the collectors
 
 `ResourceConnectionMonitor` keeps its results **in memory only** and is served solely by the separate
-resource-console process. So the only way to get Claude windows and Grok billing into Verse is for the
-Verse server to run the collectors itself.
+resource-console process. So the only way to get Claude windows and Grok billing into the Phantom console is for the
+Phantom server to run the collectors itself.
 
 Implement option **(c)**: on startup, `ashlr verse` acquires
 `acquireResourceQuotaRefreshLease(<accountsRoot>/ledger, …)` and instantiates

@@ -79,3 +79,33 @@ describe('swarm --help and stray flags never resume or start agents', () => {
     expect(loadSwarm).not.toHaveBeenCalled();
   });
 });
+
+describe('swarm show <id> --json', () => {
+  function stdoutText(): string {
+    return vi.mocked(process.stdout.write).mock.calls.map((c) => String(c[0])).join('');
+  }
+
+  it('prints the swarm record as JSON', async () => {
+    expect(await cmdSwarm(['show', 'sw-1', '--json'])).toBe(0);
+    expect(loadSwarm).toHaveBeenCalledWith('sw-1');
+    expect(JSON.parse(stdoutText())).toMatchObject({ id: 'sw-1', status: 'needs-approval' });
+  });
+
+  it('an unknown id answers JSON with the next step and exits 1', async () => {
+    loadSwarm.mockReturnValue(null);
+    expect(await cmdSwarm(['show', 'nope', '--json'])).toBe(1);
+    expect(JSON.parse(stdoutText())).toEqual({
+      ok: false,
+      error: 'Swarm not found: nope',
+      next: 'List swarm ids with `phm swarms`.',
+    });
+  });
+
+  it('an unknown id without --json names the next step on stderr', async () => {
+    loadSwarm.mockReturnValue(null);
+    expect(await cmdSwarm(['show', 'nope'])).toBe(1);
+    const err = vi.mocked(process.stderr.write).mock.calls.map((c) => String(c[0])).join('');
+    expect(err).toContain('Swarm not found: nope');
+    expect(err).toContain('phm swarms');
+  });
+});

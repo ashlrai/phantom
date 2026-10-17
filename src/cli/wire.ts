@@ -3,7 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
- *   ashlr wire status [claude|codex|cursor|all]  [--config <path>]  [--json]   (read-only)
+ *   ashlr wire status [claude|codex|cursor|gemini|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
  * Target-aware, backup-first, idempotent, LOCAL only.
@@ -17,6 +17,7 @@
  */
 
 import { pad, makeColors, isTty } from './ui.js';
+import type { EditorTarget, WritableEditorTarget } from '../core/integrations/editors.js';
 
 const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -34,11 +35,11 @@ async function importEditors() {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-const VALID_TARGETS = ['claude', 'codex', 'cursor', 'all'] as const;
+const VALID_TARGETS = ['claude', 'codex', 'cursor', 'gemini', 'all'] as const;
 type WireTarget = typeof VALID_TARGETS[number];
 
 interface ParsedWireArgs {
-  targets: Array<'claude' | 'codex' | 'cursor'>;
+  targets: EditorTarget[];
   configPath?: string;
   json: boolean;
   usageError?: string;
@@ -63,7 +64,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
       configPath = val;
     } else if (VALID_TARGETS.includes(arg as WireTarget)) {
       if (explicitTarget !== null) {
-        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor all` };
+        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor gemini all` };
       }
       explicitTarget = arg as WireTarget;
     } else if (arg.startsWith('--')) {
@@ -86,7 +87,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
   // Resolve targets; 'all' and default (no target) → detect
   if (explicitTarget === 'all' || explicitTarget === null) {
     // Will be filled in at runtime via detectEditors()
-    return { targets: [] as Array<'claude' | 'codex' | 'cursor'>, configPath, json, usageError: undefined };
+    return { targets: [] as EditorTarget[], configPath, json, usageError: undefined };
   }
 
   return { targets: [explicitTarget], configPath, json };
@@ -111,7 +112,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
-    ['status',            'Read-only report of whether each client is wired (no writes, no vendor CLI).'],
+    ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
   const w = Math.max(...opts.map(([o]) => o.length));
@@ -181,10 +182,10 @@ export async function cmdWire(args: string[]): Promise<number> {
   }
 
   // Resolve targets: empty means use detectEditors()
-  const resolvedTargets: Array<'claude' | 'codex' | 'cursor'> =
+  const resolvedTargets: EditorTarget[] =
     parsed.targets.length > 0
       ? parsed.targets
-      : (mod.detectEditors() as Array<'claude' | 'codex' | 'cursor'>);
+      : (mod.detectEditors() as WritableEditorTarget[]);
 
   if (resolvedTargets.length === 0) {
     if (parsed.json) {
@@ -269,8 +270,8 @@ async function cmdWireStatus(args: string[]): Promise<number> {
     return 1;
   }
   // Status reports every client, not just detected ones.
-  const targets: Array<'claude' | 'codex' | 'cursor'> =
-    parsed.targets.length > 0 ? parsed.targets : ['claude', 'codex', 'cursor'];
+  const targets: EditorTarget[] =
+    parsed.targets.length > 0 ? parsed.targets : [...mod.ALL_EDITOR_TARGETS];
   const rows = targets.map(target =>
     mod.inspectEditorWiring(target, parsed.configPath ? { configPath: parsed.configPath } : {}));
 

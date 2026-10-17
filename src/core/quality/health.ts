@@ -350,6 +350,18 @@ function scoreDimension(
 // ---------------------------------------------------------------------------
 
 /**
+ * The not-enrolled refusal, naming the next step: the exact enroll command, or
+ * the active lens when enrollment is narrowed (enrolling again would not help).
+ */
+function notEnrolledForHealth(abs: string): string {
+  const lenses = activeEnrollmentLenses();
+  const quoted = /^[\w@%+=:,./-]+$/u.test(abs) ? abs : `'${abs.replace(/'/g, `'\\''`)}'`;
+  return `repo not enrolled for health review: ${abs}` + (lenses.length > 0
+    ? ` (enrollment narrowed to: ${lenses.join('; ')})`
+    : `; enroll it with \`ashlr enroll add ${quoted}\``);
+}
+
+/**
  * Compute the per-repo HealthScore for `repo` (an absolute path).
  *
  * Runs all six SCANNERS (in parallel; each individually bounded + never throws)
@@ -376,7 +388,7 @@ export async function computeHealth(repo: string): Promise<HealthScore> {
   // CORE-layer enrollment guard (invariant #2): never disk-scan a non-enrolled
   // path, no matter which caller reaches here. HARD-ERROR before any scanner runs.
   if (!isEnrolled(abs)) {
-    throw new Error(`repo not enrolled for health review: ${abs}`);
+    throw new Error(notEnrolledForHealth(abs));
   }
 
   // Read-only scanner sweep + convention probe (both never-throw-guarded).
@@ -520,7 +532,7 @@ export async function computeReport(opts?: HealthOptions): Promise<HealthReport>
       const abs = resolve(r);
       if (!isEnrolled(abs)) {
         // HARD-ERROR — never silently scan a non-enrolled path.
-        throw new Error(`repo not enrolled for health review: ${abs}`);
+        throw new Error(notEnrolledForHealth(abs));
       }
       repos.push(abs);
     }

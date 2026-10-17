@@ -57,6 +57,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
   'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
   'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
+  'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
   'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
@@ -201,6 +202,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-review-benchmark.test.ts', // fixed calibration through real ledger and loopback transport
   'test/resource-pool-cli.test.ts', // explicit private manifests and CLI output files
   'test/resource-codex-account-probe.test.ts', // native metadata protocol and owned subprocess cleanup
+  'test/role-completion.test.ts', // Mac cases launch a fixture app-server, the metadata helper and a sandboxed exec child (~2.9 s on Mac CI)
   'test/codex-selected-producer.test.ts', // real pinned inert Codex processes, private login copies and captured Git edits
   'test/resource-probe-cli.test.ts', // private commissioning reports and signal ownership
   'test/resource-quota-console.test.ts', // actual foreground collector, HTTP and subprocess lifecycle
@@ -304,6 +306,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-file-operations-runner.test.ts', // frozen snapshot admission with private Git fixtures
   'test/universe-campaign-integration.test.ts', // native multi-generation ownership, feedback and durable resource limits
   'test/universe-portfolio-integration.test.ts', // native cross-Universe dependency ordering and concurrent campaign settlement
+  'test/cli-help-no-side-effects.test.ts', // ~750 real CLI subprocesses (every command/verb x --help/-h) in private sandboxes; one bounded beforeAll
   'test/universe-portfolio-resource-integration.test.ts', // shared resource ledger and confined cross-Universe dependency execution
   'test/universe-resource-quota-integration.test.ts', // inert native metadata capture before confined Universe generation
   'test/universe-capacity-wait-integration.test.ts', // parallel inert campaigns sharing collector and worker capacity
@@ -336,6 +339,8 @@ export const REAL_IO_TEST_FILES = [
   'test/npm-cli-launch.test.ts', // spawns the real npm CLI — 3.5s slowest test in the quiet baseline
   'test/m310.queued-autonomy-work.test.ts', // real queued autonomy work over real fs — 9.6s slowest test in the quiet baseline
   'test/m245.self-improve-integration.test.ts', // real self-improve integration loop — 4.7s slowest test in the quiet baseline
+  'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
+  'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
   'test/m482.release-artifact-contract.test.ts', // real npm pack/install release artifact contract (68.1s single test — keeps its own 180s override below) — 68.1s slowest test in the quiet baseline
@@ -364,6 +369,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m42.engineer-tools.test.ts', // real git worktree/merge/apply subprocess work — 7.1s slowest test in the quiet baseline
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
   'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
+  'test/stale-git-locks.test.ts', // real git repos and worktrees, real doctor run
   'test/daemon-start-temp-worktree-sweep.test.ts', // real git worktrees, dead-pid child processes and a real runDaemon start
   'test/m48.automerge-pass.test.ts', // real git worktree/merge/apply subprocess work — 5.2s slowest test in the quiet baseline
   'test/m56.branch-apply.test.ts', // real git worktree/merge/apply subprocess work — 3.2s slowest test in the quiet baseline
@@ -388,6 +394,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m417.sandbox-cleanup-quiescence.test.ts', // real fs lock/sandbox lifecycle work — 4.8s slowest test in the quiet baseline
   'test/m426.sandbox-reservation-identity.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
   'test/sandbox-create-two-phase.test.ts', // real git through a PATH shim: slow and failing checkouts, KILL armed during populate
+  'test/sandbox-git-supervisor.test.ts', // real Node supervisors + git PATH shim: cwd-pin refusal, runner death, rollback drain
   'test/m463.claimed-batch-admission.test.ts', // real fs lock/sandbox lifecycle work — 7.4s slowest test in the quiet baseline
   'test/m490.daemon-state-recovery-cli.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
 

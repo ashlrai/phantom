@@ -286,7 +286,8 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
       background: false,
       dryRun: false,
       allowCloud: false,
-      json: false,
+      // `swarm show <id> --json` prints the record as JSON (cmdSwarmShow honours it).
+      json: args.slice(2).includes('--json'),
       noCapture: false,
       yes: false,
       force: false,
@@ -637,10 +638,11 @@ async function cmdSwarmShow(id: string, jsonMode: boolean): Promise<number> {
 
   if (!swarm) {
     const msg = `Swarm not found: ${id}`;
+    const next = 'List swarm ids with `phm swarms`.';
     if (jsonMode) {
-      process.stdout.write(JSON.stringify({ error: msg }) + '\n');
+      process.stdout.write(JSON.stringify({ ok: false, error: msg, next }) + '\n');
     } else {
-      process.stderr.write(red('error: ') + msg + '\n');
+      process.stderr.write(red('error: ') + msg + '\n       ' + next + '\n');
     }
     return 1;
   }
@@ -1472,6 +1474,11 @@ export async function cmdSwarm(args: string[]): Promise<number> {
  * `ashlr swarms [--json]` — list all persisted swarms (newest first).
  */
 export async function cmdSwarms(args: string[]): Promise<number> {
+  // `swarms --help` / `-h` prints usage before the swarm store is read.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSwarmHelp();
+    return 0;
+  }
   const jsonMode = args.includes('--json');
 
   let store: StoreMod;
