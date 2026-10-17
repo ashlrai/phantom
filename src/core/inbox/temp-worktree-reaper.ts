@@ -24,12 +24,19 @@
  *   - only a `vwt-` entry's branch matching refs/heads/ashlr/verify/<hex> is
  *     deleted. `mwt-` is detached and `mergewt-` holds the default branch:
  *     their branches are never touched.
+ *
+ * Daemon start additionally runs {@link sweepLeakedTempWorktreesAtStart}: it
+ * derives each leftover's owning repo from the leftover's own `.git` pointer
+ * and runs the same reaper there under that repo's mirror lease, so a crashed
+ * daemon's leftovers do not wait for the next merge in that repo.
  */
 
 import { execFileSync } from 'node:child_process';
-import { lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { isMirrorPath, mirrorLeaseKey } from '../fleet/mirrors.js';
+import { withRepoLease } from '../sandbox/execution-leases.js';
 import {
   verifiedProcessStartIdentity,
   type ProcessStartIdentitySource,
@@ -252,4 +259,121 @@ export function reapLeakedTempWorktrees(
     if (mutated) gitTry(repo, ['worktree', 'prune']);
   } catch { /* never throws */ }
   return result;
+}
+
+/** How long the start-time sweep waits for a busy mirror lease before skipping that repo. */
+export const START_SWEEP_MIRROR_LEASE_WAIT_MS = 2_000;
+const MAX_GIT_POINTER_BYTES = 4_096;
+
+/**
+ * The repo a temp worktree directory belongs to, read from its `.git` pointer
+ * (`gitdir: <common-dir>/worktrees/<name>`). Null for anything that is not a
+ * plain linked-worktree pointer named after the directory.
+ */
+export function tempWorktreeOwningRepo(dir: string): string | null {
+  try {
+    const name = basename(dir);
+    if (!TEMP_WORKTREE_NAME.test(name)) return null;
+    const pointer = join(dir, '.git');
+    const st = lstatSync(pointer);
+    if (!st.isFile() || st.size > MAX_GIT_POINTER_BYTES) return null;
+    const adminDir = /^gitdir: (.+)$/m.exec(readFileSync(pointer, 'utf8'))?.[1]?.trim();
+    if (!adminDir || !isAbsolute(adminDir)) return null;
+    // git suffixes the admin dir with a number when the name is already taken.
+    const adminName = basename(adminDir);
+    if (adminName !== name && !(adminName.startsWith(name) && /^\d+$/.test(adminName.slice(name.length)))) {
+      return null;
+    }
+    if (basename(dirname(adminDir)) !== 'worktrees') return null;
+    const commonDir = dirname(dirname(adminDir));
+    const repo = basename(commonDir) === '.git' ? dirname(commonDir) : commonDir;
+    return lstatSync(repo).isDirectory() ? repo : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every repo owning at least one `vwt-` / `mwt-` / `mergewt-` directory in the ashlr tmp dir. */
+export function leakedTempWorktreeRepos(): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(ashlrTmpDir());
+  } catch {
+    return [];
+  }
+  const repos = new Set<string>();
+  for (const name of names.sort()) {
+    if (!TEMP_WORKTREE_NAME.test(name)) continue;
+    const repo = tempWorktreeOwningRepo(join(ashlrTmpDir(), name));
+    if (repo) repos.add(repo);
+  }
+  return [...repos];
+}
+
+/** `fn` under the repo's mirror lease when it is a fleet mirror, directly otherwise; null when busy. */
+async function underStartSweepLease<T>(repo: string, fn: () => T): Promise<{ value: T } | null> {
+  let mirror = false;
+  try {
+    mirror = isMirrorPath(repo);
+  } catch {
+    mirror = false;
+  }
+  if (!mirror) return { value: fn() };
+  const leased = await withRepoLease(mirrorLeaseKey(repo), () => fn(), { waitMs: START_SWEEP_MIRROR_LEASE_WAIT_MS });
+  return leased.ok ? { value: leased.value } : null;
+}
+
+export interface StartTempWorktreeSweepResult {
+  /** Repos the leftovers pointed at. */
+  repos: number;
+  reaped: number;
+  kept: number;
+  failed: number;
+  branchesDeleted: number;
+  /** Repos skipped because their mirror lease stayed busy or the reaper threw. */
+  skippedRepos: number;
+}
+
+export interface StartTempWorktreeSweepOptions extends ReapTempWorktreesOptions {
+  /** Test seam; production uses {@link reapLeakedTempWorktrees}. */
+  reap?: (repo: string, options: ReapTempWorktreesOptions) => ReapTempWorktreesResult;
+}
+
+/**
+ * Daemon-start sweep: reap leaked temp worktrees in every repo that still has
+ * one in the ashlr tmp dir, under the same mirror lease inbox/merge.ts holds
+ * for its verify `worktree add`. Only the reaper's fail-closed owner rules
+ * decide what is removed, so another live process's worktree is always kept.
+ * The reaper already runs `git worktree prune` in a repo it mutated. Never throws.
+ */
+export async function sweepLeakedTempWorktreesAtStart(
+  options: StartTempWorktreeSweepOptions = {},
+): Promise<StartTempWorktreeSweepResult> {
+  const total: StartTempWorktreeSweepResult = {
+    repos: 0, reaped: 0, kept: 0, failed: 0, branchesDeleted: 0, skippedRepos: 0,
+  };
+  const { reap = reapLeakedTempWorktrees, ...reapOptions } = options;
+  let repos: string[];
+  try {
+    repos = leakedTempWorktreeRepos();
+  } catch {
+    return total;
+  }
+  total.repos = repos.length;
+  for (const repo of repos) {
+    try {
+      const leased = await underStartSweepLease(repo, () => reap(repo, reapOptions));
+      if (!leased) {
+        total.skippedRepos += 1;
+        continue;
+      }
+      total.reaped += leased.value.reaped.length;
+      total.kept += leased.value.kept.length;
+      total.failed += leased.value.failed.length;
+      total.branchesDeleted += leased.value.branchesDeleted.length;
+    } catch {
+      total.skippedRepos += 1;
+    }
+  }
+  return total;
 }
