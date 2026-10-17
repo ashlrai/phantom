@@ -73,8 +73,10 @@ export function memoryEmbeddingTexts(snapshot: unknown, query: unknown): string[
  * Pure: builds the pack's `semantic` option from precomputed vectors keyed by exact text. Returns null when the query or any
  * fact text has no vector, so a partial embedding run never silently ranks some facts by meaning and others not.
  */
-export function memorySemanticOption(snapshot: unknown, query: unknown, vectors: ReadonlyMap<string, readonly number[]>, minScore: number): MemoryPackOptions['semantic'] | null {
-  if (!validMemorySnapshot(snapshot) || !validMemoryPackQuery(query) || !Number.isFinite(minScore) || minScore < -1 || minScore > 1) return null;
+export function memorySemanticOption(snapshot: unknown, query: unknown, vectors: ReadonlyMap<string, readonly number[]>, minScore: number,
+  singleTermFloor: number | null = null): MemoryPackOptions['semantic'] | null {
+  const unit = (value: number): boolean => Number.isFinite(value) && value >= -1 && value <= 1;
+  if (!validMemorySnapshot(snapshot) || !validMemoryPackQuery(query) || !unit(minScore) || (singleTermFloor !== null && !unit(singleTermFloor))) return null;
   const target = vectors.get(query.query);
   if (!target) return null;
   const scores: Record<string, number> = {};
@@ -84,5 +86,5 @@ export function memorySemanticOption(snapshot: unknown, query: unknown, vectors:
     if (!candidate) return null;
     scores[event.eventId] = Math.round(memoryCosine(target, candidate) * 1e6) / 1e6;
   }
-  return { scores, minScore };
+  return singleTermFloor === null ? { scores, minScore } : { scores, minScore, singleTermFloor };
 }

@@ -120,13 +120,16 @@ function numbers(text: string): Set<string> { return new Set(text.match(/\d+(?:\
  * `semantic` is an optional, caller-computed meaning signal (for example cosine similarity from a local embedding model).
  * The kernel never computes it: it stays pure and offline. Lexical matches always outrank meaning-only matches; a fact with
  * no lexical match is admitted only when its score reaches `minScore`, and then ranks by that score below every lexical match.
+ * With `singleTermFloor`, a fact that shares only one query term is dropped when its score is below that floor: one shared
+ * word ("password", "pager") is the usual way a question nothing answers still pulls in an unrelated fact.
  */
-export interface MemoryPackOptions { changedSourceIds: string[]; semantic?: { scores: Record<string, number>; minScore: number } }
+export interface MemoryPackOptions { changedSourceIds: string[]; semantic?: MemorySemanticOption }
+export interface MemorySemanticOption { scores: Record<string, number>; minScore: number; singleTermFloor?: number }
 const unitScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= -1 && value <= 1;
 function validSemantic(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
-  const { scores, minScore, ...rest } = value as { scores?: unknown; minScore?: unknown };
-  if (Object.keys(rest).length || !unitScore(minScore) || !scores || typeof scores !== 'object' || Object.getPrototypeOf(scores) !== Object.prototype) return false;
+  const { scores, minScore, singleTermFloor, ...rest } = value as { scores?: unknown; minScore?: unknown; singleTermFloor?: unknown };
+  if (Object.keys(rest).length || !unitScore(minScore) || ('singleTermFloor' in value && !unitScore(singleTermFloor)) || !scores || typeof scores !== 'object' || Object.getPrototypeOf(scores) !== Object.prototype) return false;
   const entries = Object.entries(scores);
   return entries.length <= MEMORY_LIMITS.events && entries.every(([id, score]) => validMemoryId(id) && unitScore(score));
 }
@@ -158,11 +161,12 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     if (!validMemoryPackQuery(query)) { output.receipt.stopReasons.push('invalid-query'); return output; }
   } catch { output.receipt.stopReasons.push('invalid-query'); return output; }
   let changed: Set<string>;
-  let semantic: { scores: Map<string, number>; minScore: number } | null = null;
+  let semantic: { scores: Map<string, number>; minScore: number; singleTermFloor: number | null } | null = null;
   try {
     if (!validOptions(optionsInput)) { output.receipt.stopReasons.push('invalid-options'); return output; }
     changed = new Set(optionsInput.changedSourceIds);
-    if (optionsInput.semantic) semantic = { scores: new Map(Object.entries(optionsInput.semantic.scores)), minScore: optionsInput.semantic.minScore };
+    if (optionsInput.semantic) semantic = { scores: new Map(Object.entries(optionsInput.semantic.scores)), minScore: optionsInput.semantic.minScore,
+      singleTermFloor: optionsInput.semantic.singleTermFloor ?? null };
   } catch { output.receipt.stopReasons.push('invalid-options'); return output; }
   output.receipt.time = query.time;
   output.receipt.scope = { projectId: query.projectId, ownerId: query.ownerId, audienceId: query.audienceId };
@@ -211,7 +215,8 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
   const ranked = eligibleWords.map(({ event, words: set }) => {
     const matched = [...search].filter(word => matches(word, set));
     const meaning = semantic?.scores.get(event.eventId) ?? null;
-    const lexical = search.size ? matched.length : 1;
+    const weak = matched.length === 1 && semantic?.singleTermFloor != null && meaning !== null && meaning < semantic.singleTermFloor;
+    const lexical = weak ? 0 : search.size ? matched.length : 1;
     const score = lexical || (semantic && meaning !== null && meaning >= semantic.minScore ? SEMANTIC_ONLY_SCORE : 0);
     return { event, score, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
       exact: matched.filter(word => set.has(word)).length, meaning: meaning ?? -1 };

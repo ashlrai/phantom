@@ -10,6 +10,8 @@ import { memoryBenchmarkCases, runMemoryBenchmark, type MemoryBenchmarkBuilder, 
 import { memoryEmbeddingTexts, memorySemanticOption, type MemoryEmbedder } from './memory-embeddings.js';
 
 export const MEMORY_EMBED_THRESHOLDS: readonly number[] = Object.freeze(Array.from({ length: 15 }, (_, index) => Math.round((0.2 + index * 0.05) * 100) / 100));
+/** Single-term floors tried after minScore is chosen. `off` keeps every one-word lexical match. */
+export const MEMORY_EMBED_SINGLE_TERM_FLOORS: readonly number[] = Object.freeze([0.1, 0.2, 0.3, 0.4, 0.5]);
 const VALIDATION = /^retrieval:(unseen|fresh|second-fresh)/;
 
 /** Which side of the protocol a case is on. */
@@ -35,9 +37,9 @@ function groups(report: MemoryBenchmarkReport): Record<string, Record<string, [n
   }
   return out;
 }
-export function memoryEmbedBuilder(vectors: ReadonlyMap<string, readonly number[]>, minScore: number): MemoryBenchmarkBuilder {
+export function memoryEmbedBuilder(vectors: ReadonlyMap<string, readonly number[]>, minScore: number, singleTermFloor: number | null = null): MemoryBenchmarkBuilder {
   return (snapshot, query, options) => {
-    const semantic = memorySemanticOption(snapshot, query, vectors, minScore);
+    const semantic = memorySemanticOption(snapshot, query, vectors, minScore, singleTermFloor);
     const base = (options ?? { changedSourceIds: [] }) as Record<string, unknown>;
     return buildMemoryContextPack(snapshot, query, semantic ? { ...base, semantic } : base);
   };
@@ -45,6 +47,8 @@ export function memoryEmbedBuilder(vectors: ReadonlyMap<string, readonly number[
 export interface MemoryEmbedComparison {
   protocol: 'phantom-memory-embedding-comparison-v1'; model: string; casesDigest: string; thresholds: number[];
   tuningPassesByThreshold: Record<string, number>; chosenThreshold: number;
+  /** Tuning passes at the chosen threshold for each single-term floor; `off` is the threshold alone. A floor is kept only when it passes more. */
+  tuningPassesBySingleTermFloor: Record<string, number>; chosenSingleTermFloor: number | null;
   groups: Record<string, Record<string, [number, number]>>; overall: Record<string, MemoryBenchmarkReport['arms'][number]['overall']>;
 }
 /** Embeds every distinct benchmark text once, then scores. Returns null when the embedder fails (callers fall back). */
@@ -60,15 +64,23 @@ export async function compareMemoryEmbeddings(embedder: MemoryEmbedder, batch = 
     if (!result || result.length !== chunk.length) return null;
     chunk.forEach((text, index) => vectors.set(text, result[index]));
   }
+  const tuningPasses = (builder: MemoryBenchmarkBuilder): number => runMemoryBenchmark([{ arm: 'embed', builder }]).arms[0].cases
+    .filter(entry => !entry.pendingDecision && entry.pass && memoryEmbedCaseSet(entry.id) === 'tuning').length;
   const tuningPassesByThreshold: Record<string, number> = {};
   let chosen = MEMORY_EMBED_THRESHOLDS[0], best = -1;
   for (const threshold of MEMORY_EMBED_THRESHOLDS) {
-    const report = runMemoryBenchmark([{ arm: 'embed', builder: memoryEmbedBuilder(vectors, threshold) }]);
-    const passes = report.arms[0].cases.filter(entry => !entry.pendingDecision && entry.pass && memoryEmbedCaseSet(entry.id) === 'tuning').length;
-    tuningPassesByThreshold[threshold.toFixed(2)] = passes;
+    const passes = tuningPassesByThreshold[threshold.toFixed(2)] = tuningPasses(memoryEmbedBuilder(vectors, threshold));
     if (passes >= best) { best = passes; chosen = threshold; }
   }
-  const report = runMemoryBenchmark([{ arm: 'governed', builder: buildMemoryContextPack }, { arm: 'governed+embedding', builder: memoryEmbedBuilder(vectors, chosen) }]);
+  // Second stage, still on tuning cases only: does dropping weak one-word matches help at the chosen threshold?
+  const tuningPassesBySingleTermFloor: Record<string, number> = { off: best };
+  let floor: number | null = null, floorBest = best;
+  for (const candidate of MEMORY_EMBED_SINGLE_TERM_FLOORS) {
+    const passes = tuningPassesBySingleTermFloor[candidate.toFixed(2)] = tuningPasses(memoryEmbedBuilder(vectors, chosen, candidate));
+    if (passes > floorBest) { floorBest = passes; floor = candidate; }
+  }
+  const report = runMemoryBenchmark([{ arm: 'governed', builder: buildMemoryContextPack }, { arm: 'governed+embedding', builder: memoryEmbedBuilder(vectors, chosen, floor) }]);
   return { protocol: 'phantom-memory-embedding-comparison-v1', model: embedder.model, casesDigest: report.casesDigest, thresholds: [...MEMORY_EMBED_THRESHOLDS],
-    tuningPassesByThreshold, chosenThreshold: chosen, groups: groups(report), overall: Object.fromEntries(report.arms.map(arm => [arm.arm, arm.overall])) };
+    tuningPassesByThreshold, chosenThreshold: chosen, tuningPassesBySingleTermFloor, chosenSingleTermFloor: floor,
+    groups: groups(report), overall: Object.fromEntries(report.arms.map(arm => [arm.arm, arm.overall])) };
 }
