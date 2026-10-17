@@ -158,6 +158,41 @@ describe('launchCloudTask — success', () => {
   });
 });
 
+describe('launchCloudTask — lessons trial', () => {
+  const NOTE = 'Run the tracker suite with --pool=forks before pushing.';
+  async function approveNote(): Promise<string> {
+    const { updateKnowledge, noteIdFor } = await import('../src/core/learn/retro/store.js');
+    const scope = { repo: REQ.repo, pathGlobs: [], taskKinds: [] };
+    const id = noteIdFor(NOTE, scope);
+    await updateKnowledge((notes) => ({ notes: [...notes, { v: 1 as const, id, text: NOTE, scope, status: 'approved' as const, retroId: null, source: 'mason' as const,
+      createdAt: '2026-10-01T00:00:00.000Z', decidedAt: '2026-10-01T00:00:00.000Z', edited: false, hits: 0, lastHitAt: null, seen: 0, agentsMdTaskId: null }], result: undefined }));
+    return id;
+  }
+
+  it('the served arm gets the lessons and records the notes that applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'served' });
+    expect(h.prompts[0]).toContain(NOTE);
+    expect(res.task!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+  });
+
+  it('the holdout arm runs without them but still records which notes applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(h.prompts[0]).not.toContain(NOTE);
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'holdout', noteIds: [id] });
+  });
+
+  it('a launch no note applies to is not in the trial', async () => {
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(readCloudTask(res.task!.id)).not.toHaveProperty('lessons');
+  });
+});
+
 describe('launchCloudTask — playbooks (3.15)', () => {
   it('no playbook: the task has no playbookRef and the prompt is exactly task text + contract', async () => {
     const h = harness();

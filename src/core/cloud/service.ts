@@ -27,6 +27,8 @@ import { cloudBudgetView } from './budget.js';
 import { declaredMcpServers, ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
 import { buildCloudPrompt, companionToolsBlock } from './delivery-contract.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
+import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { lessonArm, type LessonArm } from '../improve/lesson-trial.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { launchCloudSession, readCloudSeatArgv, SEAT_NOT_READY_REASON, type CloudLaunchDeps } from './launcher.js';
 import { CLOUD_REPO_PATTERN, listCloudTasks, newCloudTaskId, readCloudBudget, writeCloudTask } from './store.js';
@@ -39,6 +41,8 @@ export interface CloudServiceDeps {
   now?: () => Date;
   /** Acceptance check for backlog items with `doneWhen` (default: GitHub contents at the default branch). */
   doneCheck?: DoneChecker;
+  /** Lessons-trial arm for a task id (default: improve/lesson-trial.ts lessonArm with the configured holdout). */
+  lessonArm?: (taskId: string) => LessonArm;
 }
 
 /** Internal launches (Leader approvals, self-improvement) carry their origin + backlog item. */
@@ -187,10 +191,17 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       writeCloudTask(task);
       const checkout = await ensureCloudCheckout(repo, baseBranch, deps.checkout);
       if (!checkout.ok) return fail(checkout.failure, checkout.message);
-      const lessons = knowledgeBlockFor(
+      // Lessons trial (improve/lesson-trial.ts): a fixed share of launches
+      // eligible for lessons runs without them, so their effect on landing
+      // is measured against a holdout instead of assumed.
+      const block = knowledgeBlockFor(
         { repo: task.repo, paths: [], kind: null, text: `${task.title}\n${task.prompt}` },
-        { fromLeader: task.origin === 'leader' },
-      ).text;
+        { fromLeader: task.origin === 'leader', recordHits: false },
+      );
+      const arm = block.noteIds.length > 0 ? (deps.lessonArm ?? lessonArm)(task.id) : 'served';
+      if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
+      if (arm === 'served' && block.noteIds.length > 0) void recordKnowledgeHits(block.noteIds);
+      const lessons = arm === 'served' ? block.text : '';
       const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path))) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {

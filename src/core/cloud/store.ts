@@ -211,9 +211,18 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
     && (value['supersededBy'] === undefined || isSupersededBy(value['supersededBy'], value['repo'] as string))
     && (value['intake'] === undefined || isIntakeMemo(value['intake']))
     && (value['playbookRef'] === undefined || isPlaybookRef(value['playbookRef']))
+    && (value['lessons'] === undefined || isLessons(value['lessons']))
     && typeof value['estimatedCostUsd'] === 'number' && Number.isFinite(value['estimatedCostUsd']) && value['estimatedCostUsd'] >= 0
     && isNullableString(value['backlogItemId'])
     && isNullableString(value['needsYouId']);
+}
+
+function isLessons(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const l = v as Record<string, unknown>;
+  return (l['arm'] === 'served' || l['arm'] === 'holdout')
+    && Array.isArray(l['noteIds']) && l['noteIds'].length <= 64
+    && l['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
 }
 
 function taskPath(id: string): string {

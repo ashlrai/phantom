@@ -98,6 +98,12 @@ export interface CloudTaskReport {
   toolsUsed?: string[];
 }
 
+/** Which arm of the lessons holdout a launch ran in, and the knowledge notes that applied to it. */
+export interface CloudTaskLessons {
+  arm: 'served' | 'holdout';
+  noteIds: string[];
+}
+
 export interface CloudTaskPr {
   number: number;
   url: string;
@@ -178,6 +184,8 @@ export interface CloudTaskV1 {
   intake?: CloudIntakeMemo;
   /** 3.15: the playbook version this task runs under (playbooks/); absent = none. */
   playbookRef?: PlaybookRef;
+  /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
+  lessons?: CloudTaskLessons;
   /** Budget accounting — an ESTIMATE fixed at launch. */
   estimatedCostUsd: number;
   /** Backlog item this task came from (self-improvement), if any. */

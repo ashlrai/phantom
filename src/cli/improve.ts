@@ -8,6 +8,7 @@
  *   observe  --repo <dir>                                    record merges of registered PRs and reverts that undo them
  *   discover [--repo owner/name] [--dry-run] [--json]        add backlog items from member issues, a red default branch and proposals
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
+ *   lessons  [--json]                                        lessons trial: cloud runs with lessons vs the holdout without them
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -22,7 +23,8 @@ const USAGE = `Usage:
   phm improve sync-backlog
   phm improve discover [--repo <owner/name>] [--dry-run] [--json]
   phm improve observe --repo <dir>
-  phm improve promote <id> --repo <dir> [--queue-merge] [--json]`;
+  phm improve promote <id> --repo <dir> [--queue-merge] [--json]
+  phm improve lessons [--json]`;
 
 export async function cmdImprove(argv: string[]): Promise<number> {
   const args = [...argv];
@@ -36,6 +38,7 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     case 'observe': return observe(val('--repo'));
     case 'discover': return discover(val('--repo'), args.includes('--dry-run'), args.includes('--json'));
     case 'promote': return promote(args[1], val('--repo'), !args.includes('--queue-merge'), args.includes('--json'));
+    case 'lessons': return lessons(args.includes('--json'));
     default: console.error(USAGE); return 2;
   }
 }
@@ -239,4 +242,17 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
     else console.log(['! not promoted:', ...decision.reasons.map((r) => `  - ${r}`)].join('\n'));
     return decision.admit ? 0 : 1;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
+}
+
+async function lessons(json: boolean): Promise<number> {
+  const [{ listCloudTasks }, { readLedger, scoreOutcomes }, trial] = await Promise.all([
+    import('../core/cloud/store.js'), import('../core/improve/outcomes.js'), import('../core/improve/lesson-trial.js')]);
+  const reverted = new Set(scoreOutcomes(readLedger().records).filter((o) => o.reverted && o.pr).map((o) => trial.prKey(o.pr!.repository, o.pr!.number)));
+  const report = trial.lessonTrial(listCloudTasks(), reverted);
+  if (json) { console.log(JSON.stringify(report, null, 2)); return 0; }
+  console.log(`Lessons trial (holdout ${Math.round(report.holdout * 100)}% of eligible cloud launches run without lessons)`);
+  console.log(trial.renderLessonEffect(report.overall));
+  for (const e of report.byNote) console.log(`  ${trial.renderLessonEffect(e)}`);
+  if (report.excluded.launchFailed || report.excluded.unfinished) console.log(`Not counted: ${report.excluded.launchFailed} launch failure(s), ${report.excluded.unfinished} still running.`);
+  return 0;
 }
