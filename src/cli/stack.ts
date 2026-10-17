@@ -50,6 +50,11 @@ export const _stackInternals: { confirm: (q: string) => Promise<boolean> } = {
 
 function cmdStackStatus(jsonMode: boolean): number {
   if (!stackInstalled()) {
+    if (jsonMode) {
+      // --json keeps stdout machine-readable: same shape stackStatus() reports.
+      process.stdout.write(JSON.stringify({ ok: false, detail: 'stack not installed' }, null, 2) + '\n');
+      return 1;
+    }
     return printNotInstalled();
   }
 
@@ -217,13 +222,15 @@ function printStackHelp(): void {
 export async function cmdStack(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
 
-  if (sub === '--help' || sub === '-h' || sub === 'help') {
+  // `stack <verb> --help` / `-h` explains itself before the stack binary is
+  // looked up: the verbs took the flag as a passthrough arg or a service name.
+  if (sub === '--help' || sub === '-h' || sub === 'help' || rest.includes('--help') || rest.includes('-h')) {
     printStackHelp();
     return 0;
   }
 
-  // No subcommand → status
-  if (sub === undefined || sub === 'status') {
+  // No subcommand → status (`ashlr stack --json` is `ashlr stack status --json`)
+  if (sub === undefined || sub === 'status' || sub === '--json') {
     const jsonMode = args.includes('--json');
     return cmdStackStatus(jsonMode);
   }

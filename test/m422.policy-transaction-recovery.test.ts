@@ -3,20 +3,23 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { recoverEnrollmentRegistry } from '../src/core/sandbox/policy.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
+import { bundlePolicyModuleForChildren, type PolicyChildBundle } from './helpers/policy-child-bundle.js';
 
-const policyModuleUrl = new URL('../src/core/sandbox/policy.ts', import.meta.url).href;
-// Hosted Windows shards can take ~20s to cold-start tsx while other authority
-// tests contend for CPU. Match the workflow's existing 30s per-test budget so
-// the harness does not kill a healthy recovery subprocess prematurely.
+// Children import a pre-bundled policy module (see policy-child-bundle.ts), but
+// on hosted Windows each one still runs PowerShell ACL checks while other
+// authority tests contend for CPU. Match the workflow's existing 30s per-test
+// budget so the harness does not kill a healthy recovery subprocess prematurely.
 const policyChildTimeoutMs = process.platform === 'win32' ? 30_000 : 8_000;
 // The suite deadline must outlive a child's own deadline so Vitest never
 // aborts recovery while spawnSync is still deciding whether the child hung.
 const policySuiteTimeoutMs = process.platform === 'win32' ? policyChildTimeoutMs + 5_000 : 15_000;
 const children = new Set<ChildProcess>();
+let policyBundle: PolicyChildBundle;
+let policyModuleUrl: string;
 let home: string;
 let previousHome: string | undefined;
 let previousUserProfile: string | undefined;
@@ -117,7 +120,7 @@ function runPolicy(repo: string | null): { result?: unknown; repos: string[] } {
   const source = repo === null
     ? `import { listEnrolled } from ${JSON.stringify(policyModuleUrl)}; process.stdout.write(JSON.stringify({ repos: listEnrolled() }));`
     : `import { enroll, listEnrolled } from ${JSON.stringify(policyModuleUrl)}; const result = enroll(${JSON.stringify(repo)}, { waitMs: 1000 }); process.stdout.write(JSON.stringify({ result, repos: listEnrolled() }));`;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source], {
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
     cwd: process.cwd(),
     env: { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr') },
     encoding: 'utf8',
@@ -132,7 +135,7 @@ function runEnrollmentSnapshot(): unknown {
   const source =
     `import { readEnrollmentRegistry } from ${JSON.stringify(policyModuleUrl)}; ` +
     `process.stdout.write(JSON.stringify(readEnrollmentRegistry()));`;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source], {
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
     cwd: process.cwd(),
     env: { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr') },
     encoding: 'utf8',
@@ -142,6 +145,15 @@ function runEnrollmentSnapshot(): unknown {
   expect(child.status, child.stderr).toBe(0);
   return JSON.parse(child.stdout) as unknown;
 }
+
+beforeAll(async () => {
+  policyBundle = await bundlePolicyModuleForChildren();
+  policyModuleUrl = policyBundle.moduleUrl;
+});
+
+afterAll(() => {
+  policyBundle?.dispose();
+});
 
 beforeEach(() => {
   previousHome = process.env.HOME;

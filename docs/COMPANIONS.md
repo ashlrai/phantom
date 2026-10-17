@@ -28,6 +28,23 @@ artifact provenance, runtime contract support or installed readiness. Verify
 the selected release artifacts before a separate manual installation. The
 workbench command is `phm` (compatible `ashlr`); `phantom` belongs to Secrets.
 
+## Follow producer setup guides
+
+Links marked **reviewed unmerged source** point to producer-owned documentation
+corrections that have not been merged or released. Other links are source guides
+at inspected commits. Neither label proves an installed tool or service is ready;
+choose trusted artifacts and the matching setup guide for the release you use.
+Stack, Cortex and Ashlr MD are independent tools outside this three-tool inventory.
+
+| Product | Producer setup guides | Setup boundary |
+| --- | --- | --- |
+| Phantom Secrets | [Install — source guide](https://github.com/ashlrai/phantom-secrets/blob/59004c50ae3ceb7f2c292a5f532d6504cc0f96fc/docs/getting-started.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/phantom-secrets/blob/2cb7594a527e23f98f1aa8922bf5627af146cfd8/README.md#mcp-integration-claude-code-cursor-windsurf-codex) | Inventory does not initialize a project or inspect vault health. |
+| Locus | [Install — source guide](https://github.com/ashlrai/locus/blob/98e7020a7dbc02053525e66c02db83bc301564cf/README.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/locus/blob/35ce8b5763b04cbda68c19c5f8c40ed054332355/docs/mcp.md) | Registration does not establish a pinned, supervised execution session. |
+| Lexicon | [Agent installation — source guide](https://github.com/ashlrai/lexicon/blob/757f83976d63b5ffad91257cb1bae2bb555a6e96/llms-install.md) · [MCP and project trust — source guide](https://github.com/ashlrai/lexicon/blob/757f83976d63b5ffad91257cb1bae2bb555a6e96/docs/MCP.md) | Project-bound MCP and native voice-service setup remain separate. |
+| Ashlr Stack | [Install — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#connect-your-agent-mcp) | Independent; published 0.1.1 requires Bun 1.2+ and declares Node 20+. |
+| Ashlr Cortex | [Source setup — reviewed unmerged source](https://github.com/ashlrai/ashlr-cortex/blob/0e83cd3f635ebb66d2f747dd78ffd05540253161/AGENTS.md#2-monorepo-map) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/ashlr-cortex/blob/0e83cd3f635ebb66d2f747dd78ffd05540253161/docs/mcp.md) | Independent; database, identity and MCP token setup are separate. |
+| Ashlr MD | [Install — source guide](https://github.com/ashlrai/ashlr-md/blob/ff75b57eb923a2c570e657c5c2c0eed720445a0e/docs/INSTALL.md) · [Agent and MCP setup — reviewed unmerged source](https://github.com/ashlrai/ashlr-md/blob/d8d3b18cf17eb8fe0c286f87465561dbdcd7e848/README.md#connect-your-agent-mcp) | Independent; verify the installed MCP executable for your OS and client. |
+
 ## Select an installation explicitly
 
 Default discovery examines absolute directories in PATH. Empty/relative PATH
@@ -84,8 +101,22 @@ See [product names](PHANTOM-BRAND.md) and [first-run guidance](QUICKSTART.md#ope
 
 ## Register an already installed MCP server
 
-`phm mcp ecosystem` inspects existing Secrets and Locus MCP executable paths
-and their registration entries. Detection does not execute, download or start
+`phm mcp ecosystem` inspects existing MCP executable paths and their
+registration entries for three companions:
+
+| Server name | Executable looked up on PATH | Launched as |
+| --- | --- | --- |
+| `phantom-secrets` | `phantom` | `phantom mcp serve` |
+| `locus` | `locus-mcp` | `locus-mcp` with the Locus identity environment |
+| `ashlr-md` (optional) | `mdopener-mcp` | `mdopener-mcp` |
+
+Ashlr MD is optional: `phm mcp doctor` only requires `ashlr`, `phantom-secrets`
+and `locus`, so a missing `mdopener-mcp` is reported and skipped, never an
+error. Once registered, the `phm mcp` gateway lists each server's tools with
+the server name as a prefix, for example `ashlr-md__<tool>`.
+
+Detection does not execute, download or start
+those servers. Detection does not execute, download or start
 those servers. It requires a regular executable with a native binary header,
 ignores relative PATH directories and deduplicates symlinks to the same physical
 file. Multiple distinct candidates or unsupported/bootstrap launchers are
@@ -100,6 +131,8 @@ existing identity-environment repair. Unreadable, empty or malformed existing se
 writing, so repair the file first. Valid unrelated keys and server entries are
 preserved. Registration alone does not initialize a vault or prove a handshake.
 
-This helper does not register Lexicon. Its project-bound stdio MCP server and the
-desktop's separately configured native voice service have different setup and
-trust requirements; neither is started by companion inventory.
+This helper does not register Lexicon or Stack. Their MCP servers start through
+Node or Bun launchers, which the native-executable rule above refuses. Lexicon's
+project-bound stdio MCP server and the desktop's separately configured native
+voice service also have different setup and trust requirements; neither is
+started by companion inventory.

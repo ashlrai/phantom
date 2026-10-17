@@ -42,7 +42,7 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { availableParallelism, homedir, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -183,32 +183,130 @@ function releaseSandboxCleanupAuthority(lease: SandboxCleanupAuthorityLease): vo
 // ---------------------------------------------------------------------------
 
 /**
- * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. Conservative default:
- * the daemon caps swarm concurrency at 8 (loop.ts) + runner MAX_PARALLEL=8, so
- * 16 leaves ~2x headroom for concurrent daemon swarms + a manual `ashlr swarm`
- * + transient overlap, while still bounding unbounded accumulation. createSandbox
- * sweeps STALE orphans first, then REFUSES (clean audited error) if still over.
+ * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. createSandbox sweeps
+ * STALE orphans first, then REFUSES (clean audited error) if still over.
+ *
+ * MACHINE-DERIVED DEFAULT: the default cap is sized to the host instead of a
+ * fixed number. Each live sandbox costs a full working-tree checkout (objects
+ * are shared), ~50 KB of git admin data, a scratch branch, O(n) cap-check and
+ * orphan-sweep work under the creation lock, and an agent process (~160 MB RSS
+ * measured). So the derived value is
+ *   min(cpus * SANDBOX_CAP_PER_CPU, floor(totalmem / SANDBOX_CAP_MEM_PER_AGENT))
+ * clamped to [SANDBOX_CAP_FLOOR, SANDBOX_CAP_CEILING]. The floor is the old
+ * fixed default (16): it already leaves ~2x headroom over the daemon's default
+ * total dispatch concurrency of 8 (daemon/count-preferences.ts), so a small
+ * machine never gets a tighter cap than before. The ceiling keeps the O(n)
+ * work under the creation lock and the worst-case disk footprint bounded on
+ * very large hosts. Free disk space is deliberately NOT an input: the floor
+ * means it could only ever move the cap between the derived value and 16, the
+ * per-sandbox checkout size depends on the repository being sandboxed, and a
+ * full disk already fails `git worktree add` cleanly. The machine-derived value
+ * is computed once per process (cpu count and total memory do not change).
  *
  * CONFIGURABLE: an operator (or a deterministic test) may override the default
  * via ASHLR_MAX_SANDBOXES (a positive integer). Resolved at CALL TIME — like the
  * HOME-sensitive path helpers — so a test can set a small cap without restarting
  * the process. An absent/blank/invalid/non-positive value falls back to the
- * conservative default; the override can only ever SET a finite positive bound
- * (it can never disable the cap), keeping this a strictly LOCAL resource guard.
+ * machine-derived default; the override can only ever SET a finite positive
+ * bound (it can never disable the cap), keeping this a strictly LOCAL resource
+ * guard. The override is not clamped: an operator may set it below the floor or
+ * above the ceiling.
  */
-const MAX_SANDBOXES_DEFAULT = 16;
+export const SANDBOX_CAP_FLOOR = 16;
+export const SANDBOX_CAP_CEILING = 64;
+/** Sandboxes allowed per logical CPU (agents mostly wait on inference). */
+export const SANDBOX_CAP_PER_CPU = 2;
+/** Memory budgeted per sandboxed agent (~3x the measured ~160 MB RSS). */
+export const SANDBOX_CAP_MEM_PER_AGENT = 512 * 1024 * 1024;
 
-/** Resolve the effective sandbox cap (env override, else conservative default). */
-function maxSandboxes(): number {
-  const raw = process.env.ASHLR_MAX_SANDBOXES;
+/** Host facts the default sandbox cap is derived from. */
+export interface SandboxCapMachine {
+  /** Logical CPUs available to this process (os.availableParallelism()). */
+  cpus: number;
+  /** Total system memory in bytes (os.totalmem()). */
+  totalMemBytes: number;
+}
+
+/** The effective sandbox cap and where it came from. */
+export interface SandboxCapResolution {
+  cap: number;
+  /** 'env' = ASHLR_MAX_SANDBOXES override; 'machine' = derived from the host. */
+  source: 'env' | 'machine';
+  /** One-line human explanation, for doctor and diagnostics. */
+  reason: string;
+}
+
+/**
+ * Pure derivation of the default cap from host facts. Non-finite or
+ * non-positive inputs count as the minimum (1 CPU, 0 bytes), which lands on
+ * the floor. Never throws.
+ */
+export function deriveSandboxCap(machine: SandboxCapMachine): SandboxCapResolution {
+  const cpus = Number.isFinite(machine.cpus) && machine.cpus >= 1 ? Math.floor(machine.cpus) : 1;
+  const mem = Number.isFinite(machine.totalMemBytes) && machine.totalMemBytes > 0 ? machine.totalMemBytes : 0;
+  const byCpu = cpus * SANDBOX_CAP_PER_CPU;
+  const byMem = Math.floor(mem / SANDBOX_CAP_MEM_PER_AGENT);
+  const derived = Math.min(byCpu, byMem);
+  const cap = Math.min(SANDBOX_CAP_CEILING, Math.max(SANDBOX_CAP_FLOOR, derived));
+  const gib = (mem / 1024 ** 3).toFixed(1);
+  const clamp = derived < SANDBOX_CAP_FLOOR
+    ? `, raised to the floor ${SANDBOX_CAP_FLOOR}`
+    : derived > SANDBOX_CAP_CEILING
+      ? `, lowered to the ceiling ${SANDBOX_CAP_CEILING}`
+      : '';
+  return {
+    cap,
+    source: 'machine',
+    reason: `derived from ${cpus} CPUs and ${gib} GiB RAM (min(${byCpu}, ${byMem}) = ${derived}${clamp})`,
+  };
+}
+
+function readSandboxCapMachine(): SandboxCapMachine {
+  let cpus = 1;
+  try {
+    cpus = availableParallelism();
+  } catch {
+    cpus = 1;
+  }
+  let totalMemBytes = 0;
+  try {
+    totalMemBytes = totalmem();
+  } catch {
+    totalMemBytes = 0;
+  }
+  return { cpus, totalMemBytes };
+}
+
+let machineSandboxCap: SandboxCapResolution | null = null;
+
+/**
+ * Resolve the effective sandbox cap: a valid ASHLR_MAX_SANDBOXES override wins
+ * (read on every call), else the machine-derived default (computed once per
+ * process). `machine` injects host facts for tests and bypasses the cache.
+ * Never throws.
+ */
+export function resolveSandboxCap(opts?: {
+  env?: NodeJS.ProcessEnv;
+  machine?: SandboxCapMachine;
+}): SandboxCapResolution {
+  const raw = (opts?.env ?? process.env).ASHLR_MAX_SANDBOXES;
   if (raw !== undefined && raw.trim() !== '') {
     const n = Number.parseInt(raw, 10);
     // Only a finite, positive integer override takes effect; anything else
-    // (NaN, <=0, non-numeric) falls back to the safe default. The override can
-    // never remove the bound — it can only set a different finite positive one.
-    if (Number.isInteger(n) && n > 0) return n;
+    // (NaN, <=0, non-numeric) falls back to the machine default. The override
+    // can never remove the bound — it can only set a different finite one.
+    if (Number.isInteger(n) && n > 0) {
+      return { cap: n, source: 'env', reason: `ASHLR_MAX_SANDBOXES=${n}` };
+    }
   }
-  return MAX_SANDBOXES_DEFAULT;
+  if (opts?.machine) return deriveSandboxCap(opts.machine);
+  machineSandboxCap ??= deriveSandboxCap(readSandboxCapMachine());
+  return machineSandboxCap;
+}
+
+/** Resolve the effective sandbox cap (env override, else machine-derived default). */
+function maxSandboxes(): number {
+  return resolveSandboxCap().cap;
 }
 
 /**
@@ -353,11 +451,66 @@ export const DAEMON_GIT_FORCED_CONFIG: readonly (readonly [string, string])[] = 
 ] as const);
 
 /**
- * `env` plus DAEMON_GIT_FORCED_CONFIG as GIT_CONFIG_COUNT entries. Existing
- * well-formed entries are kept and ours are appended AFTER them (the last
- * value wins, so ours hold); a malformed count is replaced rather than trusted.
+ * Content filter drivers (`filter.<name>.clean|smudge|process`) are the same
+ * kind of configured program, but under a name the attacker picks, so no
+ * fixed key can null them. `worktree add` runs smudge on checkout and `add -A`
+ * runs clean, for any path an attribute maps to the driver — `.gitattributes`
+ * in the checked-out tree, or `$GIT_DIR/info/attributes`, which
+ * `--attr-source` does not cover. The drivers defined in the repository's own
+ * config (local / worktree scope, includes counted where they are included)
+ * are read first and each is nulled at command scope; global and system
+ * drivers (git-lfs) are the operator's own and stay.
  */
-export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+const FILTER_DRIVER_KEY_RE = /^filter\.(.+)\.(?:clean|smudge|process|required)$/;
+const REPO_CONFIG_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+
+/** Driver names from `git config --show-scope --null --name-only --get-regexp '^filter\.'` output. */
+export function repoScopedFilterDrivers(listing: string): string[] {
+  const parts = listing.split('\0');
+  const names = new Set<string>();
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const match = FILTER_DRIVER_KEY_RE.exec(parts[i + 1]!);
+    if (match && REPO_CONFIG_SCOPES.has(parts[i]!)) names.add(match[1]!);
+  }
+  return [...names].sort();
+}
+
+/** Command-scope entries that leave each named filter driver with no program to run. */
+export function filterDriverOverrides(names: readonly string[]): (readonly [string, string])[] {
+  return names.flatMap((name) => [
+    [`filter.${name}.process`, ''],
+    [`filter.${name}.clean`, ''],
+    [`filter.${name}.smudge`, ''],
+    [`filter.${name}.required`, 'false'],
+  ] as const);
+}
+
+const FILTER_LISTING_ARGS = ['config', '--show-scope', '--null', '--name-only', '--get-regexp', '^filter\\.'] as const;
+
+/**
+ * The overrides for the repository `git <prefix> config` resolves from `cwd`.
+ * Reading config runs no program. Exit 1 is "no filter keys"; any other
+ * failure throws, so a call that cannot be hardened is never made.
+ */
+function repoFilterOverrides(file: string, prefix: readonly string[], cwd: string, env: NodeJS.ProcessEnv): (readonly [string, string])[] {
+  try {
+    const listing = execFileSync(file, [...prefix, ...FILTER_LISTING_ARGS], {
+      cwd, env: withDaemonGitHardening(env), timeout: GIT_TIMEOUT, stdio: 'pipe', encoding: 'utf8',
+    });
+    return filterDriverOverrides(repoScopedFilterDrivers(listing));
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 1) return [];
+    throw new Error('could not read the repository filter configuration');
+  }
+}
+
+/**
+ * `env` plus DAEMON_GIT_FORCED_CONFIG (and `extra`, e.g. filterDriverOverrides)
+ * as GIT_CONFIG_COUNT entries. Existing well-formed entries are kept and ours
+ * are appended AFTER them (the last value wins, so ours hold); a malformed
+ * count is replaced rather than trusted.
+ */
+export function withDaemonGitHardening(env: NodeJS.ProcessEnv, extra: readonly (readonly [string, string])[] = []): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env };
   const raw = out.GIT_CONFIG_COUNT;
   let count = raw !== undefined && /^\d{1,3}$/.test(raw) ? Number.parseInt(raw, 10) : 0;
@@ -367,7 +520,7 @@ export function withDaemonGitHardening(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   if (count === 0) {
     for (const key of Object.keys(out)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) delete out[key];
   }
-  for (const [key, value] of DAEMON_GIT_FORCED_CONFIG) {
+  for (const [key, value] of [...DAEMON_GIT_FORCED_CONFIG, ...extra]) {
     out[`GIT_CONFIG_KEY_${count}`] = key;
     out[`GIT_CONFIG_VALUE_${count}`] = value;
     count += 1;
@@ -382,10 +535,11 @@ function gitRun(cwd: string, args: string[]): string {
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_COMMON_DIR;
+  const filters = repoFilterOverrides('git', [], cwd, env);
   return execFileSync('git', args, {
-    // hooks / fsmonitor / pager / credential helpers off (see withDaemonGitHardening).
+    // hooks / fsmonitor / pager / credential helpers / repo filter drivers off (see withDaemonGitHardening).
     cwd,
-    env: withDaemonGitHardening(env),
+    env: withDaemonGitHardening(env, filters),
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
@@ -413,52 +567,132 @@ interface PinnedWorktreeCreationResult {
   adminIno?: string;
   /** Runner step durations (ms), present only under ASHLR_SANDBOX_TIMING=1. */
   timing?: Record<string, number>;
+  /**
+   * Git supervisors the runner started ahead of their command (`prewarmed`),
+   * and how many commands took a warm one (`warm`) or had to start one on
+   * demand (`cold`). Present only under ASHLR_SANDBOX_TIMING=1.
+   */
+  supervisors?: Record<string, number>;
 }
 
 const PINNED_GIT_SUPERVISOR = String.raw`
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { lstatSync } = require('node:fs');
 
-const [cwd, repositoryContext, sourceRepo, ...gitArgs] = process.argv.slice(1);
-const gitEnv = { ...process.env };
-if (gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS) {
-  gitEnv.NODE_OPTIONS = gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-} else {
-  delete gitEnv.NODE_OPTIONS;
-}
-delete gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-delete gitEnv.GIT_DIR;
-delete gitEnv.GIT_WORK_TREE;
-delete gitEnv.GIT_COMMON_DIR;
-if (repositoryContext === 'pinned') {
-  gitEnv.GIT_DIR = '.';
-} else if (repositoryContext === 'linked') {
-  // A linked worktree's own administrative directory and work tree, exactly
-  // as git worktree add hands them to its checkout.
-  gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
-  gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
-}
-delete gitEnv.ASHLR_LINKED_GIT_DIR;
-delete gitEnv.ASHLR_LINKED_WORK_TREE;
+// One supervisor runs exactly ONE git command. The runner may start it before
+// it knows the command (a warm supervisor, so its Node start-up overlaps the
+// runner's earlier steps instead of sitting on the critical path); the command
+// then arrives as the first IPC message. An idle supervisor whose runner went
+// away exits without running anything. One whose runner went away while its
+// git runs ends that git's whole tree first: nothing may keep mutating the
+// repository after the runner (and so its caller's fence) is gone.
+let commandReceived = false;
+let cwd;
+let gitArgs;
+let gitEnv;
+let destinationPin = null;
+let gitChild = null;
+process.once('disconnect', () => {
+  if (commandReceived) {
+    try {
+      if (process.platform === 'win32') {
+        if (gitChild && typeof gitChild.pid === 'number') {
+          spawnSync('taskkill.exe', ['/PID', String(gitChild.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+        }
+      } else {
+        // This supervisor leads its own process group (the runner starts it
+        // detached), which holds git and everything git started.
+        process.kill(-process.pid, 'SIGKILL');
+      }
+    } catch { /* exit below */ }
+  }
+  process.exit(0);
+});
+process.once('message', (command) => {
+  commandReceived = true;
+  try {
+    configure(command);
+  } catch (error) {
+    send({ status: null, stdout: '', stderr: '', error: 'invalid git supervisor command: ' + String(error) });
+    return;
+  }
+  start();
+});
 
-const destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
-  parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
-  parentDev: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV,
-  parentIno: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_INO,
-  homePath: gitEnv.ASHLR_PINNED_DESTINATION_HOME_PATH,
-  homeDev: gitEnv.ASHLR_PINNED_DESTINATION_HOME_DEV,
-  homeIno: gitEnv.ASHLR_PINNED_DESTINATION_HOME_INO,
-  metadataPath: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH,
-  metadataDev: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV,
-  metadataIno: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_INO,
-  worktreePath: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH,
-  worktreeDev: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV,
-  worktreeIno: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO,
-  allowWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE === '1',
-  requireWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE === '1',
-} : null;
-for (const key of Object.keys(gitEnv)) {
-  if (key.startsWith('ASHLR_PINNED_DESTINATION')) delete gitEnv[key];
+function configure(command) {
+  if (!command || typeof command !== 'object' || !Array.isArray(command.argv) ||
+      command.argv.length < 3 || !command.argv.every((value) => typeof value === 'string') ||
+      !command.env || typeof command.env !== 'object') {
+    throw new Error('malformed command');
+  }
+  const [commandCwd, repositoryContext, , ...commandGitArgs] = command.argv;
+  cwd = commandCwd;
+  gitArgs = commandGitArgs;
+  // The per-command keys arrive with the command; none inherited at start-up.
+  gitEnv = { ...process.env };
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith('ASHLR_PINNED_DESTINATION') || key.startsWith('ASHLR_LINKED_')) delete gitEnv[key];
+  }
+  for (const [key, value] of Object.entries(command.env)) {
+    if (typeof value === 'string' &&
+        (key.startsWith('ASHLR_PINNED_DESTINATION') || key.startsWith('ASHLR_LINKED_'))) gitEnv[key] = value;
+  }
+  // A relative cwd ('.') means the runner's working directory when it handed
+  // the command over, by inode (a cold supervisor inherited exactly that).
+  // The runner sends that identity; a supervisor started before the runner
+  // moved there moves now and must land on exactly that inode (git then
+  // inherits it), or the command fails closed without starting git.
+  if (cwd === '.') {
+    const pin = command.cwdPin;
+    if (!pin || typeof pin.path !== 'string' || typeof pin.dev !== 'string' || typeof pin.ino !== 'string') {
+      throw new Error('working directory identity unavailable');
+    }
+    if (!samePinnedDirectory('.', pin.dev, pin.ino)) {
+      process.chdir(pin.path);
+      if (!samePinnedDirectory('.', pin.dev, pin.ino)) {
+        throw new Error('working directory identity changed before git command');
+      }
+    }
+  }
+  if (gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS) {
+    gitEnv.NODE_OPTIONS = gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  } else {
+    delete gitEnv.NODE_OPTIONS;
+  }
+  delete gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  delete gitEnv.GIT_DIR;
+  delete gitEnv.GIT_WORK_TREE;
+  delete gitEnv.GIT_COMMON_DIR;
+  if (repositoryContext === 'pinned') {
+    gitEnv.GIT_DIR = '.';
+  } else if (repositoryContext === 'linked') {
+    // A linked worktree's own administrative directory and work tree, exactly
+    // as git worktree add hands them to its checkout.
+    gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
+    gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
+  }
+  delete gitEnv.ASHLR_LINKED_GIT_DIR;
+  delete gitEnv.ASHLR_LINKED_WORK_TREE;
+
+  destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
+    parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
+    parentDev: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV,
+    parentIno: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_INO,
+    homePath: gitEnv.ASHLR_PINNED_DESTINATION_HOME_PATH,
+    homeDev: gitEnv.ASHLR_PINNED_DESTINATION_HOME_DEV,
+    homeIno: gitEnv.ASHLR_PINNED_DESTINATION_HOME_INO,
+    metadataPath: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH,
+    metadataDev: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV,
+    metadataIno: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_INO,
+    worktreePath: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH,
+    worktreeDev: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV,
+    worktreeIno: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO,
+    allowWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE === '1',
+    requireWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE === '1',
+  } : null;
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith('ASHLR_PINNED_DESTINATION')) delete gitEnv[key];
+  }
 }
 
 let sent = false;
@@ -526,39 +760,42 @@ function destinationStillPinned() {
   );
 }
 
-let git;
-try {
-  if (!destinationStillPinned()) {
-    send({ status: null, stdout: '', stderr: '', error: 'sandbox reservation identity changed before git command' });
-  } else {
-    git = spawn('git', gitArgs, {
-      cwd,
-      env: gitEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
+function start() {
+  let git;
+  try {
+    if (!destinationStillPinned()) {
+      send({ status: null, stdout: '', stderr: '', error: 'sandbox reservation identity changed before git command' });
+    } else {
+      git = spawn('git', gitArgs, {
+        cwd,
+        env: gitEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      gitChild = git;
+    }
+  } catch (error) {
+    send({ status: null, stdout: '', stderr: '', error: String(error) });
+  }
+  if (git) {
+    const destinationMonitor = destinationPin === null ? null : setInterval(() => {
+      if (!destinationStillPinned()) {
+        send({ status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
+      }
+    }, 1);
+    git.stdout.on('data', (chunk) => { stdout = capture(stdout, chunk); });
+    git.stderr.on('data', (chunk) => { stderr = capture(stderr, chunk); });
+    git.on('error', (error) => {
+      if (destinationMonitor !== null) clearInterval(destinationMonitor);
+      send({ status: null, stdout, stderr, error: error instanceof Error ? error.message : String(error) });
+    });
+    git.on('close', (status, signal) => {
+      if (destinationMonitor !== null) clearInterval(destinationMonitor);
+      send(destinationStillPinned()
+        ? { status, stdout, stderr, ...(signal ? { error: 'git exited on ' + signal } : {}) }
+        : { status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
     });
   }
-} catch (error) {
-  send({ status: null, stdout: '', stderr: '', error: String(error) });
-}
-if (git) {
-  const destinationMonitor = destinationPin === null ? null : setInterval(() => {
-    if (!destinationStillPinned()) {
-      send({ status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
-    }
-  }, 1);
-  git.stdout.on('data', (chunk) => { stdout = capture(stdout, chunk); });
-  git.stderr.on('data', (chunk) => { stderr = capture(stderr, chunk); });
-  git.on('error', (error) => {
-    if (destinationMonitor !== null) clearInterval(destinationMonitor);
-    send({ status: null, stdout, stderr, error: error instanceof Error ? error.message : String(error) });
-  });
-  git.on('close', (status, signal) => {
-    if (destinationMonitor !== null) clearInterval(destinationMonitor);
-    send(destinationStillPinned()
-      ? { status, stdout, stderr, ...(signal ? { error: 'git exited on ' + signal } : {}) }
-      : { status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
-  });
 }
 
 // The command runner owns this supervisor's process group/tree and kills it
@@ -779,64 +1016,147 @@ async function joinOwnedTree(supervisor, closed) {
   }
 }
 
+// Supervisors started ahead of their command (see PINNED_GIT_SUPERVISOR).
+// Each still runs exactly one git command in its own process group and is
+// killed and joined after it, exactly like one started on demand; starting it
+// early only takes its Node start-up off the path between two git commands.
+// Unused ones are killed and joined before the runner reports its result.
+const warmSupervisors = [];
+const retiredSupervisors = [];
+const supervisorCounts = { prewarmed: 0, warm: 0, cold: 0 };
+
+function supervisorStartEnv() {
+  const supervisorEnv = { ...childEnv };
+  if (supervisorEnv.NODE_OPTIONS) {
+    supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS = supervisorEnv.NODE_OPTIONS;
+  } else {
+    delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  }
+  delete supervisorEnv.NODE_OPTIONS;
+  // Per-command keys travel with the command, never through the start-up env.
+  for (const key of Object.keys(supervisorEnv)) {
+    if (key.startsWith('ASHLR_LINKED_') || key.startsWith('ASHLR_PINNED_DESTINATION')) delete supervisorEnv[key];
+  }
+  return supervisorEnv;
+}
+
+function spawnSupervisor() {
+  // cwd '.': the runner's working directory, by inode (see the cwd pin).
+  const child = spawn(process.execPath, ['-e', supervisorSource], {
+    cwd: '.',
+    env: supervisorStartEnv(),
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true,
+    ...(process.platform === 'win32' ? {} : { detached: true }),
+  });
+  const handle = { child, exited: false, closed: null };
+  handle.closed = new Promise((resolveClosed) => child.once('close', () => {
+    handle.exited = true;
+    resolveClosed();
+  }));
+  // A start-up failure is reported to the command that takes it (its own
+  // 'error' listener), or the handle is retired untaken.
+  child.on('error', () => { handle.exited = true; });
+  return handle;
+}
+
+// How many more supervisors this mode's success path will take that are not
+// started yet. They start one at a time, each when the previous warm one is
+// taken, so a start-up overlaps the git command before it without competing
+// with the ones the runner is about to use.
+let supervisorsPlanned = 0;
+
+function prewarmSupervisors(planned, startNow) {
+  supervisorsPlanned = planned;
+  startWarmSupervisors(startNow);
+}
+
+function startWarmSupervisors(count) {
+  for (let i = 0; i < count && supervisorsPlanned > 0; i += 1) {
+    supervisorsPlanned -= 1;
+    try {
+      warmSupervisors.push(spawnSupervisor());
+      supervisorCounts.prewarmed += 1;
+    } catch { /* taken on demand instead */ }
+  }
+}
+
+function takeSupervisor() {
+  let handle = null;
+  while (handle === null && warmSupervisors.length > 0) {
+    const next = warmSupervisors.shift();
+    if (!next.exited && next.child.connected) handle = next;
+    else retiredSupervisors.push(next);
+  }
+  if (handle !== null) {
+    supervisorCounts.warm += 1;
+  } else {
+    supervisorCounts.cold += 1;
+    handle = spawnSupervisor();
+  }
+  if (warmSupervisors.length === 0) startWarmSupervisors(1);
+  return handle;
+}
+
+// Kill and join every supervisor no command took. None of them ever ran git.
+async function drainSupervisors() {
+  const idle = [...warmSupervisors.splice(0), ...retiredSupervisors.splice(0)];
+  await Promise.all(idle.map((handle) => joinOwnedTree(handle.child, handle.closed)));
+}
+
 function run(cwd, args, options = {}) {
   return new Promise((resolve) => {
-    const supervisorEnv = { ...childEnv };
-    if (supervisorEnv.NODE_OPTIONS) {
-      supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS = supervisorEnv.NODE_OPTIONS;
-    } else {
-      delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-    }
-    delete supervisorEnv.NODE_OPTIONS;
-    delete supervisorEnv.ASHLR_LINKED_GIT_DIR;
-    delete supervisorEnv.ASHLR_LINKED_WORK_TREE;
+    const commandEnv = {};
     if (options.linkedWorktree) {
-      supervisorEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
-      supervisorEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
+      commandEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
+      commandEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
     }
     if (options.monitorDestination) {
-      supervisorEnv.ASHLR_PINNED_DESTINATION = '1';
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV = parentDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_INO = parentIno;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_PATH = sandboxHome;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_DEV = homeDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_INO = homeIno;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH = metadataPath;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV = metadataDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_INO = metadataIno;
+      commandEnv.ASHLR_PINNED_DESTINATION = '1';
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV = parentDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_INO = parentIno;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_PATH = sandboxHome;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_DEV = homeDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_INO = homeIno;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH = metadataPath;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV = metadataDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_INO = metadataIno;
       if (options.worktreePin || options.requireWorktreeAbsence) {
-        supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH = worktreePath;
+        commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH = worktreePath;
         if (options.worktreePin) {
-          supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV = options.worktreePin.dev;
-          supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO = options.worktreePin.ino;
+          commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV = options.worktreePin.dev;
+          commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO = options.worktreePin.ino;
         }
-        supervisorEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE =
+        commandEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE =
           options.allowWorktreeAbsence ? '1' : '0';
-        supervisorEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE =
+        commandEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE =
           options.requireWorktreeAbsence ? '1' : '0';
       }
     }
+    // '.' is this runner's working directory NOW, by inode: what a supervisor
+    // started here at this moment would have inherited.
+    let cwdPin = null;
+    if (cwd === '.') {
+      try {
+        const stat = lstatSync('.', { bigint: true });
+        if (stat.isDirectory() && !stat.isSymbolicLink()) {
+          cwdPin = { path: process.cwd(), dev: String(stat.dev), ino: String(stat.ino) };
+        }
+      } catch { /* the supervisor refuses a '.' command without a pin */ }
+    }
 
-    let supervisor;
+    let handle;
     try {
-      supervisor = spawn(process.execPath, [
-        '-e', supervisorSource, '--', cwd,
-        options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args,
-      ], {
-        cwd,
-        env: supervisorEnv,
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        windowsHide: true,
-        ...(process.platform === 'win32' ? {} : { detached: true }),
-      });
+      handle = takeSupervisor();
     } catch (error) {
       resolve({ status: null, stdout: '', stderr: '', error: String(error) });
       return;
     }
+    const supervisor = handle.child;
 
     let finishing = false;
-    const closed = new Promise((resolveClosed) => supervisor.once('close', resolveClosed));
+    const closed = handle.closed;
     const finish = async (result) => {
       if (finishing) return;
       finishing = true;
@@ -861,6 +1181,17 @@ function run(cwd, args, options = {}) {
         void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor exited without a result' });
       }
     });
+    try {
+      supervisor.send({
+        argv: [cwd, options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args],
+        env: commandEnv,
+        cwdPin,
+      }, (error) => {
+        if (error) void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor command not delivered: ' + error.message });
+      });
+    } catch (error) {
+      void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor command not delivered: ' + String(error) });
+    }
   });
 }
 
@@ -1104,11 +1435,14 @@ function worktreeIdentityResult(admin) {
 // every rollback of it.
 async function registerWorktree() {
   // Both source probes are read-only rev-parses, so they run side by side
-  // (one supervisor start instead of two in sequence). Both are spawned
-  // before the chdir below (the retained probe's cwd is '.', the source
-  // itself; the pathname probe names sourceRepo explicitly), their verdicts
-  // are applied in the original order, and both are still observed before
-  // the add.
+  // on the two supervisors the runner started with it. Both commands are
+  // handed over before the chdir below: the retained probe's cwd is '.' and
+  // its pin is the source inode the runner still sits in (which a supervisor
+  // started here already has); the pathname probe names sourceRepo
+  // explicitly. Their verdicts are applied in the original order, and both
+  // are still observed before the add. The add's supervisor, started before
+  // the chdir, normally reaches the pinned common directory by path and then
+  // must prove it holds exactly the pinned inode (see the supervisor's cwd pin).
   const [retainedSourceExact, sourcePathPinned] = await Promise.all([
     retainedSourceMatchesDiscovery(),
     currentSourceIsPinned(),
@@ -1286,8 +1620,16 @@ async function rollbackWorktree() {
   return { ok: false, cleanupComplete: await rollback(), error: 'sandbox creation rolled back' };
 }
 
+// Per mode: [supervised commands on its success path, supervisors started
+// with the runner]. REGISTER: two source probes (side by side, so both start
+// at once), add, validation. POPULATE: checkout, validation. ROLLBACK:
+// remove, prune, branch -D and its two absence checks.
+const PREWARMED_SUPERVISORS = { register: [4, 2], populate: [2, 1], rollback: [5, 1] };
+
 (async () => {
   let result;
+  const [planned, startNow] = PREWARMED_SUPERVISORS[mode] || [0, 0];
+  prewarmSupervisors(planned, startNow);
   try {
     result = mode === 'register'
       ? await registerWorktree()
@@ -1305,9 +1647,14 @@ async function rollbackWorktree() {
     }
     result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed: ' + describeError(error) };
   }
-  if (stepTiming !== null) result.timing = stepTiming.steps;
+  await drainSupervisors();
+  if (stepTiming !== null) {
+    result.timing = stepTiming.steps;
+    result.supervisors = supervisorCounts;
+  }
   process.stdout.write(JSON.stringify(result));
-})().catch((error) => {
+})().catch(async (error) => {
+  try { await drainSupervisors(); } catch { /* idle supervisors exit when this runner's channel closes */ }
   process.stdout.write(JSON.stringify({
     ok: false,
     cleanupComplete: false,
@@ -1342,6 +1689,8 @@ interface PinnedWorktreeRunnerInvocation {
   script: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Set when the call cannot be hardened; the runner is then never spawned. */
+  refusal: PinnedWorktreeCreationResult | null;
 }
 
 /**
@@ -1352,6 +1701,11 @@ interface PinnedWorktreeRunnerInvocation {
  * must each stay under this bound (test/sandbox-create-two-phase.test.ts).
  */
 export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+
+/** The pinned git supervisor's source, run with `node -e` (tests only). */
+export function _pinnedGitSupervisorSourceForTest(): string {
+  return PINNED_GIT_SUPERVISOR;
+}
 
 /** Sizes the Windows command-line bound applies to (tests only). */
 export function _pinnedRunnerCommandLineSizesForTest(): {
@@ -1393,7 +1747,20 @@ function pinnedWorktreeRunnerInvocation(
 ): PinnedWorktreeRunnerInvocation {
   // The runner and its supervisors copy this env into every git they spawn,
   // so the forced config reaches `worktree add` and its validation calls too.
-  const env = withDaemonGitHardening({ ...process.env });
+  let filters: (readonly [string, string])[] = [];
+  let refusal: PinnedWorktreeCreationResult | null = null;
+  try {
+    filters = repoFilterOverrides('git', [], identity.source.path, { ...process.env });
+  } catch {
+    // Nothing ran. Only REGISTER has nothing to clean up; a refused populate
+    // or rollback leaves the registered worktree to the existing recovery.
+    refusal = {
+      ok: false,
+      cleanupComplete: mode === 'register',
+      error: 'could not read the source repository filter configuration',
+    };
+  }
+  const env = withDaemonGitHardening({ ...process.env }, filters);
   if (env.NODE_OPTIONS) env.ASHLR_PINNED_GIT_NODE_OPTIONS = env.NODE_OPTIONS;
   else delete env.ASHLR_PINNED_GIT_NODE_OPTIONS;
   delete env.NODE_OPTIONS;
@@ -1428,6 +1795,7 @@ function pinnedWorktreeRunnerInvocation(
     script: PINNED_WORKTREE_RUNNER,
     cwd: identity.source.path,
     env,
+    refusal,
   };
 }
 
@@ -1467,6 +1835,9 @@ function parsePinnedWorktreeResult(
       typeof parsed.adminIno !== 'string' || !/^\d+$/u.test(parsed.adminIno)
     )) throw new Error('invalid pinned worktree identity');
     const timing = parsed.timing !== null && typeof parsed.timing === 'object' ? parsed.timing : undefined;
+    const supervisors = parsed.supervisors !== null && typeof parsed.supervisors === 'object'
+      ? parsed.supervisors
+      : undefined;
     return {
       ok: parsed.ok,
       cleanupComplete: parsed.cleanupComplete,
@@ -1477,6 +1848,7 @@ function parsePinnedWorktreeResult(
       ...(typeof parsed.adminDev === 'string' ? { adminDev: parsed.adminDev } : {}),
       ...(typeof parsed.adminIno === 'string' ? { adminIno: parsed.adminIno } : {}),
       ...(timing ? { timing } : {}),
+      ...(supervisors ? { supervisors } : {}),
     };
   } catch (error) {
     return {
@@ -1489,6 +1861,7 @@ function parsePinnedWorktreeResult(
 }
 
 function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): PinnedWorktreeCreationResult {
+  if (invocation.refusal) return invocation.refusal;
   const result = spawnSync(process.execPath, invocation.argv, {
     cwd: invocation.cwd,
     encoding: 'utf8',
@@ -1514,6 +1887,7 @@ function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): Pi
 function runPinnedWorktreeRunnerAsync(
   invocation: PinnedWorktreeRunnerInvocation,
 ): Promise<PinnedWorktreeCreationResult> {
+  if (invocation.refusal) return Promise.resolve(invocation.refusal);
   return new Promise((resolveResult) => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -1988,6 +2362,7 @@ class SandboxCreationClock {
   private fenceAcquiredAt: number | null = null;
   private readonly fields: Record<string, number> = {};
   private readonly parts: Record<string, number> = {};
+  private readonly supervisors: Record<string, number> = {};
 
   static start(): SandboxCreationClock | null {
     return process.env.ASHLR_SANDBOX_TIMING === '1' ? new SandboxCreationClock() : null;
@@ -1999,9 +2374,12 @@ class SandboxCreationClock {
     this.last = now;
   }
 
-  runnerSteps(prefix: string, steps: Record<string, number> | undefined): void {
-    for (const [step, ms] of Object.entries(steps ?? {})) {
+  runnerSteps(prefix: string, result: Pick<PinnedWorktreeCreationResult, 'timing' | 'supervisors'>): void {
+    for (const [step, ms] of Object.entries(result.timing ?? {})) {
       if (typeof ms === 'number') this.parts[`${prefix}.${step}`] = ms;
+    }
+    for (const [kind, count] of Object.entries(result.supervisors ?? {})) {
+      if (typeof count === 'number') this.supervisors[`${prefix}.${kind}`] = count;
     }
   }
 
@@ -2018,7 +2396,9 @@ class SandboxCreationClock {
 
   emit(ok: boolean): void {
     try {
-      process.stderr.write(`ashlr-sandbox-timing ${JSON.stringify({ ok, ...this.fields, parts: this.parts })}\n`);
+      process.stderr.write(
+        `ashlr-sandbox-timing ${JSON.stringify({ ok, ...this.fields, parts: this.parts, supervisors: this.supervisors })}\n`,
+      );
     } catch { /* diagnostics only */ }
   }
 }
@@ -2113,7 +2493,7 @@ export async function createSandboxAsync(
         registered.admin,
       ));
       clock?.mark('populate');
-      clock?.runnerSteps('populate', populated.timing);
+      clock?.runnerSteps('populate', populated);
       const failure = populatedSandboxFailure(registered, populated);
       clock?.mark('verify');
       if (failure === null) {
@@ -2173,7 +2553,7 @@ export function createSandbox(
         registered.admin,
       ));
       clock?.mark('populate');
-      clock?.runnerSteps('populate', populated.timing);
+      clock?.runnerSteps('populate', populated);
       const failure = populatedSandboxFailure(registered, populated);
       clock?.mark('verify');
       if (failure === null) {
@@ -2464,7 +2844,7 @@ function registerSandboxWhileFenced(
   // clean error) rather than accumulate unboundedly. This removes NOTHING in-use
   // and opens no outward capability — it only bounds on-disk worktree growth so a
   // pathological crash/restart loop can never fill the disk. The cap is resolved
-  // at call time (env-overridable; conservative default) — see maxSandboxes().
+  // at call time (env-overridable; machine-derived default) — see maxSandboxes().
   const creationLock = acquireCleanupLock('creation');
   if (!creationLock) throw new Error('sandbox creation lock unavailable');
   let id: string;
@@ -2558,7 +2938,7 @@ function registerSandboxWhileFenced(
     'register', repositoryIdentity, destinationIdentity, sb, null, null,
   ));
   clock?.mark('register');
-  clock?.runnerSteps('register', creation.timing);
+  clock?.runnerSteps('register', creation);
   if (!creation.ok) {
     if (creation.cleanupComplete) {
       removePinnedSandboxReservation(destinationIdentity);
@@ -2797,9 +3177,11 @@ function agentTreeGit(context: AgentTreeGitContext, cwd: string, args: string[])
     if (key.startsWith('GIT_')) delete env[key];
   }
   try {
+    const base = { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+    const filters = repoFilterOverrides(context.file, context.prefix, context.workTree, base);
     return execFileSync(context.file, [...context.prefix, ...args], {
       cwd: context.workTree,
-      env: withDaemonGitHardening({ ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }),
+      env: withDaemonGitHardening(base, filters),
       timeout: GIT_TIMEOUT,
       stdio: 'pipe',
       encoding: 'utf8',
@@ -2948,6 +3330,35 @@ function worktreeBelongsToRepo(repo: string, worktreePath: string): boolean {
   const worktreeIdentity = canonicalPathIdentity(worktreeCommon);
   const repoIdentity = canonicalPathIdentity(repoCommon);
   return worktreeIdentity !== null && repoIdentity !== null && worktreeIdentity === repoIdentity;
+}
+
+/**
+ * Whether the scratch branch in `repo` descends from the sandbox's recorded
+ * base commit. With no worktree left to prove which repository a sandbox
+ * belongs to, this is the proof that a leftover scratch branch is the one this
+ * sandbox created there: `worktree add -b` started it at baseHead.
+ */
+function scratchBranchDescendsFromBase(repo: string, branch: string, baseHead: string): boolean {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseHead)) return false;
+  return gitTry(repo, ['merge-base', '--is-ancestor', baseHead, `refs/heads/${branch}`]) !== null;
+}
+
+/**
+ * Whether a sandbox's record is older than RESERVATION_RECOVERY_MIN_AGE_MS:
+ * its recorded createdAt, its metadata file and its home directory (which
+ * `worktree add` touches) all are. A creation still between `worktree add -b`
+ * making the branch and registering the worktree is younger than that.
+ */
+function sandboxRecordSettled(sb: Sandbox, home: string): boolean {
+  const now = Date.now();
+  let freshest = Date.parse(sb.createdAt);
+  if (Number.isNaN(freshest)) return false;
+  try {
+    freshest = Math.max(freshest, lstatSync(home).mtimeMs, lstatSync(join(home, META_FILE)).mtimeMs);
+  } catch {
+    return false;
+  }
+  return now - freshest >= RESERVATION_RECOVERY_MIN_AGE_MS;
 }
 
 function processStartRef(pid: number): string | undefined {
@@ -3289,9 +3700,19 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
     : registrationBefore === 'present';
   const recoverableReservation = canonicalMatches && sourceRepoAvailable &&
     !existsSync(safeWorktree) && registrationBefore === 'absent' && branchBefore === 'absent';
+  // A kill between `git worktree remove` and `git branch -D` (or between
+  // `worktree add` creating the branch and registering the worktree) leaves
+  // only the scratch branch. Without this, no sweep could ever prove repo
+  // authority again and the home stayed counted against the cap forever. The
+  // record must be a minute old so a creation still in flight is never taken.
+  const strandedScratchBranch = canonicalMatches && sourceRepoAvailable &&
+    !existsSync(safeWorktree) && registrationBefore === 'absent' && branchBefore === 'present' &&
+    sandboxRecordSettled(sb, home) &&
+    scratchBranchDescendsFromBase(sb.sourceRepo, safeBranch, sb.baseHead);
   const guardsPass = branchInNamespace && branchMatches && worktreeContained &&
     rootState === 'present' && homeBefore === 'present' && canonicalMatches &&
-    !worktreeSymlink && (!sourceRepoAvailable || repoAuthority || recoverableReservation);
+    !worktreeSymlink &&
+    (!sourceRepoAvailable || repoAuthority || recoverableReservation || strandedScratchBranch);
   const lock = guardsPass ? acquireCleanupLock(sb.id) : undefined;
   let result: SandboxCleanupResult;
 
@@ -3358,6 +3779,14 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
     if (registration === 'unknown' || branch === 'unknown') failureClasses.push('postcondition-unavailable');
 
     if (registration === 'absent' && branch === 'absent') {
+      // Metadata goes last: a kill part-way through leaves a home whose
+      // metadata the next sweep still recognizes (finished at once) instead of
+      // a metadata-free home the reservation sweep must age for a minute.
+      try {
+        for (const entry of readdirSync(home)) {
+          if (entry !== META_FILE) rmSync(join(home, entry), { recursive: true, force: true });
+        }
+      } catch { /* verified below */ }
       try { rmSync(home, { recursive: true, force: true }); } catch { /* verified below */ }
     }
     const homeAfter = sandboxHomeState(home);

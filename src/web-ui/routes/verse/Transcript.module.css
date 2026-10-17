@@ -10,8 +10,11 @@
  * rows as one cluster.
  */
 .transcriptWrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-/* The scroller and the ChapterRail share this box, so the rail spans the log, not the outline above it. */
-.scrollArea { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* The scroller and the ChapterRail share this box, so the rail spans the log, not the outline above it.
+   Its size always comes from the column (flex: 1), never from the log, and
+   size containment says so: without it, every streamed token that grew the
+   log made the engine repaint the whole window, chat list included. */
+.scrollArea { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; contain: size; }
 .transcript {
   flex: 1;
   min-height: 0;

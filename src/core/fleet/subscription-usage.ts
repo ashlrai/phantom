@@ -358,7 +358,7 @@ export function subscriptionAllows(
       return {
         allowed: false,
         reason:
-          `${engine} subscription usage unknown (no reading from the Verse account collector or local sessions) — ` +
+          `${engine} subscription usage unknown (no reading from the Phantom account collector or local sessions) — ` +
           'unknown usage is not headroom, so autonomy stays off this engine',
       };
     }
@@ -518,7 +518,7 @@ function _localPolicyGate(
   if (applicable.some((p) => !p.enabled)) {
     return {
       allowed: false,
-      reason: `${engine} is switched off for autonomy in the ${policy.mode} budget (Verse → Budget)`,
+      reason: `${engine} is switched off for autonomy in the ${policy.mode} budget (Phantom → Budget)`,
     };
   }
   const reserve = Math.max(...applicable.map((p) => p.reservePercent));

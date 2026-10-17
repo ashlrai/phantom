@@ -6,6 +6,7 @@
  */
 .rail {
   position: absolute;
+  /* Equal insets: ChapterRail.tsx sets the height to the box minus twice `top`. */
   top: var(--space-6);
   bottom: var(--space-6);
   /* Clear of the scroller's stable gutter, so the rail never sits on the scrollbar. */

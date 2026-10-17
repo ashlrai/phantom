@@ -564,7 +564,10 @@ function printModelsHelp(): void {
  */
 export async function cmdModels(args: string[]): Promise<number> {
   // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // `models <verb> --help` / `-h` too (models takes no value flags): `models
+  // list -h` probed local model servers and `models start -h` looked for
+  // ollama to launch it.
+  if (args[0] === 'help' || args.some((arg) => arg === '--help' || arg === '-h')) {
     printModelsHelp();
     return 0;
   }
