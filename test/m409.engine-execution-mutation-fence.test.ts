@@ -1,20 +1,43 @@
 import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AshlrConfig, RunTask } from '../src/core/types.js';
 import { makeCfg, withTmpHome, type DisposableRepo } from './helpers/h1-fixture.js';
+import type { SemanticPrivateStorageHarness } from './helpers/semantic-private-storage.js';
 
-const privateStorageMocks = vi.hoisted(() => ({ useRealAssurance: false }));
+const privateStorageMocks = vi.hoisted(() => ({
+  useRealAssurance: false,
+  harness: undefined as SemanticPrivateStorageHarness | undefined,
+}));
 
+// The authority-root preparation runs the production adapter end to end, but
+// on Windows its PowerShell DACL process is answered by the semantic harness
+// (M408's pattern): two cold powershell.exe launches per case under a 5s
+// adapter timeout were this suite's Windows cost, and a timed-out pair was
+// what surfaced as "failed to establish private authority roots".
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
+  const { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } =
+    await import('./helpers/semantic-private-storage.js');
+  privateStorageMocks.harness ??= createSemanticPrivateStorageHarness({
+    systemRoot: trustedWindowsSystemRootForTest(),
+  });
   return {
     ...actual,
     assurePrivateStoragePath: (
       ...args: Parameters<typeof actual.assurePrivateStoragePath>
-    ) => privateStorageMocks.useRealAssurance
-      ? actual.assurePrivateStoragePath(...args)
-      : { ok: true, reason: 'exact-private-dacl' },
+    ) => {
+      if (!privateStorageMocks.useRealAssurance) return { ok: true, reason: 'exact-private-dacl' };
+      const options = args[3];
+      if (process.platform !== 'win32' || options?.runner !== undefined) {
+        return actual.assurePrivateStoragePath(...args);
+      }
+      return actual.assurePrivateStoragePath(args[0], args[1], args[2], {
+        ...options,
+        runner: privateStorageMocks.harness!.runner,
+      });
+    },
   };
 });
 
@@ -69,6 +92,7 @@ function sourceSnapshot(repo: DisposableRepo): SourceSnapshot {
 
 function prepareAuthorityRoots(): void {
   privateStorageMocks.useRealAssurance = true;
+  privateStorageMocks.harness?.reset();
   try {
     const fence = acquireOutwardMutationFence();
     try {
@@ -77,6 +101,18 @@ function prepareAuthorityRoots(): void {
       }
     } finally {
       releaseOutwardMutationFence(fence);
+    }
+    if (process.platform === 'win32') {
+      // Both private roots went through the validated adapter protocol.
+      const home = process.env.ASHLR_HOME;
+      if (!home) throw new Error('M409 fixture has no ASHLR_HOME');
+      expect(privateStorageMocks.harness?.requests.map((request) => ({
+        paths: request.paths.map((path) => path.toLowerCase()),
+        kind: request.kind,
+      }))).toEqual([
+        { paths: [home.toLowerCase()], kind: 'directory' },
+        { paths: [join(home, 'authority').toLowerCase()], kind: 'directory' },
+      ]);
     }
   } finally {
     privateStorageMocks.useRealAssurance = false;
