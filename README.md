@@ -2,6 +2,8 @@
 
 # Phantom
 
+**Give agents the work. Keep the evidence.**
+
 **The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**
 
 **Work with agents. Let agents work for you. One open-source workbench for your accounts, local models, chats and engineering fleet.**
@@ -569,13 +571,13 @@ switch, backends, sandboxing, the command reference, the safety model, the
 | **3.12–3.13** | Your key is the trust root; guided `ashlr authority setup`; the host-verified `ashlr/verify` check; cloud PRs into the standing gates; the resident runtime under a standing grant (`ashlr authority resident start`) | Shipped |
 | **3.14** | Talk to the Leader in Verse, Telegram and the CLI; Leader reliability; accounts ready in both chat and fleet; the rollout ladder on Command and shadow decisions on Fleet; local enforcement for free-plan private repos; `file:../` sibling dependencies; a sidecar that cannot freeze; chart polish | Shipped |
 | **3.15** | Founder-mode Leader; Devin as chat seats, a lane and a fleet producer under a two-judge rule; the workbench panel (terminal blocks, browser, checkpoints, sources and reasoning); every seat together; playbooks and automations; the Jev decision layer; retros and approved knowledge (Growth ▸ Lessons); a private repo wiki and Ask | Included in the published 3.16 release |
-| **3.20** | Reset-aware task/account choices, recorded work estimates, Jev advice and optional decision-call preferences | [3.22.0 release](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.22.0) |
-| **3.24** | Automatic awake during observed local work, organization consumption, source-qualified Growth and explicit reset controls with execution-binding holds | [3.24.0 release target](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.24.0) |
-| **3.23** | Automatic chat, editable desired outcomes, dependency-ready fleet work, preserved local context and current-outcome review/merge checks | [Published 3.23.0](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.23.0) |
-| **3.19 workbench changes** | Faster progressive resource readings, expandable usage details, optional goal and Leader preferences, Review navigation and explicit benchmark commands | Included in [3.22.0](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.22.0) |
-| **3.18** | Work with me and Work for me, configurable fleet volume, scalable workspace retention and comparable usage reports | [3.18.0 release](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.18.0) |
-| **3.17** | Local module map, scalable account/model rosters, portable efficiency-plugin connection and phone reliability | [3.17.2 release](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.17.2) |
-| **3.16** | Native Agents workbench and guarded computer tools; optional authenticated phone gateway; reviewable learning evidence; Devin CLI SWE-2 High default; local signing and release fixes | [3.16.1 published](https://github.com/ashlrai/ashlr-hub/releases/tag/v3.16.1) |
+| **3.20** | Reset-aware task/account choices, recorded work estimates, Jev advice and optional decision-call preferences | [3.22.0 release](https://github.com/ashlrai/phantom/releases/tag/v3.22.0) |
+| **3.24** | Automatic awake during observed local work, organization consumption, source-qualified Growth and explicit reset controls with execution-binding holds | [3.24.0 release target](https://github.com/ashlrai/phantom/releases/tag/v3.24.0) |
+| **3.23** | Automatic chat, editable desired outcomes, dependency-ready fleet work, preserved local context and current-outcome review/merge checks | [Published 3.23.0](https://github.com/ashlrai/phantom/releases/tag/v3.23.0) |
+| **3.19 workbench changes** | Faster progressive resource readings, expandable usage details, optional goal and Leader preferences, Review navigation and explicit benchmark commands | Included in [3.22.0](https://github.com/ashlrai/phantom/releases/tag/v3.22.0) |
+| **3.18** | Work with me and Work for me, configurable fleet volume, scalable workspace retention and comparable usage reports | [3.18.0 release](https://github.com/ashlrai/phantom/releases/tag/v3.18.0) |
+| **3.17** | Local module map, scalable account/model rosters, portable efficiency-plugin connection and phone reliability | [3.17.2 release](https://github.com/ashlrai/phantom/releases/tag/v3.17.2) |
+| **3.16** | Native Agents workbench and guarded computer tools; optional authenticated phone gateway; reviewable learning evidence; Devin CLI SWE-2 High default; local signing and release fixes | [3.16.1 published](https://github.com/ashlrai/phantom/releases/tag/v3.16.1) |
 
 CLI archives are built by hosted CI. As a dated release example, the commissioned trusted publisher published
 `@ashlr/phantom@3.29.7` on October 10, 2026 in [run 38025950740, attempt 1](https://github.com/ashlrai/phantom/actions/runs/38025950740/attempts/1),

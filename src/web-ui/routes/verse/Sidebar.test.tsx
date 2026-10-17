@@ -668,3 +668,25 @@ describe('Sidebar — remembered project disclosures', () => {
     expect(screen.queryByRole('button', { name: /Fix the login bug/ })).toBeNull();
   });
 });
+
+describe('Sidebar — first paint', () => {
+  function mountWith(sessions: VerseSession[], sessionsStatus: 'loading' | 'idle') {
+    const boot = bootstrap();
+    return render(
+      <Sidebar sessions={sessions} sessionsStatus={sessionsStatus} sessionsError={null} projects={boot.projects}
+        seats={[CLAUDE_SEAT]} selectedId={null} query="" onQuery={() => {}} onSelect={() => {}} onNew={() => {}}
+        onRetry={() => {}} onCollapse={() => {}} onDisconnect={() => {}} />,
+    );
+  }
+
+  it('draws the chats the bootstrap read carried while the sessions read is still loading', () => {
+    const { container } = mountWith([session({ id: 'boot-one', title: 'From the bootstrap read' })], 'loading');
+    expect(screen.getByText('From the bootstrap read')).toBeInTheDocument();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('shows the loading skeleton only while there is nothing to draw', () => {
+    const { container } = mountWith([], 'loading');
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+});

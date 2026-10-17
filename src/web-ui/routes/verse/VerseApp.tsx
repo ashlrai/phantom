@@ -61,6 +61,7 @@ import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
 import { SectionVisibilityProvider } from './shell/section-visibility.js';
+import { preloadedLazy } from './shell/preloaded.js';
 import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
 import { onActivityCompletions, useActivity } from './shell/useActivity.js';
@@ -131,7 +132,12 @@ const sectionLoads = new Map<VerseSectionId, Promise<{ default: ComponentType }>
 /** Sections whose module has arrived, mounted directly (no Suspense round-trip, so no skeleton frame). */
 const loadedSections = new Map<VerseSectionId, ComponentType>();
 
-function loadSection(id: VerseSectionId): Promise<{ default: ComponentType }> {
+/**
+ * Start (or join) one section's load. Exported for the cold load
+ * (app/verse-first-paint.ts): a section loaded before the shell mounts is
+ * mounted directly, without suspending once. Never rejects.
+ */
+export function loadSection(id: VerseSectionId): Promise<{ default: ComponentType }> {
   let load = sectionLoads.get(id);
   if (!load) {
     load = sectionLoader(id)().then((mod) => {
@@ -174,9 +180,10 @@ const importWarmup = () => import('./shell/warmup.js');
 // (itself a further chunk) — see resources/ResourcesChrome.tsx for why.
 const importResources = () => import('./resources/ResourcesChrome.js');
 
-const CommandPalette = lazy(() => importPalette().then((m) => ({ default: m.CommandPalette })));
-const NeedsYouDrawer = lazy(() => importDrawer().then((m) => ({ default: m.NeedsYouDrawer })));
-const ShortcutsOverlay = lazy(() => importShortcuts().then((m) => ({ default: m.ShortcutsOverlay })));
+// Fetched by the idle warm-up, then mounted without suspending (shell/preloaded.tsx).
+const Palette = preloadedLazy(() => importPalette().then((m) => m.CommandPalette), false);
+const Drawer = preloadedLazy(() => importDrawer().then((m) => m.NeedsYouDrawer), false);
+const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsOverlay), false);
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
@@ -236,7 +243,7 @@ export function prefetchAfterFirstPaint(options?: WarmupOptions): () => void {
   let cancel: (() => void) | null = null;
   void importWarmup().then(
     (m) => {
-      if (live) cancel = m.warmUpAfterFirstPaint({ loadSection, overlays: [importPalette, importDrawer, importShortcuts, () => importResources().then((r) => r.preloadResourcesDrawer())], readsInFlight }, options);
+      if (live) cancel = m.warmUpAfterFirstPaint({ loadSection, overlays: [Palette.ready, Drawer.ready, Shortcuts.ready, () => importResources().then((r) => r.preloadResourcesDrawer())], readsInFlight }, options);
     },
     () => undefined,
   );
@@ -607,9 +614,9 @@ export function VerseApp() {
         <ResourcesChrome compact={compact} />
       </Suspense>
       <Suspense fallback={null}>
-        {ui.overlay === 'palette' ? <CommandPalette /> : null}
-        {ui.overlay === 'needs-you' ? <NeedsYouDrawer /> : null}
-        {ui.overlay === 'shortcuts' ? <ShortcutsOverlay /> : null}
+        {ui.overlay === 'palette' ? <Palette.Slot /> : null}
+        {ui.overlay === 'needs-you' ? <Drawer.Slot /> : null}
+        {ui.overlay === 'shortcuts' ? <Shortcuts.Slot /> : null}
       </Suspense>
       {voiceHud ? <Suspense fallback={null}><VoiceHud /></Suspense> : null}
       {guardOpen ? <Suspense fallback={null}><GuardHost /></Suspense> : null}

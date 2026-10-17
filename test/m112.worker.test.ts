@@ -8,7 +8,7 @@
  *   4. cmdWorker setup — calls setupWizard + enroll + install + prints worker summary
  *   5. cmdWorker setup --queue → sets cfg.fleet.sharedQueue filesystem mode/path + reported in output
  *   6. cmdWorker status → reports identity / repos / service state
- *   7. cmdWorker unknown subcommand → exits 1
+ *   7. cmdWorker unknown subcommand → exits 1; --help anywhere → usage, exit 0
  *
  * SAFETY:
  *   - HOME is redirected to a tmp dir.
@@ -393,5 +393,26 @@ describe('M112 — cmdWorker error paths', () => {
     const exit = await cmdWorker([]);
 
     expect(exit).toBe(1);
+  });
+
+  // `worker setup --help` used to run setup (wizard, enrollment, config save
+  // and service install) because --help was never checked.
+  it.each([
+    [['setup', '--help']],
+    [['setup', '--user', 'WorkerBot', '--yes', '-h']],
+    [['status', '--help']],
+    [['--help']],
+    [['help']],
+  ])('%j prints usage, exits 0 and mutates nothing', async (args) => {
+    const { cmdWorker } = await importWorker();
+    const { lines } = captureConsole();
+    const mocks = [mockSetupWizard, mockEnroll, mockInstall, mockSaveConfig, mockServiceStatus];
+    const before = mocks.map((m) => m.mock.calls.length);
+
+    const exit = await cmdWorker(args);
+
+    expect(exit).toBe(0);
+    expect(lines.join('\n')).toContain('ashlr worker status');
+    expect(mocks.map((m) => m.mock.calls.length)).toEqual(before);
   });
 });

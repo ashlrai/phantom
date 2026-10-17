@@ -32,6 +32,7 @@ import type {
 import {
   argsRequestLocusFirm,
   maybeOfferLocusFirm,
+  _firmOfferInternals,
 } from './locus-firm-offer.js';
 
 // ---------------------------------------------------------------------------
@@ -432,6 +433,10 @@ function printEnrollHelp(sub?: string): void {
   console.log('');
 }
 
+function writeEnrollJson(payload: Record<string, unknown>): void {
+  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+}
+
 export async function cmdEnroll(args: string[]): Promise<number> {
   const sub = args[0];
 
@@ -464,12 +469,21 @@ export async function cmdEnroll(args: string[]): Promise<number> {
   if (sub === 'add') {
     // Positional repo is first non-flag after sub; boolean flags may appear anywhere.
     const repo = args.slice(1).find((a) => !a.startsWith('--'));
+    const json = args.includes('--json');
+    // --json: exactly one JSON object on stdout; human prose goes to stderr.
+    const fail = (code: number, error: string): number => {
+      if (json) writeEnrollJson({ ok: false, error, ...(repo ? { repo } : {}) });
+      else console.error(red('error: ') + error);
+      return code;
+    };
     if (!repo) {
-      console.error(red('error: ') + 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
-      return 2;
+      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
     }
     const policy = await loadPolicy();
-    if (!policy) { moduleNotBuilt('enroll add'); return 1; }
+    if (!policy) {
+      if (json) return fail(1, 'enroll add requires src/core/sandbox/ (M21 module not yet built).');
+      moduleNotBuilt('enroll add'); return 1;
+    }
     try {
       // First-repo gate for firm soft-offer (before enroll mutates the registry).
       // Degraded/empty registry → treat as zero enrolled so firm can still be offered.
@@ -483,28 +497,35 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       const result = policy.enroll(repo);
       // Older test doubles returned void; real policy mutators return a result.
       const failure = result === undefined ? null : policyMutationFailure(result, 'Enrollment');
-      if (failure) {
-        console.error(red('error: ') + failure);
-        return 1;
-      }
-      console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
+      if (failure) return fail(1, failure);
+      if (!json) console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
 
       // Soft-offer Locus firm on FIRST successful enrollment only. Never forces
       // on CI/tests: non-TTY / --yes requires --locus-firm or ASHLR_LOCUS_FIRM=1.
+      let locusFirm: Awaited<ReturnType<typeof maybeOfferLocusFirm>> | null = null;
       if (beforeCount === 0) {
-        const yes = args.includes('--yes') || !process.stdin.isTTY;
-        await maybeOfferLocusFirm({
-          yes,
-          locusFirmFlag: argsRequestLocusFirm(args),
-          context: 'enroll-first',
-          isInteractive: Boolean(process.stdin.isTTY) && !args.includes('--yes'),
-        });
+        // --json never prompts: it takes the non-interactive offer path.
+        const yes = args.includes('--yes') || json || !process.stdin.isTTY;
+        const prevLog = _firmOfferInternals.log;
+        if (json) _firmOfferInternals.log = (...a: unknown[]) => console.error(...a);
+        try {
+          locusFirm = await maybeOfferLocusFirm({
+            yes,
+            locusFirmFlag: argsRequestLocusFirm(args),
+            context: 'enroll-first',
+            isInteractive: Boolean(process.stdin.isTTY) && !args.includes('--yes') && !json,
+          });
+        } finally {
+          _firmOfferInternals.log = prevLog;
+        }
+      }
+      if (json) {
+        writeEnrollJson({ ok: true, repo, enrolled: true, firstEnrollment: beforeCount === 0, locusFirm });
       }
       return 0;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(red('error: ') + msg);
-      return 1;
+      return fail(1, msg);
     }
   }
 

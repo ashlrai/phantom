@@ -366,11 +366,20 @@ export function commandCatalogLoaded(): boolean {
 
 export type KeyPlatform = 'mac' | 'other';
 
+/**
+ * `navigator.userAgentData.platform`, read once ('' where the API is absent:
+ * Safari, Firefox, jsdom). Chromium builds a fresh NavigatorUAData on every
+ * read of `userAgentData`, and every shortcut hint (each tooltip, each
+ * render) asks for the platform: with many agents streaming, those reads
+ * alone cost ~4 ms of every session-list refresh at 4× CPU.
+ */
+let uaDataPlatform: string | undefined;
+
 /** The platform the page runs on, for ⌘ vs Ctrl. */
 export function detectKeyPlatform(): KeyPlatform {
   if (typeof navigator === 'undefined') return 'mac';
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const platform = nav.userAgentData?.platform ?? nav.platform ?? '';
+  uaDataPlatform ??= (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '';
+  const platform = uaDataPlatform || navigator.platform || '';
   return /mac|iphone|ipad|ipod/i.test(platform) ? 'mac' : 'other';
 }
 

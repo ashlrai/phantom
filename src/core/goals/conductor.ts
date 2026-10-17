@@ -50,6 +50,11 @@ export interface ConductorCycleSummary {
   /** Metadata-only identifier of the durably consumed one-shot permit. */
   activationPermitId?: string;
   /**
+   * Stale, proposal-less 'in-progress' milestones (a worker killed mid-advance)
+   * reset to 'pending' before selection this cycle.
+   */
+  staleLanesRecovered?: number;
+  /**
    * Per-goal activity for rich UI display: [{goalId, objective, fractionDone,
    * milestoneTitle, proposalFiled}]. Only populated for goals where work was
    * actually attempted (not dry-run skips with no milestone).
@@ -138,6 +143,26 @@ export async function runConductor(
     summary.activationRefusalReason = 'Goal conductor preferences are invalid or unavailable.';
     return summary;
   }
+  // A worker killed mid-advance (SIGKILL/OOM/reboot) never runs advanceGoal's
+  // catch, so its milestone stays 'in-progress'. nextActionableMilestone treats
+  // that as a gate and the goal would be skipped silently forever. Reuse the
+  // conservative stale-lane primitive (proposal-less lanes older than the stale
+  // window only) before selection. Best-effort: recovery never blocks a cycle.
+  if (!opts.dryRun) {
+    try {
+      const { recoverStaleGoalLanes } = await import('./store.js');
+      const recovered = recoverStaleGoalLanes();
+      if (recovered.recovered > 0) {
+        summary.staleLanesRecovered = recovered.recovered;
+        for (const lane of recovered.lanes) {
+          process.stderr.write(`[conductor] goal ${lane.goalId} milestone ${lane.milestoneId} recovered from stale in-progress (${Math.round(lane.ageMs / 60_000)}m)\n`);
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`[conductor] stale goal lane recovery failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+
   const read = listGoalsDetailed({ status: 'active' });
   const knownActive = read.goals.sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : b.updatedAt < a.updatedAt ? -1 : 0));
   const activeGoals = maxGoals === null ? knownActive : knownActive.slice(0, maxGoals);

@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { loadConfig, runSwarm } = vi.hoisted(() => ({
+const { loadConfig, runSwarm, loadSwarm, saveSwarm } = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   runSwarm: vi.fn(),
+  loadSwarm: vi.fn(),
+  saveSwarm: vi.fn(),
 }));
+vi.mock('../src/core/swarm/store.js', () => ({ loadSwarm, saveSwarm, listSwarms: () => [] }));
 vi.mock('../src/core/config.js', () => ({ loadConfig }));
 vi.mock('../src/core/swarm/runner.js', () => ({ runSwarm }));
 vi.mock('../src/core/run/streaming.js', () => ({ makeCliSink: () => () => {} }));
@@ -16,6 +19,10 @@ beforeEach(() => {
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   loadConfig.mockReset().mockReturnValue({ version: 1 });
   runSwarm.mockReset().mockResolvedValue({ id: 'mock-swarm', status: 'done' });
+  loadSwarm.mockReset().mockReturnValue({
+    id: 'sw-1', goal: 'g', status: 'needs-approval', tasks: [], escalations: [], updatedAt: '',
+  });
+  saveSwarm.mockReset().mockReturnValue({ ok: true, revision: 1 });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -42,5 +49,33 @@ describe('swarm BUILD parallel CLI preference', () => {
     expect(await cmdSwarm(['build independent modules', '--parallel', String(parallel), '--json'])).toBe(0);
     expect(runSwarm).toHaveBeenCalledOnce();
     expect(runSwarm.mock.calls[0]?.[2]).toMatchObject({ parallel, allowCloud: false, background: false });
+  });
+});
+
+describe('swarm --help and stray flags never resume or start agents', () => {
+  it.each([
+    [['approve', 'sw-1', '--help']],
+    [['approve', '--help']],
+    [['rollback', 'sw-1', '-h']],
+    [['verify', '--help']],
+    [['build independent modules', '--parallel', '2', '--help']],
+  ])('%j prints usage and dispatches nothing', async (args) => {
+    expect(await cmdSwarm(args)).toBe(0);
+    expect(loadSwarm).not.toHaveBeenCalled();
+    expect(saveSwarm).not.toHaveBeenCalled();
+    expect(runSwarm).not.toHaveBeenCalled();
+    expect(loadConfig).not.toHaveBeenCalled();
+  });
+
+  it('approve refuses anything after the id instead of resuming', async () => {
+    expect(await cmdSwarm(['approve', 'sw-1', '--yes'])).toBe(2);
+    expect(loadSwarm).not.toHaveBeenCalled();
+    expect(runSwarm).not.toHaveBeenCalled();
+  });
+
+  it('approve and rollback refuse a flag in place of the id', async () => {
+    expect(await cmdSwarm(['approve', '--force'])).toBe(2);
+    expect(await cmdSwarm(['rollback', '--yes'])).toBe(2);
+    expect(loadSwarm).not.toHaveBeenCalled();
   });
 });

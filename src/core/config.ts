@@ -353,10 +353,7 @@ const DEFAULT_CATEGORIES: Record<string, string> = {
   'dev-tools': join(HOME, 'Desktop/github/dev-tools'),
   'side-projects': join(HOME, 'Desktop/github/side-projects'),
   'professional-tools': join(HOME, 'Desktop/github/professional-tools'),
-  'artist-encyclopedias': join(HOME, 'Desktop/github/artist-encyclopedias'),
-  'client-engagements': join(HOME, 'Desktop/github/client-engagements'),
   forks: join(HOME, 'Desktop/github/forks'),
-  ashlrai: join(HOME, 'Desktop/github/ashlrai'),
 
   // Desktop document folders
   Business: join(HOME, 'Desktop/Business'),
@@ -370,18 +367,13 @@ const DEFAULT_CATEGORIES: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Keeper list
 // These basenames / absolute paths must NEVER be moved or deleted by tidy.
+// Ships generic only: every install writes this list into its own
+// ~/.ashlr/config.json, so personal file or folder names never belong here.
+// Add your own keepers in that file.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_KEEPERS: string[] = [
-  'Rent Application.pdf',
-  'ASHLRAI',
-  'rde-other',
-  'Keys & Recovery',
   'github',
-  'Evero Notes',
-  'OneDrive - James Madison University',
-  // Top-level symlinks that happen to mirror github/ structure — never double-count
-  'tts agents',
 ];
 
 // ---------------------------------------------------------------------------
@@ -458,6 +450,82 @@ export function defaultConfig(): AshlrConfig {
     // reserves frontier (claude/codex) for hard items (effort≥4 or score≥8)
     // and escalation re-tries. local-coder is mid-tier: branch-eligible but
     // NEVER granted merge-to-main authority (frontier-only gate).
+  };
+}
+
+// ---------------------------------------------------------------------------
+// firstRunConfig() — portable defaults for the config file a fresh install writes
+// ---------------------------------------------------------------------------
+
+/**
+ * Code folders probed (relative to home) when the macOS-style default layout
+ * (~/Desktop/github) is absent. Order is the tie-break: every
+ * existing folder becomes a root, in this order. `~/github` is deliberately
+ * absent: the index treats any root named `github` as a category container
+ * (`github/<category>/<repo>`), which would skip the flat `~/github/<repo>`
+ * layout people usually have there.
+ */
+export const FALLBACK_CODE_DIRS: readonly string[] = [
+  'code',
+  'src',
+  'projects',
+  'dev',
+  'Developer',
+  'repos',
+];
+
+export interface FirstRunProbe {
+  /** Home directory to resolve candidate folders against. Default: homedir(). */
+  home?: string;
+  /** Directory existence check. Default: fs.existsSync. */
+  exists?: (path: string) => boolean;
+}
+
+/**
+ * Roots for a fresh config, chosen from folders that actually exist so a new
+ * Linux/Windows machine does not start with two "missing" roots.
+ *
+ * - `~/Desktop/github` (category container) first, then `~/Desktop`, exactly
+ *   as defaultConfig() lists them, each kept only when it exists. When
+ *   `~/Desktop/github` exists that is the whole answer (unchanged behavior).
+ * - Otherwise every existing FALLBACK_CODE_DIRS entry follows, in order. They come after
+ *   `~/Desktop` on purpose: tidy works on the first non-github root, and that
+ *   must stay the Desktop, never a code folder.
+ * - Nothing found: no roots. `ashlr status` then says "no roots configured"
+ *   and prints the `ashlr config set roots` fix instead of listing phantoms.
+ */
+export function detectDefaultRoots(probe: FirstRunProbe = {}): string[] {
+  const home = probe.home ?? homedir();
+  const exists = probe.exists ?? existsSync;
+  const desktopGithub = join(home, 'Desktop', 'github');
+  const desktop = join(home, 'Desktop');
+  const roots: string[] = [];
+  if (exists(desktopGithub)) roots.push(desktopGithub);
+  if (exists(desktop)) roots.push(desktop);
+  // The classic layout is present: keep exactly the classic roots.
+  if (roots[0] === desktopGithub) return roots;
+  for (const rel of FALLBACK_CODE_DIRS) {
+    const candidate = join(home, rel);
+    if (exists(candidate)) roots.push(candidate);
+  }
+  return roots;
+}
+
+/**
+ * The config a first run writes to ~/.ashlr/config.json: defaultConfig() with
+ * roots probed by detectDefaultRoots(), and no tidy rules when there is no
+ * ~/Desktop (the default rules only move files into ~/Desktop/* folders).
+ * Only used where no config file exists yet; a saved config is never
+ * rewritten, and defaultConfig() itself stays filesystem-independent.
+ */
+export function firstRunConfig(probe: FirstRunProbe = {}): AshlrConfig {
+  const home = probe.home ?? homedir();
+  const exists = probe.exists ?? existsSync;
+  const base = defaultConfig();
+  return {
+    ...base,
+    roots: detectDefaultRoots({ home, exists }),
+    tidyRules: exists(join(home, 'Desktop')) ? base.tidyRules : [],
   };
 }
 
@@ -749,7 +817,7 @@ function readConfigStrict(configPath: string): AshlrConfig {
  */
 export function loadConfigReadOnly(): AshlrConfig {
   const configPath = resolveConfigPath();
-  return existsSync(configPath) ? readConfigOrDefaults(configPath) : defaultConfig();
+  return existsSync(configPath) ? readConfigOrDefaults(configPath) : firstRunConfig();
 }
 
 /**
@@ -766,7 +834,8 @@ export function loadConfigReadOnlyStrict(): AshlrConfig {
 /**
  * Load config from CONFIG_PATH.
  * - If CONFIG_DIR does not exist, creates it.
- * - If CONFIG_PATH does not exist, writes the default config and returns it.
+ * - If CONFIG_PATH does not exist, writes firstRunConfig() (defaults with roots
+ *   probed from folders that exist) and returns it.
  * - Otherwise, reads the file, JSON-parses it, deep-merges over defaultConfig()
  *   (so new keys added in future versions are always present), and returns.
  * - On parse error, logs a warning and falls back to the default config
@@ -783,7 +852,7 @@ export function loadConfig(): AshlrConfig {
 
   // If the config file does not exist, bootstrap it with defaults
   if (!existsSync(configPath)) {
-    const defaults = defaultConfig();
+    const defaults = firstRunConfig();
     saveConfig(defaults);
     return defaults;
   }

@@ -66,6 +66,13 @@ beforeAll(async () => {
   await Promise.all([
     import('./sections/ChatSection.js').then((module) => module.preloadChatSurface()),
     import('./resources/ResourcesChrome.js').then((module) => module.preloadResourcesDrawer()),
+    // The overlays are their own lazy chunks too. The first test to open one
+    // otherwise pays its cold transform inside findBy's 1 s window, which under
+    // shard load timed out the ⌘K case as if the palette never opened.
+    import('./shell/CommandPalette.js'),
+    import('./shell/NeedsYouDrawer.js'),
+    import('./shell/ShortcutsOverlay.js'),
+    import('./shell/GearTray.js'),
   ]);
 }, 30_000);
 
@@ -413,7 +420,8 @@ describe('overlays and keys', () => {
     await screen.findByRole('navigation', { name: 'Chats' });
     key(',', {}, 'Comma');
     key('k', {}, 'KeyK');
-    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toHaveFocus();
+    const search = await screen.findByRole('combobox', { name: 'Search commands' });
+    await waitFor(() => expect(search).toHaveFocus());
     expect(getVerseUiState().section).toBe('settings');
   });
 
@@ -603,7 +611,8 @@ describe('the Resources drawer (3.11 C6)', () => {
     expect(document.querySelector('[data-resources-handle]')).not.toBeNull();
     await user.click(tab);
     const drawer = await screen.findByRole('dialog', { name: 'Resources' });
-    expect(drawer.contains(document.activeElement)).toBe(true);
+    // Focus moves in on the drawer's mount effect, a tick after the dialog appears.
+    await waitFor(() => expect(drawer.contains(document.activeElement)).toBe(true));
     act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resources' })).not.toBeInTheDocument());
     await waitFor(() => expect(document.querySelector('[data-resources-handle]')).toHaveFocus());

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   CheckpointError,
+  defaultCheckpointGit,
   checkpointRefName,
   deleteCheckpointRefs,
   diffCheckpoints,
@@ -303,4 +304,40 @@ describe('three-way merge preview', () => {
     expect(m.text).toContain('>>>>>>> checkpoint');
     expect(await mergeThreeWay(Buffer.from([0, 1]), Buffer.from([0, 2]), Buffer.from([0, 3]))).toMatchObject({ clean: false, text: null });
   });
+});
+
+describe('defaultCheckpointGit bounds a hung child tree', () => {
+  // A repo-config shell alias stands in for any helper git starts (a clean
+  // filter, a hook): it forks a SIGTERM-ignoring grandchild that holds stdout.
+  // Killing only git left that pipe open, so 'close' never fired and the run
+  // hung forever.
+  it.skipIf(process.platform === 'win32')('settles after the timeout and kills a SIGTERM-ignoring grandchild that holds stdout', async () => {
+    const pidFile = join(root, 'grandchild.pid');
+    const script = join(root, 'hang.sh');
+    writeFileSync(script, [
+      '#!/bin/sh',
+      // The subshell ignores SIGTERM, records its pid, then becomes a sleep
+      // that keeps the inherited stdout open.
+      `( trap '' TERM; sh -c 'echo $PPID' > '${pidFile}'; exec sleep 30 ) &`,
+      'exec sleep 30',
+      '',
+    ].join('\n'));
+    git(repo, 'config', 'alias.hang', `!sh '${script}'`);
+    const started = Date.now();
+    const res = await defaultCheckpointGit(repo, ['hang'], { timeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(res).toMatchObject({ code: null, timedOut: true, missing: false });
+    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(pid).toBeGreaterThan(0);
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i += 1) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 50));
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
+  }, 15_000);
 });

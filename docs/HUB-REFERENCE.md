@@ -3,6 +3,7 @@
 # Phantom reference: Universe, resource pools and the legacy fleet
 
 > Moved from the top-level [README](../README.md) to keep the README short. Compatibility identifiers are retained; current product prose uses Phantom.
+> Commands are shown as `ashlr …`; `phm` is the primary command name and runs the same CLI (`phm <cmd>` ≡ `ashlr <cmd>`). The authoritative, current command inventory is `phm help --all`.
 
 ## Reference
 
@@ -25,7 +26,7 @@ candidate that must lose. It runs real code without a model account. The
 candidate transformations are scripted, so it demonstrates the mechanism, not AI
 productivity.
 
-![Two demo generations: compact code shrinks from 274 to 47 bytes and readable code from 317 to 210 bytes; all retained variants pass seven cases and the broken sorting variant is rejected.](https://raw.githubusercontent.com/ashlrai/ashlr-hub/master/docs/images/universe-demo.png)
+![Two demo generations: compact code shrinks from 274 to 47 bytes and readable code from 317 to 210 bytes; all retained variants pass seven cases and the broken sorting variant is rejected.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/universe-demo.png)
 
 Recorded deterministic fixture at source `914ebd1f566c0dc4f0a95479d9c4f464289e736e`.
 Arrows show parent reuse; byte reductions are not measured AI engineering yield.
@@ -69,7 +70,7 @@ task submission, pause/resume, cancellation and session-local output.
 
 ### The legacy enrolled-repository fleet
 
-ashlr-Phantom also contains the original autonomous fleet for enrolled repositories.
+Phantom also contains the original autonomous fleet for enrolled repositories.
 In the current production build its compiled daemon and conductor trust roots are
 empty, so live non-dry fleet execution is dormant unless a standing grant (see [Autonomy setup](AUTONOMY-SETUP.md))
 admits the tick; verified dry-run, status and local-console paths remain
@@ -144,7 +145,7 @@ separate [execution boundaries](ARCHITECTURE.md#current-runtime-map).
 - **Sandboxed by construction.** The legacy autonomous loop routes external engines through `runEngineSandboxed`: a throwaway git worktree with push credentials severed and scrubbed diff capture.
 - **OS-level confinement.** Optionally wraps each run with `sandbox-exec` (macOS) or `bwrap`/`firejail` (Linux) — read-jailed to the worktree, network egress blocked.
 - **Kill-switch.** `touch ~/.ashlr/KILL` gates legacy enrolled-repo mutations. Explicit Universe campaigns and Resource Pool sessions have their own cancellation controls; this is not a universal process kill command.
-- **Small, explicit dependency boundary.** Core and CLI primarily use Node builtins; the package bundles MCP transport, Markdown parsing and archive handling through `@modelcontextprotocol/sdk`, `marked` and `tar`. Backends are CLIs or APIs you explicitly configure.
+- **Small, explicit dependency boundary.** Core and CLI primarily use Node builtins; the declared runtime dependencies in `package.json` include MCP transport (`@modelcontextprotocol/sdk`), Markdown (`marked`), archives (`tar`), YAML/TOML parsing (`yaml`, `smol-toml`), and the optional remote phone gateway (`jose`, `@simplewebauthn/*`, `web-push`). Backends are CLIs or APIs you explicitly configure.
 - **Self-improving.** The fleet can target its own source, but a self-authored diff is ineligible to merge unless the full invariant suite passes flag-off and flag-on, and any diff that weakens a safety test is refused by construction.
 
 ---
@@ -164,9 +165,9 @@ They do not install an unreleased source feature or activate the dormant daemon.
 The npm install is [in the README](../README.md#the-cli). To run from a checkout instead:
 
 ```sh
-git clone https://github.com/ashlrai/ashlr-hub
-cd ashlr-hub
-./install.sh   # builds dist/, symlinks bin/ashlr → ~/.local/bin/ashlr
+git clone https://github.com/ashlrai/phantom
+cd phantom
+./install.sh   # builds dist/, links phm and ashlr into ~/.local/bin
 ```
 
 `install.sh` requires Node 22.15+ and is idempotent — safe to re-run after pulling updates.
@@ -295,7 +296,7 @@ grant resident or unattended conductor authority:
 ```sh
 ashlr goal "harden the inbox apply path"
 ashlr goals list                         # track progress
-ashlr goals advance                      # execute the next milestone
+ashlr goals advance <id>                 # execute the goal's next milestone
 
 # One owner-invoked, proposal-only attempt with a bounded machine-readable result.
 # Run only in a disposable OS account or VM, in an independently rooted clone
@@ -483,15 +484,15 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr local-runtime start/stop/status` | Supervised llama-server with batching slots for local seats |
 | `ashlr resources profile prepare/repin/upgrade-identity` | Prepare or re-pin a private native profile; explicitly add a reboot-stable witness to an unchanged older macOS profile |
 | `ashlr setup` | First-activation checks; currently nonzero because resident service mutation is restricted |
-| `ashlr onboard <repo>` | Enroll one repo with walkthrough + dry run |
+| `ashlr onboard [repo]` | Enroll one repo with walkthrough + dry run |
 | `ashlr enroll add/remove/list` | Manage enrolled repos |
 | `ashlr enroll kill on/off` | Engage/clear the kill-switch |
 | `ashlr daemon start/stop/status` | Runtime operator; current production start refuses with empty compiled roots, while status remains observational |
 | `ashlr loop [--watch] [--dry-run]` | Goal-aware conductor; current production admits dry-run only |
 | `ashlr goal "<objective>"` | Set a strategic goal; plan + dispatch milestones |
-| `ashlr goals list/show/plan/advance` | Manage goals + milestones |
+| `ashlr goals add/list/show/plan/advance/status` | Manage goals + milestones |
 | `ashlr vision show/review/preview/shadow/approve/reconcile` | Mission OS: strategy, bounded DAG preview, authenticated shadow evidence, and explicit goal adoption |
-| `ashlr inbox [show/approve/reject]` | Review and act on proposals |
+| `ashlr inbox [show/approve/submit/reject]` | Review and act on proposals |
 | `ashlr swarm "<goal>"` | Multi-agent sandboxed swarm (ad-hoc) |
 | `ashlr run "<goal>"` | Single agent run (ad-hoc) |
 | `ashlr fleet status/watch/pause/resume` | Fleet control plane |
@@ -502,7 +503,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr invent [repo] [--emit]` | Generative engine — invent net-new features; `--emit` files them to the backlog |
 | `ashlr digest [--notify]` | Org-level portfolio digest (health, goals, costs) → `~/.ashlr/digests/`, read-only |
 | `ashlr spec new/list/show/refine` | Manage spec artifacts |
-| `ashlr genome recall/learn` | Shared memory + knowledge recall |
+| `ashlr recall "<query>"` / `ashlr learn "<text>"` / `ashlr genome` | Shared memory: recall, record a learning, inspect the genome |
 | `ashlr serve [--open]` | Web dashboard (Mission Control) at 127.0.0.1:7777 |
 | `ashlr pulse` | Rolling activity + spend analytics |
 | `ashlr eval` | Local agent eval harness (adaptive-prompts A/B) |
@@ -510,7 +511,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr verify-safety` | Run the safety invariant suite |
 | `ashlr doctor` | One-glance health check |
 | `ashlr models` | List + manage model backends |
-| `ashlr mcp list/doctor/install` | MCP server aggregation gateway |
+| `ashlr mcp [list/doctor/install]` | MCP aggregation gateway: no subcommand runs it on stdio; `list` shows discovered servers plus the native `ashlr_*` and `phm_*` tools defined in `src/core/mcp-native.ts` |
 | `ashlr preflight` | Pre-activation health check — verifies daemon, backends, and keys before first enroll |
 | `ashlr sandbox` | Sandbox management |
 | `ashlr sandbox gc` | Garbage-collect stale worktrees (safe, read-jailed, no live state touched) |
@@ -519,7 +520,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr audit` | Append-only audit log |
 | `ashlr update` | Safe self-update |
 | `ashlr tui` | Interactive TUI dashboard |
-| `ashlr help` | Full command reference |
+| `ashlr help [<topic>] [--all]` | Topic-grouped help; `--all` prints every command |
 
 ---
 
@@ -542,7 +543,7 @@ containment or activation of another.
 9. **Self-improvement cannot self-disarm.** A self-target diff must pass the invariant suite flag-off and flag-on. Any diff weakening a safety test is refused. Proven by `test/m54.*`.
 10. **Preserve the declared dependency boundary.** Package manifest, lockfile and bundled dependency inventory must agree. Reuse existing utilities and update the dependency contract and verification together for a justified dependency change.
 
-Full invariant set: [`docs/SPEC-V4-FOUNDRY.md`](https://github.com/ashlrai/ashlr-hub/blob/master/docs/SPEC-V4-FOUNDRY.md) §9 and [`docs/SPEC-V5-OPEN-FLEET.md`](https://github.com/ashlrai/ashlr-hub/blob/master/docs/SPEC-V5-OPEN-FLEET.md) §9.
+Full invariant set: [`docs/SPEC-V4-FOUNDRY.md`](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-V4-FOUNDRY.md) §9 and [`docs/SPEC-V5-OPEN-FLEET.md`](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-V5-OPEN-FLEET.md) §9.
 
 ---
 
@@ -567,8 +568,8 @@ Full invariant set: [`docs/SPEC-V4-FOUNDRY.md`](https://github.com/ashlrai/ashlr
 ├── audit/               # Append-only confinement + action audit log
 ├── manager/             # Manager judge scorecards
 ├── native-profiles/     # One private profile per seat (launcher, command.json, native state)
-├── account-connections/ # connections.json: the seats Verse lists
-├── verse/               # Verse sessions, workspaces, project memory, attachments
+├── account-connections/ # connections.json: the seats Phantom lists
+├── verse/               # Phantom console sessions, workspaces, project memory, attachments
 ├── authority/           # Standing grants and the hash-chained ledger
 ├── budget.json          # Budget mode and per-seat overrides
 ├── routing/
@@ -629,7 +630,7 @@ The config is validated against [`schema/config.schema.json`](../schema/config.s
 ticks. It never invokes a model or mutates memory, routing, proposals, or merge
 state, and it remains distinct from behavior-changing reflection.
 
-See [`docs/FOUNDRY-CONFIG.md`](https://github.com/ashlrai/ashlr-hub/blob/master/docs/FOUNDRY-CONFIG.md) for the full foundry reference and [`docs/examples/foundry.config.json`](https://github.com/ashlrai/ashlr-hub/blob/master/docs/examples/foundry.config.json) for an annotated example.
+See [`docs/FOUNDRY-CONFIG.md`](https://github.com/ashlrai/phantom/blob/master/docs/FOUNDRY-CONFIG.md) for the full foundry reference and [`docs/examples/foundry.config.json`](https://github.com/ashlrai/phantom/blob/master/docs/examples/foundry.config.json) for an annotated example.
 
 ### Locus firm profile (opt-in identity gates)
 
@@ -662,6 +663,6 @@ Resolution: env → `locus.enforce` → `locus.firm === true` → off. See
 `--locus-firm` / `ASHLR_LOCUS_FIRM=1`.
 
 **Production fleet checklist** (install Locus, firm, CI binding, doctor soft
-warn): [`docs/LOCUS-FIRM-FLEET.md`](https://github.com/ashlrai/ashlr-hub/blob/master/docs/LOCUS-FIRM-FLEET.md). When repos are
+warn): [`docs/LOCUS-FIRM-FLEET.md`](https://github.com/ashlrai/phantom/blob/master/docs/LOCUS-FIRM-FLEET.md). When repos are
 enrolled, Locus is on PATH, and `locus.firm` is still false, `ashlr doctor` /
 preflight soft-warns *consider locus.firm for production* (non-blocking).

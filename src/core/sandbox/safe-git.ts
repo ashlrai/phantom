@@ -102,6 +102,8 @@ export class SafeGitError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_OUTPUT = 16 * 1024 * 1024;
+/** After the SIGKILL of a git process group: drop its pipes and settle. */
+const SAFE_GIT_KILL_GRACE_MS = 2_000;
 const MAX_POINTER_BYTES = 4096;
 
 function isInside(child: string, parent: string): boolean {
@@ -362,19 +364,45 @@ export function runSafeGit(opts: SafeGitOptions): Promise<SafeGitResult> {
   const { file, args, env } = safeGitCommand(opts);
   const max = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, { cwd: opts.workTree, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // Own process group on POSIX, so a kill reaches git's remote helpers and
+    // filters too: killing only git left a grandchild (git-remote-https
+    // stuck on the network) holding the inherited stderr, and 'close' never
+    // fired.
+    const useGroup = process.platform !== 'win32';
+    const child = spawn(file, args, { cwd: opts.workTree, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: useGroup });
     const out = collect(max);
     const err = collect(max);
     let timedOut = false;
     let overflow = false;
-    const kill = (): void => { child.kill('SIGKILL'); };
+    let settled = false;
+    let grace: NodeJS.Timeout | null = null;
+    const killTree = (): void => {
+      if (useGroup && typeof child.pid === 'number' && child.pid > 0) {
+        try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* group gone: fall back to the child */ }
+      }
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+    };
+    const kill = (): void => {
+      killTree();
+      // Something outside the group may still hold a pipe: stop waiting for
+      // 'close' a grace after the kill and settle.
+      grace ??= setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(null, 'SIGKILL');
+      }, SAFE_GIT_KILL_GRACE_MS);
+      grace.unref();
+    };
     child.stdout.on('data', (c: Buffer) => { if (!out.push(c)) { overflow = true; kill(); } });
     child.stderr.on('data', (c: Buffer) => { if (!err.push(c)) { overflow = true; kill(); } });
     const timer = setTimeout(() => { timedOut = true; kill(); }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const onAbort = (): void => kill();
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     const finish = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      if (grace) clearTimeout(grace);
       opts.signal?.removeEventListener('abort', onAbort);
       resolvePromise({
         ok: code === 0 && !timedOut && !overflow,

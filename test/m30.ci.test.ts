@@ -120,12 +120,12 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success') => {
+    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
       const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
         result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
-        process: { env: { GATE_NEEDS: JSON.stringify(dependencies) } }, console: { log: () => {} },
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
       });
     };
     const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
@@ -137,6 +137,18 @@ describe('M30 CI workflow', () => {
         expect(execute('full', { ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
       }
     }
+    // Deferred PR: only a skipped mac-general is accepted; failures still block
+    // and every other full-lane job must still succeed.
+    expect(execute('full', { ...complete, 'mac-general': 'skipped', site: 'skipped' }, 'success', 'true')).not.toThrow();
+    for (const outcome of ['failure', 'cancelled', 'neutral']) {
+      expect(execute('full', { ...complete, 'mac-general': outcome, site: 'skipped' }, 'success', 'true')).toThrow();
+    }
+    for (const name of full.filter((name) => name !== 'mac-general')) {
+      expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
+    }
+    expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
+      "${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}",
+    );
     expect(execute('site', { ...site, site: 'failure' })).toThrow();
     expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
     expect(execute('full', { ...complete, site: 'success' })).toThrow();
@@ -151,8 +163,10 @@ describe('M30 CI workflow', () => {
       'permissions:\n  contents: read',
     );
     expect(ciYml.match(/^\s{2,}permissions:/gm) ?? []).toHaveLength(0);
-    expect(ciYml).toMatch(/^concurrency:\n {2}group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m);
+    expect(ciYml).toMatch(/^concurrency:\n {2}group: ci-\$\{\{ github\.event\.pull_request\.number \|\| \(github\.event_name == 'push' && github\.sha\) \|\| github\.ref \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m);
     expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
+    // The required Merge Gate must also report on merge-queue commits.
+    expect(ciYml).toMatch(/^ {2}merge_group:$/m);
   });
 
   it('checks out the exact candidate and binds its tree to the original event before gates', () => {
@@ -275,7 +289,7 @@ describe('M30 CI workflow', () => {
         expect(step).toContain('timeout-minutes: 2');
         expect(step).not.toMatch(/always\(\)|needs:|permissions:|qualifyArtifact|verifyArtifact|adoptArtifact/);
       }
-      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}');
+      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}');
       expect(observations[1]).toContain("if: success() && steps.shadow.outputs.shadow_dir != ''");
       expect(observations[1]).toContain('name: phantom-impact-shadow-');
       const full = job.match(/^ {6}- name: Test (?:web operator console|complete Mac [^\n]+)\n[\s\S]*?(?=^ {6}- name:)/m)?.[0] ?? '';
@@ -306,7 +320,7 @@ describe('M30 CI workflow', () => {
     expect(ciYml).not.toContain('pull_request_target');
   });
 
-  it('releases only the two short Mac gates after isolated work while general lanes remain independent', () => {
+  it('queues the short Mac gates beside the isolated lane while general lanes remain independent', () => {
     type Job = {
       name: string;
       'runs-on': string;
@@ -331,27 +345,21 @@ describe('M30 CI workflow', () => {
     expect(jobs.site?.needs).toBe('classify');
     expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site'");
     expect(shared, 'shared Mac still requires its own complete named gate').toBeDefined();
+    // Each Mac gate queues straight after classify: chaining one Mac job behind
+    // another adds a whole Mac queue wait to the PR's wall clock.
     for (const id of ['ci-shared-macos', 'native-macos-broker-foundation']) {
-      const short = jobs[id]!;
-      expect(short.needs).toEqual(['classify', 'mac-isolated']);
-      expect(jobs['mac-isolated']!.needs).toBe('classify');
-      // The actual transitive graph cannot reintroduce the general matrix as
-      // a predecessor; this is scheduling overlap, never missing coverage.
-      const predecessors = (jobId: string): string[] => {
-        const needs = jobs[jobId]!.needs;
-        const dependencies = needs === undefined ? [] : Array.isArray(needs) ? needs : [needs];
-        return dependencies.flatMap((dependency) => [dependency, ...predecessors(dependency)]);
-      };
-      expect(new Set(predecessors(id))).toEqual(new Set(['classify', 'mac-isolated']));
-      // An explicit status function keeps the short gate eligible on predecessor
-      // failure; cancellation stops it rather than starting more work.
-      expect(short.if).toBe("${{ !cancelled() && needs.classify.outputs.lane == 'full' }}");
-      expect(short['continue-on-error']).toBeUndefined();
+      expect(jobs[id]!['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'mac-general', 'mac-isolated', 'windows-service-authority']) {
+    for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
     }
+    // The exhaustive Mac partition runs on master pushes, reusable calls and
+    // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
+    expect(jobs['mac-general']!.needs).toBe('classify');
+    expect(jobs['mac-general']!.if).toBe(
+      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+    );
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     expect(ci.strategy!.matrix.include).toHaveLength(7);

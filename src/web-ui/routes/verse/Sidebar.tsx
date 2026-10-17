@@ -138,7 +138,9 @@ export function Sidebar(props: SidebarProps) {
     () => buildSidebar({ sessions, projects, query, filter, activity, meta, localSeen, selectedId, selectedTerminal }),
     [sessions, projects, query, filter, activity, meta, localSeen, selectedId, selectedTerminal],
   );
-  const loading = sessionsStatus === 'loading' || (sessionsStatus === 'idle' && sessions.length === 0);
+  // Chats already in hand (the bootstrap read carries the list) draw at once;
+  // the dedicated sessions read then refreshes them in place.
+  const loading = sessions.length === 0 && (sessionsStatus === 'loading' || sessionsStatus === 'idle');
   const searching = query.trim().length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
 
