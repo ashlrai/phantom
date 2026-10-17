@@ -865,6 +865,17 @@ function checkGenomeMemory(
     );
   }
 
+  // An empty genome is the normal fresh-install state: it fills as you work.
+  // Only a missing ~/.ashlr/genome is worth a warning (`doctor --fix` creates it).
+  if (existsSync(join(homedir(), '.ashlr', 'genome'))) {
+    return check(
+      'genome-memory',
+      'Genome memory',
+      'pass',
+      'Empty so far: it fills as you work (seed it now with phm learn)',
+    );
+  }
+
   return check(
     'genome-memory',
     'Genome memory',
@@ -910,12 +921,13 @@ function checkIdentity(
     return check('identity', 'Phantom identity', 'pass', detail);
   }
 
+  // Phantom cloud is optional: local work, connected Claude Code/Codex accounts
+  // and the console all run without it, so signing out is not a warning.
   return check(
     'identity',
     'Phantom identity',
-    'warn',
-    'Not logged in to Phantom cloud — identity unavailable',
-    'phantom login  (or phantom cloud login)',
+    'pass',
+    'Not signed in to Phantom cloud (optional). Sign in for cloud identity: phantom login',
   );
 }
 

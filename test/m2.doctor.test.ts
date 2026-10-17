@@ -389,7 +389,7 @@ describe('runDoctor — report structure', () => {
     expect(report.checks.find((check) => check.id === 'ashlr-tools-installed'))
       .toMatchObject({ label: 'Phantom tools installed', status: 'warn', detail: 'No ecosystem tools installed; 0/0 installed' });
     expect(report.checks.find((check) => check.id === 'identity'))
-      .toMatchObject({ status: 'warn', detail: 'Not logged in to Phantom cloud — identity unavailable' });
+      .toMatchObject({ status: 'pass', detail: 'Not signed in to Phantom cloud (optional). Sign in for cloud identity: phantom login' });
   }, 15_000);
 
   it('returns a checks array with at least one check', async () => {
@@ -901,5 +901,33 @@ describe('runDoctor — never throws', () => {
 
     const cfg = makeConfig(tmpHome);
     await expect(runDoctor(cfg)).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fresh-install states that are normal, not problems
+// ---------------------------------------------------------------------------
+
+describe('runDoctor — fresh-install optional states', () => {
+  it('passes the identity check when not signed in to Phantom cloud, and says how to sign in', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const identity = report.checks.find(c => c.id === 'identity');
+    expect(identity?.status).toBe('pass');
+    expect(identity?.detail).toMatch(/optional/);
+    expect(identity?.detail).toContain('phantom login');
+  });
+
+  it('passes an empty genome once ~/.ashlr/genome exists', async () => {
+    mkdirSync(join(tmpHome, '.ashlr', 'genome'), { recursive: true });
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('pass');
+    expect(genome?.detail).toContain('fills as you work');
+  });
+
+  it('still warns when ~/.ashlr/genome is missing, so doctor --fix can create it', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('warn');
   });
 });
