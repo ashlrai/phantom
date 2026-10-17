@@ -268,6 +268,28 @@ describe('M23 gate — CLI inbox show NEVER calls applyProposal', () => {
     await cmdInbox(['show', 'nonexistent-id']);
     expect(applyProposalSpy).not.toHaveBeenCalled();
   });
+
+  it('`inbox show <nonexistent> --json` and a missing id refuse with JSON on stdout', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await cmdInbox(['show', 'nonexistent-id', '--json'])).toBe(1);
+      expect(await cmdInbox(['show', '--json'])).toBe(2);
+      expect(await cmdInbox(['reject', '--json'])).toBe(2);
+      expect(await cmdInbox(['automerge', '--json'])).toBe(2);
+      expect(error).not.toHaveBeenCalled();
+      expect(log.mock.calls.map((call) => JSON.parse(String(call[0])) as unknown)).toEqual([
+        { ok: false, error: 'Proposal not found: nonexistent-id' },
+        { ok: false, error: 'Usage: ashlr inbox show <id> [--open] [--json]' },
+        { ok: false, error: 'Usage: ashlr inbox reject <id> [--json]' },
+        { ok: false, error: 'Usage: ashlr inbox automerge <id> [--json]' },
+      ]);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+    expect(applyProposalSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ===========================================================================

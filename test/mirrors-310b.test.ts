@@ -546,6 +546,28 @@ describe('ashlr mirror CLI', () => {
     }
     expect(existsSync(fleetMirrorsRoot())).toBe(false);
   });
+
+  it('keeps --json stdout machine-readable: bare --json lists, refusals are JSON with exit 2', async () => {
+    const io = capture();
+    let listOut = '';
+    let refusalOut = '';
+    let unknownOut = '';
+    try {
+      expect(await runMirrorCli(['--json'])).toBe(0);
+      listOut = io.out();
+      expect(await runMirrorCli(['add', '../etc', '--json'])).toBe(2);
+      refusalOut = io.out().slice(listOut.length);
+      expect(await runMirrorCli(['frobnicate', '--json'])).toBe(2);
+      unknownOut = io.out().slice(listOut.length + refusalOut.length);
+    } finally {
+      io.restore();
+    }
+    expect(JSON.parse(listOut)).toEqual([]);
+    expect(JSON.parse(refusalOut)).toEqual({ ok: false, reason: 'not a GitHub owner/name: ../etc' });
+    expect(JSON.parse(unknownOut)).toEqual({ ok: false, reason: 'unknown mirror command: frobnicate' });
+    expect(io.err()).toBe('');
+    expect(existsSync(fleetMirrorsRoot())).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
