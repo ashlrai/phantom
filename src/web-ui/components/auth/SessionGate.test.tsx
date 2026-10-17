@@ -56,11 +56,11 @@ describe('SessionGate', () => {
     const user = userEvent.setup();
     const mutation = 'e'.repeat(64);
 
-    render(<SessionGate heading="Connect to Ashlr Verse" command="ashlr verse" subject="Ashlr Verse" mutationField onAuthenticated={onAuthenticated} />);
+    render(<SessionGate heading="Connect to Phantom" command="phm verse" subject="Phantom" mutationField onAuthenticated={onAuthenticated} />);
     expect(screen.queryByText(/This dashboard/)).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Connect to Ashlr Verse' })).toBeInTheDocument();
-    expect(screen.getByText('ashlr verse', { selector: 'pre' })).toBeInTheDocument();
-    expect(screen.getByText(/Ashlr Verse only ever talks/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
+    expect(screen.getByText('phm verse', { selector: 'pre' })).toBeInTheDocument();
+    expect(screen.getByText(/Phantom only ever talks/)).toBeInTheDocument();
     await user.type(screen.getByLabelText(/^read token/i), VALID_TOKEN);
     await user.type(screen.getByLabelText(/mutation token/i), mutation);
     await user.click(screen.getByRole('button', { name: /connect/i }));

@@ -236,6 +236,7 @@ import {
   ashlrTmpDir,
   reapLeakedTempWorktrees,
   releaseTempWorktreeOwner,
+  tempWorktreePatchPath,
   writeTempWorktreeOwner,
 } from './temp-worktree-reaper.js';
 
@@ -445,18 +446,23 @@ async function runFencedMutation<T>(
   }
 }
 
-/** Write `content` to a temp file under ~/.ashlr/tmp; caller cleans it up. */
-function writeTmpFile(content: string): string {
-  const dir = join(homedir(), '.ashlr', 'tmp');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const p = join(dir, `merge-${randomBytes(6).toString('hex')}.diff`);
+/**
+ * Write `content` to the patch file of the temp worktree at `worktreeDir`
+ * (`<dir>.patch`, beside its owner marker); caller cleans it up. Named after
+ * the worktree so a SIGKILL between write and cleanup leaves a file the
+ * temp-worktree reaper removes under the same owner rules as the worktree.
+ */
+function writeTmpFile(content: string, worktreeDir: string): string {
+  const p = tempWorktreePatchPath(worktreeDir);
   // M292: `git apply` rejects a patch whose final line lacks a trailing newline
   // ("corrupt patch at line N"). Captured sandbox diffs frequently end without
   // one, which made EVERY verify/merge git-apply fail → no proposal could ever
   // merge. Ensure a trailing newline on the apply temp file (does NOT touch the
   // stored proposal.diff or its provenance hash — only this throwaway apply file).
   const body = content.endsWith('\n') ? content : content + '\n';
-  writeFileSync(p, body, 'utf8');
+  // `wx`: the name is unique per temp worktree id, so an existing file there is
+  // never ours; fail instead of writing through whatever was planted at it.
+  writeFileSync(p, body, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return p;
 }
 
@@ -2722,8 +2728,11 @@ async function verifyProposalAgainstCurrentPins(
     return { ok: false, ran: [], detail: `could not resolve head of default branch '${base}'`, baseBranch: base };
   }
 
-  const tmpBranch = `ashlr/verify/${randomBytes(6).toString('hex')}`;
-  const tmpDir = join(ashlrTmpDir(), `vwt-${randomBytes(6).toString('hex')}`);
+  // One id for both, so the reaper can find a crashed verify's scratch branch
+  // from its owner marker after the worktree itself is gone.
+  const tmpId = randomBytes(6).toString('hex');
+  const tmpBranch = `ashlr/verify/${tmpId}`;
+  const tmpDir = join(ashlrTmpDir(), `vwt-${tmpId}`);
 
   // Create the isolated worktree on a scratch branch off the default-branch head.
   // V3.10 (U6): in a fleet mirror this is a ref + worktree mutation, so it
@@ -2737,7 +2746,7 @@ async function verifyProposalAgainstCurrentPins(
         // Reap crash leftovers (SIGKILL/OOM mid-verify skips the finally below)
         // under the same lease, then mark this worktree's owner before creating it.
         reapLeakedTempWorktrees(repo);
-        writeTempWorktreeOwner(tmpDir);
+        writeTempWorktreeOwner(tmpDir, repo);
         gitRun(repo, ['worktree', 'add', '-b', tmpBranch, tmpDir, baseHead]);
         installGrants = linkVerifyNodeModules(repo, tmpDir);
         return null;
@@ -2846,7 +2855,7 @@ async function verifyProposalAgainstCurrentPins(
     // command list, then run those (immutable) commands against the patched tree.
     // Apply exactly to the verified index. Context drift is a refusal, not
     // authority to synthesize a three-way result that was never proposed.
-    patchFile = writeTmpFile(diff);
+    patchFile = writeTmpFile(diff, tmpDir);
     try {
       gitRun(tmpDir, ['apply', '--index', patchFile]);
     } catch (err) {
@@ -3246,7 +3255,7 @@ function buildMergeBranch(
     const authorityFailure = finalAuthority?.();
     if (authorityFailure) return { branch: null, head: null, detail: authorityFailure };
     reapLeakedTempWorktrees(repo);
-    writeTempWorktreeOwner(tmpDir);
+    writeTempWorktreeOwner(tmpDir, repo);
     // Build detached so a crash cannot leave a half-built named branch that
     // permanently blocks reconstruction on the next attempt.
     gitRun(repo, ['worktree', 'add', '--detach', tmpDir, expectedBaseHead ?? baseHead]);
@@ -3275,7 +3284,7 @@ function buildMergeBranch(
       detail = writeAuthorityFailure;
       return { branch: null, head: null, detail };
     }
-    patchFile = writeTmpFile(diff);
+    patchFile = writeTmpFile(diff, tmpDir);
     try {
       const applyAuthorityFailure = finalAuthority?.();
       if (applyAuthorityFailure) throw new Error(applyAuthorityFailure);
@@ -3419,7 +3428,7 @@ function mergeLocally(
     // A leaked mergewt- from a killed daemon keeps `base` checked out and would
     // fail this add forever: reap provably-orphaned ones first, then mark ours.
     reapLeakedTempWorktrees(repo);
-    writeTempWorktreeOwner(tmpDir);
+    writeTempWorktreeOwner(tmpDir, repo);
     gitRun(repo, ['worktree', 'add', tmpDir, base]);
     const linkAuthorityFailure = finalAuthority?.();
     if (linkAuthorityFailure) throw new Error(linkAuthorityFailure);

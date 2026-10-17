@@ -129,7 +129,7 @@ export function verseMcpSeatSupport(engine: string, devinLane: 'cloud' | 'cli' |
     case 'devin':
       return devinLane === 'cloud'
         ? { supported: false, reason: 'Devin cloud runs on Cognition\'s machines and cannot reach tools on this Mac. Use the Devin CLI seat for terminal and browser tools.' }
-        : { supported: true, transport: 'http', note: 'Offered to the Devin CLI over ACP, and Devin\'s own terminals run in a visible Verse tab.' };
+        : { supported: true, transport: 'http', note: 'Offered to the Devin CLI over ACP, and Devin\'s own terminals run in a visible Phantom tab.' };
     default:
       return { supported: false, reason: 'This seat cannot load Ashlr\'s tools.' };
   }
