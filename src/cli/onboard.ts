@@ -185,7 +185,7 @@ export async function renderDryRunPlan(cfg: AshlrConfig): Promise<string> {
  * Returns 0 only when every requested narrowing action is confirmed. NEVER
  * widens access; NEVER an outward action.
  */
-export async function rollback(repo: string, opts: { kill: boolean }): Promise<number> {
+export async function rollback(repo: string, opts: { kill: boolean; json?: boolean }): Promise<number> {
   const lexical = resolve(repo);
   const authorityRepo = canonicalEnrollmentPath(repo);
   const abs = authorityRepo ?? lexical;
@@ -235,6 +235,28 @@ export async function rollback(repo: string, opts: { kill: boolean }): Promise<n
 
   // 3. Opt-in: pause ALL autonomy in the same step (H6-audited kill:on).
   const killResult = opts.kill ? setKill(true) : null;
+  const code = incomplete > 0 || failedUnenrollments.length > 0 ||
+    (killResult !== null && (!killResult.ok || !killResult.quiesced)) ? 1 : 0;
+
+  if (opts.json) {
+    writeJson({
+      ok: code === 0,
+      mode: 'rollback',
+      repo: abs,
+      unenrolled: failedUnenrollments.length === 0,
+      unenrollFailures: failedUnenrollments.map(({ identity, result }) => ({
+        identity,
+        reason: result.reason,
+      })),
+      swept,
+      incompleteCleanups: incomplete,
+      kill: killResult === null
+        ? null
+        : { requested: true, confirmed: killResult.ok && killResult.quiesced, reason: killResult.reason },
+      next: ['ashlr onboard'],
+    });
+    return code;
+  }
 
   console.log('');
   console.log(bold('  ashlr onboard --rollback'));
@@ -262,8 +284,46 @@ export async function rollback(repo: string, opts: { kill: boolean }): Promise<n
   console.log('');
   console.log(`  ${dim('Re-enable any time with')} ${cyan('ashlr onboard')}.`);
   console.log('');
-  return incomplete > 0 || failedUnenrollments.length > 0 ||
-    (killResult !== null && (!killResult.ok || !killResult.quiesced)) ? 1 : 0;
+  return code;
+}
+
+// ---------------------------------------------------------------------------
+// --json helpers — exactly one JSON object on stdout; prose goes to stderr
+// ---------------------------------------------------------------------------
+
+function writeJson(payload: Record<string, unknown>): void {
+  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+}
+
+/**
+ * The machine-readable first-activation steps for `--json`. Mirrors the
+ * human `printSteps` guidance (same order, same gates).
+ */
+function onboardJsonSteps(repoHint: string): Array<{ step: number; name: string; command: string; detail: string }> {
+  return [
+    { step: 1, name: 'preflight', command: 'ashlr preflight', detail: 'read-only readiness check' },
+    { step: 2, name: 'enroll', command: `ashlr enroll add ${repoHint}`, detail: 'the explicit enrollment gate' },
+    { step: 3, name: 'dry-run', command: 'ashlr daemon start --dry-run --once', detail: 'preview the plan; NO proposal, $0' },
+    { step: 4, name: 'review', command: 'ashlr inbox', detail: 'review + approve; NEVER auto-applied' },
+    { step: 5, name: 'rollback', command: `ashlr onboard --rollback ${repoHint}`, detail: 'one-command undo' },
+  ];
+}
+
+/** Values-free stack facts for `--json` (same probes as buildStackStep). */
+function stackJson(repo: string): Record<string, unknown> {
+  try {
+    if (!stackInstalled()) return { installed: false };
+    const status = stackStatus(repo);
+    return {
+      installed: true,
+      ok: status.ok,
+      services: status.services ?? [],
+      detail: status.detail,
+      configured: stackProjectConfigured(repo),
+    };
+  } catch {
+    return { installed: false };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +354,7 @@ function printSteps(repoHint: string): void {
   console.log(`  ${dim('Run these in order. Each step is the explicit human gate — nothing runs on its own.')}`);
   console.log('');
   console.log(`  ${cyan('1.')} ${bold('Preflight')}   ${dim('ashlr preflight')}                      ${dim('— read-only readiness check')}`);
-  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr sandbox enroll ${repoHint}`)}   ${dim('— the explicit enrollment gate')}`);
+  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr enroll add ${repoHint}`)}       ${dim('— the explicit enrollment gate')}`);
   console.log(`  ${cyan('3.')} ${bold('Dry-run')}     ${dim('ashlr daemon start --dry-run --once')}    ${dim('— preview the plan; NO proposal, $0')}`);
   console.log(`  ${cyan('4.')} ${bold('Review')}      ${dim('ashlr inbox')}                          ${dim('— review + approve; NEVER auto-applied')}`);
   console.log(`  ${cyan('5.')} ${bold('Rollback')}    ${dim(`ashlr onboard --rollback ${repoHint}`)}  ${dim('— one-command undo')}`);
@@ -390,7 +450,7 @@ function printOnboardHelp(): void {
   console.log('');
   console.log(bold('  ashlr onboard') + dim(' — guided first safe activation (never auto-applies)'));
   console.log('');
-  console.log(dim('Usage: ashlr onboard [--locus-firm] [--yes]'));
+  console.log(dim('Usage: ashlr onboard [--locus-firm] [--yes] [--json]'));
   console.log(dim('   or: ashlr onboard --rollback <repo> [--kill]'));
   console.log('');
   console.log(`    ${cyan('ashlr onboard')}                    preflight → enroll ONE repo → dry-run PLAN → \`ashlr inbox\``);
@@ -410,6 +470,7 @@ export async function cmdOnboard(args: string[]): Promise<number> {
   }
 
   const cfg = loadConfig();
+  const json = args.includes('--json');
 
   // ── Rollback route ────────────────────────────────────────────────────────
   if (args.includes('--rollback')) {
@@ -422,11 +483,12 @@ export async function cmdOnboard(args: string[]): Promise<number> {
         ? args[idx + 1]
         : positional[0] ?? process.cwd();
     const kill = args.includes('--kill');
-    return rollback(repo, { kill });
+    return rollback(repo, { kill, json });
   }
 
   // ── yesMode = non-interactive guidance (NO prompt, NO enroll) ──────────────
-  const yesMode = args.includes('--yes') || !process.stdin.isTTY;
+  // `--json` is for agents: it never prompts, so it always takes this path.
+  const yesMode = args.includes('--yes') || json || !process.stdin.isTTY;
   const locusFirmFlag = argsRequestLocusFirm(args);
 
   // Candidate repo: first positional arg that is not a known flag value, else cwd.
@@ -436,6 +498,18 @@ export async function cmdOnboard(args: string[]): Promise<number> {
 
   // ── Step 1: Preflight (READ-ONLY). Blockers ⇒ STOP, do nothing else. ───────
   const report = await buildReadiness(cfg);
+  if (!report.ready && json) {
+    writeJson({
+      ok: false,
+      mode: 'preflight',
+      ready: false,
+      blockers: report.blockers,
+      warnings: report.warnings,
+      info: report.info,
+      next: ['ashlr preflight'],
+    });
+    return 1;
+  }
   if (!report.ready) {
     printBlockers(report);
     return 1;
@@ -448,6 +522,35 @@ export async function cmdOnboard(args: string[]): Promise<number> {
   // dry-run on the user's behalf. The human runs the explicit gates.
   // Exception: explicit firm opt-in (--locus-firm / ASHLR_LOCUS_FIRM) may write
   // config.locus.firm without enrolling (production fleet bootstrap).
+  if (yesMode && json) {
+    // Any firm-offer prose goes to stderr so stdout stays one JSON object.
+    const prevLog = _firmOfferInternals.log;
+    _firmOfferInternals.log = (...a: unknown[]) => console.error(...a);
+    let locusFirm;
+    try {
+      locusFirm = await maybeOfferLocusFirm({
+        yes: true,
+        locusFirmFlag,
+        context: 'onboard',
+        isInteractive: false,
+      });
+    } finally {
+      _firmOfferInternals.log = prevLog;
+    }
+    writeJson({
+      ok: true,
+      mode: 'steps',
+      ready: true,
+      repo: candidate,
+      enrolled: false,
+      warnings: report.warnings,
+      info: report.info,
+      steps: onboardJsonSteps(repoArg ?? candidate),
+      locusFirm,
+      stack: stackJson(candidate),
+    });
+    return 0;
+  }
   if (yesMode) {
     printSteps(repoArg ?? candidate);
     // Soft firm offer — skip unless explicit flag/env (CI-safe default off).

@@ -20,7 +20,7 @@
  *  - No new runtime deps; node builtins only.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
@@ -59,9 +59,16 @@ import type {
 import { isRepo } from '../git.js';
 import {
   assertMayMutate,
+  canonicalEnrollmentPath,
   canonicalFilesystemPathIdentity,
   killSwitchOn,
 } from './policy.js';
+import {
+  acquireRepoLease,
+  registerExecutionLease,
+  type ExecutionLease,
+  type RepoLease,
+} from './execution-leases.js';
 import { audit } from './audit.js';
 import {
   acquireOutwardMutationFence,
@@ -255,7 +262,16 @@ function pidAlive(pid: unknown): boolean {
 }
 
 function ownerAlive(sb: Sandbox): boolean {
+  // A creation that failed and could not roll back marks its own sandbox
+  // abandoned: its owner is alive but will never use or remove it, so the
+  // sweeps may reclaim it now instead of after the owner exits.
+  if (sb.abandonedAt !== undefined) return false;
   return pidAlive(sb.ownerPid);
+}
+
+/** True when metadata carries a well-formed owner pid (liveness is then decidable). */
+function hasRecordedOwnerPid(sb: Sandbox): boolean {
+  return typeof sb.ownerPid === 'number' && Number.isInteger(sb.ownerPid) && sb.ownerPid > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +407,12 @@ interface PinnedWorktreeCreationResult {
   error?: string;
   worktreeDev?: string;
   worktreeIno?: string;
+  /** The worktree's administrative directory as REGISTER pinned it (ok results). */
+  adminPath?: string;
+  adminDev?: string;
+  adminIno?: string;
+  /** Runner step durations (ms), present only under ASHLR_SANDBOX_TIMING=1. */
+  timing?: Record<string, number>;
 }
 
 const PINNED_GIT_SUPERVISOR = String.raw`
@@ -410,7 +432,14 @@ delete gitEnv.GIT_WORK_TREE;
 delete gitEnv.GIT_COMMON_DIR;
 if (repositoryContext === 'pinned') {
   gitEnv.GIT_DIR = '.';
+} else if (repositoryContext === 'linked') {
+  // A linked worktree's own administrative directory and work tree, exactly
+  // as git worktree add hands them to its checkout.
+  gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
+  gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
 }
+delete gitEnv.ASHLR_LINKED_GIT_DIR;
+delete gitEnv.ASHLR_LINKED_WORK_TREE;
 
 const destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
   parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
@@ -638,16 +667,53 @@ try {
 } catch { /* exclude registration is best effort */ }
 `;
 
+/**
+ * One read of a created worktree's state: HEAD's commit, HEAD's symbolic ref
+ * (`refs/heads/<branch>`, or `HEAD` when detached), and the absolute Git
+ * common directory, in that order. It answers what `rev-parse HEAD`,
+ * `branch --show-current` and `rev-parse --git-common-dir` answered, from one
+ * git process (and, in the pinned runner, one supervisor) instead of three.
+ * Each Node supervisor costs ~50 ms of process start while the creator holds
+ * the repo lease and the machine-wide outward-mutation fence.
+ *
+ * Equivalence: the branch check compares the full ref `refs/heads/<branch>`
+ * (a detached HEAD prints `HEAD`, a non-branch symref prints its own full
+ * name, so neither can match). An unborn HEAD makes rev-parse exit non-zero,
+ * which the separate calls also rejected through the HEAD comparison.
+ */
+const WORKTREE_STATE_ARGS: readonly string[] = Object.freeze([
+  'rev-parse',
+  'HEAD',
+  '--symbolic-full-name',
+  'HEAD',
+  '--path-format=absolute',
+  '--git-common-dir',
+]);
+
+function parseWorktreeState(
+  stdout: string | null,
+): { head: string; headRef: string; commonPath: string } | null {
+  if (stdout === null) return null;
+  const lines = stdout.trim().split(/\r?\n/u);
+  if (lines.length < 3) return null;
+  const head = lines[0]!.trim();
+  const headRef = lines[1]!.trim();
+  // The path is last so an embedded newline stays part of it.
+  const commonPath = lines.slice(2).join('\n').trim();
+  return head && headRef && commonPath ? { head, headRef, commonPath } : null;
+}
+
 const PINNED_WORKTREE_RUNNER = String.raw`
 const { spawn, spawnSync } = require('node:child_process');
-const { lstatSync, realpathSync } = require('node:fs');
+const { lstatSync, readFileSync, realpathSync } = require('node:fs');
 const path = require('node:path');
 const supervisorSource = ${JSON.stringify(PINNED_GIT_SUPERVISOR)};
 const postCreateWriterSource = ${JSON.stringify(PINNED_POST_CREATE_WRITER)};
 
 const [commonDev, commonIno, expectedCommonPath, sourceDev, sourceIno, sourceRepo,
   parentDev, parentIno, sandboxParent, homeDev, homeIno, sandboxHome,
-  metadataDev, metadataIno, metadataPath, worktreePath, branch, baseHead] = process.argv.slice(1);
+  metadataDev, metadataIno, metadataPath, worktreePath, branch, baseHead,
+  mode, pinnedWorktreeDev, pinnedWorktreeIno, pinnedAdminPath, pinnedAdminDev, pinnedAdminIno] = process.argv.slice(2);
 const childEnv = { ...process.env };
 if (childEnv.ASHLR_PINNED_GIT_NODE_OPTIONS) {
   childEnv.NODE_OPTIONS = childEnv.ASHLR_PINNED_GIT_NODE_OPTIONS;
@@ -722,6 +788,12 @@ function run(cwd, args, options = {}) {
       delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
     }
     delete supervisorEnv.NODE_OPTIONS;
+    delete supervisorEnv.ASHLR_LINKED_GIT_DIR;
+    delete supervisorEnv.ASHLR_LINKED_WORK_TREE;
+    if (options.linkedWorktree) {
+      supervisorEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
+      supervisorEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
+    }
     if (options.monitorDestination) {
       supervisorEnv.ASHLR_PINNED_DESTINATION = '1';
       supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
@@ -750,7 +822,7 @@ function run(cwd, args, options = {}) {
     try {
       supervisor = spawn(process.execPath, [
         '-e', supervisorSource, '--', cwd,
-        options.pinnedRepository ? 'pinned' : 'plain', sourceRepo, ...args,
+        options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args,
       ], {
         cwd,
         env: supervisorEnv,
@@ -807,6 +879,20 @@ function sameCanonicalPath(left, right) {
   return fold(path.resolve(left)) === fold(path.resolve(right));
 }
 
+const worktreeStateArgs = ${JSON.stringify(WORKTREE_STATE_ARGS)};
+
+// Split a multi-value rev-parse result. The LAST value is a path and keeps any
+// embedded newline; the earlier ones (object ids, ref names) cannot hold one.
+function revParseLines(entry, count) {
+  if (!entry || entry.status !== 0 || typeof entry.stdout !== 'string') return null;
+  const lines = entry.stdout.trim().split(/\r?\n/);
+  if (lines.length < count) return null;
+  return [
+    ...lines.slice(0, count - 1).map((line) => line.trim()),
+    lines.slice(count - 1).join('\n').trim(),
+  ];
+}
+
 function runPinned(args, options = {}) {
   return run('.', args, { ...options, pinnedRepository: true });
 }
@@ -844,7 +930,9 @@ async function rollback() {
   };
 
   if (!await runRollbackMutation(
-    ['worktree', 'remove', '--force', worktreePath],
+    // Double force: the timed-out add this rolls back was SIGKILLed while
+    // holding git's "initializing" worktree lock.
+    ['worktree', 'remove', '--force', '--force', worktreePath],
     worktreePin
       ? { worktreePin, allowWorktreeAbsence: true }
       : { requireWorktreeAbsence: true },
@@ -889,11 +977,14 @@ async function retainedSourceMatchesDiscovery() {
   try {
     if (!sameDirectoryIdentity(lstatSync('.', { bigint: true }), sourceDev, sourceIno) ||
         !sameCanonicalPath(realpathSync.native('.'), sourceRepo)) return false;
-    const common = await run('.', ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-    const head = await run('.', ['rev-parse', 'HEAD']);
-    if (common.status !== 0 || !common.stdout.trim() ||
-        head.status !== 0 || head.stdout.trim() !== baseHead) return false;
-    const commonPath = realpathSync.native(common.stdout.trim());
+    // One supervised rev-parse answers both questions (HEAD, then the common
+    // directory) instead of two supervisors each paying a Node start.
+    const discovered = revParseLines(
+      await run('.', ['rev-parse', 'HEAD', '--path-format=absolute', '--git-common-dir']),
+      2,
+    );
+    if (discovered === null || discovered[0] !== baseHead || !discovered[1]) return false;
+    const commonPath = realpathSync.native(discovered[1]);
     return sameCanonicalPath(commonPath, expectedCommonPath) &&
       sameDirectoryIdentity(lstatSync(commonPath, { bigint: true }), commonDev, commonIno) &&
       sameDirectoryIdentity(lstatSync('.', { bigint: true }), sourceDev, sourceIno);
@@ -936,21 +1027,19 @@ async function validateCreatedWorktree() {
   } catch {
     return { exact: false, reservationChanged: true };
   }
-  const monitor = { monitorDestination: true, worktreePin };
-  const head = await run(worktreePath, ['rev-parse', 'HEAD'], monitor);
-  const currentBranch = await run(worktreePath, ['branch', '--show-current'], monitor);
-  const common = await run(
-    worktreePath,
-    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-    monitor,
-  );
-  const reservationChanged = [head, currentBranch, common].some((entry) =>
-    entry.error && entry.error.includes('sandbox reservation identity changed'));
-  if (head.status !== 0 || head.stdout.trim() !== baseHead ||
-      currentBranch.status !== 0 || currentBranch.stdout.trim() !== branch ||
-      common.status !== 0 || !common.stdout.trim()) return { exact: false, reservationChanged };
+  // HEAD's commit, HEAD's symbolic ref and the common directory from ONE
+  // destination-monitored rev-parse (see WORKTREE_STATE_ARGS).
+  const inspected = await run(worktreePath, worktreeStateArgs, {
+    monitorDestination: true,
+    worktreePin,
+  });
+  const reservationChanged = Boolean(
+    inspected.error && inspected.error.includes('sandbox reservation identity changed'));
+  const state = revParseLines(inspected, 3);
+  if (state === null || state[0] !== baseHead || state[1] !== 'refs/heads/' + branch ||
+      !state[2]) return { exact: false, reservationChanged };
   try {
-    const commonPath = realpathSync.native(common.stdout.trim());
+    const commonPath = realpathSync.native(state[2]);
     return {
       exact: sameCanonicalPath(commonPath, expectedCommonPath) &&
         sameDirectoryIdentity(lstatSync(commonPath, { bigint: true }), commonDev, commonIno),
@@ -961,177 +1050,516 @@ async function validateCreatedWorktree() {
   }
 }
 
+// Step timings, reported only when ASHLR_SANDBOX_TIMING=1 (see SandboxCreationClock).
+const stepTiming = childEnv.ASHLR_SANDBOX_TIMING === '1' ? { last: performance.now(), steps: { boot: performance.now() } } : null;
+function markStep(name) {
+  if (stepTiming === null) return;
+  const now = performance.now();
+  stepTiming.steps[name] = (stepTiming.steps[name] || 0) + (now - stepTiming.last);
+  stepTiming.last = now;
+}
+
+// " (exit N: <stderr tail>)" for a failed supervised git command, or "".
+function describeGitFailure(entry) {
+  if (!entry) return '';
+  const parts = [];
+  if (entry.status !== 0) parts.push('exit ' + entry.status);
+  if (entry.error) parts.push(String(entry.error));
+  const tail = typeof entry.stderr === 'string' ? entry.stderr.replace(/\s+/g, ' ').trim().slice(-300) : '';
+  if (tail) parts.push(tail);
+  return parts.length > 0 ? ' (' + parts.join(': ') + ')' : '';
+}
+
+// One bounded line naming what went wrong, for the caller's error and audit.
+function describeError(error) {
+  const text = error && typeof error === 'object'
+    ? [error.code, error.message].filter(Boolean).join(' ')
+    : String(error);
+  return text.replace(/\s+/g, ' ').slice(0, 300) || 'unknown error';
+}
+
+function worktreeIdentityResult(admin) {
+  try {
+    const worktree = lstatSync(worktreePath, { bigint: true });
+    return worktree.isDirectory() && !worktree.isSymbolicLink()
+      ? {
+          ok: true,
+          cleanupComplete: false,
+          worktreeDev: String(worktree.dev),
+          worktreeIno: String(worktree.ino),
+          adminPath: admin.path,
+          adminDev: admin.dev,
+          adminIno: admin.ino,
+        }
+      : { ok: false, cleanupComplete: false, error: 'worktree identity unavailable after creation' };
+  } catch {
+    return { ok: false, cleanupComplete: false, error: 'worktree identity unavailable after creation' };
+  }
+}
+
+// REGISTER (caller holds the repo lease and the outward fence): verify the
+// source, add the worktree WITHOUT checking it out, and validate the
+// registration. Every effect on the source repository's Git state (the new
+// branch ref, the worktree administrative entry) happens here, and so does
+// every rollback of it.
+async function registerWorktree() {
+  // Both source probes are read-only rev-parses, so they run side by side
+  // (one supervisor start instead of two in sequence). Both are spawned
+  // before the chdir below (the retained probe's cwd is '.', the source
+  // itself; the pathname probe names sourceRepo explicitly), their verdicts
+  // are applied in the original order, and both are still observed before
+  // the add.
+  const [retainedSourceExact, sourcePathPinned] = await Promise.all([
+    retainedSourceMatchesDiscovery(),
+    currentSourceIsPinned(),
+  ]);
+  markStep('sourceProbes');
+  if (!retainedSourceExact) {
+    return { ok: false, cleanupComplete: true, error: 'source repository discovery identity changed before worktree creation' };
+  }
+  if (!currentDestinationIsPinned()) {
+    return { ok: false, cleanupComplete: false, error: 'sandbox reservation identity changed before worktree creation' };
+  }
+  process.chdir(expectedCommonPath);
+  if (!sameCanonicalPath(realpathSync.native('.'), expectedCommonPath) ||
+      !sameDirectoryIdentity(lstatSync('.', { bigint: true }), commonDev, commonIno) ||
+      !sourcePathPinned) {
+    return { ok: false, cleanupComplete: true, error: 'repository association changed before worktree creation' };
+  }
+  // --no-checkout: the checkout (populate mode) touches only the new
+  // worktree, so it runs after the caller drops the fence and the repo lease.
+  // It is appended so the positional arguments keep their places.
+  const added = await runPinned([
+    'worktree', 'add', '-b', branch, worktreePath, baseHead, '--no-checkout',
+  ], { monitorDestination: true });
+  markStep('worktreeAdd');
+  if (added.status !== 0) {
+    return {
+      ok: false,
+      cleanupComplete: await rollback(),
+      error: added.error && added.error.includes('sandbox reservation identity changed')
+        ? added.error
+        : 'git worktree add failed',
+    };
+  }
+  const destinationPinnedBeforeValidation = currentDestinationIsPinned();
+  const worktreeValidation = destinationPinnedBeforeValidation
+    ? await validateCreatedWorktree()
+    : { exact: false, reservationChanged: true };
+  const worktreeExact = destinationPinnedBeforeValidation && worktreeValidation.exact;
+  const destinationPinnedAfterValidation = currentDestinationIsPinned();
+  markStep('validateRegistration');
+  if (!destinationPinnedBeforeValidation || !worktreeExact || !destinationPinnedAfterValidation) {
+    const reservationChanged = !destinationPinnedBeforeValidation ||
+      !destinationPinnedAfterValidation || worktreeValidation.reservationChanged;
+    return {
+      ok: false,
+      cleanupComplete: await rollback(),
+      error: reservationChanged
+        ? 'sandbox reservation identity changed during worktree creation'
+        : 'sandbox reservation or repository/Git common directory identity changed during worktree creation',
+    };
+  }
+  // Pin the administrative directory git just created: POPULATE runs its
+  // checkout against exactly this inode and refuses any other.
+  const admin = ownedAdministrativeDirectory();
+  if (admin === null) {
+    return {
+      ok: false,
+      cleanupComplete: await rollback(),
+      error: 'worktree administrative directory identity unavailable after worktree creation',
+    };
+  }
+  return worktreeIdentityResult(admin);
+}
+
+// The registered worktree's own administrative directory, resolved from its
+// .git file and required to sit directly under the pinned common directory's
+// worktrees/ (the place git worktree add created it), with its identity
+// (path, dev, ino as strings). Null on any doubt.
+function ownedAdministrativeDirectory() {
+  try {
+    const dotGit = path.join(worktreePath, '.git');
+    const stat = lstatSync(dotGit);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    const raw = readFileSync(dotGit, 'utf8').trim();
+    if (!raw.startsWith('gitdir: ')) return null;
+    const adminDir = realpathSync.native(path.resolve(worktreePath, raw.slice('gitdir: '.length).trim()));
+    const relative = path.relative(path.join(expectedCommonPath, 'worktrees'), adminDir);
+    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative) ||
+        relative.includes(path.sep)) return null;
+    const adminStat = lstatSync(adminDir, { bigint: true });
+    if (!adminStat.isDirectory() || adminStat.isSymbolicLink() ||
+        !sameDirectoryIdentity(lstatSync(expectedCommonPath, { bigint: true }), commonDev, commonIno)) return null;
+    return { path: adminDir, dev: String(adminStat.dev), ino: String(adminStat.ino) };
+  } catch {
+    return null;
+  }
+}
+
+// POPULATE (no fence, no repo lease; the caller holds a creation execution
+// lease so kill / unenroll still wait for it): check out the registered
+// worktree exactly as git worktree add itself does (reset --hard
+// --no-recurse-submodules with GIT_DIR = the worktree's own administrative
+// directory), run the post-create writer, and validate again. This writes
+// the new worktree's files, its private index and its own HEAD reflog. The
+// branch already points at baseHead, so its value does not change, but
+// reset may still take a transient refs/heads/<branch>.lock in the common
+// directory outside the repo lease; a concurrent pack-refs or gc on that ref
+// makes the reset fail, which fails closed (rollback), never corrupts. It
+// never rolls back itself: a failure is returned and the caller re-takes the
+// repo lease and the fence to run ROLLBACK.
+async function populateWorktree() {
+  const worktreePin = { dev: pinnedWorktreeDev, ino: pinnedWorktreeIno };
+  const worktreeStillPinned = () => {
+    try {
+      return sameDirectoryIdentity(lstatSync(worktreePath, { bigint: true }), worktreePin.dev, worktreePin.ino);
+    } catch {
+      return false;
+    }
+  };
+  if (!currentDestinationIsPinned() || !worktreeStillPinned()) {
+    return { ok: false, cleanupComplete: false, error: 'sandbox reservation identity changed before worktree checkout' };
+  }
+  // The administrative directory REGISTER pinned, and no other.
+  const adminStillPinned = () => {
+    const admin = ownedAdministrativeDirectory();
+    return admin !== null && sameCanonicalPath(admin.path, pinnedAdminPath) &&
+      admin.dev === pinnedAdminDev && admin.ino === pinnedAdminIno;
+  };
+  if (!adminStillPinned()) {
+    return { ok: false, cleanupComplete: false, error: 'worktree administrative directory identity changed before checkout' };
+  }
+  // GIT_DIR / GIT_WORK_TREE travel in the environment (as git worktree add
+  // passes them to its own reset), so the argv starts with the subcommand like
+  // every other pinned Git command.
+  const populated = await run(worktreePath, [
+    'reset', '--hard', '--no-recurse-submodules', '--quiet',
+  ], {
+    monitorDestination: true,
+    worktreePin,
+    linkedWorktree: { gitDir: pinnedAdminPath, workTree: worktreePath },
+  });
+  markStep('checkout');
+  if (populated.status !== 0 || !currentDestinationIsPinned() || !worktreeStillPinned() ||
+      !adminStillPinned()) {
+    return {
+      ok: false,
+      cleanupComplete: false,
+      error: populated.error && populated.error.includes('sandbox reservation identity changed')
+        ? populated.error
+        : 'git worktree checkout failed' + describeGitFailure(populated),
+    };
+  }
+  runPinnedPostCreateWriter();
+  markStep('postCreateWriter');
+  const destinationPinnedBeforePostValidation = currentDestinationIsPinned();
+  const postValidation = destinationPinnedBeforePostValidation
+    ? await validateCreatedWorktree()
+    : { exact: false, reservationChanged: true };
+  const postWorktreeExact = destinationPinnedBeforePostValidation && postValidation.exact;
+  const destinationPinnedAfterPostValidation = currentDestinationIsPinned();
+  markStep('validatePopulated');
+  if (!destinationPinnedBeforePostValidation || !postWorktreeExact ||
+      !destinationPinnedAfterPostValidation || !worktreeStillPinned() || !adminStillPinned()) {
+    const reservationChanged = !destinationPinnedBeforePostValidation ||
+      !destinationPinnedAfterPostValidation || postValidation.reservationChanged;
+    return {
+      ok: false,
+      cleanupComplete: false,
+      error: reservationChanged
+        ? 'sandbox reservation identity changed after worktree creation'
+        : 'sandbox reservation or repository/Git common directory identity changed after worktree creation',
+    };
+  }
+  return worktreeIdentityResult({ path: pinnedAdminPath, dev: pinnedAdminDev, ino: pinnedAdminIno });
+}
+
+// ROLLBACK (caller holds the repo lease and the outward fence again): the
+// same pinned rollback REGISTER uses, run from the pinned common directory.
+async function rollbackWorktree() {
+  process.chdir(expectedCommonPath);
+  if (!sameCanonicalPath(realpathSync.native('.'), expectedCommonPath) ||
+      !sameDirectoryIdentity(lstatSync('.', { bigint: true }), commonDev, commonIno)) {
+    return { ok: false, cleanupComplete: false, error: 'repository association changed before rollback' };
+  }
+  return { ok: false, cleanupComplete: await rollback(), error: 'sandbox creation rolled back' };
+}
+
 (async () => {
   let result;
   try {
-    if (!await retainedSourceMatchesDiscovery()) {
-      result = { ok: false, cleanupComplete: true, error: 'source repository discovery identity changed before worktree creation' };
-    } else if (!currentDestinationIsPinned()) {
-      result = { ok: false, cleanupComplete: false, error: 'sandbox reservation identity changed before worktree creation' };
-    } else {
-      process.chdir(expectedCommonPath);
-      if (!sameCanonicalPath(realpathSync.native('.'), expectedCommonPath) ||
-          !sameDirectoryIdentity(lstatSync('.', { bigint: true }), commonDev, commonIno) ||
-          !await currentSourceIsPinned()) {
-        result = { ok: false, cleanupComplete: true, error: 'repository association changed before worktree creation' };
-      } else {
-      const added = await runPinned([
-        'worktree', 'add', '-b', branch, worktreePath, baseHead,
-      ], { monitorDestination: true });
-      if (added.status !== 0) {
-        result = {
-          ok: false,
-          cleanupComplete: await rollback(),
-          error: added.error && added.error.includes('sandbox reservation identity changed')
-            ? added.error
-            : 'git worktree add failed',
-        };
-      } else {
-        const destinationPinnedBeforeValidation = currentDestinationIsPinned();
-        const worktreeValidation = destinationPinnedBeforeValidation
-          ? await validateCreatedWorktree()
-          : { exact: false, reservationChanged: true };
-        const worktreeExact = destinationPinnedBeforeValidation && worktreeValidation.exact;
-        const destinationPinnedAfterValidation = currentDestinationIsPinned();
-        if (!destinationPinnedBeforeValidation || !worktreeExact ||
-            !destinationPinnedAfterValidation) {
-          const reservationChanged = !destinationPinnedBeforeValidation ||
-            !destinationPinnedAfterValidation || worktreeValidation.reservationChanged;
-          result = {
-            ok: false,
-            cleanupComplete: await rollback(),
-            error: reservationChanged
-              ? 'sandbox reservation identity changed during worktree creation'
-              : 'sandbox reservation or repository/Git common directory identity changed during worktree creation',
-          };
-        } else {
-          runPinnedPostCreateWriter();
-          const destinationPinnedBeforePostValidation = currentDestinationIsPinned();
-          const postValidation = destinationPinnedBeforePostValidation
-            ? await validateCreatedWorktree()
-            : { exact: false, reservationChanged: true };
-          const postWorktreeExact = destinationPinnedBeforePostValidation && postValidation.exact;
-          const destinationPinnedAfterPostValidation = currentDestinationIsPinned();
-          if (!destinationPinnedBeforePostValidation || !postWorktreeExact ||
-              !destinationPinnedAfterPostValidation) {
-            const reservationChanged = !destinationPinnedBeforePostValidation ||
-              !destinationPinnedAfterPostValidation || postValidation.reservationChanged;
-            result = {
-              ok: false,
-              cleanupComplete: await rollback(),
-              error: reservationChanged
-                ? 'sandbox reservation identity changed after worktree creation'
-                : 'sandbox reservation or repository/Git common directory identity changed after worktree creation',
-            };
-          } else {
-            try {
-              const worktree = lstatSync(worktreePath, { bigint: true });
-              result = worktree.isDirectory() && !worktree.isSymbolicLink()
-                ? {
-                    ok: true,
-                    cleanupComplete: false,
-                    worktreeDev: String(worktree.dev),
-                    worktreeIno: String(worktree.ino),
-                  }
-                : {
-                    ok: false,
-                    cleanupComplete: false,
-                    error: 'worktree identity unavailable after creation',
-                  };
-            } catch {
-              result = {
-                ok: false,
-                cleanupComplete: false,
-                error: 'worktree identity unavailable after creation',
-              };
-            }
-          }
-        }
-      }
-      }
-    }
-  } catch {
+    result = mode === 'register'
+      ? await registerWorktree()
+      : mode === 'populate'
+        ? await populateWorktree()
+        : mode === 'rollback'
+          ? await rollbackWorktree()
+          : { ok: false, cleanupComplete: false, error: 'unknown pinned worktree runner mode' };
+  } catch (error) {
     let cleanupComplete = false;
-    try { cleanupComplete = await rollback(); } catch { /* retain recovery metadata */ }
-    result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed' };
+    // Only REGISTER rolls back in place; the other modes run without (populate)
+    // or already are (rollback) the rollback.
+    if (mode === 'register') {
+      try { cleanupComplete = await rollback(); } catch { /* retain recovery metadata */ }
+    }
+    result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed: ' + describeError(error) };
   }
+  if (stepTiming !== null) result.timing = stepTiming.steps;
   process.stdout.write(JSON.stringify(result));
-})().catch(() => {
+})().catch((error) => {
   process.stdout.write(JSON.stringify({
     ok: false,
     cleanupComplete: false,
-    error: 'pinned worktree runner failed',
+    error: 'pinned worktree runner failed: ' + describeError(error),
   }));
 });
 `;
+
+/**
+ * What the pinned runner does on one invocation:
+ *  - `register`: verify the source, `git worktree add --no-checkout`, validate
+ *    the registration, and roll it back in place on any failure. Repo lease +
+ *    outward fence held.
+ *  - `populate`: check the registered worktree out, run the post-create
+ *    writer, validate again. Touches only the new worktree; never rolls back.
+ *    Neither lock held (a creation execution lease is).
+ *  - `rollback`: the pinned rollback of a registered worktree. Repo lease +
+ *    outward fence held again.
+ */
+type PinnedWorktreeRunnerMode = 'register' | 'populate' | 'rollback';
+
+/** A registered worktree's administrative directory (`<common>/worktrees/<name>`), pinned at REGISTER. */
+interface PinnedAdministrativeDirectory {
+  readonly path: string;
+  readonly dev: string;
+  readonly ino: string;
+}
+
+interface PinnedWorktreeRunnerInvocation {
+  argv: string[];
+  /** The runner source, written to the child's stdin (`node -`). */
+  script: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Windows caps a whole command line (CreateProcess lpCommandLine) at 32,767
+ * characters. The runner embeds the supervisor and post-create writer and is
+ * itself ~34k, so it is fed on stdin (`node -`) and only its arguments ride
+ * the command line. The supervisor and writer the runner spawns with `-e`
+ * must each stay under this bound (test/sandbox-create-two-phase.test.ts).
+ */
+export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+
+/** Sizes the Windows command-line bound applies to (tests only). */
+export function _pinnedRunnerCommandLineSizesForTest(): {
+  runnerArgvChars: number;
+  supervisorScriptChars: number;
+  writerScriptChars: number;
+  runnerScriptOnCommandLine: boolean;
+} {
+  const long = 'C:\\' + 'x'.repeat(250);
+  const dir = { path: long, dev: 1n, ino: 1n };
+  const invocation = pinnedWorktreeRunnerInvocation(
+    'populate',
+    { source: dir, commonDirectory: dir },
+    { parent: dir, home: dir, metadata: dir },
+    { id: 'x', sourceRepo: long, worktreePath: long, branch: long, baseHead: 'f'.repeat(64), createdAt: '' },
+    dir,
+    { path: long, dev: '1', ino: '1' },
+  );
+  return {
+    runnerArgvChars: [process.execPath, ...invocation.argv].reduce((n, a) => n + a.length + 3, 0),
+    supervisorScriptChars: PINNED_GIT_SUPERVISOR.length,
+    writerScriptChars: PINNED_POST_CREATE_WRITER.length,
+    runnerScriptOnCommandLine: invocation.argv.some((a) => a.includes('registerWorktree')),
+  };
+}
 
 /**
  * Bind the child to the pinned common-directory inode before Git starts. The
  * child retains that cwd through add, validation, and rollback, so pathname
  * retargeting cannot redirect any repository mutation during the Git effect.
  */
-function createPinnedWorktree(
+function pinnedWorktreeRunnerInvocation(
+  mode: PinnedWorktreeRunnerMode,
   identity: PinnedRepositoryIdentity,
   destination: PinnedSandboxDestinationIdentity,
   sb: Sandbox,
-): PinnedWorktreeCreationResult {
+  worktree: PinnedDirectoryIdentity | null,
+  admin: PinnedAdministrativeDirectory | null,
+): PinnedWorktreeRunnerInvocation {
   // The runner and its supervisors copy this env into every git they spawn,
   // so the forced config reaches `worktree add` and its validation calls too.
   const env = withDaemonGitHardening({ ...process.env });
   if (env.NODE_OPTIONS) env.ASHLR_PINNED_GIT_NODE_OPTIONS = env.NODE_OPTIONS;
   else delete env.ASHLR_PINNED_GIT_NODE_OPTIONS;
   delete env.NODE_OPTIONS;
-  const result = spawnSync(process.execPath, [
-    '-e',
-    PINNED_WORKTREE_RUNNER,
-    '--',
-    String(identity.commonDirectory.dev),
-    String(identity.commonDirectory.ino),
-    identity.commonDirectory.path,
-    String(identity.source.dev),
-    String(identity.source.ino),
-    identity.source.path,
-    String(destination.parent.dev),
-    String(destination.parent.ino),
-    destination.parent.path,
-    String(destination.home.dev),
-    String(destination.home.ino),
-    destination.home.path,
-    String(destination.metadata.dev),
-    String(destination.metadata.ino),
-    destination.metadata.path,
-    sb.worktreePath,
-    sb.branch,
-    sb.baseHead,
-  ], {
+  return {
+    argv: [
+      '-',
+      String(identity.commonDirectory.dev),
+      String(identity.commonDirectory.ino),
+      identity.commonDirectory.path,
+      String(identity.source.dev),
+      String(identity.source.ino),
+      identity.source.path,
+      String(destination.parent.dev),
+      String(destination.parent.ino),
+      destination.parent.path,
+      String(destination.home.dev),
+      String(destination.home.ino),
+      destination.home.path,
+      String(destination.metadata.dev),
+      String(destination.metadata.ino),
+      destination.metadata.path,
+      sb.worktreePath,
+      sb.branch,
+      sb.baseHead,
+      mode,
+      worktree ? String(worktree.dev) : '',
+      worktree ? String(worktree.ino) : '',
+      admin?.path ?? '',
+      admin?.dev ?? '',
+      admin?.ino ?? '',
+    ],
+    script: PINNED_WORKTREE_RUNNER,
     cwd: identity.source.path,
-    encoding: 'utf8',
     env,
-    maxBuffer: 64 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
-    return { ok: false, cleanupComplete: false, error: 'pinned worktree runner failed' };
+  };
+}
+
+/** One bounded line on why the runner process itself failed. */
+function runnerFailureDetail(
+  error: Error | undefined,
+  status: number | null,
+  signal: string | null,
+  stderr: unknown,
+): string {
+  const parts: string[] = [];
+  if (error) parts.push(`spawn ${(error as NodeJS.ErrnoException).code ?? ''} ${error.message}`.trim());
+  if (status !== null && status !== 0) parts.push(`exit ${status}`);
+  if (signal) parts.push(`signal ${signal}`);
+  const tail = typeof stderr === 'string' ? stderr.replace(/\s+/gu, ' ').trim().slice(-300) : '';
+  if (tail) parts.push(`stderr: ${tail}`);
+  return parts.join('; ') || 'no result';
+}
+
+function parsePinnedWorktreeResult(
+  failure: string | null,
+  stdout: unknown,
+): PinnedWorktreeCreationResult {
+  if (failure !== null || typeof stdout !== 'string') {
+    return { ok: false, cleanupComplete: false, error: `pinned worktree runner failed (${failure ?? 'no output'})` };
   }
   try {
-    const parsed = JSON.parse(result.stdout) as Partial<PinnedWorktreeCreationResult>;
+    const parsed = JSON.parse(stdout) as Partial<PinnedWorktreeCreationResult>;
     if (typeof parsed.ok !== 'boolean' || typeof parsed.cleanupComplete !== 'boolean') {
       throw new Error('invalid pinned worktree result');
     }
     if (parsed.ok && (
       typeof parsed.worktreeDev !== 'string' || !/^\d+$/u.test(parsed.worktreeDev) ||
-      typeof parsed.worktreeIno !== 'string' || !/^\d+$/u.test(parsed.worktreeIno)
+      typeof parsed.worktreeIno !== 'string' || !/^\d+$/u.test(parsed.worktreeIno) ||
+      typeof parsed.adminPath !== 'string' || parsed.adminPath.length === 0 ||
+      typeof parsed.adminDev !== 'string' || !/^\d+$/u.test(parsed.adminDev) ||
+      typeof parsed.adminIno !== 'string' || !/^\d+$/u.test(parsed.adminIno)
     )) throw new Error('invalid pinned worktree identity');
+    const timing = parsed.timing !== null && typeof parsed.timing === 'object' ? parsed.timing : undefined;
     return {
       ok: parsed.ok,
       cleanupComplete: parsed.cleanupComplete,
       ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
       ...(typeof parsed.worktreeDev === 'string' ? { worktreeDev: parsed.worktreeDev } : {}),
       ...(typeof parsed.worktreeIno === 'string' ? { worktreeIno: parsed.worktreeIno } : {}),
+      ...(typeof parsed.adminPath === 'string' ? { adminPath: parsed.adminPath } : {}),
+      ...(typeof parsed.adminDev === 'string' ? { adminDev: parsed.adminDev } : {}),
+      ...(typeof parsed.adminIno === 'string' ? { adminIno: parsed.adminIno } : {}),
+      ...(timing ? { timing } : {}),
     };
-  } catch {
-    return { ok: false, cleanupComplete: false, error: 'invalid pinned worktree result' };
+  } catch (error) {
+    return {
+      ok: false,
+      cleanupComplete: false,
+      error: `invalid pinned worktree result (${error instanceof Error ? error.message : String(error)}: ` +
+        `${stdout.replace(/\s+/gu, ' ').slice(0, 200)})`,
+    };
   }
+}
+
+function runPinnedWorktreeRunner(invocation: PinnedWorktreeRunnerInvocation): PinnedWorktreeCreationResult {
+  const result = spawnSync(process.execPath, invocation.argv, {
+    cwd: invocation.cwd,
+    encoding: 'utf8',
+    env: invocation.env,
+    input: invocation.script,
+    maxBuffer: 64 * 1024,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const failed = Boolean(result.error) || result.status !== 0;
+  return parsePinnedWorktreeResult(
+    failed ? runnerFailureDetail(result.error, result.status, result.signal, result.stderr) : null,
+    result.stdout,
+  );
+}
+
+/**
+ * The same runner without blocking the event loop (populate in
+ * createSandboxAsync). The runner bounds every Git command itself
+ * (GIT_TIMEOUT per supervised call), and nothing kills it early: stopping it
+ * mid-checkout would orphan its supervisors while the caller rolls back.
+ */
+function runPinnedWorktreeRunnerAsync(
+  invocation: PinnedWorktreeRunnerInvocation,
+): Promise<PinnedWorktreeCreationResult> {
+  return new Promise((resolveResult) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, invocation.argv, {
+        cwd: invocation.cwd,
+        env: invocation.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (error) {
+      resolveResult(parsePinnedWorktreeResult(
+        runnerFailureDetail(error instanceof Error ? error : new Error(String(error)), null, null, ''),
+        null,
+      ));
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let overflow = false;
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      if (overflow) return;
+      stdout += chunk;
+      if (stdout.length > 64 * 1024) overflow = true;
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-4 * 1024);
+    });
+    // The script goes over stdin (see WINDOWS_COMMAND_LINE_LIMIT). A write
+    // error surfaces as the child's own failure below.
+    child.stdin?.on('error', () => { /* reported through close / error */ });
+    child.stdin?.end(invocation.script);
+    let settled = false;
+    const settle = (error: Error | undefined, status: number | null, signal: string | null): void => {
+      if (settled) return;
+      settled = true;
+      const failed = error !== undefined || status !== 0 || overflow;
+      resolveResult(parsePinnedWorktreeResult(
+        failed ? (overflow ? 'output limit exceeded' : runnerFailureDetail(error, status, signal, stderr)) : null,
+        stdout,
+      ));
+    };
+    child.once('error', (error) => settle(error, null, null));
+    child.once('close', (status, signal) => settle(undefined, status, signal));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,6 +1723,7 @@ function readMeta(id: string): Sandbox | null {
             ? rawPid
             : undefined;
         const cleanup = parseCleanupEvidence(o['cleanup']);
+        const abandonedAt = typeof o['abandonedAt'] === 'string' ? o['abandonedAt'] : undefined;
         return {
           id: o['id'],
           sourceRepo: o['sourceRepo'],
@@ -1304,6 +1733,7 @@ function readMeta(id: string): Sandbox | null {
           createdAt: o['createdAt'],
           ...(ownerPid !== undefined ? { ownerPid } : {}),
           ...(cleanup ? { cleanup } : {}),
+          ...(abandonedAt !== undefined ? { abandonedAt } : {}),
         };
       }
     }
@@ -1430,18 +1860,11 @@ function createdWorktreeStillExact(
       destination.home.path;
   if (!authorityStillExact()) return false;
 
-  const head = gitTry(sb.worktreePath, ['rev-parse', 'HEAD']);
-  if (!authorityStillExact()) return false;
-  const branch = gitTry(sb.worktreePath, ['branch', '--show-current']);
-  if (!authorityStillExact()) return false;
-  const commonPath = gitTry(sb.worktreePath, [
-    'rev-parse',
-    '--path-format=absolute',
-    '--git-common-dir',
-  ]);
-  if (!authorityStillExact() || !head || !branch || !commonPath) return false;
-  const currentCommon = pinDirectoryIdentity(commonPath);
-  return head === sb.baseHead && branch === sb.branch && currentCommon !== null &&
+  const state = parseWorktreeState(gitTry(sb.worktreePath, [...WORKTREE_STATE_ARGS]));
+  if (!authorityStillExact() || !state) return false;
+  const currentCommon = pinDirectoryIdentity(state.commonPath);
+  return state.head === sb.baseHead && state.headRef === `refs/heads/${sb.branch}` &&
+    currentCommon !== null &&
     currentCommon.path === repository.commonDirectory.path &&
     currentCommon.dev === repository.commonDirectory.dev &&
     currentCommon.ino === repository.commonDirectory.ino &&
@@ -1482,8 +1905,32 @@ function removePinnedSandboxReservation(identity: PinnedSandboxDestinationIdenti
  * repo is not enrolled and opts.allowAnyRepo is not set. Verifies sourceRepo
  * is a git repo. Reads the
  * source HEAD WITHOUT mutating it. Adds the worktree via
- * `git worktree add -b <branch> <path> <baseHead>` run in sourceRepo — this
- * MUST NOT modify the source working tree, index, HEAD, or any user branch.
+ * `git worktree add -b <branch> <path> <baseHead> --no-checkout` run in
+ * sourceRepo, then checks it out — this MUST NOT modify the source working
+ * tree, index, HEAD, or any user branch.
+ *
+ * ── TWO PHASES ────────────────────────────────────────────────────────────
+ *
+ * REGISTER (outward fence held; the daemon's callers also hold the repo
+ * lease): policy gate, reservation, `worktree add --no-checkout`, validation
+ * of the registration, in-place rollback on failure. Every effect on the
+ * SOURCE repository's Git state — the new branch ref and the worktree's
+ * administrative entry — happens here. Before dropping the fence it mints the
+ * run's own-removal right and registers a creation EXECUTION LEASE, both
+ * only possible under the fence with KILL off.
+ *
+ * POPULATE (neither lock; the creation lease held): the checkout, the
+ * post-create writer, and validation again. These write only the new
+ * worktree's files, its private index and its own HEAD reflog — what
+ * `git worktree add` itself does after registering, by running exactly
+ * `reset --hard --no-recurse-submodules` there. Kill and unenroll still see
+ * the creation: they abort the lease and wait for its release, so they
+ * cannot report quiescence while it runs. Any failure here — a validation,
+ * the lease aborted, KILL armed or the repo unenrolled meanwhile (the gate is
+ * re-checked) — rolls the registration back with the same pinned rollback,
+ * after re-taking the repo lease (when the caller handed one over) and the
+ * fence, under the own-removal right (so a KILL armed meanwhile cannot strand
+ * the worktree); only then is the lease released.
  */
 /**
  * How long sandbox creation waits for the global outward-mutation fence.
@@ -1523,9 +1970,80 @@ const SANDBOX_ASYNC_FENCE_WAIT_MS = 60_000;
  * The file lock alone is correct but not fair: N agents polling for it can
  * starve one another arbitrarily. Chaining creations in the order they were
  * requested makes the queue deterministic, and means the lock is contended by
- * at most one waiter from this process at a time.
+ * at most one waiter from this process at a time. Only REGISTER is chained:
+ * POPULATE holds neither lock, so concurrent creations overlap there.
  */
 let sandboxCreationChain: Promise<unknown> = Promise.resolve();
+
+/** Execution-lease engine label for a sandbox creation's POPULATE phase. */
+export const SANDBOX_CREATION_LEASE_ENGINE = 'sandbox-create';
+
+/**
+ * Opt-in timing of one creation (ASHLR_SANDBOX_TIMING=1), written to stderr
+ * as one `ashlr-sandbox-timing <json>` line for scripts/daemon-throughput.mjs.
+ * Off, it is never constructed.
+ */
+class SandboxCreationClock {
+  private last = performance.now();
+  private fenceAcquiredAt: number | null = null;
+  private readonly fields: Record<string, number> = {};
+  private readonly parts: Record<string, number> = {};
+
+  static start(): SandboxCreationClock | null {
+    return process.env.ASHLR_SANDBOX_TIMING === '1' ? new SandboxCreationClock() : null;
+  }
+
+  mark(step: string): void {
+    const now = performance.now();
+    this.parts[step] = (this.parts[step] ?? 0) + (now - this.last);
+    this.last = now;
+  }
+
+  runnerSteps(prefix: string, steps: Record<string, number> | undefined): void {
+    for (const [step, ms] of Object.entries(steps ?? {})) {
+      if (typeof ms === 'number') this.parts[`${prefix}.${step}`] = ms;
+    }
+  }
+
+  fenceAcquired(): void {
+    this.mark('fenceWait');
+    this.fields.fenceWaitMs = this.parts.fenceWait ?? 0;
+    this.fenceAcquiredAt = this.last;
+  }
+
+  fenceReleased(): void {
+    if (this.fenceAcquiredAt !== null) this.fields.fenceHoldMs = performance.now() - this.fenceAcquiredAt;
+    this.fenceAcquiredAt = null;
+  }
+
+  emit(ok: boolean): void {
+    try {
+      process.stderr.write(`ashlr-sandbox-timing ${JSON.stringify({ ok, ...this.fields, parts: this.parts })}\n`);
+    } catch { /* diagnostics only */ }
+  }
+}
+
+/**
+ * The creation lock records this process's start identity, which costs one
+ * `ps` spawn the first time it is read. Read it before taking the fence so
+ * that spawn is not paid inside the critical section. A pure read of this
+ * process's own identity (cached); the lock still verifies it when taken.
+ */
+function warmCreationLockOwnerIdentity(): void {
+  try { currentStartRef(); } catch { /* the lock computes it again */ }
+}
+
+/** A sandbox whose worktree is registered (REGISTER done) but not yet checked out. */
+interface RegisteredSandbox {
+  readonly sb: Sandbox;
+  readonly repository: PinnedRepositoryIdentity;
+  readonly destination: PinnedSandboxDestinationIdentity;
+  readonly worktree: PinnedDirectoryIdentity;
+  readonly admin: PinnedAdministrativeDirectory;
+  readonly removalRight: OwnSandboxRemovalRight;
+  readonly lease: ExecutionLease;
+  readonly gateOpts: { allowAnyRepo?: boolean } | undefined;
+}
 
 /**
  * Create a sandbox, waiting for the fence WITHOUT blocking the event loop.
@@ -1534,16 +2052,99 @@ let sandboxCreationChain: Promise<unknown> = Promise.resolve();
  * is that agents 2..N of a concurrent dispatch await a promise instead of
  * freezing the process. This is the entry point the daemon's fleet path uses;
  * `createSandbox` remains for synchronous callers.
+ *
+ * `repoLease`: the caller's lease on this repository (lock order: repo lease
+ * → fence). When given, it is RELEASED as soon as REGISTER is done — POPULATE
+ * does not touch the source repository's Git state — and re-taken only to
+ * roll a failed creation back. The caller's own release stays harmless
+ * (RepoLease.release is idempotent).
  */
 export async function createSandboxAsync(
   sourceRepo: string,
-  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number; signal?: AbortSignal },
+  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number; signal?: AbortSignal; repoLease?: RepoLease },
 ): Promise<Sandbox> {
   const waitMs = opts?.fenceWaitMs ?? SANDBOX_ASYNC_FENCE_WAIT_MS;
-  const run = async (): Promise<Sandbox> => {
-    const outwardFence = await acquireOutwardMutationFenceAsync(waitMs, {
-      ...(opts?.signal ? { signal: opts.signal } : {}),
-    });
+  const clock = SandboxCreationClock.start();
+  let ok = false;
+  try {
+    const register = async (): Promise<RegisteredSandbox> => {
+      warmCreationLockOwnerIdentity();
+      clock?.mark('queue');
+      const outwardFence = await acquireOutwardMutationFenceAsync(waitMs, {
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
+      if (!ownsOutwardMutationFence(outwardFence)) {
+        releaseOutwardMutationFence(outwardFence);
+        audit({
+          action: 'sandbox:create',
+          repo: sourceRepo,
+          sandboxId: null,
+          summary: `refused: outward mutation fence unavailable after ${waitMs}ms`,
+          result: 'refused',
+        });
+        throw new Error(
+          `outward mutation fence unavailable after waiting ${waitMs}ms; sandbox creation did not start`,
+        );
+      }
+      clock?.fenceAcquired();
+      try {
+        return registerSandboxWhileFenced(sourceRepo, outwardFence, opts, clock);
+      } finally {
+        releaseOutwardMutationFence(outwardFence);
+        clock?.fenceReleased();
+      }
+    };
+    // Join the queue, and keep the chain alive whatever this creation does.
+    const queued = sandboxCreationChain.then(register, register);
+    sandboxCreationChain = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    const registered = await queued;
+    let settled = false;
+    try {
+      // The source repository's Git state is final until a rollback. Release
+      // unconditionally (idempotent): a lease whose lock was lost still holds
+      // this process's FIFO turn, which the rollback would otherwise queue on.
+      const handedLease = opts?.repoLease;
+      handedLease?.release();
+      const populated = await runPinnedWorktreeRunnerAsync(pinnedWorktreeRunnerInvocation(
+        'populate', registered.repository, registered.destination, registered.sb, registered.worktree,
+        registered.admin,
+      ));
+      clock?.mark('populate');
+      clock?.runnerSteps('populate', populated.timing);
+      const failure = populatedSandboxFailure(registered, populated);
+      clock?.mark('verify');
+      if (failure === null) {
+        settled = true;
+        ok = true;
+        return completeRegisteredSandbox(registered);
+      }
+      await rollbackRegisteredSandboxAsync(registered, failure, handedLease?.repoKey ?? null, {
+        fenceWaitMs: opts?.fenceWaitMs ?? SANDBOX_ASYNC_REMOVE_FENCE_WAIT_MS,
+      });
+      settled = true;
+      clock?.mark('rollback');
+      throw new Error(failure);
+    } finally {
+      settleRegisteredSandbox(registered, settled);
+    }
+  } finally {
+    clock?.emit(ok);
+  }
+}
+
+export function createSandbox(
+  sourceRepo: string,
+  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number },
+): Sandbox {
+  const waitMs = opts?.fenceWaitMs ?? SANDBOX_FENCE_WAIT_MS;
+  const clock = SandboxCreationClock.start();
+  let ok = false;
+  try {
+    warmCreationLockOwnerIdentity();
+    const outwardFence = acquireOutwardMutationFence(waitMs);
     if (!ownsOutwardMutationFence(outwardFence)) {
       releaseOutwardMutationFence(outwardFence);
       audit({
@@ -1557,52 +2158,220 @@ export async function createSandboxAsync(
         `outward mutation fence unavailable after waiting ${waitMs}ms; sandbox creation did not start`,
       );
     }
+    clock?.fenceAcquired();
+    let registered: RegisteredSandbox;
     try {
-      return createSandboxWhileFenced(sourceRepo, outwardFence, opts);
+      registered = registerSandboxWhileFenced(sourceRepo, outwardFence, opts, clock);
     } finally {
       releaseOutwardMutationFence(outwardFence);
+      clock?.fenceReleased();
     }
-  };
-  // Join the queue, and keep the chain alive whatever this creation does.
-  const queued = sandboxCreationChain.then(run, run);
-  sandboxCreationChain = queued.then(
-    () => undefined,
-    () => undefined,
-  );
-  return queued;
+    let settled = false;
+    try {
+      const populated = runPinnedWorktreeRunner(pinnedWorktreeRunnerInvocation(
+        'populate', registered.repository, registered.destination, registered.sb, registered.worktree,
+        registered.admin,
+      ));
+      clock?.mark('populate');
+      clock?.runnerSteps('populate', populated.timing);
+      const failure = populatedSandboxFailure(registered, populated);
+      clock?.mark('verify');
+      if (failure === null) {
+        settled = true;
+        ok = true;
+        return completeRegisteredSandbox(registered);
+      }
+      // A synchronous caller that holds the repo lease still holds it here.
+      const fence = acquireOutwardMutationFence(SANDBOX_FENCE_WAIT_MS);
+      try {
+        rollbackRegisteredSandboxWhileFenced(registered, failure, fence);
+      } finally {
+        releaseOutwardMutationFence(fence);
+      }
+      settled = true;
+      clock?.mark('rollback');
+      throw new Error(failure);
+    } finally {
+      settleRegisteredSandbox(registered, settled);
+    }
+  } finally {
+    clock?.emit(ok);
+  }
 }
 
-export function createSandbox(
-  sourceRepo: string,
-  opts?: { allowAnyRepo?: boolean; fenceWaitMs?: number },
-): Sandbox {
-  const waitMs = opts?.fenceWaitMs ?? SANDBOX_FENCE_WAIT_MS;
-  const outwardFence = acquireOutwardMutationFence(waitMs);
-  if (!ownsOutwardMutationFence(outwardFence)) {
-    releaseOutwardMutationFence(outwardFence);
-    audit({
-      action: 'sandbox:create',
-      repo: sourceRepo,
-      sandboxId: null,
-      summary: `refused: outward mutation fence unavailable after ${waitMs}ms`,
-      result: 'refused',
-    });
-    throw new Error(
-      `outward mutation fence unavailable after waiting ${waitMs}ms; sandbox creation did not start`,
-    );
+/**
+ * Why a populated sandbox must not be handed out, or null when it may. Every
+ * check REGISTER and the old single-phase creation made after the checkout
+ * runs here, plus the gate again: POPULATE ran outside the fence, so KILL,
+ * unenrollment or the caller's cancellation may have arrived meanwhile.
+ */
+function populatedSandboxFailure(registered: RegisteredSandbox, populated: PinnedWorktreeCreationResult): string | null {
+  const { sb } = registered;
+  if (!populated.ok) return populated.error ?? 'pinned worktree checkout failed';
+  if (populated.worktreeDev !== String(registered.worktree.dev) ||
+      populated.worktreeIno !== String(registered.worktree.ino) ||
+      !createdWorktreeStillExact(sb, registered.worktree, registered.repository, registered.destination)) {
+    return 'repository or sandbox identity changed after worktree creation';
+  }
+  if (registered.lease.signal.aborted) {
+    return `sandbox creation stopped: ${registered.lease.abortReason() ?? 'execution lease aborted'}`;
   }
   try {
-    return createSandboxWhileFenced(sourceRepo, outwardFence, opts);
-  } finally {
-    releaseOutwardMutationFence(outwardFence);
+    assertMayMutate(sb.sourceRepo, registered.gateOpts);
+  } catch (err) {
+    return `sandbox creation stopped: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  return null;
+}
+
+function completeRegisteredSandbox(registered: RegisteredSandbox): Sandbox {
+  const { sb } = registered;
+  audit({
+    action: 'sandbox:create',
+    repo: sb.sourceRepo,
+    sandboxId: sb.id,
+    summary: `worktree on ${sb.branch} @ ${sb.baseHead.slice(0, 8)}`,
+    result: 'ok',
+  });
+  registered.lease.release();
+  return sb;
+}
+
+/**
+ * Undo a registered creation that failed after REGISTER: the pinned rollback
+ * (worktree, administrative entry, scratch branch) and then the reservation.
+ * MUST hold the outward fence (and the repo lease, when the caller uses one).
+ * Under KILL it runs only on the own-removal right minted at REGISTER — the
+ * creation cleaning up its own scratch worktree, as removeSandboxAsync does.
+ * Whatever it cannot finish keeps its owner metadata for dead-owner recovery.
+ */
+function rollbackRegisteredSandboxWhileFenced(
+  registered: RegisteredSandbox,
+  failure: string,
+  fence: OutwardMutationFence | null,
+): void {
+  const { sb } = registered;
+  audit({
+    action: 'sandbox:create',
+    repo: sb.sourceRepo,
+    sandboxId: sb.id,
+    summary: failure,
+    result: 'error',
+  });
+  if (!ownsOutwardMutationFence(fence)) {
+    abandonRegisteredSandbox(registered, 'rollback deferred: outward mutation fence unavailable');
+    return;
+  }
+  if (!ownRemovalRightValid(registered.removalRight, sb)) {
+    abandonRegisteredSandbox(registered, 'rollback deferred: own-removal right unavailable');
+    return;
+  }
+  if (killSwitchOn()) {
+    audit({
+      action: 'sandbox:remove',
+      repo: sb.sourceRepo,
+      sandboxId: sb.id,
+      summary: 'kill switch ON: rolling back a sandbox creation admitted before KILL (its own scratch worktree only)',
+      result: 'ok',
+    });
+  }
+  const rollback = runPinnedWorktreeRunner(pinnedWorktreeRunnerInvocation(
+    'rollback', registered.repository, registered.destination, sb, registered.worktree, registered.admin,
+  ));
+  if (!rollback.cleanupComplete || !removePinnedSandboxReservation(registered.destination)) {
+    abandonRegisteredSandbox(registered, 'rollback incomplete');
   }
 }
 
-function createSandboxWhileFenced(
+/**
+ * A failed creation that could not be rolled back here: audit it and mark its
+ * owner metadata ABANDONED (ownerAlive() then reads false), so the next orphan
+ * sweep or cap pre-sweep reclaims it through the ordinary removal path instead
+ * of skipping it for as long as this live process runs. The sweep takes its
+ * own fence and gate, so this grants nothing; a destination that is no longer
+ * the one pinned at REGISTER is left alone.
+ */
+function abandonRegisteredSandbox(registered: RegisteredSandbox, reason: string): void {
+  const { sb } = registered;
+  let marked = false;
+  if (sandboxDestinationStillPinned(registered.destination)) {
+    try {
+      writeMeta({ ...sb, abandonedAt: new Date().toISOString() });
+      marked = true;
+    } catch { /* the live-owner metadata stays; dead-owner recovery after exit */ }
+  }
+  audit({
+    action: 'sandbox:create',
+    repo: sb.sourceRepo,
+    sandboxId: sb.id,
+    summary: `${reason}; ${marked ? 'marked abandoned for the orphan sweep' : 'left for dead-owner recovery'}`,
+    result: 'error',
+  });
+}
+
+/**
+ * Always runs when a registered creation ends, however it ends: drops the
+ * creation lease (what kill / unenroll drain on) and forgets the creation's
+ * own-removal right. A creation that ended before reaching its rollback (an
+ * unexpected throw) is abandoned first, so it is not stranded either.
+ */
+function settleRegisteredSandbox(registered: RegisteredSandbox, settled: boolean): void {
+  try {
+    if (!settled) abandonRegisteredSandbox(registered, 'sandbox creation failed unexpectedly after registration');
+  } finally {
+    forgetOwnSandboxRemovalRight(registered.removalRight);
+    registered.lease.release();
+  }
+}
+
+async function rollbackRegisteredSandboxAsync(
+  registered: RegisteredSandbox,
+  failure: string,
+  repoKey: string | null,
+  opts: { fenceWaitMs: number },
+): Promise<void> {
+  // Lock order: repo lease, then fence. The caller's lease was released
+  // after REGISTER, so take it again for the rollback's Git effects.
+  let repoLease: RepoLease | null = null;
+  if (repoKey !== null) {
+    const leased = await acquireRepoLease(repoKey);
+    if (!leased.ok) {
+      audit({
+        action: 'sandbox:create',
+        repo: registered.sb.sourceRepo,
+        sandboxId: registered.sb.id,
+        summary: failure,
+        result: 'error',
+      });
+      abandonRegisteredSandbox(registered, `rollback deferred: repo lease unavailable (${leased.reason})`);
+      return;
+    }
+    repoLease = leased.lease;
+  }
+  try {
+    const fence = await acquireOutwardMutationFenceAsync(opts.fenceWaitMs);
+    try {
+      rollbackRegisteredSandboxWhileFenced(registered, failure, fence);
+    } finally {
+      releaseOutwardMutationFence(fence);
+    }
+  } finally {
+    repoLease?.release();
+  }
+}
+
+/**
+ * REGISTER. Runs with the outward fence held; returns with the worktree
+ * registered and validated, the own-removal right minted and the creation
+ * lease registered, or throws with everything it did rolled back (or, when
+ * rollback could not finish, the owner metadata left for recovery).
+ */
+function registerSandboxWhileFenced(
   sourceRepo: string,
   outwardFence: OutwardMutationFence | null,
-  opts?: { allowAnyRepo?: boolean },
-): Sandbox {
+  opts: { allowAnyRepo?: boolean; signal?: AbortSignal } | undefined,
+  clock: SandboxCreationClock | null,
+): RegisteredSandbox {
   const sourceIdentity = pinDirectoryIdentity(sourceRepo);
   if (!sourceIdentity) {
     audit({
@@ -1615,12 +2384,13 @@ function createSandboxWhileFenced(
     throw new Error(`could not pin repository identity: ${sourceRepo}`);
   }
   const canonicalSourceRepo = sourceIdentity.path;
+  const gateOpts = opts?.allowAnyRepo === undefined ? undefined : { allowAnyRepo: opts.allowAnyRepo };
 
   // Gate the pinned physical pathname before Git discovery. The retained
   // runner independently verifies this source inode before using its cwd, so
   // a pathname replacement cannot carry policy authority into Git effects.
   try {
-    assertMayMutate(canonicalSourceRepo, opts);
+    assertMayMutate(canonicalSourceRepo, gateOpts);
   } catch (err) {
     audit({
       action: 'sandbox:create',
@@ -1681,6 +2451,7 @@ function createSandboxWhileFenced(
   if (!repositoryIdentityStillPinned(repositoryIdentity)) {
     throw new Error('repository or Git common directory identity changed while reading source HEAD');
   }
+  clock?.mark('discover');
 
   // -------------------------------------------------------------------------
   // H5 CHANGE 4 — DISK/COUNT CAP (LOCAL-ONLY resource guard). When the live
@@ -1772,16 +2543,22 @@ function createSandboxWhileFenced(
   } finally {
     releaseCleanupLock(creationLock);
   }
+  clock?.mark('reserve');
 
   // Add the isolated worktree on a NEW scratch branch off baseHead, run IN the
   // source repo. This does NOT touch the source working tree, index, HEAD, or
-  // any user branch — it only creates a new ref + a separate checkout.
+  // any user branch — it only creates a new ref + a separate (not yet checked
+  // out) worktree.
   if (!repositoryIdentityStillPinned(repositoryIdentity) ||
       !sandboxDestinationStillPinned(destinationIdentity)) {
     removePinnedSandboxReservation(destinationIdentity);
     throw new Error('repository or sandbox destination identity changed before worktree creation');
   }
-  const creation = createPinnedWorktree(repositoryIdentity, destinationIdentity, sb);
+  const creation = runPinnedWorktreeRunner(pinnedWorktreeRunnerInvocation(
+    'register', repositoryIdentity, destinationIdentity, sb, null, null,
+  ));
+  clock?.mark('register');
+  clock?.runnerSteps('register', creation.timing);
   if (!creation.ok) {
     if (creation.cleanupComplete) {
       removePinnedSandboxReservation(destinationIdentity);
@@ -1802,31 +2579,69 @@ function createSandboxWhileFenced(
         ino: BigInt(creation.worktreeIno),
       }
     : null;
-  if (!worktreeIdentity || !createdWorktreeStillExact(
-    sb,
-    worktreeIdentity,
-    repositoryIdentity,
-    destinationIdentity,
-  )) {
+  // Undo the registration in place while this fence is still held.
+  function abandon(summary: string): never {
+    const rollback = worktreeIdentity !== null
+      ? runPinnedWorktreeRunner(pinnedWorktreeRunnerInvocation(
+          'rollback', repositoryIdentity, destinationIdentity, sb, worktreeIdentity, null,
+        ))
+      : null;
+    if (rollback?.cleanupComplete) removePinnedSandboxReservation(destinationIdentity);
     audit({
       action: 'sandbox:create',
       repo: canonicalSourceRepo,
       sandboxId: id,
-      summary: 'repository or sandbox identity changed after worktree creation',
+      summary,
       result: 'error',
     });
-    throw new Error('repository or sandbox identity changed after worktree creation');
+    throw new Error(summary);
+  }
+  const adminIdentity: PinnedAdministrativeDirectory | null =
+    creation.adminPath !== undefined && creation.adminDev !== undefined && creation.adminIno !== undefined
+      ? { path: creation.adminPath, dev: creation.adminDev, ino: creation.adminIno }
+      : null;
+  if (!worktreeIdentity || !adminIdentity || !directoryIdentityStillPinned(worktreeIdentity) ||
+      !directoryIdentityStillPinned(repositoryIdentity.source) ||
+      !directoryIdentityStillPinned(repositoryIdentity.commonDirectory) ||
+      !sandboxDestinationStillPinned(destinationIdentity)) {
+    abandon('repository or sandbox identity changed after worktree creation');
   }
 
-  audit({
-    action: 'sandbox:create',
-    repo: canonicalSourceRepo,
-    sandboxId: id,
-    summary: `worktree on ${branch} @ ${baseHead.slice(0, 8)}`,
-    result: 'ok',
+  // Authority for POPULATE, minted while the fence is held and KILL is off
+  // (both refuse otherwise): the right to remove this sandbox even after a
+  // KILL, and the lease that makes kill / unenroll wait for the checkout.
+  const removalRight = mintOwnSandboxRemovalRight(outwardFence, sb);
+  if (!removalRight) abandon('outward mutation authority became invalid during sandbox creation');
+  let repoKey = canonicalSourceRepo;
+  try {
+    repoKey = canonicalEnrollmentPath(canonicalSourceRepo) ?? canonicalSourceRepo;
+  } catch { /* the physical path is the lease key */ }
+  const registration = registerExecutionLease(outwardFence, {
+    runId: `sandbox-${id}`,
+    repoKey,
+    engine: SANDBOX_CREATION_LEASE_ENGINE,
+    ...(opts?.signal ? { parentSignal: opts.signal } : {}),
+    shouldAbort: () => {
+      try {
+        assertMayMutate(canonicalSourceRepo, gateOpts);
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    },
   });
-
-  return sb;
+  if (!registration.ok) abandon(`sandbox creation lease unavailable: ${registration.reason}`);
+  clock?.mark('authorize');
+  return {
+    sb,
+    repository: repositoryIdentity,
+    destination: destinationIdentity,
+    worktree: worktreeIdentity,
+    admin: adminIdentity,
+    removalRight,
+    lease: registration.lease,
+    gateOpts,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2370,6 +3185,11 @@ export function mintOwnSandboxRemovalRight(
   return right;
 }
 
+/** Forget a minted right once the sandbox it names is gone or its creation ended. */
+function forgetOwnSandboxRemovalRight(right: OwnSandboxRemovalRight | null | undefined): void {
+  if (right) mintedOwnRemovalRights.delete(right);
+}
+
 function ownRemovalRightValid(right: OwnSandboxRemovalRight | null | undefined, sb: Sandbox): boolean {
   return right !== null && right !== undefined && mintedOwnRemovalRights.has(right) &&
     right[ownRemovalRightBrand] === true && right.sandboxId === sb.id && right.pid === process.pid;
@@ -2393,6 +3213,11 @@ export async function removeSandboxAsync(
   opts: { fenceWaitMs?: number; signal?: AbortSignal; ownRemovalRight?: OwnSandboxRemovalRight | null } = {},
 ): Promise<SandboxCleanupResult> {
   const waitMs = opts.fenceWaitMs ?? SANDBOX_ASYNC_REMOVE_FENCE_WAIT_MS;
+  // The right names one sandbox; once that sandbox is gone it is spent.
+  const forgetRightOnceRemoved = (result: SandboxCleanupResult): SandboxCleanupResult => {
+    if (result.status === 'complete') forgetOwnSandboxRemovalRight(opts.ownRemovalRight);
+    return result;
+  };
   const fence = await acquireOutwardMutationFenceAsync(waitMs, opts.signal ? { signal: opts.signal } : undefined);
   if (!ownsOutwardMutationFence(fence)) {
     releaseOutwardMutationFence(fence);
@@ -2408,11 +3233,11 @@ export async function removeSandboxAsync(
         summary: 'kill switch ON: removing the sandbox of a run admitted before KILL (its own scratch worktree only)',
         result: 'ok',
       });
-      return removeSandboxWhileFenced(sb);
+      return forgetRightOnceRemoved(removeSandboxWhileFenced(sb));
     }
     const authority = mintSandboxCleanupAuthority(fence);
     if (!authority) return cleanupAuthorityUnavailableResult(sb, 'paused');
-    return removeSandboxWhileFenced(sb);
+    return forgetRightOnceRemoved(removeSandboxWhileFenced(sb));
   } finally {
     verifiedGitRequired.delete(sb.id);
     releaseOutwardMutationFence(fence);
@@ -2516,7 +3341,10 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
   //    the RE-DERIVED safe values, not the raw metadata.
     // `git worktree remove` also deletes the worktree directory. If the dir is
     // already gone, prune first so git's bookkeeping is consistent, then ignore.
-    gitTry(sb.sourceRepo, ['worktree', 'remove', '--force', safeWorktree]);
+    // Double force: a SIGKILL mid-`worktree add` (GIT_TIMEOUT, daemon kill)
+    // leaves git's "initializing" lock, which single force and prune never
+    // clear — the sandbox would be residual on every sweep, forever.
+    gitTry(sb.sourceRepo, ['worktree', 'remove', '--force', '--force', safeWorktree]);
     gitTry(sb.sourceRepo, ['worktree', 'prune']);
 
     // 2. Delete the scratch branch (a sandbox-only ref — never a user branch).
@@ -2901,9 +3729,14 @@ function sweepOrphanSandboxesDetailedInternal(
     if (ownerAlive(sb)) {
       continue;
     }
-    // GUARD 2 — AGE fallback for a sandbox with no usable ownerPid (owner gone
-    // or older metadata).
-    if (staleMs !== undefined) {
+    // GUARD 2 — AGE fallback ONLY for a sandbox with no usable ownerPid (older
+    // metadata / stripped marker). A recorded owner pid that is provably gone
+    // (ownerAlive() false: ESRCH) is positive evidence of a crash leftover, so
+    // it is reclaimed immediately. Holding it for ORPHAN_STALE_MS bought no
+    // safety (a recycled pid reads ALIVE and is skipped by guard 1 anyway) and
+    // let one or two daemon crashes fill MAX_SANDBOXES with dead-owner homes,
+    // refusing every createSandbox for up to six hours after restart.
+    if (staleMs !== undefined && !hasRecordedOwnerPid(sb)) {
       const createdMs = Date.parse(sb.createdAt);
       // Skip not-yet-stale sandboxes (possibly a live owner whose pid we could
       // not read). An unparseable createdAt is treated as stale=0

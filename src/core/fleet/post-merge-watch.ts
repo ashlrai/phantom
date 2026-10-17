@@ -38,8 +38,12 @@
  * never count a pending watch as green). A watch that reaches its deadline
  * with NO evidence (suite never ran, CI never reported) is finalized RED as
  * "unproven" and quarantines the repo — never green by default. CI still
- * pending at the deadline with a passing suite is green on the suite's
- * evidence, recorded as `ci: 'unknown'`.
+ * RUNNING at the deadline keeps the watch open for up to CI_PENDING_GRACE_MS
+ * more: slow lanes (macOS jobs run only after merge, on a capped runner pool)
+ * are often the only evidence for what the local Linux suite cannot see, so a
+ * deadline must not finalize green while they are still running. Past that
+ * grace, a passing suite is green on its own evidence, recorded as
+ * `ci: 'unknown'`.
  *
  * ── STATE ──────────────────────────────────────────────────────────────────
  * `~/.ashlr/authority/post-merge-watch.json` (0600): open / recent watches and
@@ -109,6 +113,12 @@ export const REVERTS_WINDOW_MS = DAY_MS;
 export const REVERTS_KILL_COUNT = 3;
 /** CI that has registered no check at all this long after landing is `none`, not "not started yet". */
 export const CI_NONE_GRACE_MS = 15 * MINUTE_MS;
+/**
+ * CI still running at the watch deadline keeps the watch open this much
+ * longer. Post-merge-only lanes (macOS) queue behind a small runner pool and
+ * can outlast the 2 h window; finalizing green then would skip their verdict.
+ */
+export const CI_PENDING_GRACE_MS = 4 * HOUR_MS;
 /** Transient revert failures (GitHub 5xx, network) retried this many times before escalating. */
 export const MAX_REVERT_ATTEMPTS = 3;
 /**
@@ -992,6 +1002,10 @@ async function stepWatch(
   }
   if (ci.state === 'green' && suiteGaveUp) {
     finalizeGreen(w, deps, nowMs, 'green', `CI green; the local suite could not run (${w.suite.detail ?? 'infra'})`, pass);
+    return;
+  }
+  if (pastDeadline && ci.state === 'pending' && nowMs < deadlineMs + CI_PENDING_GRACE_MS) {
+    saveWatch(w);
     return;
   }
   if (pastDeadline) {

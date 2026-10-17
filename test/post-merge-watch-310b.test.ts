@@ -72,6 +72,7 @@ const watch = await import('../src/core/fleet/post-merge-watch.js');
 const { authorityStateDir, listRepoHolds } = await import('../src/core/fleet/quarantine.js');
 const {
   advancePostMergeWatches,
+  CI_PENDING_GRACE_MS,
   classifyCi,
   fleetRevertRefusal,
   githubCiStatus,
@@ -424,10 +425,34 @@ describe('green and pending', () => {
     expect(r.open).toBe(1);
     expect(h.ledger).toEqual([]);
     expect(postMergeGreenPct({ sinceMs: T0 - H, nowMs: h.now.ms }).pct).toBeNull();
-    // Deadline passes with CI still pending: green on the suite's evidence, ci recorded as unknown.
+    // Deadline passes with CI still running: the watch stays open for the slow lanes.
     h.now.ms = T0 + 2 * H + MIN;
     await advancePostMergeWatches({ deps: h.deps });
+    expect(h.ledger).toEqual([]);
+    expect(listPostMergeWatches()[0]).toMatchObject({ phase: 'watching' });
+    // Past the CI grace too: green on the suite's evidence, ci recorded as unknown.
+    h.now.ms = T0 + 2 * H + CI_PENDING_GRACE_MS + MIN;
+    await advancePostMergeWatches({ deps: h.deps });
     expect(results(h)).toEqual([expect.objectContaining({ verdict: 'green', ci: 'unknown', suite: 'pass' })]);
+  });
+
+  it('a slow post-merge lane that turns red after the 2 h deadline still reverts the landing', async () => {
+    const h = harness();
+    const l = landing();
+    registerLanding(l, { nowMs: T0 });
+    h.commits.set(l.mergeSha, fleetCommit(l));
+    h.ci.set(sha('b'), GREEN);
+    h.ci.set(l.mergeSha, PENDING);
+    h.suite.set(l.mergeSha, [PASS]);
+    await advancePostMergeWatches({ deps: h.deps });
+    h.now.ms = T0 + 2 * H + MIN;
+    await advancePostMergeWatches({ deps: h.deps });
+    expect(results(h)).toEqual([]);
+    // The macOS lane finishes red an hour after the deadline.
+    h.now.ms = T0 + 3 * H;
+    h.ci.set(l.mergeSha, redCi('Mac exhaustive (1/4)'));
+    await advancePostMergeWatches({ deps: h.deps });
+    expect(h.landRevert).toHaveBeenCalledTimes(1);
   });
 
   it('no evidence at the deadline is RED ("unproven"): quarantine, but no revert and no kill', async () => {

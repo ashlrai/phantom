@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, FixAction } from './types.js';
 import { runDoctor } from './doctor.js';
-import { defaultConfig, saveConfig } from './config.js';
+import { firstRunConfig, saveConfig } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 
@@ -46,7 +46,7 @@ const SAFE_FIXABLE = new Set([
 // ---------------------------------------------------------------------------
 
 /**
- * Fix: config — create missing ~/.ashlr/config.json from defaultConfig().
+ * Fix: config — create missing ~/.ashlr/config.json from firstRunConfig().
  * ONLY when ABSENT; never overwrites an existing config (even a broken one —
  * that's a manual fix to preserve user data).
  */
@@ -73,7 +73,7 @@ async function fixConfig(_cfg: AshlrConfig, checkDetail: string): Promise<FixAct
   }
 
   try {
-    const defaults = defaultConfig();
+    const defaults = firstRunConfig();
     saveConfig(defaults);
     return {
       ...base,
