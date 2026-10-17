@@ -87,6 +87,7 @@ vi.mock('../src/core/quality/conventions.js', () => ({
 vi.mock('../src/core/sandbox/policy.js', () => ({
   listEnrolled: mocks.listEnrolled,
   isEnrolled: mocks.isEnrolled,
+  activeEnrollmentLenses: () => [],
 }));
 
 // ---------------------------------------------------------------------------
