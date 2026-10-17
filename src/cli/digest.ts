@@ -605,6 +605,8 @@ export async function cmdDigest(args: string[]): Promise<number> {
       if (mdResult.rendered && mdResult.path) {
         process.stdout.write(cyan('  opened in ashlr-md: ') + mdResult.path + '\n');
         openedInViewer = true;
+      } else {
+        process.stderr.write(dim(`  ashlr-md: ${mdResult.detail} — showing in terminal`) + '\n');
       }
     }
     if (!openedInViewer) {
