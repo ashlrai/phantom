@@ -4,14 +4,17 @@
  * full scans. Anything else (live or unreadable member, no member, another
  * platform) fails closed as present.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { processGroupHasOnlyZombies, type ProcStatReader } from '../src/core/util/process-group-liveness.js';
 
 const PGID = 4200;
-const stat = (pid: number, state: string, pgrp: number, comm = 'node') => `${pid} (${comm}) ${state} 1 ${pgrp} ${pgrp} 0 -1 0`;
+const hasPython3 = () => spawnSync('python3', ['-c', 'import ctypes, threading'], { stdio: 'ignore' }).status === 0;
+// Fields 1-20 of /proc/<pid>/stat: field 20 is num_threads.
+const stat = (pid: number, state: string, pgrp: number, comm = 'node', threads = 1) =>
+  `${pid} (${comm}) ${state} 1 ${pgrp} ${pgrp} 0 -1 0 0 0 0 0 0 0 0 0 20 0 ${threads} 0 0`;
 
 /** A fake /proc; a function entry throws or yields per read, to vary scans. */
 function fakeProc(entries: Record<string, string | (() => string)>): ProcStatReader & { reads: number } {
@@ -46,6 +49,14 @@ describe('processGroupHasOnlyZombies', () => {
     expect(processGroupHasOnlyZombies(PGID, 'linux', late)).toBe(false);
   });
 
+  it('refuses a Z leader whose other threads still run (main thread called pthread_exit)', () => {
+    expect(processGroupHasOnlyZombies(PGID, 'linux', fakeProc({ 4200: stat(4200, 'Z', PGID, 'node', 2) }))).toBe(false);
+    expect(processGroupHasOnlyZombies(PGID, 'linux', fakeProc({ 4200: stat(4200, 'Z', PGID), 4201: stat(4201, 'Z', PGID, 'w', 5) })))
+      .toBe(false);
+    // A stat line cut before num_threads cannot prove the leader's threads exited.
+    expect(processGroupHasOnlyZombies(PGID, 'linux', fakeProc({ 4200: `4200 (node) Z 1 ${PGID} ${PGID} 0 -1 0` }))).toBe(false);
+  });
+
   it('refuses when an entry or the listing is unreadable or malformed', () => {
     const eacces = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
     expect(processGroupHasOnlyZombies(PGID, 'linux', fakeProc({ 4200: stat(4200, 'Z', PGID), 4210: eacces }))).toBe(false);
@@ -70,6 +81,24 @@ describe('processGroupHasOnlyZombies', () => {
     }
     for (const pgid of [0, 1, -4200, 1.5, Number.NaN]) {
       expect(processGroupHasOnlyZombies(pgid, 'linux', fakeProc({ 4200: stat(4200, 'Z', PGID) }))).toBe(false);
+    }
+  });
+
+  it.runIf(process.platform === 'linux' && hasPython3())('reads the real /proc: a Z leader with a live thread is a live group', async () => {
+    // The main thread calls pthread_exit while a second thread sleeps: the
+    // leader's stat state is Z, but the process still runs code.
+    const script = 'import ctypes,threading,time\nthreading.Thread(target=time.sleep,args=(5,)).start()\nctypes.CDLL(None).pthread_exit(None)';
+    const child = spawn('python3', ['-c', script], { detached: true, stdio: 'ignore' });
+    try {
+      const pid = child.pid!;
+      const state = () => { const s = readFileSync(`/proc/${pid}/stat`, 'utf8'); return s.charAt(s.lastIndexOf(') ') + 2); };
+      const deadline = Date.now() + 5_000;
+      while (state() !== 'Z' && Date.now() < deadline) await delay(10);
+      expect(state()).toBe('Z');
+      expect(() => process.kill(-pid, 0)).not.toThrow();
+      expect(processGroupHasOnlyZombies(pid)).toBe(false);
+    } finally {
+      try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ }
     }
   });
 

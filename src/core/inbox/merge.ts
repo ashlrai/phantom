@@ -165,8 +165,14 @@ import {
   resolveAutoMergeScopePolicy,
   type AutoMergeScopePolicyResolution,
 } from '../foundry/automerge-scope-policy.js';
-import { measureAutoMergeDiffScopeForGate } from '../foundry/automerge-diff-scope.js';
-import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
+import { measureAutoMergeDiffScope, measureAutoMergeDiffScopeForGate } from '../foundry/automerge-diff-scope.js';
+import {
+  detectTestTampering,
+  diffAddedLinesByPath,
+  isTestPath,
+  protectedPathHits,
+  testContentImportsTier1,
+} from '../authority/protected-paths.js';
 import {
   judgeProposal,
   resolveFrontierJudgeClient,
@@ -1586,6 +1592,36 @@ function isAgentInstructionPath(path: string): boolean {
   if (segments.length === 0) return false;
   if (AGENT_INSTRUCTION_FILES.has(segments[segments.length - 1]!)) return true;
   return segments.slice(0, -1).some((segment) => AGENT_CONFIG_DIRS.has(segment));
+}
+
+/**
+ * Gate 5.6, content half (self-repo only): the test files this diff touches
+ * whose verified-base content or added lines import Tier-1 source. The fleet
+ * gates (standing-merge-pass G1) and CODEOWNERS hold every such test for the
+ * owner; protectedPathHits by name alone misses the ones not named for a
+ * Tier-1 module, so they are checked here against the exact base the diff is
+ * staged on. A base blob that cannot be read fails closed as a hit.
+ */
+function tier1ImportingTestHits(repo: string, baseHead: string, diff: string): { paths: string[] } | { error: string } {
+  const scope = measureAutoMergeDiffScope(diff);
+  if (!scope.ok) return { error: `malformed diff scope (${scope.reason})` };
+  const added = diffAddedLinesByPath(diff);
+  if (!added) return { error: 'diff sections could not be read for Tier-1 test imports' };
+  const testsImportingTier1 = new Set<string>();
+  for (const entry of scope.entries) {
+    const path = entry.newPath ?? entry.oldPath;
+    if (!path || !path.toLowerCase().startsWith('test/') || !isTestPath(path)) continue;
+    const contents: (string | null)[] = [(added.get(path) ?? []).join('\n')];
+    if (entry.oldPath !== null) {
+      const baseContent = gitTry(repo, ['cat-file', 'blob', `${baseHead}:${entry.oldPath}`]);
+      if (baseContent === null) return { error: `base content of ${entry.oldPath} could not be read` };
+      contents.push(baseContent);
+    }
+    if (testContentImportsTier1(path, contents)) testsImportingTier1.add(path);
+  }
+  if (testsImportingTier1.size === 0) return { paths: [] };
+  const hits = protectedPathHits([...testsImportingTier1], { selfRepo: true, testsImportingTier1 });
+  return { paths: hits.map((hit) => `${hit.path} (${hit.ruleId})`) };
 }
 
 /**
@@ -4528,6 +4564,18 @@ export async function autoMergeProposal(
     const lockedLocalBaseHead = resolveDefaultBranchHead(repo, base);
     if (!lockedLocalBaseHead || lockedLocalBaseHead !== boundBaseHead) {
       return refuse(`default branch '${base}' moved after signed evidence persistence`, repo);
+    }
+    if (isSelfTargetProposal(proposal, cfg)) {
+      const tier1Tests = tier1ImportingTestHits(repo, boundBaseHead, diff);
+      if ('error' in tier1Tests) {
+        return refuse(`Tier-1 test imports could not be ruled out: ${tier1Tests.error}`, repo);
+      }
+      if (tier1Tests.paths.length > 0) {
+        return refuse(
+          `protected path: ${tier1Tests.paths.slice(0, 3).join(', ')} — left for owner review, never auto-merged`,
+          repo,
+        );
+      }
     }
     if (wantRemote && githubOrigin) {
       if (!githubOriginAuthorityMatches(repo, githubOrigin)) {
