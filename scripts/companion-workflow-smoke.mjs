@@ -537,6 +537,15 @@ export async function runSmoke(options) {
     if (!present('stackBin') || !present('secretsBin')) skip('stack:phantom-vault', why('stackBin', why('secretsBin', 'needs --stack-bin and --secrets-bin')));
     else if (process.platform === 'win32') skip('stack:phantom-vault', 'needs a POSIX PATH shim for `phantom`');
     else for (const [id, check] of await stackPhantomVault(options, env, box)) add(id, check);
+
+    // 12. Phantom as the agent's one MCP endpoint: `phm mcp ecosystem --write` registers the
+    // installed Secrets and Locus servers, and Phantom's gateway (`phm mcp`) lists their
+    // tools and routes a Secrets call to the project's vault.
+    const gatewaySecrets = options.secretsBinNative ?? options.secretsBin;
+    if (!present('phm')) skip('phm:mcp-gateway', why('phm', 'no --phm'));
+    else if (!gatewaySecrets && !present('locusMcp')) skip('phm:mcp-gateway', 'needs --secrets-bin or --locus-mcp');
+    else if (process.platform === 'win32') skip('phm:mcp-gateway', 'needs a POSIX PATH shim');
+    else for (const [id, check] of await phantomGateway({ ...options, gatewaySecrets }, env, box)) add(id, check);
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }
@@ -818,6 +827,82 @@ export function evaluateLocusCredential(section, scheme, raw = '', { refusalOk =
   }
   if (!seen) return { status: 'fail', detail: `locus exec exit ${exit} with no child output and no reason` };
   return { status: 'fail', detail: `the child ran with GH_TOKEN ${seen} (exit ${exit})${reason ? `; locus said: ${reason.slice(0, 200)}` : ''}` };
+}
+
+/** Namespaced tools Phantom's gateway must expose for each registered companion server. */
+export const GATEWAY_SERVERS = Object.freeze([
+  { name: 'phantom-secrets', tool: 'phantom-secrets__phantom_list_secrets' },
+  { name: 'locus', tool: 'locus__locus_whoami' },
+]);
+
+/**
+ * Register the given companion MCP servers through Phantom, then talk to Phantom's
+ * gateway as an agent would. The gateway hands downstream servers a narrow env, so the
+ * headless file-vault passphrase goes in the registered entry's `env`, as a user's would.
+ */
+export async function phantomGateway(options, env, box) {
+  const bin = join(box.root, 'gateway-bin');
+  mkdirSync(bin, { recursive: true });
+  const expected = [];
+  if (options.gatewaySecrets && existsSync(options.gatewaySecrets)) {
+    symlinkSync(options.gatewaySecrets, join(bin, 'phantom'));
+    expected.push(GATEWAY_SERVERS[0]);
+  }
+  if (options.locusMcp && existsSync(options.locusMcp)) {
+    symlinkSync(options.locusMcp, join(bin, 'locus-mcp'));
+    const locus = options.locusBinNative ?? options.locusBin;
+    if (locus && existsSync(locus)) symlinkSync(locus, join(bin, 'locus'));
+    expected.push(GATEWAY_SERVERS[1]);
+  }
+  const passphrase = 'phm-companion-smoke-passphrase';
+  const gwEnv = { ...env, PATH: [bin, env.PATH].join(delimiter), PHANTOM_VAULT_PASSPHRASE: passphrase };
+  const project = join(box.home, 'gateway-project');
+  const withSecrets = expected.includes(GATEWAY_SERVERS[0]);
+  if (withSecrets) {
+    const setup = await secretsProject(options.gatewaySecrets, gwEnv, project, [['OPENAI_API_KEY', SECRET_SENTINEL]]);
+    if (setup) return [['phm:mcp-gateway', { status: 'fail', detail: setup }]];
+  } else mkdirSync(project, { recursive: true });
+
+  const checks = [];
+  const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], { env: gwEnv, cwd: project, timeoutMs: 30_000 });
+  let report = null;
+  try { report = JSON.parse(write.stdout); } catch { /* reported below */ }
+  const registered = new Set([...(report?.added ?? []), ...(report?.available ?? []).filter(item => item?.registered).map(item => item.name)]);
+  const unregistered = expected.filter(server => !registered.has(server.name)).map(server => server.name);
+  checks.push(['phm:mcp-ecosystem', report && !unregistered.length
+    ? { status: 'pass', detail: `registered ${expected.map(server => server.name).join(', ')}` }
+    : { status: 'fail', detail: report ? `not registered: ${unregistered.join(', ')}; refused ${JSON.stringify(report.refused ?? [])}` : `ecosystem --write exit ${write.code}: ${write.stderr.trim().slice(0, 200)}` }]);
+  if (unregistered.length) return checks;
+
+  const settingsPath = report.settingsPath ?? join(env.ASHLR_HOME, 'settings.json');
+  if (withSecrets) {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const entry = settings.mcpServers?.['phantom-secrets'];
+    if (entry) entry.env = { ...(entry.env ?? {}), PHANTOM_VAULT_PASSPHRASE: passphrase };
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  }
+
+  const gateway = { id: 'phm-gateway', requiredTools: expected.map(server => server.tool) };
+  for (const [index, protocolVersion] of CLIENT_PROTOCOL_VERSIONS.entries()) {
+    const call = index === 0 && withSecrets ? { name: GATEWAY_SERVERS[0].tool, arguments: {} } : undefined;
+    try {
+      const result = await mcpHandshake(options.phm, { env: gwEnv, cwd: project, protocolVersion, args: ['mcp'], call, timeoutMs: 60_000 });
+      checks.push([`phm:mcp-gateway:${protocolVersion}`, evaluateHandshake(gateway, protocolVersion, result)]);
+      if (call) checks.push(['phm:gateway-secrets', evaluateGatewaySecrets(result.call)]);
+    } catch (error) {
+      checks.push([`phm:mcp-gateway:${protocolVersion}`, { status: 'fail', detail: error instanceof Error ? error.message : String(error) }]);
+    }
+  }
+  return checks;
+}
+
+/** A routed phantom_list_secrets: the one stored name, never its value. */
+export function evaluateGatewaySecrets(message) {
+  if (message?.error) return { status: 'fail', detail: `tools/call error: ${JSON.stringify(message.error).slice(0, 200)}` };
+  const text = (message?.result?.content ?? []).map(part => part?.text ?? '').join('\n');
+  if (text.includes(SECRET_SENTINEL) || JSON.stringify(message ?? {}).includes(SECRET_SENTINEL)) return { status: 'fail', detail: 'the routed call returned the stored value' };
+  if (message?.result?.isError || !text.includes('OPENAI_API_KEY')) return { status: 'fail', detail: `the stored name did not come back: ${text.trim().slice(0, 200) || 'empty result'}` };
+  return { status: 'pass', detail: "Phantom's gateway routed phantom_list_secrets to the project vault and got the stored name only" };
 }
 
 /** Cortex's JSON-RPC code for an unauthenticated MCP request (packages/api/src/mcp/http.ts). */

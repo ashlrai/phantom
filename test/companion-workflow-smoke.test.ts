@@ -261,6 +261,15 @@ createInterface({ input: process.stdin }).on('line', line => {
     expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\n', 'phm:', 'sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef')).toMatchObject({ status: 'fail' });
   });
 
+  it("passes a call routed through Phantom's gateway only when it returns the stored name and never the value", () => {
+    const text = (value: string, isError = false) => ({ result: { content: [{ type: 'text', text: value }], ...(isError ? { isError } : {}) } });
+    expect(smoke.evaluateGatewaySecrets(text('{"count":1,"secrets":[{"name":"OPENAI_API_KEY"}]}'))).toMatchObject({ status: 'pass' });
+    expect(smoke.evaluateGatewaySecrets(text('Vault locked, not empty.', true))).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluateGatewaySecrets({ error: { code: -32603, message: 'Unknown tool' } })).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluateGatewaySecrets(text('OPENAI_API_KEY=sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef')).detail).toContain('stored value');
+    expect(smoke.GATEWAY_SERVERS.map((server: { tool: string }) => server.tool)).toEqual(['phantom-secrets__phantom_list_secrets', 'locus__locus_whoami']);
+  });
+
   it('wires Stack to the Phantom Secrets vault and checks its env diff through CLI and MCP', async () => {
     const bin = join(dir, 'vault-bins');
     mkdirSync(bin, { recursive: true });
