@@ -267,7 +267,7 @@ createInterface({ input: process.stdin }).on('line', line => {
     expect(smoke.evaluateGatewaySecrets(text('Vault locked, not empty.', true))).toMatchObject({ status: 'fail' });
     expect(smoke.evaluateGatewaySecrets({ error: { code: -32603, message: 'Unknown tool' } })).toMatchObject({ status: 'fail' });
     expect(smoke.evaluateGatewaySecrets(text('OPENAI_API_KEY=sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef')).detail).toContain('stored value');
-    expect(smoke.GATEWAY_SERVERS.map((server: { tool: string }) => server.tool)).toEqual(['phantom-secrets__phantom_list_secrets', 'locus__locus_whoami']);
+    expect(smoke.GATEWAY_SERVERS.map((server: { tool: string }) => server.tool)).toEqual(['phantom-secrets__phantom_list_secrets', 'locus__locus_whoami', 'ashlr-md__open_file']);
   });
 
   it('wires Stack to the Phantom Secrets vault and checks its env diff through CLI and MCP', async () => {

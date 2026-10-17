@@ -193,9 +193,10 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
   `stack env diff` and the `stack_env_diff` MCP tool name exactly the two
   missing ones. No output may contain the stored value.
 - Phantom as the agent's single MCP endpoint: `phm mcp ecosystem --write`
-  registers the given Secrets and Locus servers, then Phantom's gateway
+  registers the given Secrets, Locus and Ashlr MD servers, then Phantom's gateway
   (`phm mcp`) completes both handshakes, lists
-  `phantom-secrets__phantom_list_secrets` and `locus__locus_whoami`, and routes
+  `phantom-secrets__phantom_list_secrets`, `locus__locus_whoami` and
+  `ashlr-md__open_file` for the servers given, and routes
   one `phantom_list_secrets` call to the project's vault, which must return the
   stored name and never its value. The gateway gives downstream servers a narrow
   environment, so on a host without a keychain the file-vault passphrase goes in

@@ -539,11 +539,11 @@ export async function runSmoke(options) {
     else for (const [id, check] of await stackPhantomVault(options, env, box)) add(id, check);
 
     // 12. Phantom as the agent's one MCP endpoint: `phm mcp ecosystem --write` registers the
-    // installed Secrets and Locus servers, and Phantom's gateway (`phm mcp`) lists their
+    // installed Secrets, Locus and Ashlr MD servers, and Phantom's gateway (`phm mcp`) lists their
     // tools and routes a Secrets call to the project's vault.
     const gatewaySecrets = options.secretsBinNative ?? options.secretsBin;
     if (!present('phm')) skip('phm:mcp-gateway', why('phm', 'no --phm'));
-    else if (!gatewaySecrets && !present('locusMcp')) skip('phm:mcp-gateway', 'needs --secrets-bin or --locus-mcp');
+    else if (!gatewaySecrets && !present('locusMcp') && !present('mdopenerMcp')) skip('phm:mcp-gateway', 'needs --secrets-bin, --locus-mcp or --mdopener-mcp');
     else if (process.platform === 'win32') skip('phm:mcp-gateway', 'needs a POSIX PATH shim');
     else for (const [id, check] of await phantomGateway({ ...options, gatewaySecrets }, env, box)) add(id, check);
   } finally {
@@ -833,6 +833,7 @@ export function evaluateLocusCredential(section, scheme, raw = '', { refusalOk =
 export const GATEWAY_SERVERS = Object.freeze([
   { name: 'phantom-secrets', tool: 'phantom-secrets__phantom_list_secrets' },
   { name: 'locus', tool: 'locus__locus_whoami' },
+  { name: 'ashlr-md', tool: 'ashlr-md__open_file' },
 ]);
 
 /**
@@ -853,6 +854,10 @@ export async function phantomGateway(options, env, box) {
     const locus = options.locusBinNative ?? options.locusBin;
     if (locus && existsSync(locus)) symlinkSync(locus, join(bin, 'locus'));
     expected.push(GATEWAY_SERVERS[1]);
+  }
+  if (options.mdopenerMcp && existsSync(options.mdopenerMcp)) {
+    symlinkSync(options.mdopenerMcp, join(bin, 'mdopener-mcp'));
+    expected.push(GATEWAY_SERVERS[2]);
   }
   const passphrase = 'phm-companion-smoke-passphrase';
   const gwEnv = { ...env, PATH: [bin, env.PATH].join(delimiter), PHANTOM_VAULT_PASSPHRASE: passphrase };
