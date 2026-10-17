@@ -25,11 +25,23 @@
  * enrollment; it NEVER bypasses the kill switch.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+// Observe removeSandbox's rmSync calls (the metadata-last ordering test); every
+// call still goes to the real rmSync.
+const rmObserver = vi.hoisted(() => ({ onRm: null as ((path: string) => void) | null }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const rmSync: typeof actual.rmSync = (path, options) => {
+    rmObserver.onRm?.(String(path));
+    actual.rmSync(path, options);
+  };
+  return { ...actual, rmSync, default: { ...actual, rmSync } };
+});
 
 import {
   removeSandbox,
@@ -289,6 +301,7 @@ describe('H2 orphan sandbox — crash-leftover worktree is surfaced and swept', 
     git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
     git(repo.dir, ['worktree', 'prune']);
     expect(repo.branches()).toContain(scratchBranch(sb.id));
+    backdate(sb.id);
 
     expect(sweepOrphanSandboxes()).toEqual([sb.id]);
     expect(sandboxHomeExists(sb.id)).toBe(false);
@@ -297,10 +310,46 @@ describe('H2 orphan sandbox — crash-leftover worktree is surfaced and swept', 
     expect(repo.gitStatus()).toBe('');
   });
 
-  it('a home left holding only its metadata (kill while deleting the home) is reclaimed at once', () => {
-    // removeSandbox now deletes the metadata last, so a kill while it empties
-    // the home leaves this state, which the restart sweep finishes with the
-    // ORPHAN_STALE_MS guard on (a metadata-free home would wait a minute).
+  it('a stranded scratch branch under a minute old is kept (a creation may still be in flight)', () => {
+    // `worktree add -b` creates the branch before it registers the worktree, so
+    // a live createSandbox passes through this exact state. Only a record a
+    // minute old is taken for a crash leftover.
+    const sb = makeOrphanSandbox(repo.dir);
+    git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
+    git(repo.dir, ['worktree', 'prune']);
+
+    expect(sweepOrphanSandboxes()).toEqual([]);
+    expect(sandboxHomeExists(sb.id)).toBe(true);
+    expect(repo.branches()).toContain(scratchBranch(sb.id));
+  });
+
+  it('removeSandbox empties the home before its metadata, so the metadata is the last thing removed', () => {
+    const sb = makeOrphanSandbox(repo.dir);
+    const home = join(sandboxesDir(), sb.id);
+    const metaFile = join(home, 'sandbox.json');
+    mkdirSync(join(home, 'extra'), { recursive: true });
+    writeFileSync(join(home, 'extra', 'note.txt'), 'x\n', 'utf8');
+    const calls: Array<{ path: string; metaPresent: boolean }> = [];
+    rmObserver.onRm = (path) => {
+      if (path === home || path.startsWith(home + '/')) calls.push({ path, metaPresent: existsSync(metaFile) });
+    };
+    try {
+      removeSandbox(sb);
+    } finally {
+      rmObserver.onRm = null;
+    }
+    expect(sandboxHomeExists(sb.id)).toBe(false);
+    expect(calls.map((c) => c.path)).toContain(join(home, 'extra'));
+    expect(calls.some((c) => c.path === metaFile)).toBe(false);
+    const last = calls[calls.length - 1];
+    expect(last?.path).toBe(home);
+    expect(calls.every((c) => c.metaPresent)).toBe(true);
+  });
+
+  it('a home left holding only its metadata is reclaimed at once', () => {
+    // The state a kill while removeSandbox empties the home leaves behind (it
+    // removes the metadata last, see above): the restart sweep finishes it with
+    // the ORPHAN_STALE_MS guard on (a metadata-free home would wait a minute).
     const sb = makeOrphanSandbox(repo.dir);
     git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
     git(repo.dir, ['worktree', 'prune']);
@@ -322,17 +371,38 @@ describe('H2 orphan sandbox — crash-leftover worktree is surfaced and swept', 
     git(repo.dir, ['worktree', 'remove', '--force', sb.worktreePath]);
     git(repo.dir, ['worktree', 'prune']);
     const other = fx.makeRepo();
-    git(other.dir, ['branch', scratchBranch(sb.id)]);
+    // A root commit of its own (fixture repos made in the same second share
+    // their seed commit, so a branch off `other`'s HEAD could descend from it).
+    const unrelated = execFileSync('git', ['commit-tree', '-m', 'unrelated history', EMPTY_TREE], {
+      cwd: other.dir, stdio: 'pipe', encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 'h2', GIT_AUTHOR_EMAIL: 'h2@example.invalid', GIT_COMMITTER_NAME: 'h2', GIT_COMMITTER_EMAIL: 'h2@example.invalid' },
+    }).trim();
+    git(other.dir, ['branch', scratchBranch(sb.id), unrelated]);
     const metaFile = join(sandboxesDir(), sb.id, 'sandbox.json');
     const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
     meta['sourceRepo'] = other.dir;
     writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+    backdate(sb.id); // old enough: only the ancestry check keeps it
 
     expect(sweepOrphanSandboxes()).toEqual([]);
     expect(sandboxHomeExists(sb.id)).toBe(true);
     expect(other.branches()).toContain(scratchBranch(sb.id));
   });
 });
+
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/** Age a sandbox's record (createdAt, metadata and home mtimes) past the one-minute recovery floor. */
+function backdate(id: string): void {
+  const home = join(sandboxesDir(), id);
+  const metaFile = join(home, 'sandbox.json');
+  const old = new Date(Date.now() - 5 * 60_000);
+  const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
+  meta['createdAt'] = old.toISOString();
+  writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+  utimesSync(metaFile, old, old);
+  utimesSync(home, old, old);
+}
 
 /** A pid that provably belonged to a process which has already exited. */
 function deadPid(): number {

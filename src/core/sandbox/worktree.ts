@@ -3135,6 +3135,24 @@ function scratchBranchDescendsFromBase(repo: string, branch: string, baseHead: s
   return gitTry(repo, ['merge-base', '--is-ancestor', baseHead, `refs/heads/${branch}`]) !== null;
 }
 
+/**
+ * Whether a sandbox's record is older than RESERVATION_RECOVERY_MIN_AGE_MS:
+ * its recorded createdAt, its metadata file and its home directory (which
+ * `worktree add` touches) all are. A creation still between `worktree add -b`
+ * making the branch and registering the worktree is younger than that.
+ */
+function sandboxRecordSettled(sb: Sandbox, home: string): boolean {
+  const now = Date.now();
+  let freshest = Date.parse(sb.createdAt);
+  if (Number.isNaN(freshest)) return false;
+  try {
+    freshest = Math.max(freshest, lstatSync(home).mtimeMs, lstatSync(join(home, META_FILE)).mtimeMs);
+  } catch {
+    return false;
+  }
+  return now - freshest >= RESERVATION_RECOVERY_MIN_AGE_MS;
+}
+
 function processStartRef(pid: number): string | undefined {
   try {
     const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
@@ -3477,9 +3495,11 @@ function removeSandboxWhileFenced(sb: Sandbox): SandboxCleanupResult {
   // A kill between `git worktree remove` and `git branch -D` (or between
   // `worktree add` creating the branch and registering the worktree) leaves
   // only the scratch branch. Without this, no sweep could ever prove repo
-  // authority again and the home stayed counted against the cap forever.
+  // authority again and the home stayed counted against the cap forever. The
+  // record must be a minute old so a creation still in flight is never taken.
   const strandedScratchBranch = canonicalMatches && sourceRepoAvailable &&
     !existsSync(safeWorktree) && registrationBefore === 'absent' && branchBefore === 'present' &&
+    sandboxRecordSettled(sb, home) &&
     scratchBranchDescendsFromBase(sb.sourceRepo, safeBranch, sb.baseHead);
   const guardsPass = branchInNamespace && branchMatches && worktreeContained &&
     rootState === 'present' && homeBefore === 'present' && canonicalMatches &&
