@@ -5,7 +5,11 @@
  *  [D1]  Exhausted claude → dispatch reroutes to codex.
  *  [D2]  Available claude → no reroute (uses original engine).
  *  [D3]  resourceAwareDispatch=false → no reroute even when exhausted (flag-off = byte-identical).
- *  [D4]  All fallbacks exhausted → uses original engine as last resort (never throws).
+ *  [D4]  All fallbacks exhausted → nothing dispatched; task stays queued, attempts
+ *        unchanged, deferral reported with the earliest known reset.
+ *  [D4b] Throttled original + exhausted fallbacks → throttled original dispatched.
+ *  [D4c] Unknown availability (absent from snapshot / null snapshot) → original dispatched.
+ *  [D4d] A later tick after the engine reopens dispatches normally.
  *  [D5]  api-model fallback (nim) → runApiModelSandboxed called, NOT runEngineSandboxed.
  *  [J1]  managerJudgeEngine='codex' → codex judge client built (model=gpt-5.5).
  *  [J2]  auto + claude exhausted → resolveFrontierJudgeClient falls to codex judge.
@@ -24,7 +28,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AshlrConfig, Proposal, TaskSpec } from '../src/core/types.js';
@@ -162,23 +166,32 @@ function makeConfig(overrides: Record<string, unknown> = {}): AshlrConfig {
   } as unknown as AshlrConfig;
 }
 
-function makeSnapshot(backends: Array<{ backend: string; availability: string }>) {
+function makeSnapshot(backends: Array<{
+  backend: string;
+  availability: string;
+  resetsAt?: number | null;
+  backoffUntilMs?: number | null;
+}>) {
   return {
     generatedAt: new Date().toISOString(),
     backends: backends.map((b) => ({
-      ...b,
       usedPct: null,
       cap: null,
       capUnit: null,
       capWindow: null,
-      resetsAt: null,
       costPerMTokenOut: 0,
       p50LatencyMs: null,
       snapshotAt: new Date().toISOString(),
       reason: b.availability,
-      backoffUntilMs: null,
+      ...b,
+      resetsAt: b.resetsAt ?? null,
+      backoffUntilMs: b.backoffUntilMs ?? null,
     })),
   };
+}
+
+function readTasks(): TaskSpec[] {
+  return JSON.parse(readFileSync(join(tmpHome, '.ashlr', 'tasks.json'), 'utf8')) as TaskSpec[];
 }
 
 function writeTasks(tasks: TaskSpec[]): void {
@@ -326,19 +339,113 @@ describe('M300 [D3] resourceAwareDispatch=false → no reroute', () => {
     // flag off → use original engine
     expect(calledEngine).toBe('claude');
   });
-});
 
-// ---------------------------------------------------------------------------
-// [D4] All fallbacks exhausted → original engine used as last resort (never throws)
-// ---------------------------------------------------------------------------
-
-describe('M300 [D4] all fallbacks exhausted → degrades gracefully', () => {
-  it('uses original engine when all fallbacks are also exhausted', async () => {
-    const cfg = makeConfig({ engineFallbackOrder: ['codex', 'kimi'] });
+  it('still dispatches the original when flag is off and every candidate is exhausted', async () => {
+    const cfg = makeConfig({ resourceAwareDispatch: false, engineFallbackOrder: ['codex'] });
     writeTasks([baseTask({ engine: 'claude' })]);
 
     mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
       { backend: 'claude', availability: 'exhausted' },
+      { backend: 'codex',  availability: 'exhausted' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(result.deferred).toBeUndefined();
+    expect(mockRunEngineSandboxed).toHaveBeenCalledOnce();
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [D4] All candidates exhausted → defer: no dispatch, no attempt, reason reported
+// ---------------------------------------------------------------------------
+
+describe('M300 [D4] all fallbacks exhausted → defers without dispatching', () => {
+  it('leaves the task queued with attempts unchanged and reports the deferral', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex', 'kimi'] });
+    writeTasks([baseTask({ engine: 'claude', attempts: 1 })]);
+    const before = readTasks();
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'exhausted', resetsAt: nowSec + 7200 },
+      { backend: 'codex',  availability: 'exhausted', resetsAt: nowSec + 3600 },
+      { backend: 'kimi',   availability: 'exhausted' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    // Nothing ran: no sandbox, no attempt, not counted as an error.
+    expect(mockRunEngineSandboxed).not.toHaveBeenCalled();
+    expect(mockRunApiModelSandboxed).not.toHaveBeenCalled();
+    expect(result.tasksAttempted).toBe(0);
+    expect(result.errors).toHaveLength(0);
+
+    // The task row is untouched: still queued, same attempts, no lease or cooldown.
+    const after = readTasks();
+    expect(after).toEqual(before);
+    expect(after[0]!.done).toBeFalsy();
+    expect(after[0]!.attempts).toBe(1);
+    expect(after[0]!.dispatchLease).toBeUndefined();
+    expect(after[0]!.retryAfter).toBeUndefined();
+
+    // A clear deferral naming every candidate, with the earliest known reset.
+    expect(result.deferred).toHaveLength(1);
+    const deferral = result.deferred![0]!;
+    expect(deferral.taskId).toBe('task-1');
+    expect(deferral.engine).toBe('claude');
+    expect(deferral.reason).toMatch(/^resource-pause:/);
+    expect(deferral.reason).toContain('claude exhausted');
+    expect(deferral.reason).toContain('codex exhausted');
+    expect(deferral.reason).toContain('kimi exhausted');
+    expect(deferral.earliestResetAt).toBe(new Date((nowSec + 3600) * 1000).toISOString());
+  });
+
+  it('treats unreachable like exhausted and omits the reset hint when none is known', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['local-coder'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude',      availability: 'exhausted' },
+      { backend: 'local-coder', availability: 'unreachable' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(mockRunEngineSandboxed).not.toHaveBeenCalled();
+    expect(result.deferred).toHaveLength(1);
+    expect(result.deferred![0]!.earliestResetAt).toBeUndefined();
+    expect(readTasks()[0]!.attempts).toBeUndefined();
+  });
+
+  it('dry-run reports the deferral instead of a would-dispatch', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'exhausted' },
+      { backend: 'codex',  availability: 'exhausted' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: true, allowCloud: false });
+
+    expect(result.tasksAttempted).toBe(0);
+    expect(result.deferred).toHaveLength(1);
+  });
+});
+
+describe('M300 [D4b] throttled original + all fallbacks exhausted', () => {
+  it('dispatches the throttled original (soft limit, the call still succeeds)', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex', 'kimi'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'throttled' },
       { backend: 'codex',  availability: 'exhausted' },
       { backend: 'kimi',   availability: 'exhausted' },
     ]));
@@ -346,12 +453,121 @@ describe('M300 [D4] all fallbacks exhausted → degrades gracefully', () => {
     const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
     const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
 
-    // Should not throw, should still dispatch
+    expect(result.deferred).toBeUndefined();
     expect(result.errors).toHaveLength(0);
     expect(mockRunEngineSandboxed).toHaveBeenCalledOnce();
-    // Falls back to original engine (claude) as last resort
-    const [calledEngine] = mockRunEngineSandboxed.mock.calls[0]!;
-    expect(calledEngine).toBe('claude');
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+    expect(readTasks()[0]!.attempts).toBe(1);
+  });
+
+  it('prefers an open fallback over a throttled original', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex', 'kimi'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'throttled' },
+      { backend: 'codex',  availability: 'exhausted' },
+      { backend: 'kimi',   availability: 'open' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('kimi');
+  });
+
+  it('uses a throttled fallback when the original is exhausted and nothing is open', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex', 'kimi'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'exhausted' },
+      { backend: 'codex',  availability: 'exhausted' },
+      { backend: 'kimi',   availability: 'throttled' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(result.deferred).toBeUndefined();
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('kimi');
+  });
+});
+
+describe('M300 [D4c] unknown availability fails open → original dispatched', () => {
+  it('dispatches the original when it is absent from the snapshot', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'codex', availability: 'exhausted' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(result.deferred).toBeUndefined();
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+  });
+
+  it('dispatches the original when it reports availability unknown', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockResolvedValue(makeSnapshot([
+      { backend: 'claude', availability: 'unknown' },
+      { backend: 'codex',  availability: 'exhausted' },
+    ]));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+  });
+
+  it('dispatches the original when the snapshot itself is unavailable', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    mockGetResourceSnapshot.mockRejectedValue(new Error('monitor outage'));
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+    const result = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+
+    expect(result.deferred).toBeUndefined();
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+  });
+});
+
+describe('M300 [D4d] engine reopens → a later tick dispatches normally', () => {
+  it('defers on the first tick and dispatches the original on the next', async () => {
+    const cfg = makeConfig({ engineFallbackOrder: ['codex'] });
+    writeTasks([baseTask({ engine: 'claude' })]);
+
+    const { runSimpleConductor } = await import('../src/core/simple-conductor.js');
+
+    mockGetResourceSnapshot.mockResolvedValueOnce(makeSnapshot([
+      { backend: 'claude', availability: 'exhausted' },
+      { backend: 'codex',  availability: 'exhausted' },
+    ]));
+    const first = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+    expect(first.deferred).toHaveLength(1);
+    expect(mockRunEngineSandboxed).not.toHaveBeenCalled();
+    expect(readTasks()[0]!.attempts).toBeUndefined();
+
+    mockGetResourceSnapshot.mockResolvedValueOnce(makeSnapshot([
+      { backend: 'claude', availability: 'open' },
+      { backend: 'codex',  availability: 'exhausted' },
+    ]));
+    const second = await runSimpleConductor(cfg, { once: true, dryRun: false, allowCloud: false });
+    expect(second.deferred).toBeUndefined();
+    expect(second.errors).toHaveLength(0);
+    expect(second.proposalsFiled).toBe(1);
+    expect(mockRunEngineSandboxed).toHaveBeenCalledOnce();
+    expect(mockRunEngineSandboxed.mock.calls[0]![0]).toBe('claude');
+    const settled = readTasks()[0]!;
+    expect(settled.attempts).toBe(1);
+    expect(settled.done).toBe(true);
   });
 });
 
