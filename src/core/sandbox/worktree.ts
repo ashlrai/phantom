@@ -1557,7 +1557,9 @@ function pinnedWorktreeRunnerInvocation(
       // POPULATE / ROLLBACK run git with GIT_DIR = the worktree's admin dir,
       // where `includeIf "gitdir:"` / `"onbranch:"` can resolve differently
       // than in the source repo. Null the drivers that context sees too.
-      const linked = repoFilterOverrides('git', [`--git-dir=${admin.path}`, `--work-tree=${sb.worktreePath}`], identity.source.path, { ...process.env });
+      const linked = repoFilterOverrides('git', [], identity.source.path, {
+        ...process.env, GIT_DIR: admin.path, GIT_WORK_TREE: sb.worktreePath,
+      });
       const seen = new Set(filters.map(([key]) => key));
       filters = [...filters, ...linked.filter(([key]) => !seen.has(key))];
     }
