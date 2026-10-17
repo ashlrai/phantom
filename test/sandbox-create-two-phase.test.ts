@@ -16,7 +16,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -239,5 +248,79 @@ describe.skipIf(!posix)('sandbox creation: REGISTER fenced, POPULATE outside the
     expect(left[0]!.abandonedAt).toEqual(expect.any(String));
     expect(sweepOrphanSandboxes()).toEqual([left[0]!.id]);
     expectNothingLeft();
+  }, TIMEOUT);
+});
+
+describe.skipIf(!posix)('pinned runner supervisors start ahead of their command', () => {
+  // Each supervised git command still gets its own supervisor (its own process
+  // group, killed and joined after it), but the runner starts them when it
+  // starts, so no Node start-up sits between two git commands in the fence.
+  let prevTiming: string | undefined;
+  beforeEach(() => { prevTiming = process.env.ASHLR_SANDBOX_TIMING; });
+  afterEach(() => {
+    if (prevTiming === undefined) delete process.env.ASHLR_SANDBOX_TIMING;
+    else process.env.ASHLR_SANDBOX_TIMING = prevTiming;
+  });
+
+  it('runs every REGISTER and POPULATE command on a warm supervisor, one per git command', () => {
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const log = join(shimDir, 'git-calls.log');
+    const script = join(shimDir, 'git');
+    // One line per call: parent pid, physical cwd, then the arguments.
+    writeFileSync(script, [
+      '#!/bin/sh',
+      `printf '%s\\t%s\\t%s\\n' "$PPID" "$(pwd -P)" "$*" >> "${log}"`,
+      `exec "${realGit}" "$@"`,
+      '',
+    ].join('\n'));
+    chmodSync(script, 0o755);
+    process.env.PATH = `${shimDir}${delimiter}${prevPath ?? ''}`;
+    process.env.ASHLR_SANDBOX_TIMING = '1';
+
+    const lines: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+      const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      if (text.startsWith('ashlr-sandbox-timing ')) {
+        lines.push(text);
+        return true;
+      }
+      return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
+    }) as typeof process.stderr.write;
+    let sb: ReturnType<typeof createSandbox>;
+    try {
+      sb = createSandbox(repo.dir, { allowAnyRepo: true });
+    } finally {
+      process.stderr.write = write;
+    }
+    try {
+      expect(lines).toHaveLength(1);
+      const timing = JSON.parse(lines[0]!.slice('ashlr-sandbox-timing '.length)) as {
+        ok: boolean;
+        supervisors: Record<string, number>;
+      };
+      expect(timing.ok).toBe(true);
+      expect(timing.supervisors).toMatchObject({
+        'register.prewarmed': 4, 'register.warm': 4, 'register.cold': 0,
+        'populate.prewarmed': 2, 'populate.warm': 2, 'populate.cold': 0,
+      });
+
+      // The runner's git calls (in-process discovery reads have this process
+      // as their parent): six commands, each under its own supervisor.
+      const supervised = readFileSync(log, 'utf8').trim().split('\n')
+        .map((line) => line.split('\t'))
+        .filter(([ppid]) => Number(ppid) !== process.pid);
+      expect(supervised.map(([, , args]) => args!.split(' ')[0]).sort()).toEqual(
+        ['reset', 'rev-parse', 'rev-parse', 'rev-parse', 'rev-parse', 'worktree'],
+      );
+      expect(new Set(supervised.map(([ppid]) => ppid)).size).toBe(6);
+      // The add ran in the pinned Git common directory, which its warm
+      // supervisor reached by inode after the runner moved there.
+      const add = supervised.find(([, , args]) => args!.startsWith('worktree add'));
+      const common = git(repo.dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+      expect(add?.[1]).toBe(realpathSync.native(common));
+    } finally {
+      removeSandbox(sb);
+    }
   }, TIMEOUT);
 });
