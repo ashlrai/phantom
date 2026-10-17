@@ -8,6 +8,12 @@ on:
   # A merge queue reruns the full lane on the queued merge commit.
   merge_group:
   workflow_call:
+  # Nightly full run of the exhaustive Mac partition on master (2:17 AM ET
+  # during EDT, 1:17 AM ET during EST), so coverage deferred from PRs is still
+  # exercised once a day even if master pushes are sparse or their Mac runs
+  # were cancelled.
+  schedule:
+    - cron: '17 6 * * *'
 
 permissions:
   contents: read
@@ -453,7 +459,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac') || contains(github.event.pull_request.labels.*.name, 'mac-full'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -845,7 +851,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           GATE_NEEDS: ${{ toJSON(needs) }}
-          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
+          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') && !contains(github.event.pull_request.labels.*.name, 'mac-full')) }}
         run: |
           # A master Mac lane cancelled by its concurrency group counts as
           # superseded only when master has really moved past this commit.
