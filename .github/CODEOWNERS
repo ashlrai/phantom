@@ -274,6 +274,7 @@
 /test/daemon-first-tick-314.test.ts @masonwyatt23
 /test/daemon-liveness-310b.test.ts @masonwyatt23
 /test/daemon-resident-capacity-publisher-310.test.ts @masonwyatt23
+/test/daemon-start-temp-worktree-sweep.test.ts @masonwyatt23
 /test/decide-critics-315.test.ts @masonwyatt23
 /test/decide-judge-manager-315.test.ts @masonwyatt23
 /test/decide-resource-choice.test.ts @masonwyatt23
