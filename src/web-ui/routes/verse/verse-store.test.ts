@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VerseEvent } from '../../data/api-types.js';
 import { ev, session } from './fixtures.test-support.js';
 import { parseVerseEventFrame, VERSE_EVENT_TYPES } from './verse-events.js';
-import { bestOf, median, openLastTurn, realisticLog, stamp } from './verse-perf.test-support.js';
+import { median, openLastTurn, quietestOf, realisticLog, stamp } from './verse-perf.test-support.js';
 import {
   applyContextReading,
   applyUsageFrame,
@@ -692,6 +692,49 @@ describe('buildTranscript — V3.10 segments', () => {
     expect(t.items[1]).toMatchObject({ kind: 'tool', result: { output: 'done', isError: false } });
   });
 
+  it('matches a fresh build when the cached log grows by appends, an inserted turn or a new front', () => {
+    const cache = createTranscriptCache();
+    const log = realisticLog(120);
+    const open = openLastTurn(log);
+    let events = open.events;
+    buildTranscript(events, { cache });
+    const tail = events.at(-1)!.seq;
+    const steps: Array<(e: VerseEvent[]) => VerseEvent[]> = [
+      // Streamed deltas append to the open turn.
+      (e) => [...e, ev(tail + 1, 'text-delta', { turnId: open.turnId, text: ' more' })],
+      (e) => [...e, ev(tail + 2, 'text-delta', { turnId: open.turnId, text: ' text' })],
+      // A new ask opens a new segment.
+      (e) => [...e, ev(tail + 3, 'user-message', { turnId: 'next', text: 'again' })],
+      // An earlier ask arrives late and lands mid-log.
+      (e) => {
+        const at = Math.floor(e.length / 2);
+        return [...e.slice(0, at), ev(e[at - 1]!.seq + 0.5, 'user-message', { turnId: 'late', text: 'late' }), ...e.slice(at)];
+      },
+      // The log is reseeded without its oldest turn.
+      (e) => e.slice(e.findIndex((x, i) => i > 0 && x.type === 'user-message')),
+    ];
+    for (const step of steps) {
+      events = step(events);
+      const cached = buildTranscript(events, { cache });
+      const fresh = buildTranscript(events);
+      expect(cached.segments!.map((seg) => seg.key)).toEqual(fresh.segments!.map((seg) => seg.key));
+      expect(cached.items).toEqual(fresh.items);
+    }
+  });
+
+  it('still falls back to one pass when the cross-turn result arrives after a cached build', () => {
+    const cache = createTranscriptCache();
+    const events: VerseEvent[] = [
+      ev(1, 'user-message', { turnId: 't1', text: 'a' }),
+      ev(2, 'tool-use', { turnId: 't1', toolUseId: 'late', name: 'Bash', input: { command: 'sleep 9' } }),
+      ev(3, 'user-message', { turnId: 't2', text: 'b' }),
+    ];
+    buildTranscript(events, { cache });
+    const next = [...events, ev(4, 'tool-result', { turnId: 't1', toolUseId: 'late', output: 'done', isError: false })];
+    expect(buildTranscript(next, { cache }).items).toEqual(buildTranscript(next).items);
+    expect(buildTranscript(next, { cache }).items[1]).toMatchObject({ kind: 'tool', result: { output: 'done', isError: false } });
+  });
+
   it('carries the new persisted events and the error code into items', () => {
     const t = buildTranscript([
       ev(1, 'history-truncated', { turnId: null, droppedBefore: 900 }),
@@ -746,13 +789,16 @@ describe('client data path — §1 targets (best of several runs)', () => {
   it('replays 5k events in < 10 ms and 10k in < 25 ms (was 2.45 s / 17 s)', () => {
     const five = realisticLog(5000);
     const ten = realisticLog(10_000);
-    const results = {
-      seed5k: bestOf(7, () => replay(five, 'seed')),
-      stream5k: bestOf(7, () => replay(five, 'stream')),
-      seed10k: bestOf(7, () => replay(ten, 'seed')),
-      stream10k: bestOf(7, () => replay(ten, 'stream')),
-    };
-    console.info('[verse-perf] replay ms', { events: [five.length, ten.length], turns: getVerseTranscript('vs_bench').segments?.length },
+    // Quietest of interleaved rounds (see quietestOf): a hosted runner under
+    // load once measured 10.11 ms here when all seven back-to-back samples
+    // landed in one busy stretch. The limits are the spec's, unchanged.
+    const { best: results, rounds } = quietestOf({
+      seed5k: { run: () => replay(five, 'seed'), limitMs: 10 },
+      stream5k: { run: () => replay(five, 'stream'), limitMs: 10 },
+      seed10k: { run: () => replay(ten, 'seed'), limitMs: 25 },
+      stream10k: { run: () => replay(ten, 'stream'), limitMs: 25 },
+    });
+    console.info('[verse-perf] replay ms', { events: [five.length, ten.length], turns: getVerseTranscript('vs_bench').segments?.length, rounds },
       Object.fromEntries(Object.entries(results).map(([k, v]) => [k, Number(v.toFixed(2))])));
     expect(results.seed5k).toBeLessThan(10);
     expect(results.stream5k).toBeLessThan(10);

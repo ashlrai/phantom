@@ -356,7 +356,7 @@ describe('M126 Gate 7 — ship verdict merges', () => {
     git(tmpRepo, ['checkout', '-b', 'work']);
     enroll(tmpRepo);
 
-    const diff = docsDiff('docs/semantic-near-authority.md');
+    const diff = docsDiff('docs/semantic-near-merge.md');
     const p = frontierPatch(diff);
     const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
     const cacheTs = new Date().toISOString();

@@ -262,6 +262,12 @@ export async function cmdWiki(args: string[]): Promise<number> {
     printHelp();
     return sub === undefined ? 2 : 0;
   }
+  // `wiki <verb> --help` / `-h` prints usage before the wiki core loads: the
+  // verbs took the flag as a repo or a question. An option's value is an operand.
+  if (rest.some((a, i) => (a === '--help' || a === '-h') && !VALUE_FLAGS.has(rest[i - 1] ?? ''))) {
+    printHelp();
+    return 0;
+  }
   const wiki = await import('../core/knowledge/wiki/index.js');
   const p = parse(rest);
   switch (sub) {

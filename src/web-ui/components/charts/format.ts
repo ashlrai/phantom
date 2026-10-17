@@ -8,6 +8,7 @@
  */
 
 import { formatMetric, formatMetricUsd } from './format-metric.js';
+import { formatDateTime, formatNumber } from '../format/locale-format.js';
 
 /** Auto-compact with two significant figures. */
 export function formatCompact(n: number): string {
@@ -53,14 +54,14 @@ export function formatDayLabel(day: string): string {
   const d = new Date(`${day}T00:00:00Z`);
   // Date normalizes impossible dates; compare the padded UTC date to reject rollover.
   if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day) return day;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return formatDateTime(d, 'en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 /** Epoch ms -> short label for axis ticks. */
 export function formatTimeLabel(ms: number): string {
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDateTime(d, 'en-US', { month: 'short', day: 'numeric' });
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ const DAY_MS = 86_400_000;
 function localeFormatter(opts: Intl.DateTimeFormatOptions): (ms: number) => string {
   return (ms) => {
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', opts);
+    return Number.isNaN(d.getTime()) ? '' : formatDateTime(d, 'en-US', opts);
   };
 }
 
@@ -193,7 +194,7 @@ export function timeLabelLadder(
  */
 export function formatExact(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { maximumFractionDigits: Math.abs(n) < 1 && n !== 0 ? 3 : 2 });
+  return formatNumber(n, 'en-US', { maximumFractionDigits: Math.abs(n) < 1 && n !== 0 ? 3 : 2 });
 }
 
 /** "Fri, Sep 26" — a local calendar day with its weekday. */
