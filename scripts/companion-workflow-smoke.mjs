@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Cross-tool workflow smoke: drives Phantom with the REAL companion binaries an
- * agent uses (Phantom Secrets, Locus, Lexicon, Ashlr Stack, Ashlr MD) and checks
+ * agent uses (Phantom Secrets, Locus, Lexicon, Ashlr Stack, Ashlr MD, the
+ * Ashlr.AI Plugin) and checks
  * the seams between them: CLI identity, MCP stdio handshakes, Phantom's own
  * readers of companion output, and the Claude Code hook/launcher contracts.
  *
@@ -15,7 +16,11 @@
  *     --locus-bin /path/locus --locus-mcp /path/locus-mcp \
  *     --lexicon-bin /path/lexicon --lexicon-mcp /path/mcp-server.mjs --lexicon-hook /path/hook.mjs \
  *     --stack-bin /path/stack --stack-mcp /path/stack-mcp \
- *     --mdopen /path/mdopen --mdopener-mcp /path/mdopener-mcp [--json]
+ *     --mdopen /path/mdopen --mdopener-mcp /path/mdopener-mcp \
+ *     --plugin-dir /path/ashlr-plugin [--json]
+ *
+ * --plugin-dir is an ashlr-plugin checkout (after `bun install`) or installed
+ * package; its MCP router needs Bun and ripgrep on PATH.
  *
  * --published [--prefix <dir>] checks what users install instead: the published
  * npm packages go into a temp npm prefix (or <dir>, kept for reuse) with
@@ -46,6 +51,7 @@ const FLAGS = Object.freeze({
   '--locus-bin': 'locusBin', '--locus-mcp': 'locusMcp', '--lexicon-bin': 'lexiconBin',
   '--lexicon-mcp': 'lexiconMcp', '--lexicon-hook': 'lexiconHook', '--stack-bin': 'stackBin',
   '--stack-mcp': 'stackMcp', '--mdopen': 'mdopen', '--mdopener-mcp': 'mdopenerMcp',
+  '--plugin-dir': 'pluginDir',
 });
 
 /** Tools each MCP server must list for the workflows Phantom and its docs rely on. */
@@ -94,7 +100,17 @@ export const PUBLISHED_PACKAGES = Object.freeze([
   { name: '@ashlr/lexicon', bins: { lexiconBin: 'lexicon', lexiconMcp: 'lexicon-mcp' }, files: { lexiconHook: 'plugin/hook.mjs' } },
   { name: '@ashlr/stack', bins: { stackBin: 'stack' } },
   { name: 'ashlr-stack-mcp', bins: { stackMcp: 'ashlr-stack-mcp' } },
+  { name: 'ashlr-plugin', files: { pluginDir: '.' } },
 ]);
+
+/**
+ * The Ashlr.AI Plugin's MCP router, launched the way its Claude Code manifest does
+ * (`node scripts/bootstrap.mjs servers/_router.ts`, which hands off to Bun).
+ */
+export const PLUGIN_SERVER = Object.freeze({
+  id: 'plugin', entry: ['scripts', 'bootstrap.mjs'], args: ['servers/_router.ts'],
+  requiredTools: ['ashlr__grep', 'ashlr__read', 'ashlr__tree'],
+});
 /** Ashlr MD ships no npm package; on x64 Linux its GitHub release .deb carries both binaries. */
 export const MD_RELEASE = Object.freeze({
   repo: 'ashlrai/ashlr-md', dir: 'ashlr-md', libDir: ['usr', 'lib', 'Ashlr MD'],
@@ -278,8 +294,8 @@ export function run(path, args, { env, cwd, input, timeoutMs = 20_000 } = {}) {
  * Minimal newline-delimited JSON-RPC client for a stdio MCP server: initialize,
  * notifications/initialized, tools/list. Non-JSON on stdout is a protocol break.
  */
-export async function mcpHandshake(path, { env, cwd, protocolVersion, timeoutMs = 20_000 }) {
-  const [cmd, argv] = commandFor(path);
+export async function mcpHandshake(path, { env, cwd, protocolVersion, timeoutMs = 20_000, args = [], call }) {
+  const [cmd, argv] = commandFor(path, args);
   const child = spawn(cmd, argv, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: DETACH });
   const pending = new Map();
   const noise = [];
@@ -323,10 +339,13 @@ export async function mcpHandshake(path, { env, cwd, protocolVersion, timeoutMs 
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const list = await request('tools/list', {});
     if (list.error) throw new Error(`tools/list error: ${JSON.stringify(list.error).slice(0, 200)}`);
+    // One optional tools/call, for a server whose real work is worth a seam check.
+    const called = call ? await request('tools/call', call) : undefined;
     return {
       serverInfo: init.result?.serverInfo ?? null,
       protocolVersion: init.result?.protocolVersion ?? null,
       tools: (list.result?.tools ?? []).map(tool => tool.name),
+      ...(call ? { call: called } : {}),
       noise,
     };
   } finally {
@@ -481,6 +500,11 @@ export async function runSmoke(options) {
     // 7. Secrets: a project secret reaches an upstream only through `phantom exec`'s proxy.
     if (!present('secretsBin')) skip('secrets:exec-proxy', why('secretsBin', 'no --secrets-bin'));
     else add('secrets:exec-proxy', await secretsExecProxy(options.secretsBin, env, box.home));
+
+    // 8. Ashlr.AI Plugin: its MCP router completes the handshake and ashlr__grep finds a
+    // match in the project Claude Code names (CLAUDE_PROJECT_DIR), via an explicit cwd.
+    if (!present('pluginDir')) skip(`${PLUGIN_SERVER.id}:mcp`, why('pluginDir', 'no --plugin-dir'));
+    else for (const [id, check] of await pluginRouter(options.pluginDir, env, box.home)) add(id, check);
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }
@@ -488,6 +512,42 @@ export async function runSmoke(options) {
     schema: SMOKE_SCHEMA, ok: checks.every(check => check.status !== 'fail'), checks,
     ...(options.packages ? { published: { prefix: options.prefix ?? null, packages: options.packages } } : {}),
   };
+}
+
+const PLUGIN_NEEDLE = 'phm_plugin_smoke_needle';
+
+/** The plugin's router over stdio: handshake for each client version, then one ashlr__grep. */
+export async function pluginRouter(pluginDir, env, home) {
+  const entry = join(pluginDir, ...PLUGIN_SERVER.entry);
+  if (!existsSync(entry)) return [[`${PLUGIN_SERVER.id}:mcp`, { status: 'fail', detail: `no ${PLUGIN_SERVER.entry.join('/')} in ${pluginDir}` }]];
+  const project = join(home, 'plugin-project');
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, 'smoke.py'), `${PLUGIN_NEEDLE} = 1\n`);
+  // The bootstrap never installs Bun here; a missing Bun is a failed check, not a download.
+  const pluginEnv = { ...env, CLAUDE_PROJECT_DIR: project, ASHLR_NO_AUTO_INSTALL: '1' };
+  const results = [];
+  for (const [index, protocolVersion] of CLIENT_PROTOCOL_VERSIONS.entries()) {
+    const call = index === 0
+      ? { name: 'ashlr__grep', arguments: { pattern: PLUGIN_NEEDLE, cwd: project } }
+      : undefined;
+    try {
+      const result = await mcpHandshake(entry, { env: pluginEnv, cwd: project, protocolVersion, args: PLUGIN_SERVER.args, call, timeoutMs: 45_000 });
+      results.push([`${PLUGIN_SERVER.id}:mcp:${protocolVersion}`, evaluateHandshake(PLUGIN_SERVER, protocolVersion, result)]);
+      if (call) results.push([`${PLUGIN_SERVER.id}:grep`, evaluatePluginGrep(result.call)]);
+    } catch (error) {
+      results.push([`${PLUGIN_SERVER.id}:mcp:${protocolVersion}`, { status: 'fail', detail: error instanceof Error ? error.message : String(error) }]);
+    }
+  }
+  return results;
+}
+
+/** Presence of the match is the contract; the output shape is still changing upstream. */
+export function evaluatePluginGrep(message) {
+  if (message?.error) return { status: 'fail', detail: `tools/call error: ${JSON.stringify(message.error).slice(0, 200)}` };
+  const text = (message?.result?.content ?? []).map(part => part?.text ?? '').join('\n');
+  // Needle and file name both: an error or 'no matches' message may echo the pattern.
+  if (message?.result?.isError || !text.includes(PLUGIN_NEEDLE) || !text.includes('smoke.py')) return { status: 'fail', detail: `no match returned: ${text.trim().slice(0, 200) || 'empty result'}` };
+  return { status: 'pass', detail: `ashlr__grep found the match (${text.length} chars)` };
 }
 
 /** `--published`: install (into a temp prefix unless --prefix), resolve, run, clean up. */

@@ -170,6 +170,55 @@ describe('companion workflow smoke', () => {
     expect(report.published.packages).toEqual([{ name: 'x', version: '1' }]);
   });
 
+  it('drives the Ashlr.AI Plugin router the way its manifest does and checks an ashlr__grep match', async () => {
+    const plugin = join(dir, 'plugin');
+    mkdirSync(join(plugin, 'scripts'), { recursive: true });
+    // Stands in for scripts/bootstrap.mjs: answers with the files under CLAUDE_PROJECT_DIR that hold the pattern.
+    writeFileSync(join(plugin, 'scripts', 'bootstrap.mjs'), `
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+if (process.argv[2] !== 'servers/_router.ts' || process.env.ASHLR_NO_AUTO_INSTALL !== '1') process.exit(4);
+createInterface({ input: process.stdin }).on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.id === undefined) return;
+  let result;
+  if (msg.method === 'initialize') result = { protocolVersion: msg.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'ashlr-router', version: 'dev' } };
+  else if (msg.method === 'tools/list') result = { tools: ['ashlr__grep', 'ashlr__read', 'ashlr__tree'].map(name => ({ name, inputSchema: { type: 'object' } })) };
+  else {
+    const { pattern, cwd } = msg.params.arguments;
+    const hits = cwd === process.env.CLAUDE_PROJECT_DIR ? readdirSync(cwd).filter(file => readFileSync(join(cwd, file), 'utf8').includes(pattern)) : [];
+    result = { content: [{ type: 'text', text: hits.map(file => file + ': ' + pattern).join('\\n') || 'no matches for ' + pattern }] };
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\\n');
+});
+`);
+    const report = await smoke.runSmoke({ pluginDir: plugin });
+    const byId = Object.fromEntries(report.checks.map((check: { id: string; status: string }) => [check.id, check.status]));
+    expect(byId).toMatchObject({ 'plugin:mcp:2025-06-18': 'pass', 'plugin:mcp:2025-03-26': 'pass', 'plugin:grep': 'pass' });
+    expect(smoke.parseArgs(['--plugin-dir', plugin]).pluginDir).toBe(plugin);
+    const missing = await smoke.runSmoke({ pluginDir: dir });
+    expect(missing.checks.find((check: { id: string }) => check.id === 'plugin:mcp')).toMatchObject({ status: 'fail' });
+  });
+
+  it('fails an ashlr__grep result that only echoes the pattern or reports an error', () => {
+    const text = (value: string, isError = false) => ({ result: { content: [{ type: 'text', text: value }], ...(isError ? { isError } : {}) } });
+    expect(smoke.evaluatePluginGrep(text('no matches for phm_plugin_smoke_needle'))).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluatePluginGrep(text('smoke.py: phm_plugin_smoke_needle', true))).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluatePluginGrep({ error: { code: -32602 } })).toMatchObject({ status: 'fail' });
+    expect(smoke.evaluatePluginGrep(text('{"path":"smoke.py","line":"phm_plugin_smoke_needle = 1"}'))).toMatchObject({ status: 'pass' });
+  });
+
+  it('resolves the published ashlr-plugin package as the plugin directory', () => {
+    const prefix = join(dir, 'plugin-prefix');
+    const root = join(prefix, 'node_modules', 'ashlr-plugin');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ashlr-plugin', version: '1.36.4' }));
+    const resolved = smoke.resolvePublished(prefix);
+    expect(resolved.options.pluginDir).toBe(join(root, '.'));
+    expect(resolved.packages).toContainEqual({ name: 'ashlr-plugin', version: '1.36.4' });
+  });
+
   it('skips every check, and passes, when no companion binary is given', async () => {
     const report = await smoke.runSmoke({ json: true });
     expect(report.schema).toBe('phm.companion-workflow-smoke/v1');

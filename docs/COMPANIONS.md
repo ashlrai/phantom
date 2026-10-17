@@ -134,8 +134,13 @@ node scripts/companion-workflow-smoke.mjs --phm bin/ashlr \
   --lexicon-bin /path/to/lexicon --lexicon-mcp /path/to/lexicon/plugin/mcp-server.mjs \
   --lexicon-hook /path/to/lexicon/plugin/hook.mjs \
   --stack-bin /path/to/stack --stack-mcp /path/to/stack-mcp \
-  --mdopen /path/to/mdopen --mdopener-mcp /path/to/mdopener-mcp
+  --mdopen /path/to/mdopen --mdopener-mcp /path/to/mdopener-mcp \
+  --plugin-dir /path/to/ashlr-plugin
 ```
+
+`--plugin-dir` is an Ashlr.AI Plugin checkout after `bun install`, or its
+installed package. Its MCP router needs Bun and ripgrep on `PATH`, and the check
+never installs Bun.
 
 Every flag is optional; a check whose binary is missing is reported as `skip`.
 Each check runs in a disposable home with a scrubbed environment, so no real
@@ -155,13 +160,18 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
   authority anchor is unverified.
 - A secret stored with `phantom add --stdin` never reaches a child of
   `phantom exec`, which sees only a `phm_` placeholder and a loopback proxy URL.
+- The Ashlr.AI Plugin's MCP router, started as its manifest does
+  (`node scripts/bootstrap.mjs servers/_router.ts`), completes both handshakes
+  and lists `ashlr__grep`, `ashlr__read` and `ashlr__tree`. One `ashlr__grep`
+  call with an explicit `cwd` must return a match from the project named by
+  `CLAUDE_PROJECT_DIR`.
 
 Exit 0 means no check failed; exit 1 names the broken seam; `--json` prints
 the `phm.companion-workflow-smoke/v1` report.
 
 To check what users actually install, add `--published`. It installs the
 latest `@ashlr/phantom`, `phantom-secrets`, `locus-cli`, `@ashlr/lexicon`,
-`@ashlr/stack` and `ashlr-stack-mcp` from npm into a temporary prefix
+`@ashlr/stack`, `ashlr-stack-mcp` and `ashlr-plugin` from npm into a temporary prefix
 (`--prefix <dir>` keeps and reuses one) with install scripts off, resolves each
 binary from `node_modules/.bin`, and lets the Secrets and Locus wrappers
 download their native release into the disposable home. Explicit flags still
