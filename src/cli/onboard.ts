@@ -232,9 +232,42 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
   }
   const swept = [...sweptIds];
   const incomplete = incompleteIds.size + malformedHomes + unsafeEntries + sweepErrors;
+  // An idempotent unenroll of a path that was never enrolled reports ok with
+  // changed:false. Say so instead of claiming an unenrollment.
+  const wasEnrolled = unenrollResults.some(({ result }) => result.ok && result.changed !== false);
 
   // 3. Opt-in: pause ALL autonomy in the same step (H6-audited kill:on).
   const killResult = opts.kill ? setKill(true) : null;
+
+  // Nothing was enrolled here, nothing was left to sweep and no stop was
+  // asked for: the rollback did nothing, so refuse rather than report success
+  // (a mistyped path would otherwise look undone).
+  if (
+    !wasEnrolled && failedUnenrollments.length === 0 &&
+    swept.length === 0 && incomplete === 0 && killResult === null
+  ) {
+    const message = `${abs} was not enrolled; nothing to roll back`;
+    if (opts.json) {
+      writeJson({
+        ok: false,
+        mode: 'rollback',
+        repo: abs,
+        reason: 'not-enrolled',
+        error: message,
+        wasEnrolled: false,
+        unenrolled: false,
+        unenrollFailures: [],
+        swept: [],
+        incompleteCleanups: 0,
+        kill: null,
+        next: ['ashlr enroll list'],
+      });
+      return 1;
+    }
+    console.error(`${red('error:')} ${message}`);
+    console.error(dim('  See enrolled repos with: ashlr enroll list'));
+    return 1;
+  }
   const code = incomplete > 0 || failedUnenrollments.length > 0 ||
     (killResult !== null && (!killResult.ok || !killResult.quiesced)) ? 1 : 0;
 
@@ -243,7 +276,8 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
       ok: code === 0,
       mode: 'rollback',
       repo: abs,
-      unenrolled: failedUnenrollments.length === 0,
+      wasEnrolled,
+      unenrolled: wasEnrolled && failedUnenrollments.length === 0,
       unenrollFailures: failedUnenrollments.map(({ identity, result }) => ({
         identity,
         reason: result.reason,
@@ -261,8 +295,10 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
   console.log('');
   console.log(bold('  ashlr onboard --rollback'));
   console.log('');
-  if (failedUnenrollments.length === 0) {
+  if (failedUnenrollments.length === 0 && wasEnrolled) {
     console.log(`  ${green('✓')} unenrolled ${dim(abs)}`);
+  } else if (failedUnenrollments.length === 0) {
+    console.log(`  ${yellow('!')} ${dim(abs)} was not enrolled; nothing to unenroll`);
   } else {
     const failures = failedUnenrollments
       .map(({ identity, result }) => `${identity}: ${result.reason}`)
