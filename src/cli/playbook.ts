@@ -148,6 +148,18 @@ function parseRef(text: string | undefined): { id: string; version: number | nul
   return { id: m[1]!, version: m[2] ? Number(m[2]) : null };
 }
 
+/** `--json` keeps stdout machine-readable on refusals too: one `{ v, error }` object. */
+function jsonError(deps: PlaybookCliDeps, message: string): void {
+  deps.out(JSON.stringify({ v: 1, error: message }, null, 2));
+}
+
+function reportMissing(deps: PlaybookCliDeps, p: Parsed, ref: { id: string; version: number | null }): number {
+  const message = ref.version === null ? `No playbook named ${ref.id}.` : `${ref.id} has no version ${ref.version}.`;
+  if (p.bools.has('--json')) jsonError(deps, message);
+  else deps.err(message);
+  return 1;
+}
+
 function outcomeText(o: PlaybookOutcomeCounts | undefined): string {
   if (!o || o.total === 0) return 'no finished runs';
   return `${o.merged} merged · ${o.refused} refused · ${o.reverted} reverted · ${o.failed} failed`;
@@ -177,10 +189,7 @@ async function cmdList(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
 async function cmdShow(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
   const ref = parseRef(p.positional[0]);
   const pb = await deps.get(ref.id, ref.version);
-  if (!pb) {
-    deps.err(ref.version === null ? `No playbook named ${ref.id}.` : `${ref.id} has no version ${ref.version}.`);
-    return 1;
-  }
+  if (!pb) return reportMissing(deps, p, ref);
   const [versions, outcomes] = await Promise.all([deps.versions(ref.id), deps.outcomes(ref.id)]);
   if (p.bools.has('--json')) {
     deps.out(JSON.stringify({
@@ -260,10 +269,7 @@ async function cmdEdit(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
 async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
   const ref = parseRef(p.positional[0]);
   const pb = await deps.get(ref.id, ref.version);
-  if (!pb) {
-    deps.err(ref.version === null ? `No playbook named ${ref.id}.` : `${ref.id} has no version ${ref.version}.`);
-    return 1;
-  }
+  if (!pb) return reportMissing(deps, p, ref);
   const repo = p.flags.get('--repo') ?? deps.originRepo(deps.cwd());
   if (!repo) throw new UsageError('pass --repo owner/name (this folder has no GitHub origin)');
   const lane = p.flags.get('--lane') ?? 'cloud';
@@ -312,7 +318,8 @@ export async function runPlaybookCli(args: string[], injected?: Partial<Playbook
     }
   } catch (err) {
     if (err instanceof UsageError) {
-      deps.err(`error: ${err.message}\n${PLAYBOOK_USAGE}`);
+      if (rest.includes('--json')) jsonError(deps, err.message);
+      else deps.err(`error: ${err.message}\n${PLAYBOOK_USAGE}`);
       return 2;
     }
     throw err;
