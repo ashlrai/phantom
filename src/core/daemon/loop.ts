@@ -9980,6 +9980,27 @@ async function runDaemonInEnrollmentScope(
     } catch {
       // Best-effort: a sweep failure must never crash daemon start.
     }
+    // Crash-leftover inbox/merge temp worktrees (~/.ashlr/tmp/{vwt,mwt,mergewt}-*)
+    // are otherwise reaped only by the next merge in their repo. The sweep runs
+    // the same fail-closed owner rules (a live owner's worktree is always kept)
+    // under each repo's mirror lease, skips a repo whose lease stays busy, and
+    // never throws; the catch below is belt and braces.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const swept = await reaper.sweepLeakedTempWorktreesAtStart();
+      if (swept.repos > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `temp worktree sweep repos=${swept.repos} reaped=${swept.reaped} kept=${swept.kept} ` +
+            `failed=${swept.failed} branchesDeleted=${swept.branchesDeleted} skippedRepos=${swept.skippedRepos}`,
+          result: swept.failed === 0 && swept.skippedRepos === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch (err) {
+      console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
+    }
   }
 
   let terminalFailure: string | undefined;
