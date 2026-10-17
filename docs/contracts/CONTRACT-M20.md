@@ -121,8 +121,9 @@ SAFE-FIXABLE set (maps to existing DoctorCheck ids):
 - **`index`** — rebuild a stale/missing index via `buildIndex(cfg)` +
   `writeIndex(...)` (reuse `core/index-engine.js`). Rebuild is non-destructive
   (regenerates derived data only).
-- **`local-bin`** — create the `ashlr` → `~/.local/bin` symlink when missing and
-  the source resolves. Never modify shell profiles (PATH stays manual → if the
+- **`local-bin`** — create the `phm` and `ashlr` → `~/.local/bin` symlinks (the
+  two names `install.sh` links) for whichever is missing, when the source
+  resolves; an existing name or a broken symlink is never overwritten. Never modify shell profiles (PATH stays manual → if the
   check is "not on PATH", emit a `manual: true` action with guidance).
 - **`genome-memory`** — create the genome dir when missing (mkdir-only; reuse
   `core/genome/store.js` dir helper). Never seeds/edits entries.
