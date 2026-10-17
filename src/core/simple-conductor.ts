@@ -19,6 +19,9 @@
  *  - All merge safety (judge/gate/completeness/verification) is UNCHANGED —
  *    runAutoMergePass handles it; nothing is bypassed here.
  *  - Every claimed engine call consumes an attempt and cycle slot, including throws.
+ *  - Resource-aware dispatch (M300) picks the engine BEFORE the claim; when
+ *    every candidate is exhausted/unreachable the task is deferred unclaimed
+ *    (no attempt, no sandbox) and reported in result.deferred.
  *  - never-throws per task (catch -> durable failure settlement -> continue).
  *  - Flag off (cfg.foundry.simpleConductor !== true) ⇒ this module is never
  *    imported; loop.ts uses the old runConductor (byte-identical).
@@ -33,6 +36,11 @@
  */
 
 import type { AshlrConfig, EngineId, Proposal } from './types.js';
+import type {
+  BackendAvailability,
+  BackendResourceState,
+  ResourceSnapshot,
+} from './fabric/resource-monitor.js';
 import type { SandboxedEngineResult } from './run/sandboxed-engine.js';
 import type { AuthoritativePendingProposalExpectation } from './inbox/pending-authority.js';
 import { isSafeExecutionIdentity } from './fleet/attempt-identity.js';
@@ -67,6 +75,28 @@ export interface SimpleConductorResult {
   killSwitchTripped: boolean;
   activationRefused?: boolean;
   taskStoreUnavailable?: boolean;
+  /**
+   * M300: tasks left queued this tick because no candidate engine (the task's
+   * engine plus engineFallbackOrder) had usable capacity. A deferred task is
+   * not claimed: attempts, lease and retryAfter are unchanged, and it is not
+   * counted in tasksAttempted or errors. Absent when nothing was deferred.
+   */
+  deferred?: SimpleConductorDeferral[];
+}
+
+/** M300: one task the resource-aware dispatcher declined to run this tick. */
+export interface SimpleConductorDeferral {
+  taskId: string;
+  /** The engine the task asked for (before any fallback). */
+  engine: EngineId;
+  /** Human-readable reason naming each candidate engine and its availability. */
+  reason: string;
+  /**
+   * ISO time of the earliest known reset among the candidate engines, when the
+   * resource snapshot carries one. A candidate with no known reset may reopen
+   * sooner, so this is a hint for scheduling the next tick, not a promise.
+   */
+  earliestResetAt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +168,107 @@ function retryAfterForFailure(attempts: number, alwaysCool = false): string | un
   if (!alwaysCool && attempts < FAILURE_COOLDOWN_AFTER_ATTEMPTS) return undefined;
   const exponent = Math.max(0, Math.min(8, attempts - FAILURE_COOLDOWN_AFTER_ATTEMPTS));
   return new Date(Date.now() + CAPTURE_RECONCILIATION_DELAY_MS * 2 ** exponent).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// M300: resource-aware engine planning
+// ---------------------------------------------------------------------------
+
+/** M300: outcome of planEngineDispatch. */
+export type EnginePlan =
+  | { kind: 'dispatch'; engine: EngineId; note?: string }
+  | { kind: 'defer'; reason: string; earliestResetAt?: string };
+
+/**
+ * Hard-unavailable states: a dispatch would fail (rate limit or dead local
+ * runtime), burning an attempt and a sandbox. Per BackendAvailability,
+ * 'exhausted' is >= 100% of cap or a recent 429, and 'unreachable' is a failed
+ * health check.
+ */
+const HARD_UNAVAILABLE = new Set<BackendAvailability>(['exhausted', 'unreachable']);
+/**
+ * Soft-unavailable: 'throttled' means the backend still accepts work but is
+ * deliberately held back at protectPct to keep headroom. Any open backend is
+ * preferred; when none exists a throttled one is still used, because the call
+ * succeeds and stalling the whole queue at protectPct would be worse.
+ */
+const SOFT_UNAVAILABLE = new Set<BackendAvailability>(['throttled']);
+
+/**
+ * M300: choose the engine for one task from a resource snapshot. Pure; never
+ * throws.
+ *  1. The requested engine when it is not exhausted, throttled or unreachable
+ *     (open, near, unknown, or absent from the snapshot: fail open).
+ *  2. The first fallback in that same usable state.
+ *  3. The requested engine, then the first fallback, that is only throttled.
+ *  4. Otherwise defer: every candidate is exhausted or unreachable. The plan
+ *     carries the earliest known future reset among the candidates.
+ */
+export function planEngineDispatch(
+  requestedEngine: EngineId,
+  fallbackOrder: readonly string[],
+  snapshot: Pick<ResourceSnapshot, 'backends'>,
+  nowMs = Date.now(),
+): EnginePlan {
+  const stateOf = (engine: string): BackendResourceState | undefined =>
+    snapshot.backends.find((b) => b.backend === engine);
+  const availabilityOf = (engine: string): BackendAvailability =>
+    stateOf(engine)?.availability ?? 'unknown';
+  const usable = (engine: string): boolean => {
+    const avail = availabilityOf(engine);
+    return !HARD_UNAVAILABLE.has(avail) && !SOFT_UNAVAILABLE.has(avail);
+  };
+
+  if (usable(requestedEngine)) return { kind: 'dispatch', engine: requestedEngine };
+
+  const candidates: string[] = [requestedEngine];
+  for (const candidate of fallbackOrder) {
+    if (!candidates.includes(candidate)) candidates.push(candidate);
+  }
+  const requestedAvail = availabilityOf(requestedEngine);
+
+  for (const candidate of candidates.slice(1)) {
+    if (usable(candidate)) {
+      return {
+        kind: 'dispatch',
+        engine: candidate as EngineId,
+        note: `${requestedEngine} ${requestedAvail}; ${candidate} ${availabilityOf(candidate)}`,
+      };
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (SOFT_UNAVAILABLE.has(availabilityOf(candidate))) {
+      return {
+        kind: 'dispatch',
+        engine: candidate as EngineId,
+        note: candidate === requestedEngine
+          ? `${requestedEngine} throttled; no open fallback`
+          : `${requestedEngine} ${requestedAvail}; no open fallback; ${candidate} throttled`,
+      };
+    }
+  }
+
+  let earliestMs: number | null = null;
+  for (const candidate of candidates) {
+    const state = stateOf(candidate);
+    if (!state) continue;
+    const known = [
+      state.backoffUntilMs,
+      typeof state.resetsAt === 'number' ? state.resetsAt * 1000 : null,
+    ].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (known.length === 0) continue;
+    const reopensMs = Math.max(...known);
+    if (reopensMs <= nowMs) continue;
+    if (earliestMs === null || reopensMs < earliestMs) earliestMs = reopensMs;
+  }
+
+  return {
+    kind: 'defer',
+    reason: 'resource-pause: no candidate engine has capacity (' +
+      candidates.map((c) => `${c} ${availabilityOf(c)}`).join(', ') + ')',
+    ...(earliestMs !== null ? { earliestResetAt: new Date(earliestMs).toISOString() } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -218,40 +349,21 @@ export async function runSimpleConductor(
   /**
    * M300: Resolve effective engine, rerouting away from unavailable backends.
    * Flag-gated: cfg.foundry.resourceAwareDispatch !== false (default ON).
-   * Never throws.
+   * Never throws. See planEngineDispatch for the tiering rules.
    */
-  function resolveEffectiveEngine(requestedEngine: EngineId): EngineId {
+  function resolveEffectiveEngine(requestedEngine: EngineId): EnginePlan {
     try {
       const resourceAware = (cfg.foundry as Record<string, unknown> | undefined)?.['resourceAwareDispatch'] !== false;
-      if (!resourceAware || !resourceSnap) return requestedEngine;
-
-      const getAvailability = (engine: string): string => {
-        const state = resourceSnap!.backends.find((b) => b.backend === engine);
-        return state?.availability ?? 'unknown';
-      };
-
-      const unavailable = new Set(['exhausted', 'throttled', 'unreachable']);
-      const avail = getAvailability(requestedEngine);
-      if (!unavailable.has(avail)) return requestedEngine;
-
-      // Primary engine is exhausted — try fallback order.
+      if (!resourceAware || !resourceSnap) return { kind: 'dispatch', engine: requestedEngine };
       const fallbackOrder = ((cfg.foundry as Record<string, unknown> | undefined)?.['engineFallbackOrder'] as string[] | undefined)
         ?? ['codex', 'kimi', 'nim', 'local-coder'];
-
-      for (const candidate of fallbackOrder) {
-        if (candidate === requestedEngine) continue;
-        const candidateAvail = getAvailability(candidate);
-        if (!unavailable.has(candidateAvail)) {
-          console.log(`[simple-conductor] reroute: ${requestedEngine} ${avail} → ${candidate} (availability: ${candidateAvail})`);
-          return candidate as EngineId;
-        }
+      const plan = planEngineDispatch(requestedEngine, fallbackOrder, resourceSnap);
+      if (plan.kind === 'dispatch' && plan.note) {
+        console.log(`[simple-conductor] reroute: ${requestedEngine} → ${plan.engine} (${plan.note})`);
       }
-
-      // All fallbacks exhausted — use original engine as last resort (degrades, never freezes).
-      console.log(`[simple-conductor] reroute: all fallbacks exhausted, using original engine ${requestedEngine}`);
-      return requestedEngine;
+      return plan;
     } catch {
-      return requestedEngine;
+      return { kind: 'dispatch', engine: requestedEngine };
     }
   }
 
@@ -341,6 +453,25 @@ export async function runSimpleConductor(
       }
     }
 
+    // M300: decide the engine before any claim. When every candidate engine is
+    // hard-unavailable (exhausted/unreachable), defer: the task stays queued
+    // with its attempts, lease and retry window untouched, and no sandbox runs.
+    const requestedEngine = (task.engine ?? 'claude') as EngineId;
+    const enginePlan = resolveEffectiveEngine(requestedEngine);
+    if (enginePlan.kind === 'defer') {
+      (result.deferred ??= []).push({
+        taskId: task.id,
+        engine: requestedEngine,
+        reason: enginePlan.reason,
+        ...(enginePlan.earliestResetAt ? { earliestResetAt: enginePlan.earliestResetAt } : {}),
+      });
+      console.log(
+        `[simple-conductor] ${opts.dryRun ? 'dry-run: would defer' : 'defer'} task ${task.id}: ${enginePlan.reason}` +
+        (enginePlan.earliestResetAt ? ` (earliest known reset ${enginePlan.earliestResetAt})` : ''),
+      );
+      continue;
+    }
+
     if (opts.dryRun) {
       // Dry-run: record intent only — no dispatch, no write.
       result.tasksAttempted++;
@@ -380,8 +511,8 @@ export async function runSimpleConductor(
     // Default (unset binding + LOCUS_ENFORCE off) is a no-op pass-through.
     // LocusSessionConfigError / LocusMintError → result.errors (never throw).
     try {
-      // M300: resolve effective engine — reroutes away from exhausted backends.
-      const engineId: EngineId = resolveEffectiveEngine((task.engine ?? 'claude') as EngineId);
+      // M300: engine resolved before the claim (reroutes away from exhausted backends).
+      const engineId: EngineId = enginePlan.engine;
       // M298: append a standing full-suite directive so the agent cannot finish
       // without running the complete test suite + typecheck and confirming zero
       // NEW failures. This closed a regression window where the agent ran only

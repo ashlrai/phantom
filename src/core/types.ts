@@ -1212,8 +1212,11 @@ export interface AshlrConfig {
      * M300: Fallback engine preference order when the primary engine is
      * exhausted. Default: ['codex','kimi','nim','local-coder']. The conductor
      * tries each in order and picks the first whose availability is not
-     * 'exhausted' or 'unreachable'. If all are exhausted, the original engine
-     * is used as a last resort (fleet degrades but never freezes).
+     * 'exhausted', 'throttled' or 'unreachable'. With no open candidate it uses
+     * a throttled one (original first). When every candidate is exhausted or
+     * unreachable the task is deferred unclaimed (no attempt, no sandbox) and
+     * reported in SimpleConductorResult.deferred. Unknown availability fails
+     * open to the original engine.
      */
     engineFallbackOrder?: string[];
     autoMerge?: {

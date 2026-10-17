@@ -157,13 +157,20 @@ export async function cmdLoop(args: string[]): Promise<number> {
     } else if (sc.killSwitchTripped) {
       console.log(col.yellow('  kill-switch on — no work dispatched (rm ~/.ashlr/KILL to resume)'));
     } else if (dryRun) {
-      console.log(col.dim(`  dry-run · ${sc.tasksAttempted} task(s) would dispatch`));
+      const deferredNote = sc.deferred?.length ? ` · ${sc.deferred.length} would defer (no engine capacity)` : '';
+      console.log(col.dim(`  dry-run · ${sc.tasksAttempted} task(s) would dispatch${deferredNote}`));
     } else {
       const parts: string[] = [];
       if (sc.tasksAttempted) parts.push(`${sc.tasksAttempted} dispatched`);
       if (sc.proposalsFiled) parts.push(`${sc.proposalsFiled} proposal(s) filed`);
       if (sc.merged) parts.push(`${sc.merged} merged`);
       if (sc.errors.length) parts.push(`${sc.errors.length} error(s)`);
+      if (sc.deferred?.length) {
+        const resets = sc.deferred.map((d) => d.earliestResetAt).filter((r): r is string => !!r).sort();
+        parts.push(
+          `${sc.deferred.length} deferred (no engine capacity${resets[0] ? `; earliest reset ${resets[0]}` : ''})`,
+        );
+      }
       console.log(
         parts.length
           ? col.green('  ✓ ') + col.dim(parts.join(' · ') + ' — review proposals in `ashlr inbox`.')
