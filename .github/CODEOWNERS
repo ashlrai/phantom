@@ -861,6 +861,7 @@
 /test/tick-hooks-defaults-310b.test.ts @masonwyatt23
 /test/tick-hooks-live-310b.test.ts @masonwyatt23
 /test/tick-hooks-loop-310b.test.ts @masonwyatt23
+/test/tmp-scratch-sweep.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-acceptance.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-runner.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-store.test.ts @masonwyatt23
