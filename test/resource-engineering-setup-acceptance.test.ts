@@ -214,7 +214,7 @@ async function until(check: (deadlineMonotonicMs: number) => Promise<boolean>, t
     if (performance.now() >= deadline) {
       // Name the last observed progress so an expired wait says which stage stalled.
       let detail = '';
-      if (observed) { try { detail = `: last observed ${JSON.stringify(observed())}`; } catch { detail = ': last observation unavailable'; } }
+      if (observed) { try { detail = `: last observed ${JSON.stringify(await observed())}`; } catch { detail = ': last observation unavailable'; } }
       throw Error(`Setup acceptance condition not reached after ${timeoutMs}ms${detail}`);
     }
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -338,10 +338,21 @@ describe.runIf(process.platform === 'darwin')('offline autonomous engineering se
     expect(initial.entries).toHaveLength(1); expect(initial.entries[0]).toMatchObject({ enrollmentId: f.recipe.id, enrollmentDigest: prepared.initialEnrollmentDigest });
     const originalDeadline = initial.deadlineAt;
     let state = initial;
+    // On expiry the successor coordinator's own view is read once too: a stall
+    // after the proposal reply leaves supervision at one entry, and only the
+    // coordinator says whether the successor was held, prepared or admitted.
     await timedAsync('delivery.wait', () => until(async deadline => { state = await first.read('/api/resources/engineering-supervision', deadline); return state.entries.length === 2 && state.entries.every(row => row.state === 'completed'); }, 300_000,
-      () => ({ state: state.state, sourceState: state.sourceState, paused: state.paused,
-        entries: state.entries.map(row => ({ enrollmentId: row.enrollmentId, state: row.state, reasons: row.reasons, attempts: row.attempts })),
-        generations: f.generations.length, proposals: f.proposals.length, errors: f.errors })));
+      async () => {
+        let coordinator: unknown;
+        try {
+          const view = await first.read<ResourceEngineeringSuccessorCoordinatorSnapshot>('/api/resources/engineering-successors', performance.now() + 5_000);
+          coordinator = { state: view.state, observation: view.observation?.coordinator ?? null, workerState: view.observation?.workerState,
+            entries: view.entries.map(row => ({ successorId: row.successorId, state: row.state, reason: row.reason })) };
+        } catch (error) { coordinator = `unavailable: ${error instanceof Error ? error.message : String(error)}`; }
+        return { state: state.state, sourceState: state.sourceState, paused: state.paused,
+          entries: state.entries.map(row => ({ enrollmentId: row.enrollmentId, state: row.state, reasons: row.reasons, attempts: row.attempts })),
+          generations: f.generations.length, proposals: f.proposals.length, errors: f.errors, coordinator };
+      }));
     point('both-delivered');
     const sampleStartedAt = Date.now();
     const successors = await first.read<ResourceEngineeringSuccessorCoordinatorSnapshot>('/api/resources/engineering-successors');
