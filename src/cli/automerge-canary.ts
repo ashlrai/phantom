@@ -603,7 +603,9 @@ export async function cmdAutoMergeCanary(args: string[]): Promise<number> {
   if (subcommand === 'prepare-shadow') {
     const parsed = parsePrepareShadowArgs(rest);
     if (!parsed.ok) {
-      emit(refusal('prepare-shadow', parsed.reason), jsonRequested(rest), `error: ${parsed.reason}`, true);
+      // A --help/-h here is refused like the other custody verbs: usage, exit 2.
+      const usage = rest.includes('--help') || rest.includes('-h') ? `${help()}\n` : '';
+      emit(refusal('prepare-shadow', parsed.reason), jsonRequested(rest), `${usage}error: ${parsed.reason}`, true);
       return 2;
     }
     let cfg: import('../core/types.js').AshlrConfig;
@@ -658,7 +660,9 @@ export async function cmdAutoMergeCanary(args: string[]): Promise<number> {
   if (subcommand === 'activate-shadow') {
     const parsed = parseActivationArgs(rest);
     if (!parsed.ok) {
-      emit(refusal('activate-shadow', parsed.reason), jsonRequested(rest), `error: ${parsed.reason}`, true);
+      // A --help/-h here is refused like the other custody verbs: usage, exit 2.
+      const usage = rest.includes('--help') || rest.includes('-h') ? `${help()}\n` : '';
+      emit(refusal('activate-shadow', parsed.reason), jsonRequested(rest), `${usage}error: ${parsed.reason}`, true);
       return 2;
     }
     const input = readBoundedJsonFile(parsed.input);
