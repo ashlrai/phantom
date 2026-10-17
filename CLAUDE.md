@@ -38,4 +38,6 @@ npm run gate              # build, static checks and related tests together
   or the matching `docs/contracts/CONTRACT-M<N>.md` in the same change.
 - Do not add runtime dependencies casually (see CONTRIBUTING.md).
 - When running the CLI by hand, prefer `--help` with HOME set to a scratch
-  directory; many commands act on `~/.ashlr`.
+  directory; many commands act on `~/.ashlr`. `--help` and `-h` print usage
+  and exit 0 without acting. For parseable output use `--json` where a command
+  offers it, and set `NO_COLOR=1` to drop ANSI codes from human output.

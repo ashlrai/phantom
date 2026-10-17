@@ -77,18 +77,39 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   `--json` prints them too, so do not log that output.
 - `phm doctor [--json] [--fix]` checks Node, git, config, Phantom Secrets, Locus,
   local providers and MCP registration, and prints a `fix:` line for each problem.
+  A missing Locus or local model is a warning, not a failure. The MCP fix lines
+  name `phm mcp install claude` and `phm mcp ecosystem --write`.
 - `phm init [--wire] [--yes] [--json]` is idempotent onboarding. It writes the
   config, creates `~/.ashlr/genome`, symlinks `ashlr` into `~/.local/bin`, and
-  with `--wire` registers the MCP gateway in detected editors. It has no
-  `--help`: any invocation runs it. A new `config.json` carries only generic
-  defaults (one tidy keeper, `github`); an existing one keeps its saved keepers
-  and categories.
+  with `--wire` registers the MCP gateway in detected editors. `phm init --help`
+  prints help and writes nothing. With `--json`, the `ready` field matches the
+  exit code. A new `config.json` carries only generic defaults (one tidy keeper,
+  `github`); an existing one keeps its saved keepers and categories. Its roots
+  are `~/Desktop/github` and `~/Desktop` when those exist, otherwise whichever
+  of `~/code`, `~/src`, `~/projects`, `~/dev`, `~/Developer` and `~/repos`
+  exist, and there are no tidy rules without a `~/Desktop`.
+- `phm status [--json]` is the attention board (dirty, off-sync and stale
+  repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
-- `phm onboard [--yes]` walks through the first safe activation (preflight, enroll
-  one repo, dry-run plan, inbox). `phm onboard --rollback <repo> [--kill]` undoes it.
+- `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
+  one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
+  `phm onboard --rollback <repo> [--kill]` undoes it.
 - `phm setup` and `phm worker setup` are currently unavailable and refuse
-  before changing anything.
-- `phm docs --agent [--json]` prints the command registry for agents.
+  before changing anything. `phm setup` first lists what to run instead
+  (`phm init`, `phm doctor`, `phm verse`, `phm run "<goal>"`). Off macOS,
+  `phm authority setup` exits 1 and changes nothing; its `--dry-run` and
+  `--help` still run.
+- `phm update [--check] [--json]` self-updates (`--check` is read-only);
+  `phm upgrade` runs the same command.
+- `phm docs --agent [--json]` prints the command registry for agents. `phm docs
+  --json` without `--agent` prints a JSON usage error and exits 2.
+
+**Output for agents.** `--help` and `-h` print usage and exit 0 without acting,
+including on commands that mutate (`fleet pause`, `worker setup`, `roadmap run`,
+`gh pr create`, `swarm approve`). Set `NO_COLOR` to any non-empty value to drop
+ANSI codes from human output. Commands that take `--json` print one JSON object
+on stdout; `enroll add --json` and `authority stop --json` send their prose to
+stderr.
 
 For the desktop app and the first useful turn, follow the
 [Quickstart](QUICKSTART.md) and [desktop/README.md](../desktop/README.md).
@@ -97,17 +118,21 @@ For the desktop app and the first useful turn, follow the
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
 `doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`
-and `ecosystem [--write]`.
+and `ecosystem [--write] [--json]`.
 
 `phm wire [claude|codex|cursor|all] [--config <path>] [--json]` registers the
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
 up the target config first and is idempotent.
 
-Use one registration command, not both. `phm mcp install claude` also writes
-`~/.claude.json`, and in 3.29.15 and earlier it registers the gateway as a
-second server, `ashlr`, with an absolute command path. Running both gives the
-agent every gateway tool twice. If that happened, delete one of the two entries
-from `mcpServers`.
+`phm mcp install claude` also writes `~/.claude.json`, under the same
+`ashlr-hub` key (with an absolute path to this package's `bin/ashlr`), so
+running both commands leaves one gateway entry. Each of them also removes a
+legacy `ashlr` entry when it launches this product's own gateway, and refuses
+to overwrite an `ashlr-hub` entry that is not the gateway. Releases up to
+3.29.15 register `phm mcp install claude` as a second server, `ashlr`; with one
+of those, use one registration command, or delete one of the two entries from
+`mcpServers` if the agent sees every gateway tool twice. `phm mcp install
+ashlrcode` still writes the `ashlr` key.
 
 | Client | Default config | How `wire` writes it |
 | --- | --- | --- |
@@ -162,7 +187,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | Group | Purpose (from `phm help`) |
 | --- | --- |
 | `phm orient [--repo <r>] [--json]` | Read-only session-start context: memory hits, health, backlog, pending proposals |
-| `phm enroll list\|add\|remove\|kill` | Repos open to autonomous work, plus the global kill switch |
+| `phm enroll list\|add\|remove\|kill` | Repos open to autonomous work, plus the global kill switch (`enroll add <repo> --json` never prompts) |
 | `phm backlog [refresh]` | Scored work queue across enrolled repos |
 | `phm inbox [show\|approve\|submit\|reject] <id>` | Approval gate for proposals; `approve` applies to a local branch, `submit` hands off to a protected PR and never merges main |
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
@@ -182,7 +207,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 
 | Control | Effect |
 | --- | --- |
-| `phm authority stop [--no-wait]` / `clear-stop` | Engages Stop (`~/.ashlr/KILL`): halts running agents and cancels armed merges. Clearing is written to the ledger first. |
+| `phm authority stop [--no-wait] [--json]` / `clear-stop` | Engages Stop (`~/.ashlr/KILL`): halts running agents and cancels armed merges. With `--json`, stdout carries only the JSON result. Clearing is written to the ledger first. |
 | `phm authority revoke [--reason <text>]` | Stop, set autonomy off, and require a new signed grant to resume |
 | `phm authority switch off\|propose\|autonomous` | Lowers autonomy at once; can raise it only as far as the grant allows |
 | `phm fleet pause` / `phm fleet resume` | Engage or release the global kill switch (idempotent) |
