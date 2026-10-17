@@ -146,6 +146,8 @@ describe('M248 writeMcpConfigIfAvailable — plugin present', () => {
             ASHLR_MCP_HOST: 'ashlr-fleet-engine',
             ASHLR_HOOK_MODE: 'nudge',
             ASHLR_SESSION_LOG: '0',
+            // The plugin refuses paths outside its package dir unless the worktree is named.
+            ASHLR_ALLOW_PROJECT_PATHS: worktree,
           },
         },
       },
@@ -271,6 +273,7 @@ describe('M248 strict --mcp-config injection logic', () => {
     expect(overrides).toContain('mcp_servers.ashlr-efficiency.command="/plugin path/ashlr-mcp"');
     expect(overrides).toContain('mcp_servers.ashlr-efficiency.env.ASHLR_MCP_HOST="ashlr-fleet-engine"');
     expect(overrides).toContain('mcp_servers.ashlr-efficiency.env.ASHLR_SESSION_LOG="0"');
+    expect(overrides).toContain('mcp_servers.ashlr-efficiency.env.ASHLR_ALLOW_PROJECT_PATHS="/work"');
     expect(overrides.join(' ')).not.toMatch(/approval|token|credential|--mcp-config/);
     expect([...original, ...overrides].slice(0, original.length)).toEqual(original);
     expect(fleetEfficiencyMcpArgs('codex', null)).toEqual([]);

@@ -115,9 +115,7 @@ and `locus`, so a missing `mdopener-mcp` is reported and skipped, never an
 error. Once registered, the `phm mcp` gateway lists each server's tools with
 the server name as a prefix, for example `ashlr-md__<tool>`.
 
-Detection does not execute, download or start
-those servers. Detection does not execute, download or start
-those servers. It requires a regular executable with a native binary header,
+Detection does not execute, download or start those servers. It requires a regular executable with a native binary header,
 ignores relative PATH directories and deduplicates symlinks to the same physical
 file. Multiple distinct candidates or unsupported/bootstrap launchers are
 reported separately and skipped. This header check does not verify an artifact's
@@ -136,6 +134,44 @@ Node or Bun launchers, which the native-executable rule above refuses. Lexicon's
 project-bound stdio MCP server and the desktop's separately configured native
 voice service also have different setup and trust requirements; neither is
 started by companion inventory.
+
+## One connection for every agent
+
+The `phm mcp` gateway is one stdio MCP server that serves Phantom's own tools
+plus every server registered in `~/.ashlr/settings.json`, each prefixed with
+its server name (`phantom-secrets__<tool>`, `locus__<tool>`,
+`ashlr-md__<tool>`). Point each agent at the gateway once instead of adding
+every companion to every agent.
+
+1. Install the companions you want, so `phantom`, `locus-mcp` and (optionally)
+   `mdopener-mcp` are native executables on `PATH`.
+2. Register them with the gateway, then check what it found:
+
+   ```sh
+   phm mcp ecosystem --write
+   phm mcp doctor
+   ```
+
+   `doctor` lists each server with its tool count. A missing `mdopener-mcp` is
+   reported and skipped.
+3. Connect your agent to the gateway:
+
+   | Agent | Command |
+   | --- | --- |
+   | Claude Code | `phm mcp install claude` (adds an `ashlr-hub` entry to `~/.claude.json`, backing the file up first) |
+   | Codex | `codex mcp add ashlr-hub -- phm mcp` |
+   | Cursor | add `"ashlr-hub": { "command": "phm", "args": ["mcp"] }` under `mcpServers` in `~/.cursor/mcp.json` |
+
+   If `phm` is not on the agent's `PATH`, use its absolute path (`command -v phm`).
+4. Restart the agent and list its tools. With all three companions registered
+   and Locus not yet pinned, the gateway served 118 tools on Phantom 3.29.15:
+   35 of its own, 54 from Phantom Secrets, 9 Locus control tools and 20 from
+   Ashlr MD. A pinned Locus binding adds that binding's tools.
+
+The gateway skips its own `ashlr-hub` entry when it reads `~/.claude.json`,
+so registering it there does not make it start itself. If an agent also has
+`phantom-secrets`, `locus` or `ashlr-md` configured directly, it sees those
+tools twice; remove the direct entries once the gateway works.
 
 ## Check the tools work together
 

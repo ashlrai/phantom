@@ -35,6 +35,18 @@
         "phantom-secrets@0.7.9",
         "ashlr-stack-mcp"
       ]
+    },
+    "ashlr": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "-p",
+        "ashlr-plugin@1.36.4",
+        "ashlr-mcp"
+      ],
+      "env": {
+        "ASHLR_ALLOW_PROJECT_PATHS": "${PWD:-.}"
+      }
     }
   }
 }

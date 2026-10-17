@@ -230,6 +230,19 @@ describe('proactive profile API and native tools', () => {
     await deleteProactiveProfile({ id: created.profile.id, expectedVersion: 2 });
     expect((await getProactiveProfilesStore().list()).profiles[0]?.identity.accountId).toBe('account-b');
   });
+  it('tells a native-tool caller which profile field to fix', async () => {
+    const unknown = await callNativeTool('phm_proactive_agents_create', { profile: { name: 'Scout' } });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.content[0]?.text).toContain('Unexpected proactive agent profile field "name" in profile. Allowed: identity, displayName,');
+    const noIdentity = await callNativeTool('phm_proactive_agents_create', { profile: { displayName: 'Scout' } });
+    expect(noIdentity.content[0]?.text).toContain('profile.identity must be an object with: provider, accountId, agentId.');
+    const nested = await callNativeTool('phm_proactive_agents_create', { profile: { ...input, identity: { ...input.identity, model: 'x' } } });
+    expect(nested.content[0]?.text).toContain('field "model" in profile.identity. Allowed: provider, accountId, agentId.');
+    // Arbitrary key text is never reflected back.
+    const odd = await callNativeTool('phm_proactive_agents_create', { profile: { ...input, 'sk-live x\n': 1 } });
+    expect(odd.content[0]?.text).toContain('Unexpected proactive agent profile field in profile.');
+    expect((await store.list()).profiles).toEqual([]);
+  });
   it('filters arbitrary providers through native tools and returns declared capabilities without claiming qualification', async () => {
     const created = await createProactiveProfile({ profile: { ...input, identity: { ...input.identity, provider: 'custom-cloud' },
       capabilityIds: ['research'], preferences: { maxConcurrent: 3 } } }) as { profile: { id: string } };
