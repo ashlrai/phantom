@@ -1472,6 +1472,11 @@ export async function cmdSwarm(args: string[]): Promise<number> {
  * `ashlr swarms [--json]` — list all persisted swarms (newest first).
  */
 export async function cmdSwarms(args: string[]): Promise<number> {
+  // `swarms --help` / `-h` prints usage before the swarm store is read.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSwarmHelp();
+    return 0;
+  }
   const jsonMode = args.includes('--json');
 
   let store: StoreMod;
