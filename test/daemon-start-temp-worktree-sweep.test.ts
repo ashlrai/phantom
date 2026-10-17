@@ -8,6 +8,9 @@
  * isolated tmp HOME:
  *   - a dead-owner leftover is reaped at daemon start (dir, marker, branch);
  *   - a live-owner worktree (marker written by this running process) is kept;
+ *   - a leftover whose directory is gone is traced through the repo recorded
+ *     in its owner marker and its registration is pruned at start, while an
+ *     old-format marker without that field behaves exactly as before;
  *   - a failing sweep never stops daemon start.
  *
  * HERMETIC: HOME / ASHLR_HOME point at a tmp dir (h1 fixture), repos are tmp
@@ -23,10 +26,13 @@ import {
   ashlrTmpDir,
   leakedTempWorktreeRepos,
   sweepLeakedTempWorktreesAtStart,
+  tempWorktreeMarkerRepo,
   tempWorktreeOwningRepo,
   writeTempWorktreeOwner,
 } from '../src/core/inbox/temp-worktree-reaper.js';
 import { runDaemon } from '../src/core/daemon/loop.js';
+import { setKill, killSwitchOn } from '../src/core/sandbox/policy.js';
+import { acquireOutwardMutationFence, releaseOutwardMutationFence } from '../src/core/sandbox/mutation-fence.js';
 import { makeFixture, makeCfg, type H1Fixture, type DisposableRepo } from './helpers/h1-fixture.js';
 
 vi.mock('../src/core/daemon/activation-permit.js', () => ({
@@ -89,18 +95,18 @@ function worktreeNames(dir: string): string[] {
 }
 
 /** A leftover from a killed daemon: registered worktree + a dead-owner marker. */
-function leakDeadOwner(name: string, branch: string): string {
+function leakDeadOwner(name: string, branch: string, extra: Record<string, unknown> = {}): string {
   fs.mkdirSync(ashlrTmpDir(), { recursive: true });
   const dir = path.join(ashlrTmpDir(), name);
   git(repo.dir, ['worktree', 'add', '-b', branch, dir, repo.branch]);
-  fs.writeFileSync(`${dir}.owner`, `${JSON.stringify({ schemaVersion: 1, pid: deadPid() })}\n`, 'utf8');
+  fs.writeFileSync(`${dir}.owner`, `${JSON.stringify({ schemaVersion: 1, pid: deadPid(), ...extra })}\n`, 'utf8');
   return dir;
 }
 
 /** A worktree another live process (here: this one) is still using. */
 function liveOwner(name: string): string {
   const dir = path.join(ashlrTmpDir(), name);
-  writeTempWorktreeOwner(dir);
+  writeTempWorktreeOwner(dir, repo.dir);
   git(repo.dir, ['worktree', 'add', '--detach', dir, repo.branch]);
   return dir;
 }
@@ -156,6 +162,94 @@ describe('daemon start sweeps leaked temp worktrees', () => {
     expect(fs.existsSync(dead)).toBe(true);
   });
 
+  it('writeTempWorktreeOwner records the owning repo as an absolute path', () => {
+    setup();
+    const dir = liveOwner('mwt-5e5e5e5e5e5e');
+    const marker = JSON.parse(fs.readFileSync(`${dir}.owner`, 'utf8')) as Record<string, unknown>;
+    expect(marker['repo']).toBe(path.resolve(repo.dir));
+    expect(marker['pid']).toBe(process.pid);
+    expect(tempWorktreeMarkerRepo(`${dir}.owner`)).toBe(path.resolve(repo.dir));
+  });
+
+  it('prunes a dead-owner registration at start when only the marker (with repo) survives', async () => {
+    setup();
+    const dead = leakDeadOwner('mergewt-d1d1d1d1d1d1', 'leak-mergewt-d1', { repo: path.resolve(repo.dir) });
+    fs.rmSync(dead, { recursive: true, force: true });
+    expect(worktreeNames(repo.dir)).toContain('mergewt-d1d1d1d1d1d1');
+    expect(leakedTempWorktreeRepos()).toEqual([path.resolve(repo.dir)]);
+
+    const state = await runDaemon(makeCfg(), { once: true, dryRun: false });
+    expect(state.startRefusal).toBeUndefined();
+    expect(sweepControl.calls).toBe(1);
+
+    expect(worktreeNames(repo.dir)).not.toContain('mergewt-d1d1d1d1d1d1');
+    expect(fs.existsSync(`${dead}.owner`)).toBe(false);
+    // mergewt- holds a base branch the reaper never deletes.
+    expect(repo.branches()).toContain('leak-mergewt-d1');
+  });
+
+  it('keeps a live-owner registration traced only by its marker', async () => {
+    setup();
+    const live = liveOwner('mwt-1e1e1e1e1e1e');
+    fs.rmSync(live, { recursive: true, force: true });
+    const result = await sweepLeakedTempWorktreesAtStart();
+    expect(result).toMatchObject({ repos: 1, reaped: 0, kept: 1 });
+    expect(worktreeNames(repo.dir)).toContain('mwt-1e1e1e1e1e1e');
+    expect(fs.existsSync(`${live}.owner`)).toBe(true);
+  });
+
+  it('an old-format marker (no repo) with its directory present is traced and reaped as before', async () => {
+    setup();
+    const present = leakDeadOwner('vwt-0d0d0d0d0d0d', 'ashlr/verify/0d0d0d0d0d0d');
+    expect(tempWorktreeMarkerRepo(`${present}.owner`)).toBeNull();
+    const result = await sweepLeakedTempWorktreesAtStart();
+    expect(result).toMatchObject({ repos: 1, reaped: 1, kept: 0 });
+    expect(fs.existsSync(present)).toBe(false);
+    expect(fs.existsSync(`${present}.owner`)).toBe(false);
+    expect(repo.branches()).not.toContain('ashlr/verify/0d0d0d0d0d0d');
+    expect(worktreeNames(repo.dir)).not.toContain('vwt-0d0d0d0d0d0d');
+  });
+
+  it('an old-format marker (no repo) with its directory gone is untraceable, as before', async () => {
+    setup();
+    const gone = leakDeadOwner('mwt-0e0e0e0e0e0e', 'leak-mwt-0e');
+    fs.rmSync(gone, { recursive: true, force: true });
+    expect(leakedTempWorktreeRepos()).toEqual([]);
+    const result = await sweepLeakedTempWorktreesAtStart();
+    expect(result).toMatchObject({ repos: 0, reaped: 0 });
+    // Left for the next merge in that repo, whose reaper still handles it.
+    expect(worktreeNames(repo.dir)).toContain('mwt-0e0e0e0e0e0e');
+    expect(fs.existsSync(`${gone}.owner`)).toBe(true);
+  });
+
+  it('ignores a marker repo that is relative, missing, not a directory or not a git repo', () => {
+    setup();
+    fs.mkdirSync(ashlrTmpDir(), { recursive: true });
+    const plainDir = fs.mkdtempSync(path.join(path.dirname(repo.dir), 'not-a-repo-'));
+    const plainFile = path.join(plainDir, 'file');
+    fs.writeFileSync(plainFile, 'x');
+    const bad: Array<[string, unknown]> = [
+      ['vwt-b0b0b0b0b0b0', 'relative/repo'],
+      ['vwt-b1b1b1b1b1b1', path.join(plainDir, 'missing')],
+      ['vwt-b2b2b2b2b2b2', plainFile],
+      ['vwt-b3b3b3b3b3b3', plainDir],
+      ['vwt-b4b4b4b4b4b4', path.join(repo.dir, 'sub')],
+      ['vwt-b5b5b5b5b5b5', 42],
+    ];
+    fs.mkdirSync(path.join(repo.dir, 'sub'), { recursive: true });
+    for (const [name, value] of bad) {
+      fs.writeFileSync(
+        path.join(ashlrTmpDir(), `${name}.owner`),
+        `${JSON.stringify({ schemaVersion: 1, pid: deadPid(), repo: value })}\n`,
+      );
+      expect(tempWorktreeMarkerRepo(path.join(ashlrTmpDir(), `${name}.owner`))).toBeNull();
+    }
+    fs.writeFileSync(path.join(ashlrTmpDir(), 'not-temp.owner'), JSON.stringify({ repo: path.resolve(repo.dir) }));
+    expect(tempWorktreeMarkerRepo(path.join(ashlrTmpDir(), 'not-temp.owner'))).toBeNull();
+    expect(leakedTempWorktreeRepos()).toEqual([]);
+    fs.rmSync(plainDir, { recursive: true, force: true });
+  });
+
   it('a throwing per-repo reaper is counted as skipped, never thrown', async () => {
     setup();
     leakDeadOwner('vwt-abababababab', 'ashlr/verify/abababababab');
@@ -165,5 +259,38 @@ describe('daemon start sweeps leaked temp worktrees', () => {
       },
     });
     expect(result).toMatchObject({ repos: 1, reaped: 0, skippedRepos: 1 });
+  });
+
+  it('KILL armed after the daemon-start check stops the sweep before any repo is touched', async () => {
+    setup();
+    const dead = leakDeadOwner('vwt-c0c0c0c0c0c0', 'ashlr/verify/c0c0c0c0c0c0');
+    expect(setKill(true).ok).toBe(true);
+    try {
+      expect(killSwitchOn()).toBe(true);
+      const reap = vi.fn();
+      const result = await sweepLeakedTempWorktreesAtStart({ reap });
+      expect(reap).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ repos: 1, reaped: 0, skippedRepos: 1 });
+      expect(fs.existsSync(dead)).toBe(true);
+      expect(repo.branches()).toContain('ashlr/verify/c0c0c0c0c0c0');
+    } finally {
+      setKill(false);
+    }
+  });
+
+  it('a held outward mutation fence skips the repo instead of mutating beside the holder', async () => {
+    setup();
+    const dead = leakDeadOwner('vwt-d0d0d0d0d0d0', 'ashlr/verify/d0d0d0d0d0d0');
+    const fence = acquireOutwardMutationFence();
+    expect(fence).not.toBeNull();
+    try {
+      const reap = vi.fn();
+      const result = await sweepLeakedTempWorktreesAtStart({ reap, fenceWaitMs: 50 });
+      expect(reap).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ repos: 1, skippedRepos: 1 });
+      expect(fs.existsSync(dead)).toBe(true);
+    } finally {
+      releaseOutwardMutationFence(fence);
+    }
   });
 });
