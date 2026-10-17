@@ -279,7 +279,7 @@ describe('M23 gate — CLI inbox show NEVER calls applyProposal', () => {
       expect(await cmdInbox(['automerge', '--json'])).toBe(2);
       expect(error).not.toHaveBeenCalled();
       expect(log.mock.calls.map((call) => JSON.parse(String(call[0])) as unknown)).toEqual([
-        { ok: false, error: 'Proposal not found: nonexistent-id' },
+        { ok: false, error: 'Proposal not found: nonexistent-id', next: 'List proposal ids with `phm inbox --status all`; an id prefix must match exactly one proposal.' },
         { ok: false, error: 'Usage: ashlr inbox show <id> [--open] [--json]' },
         { ok: false, error: 'Usage: ashlr inbox reject <id> [--json]' },
         { ok: false, error: 'Usage: ashlr inbox automerge <id> [--json]' },

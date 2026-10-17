@@ -4,7 +4,7 @@
  * `/task`s into work for a lane.
  *
  *   ashlr automations list [--json]
- *   ashlr automations templates
+ *   ashlr automations templates [--json]
  *   ashlr automations add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane fleet|cloud|devin|leader-review] [--enable]
  *   ashlr automations add --file <automation.json> [--enable]
  *   ashlr automations enable|disable|remove <id>
@@ -37,7 +37,7 @@ export const AUTOMATIONS_USAGE = [
   'Usage: ashlr automations <command>',
   '',
   '  list [--json]                         Automations with last fired, next run, queue, spend, success rate',
-  '  templates                             Starting points for `add --template`',
+  '  templates [--json]                    Starting points for `add --template`',
   '  add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane <lane>] [--enable]',
   '  add --file <automation.json> [--enable]',
   '  enable <id> | disable <id> | remove <id>',
@@ -142,7 +142,15 @@ async function cmdList(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
   return 0;
 }
 
-function cmdTemplates(deps: AutomationsCliDeps): number {
+function cmdTemplates(deps: AutomationsCliDeps, p: Parsed): number {
+  if (p.positional.length > 0) throw new UsageError('templates takes no arguments.');
+  const extra = [...p.flags.keys()].find((name) => name !== '--json');
+  if (extra) throw new UsageError(`templates takes only --json (got ${extra}).`);
+  if (p.flags.has('--json')) {
+    // Same shape as the templates field of GET /api/verse/automations.
+    deps.out(JSON.stringify({ templates: AUTOMATION_TEMPLATES }, null, 2));
+    return 0;
+  }
   for (const t of AUTOMATION_TEMPLATES) deps.out(`${t.id.padEnd(26)} ${t.name} — ${t.blurb}`);
   return 0;
 }
@@ -252,7 +260,7 @@ export async function runAutomationsCli(argv: string[], injected: Partial<Automa
     switch (sub) {
       case 'list':
       case 'ls': return await cmdList(deps, p);
-      case 'templates': return cmdTemplates(deps);
+      case 'templates': return cmdTemplates(deps, p);
       case 'add': return await cmdAdd(deps, p);
       case 'enable': return await cmdSwitch(deps, p, 'enable');
       case 'disable': return await cmdSwitch(deps, p, 'disable');

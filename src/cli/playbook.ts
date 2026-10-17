@@ -217,10 +217,28 @@ async function cmdShow(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
 
 function sourceFor(deps: PlaybookCliDeps, p: Parsed, initial: string): string | null {
   const file = p.flags.get('--file');
-  if (file) return deps.readFile(file);
+  if (file) {
+    try {
+      return deps.readFile(file);
+    } catch (err) {
+      throw new UnreadableFileError(file, err);
+    }
+  }
   const piped = deps.readStdin();
   if (piped !== null && piped.trim()) return piped;
   return deps.edit(initial);
+}
+
+/** `--file` named something that cannot be read: a refusal, not a raw ENOENT. */
+class UnreadableFileError extends Error {
+  constructor(file: string, cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException | null)?.code;
+    const why = code === 'ENOENT' ? 'no such file'
+      : code === 'EISDIR' ? 'it is a directory'
+        : code === 'EACCES' || code === 'EPERM' ? 'permission denied'
+          : 'it could not be read';
+    super(`Could not read --file ${file}: ${why}. Pass a readable markdown file, or omit --file to open $EDITOR; nothing written.`);
+  }
 }
 
 function reportSave(deps: PlaybookCliDeps, result: SavePlaybookResult): number {
@@ -324,6 +342,10 @@ export async function runPlaybookCli(args: string[], injected?: Partial<Playbook
       if (rest.includes('--json')) jsonError(deps, err.message);
       else deps.err(`error: ${err.message}\n${PLAYBOOK_USAGE}`);
       return 2;
+    }
+    if (err instanceof UnreadableFileError) {
+      deps.err(`error: ${err.message}`);
+      return 1;
     }
     throw err;
   }
