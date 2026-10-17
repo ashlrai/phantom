@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/autopilot.test.ts', // Real temp git origin/clone/worktree, fixer and verify subprocesses, and a real push.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
@@ -134,6 +135,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
   'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
   'test/resource-native-profile.test.ts', // exclusive profile preparation and inert native execve
+  'test/role-completion.test.ts', // owned native Leader children under a 5 s call budget; timed out at 5050 ms on a loaded Mac runner
   'test/resource-claude-account-status.test.ts', // native auth status with inert private process fixtures
   'test/resource-claude-account-usage.test.ts', // private scratch and bounded native usage mocks
   'test/resource-grok-account-probe.test.ts', // native metadata protocol with inert ACP fixtures
