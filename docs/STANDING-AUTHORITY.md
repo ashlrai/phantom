@@ -194,7 +194,7 @@ ashlr authority surface [--installed]
 ashlr authority protect --print | --apply [--repo owner/name]
 ashlr authority github-app [--org <login>]
 ashlr authority rotate-provenance
-ashlr authority setup [--dry-run] [--source <ashlr-hub checkout>]
+ashlr authority setup [--dry-run]
 ```
 
 Stop arms KILL, aborts running agents (reporting `liveExecutionLeases`)
@@ -216,8 +216,8 @@ never runs `sudo` and never touches launchd.
 1. Checks the custody helper; if it is missing, it tells you to run
    `sudo scripts/install-custody.sh` and stops.
 2. Creates the Secure Enclave key (Touch ID).
-3. Opens a PR in your ashlr-hub checkout (from a throwaway worktree — your
-   checkout is untouched) adding the key to `trust-roots.ts`, then waits for
+3. Opens a PR on the hub repository adding the key to `trust-roots.ts`,
+   written through the GitHub API (no checkout or local git), then waits for
    you to merge it, build, install the release and kickstart the daemon.
 4. Creates the `ashlr-fleet` GitHub App through the App Manifest flow (one
    browser page). The private key goes straight into custody; it is never

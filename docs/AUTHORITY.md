@@ -204,7 +204,7 @@ The limits that remain are:
 |---|---|---|
 | Signing key | Secure Enclave, through `/usr/local/libexec/ashlr-custody` (root-owned, installed once with `sudo scripts/install-custody.sh`) | The key cannot be exported, and every signature needs Touch ID or the login password. The helper parses the grant strictly, shows its scope in the Touch ID prompt, and refuses anything that is not a StandingGrantV1 within the compiled ceilings. |
 | Key id | `se-p256-` + the first 16 hex characters of sha256(SPKI DER) | The verifier accepts a compiled root only when its `keyId` equals `keyIdForPublicKeyPem(publicKeyPem)`, so anyone reviewing a trust-roots PR can recompute the id. |
-| Trust roots | `src/core/authority/trust-roots.ts` | Added only in your own PR (setup opens it from a throwaway worktree). The August `mason-workstation` ed25519 key is burned: roots are ES256 only, and that key id is on the refusal list. |
+| Trust roots | `src/core/authority/trust-roots.ts` | Added only in your own PR (setup opens it through the GitHub API; no local git runs). The August `mason-workstation` ed25519 key is burned: roots are ES256 only, and that key id is on the refusal list. |
 | GitHub App key (`ashlr-fleet`) | Keychain item owned by the helper | Created through the App Manifest flow. The PEM never touches disk and is never printed. The App can write contents, pull requests and check runs (3.13: it posts the host-verified `ashlr/verify` check) and read statuses and metadata. It is never a code owner and cannot bypass rulesets. |
 | Claude token | Keychain item owned by the helper | Used only by `claude --restricted --tools ""` judge and Leader calls, which have no tools. |
 | Grant, switch, ledger | `~/.ashlr/authority/` (0700; files 0600) | The grant is signed, the ledger is hash-chained and anchored, and a missing or unreadable switch reads as Off. Confined agents cannot read this directory at all; it is a tripwire that kills the reader. |
@@ -250,8 +250,8 @@ step's command to copy.
    ID). A key made on an earlier run is read back with `ashlr-custody pubkey`,
    which needs no Touch ID.
 4. **Trust root.** Setup opens a PR that adds `{keyId, publicKeyPem}` to
-   `trust-roots.ts`, working in a throwaway worktree so your checkout is
-   untouched. You review it, merge it, run `npm run build`, install the
+   `trust-roots.ts`, writing the branch and commit through the GitHub API, so
+   no checkout, hook or git config is involved. You review it, merge it, run `npm run build`, install the
    release, then `launchctl kickstart -k gui/$(id -u)/ai.ashlr.daemon`, and
    rerun setup.
 5. **GitHub App.** Setup creates the `ashlr-fleet` App through the Manifest
