@@ -12,6 +12,7 @@ import { useSectionVisible } from '../shell/section-visibility.js';
 import { verdictParts, type VerdictInputs } from './authority-model.js';
 import type { SinceItem } from './command-model.js';
 import styles from './command.module.css';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export function VerdictLine(props: VerdictInputs) {
   const parts = verdictParts(props);
@@ -79,8 +80,8 @@ export function SinceStrip({ lastLookedAt, items, now = Date.now() }: { lastLook
   if (!Number.isFinite(when.getTime()) || now - when.getTime() < SINCE_MIN_GAP_MS) return null;
   const sameDay = when.toDateString() === new Date(now).toDateString();
   const label = sameDay
-    ? when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-    : when.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    ? formatDateTime(when, 'en-US', { hour: 'numeric', minute: '2-digit' })
+    : formatDateTime(when, 'en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   return (
     <div className={styles.since} role="group" aria-label={`Since you looked at ${label}`}>
       <span className={styles.sinceLead}>Since {label}</span>
