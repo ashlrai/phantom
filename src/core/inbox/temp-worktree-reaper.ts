@@ -29,7 +29,8 @@
  * derives each leftover's owning repo from the leftover's own `.git` pointer
  * and from the `repo` recorded in its owner marker (so a leftover whose
  * directory is already gone but is still registered in git is traced too),
- * and runs the same reaper there under that repo's mirror lease, so a crashed
+ * and runs the same reaper there under that repo's mirror lease and the
+ * outward mutation fence (KILL rechecked under the fence), so a crashed
  * daemon's leftovers do not wait for the next merge in that repo.
  */
 
@@ -39,6 +40,12 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isMirrorPath, mirrorLeaseKey } from '../fleet/mirrors.js';
 import { withRepoLease } from '../sandbox/execution-leases.js';
+import {
+  acquireOutwardMutationFenceAsync,
+  ownsOutwardMutationFence,
+  releaseOutwardMutationFence,
+} from '../sandbox/mutation-fence.js';
+import { killSwitchOn } from '../sandbox/policy.js';
 import {
   verifiedProcessStartIdentity,
   type ProcessStartIdentitySource,
@@ -269,6 +276,8 @@ export function reapLeakedTempWorktrees(
 
 /** How long the start-time sweep waits for a busy mirror lease before skipping that repo. */
 export const START_SWEEP_MIRROR_LEASE_WAIT_MS = 2_000;
+/** How long the start-time sweep waits for the outward mutation fence before skipping that repo. */
+export const START_SWEEP_FENCE_WAIT_MS = 2_000;
 const MAX_GIT_POINTER_BYTES = 4_096;
 
 /**
@@ -369,14 +378,14 @@ export function leakedTempWorktreeRepos(): string[] {
 }
 
 /** `fn` under the repo's mirror lease when it is a fleet mirror, directly otherwise; null when busy. */
-async function underStartSweepLease<T>(repo: string, fn: () => T): Promise<{ value: T } | null> {
+async function underStartSweepLease<T>(repo: string, fn: () => T | Promise<T>): Promise<{ value: T } | null> {
   let mirror = false;
   try {
     mirror = isMirrorPath(repo);
   } catch {
     mirror = false;
   }
-  if (!mirror) return { value: fn() };
+  if (!mirror) return { value: await fn() };
   const leased = await withRepoLease(mirrorLeaseKey(repo), () => fn(), { waitMs: START_SWEEP_MIRROR_LEASE_WAIT_MS });
   return leased.ok ? { value: leased.value } : null;
 }
@@ -388,13 +397,15 @@ export interface StartTempWorktreeSweepResult {
   kept: number;
   failed: number;
   branchesDeleted: number;
-  /** Repos skipped because their mirror lease stayed busy or the reaper threw. */
+  /** Repos skipped: mirror lease or outward fence stayed busy, KILL was armed, or the reaper threw. */
   skippedRepos: number;
 }
 
 export interface StartTempWorktreeSweepOptions extends ReapTempWorktreesOptions {
   /** Test seam; production uses {@link reapLeakedTempWorktrees}. */
   reap?: (repo: string, options: ReapTempWorktreesOptions) => ReapTempWorktreesResult;
+  /** Outward mutation fence wait per repo; default {@link START_SWEEP_FENCE_WAIT_MS}. */
+  fenceWaitMs?: number;
 }
 
 /**
@@ -402,6 +413,10 @@ export interface StartTempWorktreeSweepOptions extends ReapTempWorktreesOptions 
  * one in the ashlr tmp dir, under the same mirror lease inbox/merge.ts holds
  * for its verify `worktree add`. Only the reaper's fail-closed owner rules
  * decide what is removed, so another live process's worktree is always kept.
+ * Each repo's reap runs under the outward mutation fence with KILL rechecked
+ * after acquiring it (lock order: repo lease -> fence), like the orphan sandbox
+ * sweep: KILL armed after daemon start's own check stops the sweep, and a KILL
+ * quiescence report can never overlap a reap. A busy fence skips the repo.
  * The reaper already runs `git worktree prune` in a repo it mutated. Never throws.
  */
 export async function sweepLeakedTempWorktreesAtStart(
@@ -410,7 +425,7 @@ export async function sweepLeakedTempWorktreesAtStart(
   const total: StartTempWorktreeSweepResult = {
     repos: 0, reaped: 0, kept: 0, failed: 0, branchesDeleted: 0, skippedRepos: 0,
   };
-  const { reap = reapLeakedTempWorktrees, ...reapOptions } = options;
+  const { reap = reapLeakedTempWorktrees, fenceWaitMs = START_SWEEP_FENCE_WAIT_MS, ...reapOptions } = options;
   let repos: string[];
   try {
     repos = leakedTempWorktreeRepos();
@@ -418,10 +433,28 @@ export async function sweepLeakedTempWorktreesAtStart(
     return total;
   }
   total.repos = repos.length;
-  for (const repo of repos) {
+  let killed = false;
+  const fencedReap = async (repo: string): Promise<ReapTempWorktreesResult | null> => {
+    const fence = await acquireOutwardMutationFenceAsync(fenceWaitMs);
     try {
-      const leased = await underStartSweepLease(repo, () => reap(repo, reapOptions));
-      if (!leased) {
+      if (!ownsOutwardMutationFence(fence)) return null;
+      if (killSwitchOn()) {
+        killed = true;
+        return null;
+      }
+      return reap(repo, reapOptions);
+    } finally {
+      releaseOutwardMutationFence(fence);
+    }
+  };
+  for (const repo of repos) {
+    if (killed) {
+      total.skippedRepos += 1;
+      continue;
+    }
+    try {
+      const leased = await underStartSweepLease(repo, () => fencedReap(repo));
+      if (!leased || !leased.value) {
         total.skippedRepos += 1;
         continue;
       }

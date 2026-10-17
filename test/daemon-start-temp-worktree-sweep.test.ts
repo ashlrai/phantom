@@ -31,6 +31,8 @@ import {
   writeTempWorktreeOwner,
 } from '../src/core/inbox/temp-worktree-reaper.js';
 import { runDaemon } from '../src/core/daemon/loop.js';
+import { setKill, killSwitchOn } from '../src/core/sandbox/policy.js';
+import { acquireOutwardMutationFence, releaseOutwardMutationFence } from '../src/core/sandbox/mutation-fence.js';
 import { makeFixture, makeCfg, type H1Fixture, type DisposableRepo } from './helpers/h1-fixture.js';
 
 vi.mock('../src/core/daemon/activation-permit.js', () => ({
@@ -257,5 +259,38 @@ describe('daemon start sweeps leaked temp worktrees', () => {
       },
     });
     expect(result).toMatchObject({ repos: 1, reaped: 0, skippedRepos: 1 });
+  });
+
+  it('KILL armed after the daemon-start check stops the sweep before any repo is touched', async () => {
+    setup();
+    const dead = leakDeadOwner('vwt-c0c0c0c0c0c0', 'ashlr/verify/c0c0c0c0c0c0');
+    expect(setKill(true).ok).toBe(true);
+    try {
+      expect(killSwitchOn()).toBe(true);
+      const reap = vi.fn();
+      const result = await sweepLeakedTempWorktreesAtStart({ reap });
+      expect(reap).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ repos: 1, reaped: 0, skippedRepos: 1 });
+      expect(fs.existsSync(dead)).toBe(true);
+      expect(repo.branches()).toContain('ashlr/verify/c0c0c0c0c0c0');
+    } finally {
+      setKill(false);
+    }
+  });
+
+  it('a held outward mutation fence skips the repo instead of mutating beside the holder', async () => {
+    setup();
+    const dead = leakDeadOwner('vwt-d0d0d0d0d0d0', 'ashlr/verify/d0d0d0d0d0d0');
+    const fence = acquireOutwardMutationFence();
+    expect(fence).not.toBeNull();
+    try {
+      const reap = vi.fn();
+      const result = await sweepLeakedTempWorktreesAtStart({ reap, fenceWaitMs: 50 });
+      expect(reap).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ repos: 1, skippedRepos: 1 });
+      expect(fs.existsSync(dead)).toBe(true);
+    } finally {
+      releaseOutwardMutationFence(fence);
+    }
   });
 });
