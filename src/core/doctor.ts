@@ -1214,19 +1214,21 @@ function checkAshlrWriteableProbe(): DoctorCheck {
  * id: 'sandbox-health'
  *
  * READ-ONLY via readSandboxHealth() → listSandboxes() (counts only — removes
- * NOTHING). PASS when there are zero/low orphans; WARN when the orphan count
+ * NOTHING), plus the effective sandbox cap and its reason in the detail. PASS
+ * when there are zero/low orphans; WARN when the orphan count
  * reaches SANDBOX_ORPHAN_WARN_THRESHOLD, with a `ashlr sandbox gc` fix hint.
  * Mutates nothing. Never throws.
  */
 function checkSandboxHealth(): DoctorCheck {
   try {
-    const { total, orphans } = readSandboxHealth();
+    const { total, orphans, cap, capReason } = readSandboxHealth();
+    const capNote = `; cap ${cap}, ${capReason}`;
     if (orphans >= SANDBOX_ORPHAN_WARN_THRESHOLD) {
       return check(
         'sandbox-health',
         'Sandbox health',
         'warn',
-        `${orphans} orphan sandbox${orphans !== 1 ? 'es' : ''} of ${total} on disk`,
+        `${orphans} orphan sandbox${orphans !== 1 ? 'es' : ''} of ${total} on disk${capNote}`,
         'Reclaim them: `ashlr sandbox gc`',
       );
     }
@@ -1234,7 +1236,7 @@ function checkSandboxHealth(): DoctorCheck {
       'sandbox-health',
       'Sandbox health',
       'pass',
-      `${total} sandbox${total !== 1 ? 'es' : ''} on disk (${orphans} orphan${orphans !== 1 ? 's' : ''})`,
+      `${total} sandbox${total !== 1 ? 'es' : ''} on disk (${orphans} orphan${orphans !== 1 ? 's' : ''})${capNote}`,
     );
   } catch (err) {
     return check('sandbox-health', 'Sandbox health', 'pass', `sandbox health unreadable: ${String(err)}`);
@@ -1315,8 +1317,12 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- Async: provider registry ---
   try {
     const registry = await getProviderRegistry(cfg);
+    // With every local endpoint down (the usual fresh install), one line says
+    // so; a warning per endpoint would repeat the same fact three times.
+    const anyLocalUp = registry.providers.some(p => p.up);
+    const probed = registry.providers.map(p => `${p.id} ${p.url}`).join(', ');
 
-    for (const provider of registry.providers) {
+    for (const provider of anyLocalUp ? registry.providers : []) {
       const id = `provider:${provider.id}`;
       const label = `Local provider: ${provider.id}`;
       if (provider.up) {
@@ -1353,8 +1359,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
           'provider:active',
           'Active local provider',
           'warn',
-          'No local provider is reachable — local-first runs need --allow-cloud or a local model',
-          'Start LM Studio or Ollama (ollama serve), or use a connected Claude Code/Codex account',
+          `No local provider is reachable (probed ${probed || 'none'}) — local-first runs need --allow-cloud or a local model`,
+          'Start or install Ollama (ollama serve) or LM Studio, or use a connected Claude Code/Codex account',
         ),
       );
     } else {
