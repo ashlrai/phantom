@@ -224,10 +224,13 @@ const TOOL_SPECS: ToolSpec[] = [
   },
 
   // ── ashlr-plugin (Claude Code MCP plugin) ─────────────────────────────────
+  // Its npm package ships `ashlr-plugin` and `ashlr-mcp`. The bare `ashlr`
+  // binary is this product's own alias (ashlr-hub above), so it must not
+  // count as the plugin.
   {
     id: 'ashlr-plugin',
     name: 'ashlr-plugin (Claude Code MCP)',
-    binaries: ['ashlr', 'ashlr-plugin'],
+    binaries: ['ashlr-plugin', 'ashlr-mcp'],
     parseVersion: extractSemver,
   },
 
@@ -338,8 +341,8 @@ function probeTool(spec: ToolSpec): ToolInfo {
       version = spec.parseVersion ? spec.parseVersion(raw) : extractSemver(raw);
     }
 
-    // Special case: ashlr-hub / ashlr-plugin share the `ashlr` binary, whose
-    // `--version` may be unsupported; fall back to a nearby package.json.
+    // Special case: the ashlr-hub / ashlr-plugin binaries' `--version` may be
+    // unsupported; fall back to a nearby package.json.
     if (!version && (spec.id === 'ashlr-hub' || spec.id === 'ashlr-plugin')) {
       version = ashlrHubVersionFromPackageJson(resolvedPath);
     }
