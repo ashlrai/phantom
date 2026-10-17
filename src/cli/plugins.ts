@@ -378,7 +378,10 @@ export async function cmdPlugins(args: string[]): Promise<number> {
   const jsonMode = args.includes('--json');
   const yes = args.includes('--yes');
 
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  // `plugins <verb> ... --help` too: `plugins init <name> --help` scaffolded
+  // the plugin and `plugins enable <name> --yes --help` enabled it. The only
+  // value flag (--capability) takes a fixed capability name.
+  if (!sub || sub === '--help' || sub === '-h' || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printPluginsHelp();
     return 0;
   }

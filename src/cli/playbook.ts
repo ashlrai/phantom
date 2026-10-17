@@ -120,6 +120,15 @@ interface Parsed {
 const VALUE_FLAGS = new Set(['--file', '--note', '--repo', '--lane', '--task', '--title', '--base']);
 const BOOL_FLAGS = new Set(['--json', '--source']);
 
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (VALUE_FLAGS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export function parsePlaybookArgs(args: readonly string[]): Parsed {
   const out: Parsed = { positional: [], flags: new Map(), bools: new Set() };
   for (let i = 0; i < args.length; i += 1) {
@@ -300,7 +309,9 @@ async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
 
 export async function runPlaybookCli(args: string[], injected?: Partial<PlaybookCliDeps>): Promise<number> {
   const [sub = 'list', ...rest] = args;
-  if (sub === 'help' || sub === '--help' || sub === '-h') {
+  // `playbook <verb> ... --help` too, outside a flag value: `playbook run <id>
+  // -h` launched a session and `playbook new|edit <id> -h` opened the editor.
+  if (sub === 'help' || sub === '--help' || sub === '-h' || wantsHelp(rest)) {
     console.log(PLAYBOOK_USAGE);
     return 0;
   }

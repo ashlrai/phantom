@@ -107,7 +107,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'fleet automerge-canary reconcile': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',
   'recovery list': 'list accepts only --json; anything else prints its usage line and exits 2',
   'stack add --help': 'add requires <service>; a flag is refused with its usage line before the stack binary is looked up',
-  'plugins init --help': 'init requires a plugin <name>; a flag is refused with its usage line before anything is scaffolded',
   skills: '`skills` only has the `audit` verb; anything else prints its Usage and exits 2',
   'skills audit': 'audit requires <pack-path>; a flag is refused with its Usage before any pack is read',
   'local-runtime status': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
@@ -122,13 +121,9 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'openai-agents sessions': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents inspect': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
+  'config set editor --help': '`config set` refuses a help flag in either operand with its usage line (exit 2) instead of storing it',
   'jev status': '`jev status` rejects unexpected arguments with a UsageError (src/cli/jev.ts): usage, exit 2',
   'wiki ask --help': 'ask requires "<question>"; a flag is refused with its Usage line before any wiki, index or model is read',
-  'playbook list --help': `src/cli/playbook.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'playbook show': `src/cli/playbook.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'playbook new': `src/cli/playbook.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'playbook edit': `src/cli/playbook.ts UsageError: ${STRICT_VERB_PARSER}`,
-  'playbook run': `src/cli/playbook.ts UsageError: ${STRICT_VERB_PARSER}`,
 };
 
 /**
@@ -152,7 +147,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'mcp doctor': 'exit 0: probes MCP servers',
   'mcp ecosystem': 'exit 0: scans PATH for ecosystem MCP servers',
   'mcp run': 'exit 13: starts the MCP aggregation gateway on stdio',
-  'run show': 'exit 1: looks the flag up as a run id',
   runs: 'exit 0: lists past runs',
   'pulse-test': 'exit 2: runs the pulse check ("not configured"), no usage',
   swarms: 'exit 0: lists swarms',
@@ -187,11 +181,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'stack apply': 'exit 1: looks for the stack binary',
   'completions zsh': 'exit 0: prints the zsh completion script',
   'completions bash': 'exit 0: prints the bash completion script',
-  'plugins init -h': 'exit 2: validates -h as a plugin name, no usage',
-  'plugins list': 'exit 0: lists plugins',
-  'plugins info': 'exit 1: looks the flag up as a plugin name',
-  'plugins enable': 'exit 1: looks the flag up as a plugin name',
-  'plugins disable': 'exit 1: looks the flag up as an enabled plugin',
   version: 'exit 0: prints the version only',
   'jev test': 'exit 0: classifies the flag as an operator message',
   'wiki build --help': 'exit 2: "Not inside an enrolled repo", no usage',
@@ -201,7 +190,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'wiki show --help': 'exit 2: "Not inside an enrolled repo", no usage',
   'wiki show -h': 'exit 2: treats -h as a repo, no usage',
   'wiki ask -h': 'exit 1: asks the wiki the question "-h"',
-  'playbook list -h': 'exit 0: lists playbooks',
 };
 
 /** Subset of KNOWN_HELP_ACTS whose `--help` still writes, spawns or connects. Value: the effect. */
@@ -229,6 +217,31 @@ const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {
  * verb). Pinned because they were real incidents, not to replace enumeration.
  */
 const PINNED_NESTED: string[][] = [['gh', 'pr', 'create']];
+
+/**
+ * Full argv with the help flag after operands or other flags, which the
+ * `<cmd> [verb] <flag>` enumeration never produces. Each one used to act:
+ * deploy, self-update, start a run, write the genome, scaffold or enable a
+ * plugin, launch a playbook session or open an editor, or rewrite the config.
+ */
+const PINNED_ARGV: string[][] = [
+  ['ship', '--deploy', 'gh', '--confirm', '--help'],
+  ['ship', '--json', '-h'],
+  ['update', '--yes', '--help'],
+  ['upgrade', '--json', '-h'],
+  ['run', '--json', '-h'],
+  ['run', '--allow-cloud', '--help'],
+  ['learn', '--json', '-h'],
+  ['genome', 'learn', '--json', '-h'],
+  ['recall', '--json', '-h'],
+  ['plugins', 'init', 'zz-plugin', '--help'],
+  ['plugins', 'init', '--help', 'zz-plugin'],
+  ['plugins', 'enable', 'zz-plugin', '--yes', '-h'],
+  ['playbook', 'run', 'add-tests-for-module', '-h'],
+  ['playbook', 'new', 'zz-playbook', '-h'],
+  ['playbook', 'edit', 'add-tests-for-module', '--help'],
+  ['config', 'set', 'editor', '--help'],
+];
 
 // ---------------------------------------------------------------------------
 // CLI entry: fresh dist/ when available, otherwise the source through tsx
@@ -295,6 +308,7 @@ function enumerate(): { cases: HelpCase[]; verbs: Map<string, string[]> } {
     const cases = bases.flatMap((base) => FLAGS.map((flag) => ({
       key: [...base, flag].join(' '), base: base.join(' '), argv: [...base, flag], cmd: base[0]!,
     })));
+    for (const argv of PINNED_ARGV) cases.push({ key: argv.join(' '), base: argv.join(' '), argv, cmd: argv[0]! });
     return { cases, verbs };
   } finally {
     rmSync(home, { recursive: true, force: true });
