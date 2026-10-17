@@ -197,6 +197,13 @@ describe('cloud ends', () => {
     expect(r.happened).toBe('Landed as ashlrai/widget#42 @abcdef0.');
   });
 
+  it('merged then reverted: a separate reverted retro citing both commits', () => {
+    const rev = '1234567890abcdef1234567890abcdef12345678';
+    const r = retroFromCloud(cloud({ state: 'merged', pr: 42, outcome: { ...failedCi, ci: 'success', failedChecks: [], mergeSha: 'f'.repeat(40), revertedBy: rev } }), NOW);
+    expect(r).toMatchObject({ endKind: 'reverted', candidates: [], rootCause: { code: 'cloud:reverted', evidence: 'revert 1234567 of ashlrai/widget#42 @abcdef0' } });
+    expect(r.id).not.toBe(retroFromCloud(cloud({ state: 'merged', pr: 42 }), NOW).id);
+  });
+
   it('failed launch: the failure code is the cause; infra failures are not taught', () => {
     const auth = retroFromCloud(cloud({ state: 'failed', failure: 'auth', stateReason: 'Not signed in' }), NOW);
     expect(auth.rootCause!.code).toBe('cloud:auth');

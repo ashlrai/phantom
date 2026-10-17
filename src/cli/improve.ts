@@ -147,21 +147,36 @@ async function syncBacklog(): Promise<number> {
 async function observe(repo: string | undefined): Promise<number> {
   if (!repo) { console.error('Usage: phm improve observe --repo <dir>'); return 2; }
   const { appendLedger, readLedger, scoreOutcomes } = await import('../core/improve/outcomes.js');
-  const { observeOutcomes } = await import('../core/improve/observe.js');
+  const { observeCloudReverts, observeOutcomes } = await import('../core/improve/observe.js');
   const { defaultBranchOf, assertOriginIs } = await import('../core/improve/promote.js');
   const read = readLedger();
   if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
   try {
-    // Only proposals whose PR lives in this checkout's origin repository.
+    // Only registered PRs and cloud tasks whose PR lives in this checkout's origin repository.
+    const { listCloudTasks, readCloudTask, writeCloudTask } = await import('../core/cloud/store.js');
     const all = scoreOutcomes(read.records).filter((o) => o.pr);
-    const repository = all.map((o) => o.pr!.repository).find((r) => { try { assertOriginIs(r, repo); return true; } catch { return false; } });
-    if (!repository) { console.log('No registered PRs belong to this checkout\'s origin.'); return 0; }
+    const tasks = listCloudTasks(Number.MAX_SAFE_INTEGER);
+    const candidates = [...new Set([...all.map((o) => o.pr!.repository), ...tasks.filter((t) => t.state === 'merged').map((t) => t.repo)])];
+    const repository = candidates.find((r) => { try { assertOriginIs(r, repo); return true; } catch { return false; } });
+    if (!repository) { console.log('No registered PRs or merged cloud tasks belong to this checkout\'s origin.'); return 0; }
+    const branch = defaultBranchOf(repository, repo);
     const mine = all.filter((o) => o.pr!.repository.toLowerCase() === repository.toLowerCase());
-    const res = observeOutcomes(mine, repo, defaultBranchOf(repository, repo));
+    const res = observeOutcomes(mine, repo, branch);
     for (const e of res.events) appendLedger(e);
     for (const e of res.errors) console.log(`warn ${e}`);
     const reverts = res.events.filter((e) => e.type === 'observed' && e.observation === 'reverted').length;
     console.log(`ok ${res.events.length - reverts} merge(s) and ${reverts} revert(s) recorded`);
+    const cloud = observeCloudReverts(tasks, repository, repo, branch);
+    let written = 0;
+    for (const c of cloud.changes) {
+      const t = readCloudTask(c.taskId);
+      if (!t?.outcome) continue;
+      writeCloudTask({ ...t, outcome: { ...t.outcome, revertedBy: c.revertedBy } });
+      written += 1;
+    }
+    for (const e of cloud.errors) console.log(`warn ${e}`);
+    const cloudReverts = cloud.changes.filter((c) => c.revertedBy).length;
+    console.log(`ok ${cloudReverts} cloud task revert(s) and ${written - cloudReverts} re-land(s) recorded`);
     return 0;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
 }

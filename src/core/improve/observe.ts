@@ -12,6 +12,7 @@
  * the change, and the outcome earns its credit back.
  */
 import { execFileSync } from 'node:child_process';
+import type { CloudTaskV1 } from '../cloud/types.js';
 import type { LedgerEvent, ProposalOutcome } from './outcomes.js';
 
 export type ObserveExec = (cmd: string, args: string[], cwd: string) => string;
@@ -75,4 +76,43 @@ export function observeOutcomes(outcomes: readonly ProposalOutcome[], repoDir: s
     }
   }
   return { events, errors };
+}
+
+/** A merged cloud task whose revert state changed: reverted by `revertedBy`, or re-landed (null). */
+export interface CloudRevertChange { taskId: string; revertedBy: string | null }
+
+/**
+ * The same revert rules for merged cloud tasks in `repository` whose merge
+ * commit the tracker recorded. A task merged before that evidence existed has
+ * no merge sha and is left alone (unknown, not "held").
+ */
+export function observeCloudReverts(tasks: readonly CloudTaskV1[], repository: string, repoDir: string, defaultBranch: string, exec: ObserveExec = realExec): { changes: CloudRevertChange[]; errors: string[] } {
+  const changes: CloudRevertChange[] = [];
+  const errors: string[] = [];
+  const head = `refs/remotes/origin/${defaultBranch}`;
+  const mine = tasks.filter((t) => t.state === 'merged' && t.pr && t.outcome?.mergeSha && t.repo.toLowerCase() === repository.toLowerCase());
+  if (mine.length === 0) return { changes, errors };
+  try {
+    exec('git', [...GIT, 'fetch', '--no-tags', 'origin', `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`], repoDir);
+  } catch (err) {
+    return { changes, errors: [`fetch: ${(err instanceof Error ? err.message : String(err)).split('\n')[0]!.slice(0, 200)}`] };
+  }
+  for (const t of mine) {
+    const mergeSha = t.outcome!.mergeSha!;
+    const prior = t.outcome!.revertedBy ?? null;
+    try {
+      if (prior) {
+        const log = exec('git', [...GIT, 'log', '--format=%H%x1f%B%x1e', `${prior}..${head}`], repoDir);
+        if (revertOf(log, prior, '', 0)) changes.push({ taskId: t.id, revertedBy: null });
+        continue;
+      }
+      if (!onBranch(exec, repoDir, mergeSha, head)) continue;
+      const log = exec('git', [...GIT, 'log', '--format=%H%x1f%B%x1e', `${mergeSha}..${head}`], repoDir);
+      const revert = revertOf(log, mergeSha, t.repo, t.pr!.number);
+      if (revert) changes.push({ taskId: t.id, revertedBy: revert });
+    } catch (err) {
+      errors.push(`${t.id}: ${(err instanceof Error ? err.message : String(err)).split('\n')[0]!.slice(0, 200)}`);
+    }
+  }
+  return { changes, errors };
 }

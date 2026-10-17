@@ -91,6 +91,7 @@ export interface CloudEndInput {
   pr?: number | null;
   /** CI and review evidence captured at merge/close (cloud/tracker.ts); absent = unknown. */
   outcome?: {
+    revertedBy?: string | null;
     headSha: string | null;
     mergeSha: string | null;
     ci: 'success' | 'failure' | 'pending' | 'none' | null;
@@ -594,9 +595,10 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
   const asked = firstLines([input.title, input.prompt].join('\n'), 400) || '(no request recorded)';
   const kind = classifyTaskKind(`${input.title} ${input.prompt}`);
   const kinds: TaskKind[] = kind === 'other' ? [] : [kind];
-  const endKind: RetroEndKind = input.state;
+  const revertedBy = input.state === 'merged' ? input.outcome?.revertedBy ?? null : null;
+  const endKind: RetroEndKind = revertedBy ? 'reverted' : input.state;
   const common = {
-    sourceKey: `${lane}:${input.taskId}:${input.state}`,
+    sourceKey: `${lane}:${input.taskId}:${endKind}`,
     source: 'cloud' as const,
     taskId: input.taskId,
     repo: input.repo,
@@ -608,6 +610,18 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
     createdAt,
   };
   const report = input.report;
+
+  if (revertedBy) {
+    const cite = citeOutcome(input.repo, input.pr ?? null, input.outcome);
+    return baseRetro({
+      ...common,
+      happened: `Landed as ${cite}, then reverted by ${revertedBy.slice(0, 7)} on the default branch.`,
+      rootCause: { code: `${lane}:reverted`, label: 'Reverted after merge', detail: `Commit ${revertedBy.slice(0, 7)} reverted the merge${input.outcome?.mergeSha ? ` ${input.outcome.mergeSha.slice(0, 7)}` : ''}.`, evidence: `revert ${revertedBy.slice(0, 7)} of ${cite}` },
+      doDifferently: ['Find out why it was reverted before retrying similar work.'],
+      betterPrompt: null,
+      candidates: [],
+    });
+  }
 
   if (input.state === 'merged') {
     return baseRetro({

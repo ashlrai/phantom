@@ -238,7 +238,8 @@ function isOutcome(v: unknown): boolean {
     && Array.isArray(o['failedChecks']) && o['failedChecks'].length <= 20
     && o['failedChecks'].every((n) => typeof n === 'string' && n.length > 0 && n.length <= 120)
     && (o['reviewDecision'] === null || ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(o['reviewDecision'] as string))
-    && Number.isSafeInteger(o['changesRequested']) && (o['changesRequested'] as number) >= 0;
+    && Number.isSafeInteger(o['changesRequested']) && (o['changesRequested'] as number) >= 0
+    && (o['revertedBy'] === undefined || isSha(o['revertedBy']));
 }
 
 function taskPath(id: string): string {

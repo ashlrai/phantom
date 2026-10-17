@@ -51,4 +51,9 @@ describe('lessons trial', () => {
     expect(r.overall.served).toEqual({ tasks: 1, landed: 0, rate: 0 });
     expect(r.excluded).toEqual({ launchFailed: 1, unfinished: 1 });
   });
+
+  it('a cloud task that records its own revert did not land', () => {
+    const t = { ...task('merged', 'served', ['n1'], 7), outcome: { observedAt: 'x', headSha: null, mergeSha: null, ci: null, failedChecks: [], reviewDecision: null, changesRequested: 0, revertedBy: 'd'.repeat(40) } } as CloudTaskV1;
+    expect(lessonTrial([t, task('merged', 'served')]).overall.served).toEqual({ tasks: 2, landed: 1, rate: 0.5 });
+  });
 });

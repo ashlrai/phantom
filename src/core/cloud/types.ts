@@ -121,6 +121,8 @@ export interface CloudTaskOutcome {
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
   /** Reviews whose state was CHANGES_REQUESTED. */
   changesRequested: number;
+  /** Default-branch commit that reverted the merge (`phm improve observe`); null/absent = none seen. */
+  revertedBy?: string | null;
 }
 
 export interface CloudTaskPr {

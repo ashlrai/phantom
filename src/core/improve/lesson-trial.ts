@@ -87,8 +87,9 @@ function effect(scope: string, runs: readonly { arm: LessonArm; landed: boolean 
 }
 
 /**
- * The trial's result over cloud task files. `reverted` holds `prKey`s of PRs
- * reverted after merging (from `phm improve observe`); such a run did not land.
+ * The trial's result over cloud task files. A run did not land when its task
+ * records a revert (`outcome.revertedBy`) or `reverted` holds its `prKey`
+ * (improve-ledger reverts); both come from `phm improve observe`.
  */
 export function lessonTrial(tasks: readonly CloudTaskV1[], reverted: ReadonlySet<string> = new Set(), holdout: number = lessonHoldoutFraction()): LessonTrialReport {
   const excluded = { launchFailed: 0, unfinished: 0 };
@@ -97,7 +98,7 @@ export function lessonTrial(tasks: readonly CloudTaskV1[], reverted: ReadonlySet
     if (!t.lessons || t.lessons.noteIds.length === 0) continue;
     if (t.state === 'failed') { excluded.launchFailed += 1; continue; }
     if (!FINISHED.has(t.state)) { excluded.unfinished += 1; continue; }
-    const landed = t.state === 'merged' && !(t.pr && reverted.has(prKey(t.repo, t.pr.number)));
+    const landed = t.state === 'merged' && !t.outcome?.revertedBy && !(t.pr && reverted.has(prKey(t.repo, t.pr.number)));
     runs.push({ arm: t.lessons.arm, landed, noteIds: t.lessons.noteIds });
   }
   const ids = new Map<string, number>();
