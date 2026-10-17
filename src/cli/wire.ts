@@ -3,6 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
+ *   ashlr wire sync [target|all] [--apply|--undo] [--config <path>] [--json]   (dry run unless --apply)
  *   ashlr wire status [claude|codex|cursor|windsurf|gemini|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
@@ -112,6 +113,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
+    ['sync',              'Plan (default, dry run), --apply, or --undo MCP gateway entries for every client in the table. See docs.'],
     ['table',             'Print the shared client table as JSON (read-only; same data as docs/client-table.json).'],
     ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
@@ -165,6 +167,8 @@ export async function cmdWire(args: string[]): Promise<number> {
   }
 
   if (sub === 'status') return cmdWireStatus(args.slice(1));
+
+  if (sub === 'sync') return cmdWireSync(args.slice(1));
 
   // Read-only: print the shared client table (same data as docs/client-table.json).
   if (sub === 'table') {
@@ -300,4 +304,63 @@ async function cmdWireStatus(args: string[]): Promise<number> {
     console.log('');
   }
   return rows.some(r => r.error) ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// wire sync: dry run by default
+// ---------------------------------------------------------------------------
+
+async function cmdWireSync(args: string[]): Promise<number> {
+  const apply = args.includes('--apply');
+  const undo = args.includes('--undo');
+  if (apply && undo) {
+    process.stderr.write(red('error: ') + '--apply and --undo cannot be combined\n');
+    return 2;
+  }
+  const parsed = parseWireArgs(args.filter(a => a !== '--apply' && a !== '--undo'));
+  if (parsed.usageError) {
+    process.stderr.write(red('error: ') + parsed.usageError + '\n');
+    return 2;
+  }
+  const mod = await importEditors();
+  const explicit = parsed.targets.length > 0;
+  const targets: EditorTarget[] = explicit ? parsed.targets : [...mod.ALL_EDITOR_TARGETS];
+  const mode = undo ? 'undo' : apply ? 'apply' : 'dry-run';
+  const cfg = parsed.configPath ? { configPath: parsed.configPath } : {};
+
+  let rows: Array<Record<string, unknown>>;
+  let failed = false;
+  if (undo) {
+    rows = targets.map(t => {
+      const r = mod.undoEditorSync(t, cfg);
+      if (!r.restored && !/no sync backup/.test(r.detail)) failed = true;
+      return { ...r };
+    });
+  } else {
+    rows = targets.map(t => {
+      const plan = mod.planEditorSync(t, { ...cfg, force: explicit });
+      if (plan.action === 'invalid' || plan.action === 'conflict') failed = true;
+      const out = apply ? mod.applyEditorSync(plan) : { ...plan, applied: false };
+      if (apply && out.action === 'invalid') failed = true;
+      return { ...out };
+    });
+  }
+
+  if (parsed.json) {
+    process.stdout.write(JSON.stringify({ mode, clients: rows }, null, 2) + '\n');
+  } else {
+    console.log('');
+    console.log(bold('  ashlr wire sync') + gray(`  (${mode}${mode === 'dry-run' ? ': nothing is written; pass --apply' : ''})`));
+    console.log('');
+    for (const r of rows) {
+      const label = String(r['action'] ?? (r['restored'] ? 'restored' : 'no change'));
+      const tag = r['applied'] ? green('applied') : r['restored'] ? green('restored')
+        : label === 'add' ? cyan('would add') : label === 'unchanged' ? dim('unchanged')
+        : label === 'skip' ? dim('skip') : yellow(label === 'no change' ? 'no change' : label);
+      console.log(`  ${bold(pad(String(r['target']), 8))} ${tag}  ${dim(String(r['configPath']))}`);
+      console.log(`    ${dim(String(r['detail']))}${r['backupPath'] ? dim(`  backup: ${String(r['backupPath'])}`) : ''}`);
+    }
+    console.log('');
+  }
+  return failed ? 1 : 0;
 }

@@ -132,6 +132,14 @@ example `phm wire claude --config /tmp/x/.claude.json` or
 
 The Codex check matches `[mcp_servers.ashlr-hub]` in `config.toml` with line-based regexes, not a TOML parser. An entry that uses multi-line `args` or an inline table is reported as `wired, entry differs` even if it is equivalent; re-run `phm wire codex` or inspect it with `codex mcp get ashlr-hub --json`.
 
+`phm wire sync [target|all] [--apply|--undo] [--config <path>] [--json]` reconciles the `ashlr-hub` gateway entry across every client in the shared client table (`docs/client-table.json`), JSON-config clients only (Claude Code, Cursor, Windsurf, Gemini CLI). Codex is skipped because it is registered through its own CLI (`phm wire codex`).
+
+- Default is a dry run: it prints the planned action per client (`add`, `unchanged`, `conflict`, `invalid`, `skip`) and writes nothing. Without a target it plans only detected clients; name a target to plan it explicitly.
+- `--apply` adds the entry, preserves every other key, and first writes a timestamped backup next to the config (`<config>.wire-sync-<ms>-<id>.bak`) plus a small manifest (`.json`). A config that does not exist yet is created and recorded so undo can remove it.
+- It never overwrites a differing `ashlr-hub` entry (`conflict`) and never touches malformed or unsafe JSON (`invalid`). Both exit 1.
+- `--undo` restores the newest sync for that config from its backup (or removes a config sync created). It refuses if the config changed after the sync, and keeps the backup.
+- `--json` prints `{ mode, clients: [{ target, configPath, detected, action, detail, applied, backupPath? }] }` (undo rows carry `restored` instead of `action`).
+
 ### Daemon
 
 `phm daemon status|doctor|pause|resume|stop|service-status`. In this build,
