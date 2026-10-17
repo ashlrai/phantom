@@ -278,16 +278,36 @@ export function reapLeakedTempWorktrees(
       result.reaped.push(entry.path);
       unlinkQuietly(tempWorktreePatchPath(join(tmpDir, name)));
       unlinkQuietly(markerPath);
-      const branch = name.startsWith('vwt-') && entry.branch ? VERIFY_BRANCH_REF.exec(entry.branch)?.[1] : undefined;
-      if (branch) {
-        gitTry(repo, ['worktree', 'prune']);
-        if (gitTry(repo, ['branch', '-D', branch]) !== null) result.branchesDeleted.push(branch);
+      if (name.startsWith('vwt-')) {
+        // A kill inside `worktree add -b` leaves a registration whose HEAD
+        // does not name the branch yet: the id names it as well.
+        const listed = entry.branch ? VERIFY_BRANCH_REF.exec(entry.branch)?.[1] : undefined;
+        deleteVerifyBranches(repo, [listed, verifyBranchFor(name)], result);
       }
     }
     if (reapUnregisteredLeftovers(repo, registered, now, maxAge, result)) mutated = true;
     if (mutated) gitTry(repo, ['worktree', 'prune']);
   } catch { /* never throws */ }
   return result;
+}
+
+/** The scratch branch inbox/merge.ts gives the verify worktree `vwt-<id>`. */
+function verifyBranchFor(name: string): string {
+  return `ashlr/verify/${name.slice('vwt-'.length)}`;
+}
+
+/** Delete the existing ones of these `ashlr/verify/<hex>` branches. */
+function deleteVerifyBranches(
+  repo: string,
+  candidates: ReadonlyArray<string | undefined>,
+  result: ReapTempWorktreesResult,
+): void {
+  for (const branch of new Set(candidates)) {
+    if (!branch || !VERIFY_BRANCH_REF.test(`refs/heads/${branch}`)) continue;
+    if (gitTry(repo, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]) === null) continue;
+    gitTry(repo, ['worktree', 'prune']);
+    if (gitTry(repo, ['branch', '-D', branch]) !== null) result.branchesDeleted.push(branch);
+  }
 }
 
 function sameDirectory(a: string, b: string): boolean {
@@ -365,13 +385,7 @@ function reapUnregisteredLeftovers(
       } catch { /* gone */ }
     }
     mutated = true;
-    if (name.startsWith('vwt-')) {
-      const branch = `ashlr/verify/${name.slice('vwt-'.length)}`;
-      if (gitTry(repo, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]) !== null) {
-        gitTry(repo, ['worktree', 'prune']);
-        if (gitTry(repo, ['branch', '-D', branch]) !== null) result.branchesDeleted.push(branch);
-      }
-    }
+    if (name.startsWith('vwt-')) deleteVerifyBranches(repo, [verifyBranchFor(name)], result);
     unlinkQuietly(tempWorktreePatchPath(dir));
     unlinkQuietly(markerPath);
     result.reaped.push(dir);

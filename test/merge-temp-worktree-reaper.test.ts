@@ -263,6 +263,18 @@ describe('temp worktree reaper: leftovers git does not list (scripts/daemon-chao
     expect(branches(repo)).toEqual(['main']);
   });
 
+  it('deletes the id-named verify branch of a registration killed before HEAD named it', () => {
+    // A kill inside `worktree add -b`: the branch exists and the worktree is
+    // registered, but its HEAD does not name the branch yet.
+    const dir = leak(`vwt-${id}`, null);
+    git(repo, ['branch', `ashlr/verify/${id}`]);
+    mark(dir, deadPid());
+    const res = reapLeakedTempWorktrees(repo);
+    expect(res.reaped).toEqual([dir]);
+    expect(res.branchesDeleted).toEqual([`ashlr/verify/${id}`]);
+    expect(branches(repo)).toEqual(['main']);
+  });
+
   it('keeps everything while the owner is alive', () => {
     const dir = dirFor(`vwt-${id}`);
     writeTempWorktreeOwner(dir, repo);
