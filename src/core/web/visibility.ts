@@ -166,7 +166,12 @@ async function readCompleteVisibilityDecisions(cfg: unknown): Promise<Visibility
     : null;
 }
 
-/** Read and sum all tokensSaved across sessions in ~/.ashlr/stats.json. */
+/**
+ * Lifetime tokens saved from the plugin's ~/.ashlr/stats.json. The plugin
+ * drops each session's bucket at SessionEnd and keeps the running total in
+ * `lifetime.tokensSaved`, so summing `sessions` counts only open sessions.
+ * The session sum is the fallback for ledgers without a lifetime bucket.
+ */
 function readPluginSavings(): { tokens: number; usd: number } {
   try {
     const p = join(homedir(), '.ashlr', 'stats.json');
@@ -174,11 +179,16 @@ function readPluginSavings(): { tokens: number; usd: number } {
     const raw = readFileSync(p, 'utf8');
     const data = JSON.parse(raw) as {
       sessions?: Record<string, { tokensSaved?: number }>;
+      lifetime?: { tokensSaved?: number };
     };
-    if (!data.sessions || typeof data.sessions !== 'object') return { tokens: 0, usd: 0 };
     let total = 0;
-    for (const s of Object.values(data.sessions)) {
-      total += s.tokensSaved ?? 0;
+    const lifetime = data.lifetime?.tokensSaved;
+    if (typeof lifetime === 'number' && Number.isFinite(lifetime)) {
+      total = lifetime;
+    } else if (data.sessions && typeof data.sessions === 'object') {
+      for (const s of Object.values(data.sessions)) {
+        total += s.tokensSaved ?? 0;
+      }
     }
     // Approximate USD at Claude input pricing: $3 / 1M tokens
     const usd = (total / 1_000_000) * 3;

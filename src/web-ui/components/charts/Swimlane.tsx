@@ -34,6 +34,7 @@ import { useChartMotion } from './motion.js';
 import { useTextScale } from './useTextScale.js';
 import plot from './plot.module.css';
 import styles from './Swimlane.module.css';
+import { formatDateTime } from '../format/locale-format.js';
 
 export interface SwimlaneItem {
   id: string;
@@ -118,7 +119,7 @@ function defaultFormatTime(ms: number): string {
   const d = new Date(ms);
   return Number.isNaN(d.getTime())
     ? ''
-    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    : formatDateTime(d, 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 /** Short axis labels: long windows get dates, short ones get clock times — full timestamps collide. */
@@ -128,8 +129,8 @@ export function spanTickFormatter(from: number, to: number): (ms: number) => str
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return '';
     return long
-      ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      ? formatDateTime(d, 'en-US', { month: 'short', day: 'numeric' })
+      : formatDateTime(d, 'en-US', { hour: 'numeric', minute: '2-digit' });
   };
 }
 

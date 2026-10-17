@@ -14,7 +14,7 @@
  * Enter or Space jumps. Every tick has a full accessible name ("Turn 4 of
  * 12, failed: …"), so the colour is never the only signal (DESIGN §6).
  */
-import { memo, useCallback, useId, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
+import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { describeTick, type ChapterMarkerKind, type ChapterModel } from './chapter-model.js';
 import styles from './ChapterRail.module.css';
 
@@ -51,8 +51,34 @@ export const ChapterRail = memo(function ChapterRail({ model, onJumpTurn }: Chap
   const [active, setActive] = useState(-1);
   const [peek, setPeek] = useState<number | null>(null);
   const tickRefs = useRef(new Map<number, HTMLButtonElement>());
+  const rail = useRef<HTMLDivElement>(null);
   const cardId = useId();
   const total = model.ticks.length;
+  const shown = total > 0;
+
+  // The rail's height in px, kept in step with the box it is positioned in.
+  // Stretched by top + bottom alone, its height depends on that box, and the
+  // engine laid the rail and every tick out again on each streamed token
+  // (Chromium: ~2 ms of a 5 ms layout at 4x CPU with 300 turns). A fixed
+  // height lets that layout be reused. Same box either way: CSS gives equal
+  // top and bottom insets, and `bottom` is ignored once a height is set.
+  useLayoutEffect(() => {
+    const node = rail.current;
+    const box = node?.parentElement;
+    if (!node || !box || typeof ResizeObserver !== 'function') return undefined;
+    const fit = () => {
+      const inset = parseFloat(getComputedStyle(node).top) || 0;
+      const height = `${Math.max(0, box.getBoundingClientRect().height - 2 * inset)}px`;
+      if (node.style.height !== height) node.style.height = height;
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    return () => {
+      observer.disconnect();
+      node.style.height = '';
+    };
+  }, [shown]);
   // The roving stop: the operator's last tick, else the newest turn.
   const stop = active >= 0 && active < total ? active : total - 1;
 
@@ -79,7 +105,7 @@ export const ChapterRail = memo(function ChapterRail({ model, onJumpTurn }: Chap
   const peeked = peek !== null ? model.ticks[peek] ?? null : null;
 
   return (
-    <div className={styles.rail} role="toolbar" aria-orientation="vertical" aria-label="Chapters"
+    <div ref={rail} className={styles.rail} role="toolbar" aria-orientation="vertical" aria-label="Chapters"
       onKeyDown={onKeyDown} onMouseLeave={() => setPeek(null)}>
       {model.handoff ? (
         <span className={styles.handoff} role="img" aria-label="Continued from another chat" title="Continued from another chat">

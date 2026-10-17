@@ -166,6 +166,7 @@ import {
   type AutoMergeScopePolicyResolution,
 } from '../foundry/automerge-scope-policy.js';
 import { measureAutoMergeDiffScopeForGate } from '../foundry/automerge-diff-scope.js';
+import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
 import {
   judgeProposal,
   resolveFrontierJudgeClient,
@@ -306,9 +307,13 @@ const SELF_EVAL_PARITY_RETRY_DELAY_MS = 500;
  * `core.fsmonitor` command would otherwise run UNCONFINED as the daemon on the
  * next `worktree add`. No automated merge / verify flow here ever relied on a
  * hook (commits already pass --no-verify); smudge filters still apply.
+ * Replace refs are ignored for the same reason (see the body).
  */
 function gitRun(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
+  // --no-replace-objects: a refs/replace/<oid> planted in the shared object
+  // store would otherwise make every object read here (the staged tree, the
+  // merge parent) resolve to content no gate ever saw.
+  return execFileSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
     cwd,
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
@@ -1564,6 +1569,23 @@ function verificationBlockerCode(reason: string): AutoMergeGateCheckCode {
   if (reason.includes('scope cap')) return 'scope-cap';
   if (reason.includes('provenance check failed')) return 'provenance';
   return 'verification-gate';
+}
+
+const AGENT_INSTRUCTION_FILES = new Set(['agents.md', 'claude.md', 'constitution.md', 'gemini.md', '.mcp.json']);
+const AGENT_CONFIG_DIRS = new Set(['.claude', '.cursor', '.codex']);
+
+/**
+ * Files every later agent session reads as instructions or runs as tool
+ * config (AGENTS.md, CLAUDE.md, CONSTITUTION.md, .mcp.json, .claude/ and the
+ * like). An unattended local merge never lands them: a proposal could
+ * otherwise rewrite the rules the next agent follows, or register a command
+ * that runs on the owner's machine.
+ */
+function isAgentInstructionPath(path: string): boolean {
+  const segments = path.replace(/\\/g, '/').toLowerCase().split('/').filter((segment) => segment.length > 0);
+  if (segments.length === 0) return false;
+  if (AGENT_INSTRUCTION_FILES.has(segments[segments.length - 1]!)) return true;
+  return segments.slice(0, -1).some((segment) => AGENT_CONFIG_DIRS.has(segment));
 }
 
 /**
@@ -3321,6 +3343,7 @@ function mergeLocally(
   repo: string,
   branch: string,
   base: string,
+  expectedProposalHead: string,
   expectedBaseHead?: string,
   finalAuthority?: () => string | null,
 ): { ok: false; detail: string } | {
@@ -3369,11 +3392,20 @@ function mergeLocally(
       };
     }
   }
-  const proposalHeadOid = gitTry(repo, ['rev-parse', '--verify', branch]);
+  // Resolve the full branch ref, never the short name: a tag or another ref
+  // named like the staging branch would otherwise win, and the gated commit is
+  // the one buildMergeBranch staged, so anything else is refused.
+  const proposalHeadOid = gitTry(repo, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]);
   if (!proposalHeadOid || !/^[a-f0-9]{40}$/i.test(proposalHeadOid)) {
     return {
       ok: false,
       detail: `could not resolve proposal head '${branch}' before local merge`,
+    };
+  }
+  if (proposalHeadOid.toLowerCase() !== expectedProposalHead.toLowerCase()) {
+    return {
+      ok: false,
+      detail: `proposal branch '${branch}' moved since it was staged (staged ${expectedProposalHead.slice(0, 8)}, now ${proposalHeadOid.slice(0, 8)}) — refusing local merge`,
     };
   }
 
@@ -3901,6 +3933,30 @@ export async function autoMergeProposal(
       if (!scope.ok) {
         return refuse(`malformed diff scope (${scope.reason})`, repo);
       }
+      // Gate 5.6: the same protected-path (G1) and test-tampering (G1b) rules
+      // the fleet merge gates apply. classifyRisk alone rates gate code,
+      // CONSTITUTION.md and AGENTS.md as low or medium risk, so without this a
+      // proposal could auto-merge a change to the rules that judge it.
+      const protectedHits = protectedPathHits(scope.touchedPaths, { selfRepo: isSelfTargetProposal(proposal, cfg) });
+      if (protectedHits.length > 0) {
+        const listed = protectedHits.slice(0, 3).map((hit) => `${hit.path} (${hit.ruleId})`).join(', ');
+        return refuse(`protected path: ${listed} — left for owner review, never auto-merged`, repo);
+      }
+      const instructionHits = scope.touchedPaths.filter(isAgentInstructionPath);
+      if (instructionHits.length > 0) {
+        return refuse(
+          `protected path: ${instructionHits.slice(0, 3).join(', ')} (agent-instructions) — left for owner review, never auto-merged`,
+          repo,
+        );
+      }
+      const tamper = detectTestTampering(diff);
+      if (tamper.parseError) {
+        return refuse(`test tampering could not be ruled out: ${tamper.parseError}`, repo);
+      }
+      if (tamper.findings.length > 0) {
+        return refuse(`test tampering: ${tamper.findings.slice(0, 3).map((f) => f.detail).join('; ')}`, repo);
+      }
+
       const scopeFiles = scope.files;
       const scopeLines = scope.lines;
       scopeFilesForEvidence = scopeFiles;
@@ -4937,7 +4993,7 @@ export async function autoMergeProposal(
           (signedEvidenceSealIsLive(id, evidencePackDigest)
             ? null
             : 'signed evidence seal is no longer live during local merge');
-        const local = mergeLocally(repo, branch, base, boundBaseHead, localAuthority);
+        const local = mergeLocally(repo, branch, base, stagedHead, boundBaseHead, localAuthority);
         if (!local.ok) return { local, receiptPersisted: false };
         if (!stillOwnsFence()) return { local, receiptPersisted: false };
         // Keep the fence through the durable receipt. Revocation that loses this
