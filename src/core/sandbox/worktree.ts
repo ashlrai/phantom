@@ -42,7 +42,7 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { availableParallelism, homedir, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -183,32 +183,130 @@ function releaseSandboxCleanupAuthority(lease: SandboxCleanupAuthorityLease): vo
 // ---------------------------------------------------------------------------
 
 /**
- * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. Conservative default:
- * the daemon caps swarm concurrency at 8 (loop.ts) + runner MAX_PARALLEL=8, so
- * 16 leaves ~2x headroom for concurrent daemon swarms + a manual `ashlr swarm`
- * + transient overlap, while still bounding unbounded accumulation. createSandbox
- * sweeps STALE orphans first, then REFUSES (clean audited error) if still over.
+ * H5 CHANGE 4 — hard cap on concurrent on-disk sandboxes. createSandbox sweeps
+ * STALE orphans first, then REFUSES (clean audited error) if still over.
+ *
+ * MACHINE-DERIVED DEFAULT: the default cap is sized to the host instead of a
+ * fixed number. Each live sandbox costs a full working-tree checkout (objects
+ * are shared), ~50 KB of git admin data, a scratch branch, O(n) cap-check and
+ * orphan-sweep work under the creation lock, and an agent process (~160 MB RSS
+ * measured). So the derived value is
+ *   min(cpus * SANDBOX_CAP_PER_CPU, floor(totalmem / SANDBOX_CAP_MEM_PER_AGENT))
+ * clamped to [SANDBOX_CAP_FLOOR, SANDBOX_CAP_CEILING]. The floor is the old
+ * fixed default (16): it already leaves ~2x headroom over the daemon's default
+ * total dispatch concurrency of 8 (daemon/count-preferences.ts), so a small
+ * machine never gets a tighter cap than before. The ceiling keeps the O(n)
+ * work under the creation lock and the worst-case disk footprint bounded on
+ * very large hosts. Free disk space is deliberately NOT an input: the floor
+ * means it could only ever move the cap between the derived value and 16, the
+ * per-sandbox checkout size depends on the repository being sandboxed, and a
+ * full disk already fails `git worktree add` cleanly. The machine-derived value
+ * is computed once per process (cpu count and total memory do not change).
  *
  * CONFIGURABLE: an operator (or a deterministic test) may override the default
  * via ASHLR_MAX_SANDBOXES (a positive integer). Resolved at CALL TIME — like the
  * HOME-sensitive path helpers — so a test can set a small cap without restarting
  * the process. An absent/blank/invalid/non-positive value falls back to the
- * conservative default; the override can only ever SET a finite positive bound
- * (it can never disable the cap), keeping this a strictly LOCAL resource guard.
+ * machine-derived default; the override can only ever SET a finite positive
+ * bound (it can never disable the cap), keeping this a strictly LOCAL resource
+ * guard. The override is not clamped: an operator may set it below the floor or
+ * above the ceiling.
  */
-const MAX_SANDBOXES_DEFAULT = 16;
+export const SANDBOX_CAP_FLOOR = 16;
+export const SANDBOX_CAP_CEILING = 64;
+/** Sandboxes allowed per logical CPU (agents mostly wait on inference). */
+export const SANDBOX_CAP_PER_CPU = 2;
+/** Memory budgeted per sandboxed agent (~3x the measured ~160 MB RSS). */
+export const SANDBOX_CAP_MEM_PER_AGENT = 512 * 1024 * 1024;
 
-/** Resolve the effective sandbox cap (env override, else conservative default). */
-function maxSandboxes(): number {
-  const raw = process.env.ASHLR_MAX_SANDBOXES;
+/** Host facts the default sandbox cap is derived from. */
+export interface SandboxCapMachine {
+  /** Logical CPUs available to this process (os.availableParallelism()). */
+  cpus: number;
+  /** Total system memory in bytes (os.totalmem()). */
+  totalMemBytes: number;
+}
+
+/** The effective sandbox cap and where it came from. */
+export interface SandboxCapResolution {
+  cap: number;
+  /** 'env' = ASHLR_MAX_SANDBOXES override; 'machine' = derived from the host. */
+  source: 'env' | 'machine';
+  /** One-line human explanation, for doctor and diagnostics. */
+  reason: string;
+}
+
+/**
+ * Pure derivation of the default cap from host facts. Non-finite or
+ * non-positive inputs count as the minimum (1 CPU, 0 bytes), which lands on
+ * the floor. Never throws.
+ */
+export function deriveSandboxCap(machine: SandboxCapMachine): SandboxCapResolution {
+  const cpus = Number.isFinite(machine.cpus) && machine.cpus >= 1 ? Math.floor(machine.cpus) : 1;
+  const mem = Number.isFinite(machine.totalMemBytes) && machine.totalMemBytes > 0 ? machine.totalMemBytes : 0;
+  const byCpu = cpus * SANDBOX_CAP_PER_CPU;
+  const byMem = Math.floor(mem / SANDBOX_CAP_MEM_PER_AGENT);
+  const derived = Math.min(byCpu, byMem);
+  const cap = Math.min(SANDBOX_CAP_CEILING, Math.max(SANDBOX_CAP_FLOOR, derived));
+  const gib = (mem / 1024 ** 3).toFixed(1);
+  const clamp = derived < SANDBOX_CAP_FLOOR
+    ? `, raised to the floor ${SANDBOX_CAP_FLOOR}`
+    : derived > SANDBOX_CAP_CEILING
+      ? `, lowered to the ceiling ${SANDBOX_CAP_CEILING}`
+      : '';
+  return {
+    cap,
+    source: 'machine',
+    reason: `derived from ${cpus} CPUs and ${gib} GiB RAM (min(${byCpu}, ${byMem}) = ${derived}${clamp})`,
+  };
+}
+
+function readSandboxCapMachine(): SandboxCapMachine {
+  let cpus = 1;
+  try {
+    cpus = availableParallelism();
+  } catch {
+    cpus = 1;
+  }
+  let totalMemBytes = 0;
+  try {
+    totalMemBytes = totalmem();
+  } catch {
+    totalMemBytes = 0;
+  }
+  return { cpus, totalMemBytes };
+}
+
+let machineSandboxCap: SandboxCapResolution | null = null;
+
+/**
+ * Resolve the effective sandbox cap: a valid ASHLR_MAX_SANDBOXES override wins
+ * (read on every call), else the machine-derived default (computed once per
+ * process). `machine` injects host facts for tests and bypasses the cache.
+ * Never throws.
+ */
+export function resolveSandboxCap(opts?: {
+  env?: NodeJS.ProcessEnv;
+  machine?: SandboxCapMachine;
+}): SandboxCapResolution {
+  const raw = (opts?.env ?? process.env).ASHLR_MAX_SANDBOXES;
   if (raw !== undefined && raw.trim() !== '') {
     const n = Number.parseInt(raw, 10);
     // Only a finite, positive integer override takes effect; anything else
-    // (NaN, <=0, non-numeric) falls back to the safe default. The override can
-    // never remove the bound — it can only set a different finite positive one.
-    if (Number.isInteger(n) && n > 0) return n;
+    // (NaN, <=0, non-numeric) falls back to the machine default. The override
+    // can never remove the bound — it can only set a different finite one.
+    if (Number.isInteger(n) && n > 0) {
+      return { cap: n, source: 'env', reason: `ASHLR_MAX_SANDBOXES=${n}` };
+    }
   }
-  return MAX_SANDBOXES_DEFAULT;
+  if (opts?.machine) return deriveSandboxCap(opts.machine);
+  machineSandboxCap ??= deriveSandboxCap(readSandboxCapMachine());
+  return machineSandboxCap;
+}
+
+/** Resolve the effective sandbox cap (env override, else machine-derived default). */
+function maxSandboxes(): number {
+  return resolveSandboxCap().cap;
 }
 
 /**
@@ -2464,7 +2562,7 @@ function registerSandboxWhileFenced(
   // clean error) rather than accumulate unboundedly. This removes NOTHING in-use
   // and opens no outward capability — it only bounds on-disk worktree growth so a
   // pathological crash/restart loop can never fill the disk. The cap is resolved
-  // at call time (env-overridable; conservative default) — see maxSandboxes().
+  // at call time (env-overridable; machine-derived default) — see maxSandboxes().
   const creationLock = acquireCleanupLock('creation');
   if (!creationLock) throw new Error('sandbox creation lock unavailable');
   let id: string;

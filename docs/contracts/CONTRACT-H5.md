@@ -177,11 +177,28 @@ before/around `git worktree add` at lines 219-227). Add a new module constant
    result:'refused', summary:'sandbox cap reached' })` and throw a clean error
    (`sandbox cap reached (MAX_SANDBOXES=...)`). Never removes a non-stale/in-use sandbox.
 
-**Threshold — `MAX_SANDBOXES`:** conservative default **16**. The daemon caps concurrency at 8
-(`loop.ts:65`, runner `MAX_PARALLEL=8`), so 16 leaves 2x headroom for concurrent daemon swarms +
-a manual `ashlr swarm` + transient overlap, while still bounding unbounded accumulation. A
-total-bytes budget is documented as a FUTURE option but NOT required for H5 (count cap is the
-minimal sufficient guard).
+**Threshold — `MAX_SANDBOXES`:** machine-derived, resolved at call time by
+`resolveSandboxCap()` (exported with `deriveSandboxCap()`, `SANDBOX_CAP_FLOOR`,
+`SANDBOX_CAP_CEILING`, `SANDBOX_CAP_PER_CPU` and `SANDBOX_CAP_MEM_PER_AGENT`):
+
+- `ASHLR_MAX_SANDBOXES` set to a finite positive integer wins, read on every call and not clamped.
+  Any other value (blank, `0`, negative, non-numeric) is ignored; the override can never disable
+  the cap.
+- Otherwise the default is `clamp(min(cpus * 2, floor(totalmem / 512 MiB)), 16, 64)`, where `cpus`
+  is `os.availableParallelism()`. It is computed once per process. Each sandbox costs a working-tree
+  checkout (objects shared), ~50 KB of git admin data, a scratch branch, O(n) cap-check and sweep
+  work under the creation lock, and an agent process (~160 MB RSS measured), so 512 MiB per agent
+  is ~3x headroom.
+- The floor **16** is the original fixed default: it leaves 2x headroom over the daemon's default
+  total dispatch concurrency of 8 (`daemon/count-preferences.ts`), so no machine gets a tighter cap
+  than before. The ceiling **64** bounds the O(n) locked work and worst-case disk on large hosts.
+- Free disk space is not an input: with the floor at 16 it could only move the cap between the
+  derived value and 16, checkout size depends on the sandboxed repository, and a full disk already
+  fails `git worktree add` cleanly.
+
+`ashlr doctor`'s `sandbox-health` probe reports the effective cap and its reason (via
+`readSandboxHealth()` in `readiness.ts`). A total-bytes budget is documented as a FUTURE option but
+NOT required for H5 (count cap is the minimal sufficient guard).
 
 **Why it STRENGTHENS:** there is NO cap on sandbox count/disk today, so a pathological
 crash/restart loop could fill the disk with worktrees. The cap bounds it, and because step 2
@@ -267,10 +284,12 @@ policy source TEXT for the `kill-switch-precedence` check; it asserts `killSwitc
 
 4. **DISK-CAP-BOUNDED** — sandbox count never exceeds `MAX_SANDBOXES`; on overflow the sweep
    runs first, then a clean audited refusal — never removing a non-stale sandbox.
-   *Proof:* `test/h5.disk-cap.test.ts` — create up to `MAX_SANDBOXES` fresh sandboxes; the next
+   *Proof:* `test/h5.disk-cap.test.ts` — with a small `ASHLR_MAX_SANDBOXES`, create up to the cap
+   in fresh sandboxes; the next
    `createSandbox` first sweeps (no stale → no removal) then THROWS `sandbox cap reached` +
    audits `refused`; back-date one to stale, retry → sweep reclaims it, creation now succeeds;
-   assert no live sandbox was removed.
+   assert no live sandbox was removed. The same suite proves the machine-derived default with
+   injected cpu/memory facts (floor, ceiling, cpu- and memory-bound cases, override precedence).
 
 5. **NO-PROD-BEHAVIOR-REGRESSION** — production callers are unchanged by the env-gate.
    *Proof:* `test/h5.allowanyrepo-envgate.test.ts` — assert (static read) `runner.ts` calls

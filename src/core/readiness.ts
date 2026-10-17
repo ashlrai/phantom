@@ -48,7 +48,7 @@ import {
   loadDaemonStateStrict,
   daemonStatePath,
 } from './daemon/state.js';
-import { listSandboxes, ORPHAN_STALE_MS } from './sandbox/worktree.js';
+import { listSandboxes, ORPHAN_STALE_MS, resolveSandboxCap } from './sandbox/worktree.js';
 import { getPhantomStatus } from './phantom.js';
 import { discoverMcpServers } from './mcp-registry.js';
 import type { PhantomStatus } from './types.js';
@@ -425,9 +425,12 @@ export function readDaemonHealth(): {
  * + an orphan estimate. A sandbox is counted as an orphan when its owner pid is
  * no longer alive AND it is older than ORPHAN_STALE_MS (mirrors the sweep's two
  * guards — a LIVE owner pid is NEVER counted as an orphan regardless of age).
- * Read-only; removes NOTHING. Never throws.
+ * Also reports the effective concurrent-sandbox cap and why (env override or
+ * machine-derived; see resolveSandboxCap). Read-only; removes NOTHING. Never
+ * throws.
  */
-export function readSandboxHealth(): { total: number; orphans: number } {
+export function readSandboxHealth(): { total: number; orphans: number; cap: number; capReason: string } {
+  const { cap, reason: capReason } = resolveSandboxCap();
   try {
     const sandboxes = listSandboxes();
     const now = Date.now();
@@ -451,9 +454,9 @@ export function readSandboxHealth(): { total: number; orphans: number } {
         orphans++;
       }
     }
-    return { total: sandboxes.length, orphans };
+    return { total: sandboxes.length, orphans, cap, capReason };
   } catch {
-    return { total: 0, orphans: 0 };
+    return { total: 0, orphans: 0, cap, capReason };
   }
 }
 

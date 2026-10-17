@@ -9,7 +9,9 @@
  *
  * The cap is exercised with a SMALL deterministic bound via the ASHLR_MAX_SANDBOXES
  * env override (resolved at call time by worktree.ts's maxSandboxes()), so the
- * suite proves the real createSandbox cap logic without creating 16 worktrees.
+ * suite proves the real createSandbox cap logic without creating 16+ worktrees.
+ * The machine-derived default is proven with injected cpu/memory facts, never
+ * the CI host's.
  * Every it() has a real expect() + expect.hasAssertions(). Isolated tmp HOME +
  * disposable repos. The allowAnyRepo env toggle is set so tmp repos can be
  * sandboxed (and stays correct whether or not CHANGE 3's env-gate has landed).
@@ -24,6 +26,10 @@ import {
   listSandboxes,
   sandboxesDir,
   ORPHAN_STALE_MS,
+  deriveSandboxCap,
+  resolveSandboxCap,
+  SANDBOX_CAP_FLOOR,
+  SANDBOX_CAP_CEILING,
 } from '../src/core/sandbox/worktree.js';
 import { readAudit } from '../src/core/sandbox/audit.js';
 import {
@@ -276,5 +282,93 @@ describe('H5 · sandbox disk/count cap · DISK-CAP-BOUNDED', () => {
     expect(after).toContain(ids[1]); // live (this process) owner untouched
     expect(after).toContain(fresh.id);
     expect(existsSync(join(sandboxesDir(), ids[0]!))).toBe(false);
+  });
+});
+
+describe('H5 · sandbox cap · machine-derived default', () => {
+  const GiB = 1024 ** 3;
+
+  it('floor and ceiling are 16 and 64', () => {
+    expect.hasAssertions();
+    expect(SANDBOX_CAP_FLOOR).toBe(16);
+    expect(SANDBOX_CAP_CEILING).toBe(64);
+  });
+
+  it('small machines never drop below the floor (16)', () => {
+    expect.hasAssertions();
+    for (const m of [
+      { cpus: 1, totalMemBytes: 1 * GiB },
+      { cpus: 2, totalMemBytes: 4 * GiB },
+      { cpus: 4, totalMemBytes: 16 * GiB }, // min(8, 32) = 8
+      { cpus: 64, totalMemBytes: 2 * GiB }, // memory-bound: 4
+    ]) {
+      const r = deriveSandboxCap(m);
+      expect(r.cap).toBe(16);
+      expect(r.source).toBe('machine');
+      expect(r.reason).toMatch(/raised to the floor 16/);
+    }
+  });
+
+  it('mid-size machines get min(cpus*2, totalmem/512MiB)', () => {
+    expect.hasAssertions();
+    expect(deriveSandboxCap({ cpus: 12, totalMemBytes: 32 * GiB }).cap).toBe(24); // cpu-bound
+    expect(deriveSandboxCap({ cpus: 16, totalMemBytes: 64 * GiB }).cap).toBe(32); // cpu-bound
+    expect(deriveSandboxCap({ cpus: 32, totalMemBytes: 10 * GiB }).cap).toBe(20); // memory-bound
+    const r = deriveSandboxCap({ cpus: 10, totalMemBytes: 24 * GiB });
+    expect(r.cap).toBe(20);
+    expect(r.reason).toBe('derived from 10 CPUs and 24.0 GiB RAM (min(20, 48) = 20)');
+  });
+
+  it('big machines are held at the ceiling (64)', () => {
+    expect.hasAssertions();
+    const r = deriveSandboxCap({ cpus: 128, totalMemBytes: 512 * GiB });
+    expect(r.cap).toBe(64);
+    expect(r.reason).toMatch(/lowered to the ceiling 64/);
+  });
+
+  it('garbage host facts fall back to the floor and never throw', () => {
+    expect.hasAssertions();
+    for (const m of [
+      { cpus: Number.NaN, totalMemBytes: Number.NaN },
+      { cpus: 0, totalMemBytes: -1 },
+      { cpus: Number.POSITIVE_INFINITY, totalMemBytes: Number.POSITIVE_INFINITY },
+    ]) {
+      expect(deriveSandboxCap(m).cap).toBe(16);
+    }
+  });
+
+  it('a valid ASHLR_MAX_SANDBOXES override wins over the machine value, unclamped', () => {
+    expect.hasAssertions();
+    const machine = { cpus: 128, totalMemBytes: 512 * GiB };
+    expect(resolveSandboxCap({ env: { ASHLR_MAX_SANDBOXES: '3' }, machine })).toEqual({
+      cap: 3, source: 'env', reason: 'ASHLR_MAX_SANDBOXES=3',
+    });
+    expect(resolveSandboxCap({ env: { ASHLR_MAX_SANDBOXES: '200' }, machine }).cap).toBe(200);
+  });
+
+  it('an invalid override can never disable the cap: it falls back to the machine value', () => {
+    expect.hasAssertions();
+    const machine = { cpus: 16, totalMemBytes: 64 * GiB };
+    for (const raw of ['', '   ', '0', '-5', 'abc', 'NaN', 'Infinity']) {
+      const r = resolveSandboxCap({ env: { ASHLR_MAX_SANDBOXES: raw }, machine });
+      expect(r.source).toBe('machine');
+      expect(r.cap).toBe(32);
+    }
+    expect(resolveSandboxCap({ env: {}, machine }).cap).toBe(32);
+  });
+
+  it('the override is read from process.env on every call; the host default is cached and bounded', () => {
+    expect.hasAssertions();
+    prevCap = process.env[CAP_KEY];
+    delete process.env[CAP_KEY];
+    const host = resolveSandboxCap();
+    expect(host.source).toBe('machine');
+    expect(host.cap).toBeGreaterThanOrEqual(16);
+    expect(host.cap).toBeLessThanOrEqual(64);
+    expect(resolveSandboxCap()).toBe(host); // cached per process
+    process.env[CAP_KEY] = '5';
+    expect(resolveSandboxCap().cap).toBe(5);
+    delete process.env[CAP_KEY];
+    expect(resolveSandboxCap().cap).toBe(host.cap);
   });
 });

@@ -143,7 +143,7 @@ fails-the-process for a merely-empty fresh install:**
 | 2 | `daemon-state`     | Daemon state           | `readDaemonHealth()` → `loadDaemonState()` | pass when stopped/healthy; warn if `running` with a live pid is unexpected; the H5 reconcile already self-heals a dead-pid flag |
 | 3 | `kill-switch`      | Kill switch            | `readKillState()` → `killSwitchOn()`       | pass when OFF; warn when ON (autonomy paused) |
 | 4 | `ashlr-writeable`  | `~/.ashlr` writeable   | `checkAshlrWriteable()` (sentinel write+unlink under `CONFIG_DIR`) | pass when writeable; **fail** when not (nothing can persist) |
-| 5 | `sandbox-health`   | Sandbox health         | `readSandboxHealth()` → `listSandboxes()`  | pass when 0/low; warn on high orphan count with `ashlr sandbox gc` fix hint |
+| 5 | `sandbox-health`   | Sandbox health         | `readSandboxHealth()` → `listSandboxes()`  | pass when 0/low; warn on high orphan count with `ashlr sandbox gc` fix hint; detail names the effective sandbox cap and its reason (`resolveSandboxCap()`) |
 
 **READ-ONLY JUSTIFICATION.** Four of five are pure reads. The fifth (`ashlr-writeable`) writes +
 immediately `unlink`s a private sentinel under the ISOLATED `CONFIG_DIR` (no repo, no guard, no
