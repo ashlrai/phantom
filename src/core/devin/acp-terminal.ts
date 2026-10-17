@@ -51,11 +51,11 @@ export async function callVerseTool(mcp: Pick<DevinTurnVerseMcp, 'url' | 'token'
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
-  if (!response.ok) throw new Error(response.status === 401 || response.status === 404 ? 'Verse tools are no longer available to this turn' : `Verse answered ${response.status}`);
+  if (!response.ok) throw new Error(response.status === 401 || response.status === 404 ? 'Phantom tools are no longer available to this turn' : `Phantom answered ${response.status}`);
   const body: unknown = await response.json();
   const result = isRecord(body) && isRecord(body['result']) ? body['result'] : null;
   if (!result) {
-    const message = isRecord(body) && isRecord(body['error']) && typeof body['error']['message'] === 'string' ? body['error']['message'] : 'Verse refused the call';
+    const message = isRecord(body) && isRecord(body['error']) && typeof body['error']['message'] === 'string' ? body['error']['message'] : 'Phantom refused the call';
     throw new Error(message);
   }
   const content = Array.isArray(result['content']) ? result['content'] : [];
@@ -132,7 +132,7 @@ export function createAcpTerminalRouter(mcp: DevinTurnVerseMcp, opts: { fetch?: 
             const answer = await call('terminal_run', { command: line, wait: 'none' });
             if (answer.isError) return fail(answer.text);
             const tabId = typeof answer.header['tab_id'] === 'string' ? answer.header['tab_id'] : null;
-            if (!tabId) return fail('Verse did not say which terminal ran the command');
+            if (!tabId) return fail('Phantom did not say which terminal ran the command');
             const limit = typeof params['outputByteLimit'] === 'number' && params['outputByteLimit'] > 0 ? Math.floor(params['outputByteLimit']) : null;
             const terminalId = `vt_${(counter += 1)}_${tabId}`;
             terminals.set(terminalId, { tabId, blockId: typeof answer.header['block_id'] === 'string' ? answer.header['block_id'] : null, outputLimit: limit });

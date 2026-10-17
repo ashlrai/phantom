@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VerseEvent } from '../../data/api-types.js';
 import { ev, session } from './fixtures.test-support.js';
 import { parseVerseEventFrame, VERSE_EVENT_TYPES } from './verse-events.js';
-import { bestOf, median, openLastTurn, realisticLog, stamp } from './verse-perf.test-support.js';
+import { median, openLastTurn, quietestOf, realisticLog, stamp } from './verse-perf.test-support.js';
 import {
   applyContextReading,
   applyUsageFrame,
@@ -367,7 +367,7 @@ describe('verse store — V3.9 context events', () => {
     expect(getVerseSessionState('vs_1').session!.usage).toMatchObject({ contextWindow: 65_536, autoCompactAt: 32_536, contextWindowSource: 'runtime' });
   });
 
-  it('never lets a reading move a LOCAL window: Verse sets that one itself', () => {
+  it('never lets a reading move a LOCAL window: Phantom sets that one itself', () => {
     const local = session({ engine: 'local', seatId: 'local:qwen3-coder', model: 'qwen3-coder', usage: { ...session().usage, contextWindow: 65_536, autoCompactAt: 32_536 } });
     seedVerseSession('vs_1', local, []);
     applyVerseEvent('vs_1', ev(1, 'context', { turnId: 't1', contextTokens: 30_000, contextWindow: 200_000, exact: true }));
@@ -789,13 +789,16 @@ describe('client data path — §1 targets (best of several runs)', () => {
   it('replays 5k events in < 10 ms and 10k in < 25 ms (was 2.45 s / 17 s)', () => {
     const five = realisticLog(5000);
     const ten = realisticLog(10_000);
-    const results = {
-      seed5k: bestOf(7, () => replay(five, 'seed')),
-      stream5k: bestOf(7, () => replay(five, 'stream')),
-      seed10k: bestOf(7, () => replay(ten, 'seed')),
-      stream10k: bestOf(7, () => replay(ten, 'stream')),
-    };
-    console.info('[verse-perf] replay ms', { events: [five.length, ten.length], turns: getVerseTranscript('vs_bench').segments?.length },
+    // Quietest of interleaved rounds (see quietestOf): a hosted runner under
+    // load once measured 10.11 ms here when all seven back-to-back samples
+    // landed in one busy stretch. The limits are the spec's, unchanged.
+    const { best: results, rounds } = quietestOf({
+      seed5k: { run: () => replay(five, 'seed'), limitMs: 10 },
+      stream5k: { run: () => replay(five, 'stream'), limitMs: 10 },
+      seed10k: { run: () => replay(ten, 'seed'), limitMs: 25 },
+      stream10k: { run: () => replay(ten, 'stream'), limitMs: 25 },
+    });
+    console.info('[verse-perf] replay ms', { events: [five.length, ten.length], turns: getVerseTranscript('vs_bench').segments?.length, rounds },
       Object.fromEntries(Object.entries(results).map(([k, v]) => [k, Number(v.toFixed(2))])));
     expect(results.seed5k).toBeLessThan(10);
     expect(results.stream5k).toBeLessThan(10);

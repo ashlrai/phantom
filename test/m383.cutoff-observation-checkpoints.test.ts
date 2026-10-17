@@ -15,7 +15,78 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Observes (and can fail) the node:fs calls that add or remove a directory
+// entry. root bypasses DAC mode bits, so a 0o500 directory still accepts new
+// entries (a lock file, a temp file, a rename) from uid 0. As root the hook
+// raises the EACCES a user gets from the kernel for any entry change beneath
+// a read-only directory, and records each attempt so the case can assert the
+// read made none.
+const entryHook = vi.hoisted(() => ({
+  readOnlyDirs: [] as string[],
+  attempts: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const guarded = (target: unknown): boolean => entryHook.readOnlyDirs.some((dir) => String(target).startsWith(`${dir}/`));
+  const deny = (syscall: string, target: unknown): never => {
+    entryHook.attempts.push(`${syscall} ${String(target)}`);
+    throw Object.assign(new Error(`EACCES: permission denied, ${syscall} '${String(target)}'`), {
+      code: 'EACCES',
+      errno: -13,
+      syscall,
+      path: String(target),
+    });
+  };
+  const creates = (flags: unknown): boolean => typeof flags === 'string'
+    ? /[wax]/.test(flags)
+    : typeof flags === 'number' && (flags & actual.constants.O_CREAT) !== 0;
+  const missing = (target: unknown): boolean => !actual.existsSync(String(target));
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    if (guarded(args[0]) && creates(args[1]) && missing(args[0])) deny('open', args[0]);
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  const writeFileSync = ((...args: Parameters<typeof actual.writeFileSync>) => {
+    if (guarded(args[0]) && missing(args[0])) deny('open', args[0]);
+    actual.writeFileSync(...args);
+  }) as typeof actual.writeFileSync;
+  const appendFileSync = ((...args: Parameters<typeof actual.appendFileSync>) => {
+    if (guarded(args[0]) && missing(args[0])) deny('open', args[0]);
+    actual.appendFileSync(...args);
+  }) as typeof actual.appendFileSync;
+  const mkdirSync = ((...args: Parameters<typeof actual.mkdirSync>) => {
+    if (guarded(args[0]) && missing(args[0])) deny('mkdir', args[0]);
+    return actual.mkdirSync(...args);
+  }) as typeof actual.mkdirSync;
+  const linkSync = ((...args: Parameters<typeof actual.linkSync>) => {
+    if (guarded(args[1])) deny('link', args[1]);
+    actual.linkSync(...args);
+  }) as typeof actual.linkSync;
+  const symlinkSync = ((...args: Parameters<typeof actual.symlinkSync>) => {
+    if (guarded(args[1])) deny('symlink', args[1]);
+    actual.symlinkSync(...args);
+  }) as typeof actual.symlinkSync;
+  const renameSync = ((...args: Parameters<typeof actual.renameSync>) => {
+    if (guarded(args[0]) || guarded(args[1])) deny('rename', args[guarded(args[0]) ? 0 : 1]);
+    actual.renameSync(...args);
+  }) as typeof actual.renameSync;
+  const unlinkSync = ((...args: Parameters<typeof actual.unlinkSync>) => {
+    if (guarded(args[0])) deny('unlink', args[0]);
+    actual.unlinkSync(...args);
+  }) as typeof actual.unlinkSync;
+  const rmSync = ((...args: Parameters<typeof actual.rmSync>) => {
+    if (guarded(args[0]) && !missing(args[0])) deny('rm', args[0]);
+    actual.rmSync(...args);
+  }) as typeof actual.rmSync;
+  const rmdirSync = ((...args: Parameters<typeof actual.rmdirSync>) => {
+    if (guarded(args[0])) deny('rmdir', args[0]);
+    actual.rmdirSync(...args);
+  }) as typeof actual.rmdirSync;
+  const wrapped = { openSync, writeFileSync, appendFileSync, mkdirSync, linkSync, symlinkSync, renameSync, unlinkSync, rmSync, rmdirSync };
+  return { ...actual, ...wrapped, default: { ...actual, ...wrapped } };
+});
+const RUNNING_AS_ROOT = process.getuid?.() === 0;
 import {
   cutoffObservationCheckpointLedgerPath,
   cutoffObservationCheckpointRootPath,
@@ -116,6 +187,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  entryHook.readOnlyDirs.length = 0;
+  entryHook.attempts.length = 0;
   if (oldHome === undefined) delete process.env.HOME;
   else process.env.HOME = oldHome;
   if (oldAshlrHome === undefined) delete process.env.ASHLR_HOME;
@@ -336,13 +409,23 @@ describe('M383 authenticated cutoff observation checkpoints', () => {
     const fleetPath = join(home, '.ashlr', 'fleet');
     const lock = join(fleetPath, '.cutoff-observation-checkpoints.lock');
     chmodSync(fleetPath, 0o500);
+    if (RUNNING_AS_ROOT) entryHook.readOnlyDirs.push(fleetPath);
     try {
       expect(readCutoffObservationCheckpointsSnapshot(() => key)).toMatchObject({
         sourceState: 'healthy', complete: true, releasedRows: 1,
       });
       expect(statSync(fleetPath).mode & 0o777).toBe(0o500);
       expect(existsSync(lock)).toBe(false);
+      if (RUNNING_AS_ROOT) {
+        // The snapshot never tried to add or remove an entry under fleet/ ...
+        expect(entryHook.attempts).toEqual([]);
+        // ... and the guard is live: the lock create the mutating reader makes is refused.
+        expect(() => writeFileSync(lock, 'x')).toThrow(/EACCES/);
+        expect(entryHook.attempts).toEqual([`open ${lock}`]);
+        expect(existsSync(lock)).toBe(false);
+      }
     } finally {
+      entryHook.readOnlyDirs.length = 0;
       chmodSync(fleetPath, 0o700);
     }
   });

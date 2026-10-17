@@ -614,7 +614,9 @@ describe('M300 [F] isFrontierJudge frontier predicate', () => {
   beforeEach(async () => {
     const mod = await import('../src/core/inbox/merge.js');
     isFrontierJudge = mod.isFrontierJudge;
-  });
+    // The first import of inbox/merge.js pulls a large module graph; under a
+    // loaded parallel run it can exceed the 5 s default hook timeout.
+  }, 30_000);
 
   it('[F1] accepts gpt-5.5', () => {
     expect(isFrontierJudge('gpt-5.5')).toBe(true);

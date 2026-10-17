@@ -111,7 +111,7 @@ describe('LiveSeatBurnDowns — Claude\'s reset words', () => {
 // server's recorded seat history (GET /api/verse/budget/history) is merged
 // under this page's own readings.
 describe('LiveSeatBurnDowns — recorded seat history', () => {
-  it('draws the recorded window after a reload, without the "since Verse opened" note', async () => {
+  it('draws the recorded window after a reload, without the "since Phantom opened" note', async () => {
     const now = Date.now();
     const { fetchMock } = stubSurfaceFetch({ kind: 'live', now });
     render(<LiveSeatBurnDowns budget={budgetView('live', now)} />);
@@ -119,7 +119,7 @@ describe('LiveSeatBurnDowns — recorded seat history', () => {
     // Recorded since the window opened three days ago: nothing to apologise for.
     await waitFor(() => expect(historyCalls(fetchMock)).toBe(1));
     await waitFor(() => expect(grok).not.toHaveTextContent('No readings before'));
-    expect(grok).not.toHaveTextContent('Verse opened');
+    expect(grok).not.toHaveTextContent('Phantom opened');
     expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/verse/budget/history?days=8')).toBe(true);
   });
 
@@ -139,16 +139,16 @@ describe('LiveSeatBurnDowns — recorded seat history', () => {
     await waitFor(() => expect(historyCalls(fetchMock)).toBe(2));
   });
 
-  // The "since Verse opened" note is said ONCE, as the seat grid's tooltip —
+  // The "since Phantom opened" note is said ONCE, as the seat grid's tooltip —
   // never repeated on each card.
-  it('says "since Verse opened" once, on the grid, when the server has no recorded history', async () => {
+  it('says "since Phantom opened" once, on the grid, when the server has no recorded history', async () => {
     const now = Date.now();
     stubSurfaceFetch({ kind: 'live', now, routes: { '/api/verse/budget/history': null } });
     render(<LiveSeatBurnDowns budget={budgetView('live', now)} />);
     const grok = await screen.findByRole('figure', { name: 'Grok (grok-a) · weekly' });
     const grid = screen.getByRole('group', { name: 'Seat windows' });
     await waitFor(() => expect(grid).toHaveAttribute('title', 'Lines without recorded history start when Phantom opened.'));
-    expect(grok).not.toHaveTextContent('Verse opened');
+    expect(grok).not.toHaveTextContent('Phantom opened');
   });
 
   it('keeps the grid note when recorded history is empty too (nothing was recorded yet)', async () => {

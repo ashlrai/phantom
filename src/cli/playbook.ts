@@ -32,7 +32,7 @@ export const PLAYBOOK_USAGE = [
   '       ashlr playbook edit <id> [--file path] [--note "why"]',
   '       ashlr playbook run <id>[@vN] [--repo owner/name] [--lane cloud|devin] [--task "text"] [--title t] [--base branch] [--json]',
   '',
-  'In any task text (Verse composer, goals, `ashlr cloud launch`), `!macro` (e.g. `!fix-bug`) runs under that playbook.',
+  'In any task text (Phantom composer, goals, `ashlr cloud launch`), `!macro` (e.g. `!fix-bug`) runs under that playbook.',
 ].join('\n');
 
 export interface PlaybookCliDeps {
@@ -300,7 +300,10 @@ async function cmdRun(deps: PlaybookCliDeps, p: Parsed): Promise<number> {
 
 export async function runPlaybookCli(args: string[], injected?: Partial<PlaybookCliDeps>): Promise<number> {
   const [sub = 'list', ...rest] = args;
-  if (sub === 'help' || sub === '--help' || sub === '-h') {
+  // `playbook <verb> --help` / `-h` prints usage before any deps load: `list -h`
+  // listed playbooks and `--help` was a usage error. An option's value is an operand.
+  if (sub === 'help' || sub === '--help' || sub === '-h' ||
+    rest.some((a, i) => (a === '--help' || a === '-h') && !VALUE_FLAGS.has(rest[i - 1] ?? ''))) {
     console.log(PLAYBOOK_USAGE);
     return 0;
   }

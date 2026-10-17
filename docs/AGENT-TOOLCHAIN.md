@@ -44,18 +44,22 @@ binary from the GitHub release. Later launches use the npm and binary caches.
 
 ## What Phantom's own runs get
 
-Phantom's sandboxed runs do not start servers from this file directly:
-
 - Autonomous Claude runs on macOS go through the native broker with only file
   tools (`src/core/sandbox/claude-native-broker.ts`); no MCP server is added.
-- Non-autonomous sandboxed runs write a fleet sidecar config with
-  `--strict-mcp-config` (`prepareFleetMcpConfig` in
-  `src/core/run/sandboxed-engine.ts`). It adds the Ashlr.AI Plugin when
-  `ashlr-mcp` is installed, plus the Secrets, Locus and Lexicon entries of this
-  file when they match the reviewed specs exactly. Set
-  `foundry.fleetCompanionMcp=false` to leave the companions out.
+- Non-autonomous sandboxed runs get a fleet MCP sidecar config with
+  `--strict-mcp-config` (`src/core/run/sandboxed-engine.ts`). It holds the
+  `ashlr` efficiency server when `ashlr-mcp` is on PATH (with
+  `ASHLR_ALLOW_PROJECT_PATHS` set to the run's worktree), plus the
+  `phantom-secrets`, `locus` and `lexicon` entries from the worktree's
+  `.mcp.json`, each only when it matches the reviewed spec in
+  `FLEET_COMPANION_MCP_SPECS` exactly (command `npx`, the same args, no env).
+  Stack and any other entry are ignored. Codex gets only the `ashlr` sidecar,
+  with the same project path. Set `foundry.fleetCompanionMcp: false` to leave the companions out.
 - `phm cloud launch` starts a Claude Code cloud session on the repository, which
-  sees `.mcp.json` like any other session.
+  sees `.mcp.json` like any other session. Its task prompt names each declared
+  companion and when to call it, and asks for the tools it called in the
+  report's optional `toolsUsed` list. `phm cloud list` prints that list as
+  `Companion tools: ...` (`none called` for an empty list).
 
 ## Check it
 
