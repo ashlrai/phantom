@@ -233,6 +233,28 @@ export function unknownToolAsInvalidParams<A extends unknown[], R>(handler: (...
  */
 export const GATEWAY_ENV_MARKER = 'ASHLR_MCP_GATEWAY';
 
+/**
+ * The error text for a tools/call the gateway cannot route. Downstream tools
+ * are served as `<server>__<tool>`, but their own docs (and the agent) use the
+ * bare name, so a bare or differently spelled name names the routed tool(s)
+ * it most likely meant. Suggestions only; nothing is called on a guess.
+ */
+export function unknownToolMessage(requested: string, routed: Iterable<{ name: string; original: string }>): string {
+  const norm = (value: string): string => value.toLowerCase().replace(/-/g, '_');
+  const wanted = norm(requested);
+  const matches: string[] = [];
+  for (const { name, original } of routed) {
+    if (matches.length >= 3) break;
+    if (norm(original) === wanted || norm(name) === wanted) matches.push(name);
+  }
+  const hint = matches.length === 1
+    ? ` Did you mean "${matches[0]}"? Gateway tools from other servers are named <server>${NS}<tool>.`
+    : matches.length > 1
+      ? ` Did you mean one of ${matches.map((m) => `"${m}"`).join(', ')}? Gateway tools from other servers are named <server>${NS}<tool>.`
+      : '';
+  return `Unknown tool "${requested}".${hint} Run \`ashlr mcp list\` to see available tools.`;
+}
+
 // The MCP SDK deliberately spawns downstream servers with a NARROW env allowlist
 // (not the full process.env) so ambient secrets don't leak into third-party servers.
 // We preserve that isolation: downstreams get this safe base + ashlr's non-secret
@@ -641,7 +663,8 @@ export async function startGateway(
     if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
     const route = routes.get(requested);
     if (!route || route.downstream.client !== route.client) {
-      throw new Error(`Unknown tool "${requested}". Run \`ashlr mcp list\` to see available tools.`);
+      const live = [...routes].filter(([, r]) => r.downstream.client === r.client).map(([name, r]) => ({ name, original: r.original }));
+      throw new Error(unknownToolMessage(requested, live));
     }
     try {
       return await withDeadline(route.client.callTool({ name: route.original, arguments: request.params.arguments ?? {} }, undefined, { timeout: timeoutMs }), timeoutMs, `tools/call(${route.downstream.spec.name})`);

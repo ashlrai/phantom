@@ -186,6 +186,26 @@ describe('callNativeTool', () => {
     expect(typeof o['pendingProposals']).toBe('number');
   });
 
+  it('flags handler refusals ({ error }) as isError so clients do not read them as success', async () => {
+    const notEnrolled = join(fx.home, 'not-enrolled');
+    mkdirSync(notEnrolled, { recursive: true });
+    const calls: [string, Record<string, unknown>, RegExp][] = [
+      ['ashlr_health', { repo: notEnrolled }, /not enrolled/],
+      ['ashlr_browser_task', { repo: notEnrolled, instructions: 'read the page', title: 't', summary: 's' }, /not enrolled/],
+      ['ashlr_browser_task', { repo: notEnrolled, instructions: '   ', title: 't', summary: 's' }, /instructions must be/],
+      ['ashlr_desktop_open', { repo: notEnrolled, action_type: 'open-editor', target: 'README.md', title: 't', summary: 's' }, /not enrolled/],
+    ];
+    for (const [name, args, reason] of calls) {
+      const r = await callNativeTool(name, args);
+      expect(r.isError, name).toBe(true);
+      // The payload shape is unchanged: still parseable JSON with the reason.
+      expect((JSON.parse(resultText(r)) as { error: string }).error).toMatch(reason);
+    }
+    // A successful call that merely mentions "error" text stays a success.
+    const ok = await callNativeTool('ashlr_learn', { text: 'an error budget convention', title: 'errors' });
+    expect(ok.isError).toBeUndefined();
+  });
+
   it('caps oversized output with a visible truncation marker', () => {
     // Spaced prose so the scrubber's long-token patterns don't fire first.
     const text = renderToolText({ blob: 'lorem ipsum dolor sit amet '.repeat(5_000) });
