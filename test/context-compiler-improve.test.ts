@@ -66,7 +66,7 @@ describe('evidence-scored context', () => {
     addContext(T, a, { title: 'Claims', text: 'Claim the branch before editing.', source: 'docs/architecture/teams.md', scope: { owner: 'company' } });
     const constitution = readFileSync(join(__dirname, '..', 'CONSTITUTION.md'), 'utf8');
     const c = compileTaskContext(T, { title: 'edit branch claims', scope: { owner: 'company' }, budgetTokens: 600 }, constitution);
-    expect(c.prefix).toMatch(/constitution v2/);
+    expect(c.prefix).toMatch(/constitution v3/);
     expect(c.prefix).toMatch(/deploy/);
     expect(c.text).toContain('Claim the branch');
     expect(c.tokens).toBeLessThanOrEqual(600);

@@ -234,6 +234,6 @@ export interface KnowledgeTarget {
   repo: string | null;
   paths: readonly string[];
   kind: TaskKind | null;
-  /** Free text used only to infer `kind` when it is null. */
+  /** Task text: infers `kind` when it is null, and past the note cap ranks notes by relevance (inject.ts selectKnowledge). */
   text?: string;
 }

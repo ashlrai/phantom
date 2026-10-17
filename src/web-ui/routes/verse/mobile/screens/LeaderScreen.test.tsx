@@ -115,7 +115,7 @@ describe('LeaderScreen — states', () => {
     renderMobile(<LeaderScreen />, { permissions: permissionsFor('unavailable') });
     expect(await screen.findByText(QUESTION_TEXT)).toBeInTheDocument();
     expect(composer()).toBeDisabled();
-    expect(screen.getByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(screen.getByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Answer/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Approve now/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Quick replies' })).not.toBeInTheDocument();

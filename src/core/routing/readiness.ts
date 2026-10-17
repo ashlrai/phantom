@@ -148,7 +148,7 @@ function usd(value: number): string {
 /** Why an account has no live reading, from its machine reason — one sentence, never the code. */
 const READING_NOTE: Readonly<Record<string, string>> = {
   'connection-polling-paused':
-    'Polling is paused because nothing has asked for account data recently; it resumes the moment Verse is looked at.',
+    'Polling is paused because nothing has asked for account data recently; it resumes the moment Phantom is looked at.',
   'connection-reading-expired': 'The last reading expired before the next check landed.',
   'connection-not-checked': 'No check has run yet in this server.',
   'collector-owned': 'Another Ashlr process holds the metadata lease; readings arrive when it publishes them.',
@@ -190,7 +190,7 @@ function paidChat(seat: VerseSeat | null, account: ReadinessAccount | null, inpu
     return verdict(false, 'blocked', 'Not commissioned', 'Claude API is not commissioned in the signed grant.');
   }
   if (seat === null) {
-    return verdict(false, 'blocked', 'Not found', "Verse did not discover this account's pinned profile, so no chat can start on it.");
+    return verdict(false, 'blocked', 'Not found', "Phantom did not discover this account's pinned profile, so no chat can start on it.");
   }
   const admission = seatReadiness(seat.id, input.seats, input.reports, input.nowMs);
   const report = reportFor(input.reports, seat.id);

@@ -7,7 +7,7 @@ rollout ladder and the ledger are specified in detail in
 custody, Stop and Revoke, setup, and the residual risks.
 
 The code lives in `src/core/authority/`, the CLI is `ashlr authority`, and the
-Verse Command bar uses `/api/verse/authority`. Every path named here is a Tier-1
+Phantom console Command bar uses `/api/verse/authority`. Every path named here is a Tier-1
 protected path. The fleet can never change one, and `.github/CODEOWNERS`
 requires the owner's review on GitHub as well.
 
@@ -141,7 +141,7 @@ explanation:
 - `ashlr authority grant` and `re-approve` ask about it, or take
   `--elite-direct` / `--no-elite-direct`.
 - `ashlr authority draft --elite-direct` shows the grant without signing it.
-- Verse's grant sheet has an **Elite direct** checkbox that fetches that draft.
+- The Phantom console's grant sheet has an **Elite direct** checkbox that fetches that draft.
 
 An elite-direct grant has **one rung**, `elite-direct`. Every enrolled repo
 sits at the stage the grant signs for it (a repo without a verify command
@@ -218,7 +218,7 @@ this with real `sandbox-exec` runs under the generated profiles.
 | Control | Effect | Resume |
 |---|---|---|
 | **Switch down** (`ashlr authority switch propose\|off`) | Takes effect on the next policy read in every process. Nothing is cached past a lowering. | Raise it again within the grant. No Touch ID is needed, and the raise is ledgered first. |
-| **Stop** (`ashlr authority stop`, the Verse Stop button) | 1. Arms `~/.ashlr/KILL`. 2. Aborts every running agent: this process's agents immediately, other processes' at their next lease poll (≤ 2 s). 3. Revokes every **armed** host merge through the revocation protocol, so one that another process prepared can never be consumed. 4. Reports how many agents are still running (`liveExecutionLeases`). The CLI waits up to 30 s for agents to exit (`--no-wait` returns at once). The Verse route answers at once and runs step 3 a few milliseconds later in the same process. | `ashlr authority clear-stop`. It is ledgered first, and it waits until the fence is free. |
+| **Stop** (`ashlr authority stop`, the Phantom console Stop button) | 1. Arms `~/.ashlr/KILL`. 2. Aborts every running agent: this process's agents immediately, other processes' at their next lease poll (≤ 2 s). 3. Revokes every **armed** host merge through the revocation protocol, so one that another process prepared can never be consumed. 4. Reports how many agents are still running (`liveExecutionLeases`). The CLI waits up to 30 s for agents to exit (`--no-wait` returns at once). The Phantom console route answers at once and runs step 3 a few milliseconds later in the same process. | `ashlr authority clear-stop`. It is ledgered first, and it waits until the fence is free. |
 | **Revoke** (`ashlr authority revoke`) | Switches off, raises `minGrantSeq` past every grant accepted so far, moves the installed grant aside, **and engages Stop** (everything above). Revoke must halt a running agent within one tick, and the lease abort is keyed on KILL. | Needs a **new grant** (Touch ID), and then clearing Stop. |
 
 Even if the merge revocation fails, a merge cannot go out after Stop. The
@@ -235,7 +235,7 @@ Setup is safe to rerun, as often as you like. Each step checks first and
 reports `already` for what is in place: an open trust-root PR is found, not
 reopened; a ruleset GitHub already holds with the same content is not applied
 again; the provenance key is rotated only once. A step that fails is reported
-as failed, and the run still ends with its summary. Verse shows the same
+as failed, and the run still ends with its summary. The Phantom console shows the same
 checklist, read-only, on Command and in onboarding
 (`GET /api/verse/authority/setup`, the dry run's `--json`), with the next
 step's command to copy.
