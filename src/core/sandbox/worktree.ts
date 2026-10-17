@@ -567,52 +567,114 @@ interface PinnedWorktreeCreationResult {
   adminIno?: string;
   /** Runner step durations (ms), present only under ASHLR_SANDBOX_TIMING=1. */
   timing?: Record<string, number>;
+  /**
+   * Git supervisors the runner started ahead of their command (`prewarmed`),
+   * and how many commands took a warm one (`warm`) or had to start one on
+   * demand (`cold`). Present only under ASHLR_SANDBOX_TIMING=1.
+   */
+  supervisors?: Record<string, number>;
 }
 
 const PINNED_GIT_SUPERVISOR = String.raw`
 const { spawn } = require('node:child_process');
 const { lstatSync } = require('node:fs');
 
-const [cwd, repositoryContext, sourceRepo, ...gitArgs] = process.argv.slice(1);
-const gitEnv = { ...process.env };
-if (gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS) {
-  gitEnv.NODE_OPTIONS = gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-} else {
-  delete gitEnv.NODE_OPTIONS;
-}
-delete gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-delete gitEnv.GIT_DIR;
-delete gitEnv.GIT_WORK_TREE;
-delete gitEnv.GIT_COMMON_DIR;
-if (repositoryContext === 'pinned') {
-  gitEnv.GIT_DIR = '.';
-} else if (repositoryContext === 'linked') {
-  // A linked worktree's own administrative directory and work tree, exactly
-  // as git worktree add hands them to its checkout.
-  gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
-  gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
-}
-delete gitEnv.ASHLR_LINKED_GIT_DIR;
-delete gitEnv.ASHLR_LINKED_WORK_TREE;
+// One supervisor runs exactly ONE git command. The runner may start it before
+// it knows the command (a warm supervisor, so its Node start-up overlaps the
+// runner's earlier steps instead of sitting on the critical path); the command
+// then arrives as the first IPC message. An idle supervisor whose runner went
+// away exits without running anything.
+let commandReceived = false;
+let cwd;
+let gitArgs;
+let gitEnv;
+let destinationPin = null;
+process.once('disconnect', () => { if (!commandReceived) process.exit(0); });
+process.once('message', (command) => {
+  commandReceived = true;
+  try {
+    configure(command);
+  } catch (error) {
+    send({ status: null, stdout: '', stderr: '', error: 'invalid git supervisor command: ' + String(error) });
+    return;
+  }
+  start();
+});
 
-const destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
-  parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
-  parentDev: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV,
-  parentIno: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_INO,
-  homePath: gitEnv.ASHLR_PINNED_DESTINATION_HOME_PATH,
-  homeDev: gitEnv.ASHLR_PINNED_DESTINATION_HOME_DEV,
-  homeIno: gitEnv.ASHLR_PINNED_DESTINATION_HOME_INO,
-  metadataPath: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH,
-  metadataDev: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV,
-  metadataIno: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_INO,
-  worktreePath: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH,
-  worktreeDev: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV,
-  worktreeIno: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO,
-  allowWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE === '1',
-  requireWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE === '1',
-} : null;
-for (const key of Object.keys(gitEnv)) {
-  if (key.startsWith('ASHLR_PINNED_DESTINATION')) delete gitEnv[key];
+function configure(command) {
+  if (!command || typeof command !== 'object' || !Array.isArray(command.argv) ||
+      command.argv.length < 3 || !command.argv.every((value) => typeof value === 'string') ||
+      !command.env || typeof command.env !== 'object') {
+    throw new Error('malformed command');
+  }
+  const [commandCwd, repositoryContext, , ...commandGitArgs] = command.argv;
+  cwd = commandCwd;
+  gitArgs = commandGitArgs;
+  // The per-command keys arrive with the command; none inherited at start-up.
+  gitEnv = { ...process.env };
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith('ASHLR_PINNED_DESTINATION') || key.startsWith('ASHLR_LINKED_')) delete gitEnv[key];
+  }
+  for (const [key, value] of Object.entries(command.env)) {
+    if (typeof value === 'string' &&
+        (key.startsWith('ASHLR_PINNED_DESTINATION') || key.startsWith('ASHLR_LINKED_'))) gitEnv[key] = value;
+  }
+  // A relative cwd ('.') means the runner's working directory when it handed
+  // the command over, by inode (a cold supervisor inherited exactly that).
+  // The runner sends that identity; a supervisor started before the runner
+  // moved there moves now and must land on exactly that inode (git then
+  // inherits it), or the command fails closed without starting git.
+  if (cwd === '.') {
+    const pin = command.cwdPin;
+    if (!pin || typeof pin.path !== 'string' || typeof pin.dev !== 'string' || typeof pin.ino !== 'string') {
+      throw new Error('working directory identity unavailable');
+    }
+    if (!samePinnedDirectory('.', pin.dev, pin.ino)) {
+      process.chdir(pin.path);
+      if (!samePinnedDirectory('.', pin.dev, pin.ino)) {
+        throw new Error('working directory identity changed before git command');
+      }
+    }
+  }
+  if (gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS) {
+    gitEnv.NODE_OPTIONS = gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  } else {
+    delete gitEnv.NODE_OPTIONS;
+  }
+  delete gitEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  delete gitEnv.GIT_DIR;
+  delete gitEnv.GIT_WORK_TREE;
+  delete gitEnv.GIT_COMMON_DIR;
+  if (repositoryContext === 'pinned') {
+    gitEnv.GIT_DIR = '.';
+  } else if (repositoryContext === 'linked') {
+    // A linked worktree's own administrative directory and work tree, exactly
+    // as git worktree add hands them to its checkout.
+    gitEnv.GIT_DIR = gitEnv.ASHLR_LINKED_GIT_DIR;
+    gitEnv.GIT_WORK_TREE = gitEnv.ASHLR_LINKED_WORK_TREE;
+  }
+  delete gitEnv.ASHLR_LINKED_GIT_DIR;
+  delete gitEnv.ASHLR_LINKED_WORK_TREE;
+
+  destinationPin = gitEnv.ASHLR_PINNED_DESTINATION === '1' ? {
+    parentPath: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH,
+    parentDev: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV,
+    parentIno: gitEnv.ASHLR_PINNED_DESTINATION_PARENT_INO,
+    homePath: gitEnv.ASHLR_PINNED_DESTINATION_HOME_PATH,
+    homeDev: gitEnv.ASHLR_PINNED_DESTINATION_HOME_DEV,
+    homeIno: gitEnv.ASHLR_PINNED_DESTINATION_HOME_INO,
+    metadataPath: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH,
+    metadataDev: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV,
+    metadataIno: gitEnv.ASHLR_PINNED_DESTINATION_METADATA_INO,
+    worktreePath: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH,
+    worktreeDev: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV,
+    worktreeIno: gitEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO,
+    allowWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE === '1',
+    requireWorktreeAbsence: gitEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE === '1',
+  } : null;
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith('ASHLR_PINNED_DESTINATION')) delete gitEnv[key];
+  }
 }
 
 let sent = false;
@@ -680,39 +742,41 @@ function destinationStillPinned() {
   );
 }
 
-let git;
-try {
-  if (!destinationStillPinned()) {
-    send({ status: null, stdout: '', stderr: '', error: 'sandbox reservation identity changed before git command' });
-  } else {
-    git = spawn('git', gitArgs, {
-      cwd,
-      env: gitEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
+function start() {
+  let git;
+  try {
+    if (!destinationStillPinned()) {
+      send({ status: null, stdout: '', stderr: '', error: 'sandbox reservation identity changed before git command' });
+    } else {
+      git = spawn('git', gitArgs, {
+        cwd,
+        env: gitEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    }
+  } catch (error) {
+    send({ status: null, stdout: '', stderr: '', error: String(error) });
+  }
+  if (git) {
+    const destinationMonitor = destinationPin === null ? null : setInterval(() => {
+      if (!destinationStillPinned()) {
+        send({ status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
+      }
+    }, 1);
+    git.stdout.on('data', (chunk) => { stdout = capture(stdout, chunk); });
+    git.stderr.on('data', (chunk) => { stderr = capture(stderr, chunk); });
+    git.on('error', (error) => {
+      if (destinationMonitor !== null) clearInterval(destinationMonitor);
+      send({ status: null, stdout, stderr, error: error instanceof Error ? error.message : String(error) });
+    });
+    git.on('close', (status, signal) => {
+      if (destinationMonitor !== null) clearInterval(destinationMonitor);
+      send(destinationStillPinned()
+        ? { status, stdout, stderr, ...(signal ? { error: 'git exited on ' + signal } : {}) }
+        : { status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
     });
   }
-} catch (error) {
-  send({ status: null, stdout: '', stderr: '', error: String(error) });
-}
-if (git) {
-  const destinationMonitor = destinationPin === null ? null : setInterval(() => {
-    if (!destinationStillPinned()) {
-      send({ status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
-    }
-  }, 1);
-  git.stdout.on('data', (chunk) => { stdout = capture(stdout, chunk); });
-  git.stderr.on('data', (chunk) => { stderr = capture(stderr, chunk); });
-  git.on('error', (error) => {
-    if (destinationMonitor !== null) clearInterval(destinationMonitor);
-    send({ status: null, stdout, stderr, error: error instanceof Error ? error.message : String(error) });
-  });
-  git.on('close', (status, signal) => {
-    if (destinationMonitor !== null) clearInterval(destinationMonitor);
-    send(destinationStillPinned()
-      ? { status, stdout, stderr, ...(signal ? { error: 'git exited on ' + signal } : {}) }
-      : { status: null, stdout, stderr, error: 'sandbox reservation identity changed during git command' });
-  });
 }
 
 // The command runner owns this supervisor's process group/tree and kills it
@@ -933,64 +997,147 @@ async function joinOwnedTree(supervisor, closed) {
   }
 }
 
+// Supervisors started ahead of their command (see PINNED_GIT_SUPERVISOR).
+// Each still runs exactly one git command in its own process group and is
+// killed and joined after it, exactly like one started on demand; starting it
+// early only takes its Node start-up off the path between two git commands.
+// Unused ones are killed and joined before the runner reports its result.
+const warmSupervisors = [];
+const retiredSupervisors = [];
+const supervisorCounts = { prewarmed: 0, warm: 0, cold: 0 };
+
+function supervisorStartEnv() {
+  const supervisorEnv = { ...childEnv };
+  if (supervisorEnv.NODE_OPTIONS) {
+    supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS = supervisorEnv.NODE_OPTIONS;
+  } else {
+    delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
+  }
+  delete supervisorEnv.NODE_OPTIONS;
+  // Per-command keys travel with the command, never through the start-up env.
+  for (const key of Object.keys(supervisorEnv)) {
+    if (key.startsWith('ASHLR_LINKED_') || key.startsWith('ASHLR_PINNED_DESTINATION')) delete supervisorEnv[key];
+  }
+  return supervisorEnv;
+}
+
+function spawnSupervisor() {
+  // cwd '.': the runner's working directory, by inode (see the cwd pin).
+  const child = spawn(process.execPath, ['-e', supervisorSource], {
+    cwd: '.',
+    env: supervisorStartEnv(),
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true,
+    ...(process.platform === 'win32' ? {} : { detached: true }),
+  });
+  const handle = { child, exited: false, closed: null };
+  handle.closed = new Promise((resolveClosed) => child.once('close', () => {
+    handle.exited = true;
+    resolveClosed();
+  }));
+  // A start-up failure is reported to the command that takes it (its own
+  // 'error' listener), or the handle is retired untaken.
+  child.on('error', () => { handle.exited = true; });
+  return handle;
+}
+
+// How many more supervisors this mode's success path will take that are not
+// started yet. They start one at a time, each when the previous warm one is
+// taken, so a start-up overlaps the git command before it without competing
+// with the ones the runner is about to use.
+let supervisorsPlanned = 0;
+
+function prewarmSupervisors(planned, startNow) {
+  supervisorsPlanned = planned;
+  startWarmSupervisors(startNow);
+}
+
+function startWarmSupervisors(count) {
+  for (let i = 0; i < count && supervisorsPlanned > 0; i += 1) {
+    supervisorsPlanned -= 1;
+    try {
+      warmSupervisors.push(spawnSupervisor());
+      supervisorCounts.prewarmed += 1;
+    } catch { /* taken on demand instead */ }
+  }
+}
+
+function takeSupervisor() {
+  let handle = null;
+  while (handle === null && warmSupervisors.length > 0) {
+    const next = warmSupervisors.shift();
+    if (!next.exited && next.child.connected) handle = next;
+    else retiredSupervisors.push(next);
+  }
+  if (handle !== null) {
+    supervisorCounts.warm += 1;
+  } else {
+    supervisorCounts.cold += 1;
+    handle = spawnSupervisor();
+  }
+  if (warmSupervisors.length === 0) startWarmSupervisors(1);
+  return handle;
+}
+
+// Kill and join every supervisor no command took. None of them ever ran git.
+async function drainSupervisors() {
+  const idle = [...warmSupervisors.splice(0), ...retiredSupervisors.splice(0)];
+  await Promise.all(idle.map((handle) => joinOwnedTree(handle.child, handle.closed)));
+}
+
 function run(cwd, args, options = {}) {
   return new Promise((resolve) => {
-    const supervisorEnv = { ...childEnv };
-    if (supervisorEnv.NODE_OPTIONS) {
-      supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS = supervisorEnv.NODE_OPTIONS;
-    } else {
-      delete supervisorEnv.ASHLR_SUPERVISED_GIT_NODE_OPTIONS;
-    }
-    delete supervisorEnv.NODE_OPTIONS;
-    delete supervisorEnv.ASHLR_LINKED_GIT_DIR;
-    delete supervisorEnv.ASHLR_LINKED_WORK_TREE;
+    const commandEnv = {};
     if (options.linkedWorktree) {
-      supervisorEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
-      supervisorEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
+      commandEnv.ASHLR_LINKED_GIT_DIR = options.linkedWorktree.gitDir;
+      commandEnv.ASHLR_LINKED_WORK_TREE = options.linkedWorktree.workTree;
     }
     if (options.monitorDestination) {
-      supervisorEnv.ASHLR_PINNED_DESTINATION = '1';
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV = parentDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_PARENT_INO = parentIno;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_PATH = sandboxHome;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_DEV = homeDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_HOME_INO = homeIno;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH = metadataPath;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV = metadataDev;
-      supervisorEnv.ASHLR_PINNED_DESTINATION_METADATA_INO = metadataIno;
+      commandEnv.ASHLR_PINNED_DESTINATION = '1';
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_PATH = sandboxParent;
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_DEV = parentDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_PARENT_INO = parentIno;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_PATH = sandboxHome;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_DEV = homeDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_HOME_INO = homeIno;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_PATH = metadataPath;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_DEV = metadataDev;
+      commandEnv.ASHLR_PINNED_DESTINATION_METADATA_INO = metadataIno;
       if (options.worktreePin || options.requireWorktreeAbsence) {
-        supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH = worktreePath;
+        commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_PATH = worktreePath;
         if (options.worktreePin) {
-          supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV = options.worktreePin.dev;
-          supervisorEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO = options.worktreePin.ino;
+          commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_DEV = options.worktreePin.dev;
+          commandEnv.ASHLR_PINNED_DESTINATION_WORKTREE_INO = options.worktreePin.ino;
         }
-        supervisorEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE =
+        commandEnv.ASHLR_PINNED_DESTINATION_ALLOW_WORKTREE_ABSENCE =
           options.allowWorktreeAbsence ? '1' : '0';
-        supervisorEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE =
+        commandEnv.ASHLR_PINNED_DESTINATION_REQUIRE_WORKTREE_ABSENCE =
           options.requireWorktreeAbsence ? '1' : '0';
       }
     }
+    // '.' is this runner's working directory NOW, by inode: what a supervisor
+    // started here at this moment would have inherited.
+    let cwdPin = null;
+    if (cwd === '.') {
+      try {
+        const stat = lstatSync('.', { bigint: true });
+        if (stat.isDirectory() && !stat.isSymbolicLink()) {
+          cwdPin = { path: process.cwd(), dev: String(stat.dev), ino: String(stat.ino) };
+        }
+      } catch { /* the supervisor refuses a '.' command without a pin */ }
+    }
 
-    let supervisor;
+    let handle;
     try {
-      supervisor = spawn(process.execPath, [
-        '-e', supervisorSource, '--', cwd,
-        options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args,
-      ], {
-        cwd,
-        env: supervisorEnv,
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        windowsHide: true,
-        ...(process.platform === 'win32' ? {} : { detached: true }),
-      });
+      handle = takeSupervisor();
     } catch (error) {
       resolve({ status: null, stdout: '', stderr: '', error: String(error) });
       return;
     }
+    const supervisor = handle.child;
 
     let finishing = false;
-    const closed = new Promise((resolveClosed) => supervisor.once('close', resolveClosed));
+    const closed = handle.closed;
     const finish = async (result) => {
       if (finishing) return;
       finishing = true;
@@ -1015,6 +1162,17 @@ function run(cwd, args, options = {}) {
         void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor exited without a result' });
       }
     });
+    try {
+      supervisor.send({
+        argv: [cwd, options.pinnedRepository ? 'pinned' : options.linkedWorktree ? 'linked' : 'plain', sourceRepo, ...args],
+        env: commandEnv,
+        cwdPin,
+      }, (error) => {
+        if (error) void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor command not delivered: ' + error.message });
+      });
+    } catch (error) {
+      void finish({ status: null, stdout: '', stderr: '', error: 'git supervisor command not delivered: ' + String(error) });
+    }
   });
 }
 
@@ -1440,8 +1598,16 @@ async function rollbackWorktree() {
   return { ok: false, cleanupComplete: await rollback(), error: 'sandbox creation rolled back' };
 }
 
+// Per mode: [supervised commands on its success path, supervisors started
+// with the runner]. REGISTER: two source probes (side by side, so both start
+// at once), add, validation. POPULATE: checkout, validation. ROLLBACK:
+// remove, prune, branch -D and its two absence checks.
+const PREWARMED_SUPERVISORS = { register: [4, 2], populate: [2, 1], rollback: [5, 1] };
+
 (async () => {
   let result;
+  const [planned, startNow] = PREWARMED_SUPERVISORS[mode] || [0, 0];
+  prewarmSupervisors(planned, startNow);
   try {
     result = mode === 'register'
       ? await registerWorktree()
@@ -1459,9 +1625,14 @@ async function rollbackWorktree() {
     }
     result = { ok: false, cleanupComplete, error: 'pinned worktree creation failed: ' + describeError(error) };
   }
-  if (stepTiming !== null) result.timing = stepTiming.steps;
+  await drainSupervisors();
+  if (stepTiming !== null) {
+    result.timing = stepTiming.steps;
+    result.supervisors = supervisorCounts;
+  }
   process.stdout.write(JSON.stringify(result));
-})().catch((error) => {
+})().catch(async (error) => {
+  try { await drainSupervisors(); } catch { /* idle supervisors exit when this runner's channel closes */ }
   process.stdout.write(JSON.stringify({
     ok: false,
     cleanupComplete: false,
@@ -1637,6 +1808,9 @@ function parsePinnedWorktreeResult(
       typeof parsed.adminIno !== 'string' || !/^\d+$/u.test(parsed.adminIno)
     )) throw new Error('invalid pinned worktree identity');
     const timing = parsed.timing !== null && typeof parsed.timing === 'object' ? parsed.timing : undefined;
+    const supervisors = parsed.supervisors !== null && typeof parsed.supervisors === 'object'
+      ? parsed.supervisors
+      : undefined;
     return {
       ok: parsed.ok,
       cleanupComplete: parsed.cleanupComplete,
@@ -1647,6 +1821,7 @@ function parsePinnedWorktreeResult(
       ...(typeof parsed.adminDev === 'string' ? { adminDev: parsed.adminDev } : {}),
       ...(typeof parsed.adminIno === 'string' ? { adminIno: parsed.adminIno } : {}),
       ...(timing ? { timing } : {}),
+      ...(supervisors ? { supervisors } : {}),
     };
   } catch (error) {
     return {
@@ -2160,6 +2335,7 @@ class SandboxCreationClock {
   private fenceAcquiredAt: number | null = null;
   private readonly fields: Record<string, number> = {};
   private readonly parts: Record<string, number> = {};
+  private readonly supervisors: Record<string, number> = {};
 
   static start(): SandboxCreationClock | null {
     return process.env.ASHLR_SANDBOX_TIMING === '1' ? new SandboxCreationClock() : null;
@@ -2171,9 +2347,12 @@ class SandboxCreationClock {
     this.last = now;
   }
 
-  runnerSteps(prefix: string, steps: Record<string, number> | undefined): void {
-    for (const [step, ms] of Object.entries(steps ?? {})) {
+  runnerSteps(prefix: string, result: Pick<PinnedWorktreeCreationResult, 'timing' | 'supervisors'>): void {
+    for (const [step, ms] of Object.entries(result.timing ?? {})) {
       if (typeof ms === 'number') this.parts[`${prefix}.${step}`] = ms;
+    }
+    for (const [kind, count] of Object.entries(result.supervisors ?? {})) {
+      if (typeof count === 'number') this.supervisors[`${prefix}.${kind}`] = count;
     }
   }
 
@@ -2190,7 +2369,9 @@ class SandboxCreationClock {
 
   emit(ok: boolean): void {
     try {
-      process.stderr.write(`ashlr-sandbox-timing ${JSON.stringify({ ok, ...this.fields, parts: this.parts })}\n`);
+      process.stderr.write(
+        `ashlr-sandbox-timing ${JSON.stringify({ ok, ...this.fields, parts: this.parts, supervisors: this.supervisors })}\n`,
+      );
     } catch { /* diagnostics only */ }
   }
 }
@@ -2285,7 +2466,7 @@ export async function createSandboxAsync(
         registered.admin,
       ));
       clock?.mark('populate');
-      clock?.runnerSteps('populate', populated.timing);
+      clock?.runnerSteps('populate', populated);
       const failure = populatedSandboxFailure(registered, populated);
       clock?.mark('verify');
       if (failure === null) {
@@ -2345,7 +2526,7 @@ export function createSandbox(
         registered.admin,
       ));
       clock?.mark('populate');
-      clock?.runnerSteps('populate', populated.timing);
+      clock?.runnerSteps('populate', populated);
       const failure = populatedSandboxFailure(registered, populated);
       clock?.mark('verify');
       if (failure === null) {
@@ -2730,7 +2911,7 @@ function registerSandboxWhileFenced(
     'register', repositoryIdentity, destinationIdentity, sb, null, null,
   ));
   clock?.mark('register');
-  clock?.runnerSteps('register', creation.timing);
+  clock?.runnerSteps('register', creation);
   if (!creation.ok) {
     if (creation.cleanupComplete) {
       removePinnedSandboxReservation(destinationIdentity);
