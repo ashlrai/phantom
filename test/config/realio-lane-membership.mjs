@@ -57,6 +57,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
   'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
   'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
+  'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
   'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
@@ -338,6 +339,8 @@ export const REAL_IO_TEST_FILES = [
   'test/npm-cli-launch.test.ts', // spawns the real npm CLI — 3.5s slowest test in the quiet baseline
   'test/m310.queued-autonomy-work.test.ts', // real queued autonomy work over real fs — 9.6s slowest test in the quiet baseline
   'test/m245.self-improve-integration.test.ts', // real self-improve integration loop — 4.7s slowest test in the quiet baseline
+  'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
+  'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
   'test/m482.release-artifact-contract.test.ts', // real npm pack/install release artifact contract (68.1s single test — keeps its own 180s override below) — 68.1s slowest test in the quiet baseline
@@ -366,6 +369,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m42.engineer-tools.test.ts', // real git worktree/merge/apply subprocess work — 7.1s slowest test in the quiet baseline
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
   'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
+  'test/stale-git-locks.test.ts', // real git repos and worktrees, real doctor run
   'test/daemon-start-temp-worktree-sweep.test.ts', // real git worktrees, dead-pid child processes and a real runDaemon start
   'test/m48.automerge-pass.test.ts', // real git worktree/merge/apply subprocess work — 5.2s slowest test in the quiet baseline
   'test/m56.branch-apply.test.ts', // real git worktree/merge/apply subprocess work — 3.2s slowest test in the quiet baseline

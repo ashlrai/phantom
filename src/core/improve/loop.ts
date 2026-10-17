@@ -19,7 +19,9 @@ export interface Evidence { ref: string; summary: string }
  * reach a draft PR branch, title or body. Private feedback, team context and
  * handoff text live in `local` and are only shown on the owner's terminal.
  */
-export interface Proposal { id: string; title: string; rationale: string; evidence: Evidence[]; evalPlan: string; metric: string; local?: { title: string; rationale: string; evidence: Evidence[] } }
+export interface Proposal { id: string; title: string; rationale: string; evidence: Evidence[]; evalPlan: string; metric: string; local?: { title: string; rationale: string; evidence: Evidence[] };
+  /** Deterministic rule that produced it; outcome ranking groups realized leverage by this kind. */
+  kind?: string }
 
 function evidenceRepository(ref: string): string | null {
   const match = /^https:\/\/github\.com\/([a-z0-9][a-z0-9-]{0,38})\/([a-z0-9_.-]+)\/(issues|pull|commit|discussions|actions\/runs)\/[\w-]+(#[\w-]+)?$/i.exec(ref);
@@ -48,21 +50,21 @@ export function gatherProposals(team: string, steward?: StewardReport): Proposal
     const title = `Reduce declined handoffs (${declined.length})`;
     const ev = declined.slice(0, 10).map((h) => ({ ref: `team:${team}/handoff/${h.id}`, summary: h.title }));
     const rationale = 'Repeated declined handoffs suggest routing to the wrong agent or missing capabilities.';
-    out.push({ id: pid(title), title, rationale, evidence: publicEvidence(ev), local: { title, rationale, evidence: ev }, evalPlan: 'Replay the declined handoffs against capability-aware routing in a fixture team.', metric: 'handoff decline rate' });
+    out.push({ id: pid(title), kind: 'declined-handoffs', title, rationale, evidence: publicEvidence(ev), local: { title, rationale, evidence: ev }, evalPlan: 'Replay the declined handoffs against capability-aware routing in a fixture team.', metric: 'handoff decline rate' });
   }
   for (const r of steward?.roots ?? []) {
     if (!r.overQuota) continue;
     const title = `Native retention for ${r.id}`;
     const rationale = `${r.id} is over its quota (${Math.round(r.bytes / 1048576)} MB).`;
     const evidence = [{ ref: `steward:${r.id}`, summary: `${r.files} files, reclaimable ${Math.round(r.reclaimable.bytes / 1048576)} MB` }];
-    out.push({ id: pid(title), title, rationale: 'An allowlisted agent-log root exceeds its configured quota (local measurements withheld).', evidence: publicEvidence(evidence), local: { title, rationale, evidence }, evalPlan: 'Steward fixture shows the root stays under quota for 30 simulated days.', metric: 'agent log disk usage' });
+    out.push({ id: pid(title), kind: 'steward-retention', title, rationale: 'An allowlisted agent-log root exceeds its configured quota (local measurements withheld).', evidence: publicEvidence(evidence), local: { title, rationale, evidence }, evalPlan: 'Steward fixture shows the root stays under quota for 30 simulated days.', metric: 'agent log disk usage' });
   }
   const feedback = listContext(team).filter((e) => e.tags.some((t) => t === 'feedback' || t === 'bug' || t === 'feature-request'));
   for (const f of feedback.slice(0, 10)) {
     const localTitle = `Address: ${f.title}`;
     const id = pid(localTitle);
     const ev = [{ ref: f.source, summary: f.title }];
-    out.push({ id, title: `Address feedback item ${id}`, rationale: 'A team feedback/bug report (private; details withheld from the PR).', evidence: publicEvidence(ev), local: { title: localTitle, rationale: f.text.slice(0, 600), evidence: ev }, evalPlan: 'Add a failing test or eval reproducing the report, then make it pass.', metric: 'task success rate on the reported workflow' });
+    out.push({ id, kind: 'team-feedback', title: `Address feedback item ${id}`, rationale: 'A team feedback/bug report (private; details withheld from the PR).', evidence: publicEvidence(ev), local: { title: localTitle, rationale: f.text.slice(0, 600), evidence: ev }, evalPlan: 'Add a failing test or eval reproducing the report, then make it pass.', metric: 'task success rate on the reported workflow' });
   }
   return out;
 }
@@ -90,6 +92,7 @@ export interface OpenPrOptions { /** Refused before any effect; use the existing
 
 function assertProposal(p: Proposal): void {
   if (!p || typeof p.id !== 'string' || !/^[a-f0-9]{10}$/.test(p.id)) throw new Error('Invalid proposal id.');
+  if (p.kind !== undefined && (typeof p.kind !== 'string' || !/^[a-z0-9][a-z0-9:._-]{0,63}$/.test(p.kind))) throw new Error('Invalid proposal kind.');
   for (const key of ['title', 'rationale', 'evalPlan', 'metric'] as const) {
     if (typeof p[key] !== 'string' || !p[key].trim() || p[key].length > (key === 'title' ? 200 : 4000)) throw new Error('Invalid public proposal field.');
   }

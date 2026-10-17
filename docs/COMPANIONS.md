@@ -172,3 +172,92 @@ The gateway skips its own `ashlr-hub` entry when it reads `~/.claude.json`,
 so registering it there does not make it start itself. If an agent also has
 `phantom-secrets`, `locus` or `ashlr-md` configured directly, it sees those
 tools twice; remove the direct entries once the gateway works.
+
+## Check the tools work together
+
+`phm companions` only reads version and help. To check the seams an agent
+actually uses, run the cross-tool smoke from a built Phantom checkout
+(`npm run build`) against the companion binaries you want to test:
+
+```bash
+node scripts/companion-workflow-smoke.mjs --phm bin/ashlr \
+  --secrets-bin /path/to/phantom --secrets-mcp /path/to/phantom-mcp \
+  --locus-bin /path/to/locus --locus-mcp /path/to/locus-mcp \
+  --lexicon-bin /path/to/lexicon --lexicon-mcp /path/to/lexicon/plugin/mcp-server.mjs \
+  --lexicon-hook /path/to/lexicon/plugin/hook.mjs \
+  --stack-bin /path/to/stack --stack-mcp /path/to/stack-mcp \
+  --mdopen /path/to/mdopen --mdopener-mcp /path/to/mdopener-mcp \
+  --plugin-dir /path/to/ashlr-plugin \
+  --cortex-url https://cortex.ashlr.ai/api/mcp
+```
+
+`--plugin-dir` is an Ashlr.AI Plugin checkout after `bun install`, or its
+installed package. Its MCP router needs Bun and ripgrep on `PATH`, and the check
+never installs Bun.
+
+Every flag is optional; a check whose binary is missing is reported as `skip`.
+Each check runs in a disposable home with a scrubbed environment, so no real
+vault, pin, lexicon or Stack project is read or changed. It checks:
+
+- `phm companions` identifies each given CLI (a newer release than Phantom's
+  reviewed pin is a `warn`).
+- Each MCP server completes the stdio handshake for protocol versions
+  2025-06-18 and 2025-03-26, keeps stdout protocol-only, and lists the tools
+  agents rely on.
+- `stack status --json` and `phm stack status --json` both see a project's
+  services.
+- Lexicon's Claude Code hook exits 0 quickly with JSON or empty output.
+- `mdopen` returns promptly and gives a reason when no viewer can open.
+- A Locus pin made with `quickstart` and the shell hook reads as healthy
+  through Phantom's own Locus parsers, and `ready` is never true while the
+  authority anchor is unverified.
+- A secret stored with `phantom add --stdin` never reaches a child of
+  `phantom exec`, which sees only a `phm_` placeholder and a loopback proxy URL.
+- The Ashlr.AI Plugin's MCP router, started as its manifest does
+  (`node scripts/bootstrap.mjs servers/_router.ts`), completes both handshakes
+  and lists `ashlr__grep`, `ashlr__read` and `ashlr__tree`. One `ashlr__grep`
+  call with an explicit `cwd` must return a match from the project named by
+  `CLAUDE_PROJECT_DIR`.
+- A Locus github binding whose `credential_ref` is `phm:NAME`, run with plain
+  `locus exec`, either hands the value stored with `phantom add --stdin` to the
+  child as `GH_TOKEN` or refuses with a reason before the child starts. A child
+  that starts without the credential fails the check. The same binding with an
+  `env:` ref under `--strict-creds` is the control, so a failure names the side
+  that broke. Only a hash of the value is ever passed in argv.
+- Stack reads the project's Phantom Secrets vault: with one of the three secrets
+  declared in `.stack.toml` stored, `stack status --json` counts it, and
+  `stack env diff` and the `stack_env_diff` MCP tool name exactly the two
+  missing ones. No output may contain the stored value.
+- Phantom as the agent's single MCP endpoint: `phm mcp ecosystem --write`
+  registers the given Secrets, Locus and Ashlr MD servers, then Phantom's gateway
+  (`phm mcp`) completes both handshakes, lists
+  `phantom-secrets__phantom_list_secrets`, `locus__locus_whoami` and
+  `ashlr-md__open_file` for the servers given, and routes
+  one `phantom_list_secrets` call to the project's vault, which must return the
+  stored name and never its value. The gateway gives downstream servers a narrow
+  environment, so on a host without a keychain the file-vault passphrase goes in
+  the registered entry's `env`.
+- `--cortex-url` sends an anonymous `initialize` and one with an unknown
+  `ctx_pat_` token to a Cortex MCP endpoint. Both must get a non-cacheable 401
+  with a Bearer challenge that does not echo the token. Cortex verifies its
+  database before it authenticates, so a 503 means the deployment cannot check
+  tokens. No real token is ever sent.
+
+Exit 0 means no check failed; exit 1 names the broken seam; `--json` prints
+the `phm.companion-workflow-smoke/v1` report.
+
+To check what users actually install, add `--published`. It installs the
+latest `@ashlr/phantom`, `phantom-secrets`, `locus-cli`, `@ashlr/lexicon`,
+`@ashlr/stack`, `ashlr-stack-mcp` and `ashlr-plugin` from npm into a temporary prefix
+(`--prefix <dir>` keeps and reuses one) with install scripts off, resolves each
+binary from `node_modules/.bin`, and lets the Secrets and Locus wrappers
+download their native release into the disposable home. Explicit flags still
+win. Ashlr MD has no npm package, so on x64 Linux it downloads the latest
+Ashlr MD GitHub release `.deb` and unpacks `mdopen` and `mdopener-mcp` from it
+(needs `curl` and `dpkg-deb`; elsewhere those checks are skipped with the
+reason). The report lists each installed version. Re-run it whenever a
+companion publishes:
+
+```bash
+node scripts/companion-workflow-smoke.mjs --published --json
+```
