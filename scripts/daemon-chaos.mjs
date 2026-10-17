@@ -36,14 +36,23 @@
  *   execMarks   run execution-authority markers left in phase `executing`
  *   execClaims  shared-queue claims left in phase `executing`
  *   running     run records still `running` with no live owner
- *   pendingHomes metadata-free sandbox homes (a kill between the metadata unlink and
- *               the rmdir); the orphan sweep reclaims them once a minute old. --settle
+ *   pendingHomes sandbox homes the orphan sweep reclaims only once a minute old:
+ *               metadata-free homes (a kill between the metadata unlink and the
+ *               rmdir) and homes left with only their scratch branch (a kill
+ *               between `worktree remove` and `branch -D`, or inside `worktree add`;
+ *               their branch is counted here too, not under branches). --settle
  *               waits that minute after the last cycle and restarts once more
  *   queueWait   the queue is blocked now but recovers once the dead holder's lock is
- *               2x the lease old (the shared store spans machines, so it has no
- *               owner pid it could check)
- *   queueLitter --queue shared only: capability probes, temp and guard files left
- *               in the shared queue directory that block nothing
+ *               2x the lease old (the shared store spans machines). A stranded
+ *               unlink guard is dropped by that age; a stranded commit guard only
+ *               when its owner record proves a dead holder on this host, which a
+ *               SIGKILLed agent here always is (so the aged probe recovers it). A
+ *               live, foreign-host or unrecorded holder stays wedged on purpose
+ *   queueLitter --queue shared only: capability probes, temp files and guard owner
+ *               records left in the shared queue directory that block nothing
+ *
+ * SIGINT/SIGTERM kill every tracked agent process group and remove the run's
+ * temp base directory (unless --keep) before exiting.
  *
  * Usage:
  *   node scripts/daemon-chaos.mjs [--cycles 10] [--seed 1] [--n 4] [--files 120]
@@ -137,6 +146,26 @@ function pidAlive(pid) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Live agent process groups and the current run's base dir, for the signal handlers. */
+const liveGroups = new Set();
+let liveBase = null;
+let stopping = false;
+function stopOnSignal(signal) {
+  if (stopping) return;
+  stopping = true;
+  for (const pgid of liveGroups) {
+    try { process.kill(-pgid, 'SIGKILL'); } catch { /* gone */ }
+  }
+  if (liveBase && !keep) {
+    try { rmSync(liveBase, { recursive: true, force: true }); } catch { /* best effort */ }
+  } else if (liveBase) {
+    console.error(`kept ${liveBase}`);
+  }
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+process.on('SIGINT', () => stopOnSignal('SIGINT'));
+process.on('SIGTERM', () => stopOnSignal('SIGTERM'));
+
 /** Wait for every process in a killed agent's group to exit; SIGKILL the group after a grace. */
 async function drainGroup(pgid, graceMs = 20_000) {
   const until = Date.now() + graceMs;
@@ -154,6 +183,7 @@ function runAgent(ctx, idx, plan, crash) {
     const child = spawn(process.execPath, ['--import', 'tsx', worker, ctx.repo, ctx.queueDir, String(idx), String(agents), String(thinkMs), verify ? '1' : '0', queueMode], {
       env: ctx.env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
+    liveGroups.add(child.pid);
     let out = ''; let err = ''; let killedAt = null; let lastPhase = null;
     const strike = (mode, where) => {
       if (killedAt !== null || child.exitCode !== null) return;
@@ -173,6 +203,7 @@ function runAgent(ctx, idx, plan, crash) {
     child.stderr.on('data', (d) => { err += d; });
     child.on('close', async (code, signal) => {
       const strays = await drainGroup(child.pid);
+      liveGroups.delete(child.pid);
       const resultLine = out.split('\n').filter((l) => l.startsWith('RESULT ')).pop();
       let result = null;
       try { result = resultLine ? JSON.parse(resultLine.slice(7)) : null; } catch { result = null; }
@@ -211,17 +242,31 @@ function audit(ctx) {
   const detail = {};
   const sandboxes = join(ctx.ashlr, 'sandboxes');
   const homes = existsSync(sandboxes) ? readdirSync(sandboxes).filter((e) => !e.startsWith('.')) : [];
-  detail.homes = homes.filter((e) => existsSync(join(sandboxes, e, 'sandbox.json')));
-  detail.pendingHomes = homes.filter((e) => !existsSync(join(sandboxes, e, 'sandbox.json')));
   const porcelain = sh(ctx.repo, ctx.env, 'git', ['worktree', 'list', '--porcelain'], true);
   const blocks = porcelain.split('\n\n').filter((b) => b.startsWith('worktree '));
+  const registered = new Set(blocks.map((b) => b.split('\n')[0].slice('worktree '.length)));
+  const allBranches = sh(ctx.repo, ctx.env, 'git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/ashlr/'], true)
+    .split('\n').filter(Boolean);
+  // A home holding only its metadata and a scratch branch, under a minute old.
+  const strandedYoung = (e) => {
+    const home = join(sandboxes, e);
+    const meta = readJson(join(home, 'sandbox.json'));
+    if (!meta || existsSync(join(home, 'worktree')) || registered.has(join(home, 'worktree'))) return false;
+    if (!allBranches.includes(`ashlr/sandbox/${e}`)) return false;
+    let freshest = Date.parse(meta.createdAt);
+    try { freshest = Math.max(freshest, lstatSync(home).mtimeMs, lstatSync(join(home, 'sandbox.json')).mtimeMs); } catch { return false; }
+    return Date.now() - freshest < RESERVATION_RECOVERY_MS;
+  };
+  const withMeta = homes.filter((e) => existsSync(join(sandboxes, e, 'sandbox.json')));
+  const young = withMeta.filter(strandedYoung);
+  detail.homes = withMeta.filter((e) => !young.includes(e));
+  detail.pendingHomes = [...homes.filter((e) => !existsSync(join(sandboxes, e, 'sandbox.json'))), ...young];
   detail.worktrees = blocks.slice(1).map((b) => {
     const path = b.split('\n')[0].slice('worktree '.length);
     const flags = ['locked', 'prunable'].filter((f) => b.split('\n').some((l) => l === f || l.startsWith(`${f} `)));
     return flags.length ? `${basename(path)}(${flags.join(',')})` : basename(path);
   });
-  detail.branches = sh(ctx.repo, ctx.env, 'git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/ashlr/'], true)
-    .split('\n').filter(Boolean);
+  detail.branches = allBranches.filter((b) => !young.some((e) => b === `ashlr/sandbox/${e}`));
   detail.gitLocks = [];
   walk(join(ctx.repo, '.git'), (p) => { if (p.endsWith('.lock')) detail.gitLocks.push(p.slice(ctx.repo.length + 1)); });
   const tmp = join(ctx.ashlr, 'tmp');
@@ -340,6 +385,7 @@ let failed = false;
 for (const seed of seeds) {
   const rnd = mulberry32(seed);
   const ctx = setup();
+  liveBase = ctx.base;
   const rows = [];
   let settled = null;
   if (!asJson) console.log(`\nseed ${seed}: ${cycles} cycles x ${agents} agents, ${queueMode} queue (residue AFTER restart + sweep)\n${header}`);
@@ -365,6 +411,7 @@ for (const seed of seeds) {
   } finally {
     if (!keep) rmSync(ctx.base, { recursive: true, force: true });
     else if (!asJson) console.log(`kept ${ctx.base}`);
+    liveBase = null;
   }
   const cyclesWithHard = rows.filter((r) => r.hard > 0).length;
   const cyclesWithSoft = rows.filter((r) => r.soft > 0).length;
