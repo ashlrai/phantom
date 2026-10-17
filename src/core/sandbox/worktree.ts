@@ -576,20 +576,38 @@ interface PinnedWorktreeCreationResult {
 }
 
 const PINNED_GIT_SUPERVISOR = String.raw`
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { lstatSync } = require('node:fs');
 
 // One supervisor runs exactly ONE git command. The runner may start it before
 // it knows the command (a warm supervisor, so its Node start-up overlaps the
 // runner's earlier steps instead of sitting on the critical path); the command
 // then arrives as the first IPC message. An idle supervisor whose runner went
-// away exits without running anything.
+// away exits without running anything. One whose runner went away while its
+// git runs ends that git's whole tree first: nothing may keep mutating the
+// repository after the runner (and so its caller's fence) is gone.
 let commandReceived = false;
 let cwd;
 let gitArgs;
 let gitEnv;
 let destinationPin = null;
-process.once('disconnect', () => { if (!commandReceived) process.exit(0); });
+let gitChild = null;
+process.once('disconnect', () => {
+  if (commandReceived) {
+    try {
+      if (process.platform === 'win32') {
+        if (gitChild && typeof gitChild.pid === 'number') {
+          spawnSync('taskkill.exe', ['/PID', String(gitChild.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+        }
+      } else {
+        // This supervisor leads its own process group (the runner starts it
+        // detached), which holds git and everything git started.
+        process.kill(-process.pid, 'SIGKILL');
+      }
+    } catch { /* exit below */ }
+  }
+  process.exit(0);
+});
 process.once('message', (command) => {
   commandReceived = true;
   try {
@@ -754,6 +772,7 @@ function start() {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
+      gitChild = git;
     }
   } catch (error) {
     send({ status: null, stdout: '', stderr: '', error: String(error) });
@@ -1416,11 +1435,14 @@ function worktreeIdentityResult(admin) {
 // every rollback of it.
 async function registerWorktree() {
   // Both source probes are read-only rev-parses, so they run side by side
-  // (one supervisor start instead of two in sequence). Both are spawned
-  // before the chdir below (the retained probe's cwd is '.', the source
-  // itself; the pathname probe names sourceRepo explicitly), their verdicts
-  // are applied in the original order, and both are still observed before
-  // the add.
+  // on the two supervisors the runner started with it. Both commands are
+  // handed over before the chdir below: the retained probe's cwd is '.' and
+  // its pin is the source inode the runner still sits in (which a supervisor
+  // started here already has); the pathname probe names sourceRepo
+  // explicitly. Their verdicts are applied in the original order, and both
+  // are still observed before the add. The add's supervisor, started before
+  // the chdir, normally reaches the pinned common directory by path and then
+  // must prove it holds exactly the pinned inode (see the supervisor's cwd pin).
   const [retainedSourceExact, sourcePathPinned] = await Promise.all([
     retainedSourceMatchesDiscovery(),
     currentSourceIsPinned(),
@@ -1679,6 +1701,11 @@ interface PinnedWorktreeRunnerInvocation {
  * must each stay under this bound (test/sandbox-create-two-phase.test.ts).
  */
 export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+
+/** The pinned git supervisor's source, run with `node -e` (tests only). */
+export function _pinnedGitSupervisorSourceForTest(): string {
+  return PINNED_GIT_SUPERVISOR;
+}
 
 /** Sizes the Windows command-line bound applies to (tests only). */
 export function _pinnedRunnerCommandLineSizesForTest(): {
