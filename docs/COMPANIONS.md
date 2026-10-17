@@ -166,10 +166,12 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
   and lists `ashlr__grep`, `ashlr__read` and `ashlr__tree`. One `ashlr__grep`
   call with an explicit `cwd` must return a match from the project named by
   `CLAUDE_PROJECT_DIR`.
-- A Locus github binding whose `credential_ref` is `phm:NAME` gets the value
-  stored with `phantom add --stdin` into a `locus exec --strict-creds` child as
-  `GH_TOKEN`. The same binding with an `env:` ref is the control, so a failure
-  names the side that broke. Only a hash of the value is ever passed in argv.
+- A Locus github binding whose `credential_ref` is `phm:NAME`, run with plain
+  `locus exec`, either hands the value stored with `phantom add --stdin` to the
+  child as `GH_TOKEN` or refuses with a reason before the child starts. A child
+  that starts without the credential fails the check. The same binding with an
+  `env:` ref under `--strict-creds` is the control, so a failure names the side
+  that broke. Only a hash of the value is ever passed in argv.
 - Stack reads the project's Phantom Secrets vault: with one of the three secrets
   declared in `.stack.toml` stored, `stack status --json` counts it, and
   `stack env diff` and the `stack_env_diff` MCP tool name exactly the two

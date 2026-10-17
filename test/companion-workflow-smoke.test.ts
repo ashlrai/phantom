@@ -250,11 +250,14 @@ createInterface({ input: process.stdin }).on('line', line => {
     }
   });
 
-  it('reads a Locus exec section as resolved only when the child saw the stored value', () => {
-    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\n', 'phm:')).toMatchObject({ status: 'pass' });
-    expect(smoke.evaluateLocusCredential('error: credential resolve failed: provider=github source=phantom code=unavailable\nPHM_SMOKE_EXIT 1\n', 'phm:'))
-      .toEqual({ status: 'fail', detail: 'the phm: credential did not resolve: error: credential resolve failed: provider=github source=phantom code=unavailable' });
-    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED different\n', 'env:')).toMatchObject({ status: 'fail', detail: expect.stringContaining('as different') });
+  it('passes a Locus credential that resolves or is refused before launch, never a child run without it', () => {
+    expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\nPHM_SMOKE_EXIT 0\n', 'phm:')).toMatchObject({ status: 'pass' });
+    const refused = 'error: phm: credential references are not supported by this Locus\nPHM_SMOKE_EXIT 2\n';
+    expect(smoke.evaluateLocusCredential(refused, 'phm:', '', { refusalOk: true })).toEqual({ status: 'pass', detail: 'locus exec refused before launch (exit 2): error: phm: credential references are not supported by this Locus' });
+    expect(smoke.evaluateLocusCredential(refused, 'env:')).toMatchObject({ status: 'fail', detail: expect.stringContaining('did not resolve (exit 2)') });
+    const silent = 'warn unresolved credentials: provider=github source=phantom code=unavailable\nPHM_SMOKE_CRED unset\nPHM_SMOKE_EXIT 0\n';
+    expect(smoke.evaluateLocusCredential(silent, 'phm:', '', { refusalOk: true })).toMatchObject({ status: 'fail', detail: expect.stringContaining('the child ran with GH_TOKEN unset (exit 0)') });
+    expect(smoke.evaluateLocusCredential('PHM_SMOKE_EXIT 1\n', 'phm:', '', { refusalOk: true })).toMatchObject({ status: 'fail' });
     expect(smoke.evaluateLocusCredential('PHM_SMOKE_CRED match\n', 'phm:', 'sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef')).toMatchObject({ status: 'fail' });
   });
 

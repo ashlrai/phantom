@@ -753,9 +753,11 @@ const seen = !token ? 'unset' : createHash('sha256').update(token).digest('hex')
 process.stdout.write('PHM_SMOKE_CRED ' + seen + '\\n');`;
 
 /**
- * A github binding whose credential_ref is `phm:NAME` (and, as a control, `env:NAME`),
- * pinned and run with `locus exec --strict-creds`: the child must get the stored value
- * as GH_TOKEN. Only its sha256 is passed in argv, because Locus audits exec argv.
+ * A github binding whose credential_ref is `phm:NAME`, pinned and run with plain
+ * `locus exec` as a user would. Either the child gets the stored value as GH_TOKEN,
+ * or Locus refuses before launching it; a child that starts without the credential
+ * is the broken case. An `env:NAME` binding under `--strict-creds` is the control.
+ * Only the value's sha256 is passed in argv, because Locus audits exec argv.
  */
 export async function locusPhmCredential(options, env, box) {
   const project = join(box.home, 'locus-credential-project');
@@ -769,11 +771,11 @@ export async function locusPhmCredential(options, env, box) {
   const setup = await secretsProject(options.secretsBin, credEnv, project, [['GH_SMOKE_TOKEN', SECRET_SENTINEL]]);
   if (setup) return [['locus:phm-credential', { status: 'fail', detail: setup }]];
   const hash = createHash('sha256').update(SECRET_SENTINEL).digest('hex');
-  const probe = (label, ref) => [
+  const probe = (label, ref, flags = '') => [
     `locus binding add ${label} --tenant ${label} --provider github --account ${label}-gh --credential-ref ${ref} --org smoke-org --non-interactive >/dev/null`,
     `locus enter ${label} --force >/dev/null`,
     `echo "PHM_SMOKE_STEP ${label}"`,
-    `locus exec --strict-creds -- "$PHM_SMOKE_NODE" --input-type=module -e "$PHM_SMOKE_PROBE" ${hash} 2>&1 || echo "PHM_SMOKE_EXIT $?"`,
+    `locus exec ${flags}-- "$PHM_SMOKE_NODE" --input-type=module -e "$PHM_SMOKE_PROBE" ${hash} 2>&1; echo "PHM_SMOKE_EXIT $?"`,
     'locus leave --force >/dev/null 2>&1 || true',
   ];
   const script = [
@@ -782,7 +784,7 @@ export async function locusPhmCredential(options, env, box) {
     'eval "$(locus hook bash)"',
     'set +e',
     ...probe('phmcred', 'phm:GH_SMOKE_TOKEN'),
-    ...probe('envcred', 'env:PHM_SMOKE_ENV_TOKEN'),
+    ...probe('envcred', 'env:PHM_SMOKE_ENV_TOKEN', '--strict-creds '),
     'exit 0',
   ].join('\n');
   const result = await run('bash', ['-c', script], { cwd: project, timeoutMs: 60_000,
@@ -793,18 +795,29 @@ export async function locusPhmCredential(options, env, box) {
   }
   const [phm, envSection] = output.split('PHM_SMOKE_STEP envcred');
   return [
-    ['locus:phm-credential', evaluateLocusCredential(phm, 'phm:', result.stdout + result.stderr)],
+    ['locus:phm-credential', evaluateLocusCredential(phm, 'phm:', result.stdout + result.stderr, { refusalOk: true })],
     ['locus:env-credential', evaluateLocusCredential(envSection, 'env:', result.stdout + result.stderr)],
   ];
 }
 
-/** One `locus exec --strict-creds` section of the binding flow's output. */
-export function evaluateLocusCredential(section, scheme, raw = '') {
+/**
+ * One `locus exec` section of the binding flow's output. Resolving passes; refusing
+ * before the child starts (non-zero exit, a reason, no child output) passes when
+ * `refusalOk`; a child that ran without the credential fails.
+ */
+export function evaluateLocusCredential(section, scheme, raw = '', { refusalOk = false } = {}) {
   if (raw.includes(SECRET_SENTINEL)) return { status: 'fail', detail: 'the stored value was printed' };
   const seen = section.match(/PHM_SMOKE_CRED (\w+)/u)?.[1];
-  if (seen === 'match') return { status: 'pass', detail: `the ${scheme} credential_ref reached the locus exec child as GH_TOKEN` };
+  const exit = Number(section.match(/PHM_SMOKE_EXIT (\d+)/u)?.[1] ?? NaN);
   const reason = section.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('PHM_SMOKE')).at(-1) ?? '';
-  return { status: 'fail', detail: `the ${scheme} credential ${seen ? `reached the child as ${seen}` : 'did not resolve'}${reason ? `: ${reason.slice(0, 200)}` : ''}` };
+  if (seen === 'match') return { status: 'pass', detail: `the ${scheme} credential_ref reached the locus exec child as GH_TOKEN` };
+  if (!seen && exit !== 0 && reason) {
+    return refusalOk
+      ? { status: 'pass', detail: `locus exec refused before launch (exit ${exit}): ${reason.slice(0, 200)}` }
+      : { status: 'fail', detail: `the ${scheme} credential did not resolve (exit ${exit}): ${reason.slice(0, 200)}` };
+  }
+  if (!seen) return { status: 'fail', detail: `locus exec exit ${exit} with no child output and no reason` };
+  return { status: 'fail', detail: `the child ran with GH_TOKEN ${seen} (exit ${exit})${reason ? `; locus said: ${reason.slice(0, 200)}` : ''}` };
 }
 
 /** Cortex's JSON-RPC code for an unauthenticated MCP request (packages/api/src/mcp/http.ts). */
