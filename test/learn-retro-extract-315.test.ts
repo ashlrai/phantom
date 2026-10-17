@@ -158,6 +158,45 @@ describe('cloud ends', () => {
     expect(r.candidates).toHaveLength(1);
   });
 
+  it('the tracker\'s own close sentence is generic, not a lesson', () => {
+    const r = retroFromCloud(cloud({ stateReason: 'Pull request #42 was closed without merging.' }), NOW);
+    expect(r.rootCause!.code).toBe('closed:unreviewed');
+    expect(r.candidates).toEqual([]);
+  });
+
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const failedCi = { headSha: head, mergeSha: null, ci: 'failure' as const, failedChecks: ['test (ubuntu)', 'lint'], reviewDecision: null, changesRequested: 0 };
+
+  it('closed with failed checks on the head: a cited lesson naming the checks', () => {
+    const r = retroFromCloud(cloud({ stateReason: 'Pull request #42 was closed without merging.', pr: 42, outcome: failedCi,
+      report: { status: 'done', summary: 'Fixed.', testsRun: [], risks: [] } }), NOW);
+    expect(r.rootCause).toMatchObject({ code: 'cloud:ci-failed', detail: 'Failed on the PR head: test (ubuntu), lint', evidence: 'CI rollup on ashlrai/widget#42 @abcdef0' });
+    expect(r.candidates).toHaveLength(1);
+    expect(r.candidates[0]!.text).toBe('Cloud feature tasks in ashlrai/widget: run test (ubuntu), lint before opening the PR; they failed and the PR closed without landing (ashlrai/widget#42 @abcdef0).');
+  });
+
+  it('a reason a person wrote outranks failed checks', () => {
+    const r = retroFromCloud(cloud({ stateReason: 'Duplicates the retry work already on main.', pr: 42, outcome: failedCi }), NOW);
+    expect(r.rootCause!.code).toBe('closed:by-mason');
+    expect(r.rootCause!.evidence).toContain('ashlrai/widget#42 @abcdef0');
+  });
+
+  it('closed after a review asked for changes: cited, not taught without its text', () => {
+    const r = retroFromCloud(cloud({ stateReason: 'Closed on GitHub.', pr: 7, outcome: { ...failedCi, ci: 'success', failedChecks: [], reviewDecision: 'CHANGES_REQUESTED', changesRequested: 1 } }), NOW);
+    expect(r.rootCause).toMatchObject({ code: 'cloud:changes-requested', evidence: 'review on ashlrai/widget#7 @abcdef0' });
+    expect(r.candidates).toEqual([]);
+  });
+
+  it('unknown CI (null) is never read as a failure or a pass', () => {
+    const r = retroFromCloud(cloud({ pr: 42, outcome: { ...failedCi, ci: null, failedChecks: [] } }), NOW);
+    expect(r.rootCause!.code).toBe('closed:unreviewed');
+  });
+
+  it('merged: the retro cites the PR it landed as', () => {
+    const r = retroFromCloud(cloud({ state: 'merged', pr: 42, outcome: { ...failedCi, ci: 'success', failedChecks: [] } }), NOW);
+    expect(r.happened).toBe('Landed as ashlrai/widget#42 @abcdef0.');
+  });
+
   it('failed launch: the failure code is the cause; infra failures are not taught', () => {
     const auth = retroFromCloud(cloud({ state: 'failed', failure: 'auth', stateReason: 'Not signed in' }), NOW);
     expect(auth.rootCause!.code).toBe('cloud:auth');

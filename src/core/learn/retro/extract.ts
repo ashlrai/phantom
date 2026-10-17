@@ -87,6 +87,17 @@ export interface CloudEndInput {
    * charted vocabulary; the Lessons view groups both lanes as "cloud").
    */
   lane?: 'cloud' | 'devin';
+  /** The task's PR number, when one was verified. */
+  pr?: number | null;
+  /** CI and review evidence captured at merge/close (cloud/tracker.ts); absent = unknown. */
+  outcome?: {
+    headSha: string | null;
+    mergeSha: string | null;
+    ci: 'success' | 'failure' | 'pending' | 'none' | null;
+    failedChecks: readonly string[];
+    reviewDecision: string | null;
+    changesRequested: number;
+  } | null;
 }
 
 export interface LeaderEndInput {
@@ -398,7 +409,7 @@ export function retroFromExecutionFailure(input: ExecutionFeedbackCase, createdA
 }
 
 /** Generic close reasons that say nothing about the work (no lesson in them). */
-const GENERIC_CLOSE = /^(closed (in (verse|phantom)|on github)( without landing)?\.?|closed from (ashlr verse|phantom).*|dismissed in (verse|phantom)\.?|superseded.*)$/i;
+const GENERIC_CLOSE = /^(closed (in (verse|phantom)|on github)( without landing)?\.?|closed from (ashlr verse|phantom).*|dismissed in (verse|phantom)\.?|superseded.*|pull request #\d+ was closed without merging\.?)$/i;
 
 export function retroFromFleet(input: FleetEndInput, createdAt: string): RetroV1 {
   const asked = firstLines([input.title, input.summary].filter(Boolean).join('\n'), 400) || '(no request recorded)';
@@ -570,6 +581,12 @@ const DEVIN_FAILURES: Readonly<Record<string, { label: string; infra: boolean; a
  */
 const VERSE_CLOSE_REASON = /^Closed in (?:Verse|Phantom): (.+)$/s;
 
+/** `owner/repo#12 @abc1234` (head), or just the repo when no PR is known. */
+function citeOutcome(repo: string, pr: number | null, outcome: CloudEndInput['outcome']): string {
+  const sha = outcome?.headSha ? ` @${outcome.headSha.slice(0, 7)}` : '';
+  return pr ? `${repo}#${pr}${sha}` : `${repo}${sha}`;
+}
+
 export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1 {
   const devin = input.lane === 'devin';
   const lane = devin ? 'devin' : 'cloud';
@@ -595,7 +612,7 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
   if (input.state === 'merged') {
     return baseRetro({
       ...common,
-      happened: `Landed${report?.summary ? `: ${report.summary}` : '.'}`,
+      happened: `Landed${input.pr ? ` as ${citeOutcome(input.repo, input.pr, input.outcome)}` : ''}${report?.summary ? `: ${report.summary}` : '.'}`,
       rootCause: null,
       doDifferently: [],
       betterPrompt: null,
@@ -634,17 +651,34 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
   const reason = input.stateReason?.trim() || 'Closed without landing.';
   const masonSaid = VERSE_CLOSE_REASON.exec(reason)?.[1]?.trim() || null;
   const lesson = masonSaid ?? reason;
-  const blocked = !masonSaid && report && (report.status === 'blocked' || report.status === 'partial');
-  const noChange = !masonSaid && report?.status === 'no-change';
+  // GitHub's verdict on the exact head outranks the session's own report:
+  // failed checks first, then a reviewer asking for changes.
+  const outcome = input.outcome ?? null;
+  const cite = citeOutcome(input.repo, input.pr ?? null, outcome);
+  const checks = outcome?.ci === 'failure' && outcome.failedChecks.length > 0 ? outcome.failedChecks.slice(0, 3).map((c) => cleanText(c, 60)) : null;
+  // A reason a person wrote outranks every machine signal.
   const informative = masonSaid !== null || !GENERIC_CLOSE.test(reason);
-  const cause: RetroRootCause = blocked
+  const ciFailed = !informative && checks !== null;
+  const reviewRejected = !informative && !ciFailed && outcome !== null && (outcome.reviewDecision === 'CHANGES_REQUESTED' || outcome.changesRequested > 0);
+  const blocked = !masonSaid && !ciFailed && !reviewRejected && report && (report.status === 'blocked' || report.status === 'partial');
+  const noChange = !masonSaid && !ciFailed && !reviewRejected && report?.status === 'no-change';
+  const cause: RetroRootCause = ciFailed
+    ? { code: `${lane}:ci-failed`, label: 'CI failed', detail: `Failed on the PR head: ${checks.join(', ')}`, evidence: `CI rollup on ${cite}` }
+    : reviewRejected
+      ? { code: `${lane}:changes-requested`, label: 'Review asked for changes', detail: reason, evidence: `review on ${cite}` }
+      : blocked
     ? { code: `${lane}:${report.status}`, label: report.status === 'blocked' ? 'Session blocked' : 'Partial delivery', detail: report.summary || reason, evidence: 'PR report' }
     : noChange
       ? { code: `${lane}:no-change`, label: 'Nothing to change', detail: report?.summary || reason, evidence: 'PR report' }
       : informative
         ? { code: 'closed:by-mason', label: 'Closed by Mason', detail: lesson, evidence: masonSaid ? 'Mason’s close reason' : 'close reason' }
         : { code: 'closed:unreviewed', label: 'Closed without a reason', detail: reason, evidence: 'close reason' };
-  const doNext = blocked
+  if (!ciFailed && !reviewRejected && outcome) cause.evidence = `${cause.evidence}; ${cite}`;
+  const doNext = ciFailed
+    ? [`Run ${checks.join(', ')} before opening the PR; they failed on ${cite}.`]
+    : reviewRejected
+      ? ['Read the review that asked for changes before relaunching.']
+      : blocked
     ? [`Unblock before relaunching: ${cleanText(report.summary, 200)}`]
     : noChange
       ? ['Check the request is still needed; the session found nothing to change.']
@@ -652,7 +686,9 @@ export function retroFromCloud(input: CloudEndInput, createdAt: string): RetroV1
         ? [`Address the close reason before retrying: ${cleanText(lesson, 200)}`]
         : ['Record a close reason next time so the lesson is not lost.'];
   const candidates: KnowledgeCandidate[] = [];
-  if (blocked && report.summary) {
+  if (ciFailed) {
+    candidates.push({ text: `${devin ? 'Devin' : 'Cloud'} ${kind === 'other' ? '' : `${kind} `}tasks in ${input.repo}: run ${checks.join(', ')} before opening the PR; ${checks.length > 1 ? 'they' : 'it'} failed and the PR closed without landing (${cite}).`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });
+  } else if (blocked && report.summary) {
     candidates.push({ text: `${devin ? 'Devin' : 'Cloud'} ${kind === 'other' ? '' : `${kind} `}tasks in ${input.repo} got ${report.status}: ${cleanText(report.summary, 240)}`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });
   } else if (informative && cause.code === 'closed:by-mason') {
     candidates.push({ text: `Mason closed a ${noun} ${kind === 'other' ? '' : `${kind} `}change in ${input.repo} without landing: ${cleanText(lesson, 240)}`, scope: { repo: input.repo, pathGlobs: [], taskKinds: kinds } });

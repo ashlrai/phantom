@@ -104,6 +104,25 @@ export interface CloudTaskLessons {
   noteIds: string[];
 }
 
+/**
+ * What GitHub showed about the task's PR when it merged or closed: the exact
+ * head (and merge) commit, the CI rollup on that head and the review verdict.
+ * Captured once by the tracker at the terminal transition; absent = not
+ * captured (lookup failed or the task predates it), which is unknown, not green.
+ */
+export interface CloudTaskOutcome {
+  observedAt: string;
+  headSha: string | null;
+  mergeSha: string | null;
+  /** Rollup on the head: 'none' = no checks ran; null = could not be read. */
+  ci: 'success' | 'failure' | 'pending' | 'none' | null;
+  /** Names of failed checks on the head, at most 20. */
+  failedChecks: string[];
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  /** Reviews whose state was CHANGES_REQUESTED. */
+  changesRequested: number;
+}
+
 export interface CloudTaskPr {
   number: number;
   url: string;
@@ -186,6 +205,8 @@ export interface CloudTaskV1 {
   playbookRef?: PlaybookRef;
   /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
   lessons?: CloudTaskLessons;
+  /** CI and review evidence at merge/close (cloud/tracker.ts); absent = not captured. */
+  outcome?: CloudTaskOutcome;
   /** Budget accounting — an ESTIMATE fixed at launch. */
   estimatedCostUsd: number;
   /** Backlog item this task came from (self-improvement), if any. */
