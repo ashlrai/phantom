@@ -29,6 +29,8 @@ import {
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
+  ErrorCode,
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
@@ -202,6 +204,26 @@ const MAX_DISCOVERY_PAGES = 64;
 const MAX_DISCOVERY_TOOLS = 4_096;
 const MAX_DISCOVERY_BYTES = 4 * 1024 * 1024;
 const MAX_CURSOR_BYTES = 4_096;
+
+/**
+ * A tools/call for a name the gateway does not route is the caller's mistake,
+ * so it answers JSON-RPC -32602 (invalid params), not the SDK's default -32603
+ * (internal error). The message text is kept as is: the SDK sends `message` and
+ * `code` from the thrown error. Downstream failures (McpError, or any error
+ * without the `Unknown tool "` prefix) pass through unchanged.
+ */
+export function unknownToolAsInvalidParams<A extends unknown[], R>(handler: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    try {
+      return await handler(...args);
+    } catch (err) {
+      if (err instanceof Error && !(err instanceof McpError) && err.message.startsWith('Unknown tool "')) {
+        throw Object.assign(err, { code: ErrorCode.InvalidParams });
+      }
+      throw err;
+    }
+  };
+}
 
 /**
  * Env var set on every downstream child the gateway spawns. A downstream that
@@ -635,7 +657,7 @@ export async function startGateway(
     } as { tools: { name: string; description?: string; inputSchema: object }[]; _meta: Record<string, unknown> };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
     assertUsable();
     const requested = request.params.name;
     if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
@@ -650,7 +672,7 @@ export async function startGateway(
       await drop(route.downstream, route.client);
       throw err; // never replay an effectful request, even after reconnection
     }
-  });
+  }));
 
   let closing: Promise<void> | undefined;
   const onSigint = (): void => onSignal('SIGINT');

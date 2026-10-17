@@ -165,6 +165,17 @@ describe('callNativeTool', () => {
     expect(resultText(r)).toContain('ashlr backlog refresh');
   });
 
+  it('ashlr_health on a non-enrolled repo names the exact enroll command', async () => {
+    const repo = join(fx.home, 'not-enrolled');
+    mkdirSync(repo, { recursive: true });
+    const r = await callNativeTool('ashlr_health', { repo });
+    const payload = JSON.parse(resultText(r)) as { error?: string };
+    expect(payload.error).toContain(`repo not enrolled for health review: ${resolve(repo)}`);
+    // Shell-quoted only when the path needs it (a Windows path has `\` and `:`).
+    const arg = /^[\w@%+=:,./-]+$/u.test(resolve(repo)) ? resolve(repo) : `'${resolve(repo)}'`;
+    expect(payload.error).toContain(`; enroll it with \`ashlr enroll add ${arg}\``);
+  });
+
   it('ashlr_orient returns a valid OrientResult on empty stores', async () => {
     const r = await callNativeTool('ashlr_orient', {});
     expect(r.isError).toBeUndefined();
