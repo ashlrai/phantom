@@ -57,9 +57,12 @@ Entries below each cite a pull request merged into `master` after the
 - Detect ashlr-plugin by the binaries it ships rather than Phantom's own `ashlr` alias, and keep its lifetime savings total after sessions end (#820).
 - Show one doctor warning, not four, when no local model is running (#824).
 - Keep `--json` output machine-readable on refusals for stack, mirror, playbook, roadmap, inbox and improve (#794).
+- Report stale git lock files in `doctor` and at daemon start (#842).
+- Treat renaming a test out of the suite as deleting it (#841).
 
 ### Tests and docs
 - Fix environment-dependent and flaky tests (#752) and deflake the grok capacity e2e (#711).
+- Run the Windows DACL checks through the semantic harness, with one template repo per file (#840).
 - Align repo docs with master (#750).
 
 ## [3.29.15] — 2026-10-14
