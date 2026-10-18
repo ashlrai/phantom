@@ -6,6 +6,7 @@ import { killSwitchOn } from '../sandbox/policy.js';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { homedir, userInfo } from 'node:os';
+import type { CheckRunObservation, RequiredCheck, StatusObservation } from '../fleet/merge-gates.js';
 import { defaultHostMergeDeps, readHeadChecks, readRequiredChecks } from '../fleet/host-merge.js';
 import { evaluateG7Checks } from '../fleet/merge-gates.js';
 import { ensureMirror, mirrorPathFor } from '../fleet/mirrors.js';
@@ -59,6 +60,29 @@ function assertToolchain(commission: WebsiteCommission): void {
   if (pkg['name'] !== 'vercel' || pkg['version'] !== WEBSITE_PROFILE.cliVersion) throw new Error('Website publisher CLI version changed');
 }
 /** Inventory executable dependencies too; a package.json version alone never pins a publisher. */
+
+/** The ashlr-fleet App's host-verified check; accepted (and pinned to the App) whenever the ruleset requires it. */
+export const WEBSITE_VERIFY_CHECK = { context: 'ashlr/verify', appId: '5089472' } as const;
+
+/**
+ * Website source qualification on the exact PR head SHA. Requires a strict,
+ * readable, non-empty required-check set from the protected default branch
+ * and every required check green (evaluateG7Checks pins each check to its
+ * integration). If the ruleset requires `ashlr/verify`, it must be the fleet
+ * App's; if the ruleset does not require it, the repo's required CI checks
+ * alone qualify the source.
+ */
+export function websiteChecksQualify(
+  rules: { rulesetsUnavailable?: boolean; strict?: boolean | null; required: readonly RequiredCheck[] },
+  checks: { runs: readonly CheckRunObservation[]; statuses: readonly StatusObservation[] },
+  nowMs = Date.now(),
+): boolean {
+  if (rules.rulesetsUnavailable || rules.strict !== true || rules.required.length === 0) return false;
+  const verify = rules.required.filter((r) => r.context === WEBSITE_VERIFY_CHECK.context);
+  if (verify.length && !verify.every((r) => r.appId === WEBSITE_VERIFY_CHECK.appId)) return false;
+  return evaluateG7Checks({ enforcement: 'server', required: rules.required, runs: checks.runs, statuses: checks.statuses, pendingSinceMs: nowMs, nowMs }).state === 'green';
+}
+
 export function inventoryToolTree(root: string): string {
   // The same no-symlink complete inventory is reused; tooling has no output config requirement.
   const inventory = (path: string): unknown => {
@@ -232,9 +256,7 @@ export function createWebsiteHostAdapter(commission: WebsiteCommission, signal?:
     if (sha(object(headCommit['tree'])['sha']) !== tree) throw new Error('Merged website tree differs from its qualified PR head');
     const rules = await readRequiredChecks(WEBSITE_PROFILE.repo, WEBSITE_PROFILE.branch, host);
     const checks = await readHeadChecks(WEBSITE_PROFILE.repo, headSha, host);
-    if (typeof rules === 'string' || typeof checks === 'string' || rules.rulesetsUnavailable || rules.strict !== true ||
-        !rules.required.some((r) => r.context === 'ashlr/verify' && r.appId === '5089472') ||
-        evaluateG7Checks({ enforcement: 'server', required: rules.required, runs: checks.runs, statuses: checks.statuses, pendingSinceMs: Date.now(), nowMs: Date.now() }).state !== 'green') throw new Error('Website required checks and App identity are not green');
+    if (typeof rules === 'string' || typeof checks === 'string' || !websiteChecksQualify(rules, checks)) throw new Error('Website required checks and App identity are not green');
     const rawRules = await gh(`/rules/branches/${WEBSITE_PROFILE.branch}?per_page=100`);
     if (!Array.isArray(rawRules) || rawRules.length === 100) throw new Error('Website effective rule definitions are incomplete');
     const definitions: unknown[] = [];
