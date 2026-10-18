@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gatherProposals, openProposalPr, renderProposal } from '../core/improve/loop.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
+import { rejectUnknownOptions } from './args.js';
 
 const USAGE = `Usage:
   phm improve propose [--team <id>] [--open-pr --repo <dir>] [--json]
@@ -32,6 +33,14 @@ export async function cmdImprove(argv: string[]): Promise<number> {
 }
 
 async function propose(args: string[], val: (n: string) => string | undefined): Promise<number> {
+  // Refuse an option propose does not read before the steward runs: a typo like
+  // `--open-p` used to fall through to a normal proposal run.
+  const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--open-pr', '--auto-merge'], values: ['--team', '--repo'] });
+  if (bad) {
+    if (args.includes('--json') && args.includes('--open-pr')) console.log(JSON.stringify({ opened: [], error: bad.message }, null, 2));
+    else { console.error(bad.message); console.error(USAGE); }
+    return 2;
+  }
   if (args.includes('--auto-merge')) { console.error('Draft proposals cannot request auto-merge. Promotion is `phm improve promote`, gated by green checks and a measured metric improvement.'); return 2; }
   const gathered = gatherProposals(val('--team') ?? 'default', runSteward(defaultStewardPolicy()));
   const { readLedger, scoreOutcomes, rankByLeverage } = await import('../core/improve/outcomes.js');

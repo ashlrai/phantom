@@ -39,8 +39,10 @@ name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
 unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
 deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request
-(`.github/workflows/ci.yml`).
+(isolated)` and the other macOS checks run on every pull request that is ready
+for review. A draft pull request skips those until it is marked ready, which
+starts a full run; a draft cannot merge, so open drafts while iterating
+and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
 
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
@@ -193,7 +195,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm backlog [refresh]` | Scored work queue across enrolled repos |
 | `phm inbox [show\|approve\|submit\|reject] <id>` | Approval gate for proposals; `approve` applies to a local branch, `submit` hands off to a protected PR and never merges main |
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
-| `phm goal "<objective>"` | One owner-invoked plan plus one proposal-only advance |
+| `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
 | `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
