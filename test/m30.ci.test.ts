@@ -168,6 +168,35 @@ describe('M30 CI workflow', () => {
     for (const name of full.filter((name) => !mac.includes(name))) {
       expect(superseded({ ...complete, [name]: 'cancelled', site: 'skipped' }), `${name}: cancelled`).toThrow();
     }
+    // Draft PR: every Mac lane may be skipped, nothing else; a Mac failure or
+    // cancellation still blocks, and a PR no longer a draft defers nothing.
+    const drafted = (outcomes: Record<string, string>) => {
+      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      }]));
+      return () => runInNewContext(source!, {
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'true', MAC_DRAFT_DEFERRED: 'true' } }, console: { log: () => {} },
+      });
+    };
+    const draftMac = Object.fromEntries(mac.map((name) => [name, 'skipped']));
+    expect(drafted({ ...complete, ...draftMac, site: 'skipped' })).not.toThrow();
+    expect(execute('full', { ...complete, ...draftMac, site: 'skipped' }, 'success', 'true')).toThrow();
+    for (const name of mac) {
+      for (const outcome of ['failure', 'cancelled', 'neutral']) {
+        expect(drafted({ ...complete, ...draftMac, [name]: outcome, site: 'skipped' }), `draft ${name}: ${outcome}`).toThrow();
+      }
+    }
+    for (const name of full.filter((name) => !mac.includes(name))) {
+      expect(drafted({ ...complete, ...draftMac, [name]: 'skipped', site: 'skipped' }), `draft ${name}: skipped`).toThrow();
+    }
+    expect(steps[0]!.env.EVENT_DRAFT).toBe('${{ github.event.pull_request.draft }}');
+    expect(steps[0]!.run).toContain('if [ "$EVENT_NAME" = pull_request ] && [ "$EVENT_DRAFT" = true ]; then');
+    expect(steps[0]!.run).toContain('MAC_DRAFT_DEFERRED=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .draft) || MAC_DRAFT_DEFERRED=false');
+    // mac-general already skips on unlabelled PRs, drafts included; a ci:full-mac
+    // draft still runs it and must pass.
+    for (const id of mac.filter((id) => id !== 'mac-general')) expect(String(jobs[id]!.if), id).toContain('!github.event.pull_request.draft');
+    expect((parse(ciYml) as { on: { pull_request: { types: string[] } } }).on.pull_request.types)
+      .toEqual(['opened', 'synchronize', 'reopened', 'ready_for_review']);
     expect(steps[0]!.env.EVENT_NAME).toBe('${{ github.event_name }}');
     expect(steps[0]!.env.COMMIT_SHA).toBe('${{ github.sha }}');
     expect(steps[0]!.run).toContain('refs/heads/master | cut -f1) || head=\'\'');
@@ -394,7 +423,9 @@ describe('M30 CI workflow', () => {
     }
     for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
-      expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
+      // Draft PRs skip only the Mac lanes; Linux and Windows run on every push.
+      const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}`);
     }
     // The exhaustive Mac partition runs on master pushes, reusable calls and
     // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
