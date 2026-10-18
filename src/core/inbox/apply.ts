@@ -99,7 +99,11 @@ function writeTmpFile(content: string): string {
   const name = `patch-${randomBytes(6).toString('hex')}.diff`;
   const p = join(dir, name);
   writeTmpScratchOwner(p);
-  writeFileSync(p, content, 'utf8');
+  // `git apply` rejects a patch whose last line has no newline ("corrupt patch
+  // at line N"), and captured sandbox diffs end without one (sandboxDiff trims
+  // git's output). Same fix as inbox/merge.ts (M292); the stored diff and its
+  // provenance hash stay untouched.
+  writeFileSync(p, content.endsWith('\n') ? content : `${content}\n`, 'utf8');
   return p;
 }
 

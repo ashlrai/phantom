@@ -852,6 +852,27 @@ describe('runDoctor — compatible CLI installation guidance', () => {
     for (const c of [plugin, servers]) expect(c?.fix ?? '').not.toContain('ashlr init');
   });
 
+  it('gives one MCP warning, not two, when no MCP server is registered anywhere', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const plugin = report.checks.find(c => c.id === 'mcp-plugin');
+    expect(plugin?.status).toBe('warn');
+    expect(plugin?.fix).toContain('phm mcp install claude');
+    expect(plugin?.fix).toContain('phm mcp ecosystem --write');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')).toBeUndefined();
+  });
+
+  it('still reports discovered servers beside a missing Phantom gateway', async () => {
+    writeFileSync(join(tmpHome, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'other-mcp' } } }));
+    const report = await runDoctor(makeConfig(tmpHome));
+    expect(report.checks.find(c => c.id === 'mcp-plugin')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')?.status).toBe('pass');
+  });
+
+  it('points a missing companion set at phm companions', async () => {
+    const tools = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'ashlr-tools-installed');
+    if (tools?.status === 'warn') expect(tools.fix).toBe('See where to install each companion: phm companions');
+  });
+
   it('recognizes the canonical phm command and prefers it over ashlr', async () => {
     installAshlrShim(tmpHome, 'phm');
     isolateCommandPath();
