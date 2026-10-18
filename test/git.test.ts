@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
-import { isRepo, getRemoteOrg, getGitStatus } from '../src/core/git.js';
+import { isRepo, getRemoteOrg, getGitStatus, getGitStatusAsync } from '../src/core/git.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -210,13 +210,16 @@ describe('getGitStatus', () => {
     expect(status!.dirty).toBeGreaterThan(0);
   });
 
-  it('returns lastCommit=null for a zero-commit repo', () => {
-    initEmptyRepo(tmp);
-    const status = getGitStatus(tmp);
-    // Either null (no commits) or a valid status — implementation may return null for the whole thing
-    // on a zero-commit repo; both are acceptable per contract ("null if not a repo or git unavailable")
-    if (status !== null) {
-      expect(status.lastCommit).toBeNull();
+  it('reports a zero-commit repo (fresh git init) with its branch and lastCommit=null', async () => {
+    execSync('git init -b trunk', { cwd: tmp, stdio: 'pipe' });
+    writeFileSync(join(tmp, 'notes.txt'), 'draft');
+    for (const status of [getGitStatus(tmp), await getGitStatusAsync(tmp)]) {
+      expect(status).not.toBeNull();
+      expect(status!.branch).toBe('trunk');
+      expect(status!.lastCommit).toBeNull();
+      expect(status!.dirty).toBe(1);
+      expect(status!.ahead).toBe(0);
+      expect(status!.behind).toBe(0);
     }
   });
 
