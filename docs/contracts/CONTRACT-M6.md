@@ -94,7 +94,10 @@ export async function cmdShip(args: string[]): Promise<number>;
 - Parses: `[path] [--gate] [--deploy <target>] [--strict] [--confirm]`. Runs
   `runShipGate` (path defaults to cwd), prints the gate, then — when `--deploy`
   is given — calls `deploy` (DRY-RUN unless `--confirm`). Returns exit code:
-  non-zero when `--strict` and the gate has any `fail`, else 0.
+  non-zero when `--strict` and the gate has any `fail`, else 0; 2 on bad usage or
+  when the path is not an existing directory (refused before the gate runs, so
+  a typo'd path never reads as GATE PASSED). `runShipGate` itself still never
+  throws on a missing directory.
 
 ## Guardrails (top priority)
 - `ashlr new` REFUSES to overwrite an existing directory; writes only under the

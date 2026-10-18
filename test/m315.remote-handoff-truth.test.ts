@@ -32,6 +32,23 @@ const privateStorageHarness = vi.hoisted(() => ({
   realCalls: 0,
 }));
 
+// The auto-merge canary shadow observer is non-authoritative and runs after the
+// outward result is fixed. Under vitest its child boots tsx and re-imports the
+// whole module graph (seconds per merge on Windows). Run the same observer
+// in-process instead; m402 covers the real child-process boundary.
+vi.mock('../src/core/fleet/automerge-canary-observer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/fleet/automerge-canary-observer.js')>();
+  return {
+    ...actual,
+    observeAutoMergeCanaryShadowAsync: async (
+      input: Parameters<typeof actual.observeAutoMergeCanaryShadowAsync>[0],
+    ) => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return actual.observeAutoMergeCanaryShadow(input);
+    },
+  };
+});
+
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
   return {
