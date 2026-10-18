@@ -12,21 +12,25 @@
  *      the daemon's sandboxed-producer primitives and printing `PHASE <name>`;
  *   2. SIGKILLs agents at seeded random points: during sandbox creation
  *      (reservation / REGISTER / checkout), at admission, mid-run, while
- *      settling (proposal filing + sandbox removal) and during the inbox
- *      temp-worktree verify. Some cycles kill every agent at once (a daemon
+ *      settling (proposal filing + sandbox removal), during the inbox
+ *      temp-worktree verify, while applying the proposal and while a fleet
+ *      scratch repository is open. Some cycles kill every agent at once (a daemon
  *      crash); others kill single agents. A kill hits either the process
  *      alone (its git children run on, as after an OOM kill) or its whole
  *      process group;
  *   3. restarts: runs the start-up recovery runDaemon performs (orphan sandbox
- *      sweep, leaked temp-worktree sweep; see the worker's --restart);
+ *      sweep, leaked temp-worktree sweep, tmp scratch sweep, stale git lock
+ *      report; see the worker's --restart);
  *   4. audits residue and prints one row per cycle.
  *
  * Residue classes. HARD residue must be gone after a restart and fails the run:
  *   homes       sandbox homes under ~/.ashlr/sandboxes (these count against the cap)
  *   worktrees   linked worktrees still registered (`git worktree list`)
- *   branches    scratch branches (refs/heads/ashlr/sandbox/*, ashlr/verify/*)
+ *   branches    scratch branches (refs/heads/ashlr/sandbox/*, ashlr/verify/*); an
+ *               applied proposal's ashlr/proposal/* branch is apply's output, kept
  *   gitLocks    *.lock files under the repo's .git (index.lock, ref locks, ...)
- *   tmp         entries under ~/.ashlr/tmp (temp worktrees, owner markers, patch files)
+ *   tmp         entries under ~/.ashlr/tmp (temp worktrees, owner markers, patch files,
+ *               fleet-git-* scratch repositories)
  *   wedged      1 when the next tick's first queue claim + outcome record fails, and
  *               still fails when re-run as if every stale-lock window had passed
  *   strays      processes left over from a killed agent
@@ -90,6 +94,7 @@ const RESERVATION_RECOVERY_MS = 60_000;
 // Kill points and how long after entering the phase to strike (ms, uniform).
 const KILL_POINTS = {
   queueClaim: 40, runTerminal: 40, sandboxCreate: 900, admit: 60, engine: thinkMs, settle: 250, sandboxRemove: 250, verify: 2_500,
+  apply: 400, fleetScratch: Math.max(50, thinkMs),
 };
 
 function mulberry32(seed) {
@@ -246,7 +251,7 @@ function audit(ctx) {
   const blocks = porcelain.split('\n\n').filter((b) => b.startsWith('worktree '));
   const registered = new Set(blocks.map((b) => b.split('\n')[0].slice('worktree '.length)));
   const allBranches = sh(ctx.repo, ctx.env, 'git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/ashlr/'], true)
-    .split('\n').filter(Boolean);
+    .split('\n').filter(Boolean).filter((b) => !b.startsWith('ashlr/proposal/'));
   // A home holding only its metadata and a scratch branch, under a minute old.
   const strandedYoung = (e) => {
     const home = join(sandboxes, e);
