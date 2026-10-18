@@ -82,7 +82,7 @@ spec, touches a user repo, or emits an outward action.
 | `ashlr goals show <id> [--json]` | Show goal + milestones. | **read-only** |
 | `ashlr goals plan <id> [--allow-cloud] [--max <n>]` | Decompose + author specs. Deterministic by default; `--allow-cloud` prints a warning. Bounded by `--max`. No swarm runs. | mutating (local plan/specs) |
 | `ashlr goals advance <id>` | Run the NEXT milestone via the sandboxed, proposal-only swarm path. | **sandboxed proposal-only** |
-| `ashlr goals status [--json]` | Tracking dashboard via `progressOf`. | **read-only** |
+| `ashlr goals status [id] [--json]` | Tracking dashboard via `progressOf`; with an id, that one goal. | **read-only** |
 | `ashlr goals pause/resume/skip <id> [milestone]` | Steer the plan. | mutating (local record only) |
 
 `--allow-cloud` is **off by default**. `--json` is supported on read paths.
