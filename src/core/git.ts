@@ -128,6 +128,10 @@ export async function isRepoAsync(dir: string): Promise<boolean> {
 // The commands getGitStatus runs, shared with getGitStatusAsync so both ask
 // git exactly the same questions.
 const STATUS_BRANCH_ARGS: readonly string[] = ['rev-parse', '--abbrev-ref', 'HEAD'];
+// A repo with no commits yet (fresh `git init`) has no HEAD to rev-parse, but
+// symbolic-ref still names its branch; without it the repo would read as not
+// a repo and drop out of `phm status`.
+const STATUS_UNBORN_BRANCH_ARGS: readonly string[] = ['symbolic-ref', '--short', 'HEAD'];
 const STATUS_PORCELAIN_ARGS: readonly string[] = ['status', '--porcelain'];
 const STATUS_REV_COUNT_ARGS: readonly string[] = ['rev-list', '--left-right', '--count', '@{u}...HEAD'];
 const STATUS_LAST_COMMIT_ARGS: readonly string[] = ['log', '-1', '--format=%cI'];
@@ -140,7 +144,7 @@ export function getGitStatus(repoPath: string): GitStatus | null {
   if (!isRepo(repoPath)) return null;
 
   // --- branch ---
-  const branchRaw = git(repoPath, [...STATUS_BRANCH_ARGS]);
+  const branchRaw = git(repoPath, [...STATUS_BRANCH_ARGS]) ?? git(repoPath, [...STATUS_UNBORN_BRANCH_ARGS]);
   if (branchRaw === null) return null; // git not available / not a real repo
   return gitStatusFrom(
     branchRaw,
@@ -157,7 +161,8 @@ export function getGitStatus(repoPath: string): GitStatus | null {
  */
 export async function getGitStatusAsync(repoPath: string, signal?: AbortSignal): Promise<GitStatus | null> {
   if (!(await isRepoAsync(repoPath))) return null;
-  const branchRaw = await gitAsync(repoPath, STATUS_BRANCH_ARGS, signal);
+  const branchRaw = await gitAsync(repoPath, STATUS_BRANCH_ARGS, signal)
+    ?? await gitAsync(repoPath, STATUS_UNBORN_BRANCH_ARGS, signal);
   if (branchRaw === null) return null; // git not available / not a real repo
   const [porcelain, revCount, lastCommit] = await Promise.all([
     gitAsync(repoPath, STATUS_PORCELAIN_ARGS, signal),
