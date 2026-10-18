@@ -20,6 +20,7 @@
  * SAFETY GUARDRAIL: deploy is DRY-RUN by default. Real actions only with --confirm.
  */
 
+import { statSync } from 'node:fs';
 import type { ShipCheck, ShipGate, ShipResult } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -67,6 +68,14 @@ interface ParsedShipArgs {
   confirm: boolean;
   json: boolean;
   usageError?: string;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function parseShipArgs(args: string[]): ParsedShipArgs {
@@ -379,6 +388,16 @@ export async function cmdShip(args: string[]): Promise<number> {
 
   if (parsed.usageError) {
     process.stderr.write(red('error: ') + parsed.usageError + '\n');
+    return 2;
+  }
+
+  // A missing or non-directory path used to skip every check and print
+  // GATE PASSED with exit 0, so a typo'd path read as a shippable project.
+  if (!isDirectory(parsed.projectPath)) {
+    process.stderr.write(
+      red('error: ') + `project path is not a directory: ${parsed.projectPath}\n` +
+      'Pass an existing project directory, or run `ashlr ship` from inside one.\n',
+    );
     return 2;
   }
 

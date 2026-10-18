@@ -92,7 +92,6 @@ const STRICT_VERB_PARSER = 'its option parser turns every unrecognized flag, --h
 const HELP_STRICT_REFUSALS: Record<string, string> = {
   'config set': '`config set` takes exactly <key> <value>; anything else prints its usage line and exits 2 before the config is touched',
   team: 'the team dispatcher prints its Usage for anything that is not one of its verbs (src/cli/team.ts) and exits 2',
-  steward: '`steward` only has the `disk` verb; anything else prints its Usage line and exits 2 (src/cli/steward.ts)',
   improve: '`improve` only has the `propose` verb; anything else prints its Usage line and exits 2 (src/cli/improve.ts)',
   'mcp install': 'install requires an explicit client target and refuses with its usage before reading or writing any client config',
   'desktop install': 'release installer with an exact grammar; an unrecognized token is a usage error before any download or stage',
@@ -143,7 +142,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'mcp run': 'exit 13: starts the MCP aggregation gateway on stdio',
   'run show': 'exit 1: looks the flag up as a run id',
   runs: 'exit 0: lists past runs',
-  'pulse-test': 'exit 2: runs the pulse check ("not configured"), no usage',
   'completions zsh': 'exit 0: prints the zsh completion script',
   'completions bash': 'exit 0: prints the bash completion script',
   version: 'exit 0: prints the version only',

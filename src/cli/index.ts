@@ -280,7 +280,7 @@ const loadPulseCmd = lazyCmd(
 
 const loadPulseTestCmd = lazyCmd(
   () => import('./pulse.js' as unknown as string),
-  (m) => ((_args: string[]) => (m.cmdPulseTest as () => Promise<number>)()) as Cmd,
+  (m) => m.cmdPulseTest as Cmd,
   'pulse-test command requires src/cli/pulse.ts (M91 module not yet built).',
 );
 
