@@ -316,8 +316,9 @@ function initEntrySource(name: string, capability: InitCapability): string {
 }
 
 async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number> {
-  const name = args.find((a) => !a.startsWith('--'));
   const capIdx = args.indexOf('--capability');
+  // The value after --capability is not the name: `init --capability command foo` names foo.
+  const name = args.find((a, i) => !a.startsWith('--') && !(capIdx !== -1 && i === capIdx + 1));
   const capability = (capIdx !== -1 ? args[capIdx + 1] : 'scanner') as InitCapability;
 
   if (!name) {
