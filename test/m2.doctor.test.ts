@@ -10,9 +10,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { AshlrConfig, ProviderRegistry, PhantomStatus } from '../src/core/types.js';
 import type { LocusProbeResult } from '../src/core/integrations/locus.js';
 import {
-  copyFileSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
+  copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync, rmSync,
 } from 'node:fs';
-import { join, delimiter } from 'node:path';
+import { dirname, join, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -208,6 +208,17 @@ vi.mock('../src/core/providers.js', () => ({
 import { runDoctor, checkLocus, checkLocusFirm } from '../src/core/doctor.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
 
+// Loaded at collection time: runDoctor imports these probes lazily, so the
+// file's first runDoctor case would otherwise transform their graphs cold
+// inside its own 15s window. runDoctor still awaits the same modules, cached.
+import '../src/core/plugins/registry.js';
+import '../src/core/plugins/integrity.js';
+import '../src/core/mcp-registry.js';
+import '../src/core/observability/rollup.js';
+import '../src/core/observability/governance.js';
+import '../src/core/observability/telemetry-sink.js';
+import '../src/core/genome/store.js';
+
 // Doctor probes shell out even with provider and Phantom mocks. Windows CI can
 // spend more than Vitest's 5s default in process startup across a single probe.
 // Covered by the real-io lane's 60s default now — see scripts/realio-lane-membership.mjs.
@@ -263,19 +274,38 @@ function installAshlrShim(tmpH: string, command: 'ashlr' | 'phm' | 'phantom' = '
   process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
 }
 
-/** Retain the real PATH locator but hide all host workbench executables. */
-function isolateCommandPath(): void {
+/** First match of `name` on the host PATH, resolved once per file. */
+function locateHostCommand(name: string): string {
   const finder = process.platform === 'win32' ? 'where' : 'which';
-  const located = spawnSync(finder, [finder], { encoding: 'utf8' });
+  const located = spawnSync(finder, [name], { encoding: 'utf8', env: { ...process.env, PATH: origPath } });
   expect(located.status).toBe(0);
-  const finderPath = located.stdout.trim().split(/\r?\n/)[0]!;
+  return located.stdout.trim().split(/\r?\n/)[0]!;
+}
+
+let hostFinder: string;
+let hostGit: string;
+
+/**
+ * Retain the real PATH locator and git but hide every other host executable.
+ * runDoctor shells out to `where`/`which` three times and to `git` once. On a
+ * hosted Windows runner every case on the full PATH took about 2.2s (91s for
+ * this file, and the first case passed its 15s deadline), while the cases that
+ * already used this PATH took 0.1s, and 11ms with PATH empty.
+ */
+function isolateCommandPath(): void {
   const binDir = join(tmpHome, 'bin');
+  mkdirSync(binDir, { recursive: true });
   if (process.platform === 'win32') {
-    copyFileSync(finderPath, join(binDir, 'where.exe'));
-  } else {
-    // Keep the platform binary in place; copied macOS system executables can
-    // be killed by code-signing enforcement outside their original location.
-    symlinkSync(finderPath, join(binDir, 'which'));
+    copyFileSync(hostFinder, join(binDir, 'where.exe'));
+    // Git for Windows' launcher resolves its runtime relative to itself, so it
+    // stays in its own directory, which holds only Git's own executables.
+    process.env.PATH = `${binDir}${delimiter}${dirname(hostGit)}`;
+    return;
+  }
+  // Keep the platform binaries in place; copied macOS system executables can
+  // be killed by code-signing enforcement outside their original location.
+  for (const [target, name] of [[hostFinder, 'which'], [hostGit, 'git']] as const) {
+    if (!existsSync(join(binDir, name))) symlinkSync(target, join(binDir, name));
   }
   process.env.PATH = binDir;
 }
@@ -321,6 +351,8 @@ function makeConfig(tmpH: string): AshlrConfig {
 }
 
 beforeAll(() => {
+  hostFinder = locateHostCommand(process.platform === 'win32' ? 'where' : 'which');
+  hostGit = locateHostCommand('git');
   if (process.platform !== 'win32') return;
 
   const proofHome = makeTmpHome();
@@ -349,6 +381,7 @@ beforeEach(() => {
   privateStorageHarness.adapterHome = tmpHome;
   privateStorageHarness.adapterAshlrHome = join(tmpHome, '.ashlr');
   installAshlrShim(tmpHome);
+  isolateCommandPath();
 
   // Reset to healthy defaults before each test.
   _phantomStatus = makePhantomStatus();
@@ -389,7 +422,7 @@ describe('runDoctor — report structure', () => {
     expect(report.checks.find((check) => check.id === 'ashlr-tools-installed'))
       .toMatchObject({ label: 'Phantom tools installed', status: 'warn', detail: 'No ecosystem tools installed; 0/0 installed' });
     expect(report.checks.find((check) => check.id === 'identity'))
-      .toMatchObject({ status: 'warn', detail: 'Not logged in to Phantom cloud — identity unavailable' });
+      .toMatchObject({ status: 'pass', detail: 'Not signed in to Phantom cloud (optional). Sign in for cloud identity: phantom login' });
   }, 15_000);
 
   it('returns a checks array with at least one check', async () => {
@@ -449,7 +482,7 @@ describe('runDoctor — all healthy', () => {
 });
 
 // ---------------------------------------------------------------------------
-// No local provider up → expect a 'fail' check
+// No local provider up → warn, not fail (matches preflight readiness)
 // ---------------------------------------------------------------------------
 
 describe('runDoctor — no local provider up', () => {
@@ -464,28 +497,51 @@ describe('runDoctor — no local provider up', () => {
     };
   });
 
-  // 30s: provider probes stack multiple 2s connection timeouts on slow CI runners.
-  it('produces at least one fail check when no provider is up', async () => {
+  it('warns, without failing, when no local provider is up', async () => {
     const cfg = makeConfig(tmpHome);
     const report = await runDoctor(cfg);
-    expect(report.summary.fail).toBeGreaterThan(0);
+    const active = report.checks.find(c => c.id === 'provider:active');
+    expect(active?.status).toBe('warn');
+    expect(active?.detail).toMatch(/--allow-cloud/);
+    expect(active?.fix).toMatch(/ollama serve/);
+    expect(report.checks.some(c => c.status === 'fail' && c.id.startsWith('provider'))).toBe(false);
   });
 
-  it('summary.fail is reflected correctly in summary counts', async () => {
+  it('summary counts still match the checks', async () => {
     const cfg = makeConfig(tmpHome);
     const report = await runDoctor(cfg);
-    const failChecks = report.checks.filter(c => c.status === 'fail');
-    expect(report.summary.fail).toBe(failChecks.length);
-    expect(failChecks.length).toBeGreaterThan(0);
+    expect(report.summary.fail).toBe(report.checks.filter(c => c.status === 'fail').length);
+    expect(report.summary.warn).toBe(report.checks.filter(c => c.status === 'warn').length);
   });
 
-  it('a provider-related check has id containing "provider"', async () => {
+  it('reports one provider warning, naming every probed endpoint, instead of one per endpoint', async () => {
     const cfg = makeConfig(tmpHome);
     const report = await runDoctor(cfg);
-    const providerFails = report.checks.filter(
-      c => c.status === 'fail' && c.id.includes('provider'),
-    );
-    expect(providerFails.length).toBeGreaterThan(0);
+    const providerWarns = report.checks.filter(c => c.id.startsWith('provider:') && c.status === 'warn');
+    expect(providerWarns.map(c => c.id)).toEqual(['provider:active']);
+    expect(providerWarns[0]?.detail).toContain('lmstudio http://localhost:1234/v1/models');
+    expect(providerWarns[0]?.detail).toContain('ollama http://localhost:11434/api/tags');
+  });
+});
+
+describe('runDoctor — one local provider up', () => {
+  beforeEach(() => {
+    _providerRegistry = {
+      providers: [
+        { id: 'lmstudio', url: 'http://localhost:1234/v1/models', up: false, models: [], error: 'ECONNREFUSED' },
+        { id: 'ollama',   url: 'http://localhost:11434/api/tags', up: true, models: ['llama3:8b'] },
+      ],
+      activeProvider: 'ollama',
+      chain: ['lmstudio', 'ollama'],
+    };
+  });
+
+  it('still lists each endpoint so a down one beside a working one stays visible', async () => {
+    const cfg = makeConfig(tmpHome);
+    const report = await runDoctor(cfg);
+    expect(report.checks.find(c => c.id === 'provider:ollama')?.status).toBe('pass');
+    expect(report.checks.find(c => c.id === 'provider:lmstudio')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'provider:active')?.status).toBe('pass');
   });
 });
 
@@ -574,13 +630,36 @@ describe('checkLocus / runDoctor — locus', () => {
     expect(c.detail).toContain('pin=personal:personal');
   });
 
-  it('fails when locus is not on PATH', () => {
+  it('warns when locus is not on PATH (optional companion)', () => {
     _locusAvailable = false;
     _locusProbe = makeLocusProbe({ available: false });
-    const c = checkLocus();
-    expect(c.status).toBe('fail');
-    expect(c.detail).toMatch(/not found on PATH/i);
-    expect(c.fix).toBeTruthy();
+    const prev = process.env.LOCUS_ENFORCE;
+    delete process.env.LOCUS_ENFORCE;
+    try {
+      const c = checkLocus();
+      expect(c.status).toBe('warn');
+      expect(c.detail).toMatch(/not found on PATH.*optional/i);
+      expect(c.fix).toBeTruthy();
+    } finally {
+      if (prev === undefined) delete process.env.LOCUS_ENFORCE;
+      else process.env.LOCUS_ENFORCE = prev;
+    }
+  });
+
+  it('fails when locus is not on PATH and LOCUS_ENFORCE=enforce', () => {
+    _locusAvailable = false;
+    _locusProbe = makeLocusProbe({ available: false });
+    const prev = process.env.LOCUS_ENFORCE;
+    process.env.LOCUS_ENFORCE = 'enforce';
+    try {
+      const c = checkLocus();
+      expect(c.status).toBe('fail');
+      expect(c.detail).toMatch(/not found on PATH.*LOCUS_ENFORCE/i);
+      expect(c.fix).toBeTruthy();
+    } finally {
+      if (prev === undefined) delete process.env.LOCUS_ENFORCE;
+      else process.env.LOCUS_ENFORCE = prev;
+    }
   });
 
   it('fails when agent status is unsafe', () => {
@@ -747,6 +826,53 @@ describe('runDoctor — compatible CLI installation guidance', () => {
       .toBe('Phantom MCP plugin registered (ashlr)');
   });
 
+  it('does not ask for ~/.local/bin on PATH when phm is already on PATH (npm -g install)', async () => {
+    installAshlrShim(tmpHome, 'phm');
+    isolateCommandPath();
+    const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toMatch(/^not needed: phm is on PATH at /);
+  });
+
+  it('still warns about ~/.local/bin when phm is not on PATH either', async () => {
+    mkdirSync(join(tmpHome, 'bin'), { recursive: true });
+    isolateCommandPath();
+    const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
+    expect(check?.status).toBe('warn');
+    expect(check?.fix).toContain('export PATH="$HOME/.local/bin:$PATH"');
+  });
+
+  it('points unregistered MCP checks at the phm mcp commands that register them, not init', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const plugin = report.checks.find(c => c.id === 'mcp-plugin');
+    expect(plugin?.status).toBe('warn');
+    expect(plugin?.fix).toContain('phm mcp install claude');
+    const servers = report.checks.find(c => c.id === 'mcp-servers-discovered');
+    if (servers?.status === 'warn') expect(servers.fix).toContain('phm mcp ecosystem --write');
+    for (const c of [plugin, servers]) expect(c?.fix ?? '').not.toContain('ashlr init');
+  });
+
+  it('gives one MCP warning, not two, when no MCP server is registered anywhere', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const plugin = report.checks.find(c => c.id === 'mcp-plugin');
+    expect(plugin?.status).toBe('warn');
+    expect(plugin?.fix).toContain('phm mcp install claude');
+    expect(plugin?.fix).toContain('phm mcp ecosystem --write');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')).toBeUndefined();
+  });
+
+  it('still reports discovered servers beside a missing Phantom gateway', async () => {
+    writeFileSync(join(tmpHome, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'other-mcp' } } }));
+    const report = await runDoctor(makeConfig(tmpHome));
+    expect(report.checks.find(c => c.id === 'mcp-plugin')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')?.status).toBe('pass');
+  });
+
+  it('points a missing companion set at phm companions', async () => {
+    const tools = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'ashlr-tools-installed');
+    if (tools?.status === 'warn') expect(tools.fix).toBe('See where to install each companion: phm companions');
+  });
+
   it('recognizes the canonical phm command and prefers it over ashlr', async () => {
     installAshlrShim(tmpHome, 'phm');
     isolateCommandPath();
@@ -859,5 +985,33 @@ describe('runDoctor — never throws', () => {
 
     const cfg = makeConfig(tmpHome);
     await expect(runDoctor(cfg)).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fresh-install states that are normal, not problems
+// ---------------------------------------------------------------------------
+
+describe('runDoctor — fresh-install optional states', () => {
+  it('passes the identity check when not signed in to Phantom cloud, and says how to sign in', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const identity = report.checks.find(c => c.id === 'identity');
+    expect(identity?.status).toBe('pass');
+    expect(identity?.detail).toMatch(/optional/);
+    expect(identity?.detail).toContain('phantom login');
+  });
+
+  it('passes an empty genome once ~/.ashlr/genome exists', async () => {
+    mkdirSync(join(tmpHome, '.ashlr', 'genome'), { recursive: true });
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('pass');
+    expect(genome?.detail).toContain('fills as you work');
+  });
+
+  it('still warns when ~/.ashlr/genome is missing, so doctor --fix can create it', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('warn');
   });
 });

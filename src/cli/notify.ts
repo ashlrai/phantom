@@ -387,12 +387,27 @@ export async function cmdNotify(args: string[]): Promise<number> {
     return 0;
   }
 
+  // `notify <verb> --help` prints usage and never runs the verb: `notify test`
+  // posts to the configured webhooks and `notify session` raises a desktop
+  // notification.
+  const rest = args.slice(1);
+  if (rest.includes('--help') || rest.includes('-h')) {
+    printNotifyHelp();
+    return 0;
+  }
+
   if (sub === 'test') {
-    return cmdNotifyTest(args.slice(1));
+    const unknown = rest.find((a) => a !== '--json');
+    if (unknown !== undefined) {
+      process.stderr.write(red('error: ') + `unknown notify test option: ${bold(unknown)}\n`);
+      process.stderr.write(dim('Run `ashlr notify help` for usage.\n'));
+      return 2;
+    }
+    return cmdNotifyTest(rest);
   }
 
   if (sub === 'session') {
-    return cmdNotifySession(args.slice(1));
+    return cmdNotifySession(rest);
   }
 
   process.stderr.write(red('error: ') + `unknown notify subcommand: ${bold(sub)}\n`);

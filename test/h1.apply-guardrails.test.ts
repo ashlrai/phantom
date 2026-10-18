@@ -336,6 +336,33 @@ describe('H1 apply-guardrails — happy path (contrast)', () => {
   );
 });
 
+describe('H1 apply — a captured sandbox diff without a trailing newline', () => {
+  it('applies (sandboxDiff trims git output; scripts/daemon-chaos.mjs found every agent apply failing)', async () => {
+    const f = newFixture();
+    const repo = f.makeRepo();
+    repo.enroll();
+    const diff = patchDiff().replace(/\n+$/, '');
+    expect(diff.endsWith('\n')).toBe(false);
+    const p = createProposal({
+      repo: repo.dir,
+      origin: 'agent',
+      kind: 'patch',
+      title: 'trimmed diff',
+      summary: 'diff as sandboxDiff stores it',
+      diff,
+    });
+    setStatus(p.id, 'approved');
+
+    const result = await applyProposal(p.id, { confirmed: true });
+
+    expect(result.detail).not.toMatch(/corrupt patch/);
+    expect(result.ok).toBe(true);
+    expect(repo.branches()).toContain(`ashlr/proposal/${p.id}`);
+    // The stored diff (and so its provenance) is unchanged.
+    expect(loadProposal(p.id)!.diff).toBe(diff);
+  });
+});
+
 // ===========================================================================
 // REFUSE (parametrized): REAL-TREE-UNCHANGED + 'refused' audit across gates
 // ===========================================================================

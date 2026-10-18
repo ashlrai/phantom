@@ -17,7 +17,33 @@
  */
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Observes (and can fail) fs.openSync. root bypasses DAC mode bits, so a 0o000
+// store still opens as uid 0; the hook raises the EACCES a user gets from the
+// kernel for that exact path, so the same unreadable-store branch runs for
+// every uid.
+const openHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    const target = String(args[0]);
+    if (openHook.denied.has(target)) {
+      openHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  return { ...actual, default: { ...actual, openSync }, openSync };
+});
 
 import {
   applyDueLeaderActions,
@@ -49,6 +75,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openHook.denied.clear();
+  openHook.hits.length = 0;
   home.teardown();
   if (savedTz === undefined) delete process.env['TZ'];
   else process.env['TZ'] = savedTz;
@@ -240,16 +268,20 @@ describe('the action store is never read as empty and written back (review 310 d
     expect([...dismissedNeedsYouIds()]).toEqual(['q-1']);
   });
 
-  it.skipIf(isRoot)('a store that cannot be read right now refuses the write and is left intact', async () => {
+  it('a store that cannot be read right now refuses the write and is left intact', async () => {
     const { deps } = makeApplyDeps({ ledger, now: () => NOW });
     await scheduleGrokB(deps);
     const before = readFileSync(leaderActionsPath(), 'utf8');
     chmodSync(leaderActionsPath(), 0o000);
+    if (isRoot) openHook.denied.add(leaderActionsPath());
     try {
       expect(() => dismissNeedsYouItem('q-1')).toThrow(/could not be read.*nothing was written/);
     } finally {
+      openHook.denied.clear();
       chmodSync(leaderActionsPath(), 0o600);
     }
+    // As root, prove the injected denial is what the store read hit.
+    if (isRoot) expect(openHook.hits).toContain(leaderActionsPath());
     expect(readFileSync(leaderActionsPath(), 'utf8')).toBe(before);
     expect(readdirSync(leaderRoot()).filter((f) => f.startsWith('actions.unreadable-'))).toEqual([]);
   });

@@ -84,7 +84,7 @@ export interface CloudPrPreview {
   wouldAutoLand: boolean;
   /** One short plain sentence: "Clean: low risk, 3 files, checks green." / "Held: 2 commits behind master." */
   reason: string;
-  /** What Land requires (G1 clear, no conflicts, open) — Land is refused otherwise. */
+  /** What Land requires (G1 and G1b clear, no conflicts, open) — Land is refused otherwise. */
   landable: { ok: boolean; reason: string | null };
   /** The branch is behind its base and Update branch would help. */
   behind: boolean;
@@ -284,6 +284,15 @@ export function landRefusal(github: CloudPrGithubState, diffChecks: readonly Clo
     return protectedCheck && protectedCheck.text.startsWith('Protected: ')
       ? `It touches a protected path (${protectedCheck.text.slice('Protected: '.length)}); land it on GitHub after review.`
       : 'Its diff could not be checked for protected paths.';
+  }
+  // G1b is a refusal too, not just a chip: Land is an API call any holder of
+  // the mutation token can make, and a weakened test suite is exactly what an
+  // agent-authored PR could hide behind a green check run.
+  const tamperCheck = diffChecks.find((c) => c.id === 'tamper');
+  if (!tamperCheck || !tamperCheck.ok) {
+    return tamperCheck?.text === 'Test tampering'
+      ? 'It skips, deletes or weakens tests; land it on GitHub after review.'
+      : 'Its diff could not be checked for test tampering.';
   }
   if (github.mergeable === 'CONFLICTING' || github.mergeStateStatus === 'DIRTY') return `It conflicts with ${baseBranch}.`;
   if (github.mergeable !== 'MERGEABLE') return 'GitHub has not finished checking whether it can merge. Try again in a minute.';

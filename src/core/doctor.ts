@@ -17,6 +17,7 @@ import {
   extractLocusConfigFirm,
   locusAgentReport,
   locusAvailable,
+  resolveLocusEnforceMode,
 } from './integrations/locus.js';
 // H7 — 5 NEW read-only probes share the SAME read-only readiness facets that
 // `ashlr preflight` uses, from the shared readiness module (single source of
@@ -29,8 +30,10 @@ import {
   readKillState,
   checkAshlrWriteable,
   readSandboxHealth,
+  readGitLockHealth,
   SANDBOX_ORPHAN_WARN_THRESHOLD,
 } from './readiness.js';
+import { describeStaleGitLocks } from './sandbox/stale-git-locks.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -349,6 +352,12 @@ function checkLocalBin(): DoctorCheck {
   if (pathDirs.includes(localBin)) {
     return check('local-bin', '~/.local/bin on PATH', 'pass', `${localBin} is on PATH`);
   }
+  // A global npm install already puts phm on PATH; the ~/.local/bin link is then only a spare.
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const phm = runCmd(finder, ['phm']);
+  if (phm) {
+    return check('local-bin', '~/.local/bin on PATH', 'pass', `not needed: phm is on PATH at ${phm.split(/\r?\n/)[0]}`);
+  }
   return check(
     'local-bin',
     '~/.local/bin on PATH',
@@ -510,18 +519,23 @@ function checkPhantom(): DoctorCheck {
  * Locus identity plane (agent report).
  * id: 'locus'
  *
- * Fail closed for missing CLI / status=unsafe. Soft-warn when protected or
- * unpinned (human must `locus enter` / `locus agent setup`). Pass only when
- * ready + healthy oneline. Names/status only — never secret values.
+ * Locus is an optional companion: a missing CLI soft-warns, matching
+ * `ashlr preflight`, unless LOCUS_ENFORCE=enforce makes it a hard failure.
+ * An installed Locus that reports status=unsafe always fails. Soft-warn when
+ * protected or unpinned (human must `locus enter` / `locus agent setup`). Pass
+ * only when ready + healthy oneline. Names/status only — never secret values.
  */
 export function checkLocus(): DoctorCheck {
   try {
     if (!locusAvailable()) {
+      const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
         'locus',
         'Locus identity plane',
-        'fail',
-        'locus not found on PATH',
+        enforce ? 'fail' : 'warn',
+        enforce
+          ? 'locus not found on PATH (required: LOCUS_ENFORCE=enforce)'
+          : 'locus not found on PATH (optional identity plane)',
         'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
@@ -695,7 +709,7 @@ function checkMcpPlugin(mcpRegistry: McpRegistry | null): DoctorCheck {
     'Phantom MCP plugin registered (ashlr)',
     'warn',
     'ashlr MCP server not found in ~/.claude/settings.json, ~/.mcp.json, or ~/.claude.json',
-    'Add the Phantom MCP server via: ashlr init  or install the compatible ashlr Claude Code plugin',
+    'Register it for Claude Code: phm mcp install claude  (or install the compatible ashlr Claude Code plugin)',
   );
 }
 
@@ -715,7 +729,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
       'MCP servers discovered',
       'warn',
       'MCP registry module not available',
-      'configure MCP servers or run ashlr init',
+      'Register installed companions: phm mcp ecosystem --write',
     );
   }
 
@@ -734,7 +748,7 @@ function checkMcpServersDiscovered(mcpRegistry: McpRegistry | null): DoctorCheck
     'MCP servers discovered',
     'warn',
     'No MCP servers discovered in known config locations',
-    'configure MCP servers or run ashlr init',
+    'Register installed companions: phm mcp ecosystem --write  (and phm mcp install claude for the gateway)',
   );
 }
 
@@ -816,7 +830,7 @@ function checkAshlrToolsInstalled(toolsRegistry: ToolsRegistry | null): DoctorCh
     'Phantom tools installed',
     'warn',
     count === 0 ? `No ecosystem tools installed; ${count}/${total} installed` : detail,
-    'Install Phantom ecosystem tools (phantom, ashlrcode, aw, etc.)',
+    'See where to install each companion: phm companions',
   );
 }
 
@@ -850,6 +864,17 @@ function checkGenomeMemory(
       'Genome memory',
       'pass',
       `${health.totalEntries} entr${health.totalEntries !== 1 ? 'ies' : 'y'} across ${health.projects} project${health.projects !== 1 ? 's' : ''} (${embLabel})`,
+    );
+  }
+
+  // An empty genome is the normal fresh-install state: it fills as you work.
+  // Only a missing ~/.ashlr/genome is worth a warning (`doctor --fix` creates it).
+  if (existsSync(join(homedir(), '.ashlr', 'genome'))) {
+    return check(
+      'genome-memory',
+      'Genome memory',
+      'pass',
+      'Empty so far: it fills as you work (seed it now with phm learn)',
     );
   }
 
@@ -898,12 +923,13 @@ function checkIdentity(
     return check('identity', 'Phantom identity', 'pass', detail);
   }
 
+  // Phantom cloud is optional: local work, connected Claude Code/Codex accounts
+  // and the console all run without it, so signing out is not a warning.
   return check(
     'identity',
     'Phantom identity',
-    'warn',
-    'Not logged in to Phantom cloud — identity unavailable',
-    'phantom login  (or phantom cloud login)',
+    'pass',
+    'Not signed in to Phantom cloud (optional). Sign in for cloud identity: phantom login',
   );
 }
 
@@ -1146,7 +1172,7 @@ function checkKillSwitch(): DoctorCheck {
         'Kill switch',
         'warn',
         'Kill switch is ON — autonomy paused (nothing will run)',
-        'Clear it when ready: `ashlr kill off` (or remove ~/.ashlr/KILL)',
+        'Clear it when ready: `ashlr enroll kill off` (or remove ~/.ashlr/KILL)',
       );
     }
     return check('kill-switch', 'Kill switch', 'pass', 'Kill switch is OFF');
@@ -1202,19 +1228,21 @@ function checkAshlrWriteableProbe(): DoctorCheck {
  * id: 'sandbox-health'
  *
  * READ-ONLY via readSandboxHealth() → listSandboxes() (counts only — removes
- * NOTHING). PASS when there are zero/low orphans; WARN when the orphan count
+ * NOTHING), plus the effective sandbox cap and its reason in the detail. PASS
+ * when there are zero/low orphans; WARN when the orphan count
  * reaches SANDBOX_ORPHAN_WARN_THRESHOLD, with a `ashlr sandbox gc` fix hint.
  * Mutates nothing. Never throws.
  */
 function checkSandboxHealth(): DoctorCheck {
   try {
-    const { total, orphans } = readSandboxHealth();
+    const { total, orphans, cap, capReason } = readSandboxHealth();
+    const capNote = `; cap ${cap}, ${capReason}`;
     if (orphans >= SANDBOX_ORPHAN_WARN_THRESHOLD) {
       return check(
         'sandbox-health',
         'Sandbox health',
         'warn',
-        `${orphans} orphan sandbox${orphans !== 1 ? 'es' : ''} of ${total} on disk`,
+        `${orphans} orphan sandbox${orphans !== 1 ? 'es' : ''} of ${total} on disk${capNote}`,
         'Reclaim them: `ashlr sandbox gc`',
       );
     }
@@ -1222,10 +1250,38 @@ function checkSandboxHealth(): DoctorCheck {
       'sandbox-health',
       'Sandbox health',
       'pass',
-      `${total} sandbox${total !== 1 ? 'es' : ''} on disk (${orphans} orphan${orphans !== 1 ? 's' : ''})`,
+      `${total} sandbox${total !== 1 ? 'es' : ''} on disk (${orphans} orphan${orphans !== 1 ? 's' : ''})${capNote}`,
     );
   } catch (err) {
     return check('sandbox-health', 'Sandbox health', 'pass', `sandbox health unreadable: ${String(err)}`);
+  }
+}
+
+/**
+ * Probe: stale git lock files.
+ * id: 'git-locks'
+ *
+ * READ-ONLY via readGitLockHealth(): WARNs when an enrolled or sandbox source
+ * repo holds a git lock file (packed-refs.lock, a ref .lock, HEAD/index/config
+ * .lock) older than STALE_GIT_LOCK_MIN_AGE_MS, which blocks every later ref
+ * update there. Git records no owner, so the fix hint asks the owner to check
+ * for a running git process before removing it. Mutates nothing. Never throws.
+ */
+function checkGitLocks(): DoctorCheck {
+  try {
+    const { repos, locks } = readGitLockHealth();
+    if (locks.length > 0) {
+      return check(
+        'git-locks',
+        'Git lock files',
+        'warn',
+        describeStaleGitLocks(locks),
+        `If no git process is running in ${locks[0]!.repo}, remove the lock: rm '${locks[0]!.path}'`,
+      );
+    }
+    return check('git-locks', 'Git lock files', 'pass', `no stale git lock files in ${repos} repo${repos !== 1 ? 's' : ''}`);
+  } catch (err) {
+    return check('git-locks', 'Git lock files', 'pass', `git lock scan unreadable: ${String(err)}`);
   }
 }
 
@@ -1268,10 +1324,17 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkLocus());
   checks.push(checkLocusFirm(cfg));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)
-  checks.push(checkMcpPlugin(mcpRegistry));
+  const mcpPlugin = checkMcpPlugin(mcpRegistry);
+  checks.push(mcpPlugin);
 
   // --- M3 checks ---
-  checks.push(checkMcpServersDiscovered(mcpRegistry));
+  // With no MCP server registered anywhere (the usual fresh install), the
+  // plugin warning already says so; a second warning would repeat it.
+  if (mcpRegistry !== null && mcpRegistry.servers.length === 0 && mcpPlugin.status === 'warn') {
+    mcpPlugin.fix = `${mcpPlugin.fix}. Then register installed companions: phm mcp ecosystem --write`;
+  } else {
+    checks.push(checkMcpServersDiscovered(mcpRegistry));
+  }
   checks.push(checkAshlrToolsInstalled(toolsRegistry));
 
   // --- M5 checks ---
@@ -1296,6 +1359,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkKillSwitch());
   checks.push(checkAshlrWriteableProbe());
   checks.push(checkSandboxHealth());
+  checks.push(checkGitLocks());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(await checkPlugins(cfg));
@@ -1303,8 +1367,12 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- Async: provider registry ---
   try {
     const registry = await getProviderRegistry(cfg);
+    // With every local endpoint down (the usual fresh install), one line says
+    // so; a warning per endpoint would repeat the same fact three times.
+    const anyLocalUp = registry.providers.some(p => p.up);
+    const probed = registry.providers.map(p => `${p.id} ${p.url}`).join(', ');
 
-    for (const provider of registry.providers) {
+    for (const provider of anyLocalUp ? registry.providers : []) {
       const id = `provider:${provider.id}`;
       const label = `Local provider: ${provider.id}`;
       if (provider.up) {
@@ -1333,15 +1401,16 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
       }
     }
 
-    // At least one local provider must be up
+    // No reachable local provider only limits local-first runs; connected CLI
+    // accounts and the console still work. Warn, matching `ashlr preflight`.
     if (registry.activeProvider === null) {
       checks.push(
         check(
           'provider:active',
           'Active local provider',
-          'fail',
-          'No local provider is reachable — cannot run local-first AI',
-          'Start LM Studio or Ollama (ollama serve)',
+          'warn',
+          `No local provider is reachable (probed ${probed || 'none'}) — local-first runs need --allow-cloud or a local model`,
+          'Start or install Ollama (ollama serve) or LM Studio, or use a connected Claude Code/Codex account',
         ),
       );
     } else {

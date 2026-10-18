@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import { appendCampaignEvent, campaignDirectory, foldCampaignEvents, initUniverseCampaign, readCampaignEvents,
   readUniverseCampaign, validateUniverseCampaignDefinition, type CampaignEvent, type CampaignEventInput } from '../src/core/universe/campaign-store.js';
@@ -18,6 +18,21 @@ const deadlineAt = '2026-09-10T12:01:00.000Z';
 const finishedAt = '2026-09-10T12:00:00.010Z';
 const owner = { pid: process.pid, startRef: 'seed-store-fixture' };
 const roots: string[] = [];
+// Seed records are appended directly and the one campaign run is refused at
+// admission; no Universe run or evaluator launch starts on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'campaign-seed-store-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 afterEach(() => {
   const writable = (path: string): void => {
     const stat = lstatSync(path); if (!stat.isDirectory() || stat.isSymbolicLink()) return;
@@ -183,7 +198,7 @@ function initializedFixture() {
   initUniverse({ schemaVersion: 1, id: 'seed-fixture', name: 'Seed store fixture', objective: 'Validate durable measurement records',
     seed: { repo, revision: git('rev-parse', 'HEAD') }, metric: { name: 'value', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxParallel: 1, maxDurationMs: 1000, trialTimeoutMs: 1000 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1000 },
     variants: [{ id: 'change', niche: 'quality', hypothesis: 'Fixture only', command: [process.execPath, '-e', 'process.exit(0)'] }] }, { root });
   return { root, directory: campaignDirectory('seed-campaign', { root }) };
 }

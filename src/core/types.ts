@@ -1212,8 +1212,11 @@ export interface AshlrConfig {
      * M300: Fallback engine preference order when the primary engine is
      * exhausted. Default: ['codex','kimi','nim','local-coder']. The conductor
      * tries each in order and picks the first whose availability is not
-     * 'exhausted' or 'unreachable'. If all are exhausted, the original engine
-     * is used as a last resort (fleet degrades but never freezes).
+     * 'exhausted', 'throttled' or 'unreachable'. With no open candidate it uses
+     * a throttled one (original first). When every candidate is exhausted or
+     * unreachable the task is deferred unclaimed (no attempt, no sandbox) and
+     * reported in SimpleConductorResult.deferred. Unknown availability fails
+     * open to the original engine.
      */
     engineFallbackOrder?: string[];
     autoMerge?: {
@@ -2032,11 +2035,11 @@ export interface ToolInfo {
   id: string;
   /** Display name for the tool. */
   name: string;
-  /** Whether the tool was found on PATH. */
+  /** Whether the tool was found (on PATH, as an app bundle, or in Claude Code's plugin cache). */
   installed: boolean;
   /** Reported version string, or null if unknown/not installed. */
   version: string | null;
-  /** Resolved executable path, or null if not installed. */
+  /** Resolved executable, app bundle or cached plugin directory, or null if not installed. */
   path: string | null;
 }
 
@@ -3962,6 +3965,12 @@ export interface Sandbox {
   ownerPid?: number;
   /** Last bounded cleanup attempt retained only while recovery is incomplete. */
   cleanup?: SandboxCleanupEvidence;
+  /**
+   * Set (ISO time) when a failed creation could not roll its sandbox back and
+   * gave it up: the sweeps then treat the owner as not live and reclaim it,
+   * although `ownerPid` may still be running.
+   */
+  abandonedAt?: string;
 }
 
 export type SandboxCleanupPostcondition = 'absent' | 'present' | 'unknown' | 'unsafe';

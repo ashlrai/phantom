@@ -713,7 +713,7 @@ export function createSeatHealthSweep(options: SeatHealthSweepOptions): SeatHeal
     try {
       cwd = mkdtempSync(join(realpathSync(tmpdir()), 'ashlr-seat-health-'));
     } catch {
-      log('Verse seat health: could not create a private scratch directory; login status is unknown this sweep.');
+      log('Phantom seat health: could not create a private scratch directory; login status is unknown this sweep.');
     }
     try {
       const roster = readNativeAccounts(options.accountsRoot);
@@ -729,7 +729,7 @@ export function createSeatHealthSweep(options: SeatHealthSweepOptions): SeatHeal
       sweeps += 1;
       sweptAt = iso();
     } catch {
-      log('Verse seat health: a sweep failed part-way; the previous readings are kept.');
+      log('Phantom seat health: a sweep failed part-way; the previous readings are kept.');
     } finally {
       if (cwd !== null) { try { rmdirSync(cwd); } catch { /* a probe left something behind; leave it private */ } }
     }

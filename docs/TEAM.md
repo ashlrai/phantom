@@ -189,7 +189,7 @@ ashlr goals list
 ashlr goals add "harden error handling in auth module"
 
 # Run one owner-invoked proposal path (not a resident or unattended loop)
-ashlr goal "harden error handling in auth module"
+ashlr goal "harden error handling in auth module" --project <enrolled-repo>
 
 # Open Mission Control UI (localhost:7777)
 ashlr serve

@@ -63,6 +63,15 @@ function parseSpecArgs(args: string[]): SpecSubcmd {
     return { sub: 'help' };
   }
 
+  // `spec <verb> --help` / `-h` explains itself: never draft, load or refine a
+  // spec (`spec new -h` used to author a spec whose goal was "-h" and call the
+  // model). A --project value is an operand, not a help request.
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--project' || a === '-p') { i++; continue; }
+    if (a === '--help' || a === '-h') return { sub: 'help' };
+  }
+
   // ── new ──────────────────────────────────────────────────────────────────
   if (first === 'new') {
     const rest = args.slice(1);

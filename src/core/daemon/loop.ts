@@ -182,6 +182,7 @@ import {
   writeDaemonActivity,
   type DaemonActivityPhase,
 } from './activity.js';
+import { residentPidProvablyReused } from './pid-reuse-proof.js';
 import { beginTickProgress, noteTickPhase, readTickProgress } from './tick-progress.js';
 import { boundedBeforeTick } from './tick-deadline.js';
 import {
@@ -1706,7 +1707,8 @@ function staleResidentProof(state: DaemonState): 'dead' | 'reused' | null {
   try {
     process.kill(state.pid, 0);
   } catch (error) {
-    return (error as NodeJS.ErrnoException | undefined)?.code === 'ESRCH' ? 'dead' : null;
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ESRCH' ? 'dead' : code === 'EPERM' && residentPidProvablyReused(state, readDaemonActivity()) ? 'reused' : null;
   }
   const activity = readDaemonActivity();
   return activity.ownerState === 'reused' &&
@@ -4952,8 +4954,10 @@ export async function tick(
               routeCurrent: managerRouteCurrent,
               // Recovery cannot admit another provider contact or start a new stage.
               routeAllowed: () => false,
-            }));
-            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) });
+            // Only the singleton lock holder can prove a crashed daemon's stage has no live owner.
+            }), { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
+            reconcileOutcomeCompletions({ store: new OutcomeStore(outcomeDirectory(outcome.id)) },
+              { exclusiveOwner: () => !!opts.ownerLock && stillOwnsTick() });
             materializeOutcomeIntents(outcome.id, { stillAuthorized: authorized, cfg: routingCfg });
             const fresh = new OutcomeStore(outcomeDirectory(outcome.id)).read();
             if (fresh.sourceState === 'healthy' && authorized()) {
@@ -9975,6 +9979,59 @@ async function runDaemonInEnrollmentScope(
       });
     } catch {
       // Best-effort: a sweep failure must never crash daemon start.
+    }
+    // Crash-leftover inbox/merge temp worktrees (~/.ashlr/tmp/{vwt,mwt,mergewt}-*)
+    // are otherwise reaped only by the next merge in their repo. The sweep runs
+    // the same fail-closed owner rules (a live owner's worktree is always kept)
+    // under each repo's mirror lease, skips a repo whose lease stays busy, and
+    // never throws; the catch below is belt and braces.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const swept = await reaper.sweepLeakedTempWorktreesAtStart();
+      if (swept.repos > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `temp worktree sweep repos=${swept.repos} reaped=${swept.reaped} kept=${swept.kept} ` +
+            `failed=${swept.failed} branchesDeleted=${swept.branchesDeleted} skippedRepos=${swept.skippedRepos}`,
+          result: swept.failed === 0 && swept.skippedRepos === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch (err) {
+      console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
+    }
+    // Private scratch (verify-confine-*, fleet-git-*, patch-*.diff) a killed
+    // run left in ~/.ashlr/tmp: same owner rules, nothing else references it.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const scratch = reaper.sweepLeakedTmpScratch();
+      if (scratch.reaped.length > 0 || scratch.failed.length > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `tmp scratch sweep reaped=${scratch.reaped.length} kept=${scratch.kept.length} failed=${scratch.failed.length}`,
+          result: scratch.failed.length === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch {
+      // Best-effort: never blocks daemon start.
+    }
+    // A git process killed mid-update leaves packed-refs.lock / a ref .lock
+    // that fails every later ref update in that repo. Git records no owner, so
+    // the daemon only reports old ones (read-only); `phm doctor` repeats it.
+    try {
+      const { readGitLockHealth } = await import('../readiness.js');
+      const { describeStaleGitLocks } = await import('../sandbox/stale-git-locks.js');
+      const { locks } = readGitLockHealth();
+      if (locks.length > 0) {
+        const summary = describeStaleGitLocks(locks);
+        console.warn(`[ashlr] daemon: ${summary}; remove only if no git process is running there`);
+        audit({ action: 'daemon:start', repo: locks[0]!.repo, sandboxId: null, summary, result: 'error' });
+      }
+    } catch {
+      // Best-effort report: never blocks daemon start.
     }
   }
 

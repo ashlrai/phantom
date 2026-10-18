@@ -22,7 +22,7 @@
 
 import { createInterface } from 'node:readline';
 import type { AshlrConfig, LocalModelInfo } from '../core/types.js';
-import { C, pad, makeColors, isTty } from './ui.js';
+import { ansi as C, pad, makeColors, isTty } from './ui.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
 import { probeApiModelEngine } from '../core/providers.js';
 import type { ApiModelReadiness } from '../core/providers.js';
@@ -564,7 +564,10 @@ function printModelsHelp(): void {
  */
 export async function cmdModels(args: string[]): Promise<number> {
   // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // `models <verb> --help` / `-h` too (models takes no value flags): `models
+  // list -h` probed local model servers and `models start -h` looked for
+  // ollama to launch it.
+  if (args[0] === 'help' || args.some((arg) => arg === '--help' || arg === '-h')) {
     printModelsHelp();
     return 0;
   }

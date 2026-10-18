@@ -11088,6 +11088,72 @@ describe('M201 — Group E: runDaemon config reload + loop mechanics', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')('E5e: EPERM resident pid reused by a later process (another user, after reboot) is taken over', async () => {
+    // A real child stands in for the unrelated process now holding the pid;
+    // EPERM is what signalling another user's process returns.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
+    const reusedPid = child.pid as number;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === reusedPid) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      return true;
+    });
+    saveDaemonState({
+      running: true,
+      pid: reusedPid,
+      startedAt: '2026-07-13T00:00:00.000Z',
+      lastTickAt: '2026-07-13T00:05:00.000Z',
+      todayDate: today(),
+      todaySpentUsd: 0.25,
+      itemsProcessed: 2,
+      ticks: [],
+    });
+    mockBuildBacklog.mockResolvedValue({ generatedAt: new Date().toISOString(), repos: [], items: [] });
+
+    try {
+      const result = await runDaemon(cfgBuiltin(), { once: true, dryRun: false });
+
+      expect(result.startRefusal).toBeUndefined();
+      expect(result).toMatchObject({ running: false, pid: null, todaySpentUsd: 0.25 });
+      expect(readAudit().some((entry) =>
+        entry.action === 'daemon:stale-state-recovered' && entry.summary.includes(`reused resident state pid ${reusedPid}`),
+      )).toBe(true);
+    } finally {
+      kill.mockRestore();
+      child.kill('SIGKILL');
+    }
+  });
+
+  it('E5f: EPERM resident pid with a recent heartbeat stays fail-closed', async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
+    const otherPid = child.pid as number;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === otherPid) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      return true;
+    });
+    const persisted = {
+      running: true,
+      pid: otherPid,
+      startedAt: '2026-07-13T00:00:00.000Z',
+      lastTickAt: new Date().toISOString(),
+      todayDate: today(),
+      todaySpentUsd: 0.31,
+      itemsProcessed: 3,
+      ticks: [],
+    };
+    saveDaemonState(persisted);
+
+    try {
+      const result = await runDaemon(cfgBuiltin(), { once: true, dryRun: false });
+
+      expect(result.startRefusal).toBe('persisted-resident-owner-not-stale');
+      expect(loadDaemonState()).toEqual(persisted);
+      expect(mockBuildBacklog).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+      child.kill('SIGKILL');
+    }
+  });
+
   it('E6: runDaemon dry-run loop terminates after one tick (dry-run = bounded)', async () => {
     const repo = fx.makeRepo();
     repo.enroll();

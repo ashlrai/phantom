@@ -22,7 +22,7 @@ import { tokenEvidenceLabel } from '../core/run/token-evidence.js';
 // ANSI helpers (non-TTY safe)
 // ---------------------------------------------------------------------------
 
-import { C, pad, makeColors, isTty } from './ui.js';
+import { ansi as C, pad, makeColors, isTty } from './ui.js';
 
 const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(isTty());
 
@@ -437,7 +437,7 @@ export async function cmdPulse(args: string[]): Promise<number> {
 
   // M91: dispatch `test` subcommand (also reachable via `phm pulse-test`)
   if (args[0] === 'test') {
-    return cmdPulseTest();
+    return cmdPulseTest(args.slice(1));
   }
 
   // Help shortcircuit
@@ -747,7 +747,18 @@ function printExportHelp(): void {
  *
  * Exit codes: 0=ok, 1=error, 2=unconfigured.
  */
-export async function cmdPulseTest(): Promise<number> {
+export async function cmdPulseTest(args: string[] = []): Promise<number> {
+  // --help used to send the probe span; usage now prints without config or
+  // network IO, and stray arguments are refused before the probe.
+  const usage = 'Usage: phm pulse-test   (or: phm pulse test)  POST one probe span to cfg.pulse.endpoint; exit 0 ok, 1 error, 2 unconfigured.';
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    console.log(usage);
+    return 0;
+  }
+  if (args.length > 0) {
+    process.stderr.write(`${C.red}error:${C.reset} unknown argument: ${args[0]}\n${usage}\n`);
+    return 2;
+  }
   let cfg: AshlrConfig;
   try {
     cfg = await loadConfig();

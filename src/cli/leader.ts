@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { loadConfig } from '../core/config.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import type { LeaderAction, LeaderMemo, LeaderStateV1 } from '../core/vision/leader-types.js';
 
 const USAGE = `Phantom Leader — memo, actions and veto
@@ -354,7 +355,30 @@ async function threadCall(thread: ThreadModule, fn: () => Promise<number> | numb
   }
 }
 
+/**
+ * Free-text verbs (`say`, `answer`, `directives add`) used to glue a stray or
+ * mistyped flag into the text and send or record it. Refuse any option the verb
+ * does not read unless it follows a `--` separator. Removes the separator and
+ * everything after it from `args` and returns those trailing text tokens, or
+ * null (after printing the refusal) when an option is refused.
+ */
+function takeTextArgs(args: string[], allowed: AllowedOptions): string[] | null {
+  const bad = rejectUnknownOptions(args, allowed);
+  if (bad) {
+    console.error(bad.message);
+    console.error(USAGE);
+    return null;
+  }
+  const separator = args.indexOf('--');
+  return separator === -1 ? [] : args.splice(separator).slice(1);
+}
+
 async function runThreadCli(sub: string, args: string[]): Promise<number> {
+  if (sub === 'say' || sub === 'answer') {
+    const tail = takeTextArgs(args, {});
+    if (!tail) return 2;
+    args.push(...tail);
+  }
   const thread = await import('../core/vision/leader-thread.js');
   if (sub === 'say') {
     const text = args.join(' ').trim();
@@ -430,8 +454,10 @@ async function runDirectivesCli(args: string[]): Promise<number> {
     return 0;
   }
   if (action === 'add') {
+    const tail = takeTextArgs(args, { values: ['--kind'] });
+    if (!tail) return 2;
     const kindOpt = option(args, '--kind');
-    const text = args.join(' ').trim();
+    const text = [...args, ...tail].join(' ').trim();
     if (kindOpt === undefined || text.length === 0 || (kindOpt !== null && !operator.isOperatorDirectiveKind(kindOpt))) {
       console.error(USAGE);
       return 2;
@@ -468,6 +494,13 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
   if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
     console.log(USAGE);
     return sub ? 0 : 2;
+  }
+  // `leader <verb> --help` prints usage and never runs the verb: without this,
+  // `leader directives add --help` recorded a standing directive "--help" and
+  // `leader say --help` posted "--help" to the thread.
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(USAGE);
+    return 0;
   }
   // Before the core import: printing a plist needs no Leader state.
   if (sub === 'oversight-plist') return runOversightPlist(args);

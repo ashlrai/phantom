@@ -35,6 +35,7 @@ import type {
 import type { DevinConnectResult, DevinMessageResult } from '../core/devin/service.js';
 import { localWhen, readOriginRepo } from './cloud.js';
 import { isTty } from './ui.js';
+import { rejectUnknownOptions } from './args.js';
 
 const USAGE = `ashlr devin — Devin (Cognition) sessions that deliver PRs through the standing gates
 
@@ -412,7 +413,19 @@ async function cmdRefresh(deps: DevinCliDeps, args: string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `message` reads no options. A dash token before a `--` separator is a typo
+ * that used to be glued into the text and sent to the session.
+ */
+function unknownMessageOption(args: string[]): string | null {
+  return rejectUnknownOptions(args, {})?.token ?? null;
+}
+
 async function cmdMessage(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const unknown = unknownMessageOption(args);
+  if (unknown) throw new UsageError(`Unknown option ${unknown}.`);
+  const separator = args.indexOf('--');
+  if (separator !== -1) args.splice(separator, 1);
   const id = args.shift();
   const text = args.join(' ').trim();
   if (!id || !text) throw new UsageError('Say which task and what to tell it: ashlr devin message <task-id> "<text>".');
@@ -486,6 +499,20 @@ function clean(text: string): string {
   return noHome.replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
+const HELP_VALUE_OPTIONS = new Set([
+  '--acu', '--fleet-concurrent', '--fleet-per-day', '--max-concurrent', '--max-per-day', '--pause-at', '--per-day',
+  '--per-session', '--reserve', '--spent', '--usd-per-acu', '--base', '--email', '--org', '--repo', '--title',
+]);
+
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (HELP_VALUE_OPTIONS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDeps>): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -499,6 +526,21 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
+  }
+  // `devin <verb> --help` / `-h` explains itself before any deps load: `devin
+  // launch -h` took "-h" as the task and resolved the git origin to launch a
+  // session. A value of a value-taking option is an operand.
+  if (wantsHelp(args)) {
+    print(USAGE);
+    return 0;
+  }
+  // Before the dependencies load: a refused message must not touch any state.
+  if (sub === 'message') {
+    const unknown = unknownMessageOption(args);
+    if (unknown) {
+      printErr(`Unknown option ${unknown}.\n\n${USAGE}`);
+      return 2;
+    }
   }
   const deps: DevinCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
   try {

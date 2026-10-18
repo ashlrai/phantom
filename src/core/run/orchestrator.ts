@@ -1225,6 +1225,30 @@ function newSandboxUnavailableRunState(
 }
 
 /**
+ * Concurrent saves of OTHER runs rename into runs/ (and other stores write into
+ * ~/.ashlr), moving the parent/anchor directory snapshots that the stable read
+ * binds to, so it reports `changed-during-read` although this run's record is
+ * held under its own write lock. Re-read a bounded number of times on exactly
+ * that reason; each attempt is a complete stable read, any other failure is
+ * returned at once, and persistent instability still fails closed.
+ */
+const RUN_RECORD_STABLE_READ_ATTEMPTS = 5;
+const RUN_RECORD_RETRY_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+function readCurrentRunRecord(dest: string): ReturnType<typeof readStableRegularFile> {
+  for (let attempt = 1; ; attempt += 1) {
+    const loaded = readStableRegularFile(dest, {
+      anchorPath: stateRoot(),
+      maxFileBytes: MAX_PERSISTED_RUN_BYTES,
+      remainingBytes: MAX_PERSISTED_RUN_BYTES,
+    });
+    if (loaded.ok || loaded.reason !== 'changed-during-read' ||
+      attempt >= RUN_RECORD_STABLE_READ_ATTEMPTS) return loaded;
+    Atomics.wait(RUN_RECORD_RETRY_SLEEP, 0, 0, attempt * 2);
+  }
+}
+
+/**
  * Atomically persist a RunState to ~/.ashlr/runs/<id>.json (write-then-rename).
  * Existing records require generation authority from the exact loaded object.
  * ONLY writes under runsDir() — never touches repos or Desktop.
@@ -1262,11 +1286,7 @@ export function saveRun(s: RunState): void {
     let currentRaw: string | null = null;
     try {
       fs.lstatSync(dest);
-      const loaded = readStableRegularFile(dest, {
-        anchorPath: stateRoot(),
-        maxFileBytes: MAX_PERSISTED_RUN_BYTES,
-        remainingBytes: MAX_PERSISTED_RUN_BYTES,
-      });
+      const loaded = readCurrentRunRecord(dest);
       if (!loaded.ok) throw new Error(`Run persistence source is unsafe: ${loaded.reason}`);
       currentRaw = loaded.text;
     } catch (error) {

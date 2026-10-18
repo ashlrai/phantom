@@ -262,6 +262,36 @@ Step 2b — ResourceAware demote (NEW, flag-gated):
 4. builtin as last resort for bulk items only
 ```
 
+### 4.2a Simple-conductor engine fallback
+
+The flat-task simple-conductor (`cfg.foundry.simpleConductor`) does not go
+through the gateway. It applies its own rule from `planEngineDispatch` in
+`src/core/simple-conductor.ts` when `cfg.foundry.resourceAwareDispatch` is not
+`false`, before it claims the task:
+
+1. Use the task's engine unless it is `exhausted`, `throttled` or
+   `unreachable`. An engine missing from the snapshot, or reporting `unknown`,
+   counts as usable, and a snapshot outage dispatches the original engine.
+2. Otherwise use the first usable engine in `cfg.foundry.engineFallbackOrder`.
+3. With no usable candidate, use a `throttled` one (the task's engine first).
+   Throttling holds back headroom but the call still succeeds.
+4. When every candidate is `exhausted` or `unreachable`, defer. The task is not
+   claimed, so its attempts, lease and retry window stay unchanged and no
+   sandbox is created. The tick reports it in `SimpleConductorResult.deferred`
+   with a `resource-pause:` reason and, when the snapshot carries one, the
+   earliest known reset time among the candidates.
+
+`ashlr loop --watch` runs the simple conductor on `cfg.daemon.intervalMs`
+(default 5 minutes) through `runSimpleConductorWatch`. When a tick dispatched
+nothing, deferred at least one task and the earliest reset among the deferred
+tasks is in the future, the next tick waits for that reset instead
+(`simpleConductorNextWaitMs`): never less than the interval and never more than
+15 minutes, so new tasks and config changes are still picked up. The wait ends
+early on the kill switch, SIGINT or SIGTERM. Without a known reset the interval
+is unchanged, and the default single tick (no `--watch`) is unchanged.
+
+With `resourceAwareDispatch: false` the task's engine is always dispatched as is.
+
 ### 4.3 Production Velocity Runbook
 
 Enable the resource-control lane when the fleet should keep proposal production
