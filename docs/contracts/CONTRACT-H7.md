@@ -211,6 +211,13 @@ acceptable if BUILD prefers, both routing to the SAME `rollback()` in `onboard.t
 3. **Optionally** `setKill(true)` when `--kill` is passed — pause ALL autonomy in the same step
    (H6-audited `kill:on`). Off by default; opt-in.
 
+**Never-enrolled path.** When no identity of `<repo>` was enrolled, nothing was swept and
+`--kill` was not passed, rollback did nothing: it exits 1 with
+`{ ok: false, reason: "not-enrolled", wasEnrolled: false, unenrolled: false }` under `--json`
+(prose: "`<repo>` was not enrolled; nothing to roll back") instead of claiming an unenrollment.
+If it still swept a leftover or set the kill switch, it reports success with
+`wasEnrolled: false, unenrolled: false`.
+
 **ROLLBACK-INWARD-ONLY JUSTIFICATION.** Every step REMOVES capability or local state — it
 un-enrolls (narrows the gate), sweeps only `ashlr/sandbox/*` worktrees + scratch refs (pushes
 nothing, opens no PR, applies no proposal), and optionally flips the kill switch ON (the most
