@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendLedger, readLedger, scoreOutcomes, type LedgerEvent, type MetricSpec } from '../src/core/improve/outcomes.js';
-import { measureAt } from '../src/core/improve/measure.js';
+import { measureAt, standingMetricConfinement, type MeasureExec, type MetricSandbox } from '../src/core/improve/measure.js';
 import {
   assertOriginIs, confirmQueued, defaultBranchOf, evaluatePromotion, NOT_REMEASURED, normalizeChecks, prDiff, readPr,
   type DiffEvidence, type PromoteExec, type PrSnapshot,
@@ -214,7 +214,7 @@ describe('red team: prompt injection through PR text', () => {
 describe('red team: measured code reaching credentials (real git)', () => {
   const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } }).trim();
 
-  it('a measured head cannot run a tracked git hook or read the real HOME', () => {
+  it('a measured head cannot run a tracked git hook or read the real HOME', async () => {
     const repo = join(dir, 'repo');
     const marker = join(dir, 'hook-ran');
     fs.mkdirSync(join(repo, 'scripts'), { recursive: true });
@@ -228,9 +228,69 @@ describe('red team: measured code reaching credentials (real git)', () => {
     git(repo, 'add', '.'); git(repo, 'commit', '-q', '-m', 'head');
     const head = git(repo, 'rev-parse', 'HEAD');
     git(repo, 'config', 'core.hooksPath', '.hooks');
-    const result = measureAt(repo, head, metric);
+    const result = await measureAt(repo, head, metric);
     expect(result).toEqual({ sha: head, value: 0, reason: null });
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  /** A repo whose head commit's metric script leaves a marker when it runs as this process. */
+  const markerRepo = () => {
+    const repo = join(dir, 'confined');
+    const marker = join(dir, 'metric-ran');
+    fs.mkdirSync(join(repo, 'scripts'), { recursive: true });
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@example.com'); git(repo, 'config', 'user.name', 't'); git(repo, 'config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(join(repo, 'scripts', 'metric.mjs'),
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'x');\nconsole.log(JSON.stringify({ metric: 'eval-pass-rate', value: 1 }));\n`);
+    git(repo, 'add', '.'); git(repo, 'commit', '-q', '-m', 'head');
+    return { repo, marker, head: git(repo, 'rev-parse', 'HEAD') };
+  };
+  const recordingExec = (calls: string[]): MeasureExec => (cmd, args, cwd, env) => {
+    calls.push([cmd, ...args].join(' '));
+    return execFileSync(cmd, args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  };
+
+  it('under a standing grant the measured head runs inside the sandbox, never as this process', async () => {
+    const { repo, marker, head } = markerRepo();
+    const calls: string[] = [];
+    const ran: string[][] = [];
+    let closed = 0;
+    const sandbox: MetricSandbox = {
+      run: async (argv) => { ran.push(argv); return JSON.stringify({ metric: 'eval-pass-rate', value: 0.5 }); },
+      close: () => { closed++; },
+    };
+    const result = await measureAt(repo, head, metric, recordingExec(calls), async () => sandbox);
+    expect(result).toEqual({ sha: head, value: 0.5, reason: null });
+    expect(ran).toEqual([[process.execPath, 'scripts/metric.mjs']]);
+    expect(calls.every((c) => c.startsWith('git '))).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(closed).toBe(1);
+  });
+
+  it('a standing grant with no buildable sandbox leaves the metric unknown and never runs the head unconfined', async () => {
+    const { repo, marker, head } = markerRepo();
+    const calls: string[] = [];
+    const result = await measureAt(repo, head, metric, recordingExec(calls), async () => { throw new Error('the platform returned no sandbox launcher'); });
+    expect(result.value).toBeNull();
+    expect(result.reason).toMatch(/no sandbox launcher/);
+    expect(calls.every((c) => c.startsWith('git '))).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  it('with no standing grant the production confinement is legacy (null), as verification is', async () => {
+    await expect(standingMetricConfinement(dir)).resolves.toBeNull();
+  });
+
+  it('an npm metric opens the sandbox before installing, so a refused sandbox installs nothing', async () => {
+    const { repo } = markerRepo();
+    fs.writeFileSync(join(repo, 'package-lock.json'), '{}');
+    git(repo, 'add', '.'); git(repo, 'commit', '-q', '-m', 'lock');
+    const calls: string[] = [];
+    const npmMetric: MetricSpec = { ...metric, runner: { kind: 'npm', script: 'metric' } };
+    const result = await measureAt(repo, git(repo, 'rev-parse', 'HEAD'), npmMetric, recordingExec(calls), async () => { throw new Error('grant live, no sandbox'); });
+    expect(result.value).toBeNull();
+    expect(calls.some((c) => c.startsWith('npm '))).toBe(false);
   });
 
   it('prDiff reports renames as delete plus add, so a renamed-away test is seen', () => {

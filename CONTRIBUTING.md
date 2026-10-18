@@ -188,13 +188,16 @@ handle. The runner preserves the separate worker limits of the unit and
 serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
 
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
-four exhaustive Mac partitions, a separate serial Mac lane for all isolated
-suites, macOS queue coverage and native broker checks. The four exhaustive Mac
+four exhaustive Mac partitions, a separate Mac lane for all isolated suites
+(two at a time, each in its own home with one worker; locally they stay serial
+unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
+broker checks. The four exhaustive Mac
 partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
 other pull requests they are skipped and `Merge Gate` reports them as deferred
 to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks still run on every pull request. Local tests and hosted checks
-prove different environments. Inspect each actual run and report unavailable or
+checks run on every pull request that is ready for review; a draft pull request
+skips those three until it is marked ready, which starts a full run. Local tests
+and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
 The optional [qualified build handoff](docs/RELEASING.md#qualified-ci-build-handoff)

@@ -79,9 +79,14 @@ A proposal earns credit only from a metric it declares up front:
   worktrees at the PR's exact merge base and head (twice each by default). The
   command's last stdout line must be `{"metric": "<name>", "value": <number>}`.
   It runs with a minimal environment (no tokens or API keys) and a private
-  empty HOME, with git hooks and fsmonitor disabled. A failed run, a
-  missing script, or two runs of one commit that disagree make the outcome
-  **unknown**, never zero.
+  empty HOME, with git hooks and fsmonitor disabled. Under a standing grant
+  the metric command also runs inside the verification sandbox (writes only
+  to its worktree, no network egress, HOME jailed), because the head is
+  agent-written code nobody reviewed; when that sandbox cannot be built the
+  measurement is unknown and the command does not run. `npm ci
+  --ignore-scripts` still runs outside it, since it needs the registry and
+  runs no package code. A failed run, a missing script, or two runs of one
+  commit that disagree make the outcome **unknown**, never zero.
 * `phm improve outcomes` lists outcomes and compares proposers. Proposals
   chosen by the deterministic rules are the baseline; each exact engine/model
   pair is a fixed-model group. A rate or comparison needs at least three

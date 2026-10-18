@@ -830,7 +830,7 @@ function checkAshlrToolsInstalled(toolsRegistry: ToolsRegistry | null): DoctorCh
     'Phantom tools installed',
     'warn',
     count === 0 ? `No ecosystem tools installed; ${count}/${total} installed` : detail,
-    'Install Phantom ecosystem tools (phantom, ashlrcode, aw, etc.)',
+    'See where to install each companion: phm companions',
   );
 }
 
@@ -1324,10 +1324,17 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkLocus());
   checks.push(checkLocusFirm(cfg));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)
-  checks.push(checkMcpPlugin(mcpRegistry));
+  const mcpPlugin = checkMcpPlugin(mcpRegistry);
+  checks.push(mcpPlugin);
 
   // --- M3 checks ---
-  checks.push(checkMcpServersDiscovered(mcpRegistry));
+  // With no MCP server registered anywhere (the usual fresh install), the
+  // plugin warning already says so; a second warning would repeat it.
+  if (mcpRegistry !== null && mcpRegistry.servers.length === 0 && mcpPlugin.status === 'warn') {
+    mcpPlugin.fix = `${mcpPlugin.fix}. Then register installed companions: phm mcp ecosystem --write`;
+  } else {
+    checks.push(checkMcpServersDiscovered(mcpRegistry));
+  }
   checks.push(checkAshlrToolsInstalled(toolsRegistry));
 
   // --- M5 checks ---

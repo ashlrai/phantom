@@ -17,7 +17,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
-import { saveConfig, defaultConfig } from './config.js';
+import { saveConfig, defaultConfig, INDEX_PATH } from './config.js';
+import { buildIndex, writeIndex } from './index-engine.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
@@ -193,6 +194,38 @@ async function stepGenome(): Promise<OnboardStep> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return step('genome', 'manual', `Could not create genome dir: ${msg}. Run: ashlr doctor --fix`);
+  }
+}
+
+/**
+ * Step 5b: build ~/.ashlr/index.json on first run so `phm status` lists repos
+ * right away. Local write only, the same rebuild `doctor --fix` applies; an
+ * existing index is left for `phm index` to refresh.
+ */
+async function stepIndex(cfg: AshlrConfig): Promise<OnboardStep> {
+  try {
+    if (existsSync(INDEX_PATH)) {
+      return step('index', 'ok', `Index present at ${INDEX_PATH}`);
+    }
+    const roots: string[] = Array.isArray(cfg.roots) ? cfg.roots : [];
+    if (roots.length === 0) {
+      return step(
+        'index',
+        'skipped',
+        'No repo roots yet. Point phm at the folder that holds your repos: phm config set roots --json \'["<folder>"]\', then phm index',
+      );
+    }
+    const index = buildIndex(cfg);
+    writeIndex(index);
+    const repos = index.items.filter((item) => item.kind === 'repo').length;
+    return step(
+      'index',
+      'ok',
+      `Indexed ${repos} repo${repos === 1 ? '' : 's'} under ${roots.join(', ')}`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return step('index', 'manual', `Could not build the index: ${msg}. Run: phm index`);
   }
 }
 
@@ -642,6 +675,7 @@ export async function onboard(
   const editorsStep = await stepEditors(opts);
   const symlinkStep = await stepSymlink();
   const genomeStep = await stepGenome();
+  const indexStep = await stepIndex(cfg);
   const phantomStep = await stepPhantom();
   const { doctorStep, hasBlockingFail } = await stepDoctor(cfg);
 
@@ -651,6 +685,7 @@ export async function onboard(
     editorsStep,
     symlinkStep,
     genomeStep,
+    indexStep,
     phantomStep,
     doctorStep,
   ];

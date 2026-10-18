@@ -30,6 +30,16 @@ export async function runReleaseArticlesCli(args: string[], deps: ReleaseArticle
 }
 export async function cmdReleaseArticles(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { process.stdout.write(RELEASE_ARTICLES_USAGE + '\n'); return 0; }
+  // Only --json is an option. Any other dash token (e.g. `sync --dryrun`) used to
+  // reach sync as its version operand; refuse it before any work. Kept local:
+  // this file is a Tier-1 root, so it imports no shared CLI parser.
+  const operands = args.filter((arg) => arg !== '--json');
+  const unknown = operands.find((arg, index) => arg.length > 1 && arg.startsWith('-') && !(index === 1 && operands[0] === 'import'));
+  if (unknown !== undefined) {
+    if (args.includes('--json')) process.stdout.write(JSON.stringify({ ok: false, reason: `unknown option: ${unknown}` }) + '\n');
+    else process.stderr.write(`unknown option: ${unknown}\n${RELEASE_ARTICLES_USAGE}\n`);
+    return 2;
+  }
   const controller = new AbortController(); const stop = (): void => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try { return await runReleaseArticlesCli(args, defaultReleaseArticlesDeps(), (line) => process.stdout.write(line + '\n'), controller.signal); }

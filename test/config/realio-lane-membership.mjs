@@ -60,6 +60,7 @@ export const REAL_IO_TEST_FILES = [
   'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
   'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
+  'test/cli-unknown-option.test.ts', // fresh Node/tsx CLI subprocesses per verb, each with its own temp HOME and failing tool shims on PATH
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
@@ -370,6 +371,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
   'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
   'test/stale-git-locks.test.ts', // real git repos and worktrees, real doctor run
+  'test/tmp-scratch-sweep.test.ts', // real git worktrees, dead-pid child processes
   'test/daemon-start-temp-worktree-sweep.test.ts', // real git worktrees, dead-pid child processes and a real runDaemon start
   'test/m48.automerge-pass.test.ts', // real git worktree/merge/apply subprocess work — 5.2s slowest test in the quiet baseline
   'test/m56.branch-apply.test.ts', // real git worktree/merge/apply subprocess work — 3.2s slowest test in the quiet baseline
