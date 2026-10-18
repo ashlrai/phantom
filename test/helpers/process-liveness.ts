@@ -13,6 +13,7 @@
  * next scheduled. So tests poll to a bounded deadline instead of sleeping a
  * fixed interval and checking once.
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -21,6 +22,7 @@ import { setTimeout as delay } from 'node:timers/promises';
  * no /proc entry, or `undefined` when /proc is unavailable or unreadable.
  */
 function procState(pid: number): string | null | undefined {
+  if (process.platform === 'darwin') return psState(pid);
   if (process.platform !== 'linux') return undefined;
   let stat: string;
   try {
@@ -31,6 +33,23 @@ function procState(pid: number): string | null | undefined {
   // "pid (comm) S ppid ...": comm may itself contain ") ", so use the last one.
   const close = stat.lastIndexOf(') ');
   return close < 0 ? undefined : stat.charAt(close + 2) || undefined;
+}
+
+/**
+ * Process state letter from `ps -o stat=` (macOS has no /proc), `null` when
+ * ps lists no such pid, or `undefined` when ps cannot be run. Without this a
+ * zombie on macOS passes `kill(pid, 0)` and looks running forever.
+ */
+export function psState(pid: number): string | null | undefined {
+  let out: string;
+  try {
+    out = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (error) {
+    // ps exits 1 with no rows when the pid does not exist.
+    return (error as { status?: number }).status === 1 ? null : undefined;
+  }
+  const stat = out.trim();
+  return stat ? stat.charAt(0) : null;
 }
 
 /**
