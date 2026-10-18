@@ -261,7 +261,7 @@ describe('M30 CI workflow', () => {
     expect(sourceBinding).not.toMatch(/appendFileSync\([^;]*GITHUB_SHA=/s);
   });
 
-  it('adds all four exhaustive Mac general partitions and one complete serial isolated lane', () => {
+  it('adds all four exhaustive Mac general partitions and one complete paired isolated lane', () => {
     const general = workflowJob('mac-general');
     const isolated = workflowJob('mac-isolated');
     expect(general).toContain('name: Mac exhaustive (${{ matrix.shard }}/4)');
@@ -271,6 +271,8 @@ describe('M30 CI workflow', () => {
     expect(general).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}');
     expect(isolated).toContain('name: Mac exhaustive (isolated)');
     expect(isolated).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-isolated');
+    expect(isolated).toContain("ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2'");
+    expect(general).not.toContain('ASHLR_TEST_CI_ISOLATED_CONCURRENCY');
     for (const job of [general, isolated]) {
       expect(job).toContain('runs-on: macos-15');
       expect(job).toContain("ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'");
