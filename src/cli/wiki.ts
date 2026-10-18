@@ -19,6 +19,7 @@ import path from 'node:path';
 import { loadConfigReadOnly } from '../core/config.js';
 import type { AshlrConfig } from '../core/types.js';
 import { makeColors, isTty } from './ui.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 type WikiModule = typeof import('../core/knowledge/wiki/index.js');
 
@@ -49,6 +50,32 @@ function parse(args: string[]): Parsed {
     }
   }
   return { positional, flags, values };
+}
+
+/**
+ * Options each wiki verb reads. Anything else is refused before the wiki core
+ * loads: `build --no-modle` used to run a real model build.
+ */
+const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  build: {
+    allowed: { flags: ['--all', '--force', '--no-model', '--json'], values: ['--pages', '--tokens'] },
+    usage: 'Usage: ashlr wiki build [repo] [--all] [--force] [--no-model] [--pages N] [--tokens N] [--json]',
+  },
+  status: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki status [repo] [--json]' },
+  list: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki list [repo] [--json]' },
+  show: { allowed: {}, usage: 'Usage: ashlr wiki show <repo> [page]' },
+  ask: {
+    allowed: { flags: ['--no-model', '--json'], values: ['--repo'] },
+    usage: 'Usage: ashlr wiki ask "<question>" [--repo <path|name>] [--no-model] [--json]',
+  },
+};
+
+/** `--pages=8` is the same option as `--pages 8` to the parser. */
+function withoutInlineValues(args: string[]): string[] {
+  return args.filter((a) => {
+    const eq = a.indexOf('=');
+    return !(a.startsWith('--') && eq > 0 && VALUE_FLAGS.has(a.slice(0, eq)));
+  });
 }
 
 function positiveInt(v: string | undefined): number | undefined | null {
@@ -267,6 +294,14 @@ export async function cmdWiki(args: string[]): Promise<number> {
   if (rest.some((a, i) => (a === '--help' || a === '-h') && !VALUE_FLAGS.has(rest[i - 1] ?? ''))) {
     printHelp();
     return 0;
+  }
+  const spec = Object.hasOwn(WIKI_OPTIONS, sub) ? WIKI_OPTIONS[sub] : undefined;
+  if (spec) {
+    const bad = rejectUnknownOptions(withoutInlineValues(rest), spec.allowed);
+    if (bad) {
+      process.stderr.write(`${bad.message}\n${spec.usage}\n`);
+      return 2;
+    }
   }
   const wiki = await import('../core/knowledge/wiki/index.js');
   const p = parse(rest);
