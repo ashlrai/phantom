@@ -14,6 +14,7 @@
  * Exit codes: 0 ok, 1 failure, 2 bad usage.
  */
 
+import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfigReadOnly } from '../core/config.js';
@@ -84,6 +85,14 @@ function positiveInt(v: string | undefined): number | undefined | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** A repo argument may be a path or an enrolled repo's name. */
 function resolveRepo(wiki: WikiModule, arg: string | undefined): { repo: string } | { error: string } {
   const enrolled = wiki.wikiCandidateRepos();
@@ -98,7 +107,12 @@ function resolveRepo(wiki: WikiModule, arg: string | undefined): { repo: string 
   const byName = enrolled.filter((r) => path.basename(r) === arg);
   if (byName.length === 1) return { repo: byName[0]! };
   if (byName.length > 1) return { error: `"${arg}" matches ${byName.length} enrolled repos — pass the full path.` };
-  return { error: `${arg} is not an enrolled repo (see \`ashlr enroll list\`).` };
+  // A real directory just needs enrolling; anything else is a typo or a name.
+  if (isDirectory(abs)) {
+    const shown = /\s/.test(abs) ? `"${abs}"` : abs;
+    return { error: `${abs} is not enrolled. Enroll it with \`ashlr enroll add ${shown}\`.` };
+  }
+  return { error: `${arg} is not an enrolled repo name or a directory (see \`ashlr enroll list\`).` };
 }
 
 /** Citations render as plain `file:line` in a terminal. */
