@@ -218,6 +218,12 @@ describe('CLI verbs refuse unknown options before side effects', () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ created: true, name: 'my-plug', capability: 'command' });
   });
 
+  it('plugins init takes the name after --capability, not its value', () => {
+    const r = run(['plugins', 'init', '--capability', 'command', 'my-plug', '--json']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ created: true, name: 'my-plug', capability: 'command' });
+  });
+
   it('devin message accepts dash-led text after a -- separator', () => {
     const r = run(['devin', 'message', 'task-1', '--', '--literal', 'text']);
     expect(r.stderr).not.toContain('Unknown option');
