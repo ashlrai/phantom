@@ -544,6 +544,9 @@ jobs:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
       ASHLR_TEST_CI_TIMEOUT_MS: '5400000'
+      # The isolated suites mostly wait on real child processes. Two run at a
+      # time, longest first, each in its own home with one worker.
+      ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
