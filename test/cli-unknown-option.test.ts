@@ -5,6 +5,9 @@
  * state written. `sandbox gc --dry-run` reclaimed for real, `comms cycle
  * --dry-run` sent, `enroll add <repo> --locus-frm` enrolled without firm mode,
  * and `devin message` / `leader say` glued stray flags into the sent text.
+ * Then `wiki build --no-modle` ran a real model build, `plugins init <name>
+ * --capabilty command` scaffolded a scanner, `stack add`/`apply` and
+ * `demo` dropped mistyped flags.
  *
  * Every CLI case runs in its own fresh HOME with failing shims for the external
  * tools first on PATH, so a regression cannot reach a real account.
@@ -60,7 +63,7 @@ describe('CLI verbs refuse unknown options before side effects', () => {
   const root = mkdtempSync(join(tmpdir(), 'phm-unknown-option-'));
   const bin = join(root, 'bin');
   mkdirSync(bin);
-  for (const tool of ['claude', 'gh', 'codex', 'curl', 'devin', 'vercel']) {
+  for (const tool of ['claude', 'gh', 'codex', 'curl', 'devin', 'vercel', 'stack']) {
     const shim = join(bin, tool);
     writeFileSync(shim, '#!/bin/sh\necho "test shim: $0 must not run" >&2\nexit 97\n');
     chmodSync(shim, 0o755);
@@ -110,6 +113,25 @@ describe('CLI verbs refuse unknown options before side effects', () => {
       args: ['fleet', verb, '--definitely-not-a-flag'], flag: '--definitely-not-a-flag',
     })),
     { args: ['fleet', 'scorecard', '--window'], flag: '--window' },
+    { args: ['wiki', 'build', '--all', '--no-modle'], flag: '--no-modle' },
+    { args: ['wiki', 'build', 'some-repo', '--pages', '3', '--forse'], flag: '--forse' },
+    { args: ['wiki', 'build', '--repo', 'some-repo'], flag: '--repo' },
+    { args: ['wiki', 'build', '--pages'], flag: '--pages' },
+    { args: ['wiki', 'status', '--jsn'], flag: '--jsn' },
+    { args: ['wiki', 'list', '--definitely-not-a-flag'], flag: '--definitely-not-a-flag' },
+    { args: ['wiki', 'show', 'some-repo', '--json'], flag: '--json' },
+    { args: ['wiki', 'ask', 'where is auth', '--repoo', 'x'], flag: '--repoo' },
+    { args: ['stack', 'add', 'postgres', '--yse'], flag: '--yse' },
+    { args: ['stack', 'add', 'postgres', '-y'], flag: '-y' },
+    { args: ['stack', 'apply', 'my-recipe', '--yes', '--forse'], flag: '--forse' },
+    { args: ['stack', 'status', '--jsn'], flag: '--jsn' },
+    { args: ['plugins', 'init', 'my-plug', '--capabilty', 'command'], flag: '--capabilty' },
+    { args: ['plugins', 'init', 'my-plug', '--capability'], flag: '--capability' },
+    { args: ['plugins', 'enable', 'my-plug', '--yse'], flag: '--yse' },
+    { args: ['plugins', 'disable', 'my-plug', '--definitely-not-a-flag'], flag: '--definitely-not-a-flag' },
+    { args: ['plugins', 'list', '--jsn'], flag: '--jsn' },
+    { args: ['plugins', 'info', 'my-plug', '--definitely-not-a-flag'], flag: '--definitely-not-a-flag' },
+    { args: ['demo', '--no-clean'], flag: '--no-clean' },
   ];
 
   for (const { args, flag } of refused) {
@@ -145,6 +167,12 @@ describe('CLI verbs refuse unknown options before side effects', () => {
     { args: ['leader', 'say', '--help'], status: 0, out: /phm leader say/ },
     { args: ['manager', '--help'], status: 0, out: /--apply-rejects/ },
     { args: ['fleet', 'scorecard', '--window', '7d', '--by-engine', '--json'], status: 0, out: /"window": "7d"/ },
+    { args: ['wiki', 'build', '--help'], status: 0, out: /ashlr wiki/ },
+    { args: ['wiki', 'status', '--json'], status: 0, out: /^\[\]/ },
+    { args: ['stack', 'add', '--help'], status: 0, out: /stack add <service> \[--yes\]/ },
+    { args: ['plugins', 'init', '--help'], status: 0, out: /plugins init <name>/ },
+    { args: ['plugins', 'list', '--json'], status: 0, out: /^\[\]/ },
+    { args: ['demo', '--help'], status: 0, out: /ashlr demo \[--no-cleanup\] \[--json\]/ },
   ];
 
   for (const { args, status, out } of valid) {
@@ -161,6 +189,33 @@ describe('CLI verbs refuse unknown options before side effects', () => {
     expect(r.status, r.stderr).toBe(2);
     expect(r.stderr).toContain('cannot request auto-merge');
     expect(r.homeEntries).toEqual([]);
+  });
+
+  // Accepted options pass the check and reach the verb's own next refusal.
+  const reachesVerb: Array<{ args: string[]; status: number; err: RegExp }> = [
+    { args: ['wiki', 'build', '--all', '--force', '--no-model', '--pages', '3', '--tokens=1000', '--json'], status: 1, err: /No enrolled repos/ },
+    { args: ['wiki', 'ask', 'where is auth', '--repo', 'nope', '--no-model', '--json'], status: 2, err: /nope is not an enrolled repo/ },
+    { args: ['wiki', 'show', 'nope', 'overview'], status: 2, err: /nope is not an enrolled repo/ },
+    { args: ['stack', 'add', 'postgres'], status: 2, err: /requires --yes/ },
+    { args: ['stack', 'apply', 'my-recipe'], status: 2, err: /requires --yes/ },
+    { args: ['plugins', 'enable', 'my-plug', '--yes', '--json'], status: 1, err: /no valid plugin named "my-plug"/ },
+    { args: ['plugins', 'disable', 'my-plug', '--json'], status: 1, err: /is not enabled/ },
+  ];
+
+  for (const { args, status, err } of reachesVerb) {
+    it(`phm ${args.join(' ')} passes the option check (exit ${status})`, () => {
+      const r = run(args);
+      expect(r.status, r.stderr).toBe(status);
+      expect(r.stderr).toMatch(err);
+      expect(r.stderr).not.toContain('unknown option');
+      expect(r.stderr).not.toContain('test shim');
+    });
+  }
+
+  it('plugins init --capability command still scaffolds a command plugin', () => {
+    const r = run(['plugins', 'init', 'my-plug', '--capability', 'command', '--json']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ created: true, name: 'my-plug', capability: 'command' });
   });
 
   it('devin message accepts dash-led text after a -- separator', () => {
