@@ -278,9 +278,16 @@ ashlr cloud improve [--count N]            # launch backlog items now
 ashlr cloud budget --total 250 --spent 12 --per-session 3 --max-per-day 20 \
                    --self-improve on --self-improve-max 4 --self-improve-max-open 3 --reserve 40
 ashlr cloud backlog
+ashlr cloud stats [--days N] [--json]      # how tasks ended, and the merged rate
 ```
 
 `launch` defaults `--repo` to the current directory's GitHub origin.
+
+`stats` counts every task by how it ended (merged, closed, failed with its
+launch failure code, expired) and what is still in flight. Its merged rate is
+merged PRs over finished PRs that carried a change: a PR closed after the
+session reported no change was needed is a correct verdict, so it is counted
+under closed but left out of the rate.
 
 ### Triage in Needs you
 
