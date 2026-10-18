@@ -14,7 +14,7 @@
  * malformed file yields empty/partial structures the caller can reject.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { MilestoneDoc, MilestoneStep, RoadmapEntry, RoadmapIndex } from './types.js';
 
@@ -67,9 +67,19 @@ export function resolveRoadmapPath(dir: string, roadmapFile?: string): string {
     const f = roadmapFile.trim();
     return isAbsolute(f) ? f : resolve(base, f);
   }
+  // Match names against the directory listing, not existsSync: on a
+  // case-insensitive filesystem (default APFS, NTFS) existsSync('roadmap.md')
+  // is true for a file named ROADMAP.md, and the returned path would not be
+  // the file's real name.
+  let entries: Set<string> | undefined;
+  try {
+    entries = new Set(readdirSync(base));
+  } catch {
+    entries = undefined;
+  }
   for (const name of DEFAULT_ROADMAP_NAMES) {
     const candidate = resolve(base, name);
-    if (existsSync(candidate)) return candidate;
+    if (entries ? entries.has(name) : existsSync(candidate)) return candidate;
   }
   return resolve(base, DEFAULT_ROADMAP_NAMES[0] as string);
 }
