@@ -39,8 +39,10 @@ name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
 unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
 deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request
-(`.github/workflows/ci.yml`).
+(isolated)` and the other macOS checks run on every pull request that is ready
+for review. A draft pull request skips those until it is marked ready, which
+starts a full run; a draft cannot merge, so open drafts while iterating
+and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
 
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites

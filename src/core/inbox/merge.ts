@@ -236,8 +236,10 @@ import {
   ashlrTmpDir,
   reapLeakedTempWorktrees,
   releaseTempWorktreeOwner,
+  releaseTmpScratchOwner,
   tempWorktreePatchPath,
   writeTempWorktreeOwner,
+  writeTmpScratchOwner,
 } from './temp-worktree-reaper.js';
 
 function auditAutoMergeCanaryFailure(repo: string, sandboxId: string): void {
@@ -2515,6 +2517,7 @@ export async function openStandingVerificationConfinement(
     try {
       rmSync(runTmpDir, { recursive: true, force: true });
     } catch { /* a leftover private dir under ~/.ashlr/tmp is harmless */ }
+    releaseTmpScratchOwner(runTmpDir);
     runTmpDir = null;
   };
   try {
@@ -2522,6 +2525,7 @@ export async function openStandingVerificationConfinement(
     const parent = join(home, '.ashlr', 'tmp');
     mkdirSync(parent, { recursive: true, mode: 0o700 });
     runTmpDir = realpathSync(mkdtempSync(join(parent, 'verify-confine-')));
+    writeTmpScratchOwner(runTmpDir);
     chmodSync(runTmpDir, 0o700);
     const base = overlayMod.buildAutonomousEnvOverlay({ engine: 'local', runTmpDir, home, seatId: null });
     const cargo = opts.cargoAttachment;
