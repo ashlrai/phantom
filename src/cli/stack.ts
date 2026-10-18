@@ -39,6 +39,7 @@ import {
 } from '../core/integrations/stack.js';
 import { makeColors, isTty } from './ui.js';
 import { promptConfirm } from './onboard.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -235,6 +236,18 @@ function printStackHelp(): void {
   console.log('');
 }
 
+/**
+ * Print the refusal plus the verb's usage on stderr and return true when
+ * `args` carries an option the verb does not read. Called before any lookup.
+ */
+function refuseUnknownOption(args: string[], allowed: AllowedOptions, usage: string): boolean {
+  const bad = rejectUnknownOptions(args, allowed);
+  if (!bad) return false;
+  process.stderr.write(red('error: ') + bad.message + '\n');
+  process.stderr.write(dim(usage) + '\n');
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
@@ -255,6 +268,7 @@ export async function cmdStack(args: string[]): Promise<number> {
 
   // No subcommand → status (`ashlr stack --json` is `ashlr stack status --json`)
   if (sub === undefined || sub === 'status' || sub === '--json') {
+    if (refuseUnknownOption(sub === 'status' ? rest : args, { flags: ['--json'] }, 'Usage: ashlr stack [status] [--json]')) return 2;
     const jsonMode = args.includes('--json');
     return cmdStackStatus(jsonMode);
   }
@@ -267,6 +281,8 @@ export async function cmdStack(args: string[]): Promise<number> {
 
   // Mutating: add
   if (sub === 'add') {
+    // `add <service> --yse` used to ignore the typo and carry on to the confirm gate.
+    if (refuseUnknownOption(rest, { flags: ['--yes'] }, 'Usage: ashlr stack add <service> [--yes]')) return 2;
     const yes = rest.includes('--yes');
     const positional = rest.filter((a) => !a.startsWith('--'));
     if (positional.length === 0) {
@@ -278,6 +294,7 @@ export async function cmdStack(args: string[]): Promise<number> {
 
   // Mutating: apply
   if (sub === 'apply') {
+    if (refuseUnknownOption(rest, { flags: ['--yes'] }, 'Usage: ashlr stack apply [recipe] [--yes]')) return 2;
     const yes = rest.includes('--yes');
     const positional = rest.filter((a) => !a.startsWith('--'));
     return cmdStackMutate('apply', positional, yes);

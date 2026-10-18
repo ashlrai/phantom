@@ -20,6 +20,16 @@ if (args.length > 0 && !generalSelector && !isolatedOnly) {
   process.exit(2);
 }
 const selectedShard = generalSelector ? Number(generalSelector[1]) : null;
+// Hosted CI may run the isolated suites two at a time. They mostly wait on real
+// child processes, so a pair fits one runner, and each suite still gets its own
+// home and single worker with every bounded deadline unchanged. Locally they
+// stay serial unless asked; any other value is refused.
+const isolatedConcurrencyInput = process.env.ASHLR_TEST_CI_ISOLATED_CONCURRENCY ?? '1';
+if (isolatedConcurrencyInput !== '1' && isolatedConcurrencyInput !== '2') {
+  console.error('ASHLR_TEST_CI_ISOLATED_CONCURRENCY must be 1 or 2.');
+  process.exit(2);
+}
+const isolatedConcurrency = Number(isolatedConcurrencyInput);
 const reportInput = process.env.ASHLR_TEST_CI_REPORT_DIRECTORY;
 let reportDirectory = null;
 if (reportInput !== undefined) {
@@ -90,6 +100,24 @@ const isolatedCases = [
   { file: isolatedAcceptance, filter: 'automatic seed measurement: false', label: 'campaign false' },
   { file: isolatedAcceptance, filter: 'automatic seed measurement: true', label: 'campaign true' },
 ];
+// Measured macOS seconds per isolated case (hosted run 39088914496, 10-18).
+// Paired runs start the longest first so neither slot is left with the tail.
+const isolatedSeconds = {
+  'test/resource-engineering-setup-acceptance.test.ts': 473,
+  'test/resource-engineering-successor-acceptance.test.ts': 172,
+  'test/universe-firm-engineering-control.test.ts': 157,
+  'test/resource-engineering-supervisor-admission-acceptance.test.ts': 133,
+  'test/m342.dispatch-production-ledger.test.ts': 106,
+  'campaign false': 100,
+  'test/resource-engineering-supervisor-acceptance.test.ts': 98,
+  'test/resource-console-engineering-acceptance.test.ts': 82,
+  'test/universe-engineering-handoff-recovery.test.ts': 67,
+  'test/universe-campaign-integration.test.ts': 64,
+  'test/universe-supervision-integration.test.ts': 63,
+  'campaign true': 60,
+  'test/m446.external-skill-git-capture.test.ts': 45,
+  'test/m395.effect-terminal-retention.test.ts': 29,
+};
 // Existing real-I/O acceptance phases describe work within a long-running case;
 // enable them without changing the wrapper's child-output idle deadline. Keep
 // explicit caller choices, including empty values, and leave the parent alone.
@@ -179,28 +207,40 @@ if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
   // Each gets a fresh home. The campaign's two cases also get separate homes
   // so one case's process state cannot exhaust the next delivery.
   const isolatedCodes = [];
-  for (const [index, { file, filter, label }] of isolatedCases.entries()) {
-    if (failure) break;
+  const runIsolated = (index) => new Promise((resolve) => {
+    const { file, filter, label } = isolatedCases[index];
     const child = spawn(process.execPath, [runner, file, ...(filter ? ['-t', filter] : []), '--maxWorkers=1', '--fileParallelism=false', '--bail=1',
       ...reportArgs(`isolated-${String(index + 1).padStart(2, '0')}.json`)], {
       cwd: process.cwd(), env: isolatedEnvironment, stdio: 'inherit',
     });
     children.set(`isolated-${label}`, child);
     console.error(`[test-ci:sharded] started isolated acceptance ${label} (pid ${child.pid ?? 'unavailable'})`);
-    const isolatedCode = await new Promise((resolve) => {
-      child.once('error', (error) => {
-        console.error(`[test-ci:sharded] isolated ${label} failed to start: ${error.message}`);
-        resolve(1);
-      });
-      child.once('exit', (code, signal) => {
-        console.error(`[test-ci:sharded] isolated ${label} ${signal ? `exited via ${signal}` : `exited ${code}`}`);
-        resolve(code ?? 1);
-      });
-    });
-    isolatedCodes.push(isolatedCode);
-    if (isolatedCode !== 0) failure = isolatedCode;
+    let settled = false;
+    const finish = (code, detail) => {
+      if (settled) return;
+      settled = true;
+      console.error(`[test-ci:sharded] isolated ${label} ${detail}`);
+      isolatedCodes[index] = code;
+      if (code !== 0 && !failure) {
+        failure = code;
+        stopOthers(`isolated-${label}`);
+      }
+      resolve();
+    };
+    child.once('error', (error) => finish(1, `failed to start: ${error.message}`));
+    child.once('exit', (code, signal) => finish(code ?? 1, signal ? `exited via ${signal}` : `exited ${code}`));
+  });
+  const order = isolatedCases.map((_, index) => index);
+  if (isolatedConcurrency > 1) {
+    const seconds = ({ file, label }) => isolatedSeconds[label === file ? file : label] ?? 0;
+    order.sort((a, b) => seconds(isolatedCases[b]) - seconds(isolatedCases[a]) || a - b);
   }
-  process.exitCode = failure || (isolatedCodes.length === isolatedCases.length ? 0 : 1);
+  const runIsolatedQueue = async () => {
+    while (order.length && !failure) await runIsolated(order.shift());
+  };
+  await Promise.all(Array.from({ length: isolatedConcurrency }, runIsolatedQueue));
+  const launched = isolatedCodes.filter((code) => code !== undefined);
+  process.exitCode = failure || (launched.length === isolatedCases.length ? 0 : 1);
   const prefix = isolatedOnly ? '' : `${codes.join(', ')}, `;
-  console.error(`[test-ci:sharded] ${process.exitCode === 0 ? 'PASS' : 'FAIL'} (${prefix}isolated ${isolatedCodes.join(', ')})`);
+  console.error(`[test-ci:sharded] ${process.exitCode === 0 ? 'PASS' : 'FAIL'} (${prefix}isolated ${launched.join(', ')})`);
 }

@@ -33,6 +33,7 @@ import type { AuditEntry } from '../core/types.js';
 import type { FleetStatus } from '../core/fleet/status.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2283,6 +2284,19 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Options each lenient fleet verb reads, mirroring printFleetHelp. */
+const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
+  direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
+  init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
+  doctor:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet doctor [--json]' },
+  scorecard:      { allowed: { flags: ['--json', '--by-engine', '--by-repo'], values: ['--window'] }, usage: 'ashlr fleet scorecard [--window 7d|30d|all] [--by-engine] [--by-repo] [--json]' },
+  oversight:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet oversight [--json]' },
+  'judge-traces': { allowed: { flags: ['--json', '--outcome-only'], values: ['--limit', '--proposal'] }, usage: 'ashlr fleet judge-traces [--limit N] [--proposal <id>] [--outcome-only] [--json]' },
+  'judge-health': { allowed: { flags: ['--json', '--degradation'] }, usage: 'ashlr fleet judge-health [--degradation] [--json]' },
+};
+
 export async function cmdFleet(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
 
@@ -2304,6 +2318,19 @@ export async function cmdFleet(args: string[]): Promise<number> {
   if ((sub === 'pause' || sub === 'resume') && rest.length > 0) {
     process.stderr.write(red('error: ') + `fleet ${sub} takes no arguments (got ${rest[0]})\n`);
     return 2;
+  }
+
+  // Refuse an option the verb does not read before it runs: `fleet init --wirte`
+  // used to print instead of merge, and typos elsewhere were silently dropped.
+  // evidence, optimize-prompt and automerge-canary keep their own strict parsers.
+  const spec = Object.hasOwn(FLEET_VERB_OPTIONS, sub) ? FLEET_VERB_OPTIONS[sub] : undefined;
+  if (spec) {
+    const bad = rejectUnknownOptions(rest, spec.allowed);
+    if (bad) {
+      process.stderr.write(red('error: ') + `fleet ${sub}: ${bad.message}\n`);
+      process.stderr.write(`usage: ${spec.usage}\n`);
+      return 2;
+    }
   }
 
   switch (sub) {

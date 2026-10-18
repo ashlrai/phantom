@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gatherProposals, openProposalPr, renderProposal } from '../core/improve/loop.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
+import { rejectUnknownOptions } from './args.js';
 
 const USAGE = `Usage:
   phm improve propose [--team <id>] [--open-pr --repo <dir>] [--json]
@@ -32,6 +33,14 @@ export async function cmdImprove(argv: string[]): Promise<number> {
 }
 
 async function propose(args: string[], val: (n: string) => string | undefined): Promise<number> {
+  // Refuse an option propose does not read before the steward runs: a typo like
+  // `--open-p` used to fall through to a normal proposal run.
+  const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--open-pr', '--auto-merge'], values: ['--team', '--repo'] });
+  if (bad) {
+    if (args.includes('--json') && args.includes('--open-pr')) console.log(JSON.stringify({ opened: [], error: bad.message }, null, 2));
+    else { console.error(bad.message); console.error(USAGE); }
+    return 2;
+  }
   if (args.includes('--auto-merge')) { console.error('Draft proposals cannot request auto-merge. Promotion is `phm improve promote`, gated by green checks and a measured metric improvement.'); return 2; }
   const gathered = gatherProposals(val('--team') ?? 'default', runSteward(defaultStewardPolicy()));
   const { readLedger, scoreOutcomes, rankByLeverage } = await import('../core/improve/outcomes.js');
@@ -95,7 +104,7 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
   if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
   if (!outcome?.pr) { console.error('! register the proposal with its PR first (phm improve register)'); return 1; }
   const { appendLedger } = await import('../core/improve/outcomes.js');
-  const { measureAt } = await import('../core/improve/measure.js');
+  const { measureAt, standingMetricConfinement } = await import('../core/improve/measure.js');
   const { readPr, defaultBranchOf, assertOriginIs, prMergeBase } = await import('../core/improve/promote.js');
   try {
     assertOriginIs(outcome.pr.repository, repo);
@@ -103,7 +112,7 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
     const base = prMergeBase(repo, pr, defaultBranchOf(outcome.pr.repository, repo));
     for (const [phase, sha] of [['base', base], ['head', pr.headRefOid]] as const) {
       for (let i = 0; i < repeat; i++) {
-        const m = measureAt(repo, sha, outcome.metric);
+        const m = await measureAt(repo, sha, outcome.metric, undefined, standingMetricConfinement);
         appendLedger({ type: 'measured', proposalId: id, phase, sha, value: m.value, reason: m.reason });
         console.log(`-> ${phase} ${sha.slice(0, 12)} ${outcome.metric.name} = ${m.value ?? `unknown (${m.reason})`}`);
         if (m.value === null) break;
@@ -136,7 +145,7 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
   if (!outcome?.pr) { console.error('! register the proposal with its PR first (phm improve register)'); return 1; }
   const repository = outcome.pr.repository;
   const { appendLedger } = await import('../core/improve/outcomes.js');
-  const { measureAt } = await import('../core/improve/measure.js');
+  const { measureAt, standingMetricConfinement } = await import('../core/improve/measure.js');
   const { readPr, defaultBranchOf, assertOriginIs, prMergeBase, prDiff, evaluatePromotion, queueMerge, confirmQueued, NOT_REMEASURED } = await import('../core/improve/promote.js');
   const guards = async () => {
     const [{ killSwitchOn }, { isPaused }] = await Promise.all([import('../core/sandbox/policy.js'), import('../core/comms/pause.js')]);
@@ -151,8 +160,8 @@ async function promote(id: string | undefined, repo: string | undefined, dryRun:
     let decision = evaluatePromotion({ ...facts, guards: await guards() });
     // Measuring runs the PR's code; only spend it on a PR that passes every other gate.
     if (decision.reasons.length === 1 && decision.reasons[0] === NOT_REMEASURED) {
-      const base = measureAt(repo, mergeBase, outcome.metric);
-      const head = measureAt(repo, pr.headRefOid, outcome.metric);
+      const base = await measureAt(repo, mergeBase, outcome.metric, undefined, standingMetricConfinement);
+      const head = await measureAt(repo, pr.headRefOid, outcome.metric, undefined, standingMetricConfinement);
       const remeasured = { base: base.value, head: head.value, reasons: [base.reason, head.reason].filter((r): r is string => !!r) };
       // Measuring takes minutes: Stop/Pause and the PR itself are read again right before acting.
       const now = readPr(repository, outcome.pr.number, repo);

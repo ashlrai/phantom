@@ -10001,6 +10001,23 @@ async function runDaemonInEnrollmentScope(
     } catch (err) {
       console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
     }
+    // Private scratch (verify-confine-*, fleet-git-*, patch-*.diff) a killed
+    // run left in ~/.ashlr/tmp: same owner rules, nothing else references it.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const scratch = reaper.sweepLeakedTmpScratch();
+      if (scratch.reaped.length > 0 || scratch.failed.length > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `tmp scratch sweep reaped=${scratch.reaped.length} kept=${scratch.kept.length} failed=${scratch.failed.length}`,
+          result: scratch.failed.length === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch {
+      // Best-effort: never blocks daemon start.
+    }
     // A git process killed mid-update leaves packed-refs.lock / a ref .lock
     // that fails every later ref update in that repo. Git records no owner, so
     // the daemon only reports old ones (read-only); `phm doctor` repeats it.

@@ -147,7 +147,7 @@ describe('promotion gate', () => {
 describe('measurement', () => {
   const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } }).trim();
 
-  it('measures the declared metric at two exact commits of a real repository', () => {
+  it('measures the declared metric at two exact commits of a real repository', async () => {
     const repo = join(dir, 'repo');
     fs.mkdirSync(join(repo, 'scripts'), { recursive: true });
     git(repo, 'init', '-q', '-b', 'main');
@@ -161,16 +161,16 @@ describe('measurement', () => {
     const head = commit(0.8);
     process.env.GITHUB_TOKEN = 'ghp_should_not_reach_metric';
     try {
-      const b = measureAt(repo, base, metric);
-      const h = measureAt(repo, head, metric);
+      const b = await measureAt(repo, base, metric);
+      const h = await measureAt(repo, head, metric);
       expect(b).toEqual({ sha: base, value: 0.6, reason: null });
       expect(h).toEqual({ sha: head, value: 0.8, reason: null });
       expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
       const [o] = write(reg('0123456789'), m('0123456789', 'base', base, b.value), m('0123456789', 'head', head, h.value));
       expect(o).toMatchObject({ status: 'improved' });
       expect(o!.effect).toBeCloseTo(0.2);
-      expect(measureAt(repo, head, { ...metric, runner: { kind: 'node', path: 'scripts/missing.mjs' } }).reason).toMatch(/missing/);
-      expect(measureAt(repo, 'f'.repeat(40), metric).value).toBeNull();
+      expect((await measureAt(repo, head, { ...metric, runner: { kind: 'node', path: 'scripts/missing.mjs' } })).reason).toMatch(/missing/);
+      expect((await measureAt(repo, 'f'.repeat(40), metric)).value).toBeNull();
     } finally { delete process.env.GITHUB_TOKEN; }
   });
 

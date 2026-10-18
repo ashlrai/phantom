@@ -14,11 +14,13 @@
  * Exit codes: 0 ok, 1 failure, 2 bad usage.
  */
 
+import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfigReadOnly } from '../core/config.js';
 import type { AshlrConfig } from '../core/types.js';
 import { makeColors, isTty } from './ui.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 type WikiModule = typeof import('../core/knowledge/wiki/index.js');
 
@@ -51,10 +53,44 @@ function parse(args: string[]): Parsed {
   return { positional, flags, values };
 }
 
+/**
+ * Options each wiki verb reads. Anything else is refused before the wiki core
+ * loads: `build --no-modle` used to run a real model build.
+ */
+const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  build: {
+    allowed: { flags: ['--all', '--force', '--no-model', '--json'], values: ['--pages', '--tokens'] },
+    usage: 'Usage: ashlr wiki build [repo] [--all] [--force] [--no-model] [--pages N] [--tokens N] [--json]',
+  },
+  status: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki status [repo] [--json]' },
+  list: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki list [repo] [--json]' },
+  show: { allowed: {}, usage: 'Usage: ashlr wiki show <repo> [page]' },
+  ask: {
+    allowed: { flags: ['--no-model', '--json'], values: ['--repo'] },
+    usage: 'Usage: ashlr wiki ask "<question>" [--repo <path|name>] [--no-model] [--json]',
+  },
+};
+
+/** `--pages=8` is the same option as `--pages 8` to the parser. */
+function withoutInlineValues(args: string[]): string[] {
+  return args.filter((a) => {
+    const eq = a.indexOf('=');
+    return !(a.startsWith('--') && eq > 0 && VALUE_FLAGS.has(a.slice(0, eq)));
+  });
+}
+
 function positiveInt(v: string | undefined): number | undefined | null {
   if (v === undefined) return undefined;
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** A repo argument may be a path or an enrolled repo's name. */
@@ -71,7 +107,12 @@ function resolveRepo(wiki: WikiModule, arg: string | undefined): { repo: string 
   const byName = enrolled.filter((r) => path.basename(r) === arg);
   if (byName.length === 1) return { repo: byName[0]! };
   if (byName.length > 1) return { error: `"${arg}" matches ${byName.length} enrolled repos — pass the full path.` };
-  return { error: `${arg} is not an enrolled repo (see \`ashlr enroll list\`).` };
+  // A real directory just needs enrolling; anything else is a typo or a name.
+  if (isDirectory(abs)) {
+    const shown = /\s/.test(abs) ? `"${abs}"` : abs;
+    return { error: `${abs} is not enrolled. Enroll it with \`ashlr enroll add ${shown}\`.` };
+  }
+  return { error: `${arg} is not an enrolled repo name or a directory (see \`ashlr enroll list\`).` };
 }
 
 /** Citations render as plain `file:line` in a terminal. */
@@ -267,6 +308,14 @@ export async function cmdWiki(args: string[]): Promise<number> {
   if (rest.some((a, i) => (a === '--help' || a === '-h') && !VALUE_FLAGS.has(rest[i - 1] ?? ''))) {
     printHelp();
     return 0;
+  }
+  const spec = Object.hasOwn(WIKI_OPTIONS, sub) ? WIKI_OPTIONS[sub] : undefined;
+  if (spec) {
+    const bad = rejectUnknownOptions(withoutInlineValues(rest), spec.allowed);
+    if (bad) {
+      process.stderr.write(`${bad.message}\n${spec.usage}\n`);
+      return 2;
+    }
   }
   const wiki = await import('../core/knowledge/wiki/index.js');
   const p = parse(rest);
