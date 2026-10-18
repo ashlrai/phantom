@@ -48,10 +48,13 @@ spec, touches a user repo, or emits an outward action.
   `getActiveClient(cfg, { allowCloud })` (local Ollama/LM Studio unless
   `--allow-cloud` + key); falls back to the deterministic split on any model
   error. **BOUNDED** by `min(maxMilestones ?? 8, HARD_MAX=16)`. Does not persist.
-- `planMilestoneSpec(goal, milestone, cfg): Promise<SpecArtifact>` — authors/
-  links a versioned spec via `spec-store.authorSpec(prompt, cfg, { project })`
-  (local-first, idempotent). Caller persists `milestone.specId = artifact.id`.
-  NEVER runs a swarm or touches a user working tree.
+- `planMilestoneSpec(goal, milestone, cfg, opts?: { allowCloud? }): Promise<SpecArtifact>` —
+  authors/links a versioned spec via `spec-store.authorSpec(prompt, cfg,
+  { project, allowCloud, quietIfNoProvider: true })` (local-first,
+  idempotent). A reachable local model drafts the spec (cloud only with
+  `opts.allowCloud`); with no usable provider it writes a template seeded with
+  the milestone text and logs nothing. Caller persists `milestone.specId = artifact.id`. NEVER runs a
+  swarm or touches a user working tree.
 
 ### `advance.ts` — the sandboxed, proposal-only, single-milestone run (**SAFETY-CRITICAL**)
 - `nextActionableMilestone(goal): Milestone | null` — pure **READ seam** the

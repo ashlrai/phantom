@@ -514,8 +514,7 @@ async function cmdInboxShow(id: string, jsonMode: boolean, openMd: boolean): Pro
   const p = resolveProposal(id);
   if (!p) {
     // Same JSON refusal shape as approve / reject / automerge / submit.
-    if (jsonMode) console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    else console.error(col.red('error: ') + `Proposal not found: ${id}`);
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -630,9 +629,7 @@ async function cmdInboxSubmit(id: string, yes: boolean, jsonMode: boolean): Prom
   }
   const proposal = resolveProposal(id);
   if (!proposal) {
-    const msg = `Proposal not found: ${id}`;
-    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
-    else console.error(col.red('error: ') + msg);
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
   if (proposal.status !== 'pending' && proposal.status !== 'awaiting-host-merge') {
@@ -762,11 +759,7 @@ async function cmdInboxApprove(id: string, yes: boolean, jsonMode: boolean): Pro
   // Load proposal — resolve by prefix if needed
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -900,11 +893,7 @@ async function cmdInboxReject(id: string, jsonMode: boolean): Promise<number> {
 
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -965,11 +954,7 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
 
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -1038,6 +1023,15 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
 // ---------------------------------------------------------------------------
 // ID resolution — accept full id or an unambiguous prefix
 // ---------------------------------------------------------------------------
+
+const PROPOSAL_NOT_FOUND_NEXT = 'List proposal ids with `phm inbox --status all`; an id prefix must match exactly one proposal.';
+
+/** One refusal for an unknown or ambiguous id across show/approve/submit/reject/automerge. */
+function reportProposalNotFound(id: string, jsonMode: boolean, col: ReturnType<typeof makeColors>): void {
+  const error = `Proposal not found: ${id}`;
+  if (jsonMode) console.log(JSON.stringify({ ok: false, error, next: PROPOSAL_NOT_FOUND_NEXT }));
+  else console.error(col.red('error: ') + error + '\n' + PROPOSAL_NOT_FOUND_NEXT);
+}
 
 function resolveProposal(idOrPrefix: string): Proposal | null {
   if (!_loadProposal || !_listProposals) return null;

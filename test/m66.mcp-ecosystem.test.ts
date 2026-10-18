@@ -488,6 +488,8 @@ describe('ecosystem discovery binds a physical executable without launching it',
     vi.stubEnv('PATH', [path.dirname(first), path.dirname(second)].join(path.delimiter));
     const result = await runEcosystem(['--write']);
     expect(result.output).toContain('ambiguous');
+    expect(result.output).toContain('2 different phantom executables on PATH');
+    expect(result.output).toContain('Leave exactly one native binary on PATH');
     expect(fs.existsSync(settingsFor(root))).toBe(false);
   });
 
@@ -499,6 +501,22 @@ describe('ecosystem discovery binds a physical executable without launching it',
     vi.stubEnv('PATH', bin);
     const result = await runEcosystem(['--write']);
     expect(result.output).toContain('unsupported-launcher');
+    expect(result.output).toContain(`${fs.realpathSync(wrapper)} is a bootstrap launcher that downloads or installs code on first run`);
+    expect(result.output).toContain('Install the native phantom binary, make it the only phantom on PATH, then re-run `ashlr mcp ecosystem`.');
+    expect(fs.existsSync(settingsFor(root))).toBe(false);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a Node script launcher and says why and what to do', async () => {
+    const root = ecosystemFixture(); const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+    const marker = path.join(root, 'must-not-run');
+    const script = path.join(bin, 'phantom');
+    fs.writeFileSync(script, `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(marker)}, '')\n`); fs.chmodSync(script, 0o700);
+    vi.stubEnv('PATH', bin);
+    const result = await runEcosystem(['--write']);
+    expect(result.output).toContain('unsupported-launcher');
+    expect(result.output).toContain(`${fs.realpathSync(script)} is a Node script, not the native phantom binary; only native executables are registered.`);
+    expect(result.output).toContain('Install the native phantom binary, make it the only phantom on PATH, then re-run `ashlr mcp ecosystem`.');
     expect(fs.existsSync(settingsFor(root))).toBe(false);
     expect(fs.existsSync(marker)).toBe(false);
   });
