@@ -37,6 +37,9 @@ npm run gate              # build, static checks and related tests together
 - Contract first: changing an exported signature means updating `CONTRACT.md`
   or the matching `docs/contracts/CONTRACT-M<N>.md` in the same change.
 - Do not add runtime dependencies casually (see CONTRIBUTING.md).
+- `test/doc-facts.test.ts` checks every `phm`/`ashlr` command, verb and flag
+  shown in the agent docs against the CLI; when you rename or drop one, fix the
+  doc line it names.
 - When running the CLI by hand, prefer `--help` with HOME set to a scratch
   directory; many commands act on `~/.ashlr`. `--help` and `-h` print usage
   and exit 0 without acting. For parseable output use `--json` where a command
