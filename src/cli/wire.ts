@@ -150,7 +150,9 @@ function printWireHelp(): void {
 export async function cmdWire(args: string[]): Promise<number> {
   const sub = args[0];
 
-  if (sub === '--help' || sub === '-h' || sub === 'help') {
+  // `--help`/`-h` anywhere (`wire claude --help`, `wire status -h`) prints
+  // usage before any target is parsed or any config is read.
+  if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printWireHelp();
     return 0;
   }
