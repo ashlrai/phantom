@@ -1,10 +1,16 @@
 /** `phm steward` — disk/log guardrails for agent CLIs (dry run by default). */
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 
+const USAGE = 'Usage: phm steward disk [--apply] [--json]';
 const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
 export async function cmdSteward(argv: string[]): Promise<number> {
+  // --help anywhere prints usage without scanning: `disk --apply --help` used
+  // to delete files, and unknown flags (a typo'd --aply) ran a silent dry run.
+  if (argv.includes('--help') || argv.includes('-h') || argv[0] === 'help') { console.log(USAGE); return 0; }
   const [sub = 'disk', ...rest] = argv;
-  if (sub !== 'disk') { console.error('Usage: phm steward disk [--apply] [--json]'); return 2; }
+  if (sub !== 'disk') { console.error(USAGE); return 2; }
+  const unknown = rest.find((a) => a !== '--apply' && a !== '--json');
+  if (unknown !== undefined) { console.error(`error: unknown argument: ${unknown}\n${USAGE}`); return 2; }
   const report = runSteward(defaultStewardPolicy(), { apply: rest.includes('--apply') });
   if (rest.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return 0; }
   for (const r of report.roots) {
