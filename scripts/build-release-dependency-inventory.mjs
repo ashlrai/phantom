@@ -132,15 +132,22 @@ function assertOpenFileIsCurrent(opened) {
 
 function observeNpmRuntimeClosure(npmRoot, snapshotRoot) {
   const records = [];
-  const deadline = process.hrtime.bigint() + BigInt(MAX_NPM_RUNTIME_SCAN_MS) * 1_000_000n;
+  const started = process.hrtime.bigint();
+  const deadline = started + BigInt(MAX_NPM_RUNTIME_SCAN_MS) * 1_000_000n;
   let directoryCount = 0;
   let entryCount = 0;
   let fileCount = 0;
   let totalBytes = 0;
 
   const checkDeadline = () => {
-    if (process.hrtime.bigint() > deadline) {
-      throw new Error('npm runtime closure scan exceeded deadline');
+    const now = process.hrtime.bigint();
+    if (now > deadline) {
+      // Progress makes a slow host distinguishable from an oversized closure.
+      const elapsedMs = Number((now - started) / 1_000_000n);
+      throw new Error(
+        `npm runtime closure scan exceeded deadline (${snapshotRoot === undefined ? 'verify' : 'copy'}, ` +
+        `${elapsedMs} ms, ${directoryCount} directories, ${fileCount} files, ${totalBytes} bytes)`,
+      );
     }
   };
 
