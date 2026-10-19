@@ -213,6 +213,12 @@
 /src/core/learning/agent-semantic-events.ts @masonwyatt23
 /src/core/verse/authority-api.ts @masonwyatt23
 /src/cli/authority.ts @masonwyatt23
+/src/core/improve/** @masonwyatt23
+/src/cli/improve.ts @masonwyatt23
+/src/core/autopilot/** @masonwyatt23
+/src/cli/autopilot.ts @masonwyatt23
+/src/core/cloud/pr-actions.ts @masonwyatt23
+/src/core/cloud/pr-preview.ts @masonwyatt23
 # tier1-test-infra: test setup and build config decide which tests run and whether HOME is isolated
 /test/setup/** @masonwyatt23
 /test/config/** @masonwyatt23
@@ -261,12 +267,15 @@
 /test/cli-mirror-args.test.ts @masonwyatt23
 /test/cloud-budget.test.ts @masonwyatt23
 /test/cloud-intake-313.test.ts @masonwyatt23
+/test/cloud-pr-actions.test.ts @masonwyatt23
+/test/cloud-pr-triage.test.ts @masonwyatt23
 /test/cloud-timeline.test.ts @masonwyatt23
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
 /test/confine-autonomous-310b.test.ts @masonwyatt23
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
+/test/context-compiler-improve.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
@@ -289,6 +298,7 @@
 /test/devin-cli-engine-315.test.ts @masonwyatt23
 /test/devin-cli-engine-realio-315.test.ts @masonwyatt23
 /test/devin-engine-identity-315.test.ts @masonwyatt23
+/test/devin-evidence-triage-315.test.ts @masonwyatt23
 /test/devin-fleet-launcher-315.test.ts @masonwyatt23
 /test/devin-intake-315.test.ts @masonwyatt23
 /test/devin-lane-315.test.ts @masonwyatt23
@@ -368,6 +378,8 @@
 /test/helpers/preparation-workflow-manager-fixture.ts @masonwyatt23
 /test/helpers/process-liveness.ts @masonwyatt23
 /test/host-merge-310b.test.ts @masonwyatt23
+/test/improve-boundary.test.ts @masonwyatt23
+/test/improve-cli-boundary.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
