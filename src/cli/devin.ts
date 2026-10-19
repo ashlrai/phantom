@@ -134,8 +134,8 @@ async function defaultDeps(): Promise<DevinCliDeps> {
  * The same technique as `ashlr authority` (cli/authority.ts realReadSecret),
  * kept separate so the Devin lane adds nothing to the authority CLI.
  */
-export async function readHiddenLine(prompt: string): Promise<string> {
-  if (!process.stdin.isTTY || !isTty()) throw new Error('the Devin key can only be entered in an interactive terminal');
+export async function readHiddenLine(prompt: string, what = 'the Devin key'): Promise<string> {
+  if (!process.stdin.isTTY || !isTty()) throw new Error(`${what} can only be entered in an interactive terminal`);
   process.stdout.write(prompt);
   const stdin = process.stdin;
   stdin.setRawMode(true);
