@@ -219,6 +219,34 @@ describe('pulse connect --token', () => {
     expect(output).not.toContain('my-pat-value');
   });
 
+  it('stores the PAT with `phantom add <KEY> --stdin`, value on stdin and never in argv', async () => {
+    writeConfig(tmpHome, makeConfig({ phantom: { enabled: true } }));
+    mockSpawnSync.mockReturnValue({ status: 0, error: undefined, stdout: '', stderr: '' } as never);
+    const { cmdPulseConnect } = await import('../src/cli/pulse.js');
+
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => { lines.push(args.join(' ')); });
+    try {
+      await cmdPulseConnect(['--token', 'stdin-only-pat-value']);
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const calls = mockSpawnSync.mock.calls as unknown as Array<[string, string[], Record<string, unknown>]>;
+    const add = calls.find(([, args]) => args[0] === 'add');
+    expect(add).toBeDefined();
+    const [bin, args, opts] = add!;
+    expect(bin).toBe('phantom');
+    expect(args).toEqual(['add', 'ASHLR_PULSE_TOKEN', '--stdin']);
+    expect(opts.input).toBe('stdin-only-pat-value');
+    expect((opts.stdio as string[])[0]).toBe('pipe');
+    for (const [, callArgs] of calls) {
+      expect(callArgs.join(' ')).not.toContain('stdin-only-pat-value');
+    }
+    expect(lines.join('\n')).toContain('PAT stored in Phantom vault');
+    expect(lines.join('\n')).not.toContain('stdin-only-pat-value');
+  });
+
   it('returns exit code 2 when --token flag has no value', async () => {
     writeConfig(tmpHome, makeConfig());
     const { cmdPulseConnect } = await import('../src/cli/pulse.js');
