@@ -12,6 +12,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- `phm pulse connect --token` with no value now asks for the Pulse PAT at a
+  hidden prompt, and `--token-stdin` reads it from a pipe. `--token <pat>` still
+  works but warns on stderr that the PAT is visible in the process list and
+  shell history. The PAT reaches `phantom add` only on stdin.
 - Group resource displays by provider while keeping configured references,
   current readings and verified account coverage separate. Unknown identities,
   balances and capacity stay unknown; grouping does not authorize execution.
