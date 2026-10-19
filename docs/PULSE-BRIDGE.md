@@ -48,7 +48,10 @@ Stores the Pulse PAT. The token is **never** printed, logged, or written to
 **PAT storage and current sending support:**
 
 1. **Phantom vault storage** — stored as secret `ASHLR_PULSE_TOKEN` via
-   `phantom add ASHLR_PULSE_TOKEN <value>`. Requires `phantom.enabled: true` in
+   `phantom add ASHLR_PULSE_TOKEN --stdin` (the token is piped on stdin, never
+   passed as an argument; phantom-secrets refuses positional secret values).
+   To store it yourself, run `phantom add ASHLR_PULSE_TOKEN` for a hidden
+   prompt. Requires `phantom.enabled: true` in
    your config and the `phantom` CLI on PATH.
 
 2. **Current OTLP sending route: existing environment variable.** The command

@@ -896,7 +896,9 @@ async function connectSet(args: string[]): Promise<number> {
 }
 
 /**
- * Store the PAT via `phantom add` — value flows through stdin/arg to phantom,
+ * Store the PAT via `phantom add <KEY> --stdin`. The value goes to phantom on
+ * stdin only, never as a command-line argument (argv is visible to process
+ * inspection, and phantom-secrets refuses positional secret values), and
  * never through any log or printed string here. Returns true on success.
  *
  * NEVER prints, logs, stores, or returns the token value itself.
@@ -912,12 +914,13 @@ function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, _token:
   });
   if (probe.error || probe.status !== 0) return false;
 
-  // `phantom add KEY VALUE` — token is arg, never logged here
-  const result = spawnSync(PHANTOM_BIN, ['add', CONNECT_PHANTOM_PAT_KEY, _token], {
+  // `phantom add KEY --stdin`: the token is piped on stdin, never in argv.
+  const result = spawnSync(PHANTOM_BIN, ['add', CONNECT_PHANTOM_PAT_KEY, '--stdin'], {
     encoding: 'utf8',
     timeout: 5_000,
     env: { ...process.env, PHANTOM_NO_UPDATE_CHECK: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    input: _token,
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   return !result.error && result.status === 0;
