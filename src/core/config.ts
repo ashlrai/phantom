@@ -1128,3 +1128,37 @@ export function saveConfig(c: AshlrConfig): void {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// gateways: opt-in governed-client gateway targets (type only, not wired)
+// ---------------------------------------------------------------------------
+//
+// Top-level `gateways` block in ~/.ashlr/config.json. Absent by default:
+// defaultConfig() and firstRunConfig() never emit it, so every governed client
+// keeps its first-party endpoint. Validation lives in
+// src/core/run/gateway-target.ts. No client reads this block yet, and no
+// environment variable (ANTHROPIC_BASE_URL, OPENAI_BASE_URL) ever selects a
+// gateway. Custom CA and extra headers are deliberately not part of the shape.
+
+/** Governed clients that may later opt in to a gateway. */
+export const GATEWAY_CLIENT_IDS = ['anthropic', 'openaiAgents'] as const;
+export type GatewayClientId = (typeof GATEWAY_CLIENT_IDS)[number];
+
+/** One client's gateway opt-in. */
+export interface GatewayEntryConfig {
+  /** Must be literally `true` to opt in; anything else keeps first-party. */
+  enabled?: boolean;
+  /** Origin plus optional path prefix, for example `https://gw.example.com/anthropic`. */
+  baseUrl?: string;
+  /**
+   * Exact `host:port` entries, for example `gw.example.com:443`. Required for
+   * any non-loopback target. No wildcards, no suffix matching.
+   */
+  allowedHosts?: readonly string[];
+}
+
+/** Top-level `gateways` block. Absent means first-party for every client. */
+export type GatewaysConfig = Partial<Record<GatewayClientId, GatewayEntryConfig>>;
+
+/** AshlrConfig as read from disk, with the optional `gateways` block. */
+export type AshlrConfigWithGateways = AshlrConfig & { gateways?: GatewaysConfig };
