@@ -15,7 +15,8 @@
  * and it still pins the generated block byte for byte.
  *
  * Regenerate after a reviewed change (new Tier-1 tests, new rules):
- *   ASHLR_UPDATE_CODEOWNERS=1 npx vitest run test/authority-codeowners-310b.test.ts
+ *   node scripts/regenerate-codeowners.mjs
+ * (equivalent to ASHLR_UPDATE_CODEOWNERS=1 npx vitest run test/authority-codeowners-310b.test.ts)
  * CODEOWNERS is itself owner-lane, so only Mason's own change can land it.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -80,6 +81,11 @@ function codeownersRegExp(pattern: string): RegExp {
 
 const tree = testTree();
 const tier1Tests = tier1TestPathsIn(tree);
+/** The one fix for every drift failure in this file. */
+const FIX =
+  'FIX: run `node scripts/regenerate-codeowners.mjs`, then `git add .github/CODEOWNERS` and commit. ' +
+  'This fails when a branch adds a test file under test/ that the authority owner lane protects ' +
+  '(for example one importing a Tier-1 module) without regenerating CODEOWNERS.';
 const block = renderCodeownersBlock(OWNER, { selfRepo: true, tier1TestPaths: tier1Tests });
 
 describe('.github/CODEOWNERS', () => {
@@ -99,7 +105,7 @@ describe('.github/CODEOWNERS', () => {
   const regexes = patterns.map((pattern) => codeownersRegExp(pattern));
 
   it('contains exactly the owner-lane block for this repo (regenerate on drift)', () => {
-    expect(codeowners.endsWith(block), 'CODEOWNERS drifted: ASHLR_UPDATE_CODEOWNERS=1 npx vitest run test/authority-codeowners-310b.test.ts').toBe(true);
+    expect(codeowners.endsWith(block), `CODEOWNERS drifted from the generated owner-lane block. ${FIX}`).toBe(true);
     expect(lines.every((line) => / @masonwyatt23$/.test(line))).toBe(true);
     expect(codeowners).not.toMatch(/ashlr-fleet\[bot\]|@ashlrai\/ashlr-fleet/);
   });
@@ -123,7 +129,7 @@ describe('.github/CODEOWNERS', () => {
       if (!hit) continue;
       if (!regexes.some((re) => re.test(file.path))) missing.push(`${file.path} (${hit.ruleId})`);
     }
-    expect(missing, 'G1 protects these but GitHub does not — regenerate CODEOWNERS').toEqual([]);
+    expect(missing, `G1 protects these test files but .github/CODEOWNERS does not list them. ${FIX}`).toEqual([]);
     // The invariant suites the review named, concretely.
     for (const path of ['test/merge-gates-310b.test.ts', 'test/authority-rollout-310b.test.ts', 'test/host-merge-310b.test.ts', 'test/authority-review-fixes-310.test.ts']) {
       expect(regexes.some((re) => re.test(path)), path).toBe(true);
