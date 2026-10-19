@@ -1,6 +1,6 @@
-# Governed-client gateway opt-in: design note (DRAFT, not implemented)
+# Governed-client gateway opt-in: design note
 
-Status: design only, for Mason's review. Nothing here is implemented. Source: read of phantom master (332af868 era) plus `/workspace/phantom-work/base-url-audit-phantom.md`. No behavior was run against any gateway, and no claim is made about any particular gateway product.
+Status: decisions recorded 2026-10-19 02:15 ET (Engineering Orchestrator, under Mason's delegation; see section 8). Slice A, the pure validator and config types, is #879: not wired into any client, defaults unchanged. Slice B (client wiring) is not started and will be left for Mason's review. Grant origin binding comes later in its own PR for Mason. Source: read of phantom master (332af868 era) plus `/workspace/phantom-work/base-url-audit-phantom.md`. No behavior was run against any gateway, and no claim is made about any particular gateway product.
 
 ## 1. Goal and non-goals
 Let the two governed first-party clients talk to a gateway (LiteLLM, a corporate proxy, a local loopback shim) only when the operator explicitly opts in through config.
@@ -20,7 +20,7 @@ Non-goals: no env var reads (ANTHROPIC_BASE_URL, OPENAI_BASE_URL are never read 
 6. Usage and limits endpoints stay first-party and never use the gateway.
 7. Response validation stays strict. A gateway that rewrites the response (extra usage fields, cache tokens, other service tier) fails closed, the same as today. This is deliberate: billing exposure stays derived from the pinned table, not from gateway claims.
 
-## 3. Config shape (proposal)
+## 3. Config shape (decided: top-level `gateways`)
 Under the existing config object, a new optional block. Absent means today's behavior.
 
 ```jsonc
@@ -29,11 +29,11 @@ Under the existing config object, a new optional block. Absent means today's beh
     "anthropic": {
       "enabled": true,                       // must be literally true; absent or false = first-party
       "baseUrl": "https://llm-gw.example.com/anthropic",  // origin plus optional path prefix; no query, no fragment
-      "allowedHosts": ["llm-gw.example.com"]  // required for non-loopback https; exact host match, no wildcards
+      "allowedHosts": ["llm-gw.example.com:443"]  // required for non-loopback; exact host:port, port required, no wildcards
     },
     "openaiAgents": {
       "enabled": true,
-      "baseUrl": "http://127.0.0.1:4000"      // loopback may use http
+      "baseUrl": "http://127.0.0.1:4000"      // loopback IP literal may use http; no allowlist needed
     }
   }
 }
@@ -41,29 +41,30 @@ Under the existing config object, a new optional block. Absent means today's beh
 
 The final request URL is `baseUrl` (trailing slash trimmed) plus the fixed API path the client already uses (`/v1/messages`, `/v1/...` agents paths). Callers cannot supply a path.
 
-Open naming choice: top-level `gateways` versus nesting under `foundry`. Both live in `src/core/config.ts`, which is not code-owned.
+Decided: top-level `gateways`, not nested under `foundry`. Types live in `src/core/config.ts` (`GatewaysConfig`, `GatewayEntryConfig`, `GATEWAY_CLIENT_IDS`), which is not code-owned. The block is absent by default. An entry with any key other than `enabled`, `baseUrl` and `allowedHosts` is refused, so there is no place for a CA or extra headers. An opted-in entry that fails validation refuses (fails closed) instead of falling back to first-party.
 
 ## 4. Validation rules
-Implemented once in a small pure module (proposed `src/core/run/gateway-target.ts`) that returns either a frozen `{ origin, prefix }` or a closed refusal reason (no input echoed in the reason).
+Implemented once in the pure module `src/core/run/gateway-target.ts` (#879), which returns either a frozen target (`origin`, `prefix`, `host`, `port`, `loopback`) or a closed refusal reason (no input echoed in the reason). It reads no environment variables and does no DNS.
 
 - Parse with `new URL`. Reject on throw.
 - Scheme: `https:` always allowed (subject to allowlist). `http:` allowed only for loopback. Everything else refused (`ftp`, `file`, `data`, `ws`...).
 - No userinfo: refuse if `username` or `password` is non-empty (keys must not ride in the URL).
 - No query and no fragment. Path prefix normalized, must not contain `..`, `//`, backslash, `%2e`/`%2f` encodings, or control characters.
-- Host handling: lowercase, strip trailing dot, convert via URL's IDNA result, compare with exact string match against `allowedHosts` (also normalized). No wildcard, no suffix match, no IP-literal unless it is loopback.
-- Port: any valid port is allowed on a listed host. The allowlist entry is host only; consider host:port entries if Mason wants tighter pinning (open question).
-- Loopback definition: `localhost`, `127.0.0.0/8`, `[::1]`. Loopback is allowed without an allowlist entry but still needs `enabled: true`. Never treat `0.0.0.0`, link-local, RFC1918, or `*.localhost` lookalikes as loopback. `localhost` is resolved by the OS and could be rebound by a hostile hosts file, so the note recommends preferring `127.0.0.1` and documents the residual risk.
+- Host handling: lowercase, then require the host as written to already be canonical (what `new URL` would produce). Trailing dots, numeric IPv4 shorthands (`127.1`, decimal, hex), expanded IPv6, percent-encoding and non-ASCII hosts are refused rather than silently rewritten. Exact string match against `allowedHosts`. No wildcard, no suffix match, no IP literal unless it is loopback.
+- Port (decided): the allowlist is exact `host:port`, and each entry must name its port. The target's effective port (the scheme default when omitted, so `https://gw.example.com` is `gw.example.com:443`) must match an entry.
+- Loopback definition (decided): the IP literals `127.0.0.1` and `[::1]` only. The name `localhost` and `*.localhost` are refused, because the OS resolves them and a hostile hosts file could rebind them. Other `127.0.0.0/8` addresses, `0.0.0.0`, link-local, RFC1918 and other IP literals are refused. Loopback is allowed without an allowlist entry but still needs `enabled: true`.
 - Redirects: keep `redirect: 'error'` on every gateway request (any 3xx fails closed; nothing is followed, so the key can never move off-target). Keep the existing `response.redirected` check. Reject a gateway answering with a different final URL.
-- TLS: https uses the normal system trust store. No `rejectUnauthorized` override, no custom CA option in this slice.
+- TLS: https uses the normal system trust store. No `rejectUnauthorized` override. Custom CA is out of scope (decided).
 - Revalidate on every request, not just at build time, and re-check that the validated config object is the frozen one the client was built with.
-- Header handling: the key header is set only after validation succeeds. Gateway-specific extra headers are out of scope (no config for them).
+- Header handling: the key header is set only after validation succeeds. Gateway-specific extra headers are out of scope (decided; no config for them).
 - Proxy env (`HTTPS_PROXY`) behavior is unchanged and out of scope; call it out in docs.
 
 ## 5. Tests (tests-first list)
 New file `test/gateway-target.test.ts` (new file, not matched by any CODEOWNERS pattern seen):
 - default (no block, `enabled` false or absent, `enabled: "true"` string) returns first-party target.
 - env ANTHROPIC_BASE_URL and OPENAI_BASE_URL set to hostile values change nothing.
-- accepts: `https://listed.example/x`, `http://127.0.0.1:4000`, `http://[::1]:4000`, `http://localhost:4000`.
+- accepts: `https://listed.example/x` with `listed.example:443` listed, `http://127.0.0.1:4000`, `http://[::1]:4000`.
+- refuses `http://localhost:4000` and `*.localhost` (loopback by IP literal only).
 - refuses: http to non-loopback, https host not listed, host differing by case-only trick is normalized (accept) but suffix or prefix lookalikes (`listed.example.evil.com`, `evil-listed.example`) refused, userinfo, query, fragment, `..` and encoded dot segments, backslash, `0.0.0.0`, `10.0.0.1`, `169.254.169.254`, `127.0.0.1.evil.com`, empty and non-string values, unsupported scheme.
 - refusal reasons never contain the input URL.
 
@@ -97,16 +98,22 @@ Consequence: any implementation PR that extends `test/anthropic-messages-client.
 - Billing: a gateway could bill differently, route to another model, or cache. The pinned `PRICES` table would then understate or misstate cost. Mitigation: strict response parsing rejects unfamiliar usage shape; Phantom's ledger is an estimate of first-party pricing, not a gateway invoice. State this in docs.
 - Grant meaning: the claude-api grant is bound to a credential digest. With a gateway the key may be a gateway virtual key, which is a different credential. The binding still compares the digest of whatever key is resolved, but an operator could be confused. Needs a decision (section 8).
 - Loopback shim abuse: any local process on the port can read the key. Loopback http is plaintext on the machine; accepted risk, documented.
-- DNS rebinding and `localhost` resolution (section 4).
+- DNS rebinding: listed names still resolve through DNS; `localhost` by name is refused (section 4).
 - Gateway rewriting content: Phantom cannot verify the model that answered. Provenance claims for gateway runs should say "via gateway".
 - Scope creep: compat engines already have `OPENAI_COMPAT_BASE_URL` and `OLLAMA_BASE_URL`. This change must not become a second route to the same thing.
 
-## 8. Open questions for Mason
-1. Do you want this at all for the governed clients, or should gateway users stay on the compat engines?
-2. Config home: top-level `gateways` or under `foundry`?
-3. Allowlist granularity: host only, or host:port?
-4. Should a gateway run be recorded distinctly in the billing ledger and audit events (recommended: yes, a `via: gateway` marker with the host, never the key)?
-5. Should the claude-api grant name the gateway host, so a grant issued for first-party cannot silently be used against a gateway? Recommended: yes, bind the target origin into the admission digest. This touches grant code that may be code-owned, so it needs your call.
-6. Allow loopback `localhost` by name, or only IP literals?
-7. Custom CA or extra headers for corporate gateways: out of scope now, add later?
-8. Is test-only scaffolding acceptable ahead of approval, or wait for this review?
+## 8. Decisions (2026-10-19 02:15 ET)
+Recorded by the Engineering Orchestrator under Mason's delegation, conservative options throughout. Mason can still revise any of them in review.
+1. Decided: yes, governed clients may use a gateway, but only through explicit config opt-in. The environment never selects one.
+2. Decided: top-level `gateways`.
+3. Decided: exact `host:port` allowlist, port required in every entry.
+4. Decided: yes, record `via: gateway` with the host in ledger and audit events, never the key, the URL or the path prefix. Slice A ships the type and helper (`gatewayViaMarker`); recording it is slice B.
+5. Decided: yes, bind the target origin into the claude-api admission digest, but later, in its own PR left for Mason, because grant code and its tests are code-owned.
+6. Decided: loopback by IP literal only (`127.0.0.1`, `[::1]`). `localhost` by name is refused.
+7. Decided: custom CA and extra headers are out of scope.
+8. Decided: non-code-owned scaffolding may land now. Slice A is #879.
+
+## 9. Slices
+- Slice A, #879: `src/core/run/gateway-target.ts`, `gateways` types in `src/core/config.ts`, `test/gateway-target.test.ts`. Not wired into any client, defaults unchanged.
+- Slice B, not started: wire `anthropic-client.ts` and `openai-agents/client.ts` to the validated target and record the `via: gateway` marker, with tests in new non-owned files. It will be opened for Mason's review and not merged by automation.
+- Slice C, later: grant origin binding in the admission digest, a PR for Mason (code-owned).
