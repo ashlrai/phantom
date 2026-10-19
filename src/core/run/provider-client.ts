@@ -40,8 +40,7 @@ import {
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { resolveModelProfile, adaptivePromptsEnabled } from './model-profile.js';
 import { normalizeNumericLoopbackOllamaBaseUrl } from './ollama-identity.js';
-import { redactKnownValues } from '../util/redact-known.js';
-import { scrubSecrets } from '../util/scrub.js';
+import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import { ENFORCED_PROVIDER_AUTHORITY } from './model-call-authority.js';
 import {
   assertPermitted,

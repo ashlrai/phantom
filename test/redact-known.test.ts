@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { redactKnownValues } from '../src/core/util/redact-known.js';
+import { redactKnownValues } from '../src/core/util/scrub.js';
 
 const KEY = '9f8e7d6c5b4a39281706f5e4d3c2b1a0';
 

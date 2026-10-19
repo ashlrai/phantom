@@ -11,8 +11,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
 
 import type { AshlrConfig, VisualGroundingEvidence } from '../types.js';
-import { redactKnownValues } from '../util/redact-known.js';
-import { scrubSecrets } from '../util/scrub.js';
+import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import { assertPermitted, endpointPermitted } from '../policy/local-only.js';
 export type { VisualGroundingEvidence } from '../types.js';
 

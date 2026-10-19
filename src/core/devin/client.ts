@@ -23,8 +23,7 @@
  * request was refused, not processed), because a retried create after an
  * ambiguous failure could start — and bill — a second session.
  */
-import { redactKnownValues } from '../util/redact-known.js';
-import { scrubSecrets } from '../util/scrub.js';
+import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import {
   DEVIN_API_BASE_URL,
   DEVIN_ORG_ID_PATTERN,
