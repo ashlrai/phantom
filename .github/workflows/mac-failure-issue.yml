@@ -1,0 +1,60 @@
+name: Mac failure issue
+
+# Mac coverage is deferred on PRs (see ci.yml). When a master push or the
+# nightly run of CI ends with a failed Mac job, open one tracking issue, or
+# comment on the open one, so the loss of that coverage is never silent.
+# This workflow only reads the finished CI run and writes an issue. It checks
+# out and runs no repository code, and it is not a required check.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Report Mac failure on master
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the Mac failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          failed=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure") | select(.name | test("Mac exhaustive|macos|Native macOS")) | .name' | sort -u)
+          if [ -z "$failed" ]; then
+            echo "No failed Mac job in run $RUN_ID; nothing to report."
+            exit 0
+          fi
+          label='ci-mac-failure'
+          gh api -X POST "repos/$REPO/labels" -f name="$label" -f color=B60205 \
+            -f description='Mac CI failed on master or nightly' >/dev/null 2>&1 || true
+          body=$(printf 'Mac CI failed on master (%s run).\n\nFailed jobs:\n%s\n\nRun: %s\nCommit: %s/%s/commit/%s\n\nThis issue is opened or updated automatically by `.github/workflows/mac-failure-issue.yml`. Close it once master is green on Mac again; the next failure opens a new one.' \
+            "$RUN_EVENT" "$(printf '%s\n' "$failed" | sed 's/^/- /')" "$RUN_URL" "$GITHUB_SERVER_URL" "$REPO" "$HEAD_SHA")
+          existing=$(gh api "repos/$REPO/issues?labels=$label&state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request | not)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh api -X POST "repos/$REPO/issues/$existing/comments" -f body="$body" >/dev/null
+            echo "Updated issue #$existing"
+          else
+            gh api -X POST "repos/$REPO/issues" -f title="Mac CI failing on master" -f body="$body" -f "labels[]=$label" --jq '.html_url'
+          fi
