@@ -11,6 +11,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
 
 import type { AshlrConfig, VisualGroundingEvidence } from '../types.js';
+import { redactKnownValues } from '../util/redact-known.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { assertPermitted, endpointPermitted } from '../policy/local-only.js';
 export type { VisualGroundingEvidence } from '../types.js';
@@ -509,7 +510,8 @@ async function callOpenAiCompatibleGrounder(
     });
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`provider returned HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}: ${shorten(text)}`);
+      const sentKey = cfg.apiKeyEnv ? process.env[cfg.apiKeyEnv] : undefined;
+      throw new Error(`provider returned HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}: ${shorten(redactKnownValues(text, [sentKey]))}`);
     }
     return extractOpenAiText(text) ?? text;
   } finally {

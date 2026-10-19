@@ -23,6 +23,7 @@
  * request was refused, not processed), because a retried create after an
  * ambiguous failure could start — and bill — a second session.
  */
+import { redactKnownValues } from '../util/redact-known.js';
 import { scrubSecrets } from '../util/scrub.js';
 import {
   DEVIN_API_BASE_URL,
@@ -359,7 +360,7 @@ export function devinFailureSentence(code: DevinFailureCode): string {
 }
 
 /** ProblemDetail.detail (RFC 9457 body), scrubbed and clipped; '' when absent. */
-function problemDetail(text: string): string {
+function problemDetail(text: string, apiKey: string): string {
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -367,7 +368,7 @@ function problemDetail(text: string): string {
     return '';
   }
   if (!isRecord(body) || typeof body['detail'] !== 'string') return '';
-  const flat = scrubSecrets(body['detail']).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]').replace(/\s+/g, ' ').trim();
+  const flat = scrubSecrets(redactKnownValues(body['detail'], [apiKey])).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]').replace(/\s+/g, ' ').trim();
   return flat.length > MAX_DETAIL_CHARS ? `${flat.slice(0, MAX_DETAIL_CHARS - 1)}…` : flat;
 }
 
@@ -464,7 +465,7 @@ export class DevinClient {
         }
       }
       const code = failureForStatus(response.status);
-      const detail = problemDetail(text);
+      const detail = problemDetail(text, this.apiKey);
       lastError = new DevinApiError(code, detail ? `${STATUS_SENTENCES[code]} Devin said: ${detail}` : STATUS_SENTENCES[code], response.status, consumptionRetry && code === 'rate-limited' ? parseConsumptionRetryAfter(response.headers.get('retry-after')) : null);
       const retryable = code === 'rate-limited' || (policy === 'read' && code === 'server');
       if (!retryable || attempt === this.retries) throw lastError;

@@ -40,6 +40,7 @@ import {
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { resolveModelProfile, adaptivePromptsEnabled } from './model-profile.js';
 import { normalizeNumericLoopbackOllamaBaseUrl } from './ollama-identity.js';
+import { redactKnownValues } from '../util/redact-known.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { ENFORCED_PROVIDER_AUTHORITY } from './model-call-authority.js';
 import {
@@ -1185,7 +1186,7 @@ export function buildOpenAICompatibleClient(
       } catch (err: unknown) {
         if (err instanceof SelectedOutcomeAdmissionRefusal) throw err;
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`OpenAI-compat fetch failed (${chatUrl}): ${msg}`);
+        throw new Error(redactKnownValues(`OpenAI-compat fetch failed (${chatUrl}): ${msg}`, [apiKey]));
       }
 
       let data: unknown;
@@ -1200,7 +1201,7 @@ export function buildOpenAICompatibleClient(
           } catch {
             throwIfAborted(requestSignal);
           }
-          const safeError = scrubSecrets(errText).slice(0, MAX_ERROR_TEXT_CHARS);
+          const safeError = redactKnownValues(scrubSecrets(errText), [apiKey]).slice(0, MAX_ERROR_TEXT_CHARS);
           throw new Error(`OpenAI-compat HTTP ${response.status}: ${safeError}`);
         }
 
