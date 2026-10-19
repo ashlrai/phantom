@@ -25,7 +25,7 @@ import { activeEnrollmentLenses, listEnrolled, isEnrolled } from '../sandbox/pol
 import { isMirrorPath } from '../fleet/mirrors.js';
 import { scrubSecrets as scrubSharedSecrets } from '../util/scrub.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
-import { localOllamaBase } from '../local-ollama-host.js';
+import { localOllamaBase } from '../providers.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing

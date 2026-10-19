@@ -14,8 +14,7 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AshlrConfig, LocalModelInfo } from '../types.js';
-import { probeEndpoint } from '../providers.js';
-import { localOllamaBase } from '../local-ollama-host.js';
+import { probeEndpoint, localOllamaBase } from '../providers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -350,7 +349,7 @@ async function isOllamaUp(): Promise<boolean> {
     try {
       // Ollama's local API is intentionally cleartext but is pinned to a loopback
       // address (OLLAMA_HOST is honored only when it names one, see
-      // local-ollama-host.ts): this probe cannot send model metadata off-host.
+      // providers.ts): this probe cannot send model metadata off-host.
       // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       response = await fetch(`${localOllamaBase(process.env, 'http://127.0.0.1:11434')}/api/tags`, {
         method: 'GET',

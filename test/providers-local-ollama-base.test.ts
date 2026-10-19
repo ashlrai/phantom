@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localOllamaBase } from '../src/core/local-ollama-host.js';
+import { localOllamaBase } from '../src/core/providers.js';
 
 const DEFAULT = 'http://localhost:11434';
 const at = (v: string | undefined) => localOllamaBase({ OLLAMA_HOST: v });
