@@ -27,6 +27,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   operator controls; source availability does not establish runtime acceptance.
 
 ### Fixed
+- Provider error bodies that echo the rejected API key no longer carry it into
+  thrown errors. The OpenAI-compatible client, visual grounding and the Devin
+  client now redact any run of 8 or more characters of the key they sent, so
+  opaque keys with no vendor prefix are covered as well as known key shapes.
 - Preserve original quota and credit expiry across resource cards, provider
   groups and capacity views. Connection and admission checks cannot refresh
   or extend retained usage evidence.
