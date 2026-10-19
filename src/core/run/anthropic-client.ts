@@ -5,6 +5,8 @@ import { createClaudeApiGrantAdmission, reserveClaudeApiGrantRequest, markClaude
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { assertPermitted, cloudSubjectPermitted } from '../policy/local-only.js';
 import { ENFORCED_PROVIDER_AUTHORITY, MAX_GOVERNED_OUTPUT_TOKENS } from './model-call-authority.js';
+import type { AshlrConfigWithGateways } from '../config.js';
+import { gatewayRequestUrl, gatewayViaMarker, resolveGatewayTarget } from './gateway-target.js';
 
 /** Internal host binding, never an HTTP/CLI DTO or a serialized admission. */
 export interface ClaudeApiExecutionBinding {
@@ -15,6 +17,7 @@ export interface ClaudeApiExecutionBinding {
 }
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
+const MESSAGES_PATH = '/v1/messages';
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -154,13 +157,31 @@ function parseResponse(value: unknown, model: string, names: Set<string>, replay
   return { content: texts.join(''), ...(calls.length ? { toolCalls: calls } : {}), usage: { tokensIn: usage.input_tokens, tokensOut: usage.output_tokens }, usageKnown: true, requestId: value.id };
 }
 
-/** Fixed first-party transport, one contact per call. No streaming retry or endpoint override. */
+/**
+ * Resolve the Messages endpoint from config only. First-party unless
+ * `gateways.anthropic.enabled` is literally true and the target validates
+ * (gateway-target.ts). The environment (ANTHROPIC_BASE_URL) is never read.
+ */
+function messagesTarget(cfg: AshlrConfig): { endpoint: string; gateway?: { via: 'gateway'; host: string } } {
+  const resolved = resolveGatewayTarget('anthropic', (cfg as AshlrConfigWithGateways).gateways);
+  if (!resolved.ok) refuse('gateway-config-invalid');
+  if (resolved.target.kind === 'first-party') return { endpoint: ENDPOINT };
+  const marker = gatewayViaMarker(resolved.target);
+  return { endpoint: gatewayRequestUrl(resolved.target, MESSAGES_PATH), gateway: { via: marker.via, host: marker.host } };
+}
+
+/**
+ * One contact per call, no streaming retry. The endpoint is the fixed
+ * first-party constant unless config explicitly opts in to a validated
+ * gateway; grant admission, output caps and the price table are identical.
+ */
 export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, binding: ClaudeApiExecutionBinding, hooks?: { beforeRequest?: () => void; onRequestStart?: () => void }): ProviderClient {
   const price = Object.hasOwn(PRICES, model) ? PRICES[model] : undefined;
   if (!price) refuse('pricing-unknown');
   if (!cfg.foundry?.allowedBackends?.includes('claude-api')) refuse('engine-disabled');
   assertPermitted(cloudSubjectPermitted('provider', 'anthropic', cfg));
   if (!binding || !HASH.test(binding.expectedBinding?.credentialDigest ?? '') || typeof binding.readFreshProof !== 'function') refuse('proof-missing');
+  const target = Object.freeze(messagesTarget(cfg));
   const host = Object.freeze({ ...binding, expectedBinding: Object.freeze({ ...binding.expectedBinding }) });
   const pricingDigest = createHash('sha256').update(JSON.stringify({ v: 1, model, serviceTier: 'standard', geography: 'global', input: price.input.toString(), output: price.output.toString(), maxInputTokens: price.maxInputTokens, maxRequestBytes: MAX_REQUEST_BYTES, cache: 'unsupported', source: 'anthropic-pricing/2026-10-09' })).digest('hex');
   let settled = 0n; let unknown = 0n; let settledRequests = 0; let unknownRequests = 0;
@@ -174,13 +195,16 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
       if (signal?.aborted) refuse('cancelled-before-contact');
       assertPermitted(cloudSubjectPermitted('provider', 'anthropic', cfg));
       if (!cfg.foundry?.allowedBackends?.includes('claude-api')) refuse('engine-disabled');
+      // Revalidate the target on every request; a config change after build refuses before contact.
+      const current = messagesTarget(cfg);
+      if (current.endpoint !== target.endpoint || current.gateway?.host !== target.gateway?.host) refuse('gateway-config-changed');
       // Validate the key's expected scope against the same trusted fresh reader.
       // A copied admission still fails reserve, and a different expected key
       // cannot borrow an admission minted for another credential generation.
       const checkedBinding = createClaudeApiGrantAdmission({ readFreshProof: host.readFreshProof, expectedBinding: host.expectedBinding });
       if (!checkedBinding.ok) refuse(checkedBinding.reason);
       const maxCost = BigInt(price.maxInputTokens) * price.input + BigInt(request.maxOutput) * price.output;
-      const reserved = reserveClaudeApiGrantRequest({ root: host.ledgerRoot, admission: host.admission, requestId: `messages-${randomUUID()}`, maxUsdMicros: maxCost.toString(), pricingDigest, readFreshProof: host.readFreshProof });
+      const reserved = reserveClaudeApiGrantRequest({ root: host.ledgerRoot, admission: host.admission, requestId: `messages-${randomUUID()}`, maxUsdMicros: maxCost.toString(), pricingDigest, readFreshProof: host.readFreshProof, ...(target.gateway ? { gateway: target.gateway } : {}) });
       if (!reserved.ok) refuse(reserved.reason);
       const reservation: ClaudeApiGrantReservation = reserved.value;
       let sent = false; let accounted = false;
@@ -197,7 +221,7 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
         const marked = markClaudeApiGrantRequestSent(reservation);
         if (!marked.ok) refuse(marked.reason);
         sent = true;
-        const contacted = fetch(ENDPOINT, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: request.body });
+        const contacted = fetch(target.endpoint, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: request.body });
         // The notification can throw after contact. Attach rejection handling
         // before invoking it so cleanup never leaves an unhandled fetch promise.
         void contacted.catch(() => {});
@@ -209,7 +233,7 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
         if (!result.ok) throw new Error();
         accounted = true; settled += actual; settledRequests++;
         const { requestId, ...chat } = parsed;
-        return { ...chat, billing: { provider: 'anthropic', requestId, model, pricingDigest, serviceTier: 'standard', inputTokens: parsed.usage.tokensIn, outputTokens: parsed.usage.tokensOut, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, actualUsdMicros: actual.toString() } };
+        return { ...chat, billing: { provider: 'anthropic', requestId, model, pricingDigest, serviceTier: 'standard', inputTokens: parsed.usage.tokensIn, outputTokens: parsed.usage.tokensOut, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, actualUsdMicros: actual.toString(), ...(target.gateway ? { gateway: { ...target.gateway } } : {}) } };
       } catch (error) {
         controller.abort();
         if (sent && !accounted) { retainClaudeApiGrantUnknown(reservation); unknown += maxCost; unknownRequests++; }

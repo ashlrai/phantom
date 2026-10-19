@@ -107,13 +107,23 @@ interface LedgerRow {
   maxUsdMicros: string; heldUsdMicros: string; createdAt: string;
   state: 'reserved' | 'sent' | 'unknown' | 'settled' | 'released';
   providerRequestId: string | null; actualUsdMicros: string | null;
+  /** Present only for a configured gateway request: host only, never the key, URL or path. */
+  gateway?: ClaudeApiGatewayVia;
 }
+/** Value-free ledger marker for a request sent through an opted-in gateway. */
+export interface ClaudeApiGatewayVia { readonly via: 'gateway'; readonly host: string }
+const GATEWAY_HOST = /^(?:\[::1\]|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)$/;
+function gatewayVia(value: unknown): value is ClaudeApiGatewayVia {
+  return exact(value, ['via', 'host']) && value.via === 'gateway' && text(value.host, GATEWAY_HOST);
+}
+const ROW_KEYS = ['id', 'cycleId', 'binding', 'pricingDigest', 'maxUsdMicros', 'heldUsdMicros', 'createdAt', 'state', 'providerRequestId', 'actualUsdMicros'];
 interface Ledger { v: 1; rows: LedgerRow[]; ceilings: { organizationDigest: string; cycleId: string; usdMicros: string; cutoff: string }[]; }
 function validLedger(raw: unknown): raw is Ledger {
   if (!exact(raw, ['v', 'rows', 'ceilings']) || raw.v !== 1 || !dense(raw.rows) || !dense(raw.ceilings)) return false;
   const ids = new Set<string>(); const providers = new Set<string>(); const ceilings = new Set<string>();
   for (const row of raw.rows) {
-    if (!exact(row, ['id', 'cycleId', 'binding', 'pricingDigest', 'maxUsdMicros', 'heldUsdMicros', 'createdAt', 'state', 'providerRequestId', 'actualUsdMicros']) ||
+    const viaGateway = !!row && typeof row === 'object' && Object.prototype.hasOwnProperty.call(row, 'gateway');
+    if (!exact(row, viaGateway ? [...ROW_KEYS, 'gateway'] : ROW_KEYS) || (viaGateway && !gatewayVia(row.gateway)) ||
       !text(row.id, ID) || ids.has(row.id) || !text(row.cycleId, ID) || !binding(row.binding) || !text(row.pricingDigest, HASH) ||
       !money(row.maxUsdMicros) || BigInt(row.maxUsdMicros) === 0n || !money(row.heldUsdMicros) || !iso(row.createdAt) ||
       !['reserved', 'sent', 'unknown', 'settled', 'released'].includes(String(row.state)) ||
@@ -307,10 +317,11 @@ function available(ledger: Ledger, current: FreshClaudeApiGrantProof, excludeId:
   return { balance: fresh < original ? fresh : original, daily: (limit < remaining ? limit : remaining) - dayBooked };
 }
 export function reserveClaudeApiGrantRequest(options: { root: string; admission: ClaudeApiGrantAdmission; requestId: string; maxUsdMicros: string;
-  pricingDigest: string; readFreshProof?: ReadFreshClaudeApiGrantProof; nowMs?: number }): ClaudeApiGrantResult<ClaudeApiGrantReservation> {
+  pricingDigest: string; readFreshProof?: ReadFreshClaudeApiGrantProof; nowMs?: number; gateway?: ClaudeApiGatewayVia }): ClaudeApiGrantResult<ClaudeApiGrantReservation> {
   return result(() => transaction(options.root, ledger => {
     const nowMs = options.nowMs ?? Date.now(); const current = recheck(options.admission, options.readFreshProof, nowMs);
     if (!text(options.requestId, ID) || !money(options.maxUsdMicros) || BigInt(options.maxUsdMicros) === 0n || !text(options.pricingDigest, HASH)) fail('reservation-invalid');
+    if (options.gateway !== undefined && !gatewayVia(options.gateway)) fail('reservation-invalid');
     if (ledger.rows.some(row => row.id === options.requestId)) fail('request-recorded');
     const bounds = available(ledger, current, null, nowMs); const cost = BigInt(options.maxUsdMicros);
     if (cost > bounds.balance) fail('balance-exhausted'); if (cost > bounds.daily) fail('daily-limit');
@@ -320,7 +331,8 @@ export function reserveClaudeApiGrantRequest(options: { root: string; admission:
     }
     const row: LedgerRow = { id: options.requestId, cycleId: observation.cycleId, binding: observation.binding, pricingDigest: options.pricingDigest,
       maxUsdMicros: options.maxUsdMicros, heldUsdMicros: options.maxUsdMicros, createdAt: new Date(nowMs).toISOString(),
-      state: 'reserved', providerRequestId: null, actualUsdMicros: null };
+      state: 'reserved', providerRequestId: null, actualUsdMicros: null,
+      ...(options.gateway ? { gateway: { via: 'gateway' as const, host: options.gateway.host } } : {}) };
     ledger.rows.push(row);
     const capability: ClaudeApiGrantReservation = Object.freeze({ kind: 'claude-api-reservation' });
     reservations.set(capability, { root: options.root, id: options.requestId, admission: options.admission, reader: options.readFreshProof!, identity: rowIdentity(row) });
@@ -332,7 +344,7 @@ function owned(reservation: ClaudeApiGrantReservation): NonNullable<ReturnType<t
 }
 function rowIdentity(row: LedgerRow): string {
   return canonicalJson({ id: row.id, cycleId: row.cycleId, binding: row.binding, pricingDigest: row.pricingDigest,
-    maxUsdMicros: row.maxUsdMicros, createdAt: row.createdAt });
+    maxUsdMicros: row.maxUsdMicros, createdAt: row.createdAt, ...(row.gateway ? { gateway: row.gateway } : {}) });
 }
 function rowOf(ledger: Ledger, token: NonNullable<ReturnType<typeof reservations.get>>): LedgerRow {
   const row = ledger.rows.find(value => value.id === token.id);
