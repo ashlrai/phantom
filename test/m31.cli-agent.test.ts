@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-import { AGENT_COMMANDS, agentDocsText, claudeMdSnippet, cmdDocs } from '../src/cli/help.js';
+import { AGENT_COMMANDS, ONLINE_DOCUMENTATION, agentDocsText, claudeMdSnippet, cmdDocs } from '../src/cli/help.js';
 import { TOP_LEVEL_COMMANDS, didYouMean, cmdCompletions } from '../src/cli/completions.js';
 import { nativeToolDefs } from '../src/core/mcp-native.js';
 
@@ -106,6 +106,40 @@ describe('AGENT_COMMANDS — the CLI-first agent contract', () => {
 // ---------------------------------------------------------------------------
 
 describe('agent docs surfaces', () => {
+  it('discovers public workbench documentation offline without changing the agent registry shape', async () => {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      throw new Error('documentation discovery must remain offline');
+    });
+    try {
+      expect(await cmdDocs(['--online', '--json'])).toBe(0);
+      expect(JSON.parse(chunks.join(''))).toEqual(ONLINE_DOCUMENTATION);
+      expect(ONLINE_DOCUMENTATION.agentQuickstart).toContain('/docs/workbench-agents');
+      expect(ONLINE_DOCUMENTATION.source).toBe('https://github.com/ashlrai/phantom');
+      expect(fetch).not.toHaveBeenCalled();
+      chunks.length = 0;
+      expect(await cmdDocs(['--online'])).toBe(0);
+      expect(chunks.join('')).toContain(ONLINE_DOCUMENTATION.manifest);
+      expect(chunks.join('')).not.toContain('\u001b');
+    } finally {
+      stdout.mockRestore();
+      fetch.mockRestore();
+    }
+  });
+
+  it('refuses ambiguous online and installed registry output', async () => {
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await cmdDocs(['--online', '--agent', '--json'])).toBe(2);
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+
   it('preserves the four-field JSON registry and top-level commands wrapper', async () => {
     const chunks: string[] = [];
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
