@@ -118,7 +118,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   leader: ['show', 'run', 'tick', 'veto', 'oversight-plist', 'say', 'thread', 'answer', 'approve', 'directives', 'help'],
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
-  cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'help'],
+  cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).

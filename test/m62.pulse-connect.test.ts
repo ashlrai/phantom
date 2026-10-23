@@ -219,11 +219,164 @@ describe('pulse connect --token', () => {
     expect(output).not.toContain('my-pat-value');
   });
 
+  it('stores the PAT with `phantom add <KEY> --stdin`, value on stdin and never in argv', async () => {
+    writeConfig(tmpHome, makeConfig({ phantom: { enabled: true } }));
+    mockSpawnSync.mockReturnValue({ status: 0, error: undefined, stdout: '', stderr: '' } as never);
+    const { cmdPulseConnect } = await import('../src/cli/pulse.js');
+
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => { lines.push(args.join(' ')); });
+    try {
+      await cmdPulseConnect(['--token', 'stdin-only-pat-value']);
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const calls = mockSpawnSync.mock.calls as unknown as Array<[string, string[], Record<string, unknown>]>;
+    const add = calls.find(([, args]) => args[0] === 'add');
+    expect(add).toBeDefined();
+    const [bin, args, opts] = add!;
+    expect(bin).toBe('phantom');
+    expect(args).toEqual(['add', 'ASHLR_PULSE_TOKEN', '--stdin']);
+    expect(opts.input).toBe('stdin-only-pat-value');
+    expect((opts.stdio as string[])[0]).toBe('pipe');
+    for (const [, callArgs] of calls) {
+      expect(callArgs.join(' ')).not.toContain('stdin-only-pat-value');
+    }
+    expect(lines.join('\n')).toContain('PAT stored in Phantom vault');
+    expect(lines.join('\n')).not.toContain('stdin-only-pat-value');
+  });
+
   it('returns exit code 2 when --token flag has no value', async () => {
     writeConfig(tmpHome, makeConfig());
     const { cmdPulseConnect } = await import('../src/cli/pulse.js');
     const code = await cmdPulseConnect(['--token']);
     expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PAT input paths: hidden prompt, --token-stdin, --token <pat> warning
+// ---------------------------------------------------------------------------
+
+describe('pulse connect PAT input paths', () => {
+  const PAT = 'pat-value-never-in-argv-7f3a';
+
+  async function run(args: string[], io: Record<string, unknown>) {
+    writeConfig(tmpHome, makeConfig({ phantom: { enabled: true } }));
+    mockSpawnSync.mockReturnValue({ status: 0, error: undefined, stdout: '', stderr: '' } as never);
+    const mod = await import('../src/cli/pulse.js');
+    mod.setPulseTokenIoForTest(io as never);
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => { out.push(a.join(' ')); });
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      err.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    });
+    let code: number;
+    try {
+      code = await mod.cmdPulseConnect(args);
+    } finally {
+      vi.restoreAllMocks();
+      mod.setPulseTokenIoForTest(null);
+    }
+    const calls = mockSpawnSync.mock.calls as unknown as Array<[string, string[], Record<string, unknown>]>;
+    return { code, out: out.join('\n'), err: err.join(''), calls };
+  }
+
+  function expectStoredViaStdin(calls: Array<[string, string[], Record<string, unknown>]>) {
+    const add = calls.find(([, a]) => a[0] === 'add');
+    expect(add?.[1]).toEqual(['add', 'ASHLR_PULSE_TOKEN', '--stdin']);
+    expect(add?.[2].input).toBe(PAT);
+  }
+
+  function expectNeverInChildArgv(calls: Array<[string, string[], Record<string, unknown>]>) {
+    for (const [bin, a, opts] of calls) {
+      expect([bin, ...a].join(' ')).not.toContain(PAT);
+      expect(JSON.stringify(opts.env ?? {})).not.toContain(PAT);
+    }
+  }
+
+  it('hidden prompt: bare --token on a terminal prompts and stores via stdin', async () => {
+    const prompts: string[] = [];
+    const r = await run(['--token'], {
+      stdinIsTty: () => true,
+      readHidden: async (p: string) => { prompts.push(p); return `${PAT}\n`; },
+    });
+    expect(r.code).toBe(0);
+    expect(prompts).toEqual(['Pulse PAT (hidden): ']);
+    expectStoredViaStdin(r.calls);
+    expectNeverInChildArgv(r.calls);
+    expect(r.err).not.toContain('warning');
+    expect(r.out + r.err).not.toContain(PAT);
+  });
+
+  it('hidden prompt: an empty entry is refused', async () => {
+    const r = await run(['--token'], { stdinIsTty: () => true, readHidden: async () => '   ' });
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('no PAT entered');
+    expect(r.calls.find(([, a]) => a[0] === 'add')).toBeUndefined();
+  });
+
+  it('non-TTY without a token value errors clearly and never prompts', async () => {
+    const readHidden = vi.fn();
+    const r = await run(['--token'], { stdinIsTty: () => false, readHidden });
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('stdin is not a terminal');
+    expect(r.err).toContain('--token-stdin');
+    expect(readHidden).not.toHaveBeenCalled();
+    expect(r.calls.find(([, a]) => a[0] === 'add')).toBeUndefined();
+  });
+
+  it('--token-stdin reads one line from a pipe and stores via stdin', async () => {
+    const r = await run(['--token-stdin'], { stdinIsTty: () => false, readAllStdin: async () => `${PAT}\n` });
+    expect(r.code).toBe(0);
+    expectStoredViaStdin(r.calls);
+    expectNeverInChildArgv(r.calls);
+    expect(r.err).not.toContain('warning');
+  });
+
+  it('--token-stdin refuses empty or multi-line input and a terminal stdin', async () => {
+    for (const input of ['', '\n', `${PAT}\nsecond`]) {
+      const r = await run(['--token-stdin'], { stdinIsTty: () => false, readAllStdin: async () => input });
+      expect(r.code).toBe(2);
+      expect(r.err).toContain('exactly one non-empty line');
+    }
+    const r = await run(['--token-stdin'], { stdinIsTty: () => true, readAllStdin: vi.fn() });
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('stdin is a terminal');
+  });
+
+  it('--token <pat> still works but warns on stderr and still uses stdin for phantom', async () => {
+    const r = await run(['--token', PAT], { stdinIsTty: () => true });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('warning: --token <pat> puts the PAT on the command line');
+    expect(r.err).toContain('--token-stdin');
+    expect(r.err).not.toContain(PAT);
+    expectStoredViaStdin(r.calls);
+    expectNeverInChildArgv(r.calls);
+  });
+
+  it('--help lists the prompt, --token-stdin and the visible --token form', async () => {
+    const { cmdPulseConnect } = await import('../src/cli/pulse.js');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => { lines.push(a.join(' ')); });
+    try {
+      expect(await cmdPulseConnect(['--help'])).toBe(0);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const help = lines.join('\n');
+    expect(help).toContain('hidden prompt');
+    expect(help).toContain('--token-stdin');
+    expect(help).toContain('visible in ps and shell history');
+  });
+
+  it('giving the PAT twice is refused', async () => {
+    const r = await run(['--token', PAT, '--token-stdin'], { stdinIsTty: () => false });
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('give the PAT once');
   });
 });
 
