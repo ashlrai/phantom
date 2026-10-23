@@ -9,7 +9,7 @@
  * never accept a malformed token, and never echo a secret.
  */
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
-import { chownSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chownSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,7 +94,8 @@ describe('helper install trust (root-owned or nothing)', () => {
 
   it('accepts a root-owned binary in root-owned directories (the OS provides one)', () => {
     // /usr/bin/true is root:wheel 0755 inside /usr/bin, /usr, / — the same shape Phase 0 installs.
-    expect(custodyHelperInstallProblem('/usr/bin/true')).toBeNull();
+    // Some runner images ship it as a symlink (refused, by design), so check its target.
+    expect(custodyHelperInstallProblem(realpathSync('/usr/bin/true'))).toBeNull();
   });
 
   it('never reads the helper path (or anything else) from the environment', () => {
