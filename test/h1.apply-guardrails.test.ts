@@ -19,6 +19,8 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   makeFixture,
@@ -29,6 +31,7 @@ import {
 import { createProposal, setStatus, loadProposal } from '../src/core/inbox/store.js';
 import { applyProposal } from '../src/core/inbox/apply.js';
 import { readAudit } from '../src/core/sandbox/audit.js';
+import { createSandbox, removeSandbox, sandboxDiff } from '../src/core/sandbox/worktree.js';
 import type { Proposal } from '../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -360,6 +363,40 @@ describe('H1 apply — a captured sandbox diff without a trailing newline', () =
     expect(repo.branches()).toContain(`ashlr/proposal/${p.id}`);
     // The stored diff (and so its provenance) is unchanged.
     expect(loadProposal(p.id)!.diff).toBe(diff);
+  });
+});
+
+describe('H1 apply — an agent diff captured from a real sandbox', () => {
+  it('applies end to end (sandboxDiff -> proposal -> approve -> apply)', async () => {
+    const f = newFixture();
+    const repo = f.makeRepo();
+    repo.enroll();
+    const sb = createSandbox(repo.dir);
+    let diff: string;
+    try {
+      writeFileSync(join(sb.worktreePath, 'agent-change.txt'), 'written by an agent\n');
+      diff = sandboxDiff(sb).patch;
+    } finally {
+      removeSandbox(sb);
+    }
+    expect(diff).toContain('agent-change.txt');
+    const p = createProposal({
+      repo: repo.dir,
+      origin: 'agent',
+      kind: 'patch',
+      title: 'captured agent diff',
+      summary: 'exact sandboxDiff output',
+      diff,
+      sandboxId: sb.id,
+    });
+    setStatus(p.id, 'approved');
+
+    const result = await applyProposal(p.id, { confirmed: true });
+
+    expect(result.detail).not.toMatch(/corrupt patch/);
+    expect(result.ok).toBe(true);
+    expect(repo.branches()).toContain(`ashlr/proposal/${p.id}`);
+    expect(repo.gitStatus()).toBe('');
   });
 });
 
