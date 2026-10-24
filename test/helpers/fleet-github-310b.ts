@@ -542,14 +542,17 @@ export function repoPolicy(repo: string, overrides: Partial<EffectiveRepoPolicy>
   };
 }
 
+/** Fixture grant window relative to now, so it never expires under the suite (was a fixed 2026-10-24 expiry). */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export function standingPolicy(repos: EffectiveRepoPolicy[], overrides: Partial<EffectivePolicy> = {}): EffectivePolicy {
   return {
     v: 1,
     grantId: '0123456789abcdef0123456789abcdef',
     grantSeq: 1,
     keyId: 'mason-se-2026-09',
-    issuedAt: '2026-09-24T00:00:00.000Z',
-    expiresAt: '2026-10-24T00:00:00.000Z',
+    issuedAt: new Date(Date.now() - DAY_MS).toISOString(),
+    expiresAt: new Date(Date.now() + 30 * DAY_MS).toISOString(),
     switch: 'autonomous',
     rollout: { stageId: '2b', stageIndex: 2, stageCount: 5, enteredAt: '2026-09-24T00:00:00.000Z' },
     repos,
