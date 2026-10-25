@@ -3,6 +3,7 @@
  *
  * Usage:
  *   ashlr wire [claude|codex|cursor|all]  [--config <path>]  [--json]
+ *   ashlr wire status [claude|codex|cursor|gemini|all]  [--config <path>]  [--json]   (read-only)
  *
  * Defaults to detected editors when no target is specified.
  * Target-aware, backup-first, idempotent, LOCAL only.
@@ -16,6 +17,7 @@
  */
 
 import { pad, makeColors, isTty } from './ui.js';
+import type { EditorTarget, WritableEditorTarget } from '../core/integrations/editors.js';
 
 const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -33,11 +35,11 @@ async function importEditors() {
 // Arg parsing
 // ---------------------------------------------------------------------------
 
-const VALID_TARGETS = ['claude', 'codex', 'cursor', 'all'] as const;
+const VALID_TARGETS = ['claude', 'codex', 'cursor', 'gemini', 'all'] as const;
 type WireTarget = typeof VALID_TARGETS[number];
 
 interface ParsedWireArgs {
-  targets: Array<'claude' | 'codex' | 'cursor'>;
+  targets: EditorTarget[];
   configPath?: string;
   json: boolean;
   usageError?: string;
@@ -62,7 +64,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
       configPath = val;
     } else if (VALID_TARGETS.includes(arg as WireTarget)) {
       if (explicitTarget !== null) {
-        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor all` };
+        return { targets: [], json, usageError: `multiple targets specified; pass one of: claude codex cursor gemini all` };
       }
       explicitTarget = arg as WireTarget;
     } else if (arg.startsWith('--')) {
@@ -85,7 +87,7 @@ function parseWireArgs(args: string[]): ParsedWireArgs {
   // Resolve targets; 'all' and default (no target) → detect
   if (explicitTarget === 'all' || explicitTarget === null) {
     // Will be filled in at runtime via detectEditors()
-    return { targets: [] as Array<'claude' | 'codex' | 'cursor'>, configPath, json, usageError: undefined };
+    return { targets: [] as EditorTarget[], configPath, json, usageError: undefined };
   }
 
   return { targets: [explicitTarget], configPath, json };
@@ -110,6 +112,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
+    ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
   const w = Math.max(...opts.map(([o]) => o.length));
@@ -147,7 +150,9 @@ function printWireHelp(): void {
 export async function cmdWire(args: string[]): Promise<number> {
   const sub = args[0];
 
-  if (sub === '--help' || sub === '-h' || sub === 'help') {
+  // `--help`/`-h` anywhere (`wire claude --help`, `wire status -h`) prints
+  // usage before any target is parsed or any config is read.
+  if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printWireHelp();
     return 0;
   }
@@ -159,6 +164,8 @@ export async function cmdWire(args: string[]): Promise<number> {
     process.stdout.write(claudeMdSnippet());
     return 0;
   }
+
+  if (sub === 'status') return cmdWireStatus(args.slice(1));
 
   const parsed = parseWireArgs(args);
 
@@ -177,10 +184,10 @@ export async function cmdWire(args: string[]): Promise<number> {
   }
 
   // Resolve targets: empty means use detectEditors()
-  const resolvedTargets: Array<'claude' | 'codex' | 'cursor'> =
+  const resolvedTargets: EditorTarget[] =
     parsed.targets.length > 0
       ? parsed.targets
-      : (mod.detectEditors() as Array<'claude' | 'codex' | 'cursor'>);
+      : (mod.detectEditors() as WritableEditorTarget[]);
 
   if (resolvedTargets.length === 0) {
     if (parsed.json) {
@@ -245,4 +252,46 @@ export async function cmdWire(args: string[]): Promise<number> {
 
   const exitCode = results.some(r => !r.ok) ? 1 : 0;
   return exitCode;
+}
+
+// ---------------------------------------------------------------------------
+// wire status: read-only
+// ---------------------------------------------------------------------------
+
+async function cmdWireStatus(args: string[]): Promise<number> {
+  const parsed = parseWireArgs(args);
+  if (parsed.usageError) {
+    process.stderr.write(red('error: ') + parsed.usageError + '\n');
+    return 2;
+  }
+  let mod: Awaited<ReturnType<typeof importEditors>>;
+  try {
+    mod = await importEditors();
+  } catch {
+    process.stderr.write(red('error: ') + 'Editor integration module not yet available.\n');
+    return 1;
+  }
+  // Status reports every client, not just detected ones.
+  const targets: EditorTarget[] =
+    parsed.targets.length > 0 ? parsed.targets : [...mod.ALL_EDITOR_TARGETS];
+  const rows = targets.map(target =>
+    mod.inspectEditorWiring(target, parsed.configPath ? { configPath: parsed.configPath } : {}));
+
+  if (parsed.json) {
+    process.stdout.write(JSON.stringify({ clients: rows }, null, 2) + '\n');
+  } else {
+    console.log('');
+    console.log(bold('  ashlr wire status') + gray('  (read-only)'));
+    console.log('');
+    for (const r of rows) {
+      const state = r.error ? red('error')
+        : !r.wired ? yellow('not wired')
+        : r.matchesExpected ? green('wired')
+        : yellow('wired, entry differs');
+      console.log(`  ${bold(pad(r.target, 7))} ${state}  ${dim(r.configPath)}`);
+      console.log(`    ${dim(`detected=${r.detected} config=${r.configFound} backup=${r.backupFound}`)}${r.error ? '  ' + red(r.error) : ''}`);
+    }
+    console.log('');
+  }
+  return rows.some(r => r.error) ? 1 : 0;
 }

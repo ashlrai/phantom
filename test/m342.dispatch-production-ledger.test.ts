@@ -6821,10 +6821,17 @@ describe('M342 dispatch production ledger', () => {
         .filter((name) => name.endsWith('.json'))
         .slice(0, 512)
         .map((name) => join(receiptDir, name));
+      // The adapter reports a 15s spawn timeout and a script failure with the
+      // same reason; the elapsed time tells them apart when this fails.
+      const batchStarted = performance.now();
       const batchPreflight = assurePrivateStoragePaths(receiptPaths, {
         anchorPath: dispatchProductionDir(),
       });
-      expect({ batchPreflight, write: recordDispatchProduction(witness) }).toEqual({
+      const batchElapsedMs = Math.round(performance.now() - batchStarted);
+      expect(
+        { batchPreflight, write: recordDispatchProduction(witness) },
+        `${receiptPaths.length}-path batch preflight returned after ${batchElapsedMs}ms`,
+      ).toEqual({
         batchPreflight: { ok: true, reason: 'owned-safe-paths' },
         write: { attempted: 1, recorded: 1, failed: 0 },
       });

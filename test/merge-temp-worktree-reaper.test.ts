@@ -117,7 +117,7 @@ describe('temp worktree reaper', () => {
 
   it('keeps a worktree whose owner is alive (marker written by this process)', () => {
     const dir = path.join(ashlrTmpDir(), 'vwt-123456abcdef');
-    writeTempWorktreeOwner(dir);
+    writeTempWorktreeOwner(dir, repo);
     git(repo, ['worktree', 'add', '-b', 'ashlr/verify/123456abcdef', dir, 'main']);
     const res = reapLeakedTempWorktrees(repo, { now: Date.now() + 10 * MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS });
     expect(res.reaped).toEqual([]);
@@ -217,5 +217,95 @@ describe('temp worktree reaper', () => {
     expect(branches(repo)).toEqual(['main']);
     const leftovers = fs.readdirSync(ashlrTmpDir()).filter((n) => /^(vwt|mwt|mergewt)-/.test(n));
     expect(leftovers).toEqual([]);
+  });
+});
+
+describe('temp worktree reaper: leftovers git does not list (scripts/daemon-chaos.mjs)', () => {
+  // A SIGKILL before or during `worktree add`, or in cleanup after
+  // `worktree remove`, leaves no registration, so the per-registration pass
+  // never saw the marker, the `<dir>.patch`, or the verify scratch branch.
+  const id = '5ca1ab1e0001';
+  const dirFor = (name: string): string => path.join(ashlrTmpDir(), name);
+  const mark = (dir: string, pid: number, markerRepo = repo): void => {
+    fs.mkdirSync(ashlrTmpDir(), { recursive: true });
+    writeMarker(dir, { schemaVersion: 1, pid, repo: markerRepo });
+  };
+
+  it('reaps a dead owner\'s marker left before `worktree add` ran', () => {
+    const dir = dirFor('mergewt-5ca1ab1e0002');
+    mark(dir, deadPid());
+    const res = reapLeakedTempWorktrees(repo);
+    expect(res.reaped).toEqual([dir]);
+    expect(fs.existsSync(`${dir}.owner`)).toBe(false);
+  });
+
+  it('reaps the verify branch, patch and marker left after `worktree remove` in cleanup', () => {
+    const dir = leak(`vwt-${id}`, `ashlr/verify/${id}`);
+    mark(dir, deadPid());
+    fs.writeFileSync(`${dir}.patch`, 'diff\n', 'utf8');
+    git(repo, ['worktree', 'remove', '--force', dir]);
+    const res = reapLeakedTempWorktrees(repo);
+    expect(res.reaped).toEqual([dir]);
+    expect(res.branchesDeleted).toEqual([`ashlr/verify/${id}`]);
+    expect(fs.readdirSync(ashlrTmpDir())).toEqual([]);
+    expect(branches(repo)).toEqual(['main']);
+  });
+
+  it('removes an unregistered directory and branch left mid `worktree add`', () => {
+    const dir = dirFor(`vwt-${id}`);
+    mark(dir, deadPid());
+    git(repo, ['branch', `ashlr/verify/${id}`]);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'partial.txt'), 'x', 'utf8');
+    const res = reapLeakedTempWorktrees(repo);
+    expect(res.reaped).toEqual([dir]);
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(branches(repo)).toEqual(['main']);
+  });
+
+  it('deletes the id-named verify branch of a registration killed before HEAD named it', () => {
+    // A kill inside `worktree add -b`: the branch exists and the worktree is
+    // registered, but its HEAD does not name the branch yet.
+    const dir = leak(`vwt-${id}`, null);
+    git(repo, ['branch', `ashlr/verify/${id}`]);
+    mark(dir, deadPid());
+    // A registered worktree is reported by the path git lists, which macOS
+    // resolves through /private (os.tmpdir() is a symlink there).
+    const listed = real(dir);
+    const res = reapLeakedTempWorktrees(repo);
+    expect(res.reaped).toEqual([listed]);
+    expect(res.branchesDeleted).toEqual([`ashlr/verify/${id}`]);
+    expect(branches(repo)).toEqual(['main']);
+  });
+
+  it('keeps everything while the owner is alive', () => {
+    const dir = dirFor(`vwt-${id}`);
+    writeTempWorktreeOwner(dir, repo);
+    git(repo, ['branch', `ashlr/verify/${id}`]);
+    fs.writeFileSync(`${dir}.patch`, 'diff\n', 'utf8');
+    const res = reapLeakedTempWorktrees(repo, { now: Date.now() + 10 * MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS });
+    expect(res.reaped).toEqual([]);
+    expect(res.kept).toEqual([dir]);
+    expect(fs.existsSync(`${dir}.owner`)).toBe(true);
+    expect(fs.existsSync(`${dir}.patch`)).toBe(true);
+    expect(branches(repo)).toContain(`ashlr/verify/${id}`);
+  });
+
+  it('leaves a marker that records another repository to that repository', () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-reaper-other-'));
+    try {
+      initRepo(other);
+      git(other, ['branch', `ashlr/verify/${id}`]);
+      const dir = dirFor(`vwt-${id}`);
+      mark(dir, deadPid(), other);
+      git(repo, ['branch', `ashlr/verify/${id}`]);
+      expect(reapLeakedTempWorktrees(repo).reaped).toEqual([]);
+      expect(branches(repo)).toContain(`ashlr/verify/${id}`);
+      expect(fs.existsSync(`${dir}.owner`)).toBe(true);
+      expect(reapLeakedTempWorktrees(other).reaped).toEqual([dir]);
+      expect(branches(other)).toEqual(['main']);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
   });
 });

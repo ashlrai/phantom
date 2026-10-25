@@ -85,6 +85,10 @@ if (process.env.ASHLR_FAKE_FAILURE === 'signal') {
 } else if (process.env.ASHLR_FAKE_FAILURE === 'isolated' && process.argv.includes('automatic seed measurement: true')) {
   process.exitCode = 9;
 }
+// Paired-mode fixtures hold passing isolated cases open so overlap is observable.
+if (!shard && !process.exitCode && process.env.ASHLR_FAKE_ISOLATED_DELAY_MS) {
+  setTimeout(() => {}, Number(process.env.ASHLR_FAKE_ISOLATED_DELAY_MS));
+}
 `, 'utf8');
   // Baseline defaults must be independent of the outer release's timing flags.
   // Clear only this fixture's copied environment, then apply caller overrides.
@@ -97,6 +101,7 @@ if (process.env.ASHLR_FAKE_FAILURE === 'signal') {
   delete environment.ASHLR_TEST_CI_WEIGHTED_PARTITION;
   delete environment.ASHLR_TEST_CI_WEIGHTED_HINTS;
   delete environment.ASHLR_VITEST_UNIT_MAX_WORKERS;
+  delete environment.ASHLR_TEST_CI_ISOLATED_CONCURRENCY;
   if (reportDirectory !== undefined) environment.ASHLR_TEST_CI_REPORT_DIRECTORY = reportDirectory;
   return spawnSync(process.execPath, [join(root, 'scripts', 'test-ci-sharded.mjs'), ...args], {
     cwd: root, encoding: 'utf8', timeout: 8_000,
@@ -381,5 +386,70 @@ describe('local exhaustive prepublish shards', () => {
     const result = runFixture('isolated');
     expect(result.error).toBeUndefined(); expect(result.status).toBe(9);
     expect(result.stderr).toContain('[test-ci:sharded] FAIL (0, 0, 0, 0, isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9)');
+  });
+});
+
+describe('paired isolated acceptance', () => {
+  const longestFirst = [
+    'test/resource-engineering-setup-acceptance.test.ts',
+    'test/resource-engineering-successor-acceptance.test.ts',
+    'test/universe-firm-engineering-control.test.ts',
+    'test/resource-engineering-supervisor-admission-acceptance.test.ts',
+    'test/m342.dispatch-production-ledger.test.ts',
+    'campaign false',
+    'test/resource-engineering-supervisor-acceptance.test.ts',
+    'test/resource-console-engineering-acceptance.test.ts',
+    'test/universe-engineering-handoff-recovery.test.ts',
+    'test/universe-campaign-integration.test.ts',
+    'test/universe-supervision-integration.test.ts',
+    'campaign true',
+    'test/m446.external-skill-git-capture.test.ts',
+    'test/m395.effect-terminal-retention.test.ts',
+  ];
+  const events = (stderr: string) => stderr.split('\n').flatMap((line) => {
+    const start = /^\[test-ci:sharded\] started isolated acceptance (.+) \(pid /.exec(line);
+    if (start) return [{ kind: 'start' as const, label: start[1]! }];
+    const end = /^\[test-ci:sharded\] isolated (.+) (?:exited|failed)/.exec(line);
+    return end ? [{ kind: 'end' as const, label: end[1]! }] : [];
+  });
+
+  it('runs every case once, longest first, with at most two active and original report names', () => {
+    const result = runFixture('none', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' },
+      ['--isolated-only'], 'private');
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+    const ordered = events(result.stderr);
+    expect(ordered.filter(event => event.kind === 'start').map(event => event.label)).toEqual(longestFirst);
+    const active = new Set<string>(); let maximum = 0;
+    for (const event of ordered) {
+      if (event.kind === 'start') { active.add(event.label); maximum = Math.max(maximum, active.size); }
+      else expect(active.delete(event.label)).toBe(true);
+    }
+    expect(maximum).toBe(2); expect(active.size).toBe(0);
+    const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { file: string; filter?: string; home: string; outputFiles: string[] });
+    expect(rows).toHaveLength(14);
+    expect(new Set(rows.map(row => row.home)).size).toBe(14);
+    const names = rows.map(row => basename(row.outputFiles.find(arg => arg.startsWith('--outputFile.json='))!.slice('--outputFile.json='.length)));
+    const expected = [...isolatedFiles, markerFile, markerFile].map((file, index) => ({ file, name: `isolated-${String(index + 1).padStart(2, '0')}.json` }));
+    for (const row of rows) {
+      const index = row.file === markerFile ? (row.filter === 'automatic seed measurement: false' ? 12 : 13) : isolatedFiles.indexOf(row.file);
+      expect(names[rows.indexOf(row)]).toBe(expected[index]!.name);
+    }
+    expect(result.stderr).toContain('[test-ci:sharded] PASS (isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)');
+  });
+
+  it('stops the running sibling and launches nothing more when a paired case fails', () => {
+    const result = runFixture('successor', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '3000' }, ['--isolated-only']);
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(11);
+    const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
+    expect(starts).toEqual(longestFirst.slice(0, 2));
+    expect(result.stderr).toMatch(/isolated test\/resource-engineering-setup-acceptance\.test\.ts exited (?!0\b)/);
+    expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
+  });
+
+  it.each(['0', '3', 'two', ''])('refuses isolated concurrency %j before launching anything', (value) => {
+    const result = runFixture('none', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: value }, ['--isolated-only']);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).not.toContain('started');
   });
 });

@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 const mocks = vi.hoisted(() => ({
   readiness: vi.fn(),
@@ -178,6 +179,16 @@ describe('onboard --json', () => {
     expect(r.stdout).toContain('first safe activation (steps)');
     expect(() => JSON.parse(r.stdout)).toThrow();
   });
+
+  it('lines up the step columns whatever the repo path length', async () => {
+    const repo = '/tmp/a/much/longer/repository/path/than/the/fixed/columns/allowed';
+    const r = await capture(() => cmdOnboard([repo, '--yes']));
+    const plain = stripVTControlCharacters(r.stdout);
+    const steps = plain.split('\n').filter(line => /^ {2}[1-5]\. /.test(line));
+    expect(steps).toHaveLength(5);
+    expect(new Set(steps.map(line => line.indexOf('ashlr '))).size).toBe(1);
+    expect(new Set(steps.map(line => line.indexOf('— '))).size).toBe(1);
+  });
 });
 
 describe('enroll add --json', () => {
@@ -252,7 +263,10 @@ describe('mcp ecosystem --json', () => {
       name: 'phantom-secrets', label: 'Phantom Secrets (phantom-mcp)', probe: 'phantom',
       command: bin, args: ['mcp', 'serve'], registered: false,
     }]);
-    expect(obj['missing']).toEqual([{ name: 'locus', label: 'Locus (identity plane)', probe: 'locus-mcp' }]);
+    expect(obj['missing']).toEqual([
+      { name: 'locus', label: 'Locus (identity plane)', probe: 'locus-mcp' },
+      { name: 'ashlr-md', label: 'Ashlr MD (mdopener-mcp)', probe: 'mdopener-mcp' },
+    ]);
   });
 
   it('--write --json registers and reports the added servers', async () => {

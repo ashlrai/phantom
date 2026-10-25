@@ -37,7 +37,7 @@ import { buildRollup } from './observability/rollup.js';
 import { buildSnapshot } from './dashboard.js';
 import { buildOrientation } from './orient.js';
 import { selectGenomeSync, selectInboxStore, selectBacklogSource } from './seams/index.js';
-import { loadDaemonState } from './daemon/state.js';
+import { loadDaemonState, loadDaemonStateStrict } from './daemon/state.js';
 import { buildFleetDigest } from './fleet/digest.js';
 import { computeQualityMetrics } from './fleet/quality-metrics.js';
 import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
@@ -659,12 +659,17 @@ const TOOLS: NativeToolImpl[] = [
     description:
       'Live fleet status: daemon running/pid, last tick, today\'s estimated spend, ' +
       'items processed, the last 20 ticks (items considered, proposals created, spend, reason, ' +
-      'per-backend dispatch counts), pending-proposal count, and a 7d fleet digest. Read-only.',
+      'per-backend dispatch counts), pending-proposal count, a 7d fleet digest, and budget: ' +
+      'the daily cap the daemon enforces (config or $1 default; 0 = stopped) vs spend recorded ' +
+      'for the current UTC day, remaining, and whether the paid cap is reached (spend is null, ' +
+      'not 0, when daemon state is unreadable). Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
-    handler: async (_args, _cfg) => {
+    handler: async (_args, cfg) => {
       // loadDaemonState and buildFleetDigest both never throw.
       const ds = loadDaemonState();
+      let budget: import('./fleet/budget-view.js').FleetBudget | null;
+      try { budget = (await import('./fleet/budget-view.js')).fleetBudget(cfg, loadDaemonStateStrict()); } catch { budget = null; }
       const digest = await buildFleetDigest('7d');
       // Bound ticks to last 20 for output size.
       const recentTicks = Array.isArray(ds.ticks) ? ds.ticks.slice(-20) : [];
@@ -676,6 +681,7 @@ const TOOLS: NativeToolImpl[] = [
         todaySpentUsd: ds.todaySpentUsd,
         itemsProcessed: ds.itemsProcessed,
         recentTicks,
+        budget,
         pendingProposals: digest.totalPending,
         digest: {
           totalProposed: digest.totalProposed,
@@ -759,10 +765,13 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_north_star',
     description:
-      'Human-leverage north-star metric for the autonomous fleet (7d window). ' +
-      'Substantive merges, hours saved, leverage score and trend are currently dormant ' +
-      '(always 0 / flat) pending a post-merge proof verifier; raw 7d proposal metrics ' +
-      '(merged, accept/empty/trivial rates, avg diff lines) are factual. Read-only.',
+      'Human-leverage north-star metric for the autonomous fleet (7d window). leverageScore ' +
+      '(0–100, 50 = neutral) comes from self-improvement outcomes measured at exact merge base ' +
+      'vs head in the outcome ledger (phm improve measure); it and the week-over-week trend are ' +
+      'null / unknown below 3 measured outcomes or on a broken ledger, and `leverage` carries ' +
+      'the counts. Substantive merges and hours saved stay dormant (0) pending a post-merge ' +
+      'proof verifier; raw 7d proposal metrics (merged, accept/empty/trivial rates, avg diff ' +
+      'lines) are factual. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
@@ -774,6 +783,7 @@ const TOOLS: NativeToolImpl[] = [
           engHoursSaved7d: metric.engHoursSaved7d,
           leverageScore: metric.leverageScore,
           trend: metric.trend,
+          leverage: metric.leverage,
           computedAt: metric.computedAt,
           summary: northStarSummary(metric),
           raw: metric.raw,
@@ -782,8 +792,8 @@ const TOOLS: NativeToolImpl[] = [
         return {
           substantiveMerges7d: 0,
           engHoursSaved7d: 0,
-          leverageScore: 0,
-          trend: 'flat',
+          leverageScore: null,
+          trend: 'unknown',
           computedAt: new Date().toISOString(),
           summary: '=== NORTH-STAR: HUMAN LEVERAGE ===\nMetric unavailable.',
           raw: null,
@@ -1111,6 +1121,13 @@ function textResult(payload: unknown, isError = false): NativeToolResult {
   return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
 }
 
+/** A handler's `{ error: "<reason>" }` refusal (a non-empty string error). */
+function isRefusalPayload(payload: unknown): payload is { error: string } {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const error = (payload as Record<string, unknown>)['error'];
+  return typeof error === 'string' && error.trim().length > 0;
+}
+
 /**
  * Audit one native-tool outcome. Every call site shares the same
  * 'mcp:native-call' action with null repo/sandbox and a `${tool} keys=${keys}`
@@ -1175,6 +1192,12 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
 
   try {
     const payload = await tool.handler(args, cfg);
+    // Handlers refuse with a `{ error }` payload (not enrolled, bad kind, ...).
+    // That is a failed call: flag it so clients do not read it as success.
+    if (isRefusalPayload(payload)) {
+      auditNativeCall(`${tool.name} keys=${argKeys} — refused: ${payload.error}`, 'refused');
+      return textResult(payload, true);
+    }
     auditNativeCall(`${tool.name} keys=${argKeys} — ok`, 'ok');
     if (tool.name === 'phm_task_context') {
       const { renderOutcomeTaskContextText } = await import('./verse/outcome-task-context-output.js');

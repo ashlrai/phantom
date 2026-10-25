@@ -197,7 +197,7 @@ describe('a Devin chat in the session engine', () => {
     expect(events.at(-1)).toMatchObject({ type: 'turn-done', ok: true });
     const retry = calls()[2]!.req as { nativeId: string | null; text: string };
     expect(retry.nativeId).toBeNull();
-    expect(retry.text).toMatch(/# Continuing from an earlier Verse session/);
+    expect(retry.text).toMatch(/# Continuing from an earlier Phantom session/);
     expect(retry.text).toMatch(/GONE are you there\?$/);
   });
 

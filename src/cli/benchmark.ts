@@ -1,7 +1,7 @@
 const HELP = `ashlr benchmark — recorded local-agent trials and offline receipt comparison
 
   ashlr benchmark --help
-  ashlr benchmark --compare-reports BASELINE.json CANDIDATE.json
+  ashlr benchmark --compare-reports BASELINE.json CANDIDATE.json [--json]
   ashlr benchmark run [--set core|heldout] [--task ID] [--trials N] [--concurrency N]
     [--base-url URL] [--upstream URL] [--model REF] [--agent EXECUTABLE]
     [--timeout-ms N] [--out FILE] [--trace|--no-trace]
@@ -9,6 +9,7 @@ const HELP = `ashlr benchmark — recorded local-agent trials and offline receip
   ashlr benchmark run --experiments [--fleet-busy] [runtime options]
 
 Help and comparison are offline and do not probe a runtime or invoke an agent.
+The comparison always prints JSON; --json is accepted and changes nothing.
 Only run starts agent/model work. It reuses the local-eval core/held-out tasks,
 real checker exits, observed configuration and private trace artifacts.
 Defaults: 3 trials/task, concurrency 2, cache state uncontrolled.
@@ -37,10 +38,15 @@ export async function runBenchmarkCli(args: string[], overrides: Partial<Benchma
   }
   const usage = (): number => { deps.err(HELP); return 2; };
   if (args[0] === '--compare-reports') {
-    if (args.length !== 3 || args.slice(1).some((value) => !value || value.startsWith('-'))) return usage();
+    // The comparison is always JSON, so one `--json` anywhere is accepted
+    // and dropped; it used to fall through to help with exit 2.
+    const rest = args.slice(1);
+    const operands = rest.filter((value) => value !== '--json');
+    if (rest.length - operands.length > 1 || operands.length !== 2
+      || operands.some((value) => !value || value.startsWith('-'))) return usage();
     try {
       const comparator = await deps.loadComparator();
-      const result = comparator.compareReportsCli(args);
+      const result = comparator.compareReportsCli(['--compare-reports', ...operands]);
       deps.out(result.output); return result.exitCode;
     } catch { deps.err('Benchmark receipts could not be read; no comparison was inferred.'); return 2; }
   }

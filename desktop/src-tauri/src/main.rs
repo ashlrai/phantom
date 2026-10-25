@@ -775,7 +775,7 @@ fn create_main_window(handle: &AppHandle, startup: Option<&SidecarStartup>) {
                 close_launch_window(&handle2);
             }
             Err(e) => {
-                eprintln!("[ashlr-desktop] could not create the Verse window: {e}");
+                eprintln!("[ashlr-desktop] could not create the Phantom app window: {e}");
                 set_launch_phase(
                     &handle2,
                     &LaunchPhase::Failed(LaunchFailure::SpawnFailed {
@@ -1443,7 +1443,7 @@ fn hand_tokens_to_open_window(handle: &AppHandle, startup: &SidecarStartup) {
                 eprintln!("[ashlr-desktop] could not hand the restarted sidecar's tokens to the window: {e}");
             }
         }
-        None => eprintln!("[ashlr-desktop] no Verse window to hand the restarted sidecar's tokens to"),
+        None => eprintln!("[ashlr-desktop] no Phantom app window to hand the restarted sidecar's tokens to"),
     });
     if let Err(e) = result {
         eprintln!("[ashlr-desktop] could not schedule the token handoff: {e}");

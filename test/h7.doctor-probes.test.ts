@@ -24,6 +24,7 @@ import {
   readFileSync,
   writeFileSync,
   chmodSync,
+  realpathSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -33,9 +34,43 @@ import { runDoctor } from '../src/core/doctor.js';
 import type { DoctorCheck, DoctorReport } from '../src/core/types.js';
 import * as providers from '../src/core/providers.js';
 
+// Observes (and can fail) fs.openSync / fs.accessSync. root bypasses DAC mode
+// bits (and some CI filesystems ignore chmod), so a 0o000 ~/.ashlr can still
+// be opened and passes accessSync(W_OK). When the chmod is not enforced the
+// hook raises the EACCES a user gets from the kernel for that directory and
+// everything under it, so the same probe-failure branch runs everywhere.
+const denyHook = vi.hoisted(() => ({
+  roots: [] as string[],
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const deny = (target: string, syscall: string): void => {
+    if (!denyHook.roots.some((root) => target === root || target.startsWith(root + '/'))) return;
+    denyHook.hits.push(target);
+    throw Object.assign(new Error(`EACCES: permission denied, ${syscall} '${target}'`), {
+      code: 'EACCES',
+      errno: -13,
+      syscall,
+      path: target,
+    });
+  };
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    deny(String(args[0]), 'open');
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  const accessSync = ((...args: Parameters<typeof actual.accessSync>) => {
+    deny(String(args[0]), 'access');
+    actual.accessSync(...args);
+  }) as typeof actual.accessSync;
+  return { ...actual, default: { ...actual, openSync, accessSync }, openSync, accessSync };
+});
+
 let fx: H1Fixture | undefined;
 
 afterEach(() => {
+  denyHook.roots.length = 0;
+  denyHook.hits.length = 0;
   // Best-effort: re-grant perms on the isolated ~/.ashlr in case a writeable
   // test left it chmod 0 (so cleanup's rm -rf can proceed).
   if (fx) {
@@ -331,7 +366,8 @@ describe('h7 doctor probes — 5 NEW read-only checks', () => {
     chmodSync(fx.ashlrDir, 0o000);
 
     // If chmod is a no-op (root / some CI filesystems), the write would still
-    // succeed; detect that and assert the truthful PASS rather than false-green.
+    // succeed; detect that and inject the kernel's EACCES for ~/.ashlr instead,
+    // so the probe is held to the same FAIL everywhere.
     let enforced = true;
     try {
       writeFileSync(join(fx.ashlrDir, '.perm-probe'), 'x', 'utf8');
@@ -339,19 +375,17 @@ describe('h7 doctor probes — 5 NEW read-only checks', () => {
     } catch {
       enforced = true;
     }
-
-    if (!enforced) {
-      chmodSync(fx.ashlrDir, 0o700);
-      const report = await runDoctor(cfg());
-      expect(probe(report, 'ashlr-writeable')?.status).toBe('pass');
-      return;
-    }
+    const deniedDirs = enforced ? [] : [fx.ashlrDir, realpathSync(fx.ashlrDir)];
+    denyHook.roots.push(...deniedDirs);
 
     const report = await runDoctor(cfg());
+    denyHook.roots.length = 0;
     const wp = probe(report, 'ashlr-writeable');
     expect(wp).toBeDefined();
     expect(wp?.status).toBe('fail');
     expect(wp?.fix).toBeDefined();
+    // When the denial was injected, prove the probe hit it on ~/.ashlr itself.
+    if (!enforced) expect(denyHook.hits.some((hit) => deniedDirs.includes(hit))).toBe(true);
 
     // Restore so afterEach cleanup can rm -rf the dir.
     chmodSync(fx.ashlrDir, 0o700);
