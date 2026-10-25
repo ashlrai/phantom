@@ -5,7 +5,8 @@
  * Exit codes: 0 ready, 1 blocked, 2 degraded, 3 could not evaluate.
  * Anything else, a spawn error, a timeout or unparsable output means
  * "do not run unattended with secrets". The vault is never probed: no
- * `--vault` flag is passed, so the preflight stays metadata-only.
+ * `--vault` flag is passed unless a caller explicitly asks (doctor with
+ * ASHLR_DOCTOR_PHANTOM_VAULT=1), so the spawn-time preflight stays metadata-only.
  */
 import { spawnSync } from 'node:child_process';
 
@@ -35,13 +36,22 @@ export interface PreflightRunOutput {
 
 const EXIT_TO_VERDICT: Record<number, 'ready' | 'blocked' | 'degraded'> = { 0: 'ready', 1: 'blocked', 2: 'degraded' };
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * A check id segment is a word (letters only, up to 24) or a short token such
+ * as `v2` or `0600` (up to 4). Longer alphanumeric runs look like key material
+ * (`sk-live-<hex>`) and are dropped, so a hostile or buggy preflight cannot
+ * smuggle a secret-shaped string into doctor output or logs.
+ */
+function isWordSegment(seg: string): boolean {
+  return /^[a-z]{1,24}$/.test(seg) || /^[a-z0-9]{1,4}$/.test(seg);
+}
 
 function unavailable(exit: number | null): PhantomPreflightResult {
   return { verdict: 'unavailable', exit, mayWrap: false, reason: 'preflight-unavailable', checkIds: [] };
 }
 
 /** Pure interpretation of one preflight run. Never throws. */
-export function interpretPhantomPreflight(run: PreflightRunOutput): PhantomPreflightResult {
+export function interpretPhantomPreflight(run: PreflightRunOutput, opts: { vaultRequested?: boolean } = {}): PhantomPreflightResult {
   if (run.error || run.status === null) return unavailable(run.status ?? null);
   const byExit = EXIT_TO_VERDICT[run.status];
   if (!byExit) return unavailable(run.status);
@@ -57,11 +67,12 @@ export function interpretPhantomPreflight(run: PreflightRunOutput): PhantomPrefl
   if (d['schema_version'] !== 1 || d['kind'] !== 'phantom.agent.preflight') return unavailable(run.status);
   // The JSON verdict must agree with the exit code; disagreement is not trusted.
   if (d['verdict'] !== byExit) return unavailable(run.status);
-  if (d['vault_probed'] !== false) return unavailable(run.status);
+  // vault_probed must match what was asked: false by default, true only for an explicit --vault run.
+  if (d['vault_probed'] !== (opts.vaultRequested === true)) return unavailable(run.status);
   const checks = Array.isArray(d['checks']) ? d['checks'] : [];
   const checkIds = checks
     .map((c) => (c && typeof c === 'object' ? (c as Record<string, unknown>)['id'] : undefined))
-    .filter((id): id is string => typeof id === 'string' && id.length <= 64 && KEBAB.test(id));
+    .filter((id): id is string => typeof id === 'string' && id.length <= 64 && KEBAB.test(id) && id.split('-').every(isWordSegment));
   if (byExit === 'ready') return { verdict: 'ready', exit: 0, mayWrap: true, checkIds };
   return { verdict: byExit, exit: run.status, mayWrap: false, reason: 'preflight-blocked', checkIds };
 }
@@ -80,9 +91,14 @@ const defaultRunner: PreflightRunner = (bin, args, cwd) => {
 };
 
 /** Run the strict preflight in `cwd`. Never throws. */
-export function runPhantomPreflight(cwd: string, runner: PreflightRunner = defaultRunner): PhantomPreflightResult {
+export function runPhantomPreflight(
+  cwd: string,
+  runner: PreflightRunner = defaultRunner,
+  opts: { vault?: boolean } = {},
+): PhantomPreflightResult {
   try {
-    return interpretPhantomPreflight(runner('phantom', PHANTOM_PREFLIGHT_ARGS, cwd));
+    const args = opts.vault === true ? [...PHANTOM_PREFLIGHT_ARGS, '--vault'] : PHANTOM_PREFLIGHT_ARGS;
+    return interpretPhantomPreflight(runner('phantom', args, cwd), { vaultRequested: opts.vault === true });
   } catch {
     return unavailable(null);
   }

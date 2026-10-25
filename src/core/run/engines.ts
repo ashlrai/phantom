@@ -20,6 +20,7 @@ import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
  */
 
 import { runPhantomPreflight, type PreflightRunner } from './phantom-preflight.js';
+import { appendCustodyRecord } from './custody-ledger.js';
 import { decidePhantomCustody, formatCustodyLine, isLinkedGitWorktree, type PhantomCustodyRecord } from './phantom-custody.js';
 import { spawnSync, execFileSync, spawn } from 'node:child_process';
 import * as http from 'node:http';
@@ -880,7 +881,10 @@ async function spawnEngineInner(
   if (custody.wrapped) {
     effective = phantomWrap(cmd, cfg);
   }
-  if (phantomEnabled) process.stderr.write(formatCustodyLine(custody));
+  if (phantomEnabled) {
+    process.stderr.write(formatCustodyLine(custody));
+    appendCustodyRecord(custody);
+  }
   opts?.onCustody?.(custody);
 
   // M52: apply the OS sandbox launcher when provided. The launcher wraps the
