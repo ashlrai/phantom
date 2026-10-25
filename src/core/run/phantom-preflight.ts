@@ -6,7 +6,9 @@
  * Anything else, a spawn error, a timeout or unparsable output means
  * "do not run unattended with secrets". The vault is never probed: no
  * `--vault` flag is passed unless a caller explicitly asks (doctor with
- * ASHLR_DOCTOR_PHANTOM_VAULT=1), so the spawn-time preflight stays metadata-only.
+ * ASHLR_DOCTOR_PHANTOM_VAULT=1, or a fleet operator with
+ * ASHLR_PHANTOM_PREFLIGHT_VAULT=1), so the spawn-time preflight stays
+ * metadata-only by default (design decision 2).
  */
 import { spawnSync } from 'node:child_process';
 
@@ -90,15 +92,28 @@ const defaultRunner: PreflightRunner = (bin, args, cwd) => {
   return { status: r.status, stdout: r.stdout ?? '', error: r.error };
 };
 
-/** Run the strict preflight in `cwd`. Never throws. */
+/**
+ * Opt-in vault probe for the spawn-time and status preflight. Only the exact
+ * value "1" opts in, so a typo never opens the vault.
+ */
+export function preflightVaultFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env['ASHLR_PHANTOM_PREFLIGHT_VAULT'] === '1';
+}
+
+/**
+ * Run the strict preflight in `cwd`. Never throws. When `opts.vault` is not
+ * given, ASHLR_PHANTOM_PREFLIGHT_VAULT=1 adds `--vault`; an explicit boolean
+ * (doctor) always wins.
+ */
 export function runPhantomPreflight(
   cwd: string,
   runner: PreflightRunner = defaultRunner,
   opts: { vault?: boolean } = {},
 ): PhantomPreflightResult {
   try {
-    const args = opts.vault === true ? [...PHANTOM_PREFLIGHT_ARGS, '--vault'] : PHANTOM_PREFLIGHT_ARGS;
-    return interpretPhantomPreflight(runner('phantom', args, cwd), { vaultRequested: opts.vault === true });
+    const vault = opts.vault ?? preflightVaultFromEnv();
+    const args = vault ? [...PHANTOM_PREFLIGHT_ARGS, '--vault'] : PHANTOM_PREFLIGHT_ARGS;
+    return interpretPhantomPreflight(runner('phantom', args, cwd), { vaultRequested: vault });
   } catch {
     return unavailable(null);
   }
