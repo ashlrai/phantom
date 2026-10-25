@@ -82,6 +82,8 @@ describe('receipt.v1 core', () => {
   it('closed shape: extra fields, unknown enums and inconsistent sections are rejected', () => {
     expect(isReceiptV1Body(body())).toBe(true);
     expect(isReceiptV1Body({ ...body(), extra: 1 })).toBe(false);
+    expect(isReceiptV1Body(body({ base_oid: null, secrets: { ...body().secrets, wrap: null } }))).toBe(true);
+    expect(isReceiptV1Body({ ...body(), base_oid: 'not-an-oid' })).toBe(false);
     const withNames = body();
     (withNames.secrets as unknown as Record<string, unknown>)['injected_names'] = ['X'];
     expect(isReceiptV1Body(withNames)).toBe(false);
