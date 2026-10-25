@@ -108,12 +108,14 @@ describe('openStandingVerificationConfinement', () => {
     confined!.close();
     confined!.close(); // idempotent
     expect(existsSync(created[0]!)).toBe(false);
+    expect(existsSync(`${created[0]!}.owner`)).toBe(false);
   });
 });
 
 function listRunDirs(): string[] {
   const dir = join(realpathSync(homedir()), '.ashlr', 'tmp');
   return (existsSync(dir) ? readdirSync(dir) : [])
-    .filter((name) => name.startsWith('verify-confine-'))
+    // The run dir only: its `<dir>.owner` marker (#849) shares the prefix.
+    .filter((name) => /^verify-confine-[A-Za-z0-9]{6}$/.test(name))
     .map((name) => join(dir, name));
 }
