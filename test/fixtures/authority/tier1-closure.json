@@ -677,6 +677,7 @@
     "src/core/run/budget.ts",
     "src/core/run/completeness-gate.ts",
     "src/core/run/context-window.ts",
+    "src/core/run/custody-ledger.ts",
     "src/core/run/delegation-scope.ts",
     "src/core/run/desktop-metadata-launch-trust.ts",
     "src/core/run/diff-safety.ts",

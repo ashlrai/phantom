@@ -11,6 +11,7 @@ import type {
   AutoMergeCanaryShadowMismatchField,
   AutoMergeCanaryShadowOutcome,
 } from './automerge-canary-store.js';
+import type { CustodySummary } from '../run/custody-ledger.js';
 
 export const AUTOMERGE_CANARY_SHADOW_REPORT_SCHEMA_VERSION = 1 as const;
 const MAX_LISTED = 50;
@@ -39,9 +40,14 @@ export interface CanaryShadowReport {
   blocked: CanaryShadowReportEntry[];
   blockingFieldCounts: Partial<Record<AutoMergeCanaryShadowMismatchField, number>>;
   truncated: boolean;
+  /**
+   * Value-free custody counts from the fleet custody ledger over the report
+   * window (wrapped vs unwrapped by reason). Null when the caller passed none.
+   */
+  custody: CustodySummary | null;
 }
 
-export function buildCanaryShadowReport(read: AutoMergeCanaryReadResult): CanaryShadowReport {
+export function buildCanaryShadowReport(read: AutoMergeCanaryReadResult, custody: CustodySummary | null = null): CanaryShadowReport {
   const state = read.state;
   const sc = state?.shadowCounters;
   const counters = {
@@ -87,6 +93,7 @@ export function buildCanaryShadowReport(read: AutoMergeCanaryReadResult): Canary
     blocked: blocked.slice(-MAX_LISTED),
     blockingFieldCounts,
     truncated: would.length > MAX_LISTED || blocked.length > MAX_LISTED,
+    custody,
   };
 }
 
@@ -105,5 +112,10 @@ export function formatCanaryShadowReport(report: CanaryShadowReport, json: boole
     ...report.blocked.map((e) => `  ${e.observedAt} ${e.outcome}${e.mismatchFields.length ? ` [${e.mismatchFields.join(', ')}]` : ''}`),
   ];
   if (report.truncated) lines.push('(lists truncated to the most recent 50 entries)');
+  if (report.custody) {
+    const k = report.custody;
+    const reasons = Object.entries(k.unwrapped).sort(([a], [b]) => (a < b ? -1 : 1)).map(([r, n]) => `${r} ${n}`).join(', ');
+    lines.push(`custody: spawns ${k.spawns}, wrapped ${k.wrapped}, unwrapped ${k.spawns - k.wrapped}${reasons ? ` (${reasons})` : ''}${k.malformed ? `, malformed ${k.malformed}` : ''}`);
+  }
   return `${lines.join('\n')}\n`;
 }
