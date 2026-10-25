@@ -69,6 +69,7 @@ import { pad, makeColors, isTty, isStderrTty } from './ui.js';
 import { parsePositiveInt } from './args.js';
 import { resolveEngineSpec } from '../core/run/engine-registry.js';
 import { claudeSandboxHostRefusal } from './run-preflight.js';
+import { isStaleRunning } from '../core/run/run-staleness.js';
 
 const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -343,7 +344,8 @@ function printRunSummary(state: RunState): void {
   console.log(`  ${bold('Goal:')}    ${goal}`);
   console.log(
     `  ${bold('Status:')}  ${statusColor(status)}` +
-    (status === 'aborted' ? yellow('  ⚠ budget/step limit reached') : ''),
+    (status === 'aborted' ? yellow('  ⚠ budget/step limit reached') : '') +
+    (isStaleRunning(state) ? yellow(`  ⚠ stale: last update ${relativeTime(updatedAt)}, likely orphaned`) : ''),
   );
   console.log(`  ${bold('Engine:')}  ${engine}  ${dim('·')}  ${bold('Provider:')} ${cyan(provider)}`);
   console.log(`  ${bold('Duration:')} ${duration}`);
@@ -799,12 +801,15 @@ export async function cmdRuns(args: string[]): Promise<number> {
     void providerStr; // not shown in list (too wide); shown in `show`
 
     console.log(
-      `  ${pad(dim(r.id), idW)}  ${pad(statusColor(r.status), statusW)}  ` +
+      `  ${pad(dim(r.id), idW)}  ${pad(isStaleRunning(r) ? yellow('stale') : statusColor(r.status), statusW)}  ` +
       `${pad(totalTokens.toLocaleString(), tokW, 'right')}  ${pad(gray(when), timeW)}  ${goalTrunc}`,
     );
   }
 
   console.log('');
+  if (runs.some(r => isStaleRunning(r))) {
+    console.log(dim('  stale = running with no update for 30+ min; its process likely crashed or was killed.'));
+  }
   console.log(dim(`  Use 'ashlr run show <id>' to see details.`));
   console.log('');
 
