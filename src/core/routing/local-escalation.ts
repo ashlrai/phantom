@@ -10,7 +10,7 @@
  *
  * Escalate to frontier when any of:
  *   - the step merges to main (frontier-only, always);
- *   - the step needs credentials (phantom exec) and the local model is abliterated;
+ *   - the role holds merge rights or credentials (frontier-only, any model);
  *   - the task is planning or architecture;
  *   - the change touches a Tier-1 / protected path;
  *   - verify failed N times on local (default 2) or retries reached the cap (default 3);
@@ -25,6 +25,8 @@ export type LocalTaskKind = (typeof LOCAL_TASK_KINDS)[number];
 
 export type EscalationReason =
   | 'merge-to-main-frontier-only'
+  | 'merge-rights-frontier-only'
+  | 'credentials-frontier-only'
   | 'abliterated-with-credentials'
   | 'complex-task-kind'
   | 'protected-path'
@@ -38,6 +40,8 @@ export interface EscalationInput {
   kind: LocalTaskKind;
   /** The step would merge to main (or hold merge rights). */
   mergesToMain?: boolean;
+  /** The role holds merge rights (main or any protected branch), even if this step does not merge. */
+  holdsMergeRights?: boolean;
   /** The step runs with project credentials (phantom exec). */
   needsCredentials?: boolean;
   /** Any changed path is Tier-1 / code-owned. */
@@ -78,8 +82,13 @@ export function decideLocalEscalation(
 ): EscalationDecision {
   const frontier = (reason: EscalationReason): EscalationDecision => ({ lane: 'frontier', reason });
   if (input.mergesToMain === true) return frontier('merge-to-main-frontier-only');
-  if (input.needsCredentials === true && input.localModel && isAbliteratedModel(input.localModel)) {
-    return frontier('abliterated-with-credentials');
+  // Master only enforces this by engine tier (inbox/merge.ts evaluateMergeAuthority),
+  // and config can promote a local engine id to tier 'frontier'. So locality is
+  // enforced here too: any role holding merge rights or credentials is
+  // frontier-only, whatever its kind (coder, reviewer, planner) or model.
+  if (input.holdsMergeRights === true) return frontier('merge-rights-frontier-only');
+  if (input.needsCredentials === true) {
+    return frontier(input.localModel && isAbliteratedModel(input.localModel) ? 'abliterated-with-credentials' : 'credentials-frontier-only');
   }
   if (!input.localAvailable) return frontier('local-unavailable');
   if (COMPLEX_KINDS.has(input.kind) || !(LOCAL_TASK_KINDS as readonly string[]).includes(input.kind)) {

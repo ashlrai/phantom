@@ -4,6 +4,22 @@ import { decideLocalEscalation, localLaneMayMergeToMain, type EscalationInput } 
 const base: EscalationInput = { kind: 'edit', localAvailable: true, localModel: 'qwen3.8:27b' };
 
 describe('decideLocalEscalation', () => {
+  it('FIRST: any role holding merge rights or credentials is frontier-only; local only for proposal and coding loops', () => {
+    for (const kind of ['edit', 'test', 'lint', 'tool-loop', 'draft', 'review', 'plan', 'architecture'] as const) {
+      for (const localModel of ['qwen3.8:27b', 'huihui-qwen-abliterated@sha256:' + 'a'.repeat(64)]) {
+        expect(decideLocalEscalation({ ...base, kind, localModel, mergesToMain: true }).lane, `${kind} merge`).toBe('frontier');
+        expect(decideLocalEscalation({ ...base, kind, localModel, holdsMergeRights: true }).lane, `${kind} merge rights`).toBe('frontier');
+        expect(decideLocalEscalation({ ...base, kind, localModel, needsCredentials: true }).lane, `${kind} credentials`).toBe('frontier');
+      }
+    }
+    expect(decideLocalEscalation({ ...base, holdsMergeRights: true })).toEqual({ lane: 'frontier', reason: 'merge-rights-frontier-only' });
+    expect(decideLocalEscalation({ ...base, needsCredentials: true })).toEqual({ lane: 'frontier', reason: 'credentials-frontier-only' });
+    expect(localLaneMayMergeToMain()).toBe(false);
+    // Without merge or credential rights, only proposal/coding loops stay local.
+    expect(decideLocalEscalation({ ...base, kind: 'review' }).lane).toBe('local');
+    expect(decideLocalEscalation({ ...base, kind: 'plan' }).lane).toBe('frontier');
+  });
+
   it('stays local for coding, test, lint, tool loops, drafts and review', () => {
     for (const kind of ['edit', 'test', 'lint', 'tool-loop', 'draft', 'review'] as const) {
       expect(decideLocalEscalation({ ...base, kind })).toEqual({ lane: 'local', reason: 'local-ok' });
@@ -19,7 +35,6 @@ describe('decideLocalEscalation', () => {
   it('abliterated local model never runs a credentialed step', () => {
     expect(decideLocalEscalation({ ...base, needsCredentials: true, localModel: 'huihui-qwen-abliterated@sha256:' + 'a'.repeat(64) }))
       .toEqual({ lane: 'frontier', reason: 'abliterated-with-credentials' });
-    expect(decideLocalEscalation({ ...base, needsCredentials: true })).toEqual({ lane: 'local', reason: 'local-ok' });
   });
 
   it('local unavailable, complex kinds and protected paths escalate', () => {
