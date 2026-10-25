@@ -24,6 +24,14 @@ export type HostCancellationResult =
 
 export const HOST_CANCELLATION_MAX_READS = 3;
 
+/**
+ * Whether host cancellation is proven for enforce. A code constant, never
+ * config or env: it may only change in its own reviewed PR after the proof
+ * tests (test/automerge-canary-host-cancellation.test.ts) pass against the
+ * wired enforce path. Pinned false.
+ */
+export const HOST_CANCELLATION_PROVEN = false as const;
+
 export function cancelHostAutoMerge(
   target: { repo: string; number: number; expectedHeadOid: string },
   deps: { exec: CancelExec; view: CancelView; maxReads?: number },

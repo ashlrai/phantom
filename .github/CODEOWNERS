@@ -251,6 +251,7 @@
 /test/authority-surface-310b.test.ts @masonwyatt23
 /test/authority-tier1-closure-310b.test.ts @masonwyatt23
 /test/automerge-canary-host-cancellation.test.ts @masonwyatt23
+/test/automerge-canary-ladder.test.ts @masonwyatt23
 /test/automerge-canary-shadow-report.test.ts @masonwyatt23
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
@@ -857,6 +858,7 @@
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
+/test/status-custody.test.ts @masonwyatt23
 /test/store-unreadable-refusal-310.test.ts @masonwyatt23
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
