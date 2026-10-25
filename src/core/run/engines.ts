@@ -19,6 +19,7 @@ import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
  *   - applyLocusPreMutateGate is opt-in (LOCUS_ENFORCE); fail-closed when enforce.
  */
 
+import { decidePhantomCustody, formatCustodyLine, isLinkedGitWorktree, type PhantomCustodyRecord } from './phantom-custody.js';
 import { spawnSync, execFileSync, spawn } from 'node:child_process';
 import * as http from 'node:http';
 import * as https from 'node:https';
@@ -379,6 +380,8 @@ export interface SpawnEngineOptions {
   onEvent?: (ev: RunEvent) => void;
   /** Metadata callback after the owned child reports an actual spawn. */
   onSpawn?: () => void;
+  /** Value-free phantom custody record for this spawn (wrapped, or unwrapped with a reason). */
+  onCustody?: (record: PhantomCustodyRecord) => void;
   /**
    * Caller ownership contract. Signaled POSIX runs own their invocation's
    * detached process group only. Descendants that deliberately escape it via
@@ -849,14 +852,25 @@ async function spawnEngineInner(
   // and fatal (phantom hard-fails with "No .phantom.toml found"). Skip wrap
   // gracefully; the agent authenticates via its own ~/.claude / ~/.codex.
   // phantomWrap composes BEFORE the launcher -- the OS jail wraps the whole thing.
+  // Custody record (design-custody-fleet.md 3.3): one value-free record per
+  // spawn. A linked git worktree is recorded as unwrapped with
+  // reason=worktree-namespace until the opt-in source binding lands, because
+  // phantom would open a separate, empty vault there.
   let effective = cmd;
   const wrapCwd = cmd.cwd ?? process.cwd();
-  if (cfg.phantom?.enabled && phantomInstalled() && phantomInitializedAt(wrapCwd)) {
+  const phantomEnabled = cfg.phantom?.enabled === true;
+  const custody = decidePhantomCustody({
+    enabled: phantomEnabled,
+    installed: phantomEnabled && phantomInstalled(),
+    initialized: phantomEnabled && phantomInitializedAt(wrapCwd),
+    linkedWorktree: phantomEnabled && isLinkedGitWorktree(wrapCwd),
+    engineBin: cmd.bin,
+  });
+  if (custody.wrapped) {
     effective = phantomWrap(cmd, cfg);
-  } else if (cfg.phantom?.enabled && phantomInstalled() && !phantomInitializedAt(wrapCwd)) {
-    // Audit note: skipping phantom wrap -- no .phantom.toml in cwd (engine self-authenticates).
-    process.stderr.write(`[ashlr] phantomWrap skipped for ${cmd.bin}: no .phantom.toml in ${wrapCwd}\n`);
   }
+  if (phantomEnabled) process.stderr.write(formatCustodyLine(custody));
+  opts?.onCustody?.(custody);
 
   // M52: apply the OS sandbox launcher when provided. The launcher wraps the
   // already-phantom-wrapped command so the jail contains the entire chain.
