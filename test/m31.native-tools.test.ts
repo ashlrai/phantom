@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -166,14 +166,30 @@ describe('callNativeTool', () => {
   });
 
   it('ashlr_health on a non-enrolled repo names the exact enroll command', async () => {
-    const repo = join(fx.home, 'not-enrolled');
-    mkdirSync(repo, { recursive: true });
-    const r = await callNativeTool('ashlr_health', { repo });
-    const payload = JSON.parse(resultText(r)) as { error?: string };
-    expect(payload.error).toContain(`repo not enrolled for health review: ${resolve(repo)}`);
-    // Shell-quoted only when the path needs it (a Windows path has `\` and `:`).
-    const arg = /^[\w@%+=:,./-]+$/u.test(resolve(repo)) ? resolve(repo) : `'${resolve(repo)}'`;
-    expect(payload.error).toContain(`; enroll it with \`ashlr enroll add ${arg}\``);
+    // Tool output is secret-scrubbed, and macOS's per-user temp dir
+    // (/var/folders/xx/<32 random chars>/T) is high-entropy enough to be
+    // redacted. Put the repo under a fixed low-entropy parent so the exact path
+    // survives; Windows keeps the fixture home.
+    const parent = process.platform === 'win32' ? null : realpathSync(mkdtempSync('/tmp/ashlr-m31-repo-'));
+    try {
+      const repo = join(parent ?? fx.home, 'not-enrolled');
+      mkdirSync(repo, { recursive: true });
+      const r = await callNativeTool('ashlr_health', { repo });
+      const payload = JSON.parse(resultText(r)) as { error?: string };
+      expect(payload.error).toContain(`repo not enrolled for health review: ${resolve(repo)}`);
+      // Shell-quoted only when the path needs it (a Windows path has `\` and `:`).
+      const arg = /^[\w@%+=:,./-]+$/u.test(resolve(repo)) ? resolve(repo) : `'${resolve(repo)}'`;
+      expect(payload.error).toContain(`; enroll it with \`ashlr enroll add ${arg}\``);
+    } finally {
+      if (parent) rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('tool output still redacts a high-entropy path segment (macOS /var/folders shape)', () => {
+    const segment = ['vtw8zd2j', '31d1gdrt', 'ntc5y460', '0000gn'].join('');
+    const text = renderToolText({ error: `repo not enrolled: /private/var/folders/nj/${segment}/T/x/not-enrolled` });
+    expect(text).toContain('[REDACTED]');
+    expect(text).not.toContain(segment);
   });
 
   it('ashlr_orient returns a valid OrientResult on empty stores', async () => {

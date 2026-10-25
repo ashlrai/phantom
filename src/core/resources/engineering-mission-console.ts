@@ -2,6 +2,11 @@
 import type { ResourceConsoleServerHandle } from '../web/resource-console-server.js';
 
 export class MissionConsoleRequestError extends Error {}
+/** Consecutive transport failures a read may absorb before the error is surfaced. */
+export const MAX_TRANSIENT_READ_FAILURES = 3;
+function isTransientTransportError(error: unknown): boolean {
+  return error instanceof TypeError && !(error instanceof DOMException);
+}
 export async function requestEngineeringMissionConsole<T>(options: {
   handle: ResourceConsoleServerHandle; path: string; body?: unknown; signal: AbortSignal;
   remainingMs(): number; assertActive(): void; wait(): Promise<void>;
@@ -12,14 +17,26 @@ export async function requestEngineeringMissionConsole<T>(options: {
       !path.startsWith('/api/resources') || new URL(path, origin).origin !== origin.origin) {
     throw new MissionConsoleRequestError('Mission console unavailable');
   }
+  let transportFailures = 0;
   for (;;) {
     options.assertActive();
     const remaining = options.remainingMs();
     if (!Number.isFinite(remaining) || remaining <= 0) throw new MissionConsoleRequestError('Mission execution stopped');
-    const response = await fetch(handle.url + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'error',
-      headers: { 'x-ashlr-token': body === undefined ? handle.readToken : handle.controlToken!, origin: handle.url, 'content-type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([options.signal,
-        AbortSignal.timeout(Math.max(1, Math.floor(Math.min(60_000, remaining))))]) });
+    let response: Response;
+    try {
+      response = await fetch(handle.url + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'error',
+        headers: { 'x-ashlr-token': body === undefined ? handle.readToken : handle.controlToken!, origin: handle.url, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([options.signal,
+          AbortSignal.timeout(Math.max(1, Math.floor(Math.min(60_000, remaining))))]) });
+    } catch (error) {
+      // A loopback read can fail at the transport (fetch rejects with a plain
+      // TypeError, e.g. a reset socket). Retry only observation, a bounded number
+      // of consecutive times, within the original mission clock. Cancellation
+      // and timeouts (DOMException) and every mutation still fail at once.
+      if (body !== undefined || !isTransientTransportError(error) || ++transportFailures > MAX_TRANSIENT_READ_FAILURES) throw error;
+      options.assertActive(); await options.wait(); continue;
+    }
+    transportFailures = 0;
     // Snapshots may be unavailable while a worker publishes evidence. Retry only
     // observation, within the original mission clock. Never replay a mutation,
     // authentication refusal, quota denial or malformed successful response.
