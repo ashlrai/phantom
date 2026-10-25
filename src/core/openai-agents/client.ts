@@ -30,11 +30,13 @@ export class AgentsReadClient {
   }
   /** `via: gateway` with the host only when a gateway is configured; otherwise undefined. */
   get via(): GatewayViaMarker | undefined {
-    return this.target.ok && this.target.target.kind === 'gateway' ? gatewayViaMarker(this.target.target) : undefined;
+    return this.target.ok && this.target.target.kind === 'gateway' && this.target.target.loopback ? gatewayViaMarker(this.target.target) : undefined;
   }
   private base(): string {
     if (!this.target.ok) throw new AgentsReadError('gateway-config-invalid');
     const target = this.target.target;
+    // This slice is loopback only: the key never leaves the machine over the network.
+    if (target.kind === 'gateway' && !target.loopback) throw new AgentsReadError('gateway-config-invalid');
     return target.kind === 'gateway' ? `${target.origin}${target.prefix}` : ORIGIN;
   }
   private pageQuery(options: ReadPageOptions): URLSearchParams {

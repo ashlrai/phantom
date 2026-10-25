@@ -48,10 +48,12 @@ describe('openai agents client: explicit gateway', () => {
     expect(JSON.stringify(client.via)).not.toMatch(/4000|oa|sk-/);
   });
 
-  it('https listed host with query paths', async () => {
-    const { client, transport } = make({ openaiAgents: { enabled: true, baseUrl: 'https://gw.example.com', allowedHosts: ['gw.example.com:443'] } });
-    await client.listTurns('sess_123', { limit: 2 }).catch(() => undefined);
-    expect(transport.mock.calls[0]![0]).toBe('https://gw.example.com/v1/agents/sessions/sess_123/turns?limit=2&order=desc');
+  it('an allowlisted https gateway refuses (loopback only in this slice)', async () => {
+    const { client, transport, readApiKey } = make({ openaiAgents: { enabled: true, baseUrl: 'https://gw.example.com', allowedHosts: ['gw.example.com:443'] } });
+    await expect(client.listTurns('sess_123', { limit: 2 })).rejects.toMatchObject({ code: 'gateway-config-invalid' });
+    expect(readApiKey).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+    expect(client.via).toBeUndefined();
   });
 
   it('a gateway echoing the key is still rejected', async () => {

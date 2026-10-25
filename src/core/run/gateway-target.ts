@@ -275,3 +275,14 @@ export function gatewayRequestUrl(target: GatewayTarget, apiPath: string): strin
 export function gatewayViaMarker(target: GatewayTarget): GatewayViaMarker {
   return Object.freeze({ via: 'gateway' as const, host: target.host });
 }
+
+/**
+ * Audit summary suffix for a run of a governed client: ` via=gateway host=<host>`
+ * when config routes it through a valid gateway, '' for first-party. Host only,
+ * never the key, port, URL or path. An invalid config adds nothing here because
+ * the client itself refuses before any contact.
+ */
+export function gatewayAuditSuffix(client: GatewayClientId, gateways: unknown): string {
+  const resolved = resolveGatewayTarget(client, gateways);
+  return resolved.ok && resolved.target.kind === 'gateway' ? ` via=gateway host=${resolved.target.host}` : '';
+}

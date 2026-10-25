@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { AshlrConfig, ChatMessage, ChatResult, ModelCallLimits, ProviderClient, ApiBillingSummary } from '../types.js';
 import type { ClaudeApiGrantAdmission, ClaudeApiGrantBinding, ClaudeApiGrantReservation, ReadFreshClaudeApiGrantProof } from '../resources/claude-api-grant-types.js';
-import { createClaudeApiGrantAdmission, reserveClaudeApiGrantRequest, markClaudeApiGrantRequestSent, releaseClaudeApiGrantBeforeContact, retainClaudeApiGrantUnknown, settleClaudeApiGrantRequest } from '../resources/claude-api-grant.js';
+import { claudeApiGrantOriginFor, createClaudeApiGrantAdmission, reserveClaudeApiGrantRequest, markClaudeApiGrantRequestSent, releaseClaudeApiGrantBeforeContact, retainClaudeApiGrantUnknown, settleClaudeApiGrantRequest } from '../resources/claude-api-grant.js';
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { assertPermitted, cloudSubjectPermitted } from '../policy/local-only.js';
 import { ENFORCED_PROVIDER_AUTHORITY, MAX_GOVERNED_OUTPUT_TOKENS } from './model-call-authority.js';
@@ -162,12 +162,14 @@ function parseResponse(value: unknown, model: string, names: Set<string>, replay
  * `gateways.anthropic.enabled` is literally true and the target validates
  * (gateway-target.ts). The environment (ANTHROPIC_BASE_URL) is never read.
  */
-function messagesTarget(cfg: AshlrConfig): { endpoint: string; gateway?: { via: 'gateway'; host: string } } {
+function messagesTarget(cfg: AshlrConfig): { endpoint: string; origin?: string; gateway?: { via: 'gateway'; host: string } } {
   const resolved = resolveGatewayTarget('anthropic', (cfg as AshlrConfigWithGateways).gateways);
   if (!resolved.ok) refuse('gateway-config-invalid');
   if (resolved.target.kind === 'first-party') return { endpoint: ENDPOINT };
+  // This slice is loopback only: the key never leaves the machine over the network.
+  if (!resolved.target.loopback) refuse('gateway-not-loopback');
   const marker = gatewayViaMarker(resolved.target);
-  return { endpoint: gatewayRequestUrl(resolved.target, MESSAGES_PATH), gateway: { via: marker.via, host: marker.host } };
+  return { endpoint: gatewayRequestUrl(resolved.target, MESSAGES_PATH), origin: claudeApiGrantOriginFor(resolved.target), gateway: { via: marker.via, host: marker.host } };
 }
 
 /**
@@ -182,6 +184,9 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
   assertPermitted(cloudSubjectPermitted('provider', 'anthropic', cfg));
   if (!binding || !HASH.test(binding.expectedBinding?.credentialDigest ?? '') || typeof binding.readFreshProof !== 'function') refuse('proof-missing');
   const target = Object.freeze(messagesTarget(cfg));
+  // Grant origin binding: a grant without an origin is first-party only, and a
+  // gateway grant admits only the exact loopback host and port it names.
+  if (binding.expectedBinding.origin !== target.origin) refuse('gateway-grant-origin-mismatch');
   const host = Object.freeze({ ...binding, expectedBinding: Object.freeze({ ...binding.expectedBinding }) });
   const pricingDigest = createHash('sha256').update(JSON.stringify({ v: 1, model, serviceTier: 'standard', geography: 'global', input: price.input.toString(), output: price.output.toString(), maxInputTokens: price.maxInputTokens, maxRequestBytes: MAX_REQUEST_BYTES, cache: 'unsupported', source: 'anthropic-pricing/2026-10-09' })).digest('hex');
   let settled = 0n; let unknown = 0n; let settledRequests = 0; let unknownRequests = 0;
@@ -197,7 +202,8 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
       if (!cfg.foundry?.allowedBackends?.includes('claude-api')) refuse('engine-disabled');
       // Revalidate the target on every request; a config change after build refuses before contact.
       const current = messagesTarget(cfg);
-      if (current.endpoint !== target.endpoint || current.gateway?.host !== target.gateway?.host) refuse('gateway-config-changed');
+      if (current.endpoint !== target.endpoint || current.origin !== target.origin || current.gateway?.host !== target.gateway?.host) refuse('gateway-config-changed');
+      if (host.expectedBinding.origin !== target.origin) refuse('gateway-grant-origin-mismatch');
       // Validate the key's expected scope against the same trusted fresh reader.
       // A copied admission still fails reserve, and a different expected key
       // cannot borrow an admission minted for another credential generation.

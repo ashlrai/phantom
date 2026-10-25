@@ -119,6 +119,7 @@
     "src/core/run/best-of-n.ts",
     "src/core/run/desktop-metadata-launch-trust.ts",
     "src/core/run/engine-registry.ts",
+    "src/core/run/gateway-target.ts",
     "src/core/run/sandboxed-engine.ts",
     "src/core/sandbox/audit.ts",
     "src/core/sandbox/autonomous-env.ts",

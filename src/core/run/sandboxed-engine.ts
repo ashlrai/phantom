@@ -141,6 +141,7 @@ import {
 import { autonomousVendorIdentityCurrent, autonomousDevinIdentityCurrent, captureAutonomousVendorIdentityCheck } from '../sandbox/autonomous-env.js';
 import { recordSandboxEvidenceUnknown } from '../authority/rollout.js';
 import { audit as auditConfinement } from '../sandbox/audit.js';
+import { gatewayAuditSuffix } from './gateway-target.js';
 import {
   assertMayMutate,
   canonicalEnrollmentPath,
@@ -2630,7 +2631,7 @@ export async function runEngineSandboxed(
       action: 'confinement.run',
       repo: sb.worktreePath,
       sandboxId: sb.id,
-      summary: `engine=${engine} mode=${confinementProfile.mode ?? 'off'} platform=${process.platform} launched=${launcher !== null} networkEgress=${confinementProfile.networkEgress ?? false}${autonomousRun ? ' autonomous=true' : ''}`,
+      summary: `engine=${engine} mode=${confinementProfile.mode ?? 'off'} platform=${process.platform} launched=${launcher !== null} networkEgress=${confinementProfile.networkEgress ?? false}${autonomousRun ? ' autonomous=true' : ''}${engine === 'claude-api' ? gatewayAuditSuffix('anthropic', (cfg as { gateways?: unknown }).gateways) : ''}`,
       result: 'ok',
     });
 

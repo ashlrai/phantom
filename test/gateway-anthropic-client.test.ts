@@ -1,6 +1,10 @@
 /**
  * Governed-client gateway slice B: Anthropic Messages client.
  *
+ * Narrowed per the #880 decision (Option C): loopback only, and the grant is
+ * bound to its destination. A grant with no origin is first-party only; a
+ * grant issued for `gateway:<host>:<port>` admits only that loopback gateway.
+ *
  * The client keeps the first-party endpoint unless `gateways.anthropic` is
  * explicitly enabled and validates. Grant admission, output caps, the price
  * table and strict response parsing are unchanged. The ledger row and the
@@ -31,7 +35,7 @@ const baseCfg = (gateways?: unknown): AshlrConfig => ({
   ...(gateways === undefined ? {} : { gateways }),
 } as unknown as AshlrConfig);
 
-let root: string; let binding: ClaudeApiExecutionBinding;
+let root: string; let binding: ClaudeApiExecutionBinding; let makeBinding: (origin?: string) => ClaudeApiExecutionBinding;
 function ledgerRows(): Array<Record<string, unknown>> {
   return JSON.parse(readFileSync(join(root, CLAUDE_API_GRANT_LEDGER_FILE), 'utf8')).rows;
 }
@@ -45,6 +49,11 @@ interface Seen { url: string; headers: Record<string, string>; redirect: Request
  * It records exactly where the key went. 'redirect' rejects the way fetch
  * does for a 3xx under redirect: 'error'.
  */
+/** The origin-bound grant a loopback gateway config needs. */
+function gw(cfg: AshlrConfig): ClaudeApiExecutionBinding {
+  const url = new URL((cfg as unknown as { gateways: { anthropic: { baseUrl: string } } }).gateways.anthropic.baseUrl);
+  return makeBinding(`gateway:${url.hostname}:${url.port}`);
+}
 function peerFetch(handler: () => Record<string, unknown> | 'redirect' = () => reply()) {
   const seen: Seen[] = [];
   const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -68,10 +77,15 @@ beforeEach(() => {
     observedAt: stamp, validUntil: new Date(now + 60_000).toISOString(),
     funding: { source: 'verified-provider-billing', prepaid: true, invoiced: false, autoReload: 'off', purchasedUsdMicros: '0', otherPaidFunding: false },
     authority: { active: true, stop: false, localOnly: false, engineEnabled: true, repoAuthorized: true, roleAuthorized: true, meteredCeilingUsdMicros: '10000000', dailyRemainingUsdMicros: '10000000', identityDigest: 'd'.repeat(64) } };
-  const readFreshProof = () => structuredClone(proof);
-  const admission = createClaudeApiGrantAdmission({ expectedBinding: proof.observation.binding, readFreshProof });
-  if (!admission.ok) throw new Error(admission.reason);
-  binding = { ledgerRoot: root, admission: admission.value, expectedBinding: proof.observation.binding, readFreshProof };
+  makeBinding = (origin?: string) => {
+    const issued: FreshClaudeApiGrantProof = structuredClone(proof);
+    if (origin !== undefined) issued.observation.binding.origin = origin;
+    const readFreshProof = () => structuredClone(issued);
+    const admission = createClaudeApiGrantAdmission({ expectedBinding: issued.observation.binding, readFreshProof });
+    if (!admission.ok) throw new Error(admission.reason);
+    return { ledgerRoot: root, admission: admission.value, expectedBinding: issued.observation.binding, readFreshProof };
+  };
+  binding = makeBinding();
   secret.read.mockReset(); secret.read.mockReturnValue(key);
 });
 afterEach(() => {
@@ -106,7 +120,7 @@ describe('anthropic client: explicit loopback gateway', () => {
   it('sends to the configured target only, settles with the pinned price, records host only', async () => {
     const peer = peerFetch();
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4555/gw/prefix' } });
-    const result = await buildAnthropicMessagesClient(cfg, model, binding).chat(messages, [], undefined, limits);
+    const result = await buildAnthropicMessagesClient(cfg, model, gw(cfg)).chat(messages, [], undefined, limits);
     expect(peer.seen).toHaveLength(1);
     expect(peer.seen[0]).toMatchObject({ url: 'http://127.0.0.1:4555/gw/prefix/v1/messages', redirect: 'error' });
     expect(peer.seen[0]!.headers['x-api-key']).toBe(key);
@@ -117,7 +131,10 @@ describe('anthropic client: explicit loopback gateway', () => {
     const persisted = readFileSync(join(root, CLAUDE_API_GRANT_LEDGER_FILE), 'utf8');
     expect(persisted).not.toContain(key);
     expect(persisted).not.toContain('/gw/prefix');
-    expect(persisted).not.toContain('4555');
+    // The gateway marker is host only; the port appears only as the grant's
+    // own issued origin inside the bound grant identity, never in the marker.
+    expect(ledgerRows()[0]!.gateway).toEqual({ via: 'gateway', host: '127.0.0.1' });
+    expect((ledgerRows()[0]!.binding as Record<string, unknown>).origin).toBe('gateway:127.0.0.1:4555');
     expect(JSON.stringify(result)).not.toContain(key);
   });
 
@@ -125,7 +142,7 @@ describe('anthropic client: explicit loopback gateway', () => {
     let n = 0;
     peerFetch(() => reply({ id: `msg_Gw${++n}` }));
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4555' } });
-    const client = buildAnthropicMessagesClient(cfg, model, binding);
+    const client = buildAnthropicMessagesClient(cfg, model, gw(cfg));
     await client.chat(messages, [], undefined, limits);
     await client.chat(messages, [], undefined, limits);
     expect(ledgerRows().map(row => [row.state, row.providerRequestId, row.gateway])).toEqual([
@@ -138,7 +155,7 @@ describe('anthropic client: explicit loopback gateway', () => {
   it('a redirect from the gateway fails closed and is not followed', async () => {
     const peer = peerFetch(() => 'redirect');
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4555' } });
-    await expect(buildAnthropicMessagesClient(cfg, model, binding).chat(messages, [], undefined, limits)).rejects.toThrow('contact-unconfirmed');
+    await expect(buildAnthropicMessagesClient(cfg, model, gw(cfg)).chat(messages, [], undefined, limits)).rejects.toThrow('contact-unconfirmed');
     expect(peer.seen).toHaveLength(1);
     expect(ledgerRows()[0]).toMatchObject({ state: 'unknown', gateway: { via: 'gateway', host: '127.0.0.1' } });
   });
@@ -146,7 +163,7 @@ describe('anthropic client: explicit loopback gateway', () => {
   it('a gateway response with an unfamiliar usage shape fails closed', async () => {
     peerFetch(() => reply({ usage: { input_tokens: 10, output_tokens: 5, gateway_cost: 1 } }));
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4555' } });
-    await expect(buildAnthropicMessagesClient(cfg, model, binding).chat(messages, [], undefined, limits)).rejects.toThrow('contact-unconfirmed');
+    await expect(buildAnthropicMessagesClient(cfg, model, gw(cfg)).chat(messages, [], undefined, limits)).rejects.toThrow('contact-unconfirmed');
   });
 });
 
@@ -176,9 +193,9 @@ describe('anthropic client: refusals before any contact', () => {
   it('pricing, engine and output-limit refusals are unchanged with a gateway configured', async () => {
     const gateways = { anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4000' } };
     const spy = vi.spyOn(globalThis, 'fetch');
-    expect(() => buildAnthropicMessagesClient(baseCfg(gateways), 'claude-unknown-model', binding)).toThrow('pricing-unknown');
-    expect(() => buildAnthropicMessagesClient({ ...baseCfg(gateways), foundry: {} } as AshlrConfig, model, binding)).toThrow('engine-disabled');
-    const client = buildAnthropicMessagesClient(baseCfg(gateways), model, binding);
+    expect(() => buildAnthropicMessagesClient(baseCfg(gateways), 'claude-unknown-model', makeBinding('gateway:127.0.0.1:4000'))).toThrow('pricing-unknown');
+    expect(() => buildAnthropicMessagesClient({ ...baseCfg(gateways), foundry: {} } as AshlrConfig, model, makeBinding('gateway:127.0.0.1:4000'))).toThrow('engine-disabled');
+    const client = buildAnthropicMessagesClient(baseCfg(gateways), model, makeBinding('gateway:127.0.0.1:4000'));
     await expect(client.chat(messages, [], undefined, undefined)).rejects.toThrow('output-limit-required');
     await expect(client.chat(messages, [], undefined, { maxOutputTokens: 10_000_000 })).rejects.toThrow('output-limit-required');
     expect(spy).not.toHaveBeenCalled();
@@ -186,7 +203,7 @@ describe('anthropic client: refusals before any contact', () => {
 
   it('a config change after build refuses before contact and releases the hold', async () => {
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4000' } }) as unknown as { gateways: { anthropic: { baseUrl: string } } };
-    const client = buildAnthropicMessagesClient(cfg as unknown as AshlrConfig, model, binding);
+    const client = buildAnthropicMessagesClient(cfg as unknown as AshlrConfig, model, makeBinding('gateway:127.0.0.1:4000'));
     cfg.gateways.anthropic.baseUrl = 'http://127.0.0.1:4001';
     const spy = vi.spyOn(globalThis, 'fetch');
     await expect(client.chat(messages, [], undefined, limits)).rejects.toThrow('gateway-config-changed');
@@ -198,19 +215,46 @@ describe('anthropic client: refusals before any contact', () => {
     secret.read.mockReturnValue('a-different-key');
     const spy = vi.spyOn(globalThis, 'fetch');
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4000' } });
-    await expect(buildAnthropicMessagesClient(cfg, model, binding).chat(messages, [], undefined, limits)).rejects.toThrow('credential-binding-changed');
+    await expect(buildAnthropicMessagesClient(cfg, model, gw(cfg)).chat(messages, [], undefined, limits)).rejects.toThrow('credential-binding-changed');
     expect(spy).not.toHaveBeenCalled();
     expect(ledgerRows()[0]).toMatchObject({ state: 'released' });
   });
 });
 
-describe('anthropic client: https gateway on a listed host', () => {
-  it('uses the exact listed origin and keeps redirect error', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('stop'));
+describe('anthropic client: loopback only in this slice', () => {
+  it('an allowlisted https gateway refuses before reading the key or contacting it', () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
     const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'https://gw.example.com/anthropic', allowedHosts: ['gw.example.com:443'] } });
-    await expect(buildAnthropicMessagesClient(cfg, model, binding).chat(messages, [], undefined, limits)).rejects.toThrow('contact-unconfirmed');
-    expect(spy.mock.calls[0]![0]).toBe('https://gw.example.com/anthropic/v1/messages');
-    expect(spy.mock.calls[0]![1]?.redirect).toBe('error');
-    expect(ledgerRows()[0]).toMatchObject({ state: 'unknown', gateway: { via: 'gateway', host: 'gw.example.com' } });
+    expect(() => buildAnthropicMessagesClient(cfg, model, makeBinding())).toThrow('Claude API held: gateway-not-loopback');
+    expect(spy).not.toHaveBeenCalled();
+    expect(secret.read).not.toHaveBeenCalled();
   });
+});
+
+describe('anthropic client: grant origin binding', () => {
+  const cfg = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://127.0.0.1:4555' } });
+  it('an existing grant (no origin) refuses the gateway before contact', () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    expect(() => buildAnthropicMessagesClient(cfg, model, binding)).toThrow('Claude API held: gateway-grant-origin-mismatch');
+    expect(spy).not.toHaveBeenCalled();
+    expect(secret.read).not.toHaveBeenCalled();
+  });
+  it('a grant for one loopback port refuses another port and the other loopback host', () => {
+    expect(() => buildAnthropicMessagesClient(cfg, model, makeBinding('gateway:127.0.0.1:4556'))).toThrow('gateway-grant-origin-mismatch');
+    expect(() => buildAnthropicMessagesClient(cfg, model, makeBinding('gateway:[::1]:4555'))).toThrow('gateway-grant-origin-mismatch');
+  });
+  it('a gateway grant never authorizes first-party contact', () => {
+    expect(() => buildAnthropicMessagesClient(baseCfg(), model, makeBinding('gateway:127.0.0.1:4555'))).toThrow('gateway-grant-origin-mismatch');
+  });
+  it('a gateway grant for [::1] admits exactly that host and port', async () => {
+    const peer = peerFetch();
+    const v6 = baseCfg({ anthropic: { enabled: true, baseUrl: 'http://[::1]:4555' } });
+    await buildAnthropicMessagesClient(v6, model, makeBinding('gateway:[::1]:4555')).chat(messages, [], undefined, limits);
+    expect(peer.seen.map(call => call.url)).toEqual(['http://[::1]:4555/v1/messages']);
+    expect(ledgerRows()[0]).toMatchObject({ state: 'settled', gateway: { via: 'gateway', host: '[::1]' } });
+  });
+  it.each(['gateway:gw.example.com:443', 'gateway:localhost:4555', 'gateway:127.0.0.1', 'gateway:127.0.0.1:0', 'gateway:127.0.0.1:65536', 'https://127.0.0.1:4555'])(
+    'a grant origin of %s is not a valid binding', (origin) => {
+      expect(() => makeBinding(origin)).toThrow('proof-invalid');
+    });
 });

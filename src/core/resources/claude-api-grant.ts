@@ -39,9 +39,18 @@ function date(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(`${value}T00:00:00.000Z`)) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
 }
+/** Loopback-only gateway origin a grant may be issued for. */
+export const CLAUDE_API_GATEWAY_ORIGIN = /^gateway:(?:127\.0\.0\.1|\[::1\]):(?:[1-9][0-9]{0,4})$/;
+const BINDING_KEYS = ['organizationDigest', 'workspaceDigest', 'credentialDigest', 'generation'];
 function binding(value: unknown): value is ClaudeApiGrantBinding {
-  return exact(value, ['organizationDigest', 'workspaceDigest', 'credentialDigest', 'generation']) &&
-    ['organizationDigest', 'workspaceDigest', 'credentialDigest'].every(key => text(value[key], HASH)) && text(value.generation, ID);
+  const withOrigin = !!value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'origin');
+  return exact(value, withOrigin ? [...BINDING_KEYS, 'origin'] : BINDING_KEYS) &&
+    ['organizationDigest', 'workspaceDigest', 'credentialDigest'].every(key => text(value[key], HASH)) && text(value.generation, ID) &&
+    (!withOrigin || (text(value.origin, CLAUDE_API_GATEWAY_ORIGIN) && Number((value.origin as string).slice((value.origin as string).lastIndexOf(':') + 1)) <= 65535));
+}
+/** The origin a request target requires its grant to carry; undefined for first-party. */
+export function claudeApiGrantOriginFor(gateway: { host: string; port: number } | undefined): string | undefined {
+  return gateway ? `gateway:${gateway.host}:${gateway.port}` : undefined;
 }
 function same(a: unknown, b: unknown): boolean { return canonicalJson(a) === canonicalJson(b); }
 function dense(value: unknown): value is unknown[] {
@@ -112,7 +121,7 @@ interface LedgerRow {
 }
 /** Value-free ledger marker for a request sent through an opted-in gateway. */
 export interface ClaudeApiGatewayVia { readonly via: 'gateway'; readonly host: string }
-const GATEWAY_HOST = /^(?:\[::1\]|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)$/;
+const GATEWAY_HOST = /^(?:\[::1\]|127\.0\.0\.1)$/;
 function gatewayVia(value: unknown): value is ClaudeApiGatewayVia {
   return exact(value, ['via', 'host']) && value.via === 'gateway' && text(value.host, GATEWAY_HOST);
 }

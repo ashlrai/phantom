@@ -47,9 +47,9 @@ describe('grant ledger gateway marker', () => {
   });
 
   it('gateway rows carry exactly via and host, and the ledger reloads', () => {
-    expect(reserve('gateway-one', { via: 'gateway', host: 'gw.example.com' }).ok).toBe(true);
+    expect(reserve('gateway-one', { via: 'gateway', host: '127.0.0.1' }).ok).toBe(true);
     expect(reserve('gateway-two', { via: 'gateway', host: '[::1]' }).ok).toBe(true);
-    expect(rows().map(row => row.gateway)).toEqual([{ via: 'gateway', host: 'gw.example.com' }, { via: 'gateway', host: '[::1]' }]);
+    expect(rows().map(row => row.gateway)).toEqual([{ via: 'gateway', host: '127.0.0.1' }, { via: 'gateway', host: '[::1]' }]);
   });
 
   it.each([
@@ -59,14 +59,17 @@ describe('grant ledger gateway marker', () => {
     ['host with userinfo', { via: 'gateway', host: 'user:pw@gw.example.com' }],
     ['wrong via', { via: 'proxy', host: 'gw.example.com' }],
     ['missing host', { via: 'gateway' }],
+    // Loopback only in this slice: a remote host marker is refused too.
+    ['non-loopback host', { via: 'gateway', host: 'gw.example.com' }],
+    ['localhost name', { via: 'gateway', host: 'localhost' }],
   ])('refuses a %s marker at reserve', (_label, gateway) => {
     expect(reserve('bad-one', gateway)).toEqual({ ok: false, reason: 'reservation-invalid' });
   });
 
   it('a tampered on-disk marker makes the ledger unavailable (fails closed)', () => {
-    expect(reserve('gateway-one', { via: 'gateway', host: 'gw.example.com' }).ok).toBe(true);
+    expect(reserve('gateway-one', { via: 'gateway', host: '127.0.0.1' }).ok).toBe(true);
     const ledger = JSON.parse(readFileSync(file(), 'utf8'));
-    ledger.rows[0].gateway = { via: 'gateway', host: 'gw.example.com', key: 'sk-leak' };
+    ledger.rows[0].gateway = { via: 'gateway', host: '127.0.0.1', key: 'sk-leak' };
     writeFileSync(file(), JSON.stringify(ledger), { mode: 0o600 });
     expect(reserve('next-one')).toEqual({ ok: false, reason: 'store-unavailable' });
   });
