@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CUSTODY_LEDGER_MAX_BYTES,
+  CUSTODY_LEDGER_MAX_READ_BYTES,
   appendCustodyRecord,
   custodyLedgerPath,
   readCustodySummary,
@@ -67,5 +68,46 @@ describe('custody ledger', () => {
   it('never throws when HOME is unwritable', () => {
     process.env.HOME = path.join(tmpHome, 'missing', '\0bad');
     expect(() => appendCustodyRecord(decidePhantomCustody(base))).not.toThrow();
+  });
+
+  it.skipIf(process.platform === 'win32')('does not write through a symlinked ledger file', () => {
+    const target = path.join(tmpHome, 'elsewhere.txt');
+    fs.writeFileSync(target, 'keep\n');
+    fs.mkdirSync(path.dirname(custodyLedgerPath()), { recursive: true });
+    fs.symlinkSync(target, custodyLedgerPath());
+    appendCustodyRecord(decidePhantomCustody(base));
+    expect(fs.readFileSync(target, 'utf8')).toBe('keep\n');
+    expect(readCustodySummary(null)).toEqual({ spawns: 0, wrapped: 0, unwrapped: {}, malformed: 1 });
+  });
+
+  it.skipIf(process.platform === 'win32')('does not write into a symlinked custody directory', () => {
+    const elsewhere = path.join(tmpHome, 'other-dir');
+    fs.mkdirSync(elsewhere);
+    fs.mkdirSync(path.join(tmpHome, '.ashlr'), { recursive: true });
+    fs.symlinkSync(elsewhere, path.dirname(custodyLedgerPath()));
+    appendCustodyRecord(decidePhantomCustody(base));
+    expect(fs.readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it('refuses a directory in place of the ledger file and an oversized ledger', () => {
+    fs.mkdirSync(custodyLedgerPath(), { recursive: true });
+    expect(() => appendCustodyRecord(decidePhantomCustody(base))).not.toThrow();
+    expect(readCustodySummary(null).malformed).toBe(1);
+    fs.rmSync(custodyLedgerPath(), { recursive: true });
+    fs.writeFileSync(custodyLedgerPath(), 'x'.repeat(CUSTODY_LEDGER_MAX_READ_BYTES + 1));
+    expect(readCustodySummary(null)).toEqual({ spawns: 0, wrapped: 0, unwrapped: {}, malformed: 1 });
+  });
+
+  it('re-validates fields at write time', () => {
+    appendCustodyRecord({ wrapped: true, engine: '../../etc/x y', preflight_schema: 1, preflight_exit: 1.5 } as never);
+    appendCustodyRecord({ wrapped: false, reason: 'made-up' as never, engine: 'aider', preflight_exit: 999 } as never);
+    const lines = fs.readFileSync(custodyLedgerPath(), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines[0]).toMatchObject({ wrapped: true, engine: 'unknown', preflight_exit: null });
+    expect(lines[1]).toMatchObject({ wrapped: false, reason: 'unknown', engine: 'aider', preflight_exit: null });
+  });
+
+  it.skipIf(process.platform === 'win32')('creates the ledger owner-only', () => {
+    appendCustodyRecord(decidePhantomCustody(base));
+    expect(fs.statSync(custodyLedgerPath()).mode & 0o777).toBe(0o600);
   });
 });
