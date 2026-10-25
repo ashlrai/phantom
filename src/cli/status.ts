@@ -109,6 +109,8 @@ export interface StatusJson {
   resources: Array<{ backend: string; availability: string; usedPct: number | null }> | null;
   /** Receipt.v1 and custody ledger counts; null when nothing was ever recorded. */
   custody: import('./status-custody.js').CustodyStatus | null;
+  /** Local inference probe (loopback GET /models); null when not configured or it could not run. */
+  localInference: import('../core/run/local-inference-probe.js').LocalInferenceProbe | null;
 }
 
 function toRow(item: IndexedItem): StatusRepoRow {
@@ -208,6 +210,12 @@ export async function gatherStatus(
     return gatherCustodyStatus();
   });
 
+  const localInference = await attempt(async () => {
+    const { probeLocalInference } = await import('../core/run/local-inference-probe.js');
+    const p = await probeLocalInference((cfg as unknown as Record<string, unknown>)['localInference']);
+    return p.status === 'not-configured' ? null : p;
+  });
+
   const resources = await attempt(async () => {
     const { getResourceSnapshot } = await import('../core/fabric/resource-monitor.js');
     const snap = await getResourceSnapshot(cfg);
@@ -239,6 +247,7 @@ export async function gatherStatus(
     identity,
     resources,
     custody,
+    localInference,
   };
 }
 

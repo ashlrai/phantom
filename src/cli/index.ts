@@ -2523,6 +2523,22 @@ async function main(): Promise<void> {
         break;
       }
 
+      case '--ashlr-handshake': {
+        // Companion handshake v1: one JSON object, no network, exit 0.
+        let version = process.env.ASHLR_VERSION;
+        if (!version) {
+          try {
+            const { createRequire } = await import('node:module');
+            version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+          } catch {
+            version = 'unknown';
+          }
+        }
+        const { buildPhmHandshake } = await import('./handshake.js');
+        console.log(JSON.stringify(buildPhmHandshake(version)));
+        break;
+      }
+
       case 'help':
       case '--help':
       case '-h':
