@@ -5,6 +5,7 @@ import { buildReceiptTimeline, formatReceiptTimeline } from '../core/receipt/rec
 const USAGE = 'usage: ashlr fleet receipt <list|show <run-id>|verify <run-id>|timeline <run-id>|status> [--json]';
 
 export async function cmdFleetReceipt(args: string[]): Promise<number> {
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) { process.stdout.write(`${USAGE}\n`); return 0; }
   const json = args.includes('--json');
   const [sub, runId] = args.filter((a) => a !== '--json');
   const out = (v: unknown, text: string): void => { process.stdout.write(json ? `${JSON.stringify(v)}\n` : `${text}\n`); };
