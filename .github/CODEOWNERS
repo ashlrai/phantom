@@ -857,6 +857,7 @@
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
+/test/status-custody.test.ts @masonwyatt23
 /test/store-unreadable-refusal-310.test.ts @masonwyatt23
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
