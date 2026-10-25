@@ -8,6 +8,7 @@ import {
   realpathSync,
   type BigIntStats,
 } from 'node:fs';
+import { buildCanaryShadowReport, formatCanaryShadowReport } from '../core/fleet/automerge-canary-shadow-report.js';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -476,6 +477,7 @@ function actionResult(
 function help(): string {
   return [
     'usage: ashlr fleet automerge-canary status [--json]',
+    '       ashlr fleet automerge-canary report [--json]',
     '       ashlr fleet automerge-canary prepare-shadow --repo <absolute-repo> --base-ref <branch> --base-oid <immutable-oid> --head-oid <immutable-oid> [--json]',
     '       ashlr fleet automerge-canary activate-shadow --input <bounded-json-file> [--json]',
     '       ashlr fleet automerge-canary halt [--json]',
@@ -597,6 +599,16 @@ export async function cmdAutoMergeCanary(args: string[]): Promise<number> {
     }
     const read = automergeCanaryStatus();
     process.stdout.write(formatAutoMergeCanaryStatus(read, rest.includes('--json')));
+    return read.sourceState === 'degraded' || read.severity === 'critical' ? 1 : 0;
+  }
+
+  if (subcommand === 'report') {
+    if (!validJsonOnly(rest)) {
+      emit(refusal('report', 'usage'), jsonRequested(rest), `${help()}\nerror: report accepts only --json`, true);
+      return 2;
+    }
+    const read = automergeCanaryStatus();
+    process.stdout.write(formatCanaryShadowReport(buildCanaryShadowReport(read), rest.includes('--json')));
     return read.sourceState === 'degraded' || read.severity === 'critical' ? 1 : 0;
   }
 
