@@ -12,6 +12,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Every engine spawn that is not wrapped by `phantom exec` now leaves a
+  value-free custody record with a fixed reason code, including when Phantom is
+  off (`phantom-disabled`). `phm status` and `status --json` break unwrapped
+  spawns down by reason. `.phantom.toml` is still never copied into sandbox
+  worktrees (it would select a different, empty vault).
 - Run receipts now record what happened after close: the daemon appends signed
   `later[]` entries when a run's PR checks settle (ci), it merges (merge), the
   post-merge watch reports (survival) and a revert lands (revert). Best effort,
