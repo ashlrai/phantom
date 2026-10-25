@@ -2352,6 +2352,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
       const { cmdAutoMergeCanary } = await import('./automerge-canary.js');
       return cmdAutoMergeCanary(rest);
     }
+    case 'receipt': {
+      const { cmdFleetReceipt } = await import('./receipt.js');
+      return cmdFleetReceipt(rest);
+    }
     case 'evidence':
       return cmdFleetEvidence(rest);
     case 'scorecard':
