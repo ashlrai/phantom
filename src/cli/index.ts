@@ -1410,6 +1410,18 @@ async function cmdStatus(args: string[]): Promise<void> {
     // silently omit; never break status
   }
 
+  // Phantom strict preflight: only when the spawn gate is on (value-free)
+  try {
+    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
+    const pre = gatherPreflightStatus();
+    if (pre) {
+      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
   try {
     const resourcesMod = await import('./resources.js' as unknown as string) as {
