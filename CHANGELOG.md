@@ -17,6 +17,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   off (`phantom-disabled`). `phm status` and `status --json` break unwrapped
   spawns down by reason. `.phantom.toml` is still never copied into sandbox
   worktrees (it would select a different, empty vault).
+- `phm status` and `status --json` show the strict Phantom preflight
+  (`phantomPreflight`) when `ASHLR_PHANTOM_PREFLIGHT=1`: verdict, exit code,
+  whether the vault was probed, and whether a fleet spawn here would wrap or
+  run unwrapped with its reason. `ASHLR_PHANTOM_PREFLIGHT_VAULT=1` adds
+  `--vault` to the spawn and status preflight; the default stays metadata-only.
 - Run receipts now record what happened after close: the daemon appends signed
   `later[]` entries when a run's PR checks settle (ci), it merges (merge), the
   post-merge watch reports (survival) and a revert lands (revert). Best effort,

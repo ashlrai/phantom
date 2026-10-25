@@ -109,6 +109,8 @@ export interface StatusJson {
   resources: Array<{ backend: string; availability: string; usedPct: number | null }> | null;
   /** Receipt.v1 and custody ledger counts; null when nothing was ever recorded. */
   custody: import('./status-custody.js').CustodyStatus | null;
+  /** Strict phantom preflight; null unless ASHLR_PHANTOM_PREFLIGHT=1 and phantom is configured. */
+  phantomPreflight: import('./status-preflight.js').PreflightStatus | null;
 }
 
 function toRow(item: IndexedItem): StatusRepoRow {
@@ -208,6 +210,11 @@ export async function gatherStatus(
     return gatherCustodyStatus();
   });
 
+  const phantomPreflight = await attempt(async () => {
+    const { gatherPreflightStatus } = await import('./status-preflight.js');
+    return gatherPreflightStatus({ cwd });
+  });
+
   const resources = await attempt(async () => {
     const { getResourceSnapshot } = await import('../core/fabric/resource-monitor.js');
     const snap = await getResourceSnapshot(cfg);
@@ -239,6 +246,7 @@ export async function gatherStatus(
     identity,
     resources,
     custody,
+    phantomPreflight,
   };
 }
 
