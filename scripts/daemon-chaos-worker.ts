@@ -5,14 +5,18 @@
  * (shared queue claim, run authority, repo lease -> createSandboxAsync,
  * admission, fake engine, proposal filing, sandbox removal, terminal run
  * record) and then, optionally, verifies the filed proposal in an inbox temp
- * worktree (inbox/merge.ts verifyProposal: `vwt-*` under ~/.ashlr/tmp). It
- * prints `PHASE <name>` on stdout as it enters each phase so the harness can
+ * worktree (inbox/merge.ts verifyProposal: `vwt-*` under ~/.ashlr/tmp). It then
+ * approves and applies the proposal (inbox/apply.ts: a `wt-*` worktree and a
+ * `patch-*.diff` file under ~/.ashlr/tmp, output branch `ashlr/proposal/<id>`)
+ * and opens a fleet scratch repository over the repo's objects
+ * (fleet/host-merge.ts openGitScratch: `fleet-git-*`). It prints `PHASE <name>` on stdout as it enters each phase so the harness can
  * SIGKILL it at a chosen point. No model, no network, no credentials.
  *
  * Restart mode runs the crash-recovery work runDaemon does at start, in the
  * same order and with the same arguments (src/core/daemon/loop.ts, after the
- * activation checks): the orphan sandbox sweep with ORPHAN_STALE_MS, then the
- * leaked temp-worktree sweep. The harness cannot start the real resident
+ * activation checks): the orphan sandbox sweep with ORPHAN_STALE_MS, the
+ * leaked temp-worktree sweep, the tmp scratch sweep and the read-only stale git
+ * lock report. The harness cannot start the real resident
  * daemon (it needs trusted activation roots), so it calls exactly what that
  * start calls.
  *
@@ -22,6 +26,7 @@
  *   node --import tsx scripts/daemon-chaos-worker.ts --probe <queueDir> <local|shared> [aged]
  *   node --import tsx scripts/daemon-chaos-worker.ts <repo> <queueDir> <idx> <itemCount> <thinkMs> <verify:0|1> <local|shared>
  */
+import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
@@ -43,7 +48,7 @@ import {
 } from '../src/core/sandbox/mutation-fence.js';
 import { acquireRepoLease, registerExecutionLease, type ExecutionLease, type RepoLease } from '../src/core/sandbox/execution-leases.js';
 import { assertMayMutate, canonicalEnrollmentPath, enroll } from '../src/core/sandbox/policy.js';
-import { createProposal } from '../src/core/inbox/store.js';
+import { createProposal, setStatus } from '../src/core/inbox/store.js';
 import type { RunState, Sandbox } from '../src/core/types.js';
 
 const ADMIT_FENCE_WAIT_MS = 60_000;
@@ -167,6 +172,35 @@ async function agent(argv: string[]): Promise<void> {
     const verdict = await verifyProposal(proposal, { version: 1 } as never);
     if (!verdict.ok) failure = `verify: ${verdict.detail}`;
   }
+
+  if (proposal && !failure) {
+    phase('apply');
+    if (!setStatus(proposal.id, 'approved')) failure = 'apply: approve refused';
+    else {
+      const { applyProposal } = await import('../src/core/inbox/apply.js');
+      const applied = await applyProposal(proposal.id, { confirmed: true });
+      if (!applied.ok) failure = `apply: ${applied.detail}`;
+    }
+  }
+
+  if (!failure) {
+    phase('fleetScratch');
+    const { openGitScratch, closeGitScratch } = await import('../src/core/fleet/host-merge.js');
+    const scratch = openGitScratch(repo!);
+    if (typeof scratch === 'string') failure = `fleet-scratch: ${scratch}`;
+    else {
+      try {
+        // Read the borrowed objects the way a host merge does, then linger so
+        // a kill can land while the scratch repository exists.
+        execFileSync('git', ['count-objects', '-v'], { env: scratch.env, stdio: 'pipe' });
+        if (thinkMs > 0) await new Promise((r) => setTimeout(r, thinkMs));
+      } catch (e) {
+        failure = `fleet-scratch: ${(e as Error).message}`;
+      } finally {
+        closeGitScratch(scratch);
+      }
+    }
+  }
   phase('done');
   emit({ idx, ok: failure === null, failure });
 }
@@ -177,6 +211,9 @@ async function restart(): Promise<void> {
   const sweep = wt.sweepOrphanSandboxesDetailed({ staleMs: wt.ORPHAN_STALE_MS });
   const reaper = await import('../src/core/inbox/temp-worktree-reaper.js');
   const temp = await reaper.sweepLeakedTempWorktreesAtStart();
+  const scratch = reaper.sweepLeakedTmpScratch();
+  const { readGitLockHealth } = await import('../src/core/readiness.js');
+  const { locks } = readGitLockHealth();
   emit({
     restartMs: Date.now() - started,
     orphanSweep: {
@@ -185,6 +222,8 @@ async function restart(): Promise<void> {
       malformedHomes: sweep.inventory.malformedHomes, unsafeEntries: sweep.inventory.unsafeEntries,
     },
     tempSweep: temp,
+    scratchSweep: { reaped: scratch.reaped.length, kept: scratch.kept.length, failed: scratch.failed.length },
+    staleGitLocks: locks.length,
   });
 }
 

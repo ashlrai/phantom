@@ -67,6 +67,7 @@ import { seatSubscription, type SeatSubscriptionView } from './seat-subscription
 import { formatRelative, seatPillLabel } from './verse-model.js';
 import { SavedProjects } from './workspaces/SavedProjects.js';
 import { findCommand, formatChord } from './shell/command-catalog.js';
+import { pulse } from '../../components/motion/pulse.js';
 import styles from './Sidebar.module.css';
 
 export interface SidebarProps {
@@ -561,6 +562,14 @@ function sameRow(a: SidebarRow, b: SidebarRow): boolean {
     JSON.stringify(a.status) === JSON.stringify(b.status);
 }
 
+/** A running chat's dot: a 6px dot to a 16px ring (the old 5px shadow spread), 55% to clear. */
+const RUNNING_RING = pulse({
+  keyframes: [{ transform: 'scale(1)', opacity: 0.55 }, { transform: 'scale(2.667)', opacity: 0 }],
+  duration: 1800,
+  easing: 'ease-out',
+  pseudoElement: '::after',
+});
+
 function RowStatus({ row }: { row: SidebarRow }) {
   const { status, session } = row;
   // One wording for the glyph's name and the row's tooltip (rowStatusWords).
@@ -573,7 +582,7 @@ function RowStatus({ row }: { row: SidebarRow }) {
     case 'running':
       return (
         <span className={styles.statusRunning}>
-          <span className={styles.running} role="img" aria-label={words} />
+          <span className={styles.running} ref={RUNNING_RING} role="img" aria-label={words} />
           {status.startedAt ? <LiveTimer className={styles.elapsed} since={status.startedAt} /> : null}
         </span>
       );

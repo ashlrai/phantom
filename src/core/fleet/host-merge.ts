@@ -103,6 +103,7 @@ import type {
   LandingRecord,
   RepoEnforcement,
 } from './fleet-types.js';
+import { releaseTmpScratchOwner, writeTmpScratchOwner } from '../inbox/temp-worktree-reaper.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -366,6 +367,7 @@ export function openGitScratch(mirror: string): FleetGitScratch | string {
     const parent = join(homedir(), '.ashlr', 'tmp');
     mkdirSync(parent, { recursive: true, mode: 0o700 });
     const dir = mkdtempSync(join(parent, 'fleet-git-'));
+    writeTmpScratchOwner(dir);
     const env: NodeJS.ProcessEnv = {
       PATH: process.env['PATH'] ?? '/usr/bin:/bin',
       HOME: dir,
@@ -394,6 +396,7 @@ export function closeGitScratch(scratch: FleetGitScratch | null): void {
   try {
     rmSync(scratch.dir, { recursive: true, force: true });
   } catch { /* a leftover scratch dir under ~/.ashlr/tmp is harmless */ }
+  releaseTmpScratchOwner(scratch.dir);
 }
 
 function git(scratch: FleetGitScratch, args: readonly string[], input?: string | Buffer): GitRun {

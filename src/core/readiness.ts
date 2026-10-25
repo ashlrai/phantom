@@ -41,6 +41,7 @@ import { probeEndpoint } from './providers.js';
 import {
   readKillSwitch,
   readEnrollmentRegistry,
+  listEnrolled,
   type EnrollmentRegistrySnapshot,
   type KillSwitchReadResult,
 } from './sandbox/policy.js';
@@ -49,6 +50,7 @@ import {
   daemonStatePath,
 } from './daemon/state.js';
 import { listSandboxes, ORPHAN_STALE_MS, resolveSandboxCap } from './sandbox/worktree.js';
+import { findStaleGitLocks, type StaleGitLock } from './sandbox/stale-git-locks.js';
 import { getPhantomStatus } from './phantom.js';
 import { discoverMcpServers } from './mcp-registry.js';
 import type { PhantomStatus } from './types.js';
@@ -457,6 +459,24 @@ export function readSandboxHealth(): { total: number; orphans: number; cap: numb
     return { total: sandboxes.length, orphans, cap, capReason };
   } catch {
     return { total: 0, orphans: 0, cap, capReason };
+  }
+}
+
+/**
+ * READ-ONLY scan for git lock files a killed git process left behind in the
+ * repositories autonomous work touches: enrolled repos plus each on-disk
+ * sandbox's source repo (one scan per common git dir). Reports only; git
+ * records no lock owner, so nothing is removed. Never throws.
+ */
+export function readGitLockHealth(): { repos: number; locks: StaleGitLock[] } {
+  try {
+    const repos = new Set<string>(listEnrolled());
+    for (const sb of listSandboxes()) {
+      if (typeof sb.sourceRepo === 'string' && sb.sourceRepo) repos.add(sb.sourceRepo);
+    }
+    return { repos: repos.size, locks: findStaleGitLocks([...repos]) };
+  } catch {
+    return { repos: 0, locks: [] };
   }
 }
 

@@ -48,10 +48,13 @@ spec, touches a user repo, or emits an outward action.
   `getActiveClient(cfg, { allowCloud })` (local Ollama/LM Studio unless
   `--allow-cloud` + key); falls back to the deterministic split on any model
   error. **BOUNDED** by `min(maxMilestones ?? 8, HARD_MAX=16)`. Does not persist.
-- `planMilestoneSpec(goal, milestone, cfg): Promise<SpecArtifact>` — authors/
-  links a versioned spec via `spec-store.authorSpec(prompt, cfg, { project })`
-  (local-first, idempotent). Caller persists `milestone.specId = artifact.id`.
-  NEVER runs a swarm or touches a user working tree.
+- `planMilestoneSpec(goal, milestone, cfg, opts?: { allowCloud? }): Promise<SpecArtifact>` —
+  authors/links a versioned spec via `spec-store.authorSpec(prompt, cfg,
+  { project, allowCloud, quietIfNoProvider: true })` (local-first,
+  idempotent). A reachable local model drafts the spec (cloud only with
+  `opts.allowCloud`); with no usable provider it writes a template seeded with
+  the milestone text and logs nothing. Caller persists `milestone.specId = artifact.id`. NEVER runs a
+  swarm or touches a user working tree.
 
 ### `advance.ts` — the sandboxed, proposal-only, single-milestone run (**SAFETY-CRITICAL**)
 - `nextActionableMilestone(goal): Milestone | null` — pure **READ seam** the
@@ -79,7 +82,7 @@ spec, touches a user repo, or emits an outward action.
 | `ashlr goals show <id> [--json]` | Show goal + milestones. | **read-only** |
 | `ashlr goals plan <id> [--allow-cloud] [--max <n>]` | Decompose + author specs. Deterministic by default; `--allow-cloud` prints a warning. Bounded by `--max`. No swarm runs. | mutating (local plan/specs) |
 | `ashlr goals advance <id>` | Run the NEXT milestone via the sandboxed, proposal-only swarm path. | **sandboxed proposal-only** |
-| `ashlr goals status [--json]` | Tracking dashboard via `progressOf`. | **read-only** |
+| `ashlr goals status [id] [--json]` | Tracking dashboard via `progressOf`; with an id, that one goal. | **read-only** |
 | `ashlr goals pause/resume/skip <id> [milestone]` | Steer the plan. | mutating (local record only) |
 
 `--allow-cloud` is **off by default**. `--json` is supported on read paths.

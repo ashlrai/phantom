@@ -437,7 +437,7 @@ export async function cmdPulse(args: string[]): Promise<number> {
 
   // M91: dispatch `test` subcommand (also reachable via `phm pulse-test`)
   if (args[0] === 'test') {
-    return cmdPulseTest();
+    return cmdPulseTest(args.slice(1));
   }
 
   // Help shortcircuit
@@ -747,7 +747,18 @@ function printExportHelp(): void {
  *
  * Exit codes: 0=ok, 1=error, 2=unconfigured.
  */
-export async function cmdPulseTest(): Promise<number> {
+export async function cmdPulseTest(args: string[] = []): Promise<number> {
+  // --help used to send the probe span; usage now prints without config or
+  // network IO, and stray arguments are refused before the probe.
+  const usage = 'Usage: phm pulse-test   (or: phm pulse test)  POST one probe span to cfg.pulse.endpoint; exit 0 ok, 1 error, 2 unconfigured.';
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    console.log(usage);
+    return 0;
+  }
+  if (args.length > 0) {
+    process.stderr.write(`${C.red}error:${C.reset} unknown argument: ${args[0]}\n${usage}\n`);
+    return 2;
+  }
   let cfg: AshlrConfig;
   try {
     cfg = await loadConfig();
@@ -785,12 +796,56 @@ import { spawnSync } from 'node:child_process';
 const CONNECT_PHANTOM_PAT_KEY = 'ASHLR_PULSE_TOKEN';
 const PHANTOM_BIN = 'phantom';
 const DEFAULT_PULSE_ENDPOINT = 'https://pulse.ashlr.ai/api/otlp/v1/traces';
+/** Upper bound for a PAT read from a pipe. */
+const MAX_TOKEN_STDIN_BYTES = 64 * 1024;
+
+/** Terminal and pipe access for reading the PAT; replaceable in tests. */
+export interface PulseTokenIo {
+  stdinIsTty: () => boolean;
+  readHidden: (prompt: string) => Promise<string>;
+  readAllStdin: () => Promise<string>;
+}
+
+const defaultTokenIo: PulseTokenIo = {
+  stdinIsTty: () => process.stdin.isTTY === true,
+  readHidden: async (prompt) => {
+    const { readHiddenLine } = await import('./devin.js');
+    return readHiddenLine(prompt, 'the Pulse PAT');
+  },
+  readAllStdin: () => new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    process.stdin.on('data', (chunk: Buffer | string) => {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      size += buf.length;
+      if (size > MAX_TOKEN_STDIN_BYTES) {
+        process.stdin.pause();
+        reject(new Error(`stdin is larger than ${MAX_TOKEN_STDIN_BYTES} bytes`));
+        return;
+      }
+      chunks.push(buf);
+    });
+    process.stdin.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    process.stdin.once('error', reject);
+  }),
+};
+
+let tokenIo: PulseTokenIo = defaultTokenIo;
+
+/** Test hook: replace terminal and pipe access. Pass null to restore. */
+export function setPulseTokenIoForTest(io: Partial<PulseTokenIo> | null): void {
+  tokenIo = io ? { ...defaultTokenIo, ...io } : defaultTokenIo;
+}
+
+const ARGV_TOKEN_WARNING =
+  'warning: --token <pat> puts the PAT on the command line, where the process list (ps) and shell history can show it. ' +
+  'Safer: run `phm pulse connect --token` with no value for a hidden prompt, or pipe it with `phm pulse connect --token-stdin`.';
 
 /**
  * `phm pulse connect` — configure and test the hub→pulse OTLP bridge.
  *
  * Routes:
- *   connect [<endpoint>] [--token <pat>]   — set endpoint and/or store PAT
+ *   connect [<endpoint>] [--token [<pat>] | --token-stdin]   set endpoint and/or store PAT
  *   connect --status                        — report config state
  *   connect --test                          — send one test span
  *   connect --disconnect                    — clear endpoint
@@ -822,17 +877,28 @@ async function connectSet(args: string[]): Promise<number> {
 
   let endpoint: string | undefined;
   let token: string | undefined;
+  let tokenSource: 'argv' | 'prompt' | 'stdin' | undefined;
 
   let i = 0;
   while (i < args.length) {
     const a = args[i]!;
-    if (a === '--token') {
-      const val = args[++i];
-      if (!val) {
-        process.stderr.write(`${C.red}error:${C.reset} --token requires a value\n`);
+    if (a === '--token' || a === '--token-stdin') {
+      if (tokenSource) {
+        process.stderr.write(`${C.red}error:${C.reset} give the PAT once: use one of --token, --token <pat>, --token-stdin\n`);
         return 2;
       }
-      token = val;
+      if (a === '--token-stdin') {
+        tokenSource = 'stdin';
+      } else {
+        const next = args[i + 1];
+        if (next !== undefined && !next.startsWith('--')) {
+          token = next;
+          tokenSource = 'argv';
+          i++;
+        } else {
+          tokenSource = 'prompt';
+        }
+      }
     } else if (!a.startsWith('--')) {
       endpoint = a;
     } else {
@@ -842,10 +908,53 @@ async function connectSet(args: string[]): Promise<number> {
     i++;
   }
 
-  if (!endpoint && !token) {
+  if (!endpoint && !tokenSource) {
     process.stderr.write(`${C.red}error:${C.reset} provide an endpoint or --token\n`);
     printConnectHelp();
     return 2;
+  }
+
+  if (tokenSource === 'argv') {
+    process.stderr.write(`${C.yellow}${ARGV_TOKEN_WARNING}${C.reset}\n`);
+  } else if (tokenSource === 'prompt') {
+    if (!tokenIo.stdinIsTty()) {
+      process.stderr.write(
+        `${C.red}error:${C.reset} --token needs a value, and stdin is not a terminal, so there is no hidden prompt. ` +
+        `Pipe the PAT instead: phm pulse connect --token-stdin\n`,
+      );
+      return 2;
+    }
+    try {
+      token = (await tokenIo.readHidden('Pulse PAT (hidden): ')).trim();
+    } catch (err) {
+      process.stderr.write(`${C.red}error:${C.reset} could not read the PAT: ${(err as Error).message}\n`);
+      return 2;
+    }
+    if (!token) {
+      process.stderr.write(`${C.red}error:${C.reset} no PAT entered\n`);
+      return 2;
+    }
+  } else if (tokenSource === 'stdin') {
+    if (tokenIo.stdinIsTty()) {
+      process.stderr.write(
+        `${C.red}error:${C.reset} --token-stdin reads a pipe, but stdin is a terminal. ` +
+        `Run phm pulse connect --token with no value for a hidden prompt.\n`,
+      );
+      return 2;
+    }
+    let raw: string;
+    try {
+      raw = await tokenIo.readAllStdin();
+    } catch (err) {
+      process.stderr.write(`${C.red}error:${C.reset} could not read the PAT from stdin: ${(err as Error).message}\n`);
+      return 2;
+    }
+    const value = raw.replace(/\r?\n$/, '');
+    if (!value || /[\r\n]/.test(value)) {
+      process.stderr.write(`${C.red}error:${C.reset} --token-stdin expects exactly one non-empty line\n`);
+      return 2;
+    }
+    token = value;
   }
 
   const cfg = loadConfig();
@@ -877,7 +986,7 @@ async function connectSet(args: string[]): Promise<number> {
     console.log(`  ${C.dim}Tip: set an endpoint with:  phm pulse connect ${DEFAULT_PULSE_ENDPOINT}${C.reset}`);
   }
   if (!token) {
-    console.log(`  ${C.dim}Tip: store your PAT with:   phm pulse connect --token <pat>${C.reset}`);
+    console.log(`  ${C.dim}Tip: store your PAT with:   phm pulse connect --token   (hidden prompt)${C.reset}`);
   }
   console.log(`  Run ${C.cyan}phm pulse connect --status${C.reset} to verify configuration.`);
   console.log(`  Run ${C.cyan}phm pulse connect --test${C.reset}   to send a test span.`);
@@ -885,7 +994,9 @@ async function connectSet(args: string[]): Promise<number> {
 }
 
 /**
- * Store the PAT via `phantom add` — value flows through stdin/arg to phantom,
+ * Store the PAT via `phantom add <KEY> --stdin`. The value goes to phantom on
+ * stdin only, never as a command-line argument (argv is visible to process
+ * inspection, and phantom-secrets refuses positional secret values), and
  * never through any log or printed string here. Returns true on success.
  *
  * NEVER prints, logs, stores, or returns the token value itself.
@@ -901,12 +1012,13 @@ function storePatViaPhantom(cfg: import('../core/types.js').AshlrConfig, _token:
   });
   if (probe.error || probe.status !== 0) return false;
 
-  // `phantom add KEY VALUE` — token is arg, never logged here
-  const result = spawnSync(PHANTOM_BIN, ['add', CONNECT_PHANTOM_PAT_KEY, _token], {
+  // `phantom add KEY --stdin`: the token is piped on stdin, never in argv.
+  const result = spawnSync(PHANTOM_BIN, ['add', CONNECT_PHANTOM_PAT_KEY, '--stdin'], {
     encoding: 'utf8',
     timeout: 5_000,
     env: { ...process.env, PHANTOM_NO_UPDATE_CHECK: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    input: _token,
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   return !result.error && result.status === 0;
@@ -944,7 +1056,7 @@ async function connectStatus(): Promise<number> {
     console.log(`  ${C.dim}Run: phm pulse connect ${DEFAULT_PULSE_ENDPOINT}${C.reset}`);
   }
   if (!hasPat) {
-    console.log(`  ${C.dim}Run: phm pulse connect --token <your-pulse-pat>${C.reset}`);
+    console.log(`  ${C.dim}Run: phm pulse connect --token   (hidden prompt)${C.reset}`);
   }
   if (endpoint && hasPat) {
     console.log(`  ${C.green}Ready.${C.reset} Run ${C.cyan}phm pulse connect --test${C.reset} to verify end-to-end.`);
@@ -1010,7 +1122,7 @@ async function connectTest(): Promise<number> {
   } else {
     console.log(`${C.red}fail${C.reset}   sink=${result.sink}  detail=${result.detail}`);
     if (result.detail === 'PAT unavailable') {
-      console.log(`  ${C.dim}Store your PAT: phm pulse connect --token <pat>${C.reset}`);
+      console.log(`  ${C.dim}Store your PAT: phm pulse connect --token   (hidden prompt)${C.reset}`);
     }
     return 1;
   }
@@ -1054,7 +1166,9 @@ function printConnectHelp(): void {
   console.log(`  ${C.bold}Usage:${C.reset}`);
   console.log('');
   console.log(`    phm pulse connect <endpoint>          Set OTLP endpoint`);
-  console.log(`    phm pulse connect --token <pat>       Store PAT in vault; sending needs env`);
+  console.log(`    phm pulse connect --token             Store PAT in vault (hidden prompt); sending needs env`);
+  console.log(`    phm pulse connect --token-stdin       Store PAT read from a pipe (one line)`);
+  console.log(`    phm pulse connect --token <pat>       Still works, but the PAT is visible in ps and shell history`);
   console.log(`    phm pulse connect --status            Show config + active sink`);
   console.log(`    phm pulse connect --test              Send one test span`);
   console.log(`    phm pulse connect --disconnect        Clear endpoint`);
@@ -1071,7 +1185,8 @@ function printConnectHelp(): void {
   console.log('');
   console.log(`    ${C.cyan}phm pulse connect${C.reset}                                        ${C.dim}# quick-start with default endpoint${C.reset}`);
   console.log(`    ${C.cyan}phm pulse connect https://pulse.ashlr.ai/api/otlp/v1/traces${C.reset}  ${C.dim}# explicit endpoint${C.reset}`);
-  console.log(`    ${C.cyan}phm pulse connect --token <pat>${C.reset}                          ${C.dim}# store PAT only${C.reset}`);
+  console.log(`    ${C.cyan}phm pulse connect --token${C.reset}                                ${C.dim}# store PAT only (hidden prompt)${C.reset}`);
+  console.log(`    ${C.cyan}printf %s "$PAT" | phm pulse connect --token-stdin${C.reset}        ${C.dim}# store PAT from a pipe${C.reset}`);
   console.log(`    ${C.cyan}phm pulse connect --status${C.reset}                               ${C.dim}# verify config${C.reset}`);
   console.log(`    ${C.cyan}phm pulse connect --test${C.reset}                                 ${C.dim}# live end-to-end test${C.reset}`);
   console.log(`    ${C.cyan}phm pulse connect --disconnect${C.reset}                           ${C.dim}# revert to local file sink${C.reset}`);

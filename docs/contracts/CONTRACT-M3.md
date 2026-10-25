@@ -81,6 +81,14 @@ export async function startGateway(registry: McpRegistry): Promise<void>;
  * error set).
  */
 export async function probeServer(spec: McpServerSpec, timeoutMs?: number): Promise<McpServerHealth>;
+
+/**
+ * Error text for a tools/call the gateway cannot route. When the requested
+ * name equals a routed tool's original (un-namespaced) name, or a routed name
+ * up to case and `-`/`_`, it names up to three `<server>__<tool>` candidates.
+ * Pure; never calls anything on a guess.
+ */
+export function unknownToolMessage(requested: string, routed: Iterable<{ name: string; original: string }>): string;
 ```
 
 ### `src/core/tools-registry.ts`

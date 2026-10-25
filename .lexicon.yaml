@@ -1,6 +1,6 @@
 # Lexicon: Phantom's project vocabulary for voice-to-agents.
 # canonical: the spelling agents and docs use; aliases: what speech-to-text writes.
-# Merged into a user's lexicon only after `lexicon trust` in this repo.
+# Merged into a user's lexicon only after `lexicon trust` (no argument) in this repo.
 version: 1
 terms:
   - canonical: Ashlr.AI
@@ -20,7 +20,8 @@ terms:
     notes: Separate repo ashlrai/phantom-secrets; CLI `phantom`, MCP `phantom-mcp`. Never put raw keys in prompts.
   - canonical: Locus
     category: product
-    aliases: [Locas, Lowkus, Locust]
+    aliases: [Locas, Lowkus]
+    # never is case-insensitive, so a Locust alias could not fire; the insect stays.
     never: [locust]
     notes: Identity pins and authority for parallel agents (ashlrai/locus).
   - canonical: Lexicon
@@ -33,10 +34,6 @@ terms:
   - canonical: ashlr-md
     category: product
     aliases: [Ashlr MD, ashler md, Ashlar MD]
-  - canonical: Verse
-    category: product
-    aliases: [Verse app]
-    notes: Phantom's chat and workbench UI.
   - canonical: Jev
     category: product
     aliases: [Jevv, Gev]

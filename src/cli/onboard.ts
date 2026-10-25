@@ -232,9 +232,42 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
   }
   const swept = [...sweptIds];
   const incomplete = incompleteIds.size + malformedHomes + unsafeEntries + sweepErrors;
+  // An idempotent unenroll of a path that was never enrolled reports ok with
+  // changed:false. Say so instead of claiming an unenrollment.
+  const wasEnrolled = unenrollResults.some(({ result }) => result.ok && result.changed !== false);
 
   // 3. Opt-in: pause ALL autonomy in the same step (H6-audited kill:on).
   const killResult = opts.kill ? setKill(true) : null;
+
+  // Nothing was enrolled here, nothing was left to sweep and no stop was
+  // asked for: the rollback did nothing, so refuse rather than report success
+  // (a mistyped path would otherwise look undone).
+  if (
+    !wasEnrolled && failedUnenrollments.length === 0 &&
+    swept.length === 0 && incomplete === 0 && killResult === null
+  ) {
+    const message = `${abs} was not enrolled; nothing to roll back`;
+    if (opts.json) {
+      writeJson({
+        ok: false,
+        mode: 'rollback',
+        repo: abs,
+        reason: 'not-enrolled',
+        error: message,
+        wasEnrolled: false,
+        unenrolled: false,
+        unenrollFailures: [],
+        swept: [],
+        incompleteCleanups: 0,
+        kill: null,
+        next: ['ashlr enroll list'],
+      });
+      return 1;
+    }
+    console.error(`${red('error:')} ${message}`);
+    console.error(dim('  See enrolled repos with: ashlr enroll list'));
+    return 1;
+  }
   const code = incomplete > 0 || failedUnenrollments.length > 0 ||
     (killResult !== null && (!killResult.ok || !killResult.quiesced)) ? 1 : 0;
 
@@ -243,7 +276,8 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
       ok: code === 0,
       mode: 'rollback',
       repo: abs,
-      unenrolled: failedUnenrollments.length === 0,
+      wasEnrolled,
+      unenrolled: wasEnrolled && failedUnenrollments.length === 0,
       unenrollFailures: failedUnenrollments.map(({ identity, result }) => ({
         identity,
         reason: result.reason,
@@ -261,8 +295,10 @@ export async function rollback(repo: string, opts: { kill: boolean; json?: boole
   console.log('');
   console.log(bold('  ashlr onboard --rollback'));
   console.log('');
-  if (failedUnenrollments.length === 0) {
+  if (failedUnenrollments.length === 0 && wasEnrolled) {
     console.log(`  ${green('✓')} unenrolled ${dim(abs)}`);
+  } else if (failedUnenrollments.length === 0) {
+    console.log(`  ${yellow('!')} ${dim(abs)} was not enrolled; nothing to unenroll`);
   } else {
     const failures = failedUnenrollments
       .map(({ identity, result }) => `${identity}: ${result.reason}`)
@@ -353,11 +389,19 @@ function printSteps(repoHint: string): void {
   console.log('');
   console.log(`  ${dim('Run these in order. Each step is the explicit human gate — nothing runs on its own.')}`);
   console.log('');
-  console.log(`  ${cyan('1.')} ${bold('Preflight')}   ${dim('ashlr preflight')}                      ${dim('— read-only readiness check')}`);
-  console.log(`  ${cyan('2.')} ${bold('Enroll ONE')}  ${dim(`ashlr enroll add ${repoHint}`)}       ${dim('— the explicit enrollment gate')}`);
-  console.log(`  ${cyan('3.')} ${bold('Dry-run')}     ${dim('ashlr daemon start --dry-run --once')}    ${dim('— preview the plan; NO proposal, $0')}`);
-  console.log(`  ${cyan('4.')} ${bold('Review')}      ${dim('ashlr inbox')}                          ${dim('— review + approve; NEVER auto-applied')}`);
-  console.log(`  ${cyan('5.')} ${bold('Rollback')}    ${dim(`ashlr onboard --rollback ${repoHint}`)}  ${dim('— one-command undo')}`);
+  const rows: Array<[string, string, string]> = [
+    ['Preflight', 'ashlr preflight', 'read-only readiness check'],
+    ['Enroll ONE', `ashlr enroll add ${repoHint}`, 'the explicit enrollment gate'],
+    ['Dry-run', 'ashlr daemon start --dry-run --once', 'preview the plan; NO proposal, $0'],
+    ['Review', 'ashlr inbox', 'review + approve; NEVER auto-applied'],
+    ['Rollback', `ashlr onboard --rollback ${repoHint}`, 'one-command undo'],
+  ];
+  // Pad before coloring so the columns line up whatever the repo path length.
+  const nameWidth = Math.max(...rows.map(([name]) => name.length));
+  const cmdWidth = Math.max(...rows.map(([, cmd]) => cmd.length));
+  rows.forEach(([name, cmd, note], i) => {
+    console.log(`  ${cyan(`${i + 1}.`)} ${bold(name.padEnd(nameWidth))}  ${dim(cmd.padEnd(cmdWidth))}  ${dim(`— ${note}`)}`);
+  });
   console.log('');
   console.log(`  ${dim('Re-run interactively (a TTY, no --yes) to be guided through steps 1–3 automatically.')}`);
   console.log('');
@@ -405,7 +449,7 @@ export function buildStackStep(repo?: string): string[] {
       const svcs = status.services ?? [];
       if (svcs.length === 0) {
         lines.push(`  ${dim('no services wired yet')}`);
-        lines.push(`    ${cyan('→')} ${dim('run')} ${cyan('stack recommend')} ${dim('to see what fits this repo')}`);
+        lines.push(`    ${cyan('→')} ${dim('run')} ${cyan('stack recommend "<what you\'re building>"')} ${dim('to see what fits')}`);
         lines.push(`    ${cyan('→')} ${dim('or')} ${cyan('stack add <service>')} ${dim('to provision one directly')}`);
       } else {
         lines.push(`  ${green(String(svcs.length))} service(s) wired:`);

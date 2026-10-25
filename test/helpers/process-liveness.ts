@@ -13,6 +13,7 @@
  * next scheduled. So tests poll to a bounded deadline instead of sleeping a
  * fixed interval and checking once.
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -21,6 +22,7 @@ import { setTimeout as delay } from 'node:timers/promises';
  * no /proc entry, or `undefined` when /proc is unavailable or unreadable.
  */
 function procState(pid: number): string | null | undefined {
+  if (process.platform === 'darwin') return psState(pid);
   if (process.platform !== 'linux') return undefined;
   let stat: string;
   try {
@@ -31,6 +33,19 @@ function procState(pid: number): string | null | undefined {
   // "pid (comm) S ppid ...": comm may itself contain ") ", so use the last one.
   const close = stat.lastIndexOf(') ');
   return close < 0 ? undefined : stat.charAt(close + 2) || undefined;
+}
+
+/**
+ * macOS has no /proc: read the state letter from `ps -o stat=`. `null` when ps
+ * reports no such pid, or `undefined` when ps cannot be run or its output is
+ * unexpected.
+ */
+function psState(pid: number): string | null | undefined {
+  const r = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  if (r.error || typeof r.stdout !== 'string') return undefined;
+  const state = r.stdout.trim();
+  if (state === '') return r.status === 1 ? null : undefined;
+  return /^[A-Z]/.test(state) ? state.charAt(0) : undefined;
 }
 
 /**

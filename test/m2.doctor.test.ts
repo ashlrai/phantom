@@ -422,7 +422,7 @@ describe('runDoctor — report structure', () => {
     expect(report.checks.find((check) => check.id === 'ashlr-tools-installed'))
       .toMatchObject({ label: 'Phantom tools installed', status: 'warn', detail: 'No ecosystem tools installed; 0/0 installed' });
     expect(report.checks.find((check) => check.id === 'identity'))
-      .toMatchObject({ status: 'warn', detail: 'Not logged in to Phantom cloud — identity unavailable' });
+      .toMatchObject({ status: 'pass', detail: 'Not signed in to Phantom cloud (optional). Sign in for cloud identity: phantom login' });
   }, 15_000);
 
   it('returns a checks array with at least one check', async () => {
@@ -852,6 +852,27 @@ describe('runDoctor — compatible CLI installation guidance', () => {
     for (const c of [plugin, servers]) expect(c?.fix ?? '').not.toContain('ashlr init');
   });
 
+  it('gives one MCP warning, not two, when no MCP server is registered anywhere', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const plugin = report.checks.find(c => c.id === 'mcp-plugin');
+    expect(plugin?.status).toBe('warn');
+    expect(plugin?.fix).toContain('phm mcp install claude');
+    expect(plugin?.fix).toContain('phm mcp ecosystem --write');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')).toBeUndefined();
+  });
+
+  it('still reports discovered servers beside a missing Phantom gateway', async () => {
+    writeFileSync(join(tmpHome, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'other-mcp' } } }));
+    const report = await runDoctor(makeConfig(tmpHome));
+    expect(report.checks.find(c => c.id === 'mcp-plugin')?.status).toBe('warn');
+    expect(report.checks.find(c => c.id === 'mcp-servers-discovered')?.status).toBe('pass');
+  });
+
+  it('points a missing companion set at phm companions', async () => {
+    const tools = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'ashlr-tools-installed');
+    if (tools?.status === 'warn') expect(tools.fix).toBe('See where to install each companion: phm companions');
+  });
+
   it('recognizes the canonical phm command and prefers it over ashlr', async () => {
     installAshlrShim(tmpHome, 'phm');
     isolateCommandPath();
@@ -964,5 +985,33 @@ describe('runDoctor — never throws', () => {
 
     const cfg = makeConfig(tmpHome);
     await expect(runDoctor(cfg)).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fresh-install states that are normal, not problems
+// ---------------------------------------------------------------------------
+
+describe('runDoctor — fresh-install optional states', () => {
+  it('passes the identity check when not signed in to Phantom cloud, and says how to sign in', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const identity = report.checks.find(c => c.id === 'identity');
+    expect(identity?.status).toBe('pass');
+    expect(identity?.detail).toMatch(/optional/);
+    expect(identity?.detail).toContain('phantom login');
+  });
+
+  it('passes an empty genome once ~/.ashlr/genome exists', async () => {
+    mkdirSync(join(tmpHome, '.ashlr', 'genome'), { recursive: true });
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('pass');
+    expect(genome?.detail).toContain('fills as you work');
+  });
+
+  it('still warns when ~/.ashlr/genome is missing, so doctor --fix can create it', async () => {
+    const report = await runDoctor(makeConfig(tmpHome));
+    const genome = report.checks.find(c => c.id === 'genome-memory');
+    expect(genome?.status).toBe('warn');
   });
 });
