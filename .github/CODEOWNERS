@@ -789,6 +789,7 @@
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
+/test/receipt-later-hooks.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23

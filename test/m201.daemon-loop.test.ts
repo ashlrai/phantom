@@ -11764,6 +11764,30 @@ describe('Group R: run receipt written by a real dispatch tick', () => {
       expect(text).not.toContain(planted);
       expect(text).not.toContain(planted.slice(3));
       expect(text).not.toContain(remoteToken);
+
+      // 4. R6: after the run closes, CI settles and the PR merges; the timeline shows both and verify still passes.
+      const { receiptLaterFromLedgerEntry } = await import('../src/core/receipt/receipt-later-hooks.js');
+      const mapRun = { runIdForProposal: (p: string) => (p === 'prop-e2e' ? 'run-receipt-e2e' : null) };
+      const headSha = randomBytes(20).toString('hex');
+      const mergeSha = randomBytes(20).toString('hex');
+      expect(receiptLaterFromLedgerEntry({ kind: 'gate:result', data: { gate: 'G7', proposalId: 'prop-e2e', headSha, verdict: 'pass', reason: planted, at: '2026-10-25T13:00:00.000Z' } }, mapRun))
+        .toMatchObject({ kind: 'ci', result: { ok: true } });
+      expect(receiptLaterFromLedgerEntry({ kind: 'merge:landed', data: { kind: 'merge', proposalId: 'prop-e2e', mergeSha, prNumber: 5, landedAt: '2026-10-25T13:05:00.000Z', id: planted } }, mapRun))
+        .toMatchObject({ kind: 'merge', result: { ok: true } });
+      const laterWrites: string[] = [];
+      const spy2 = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { laterWrites.push(String(chunk)); return true; });
+      let tlCode: number; let vCode: number;
+      try {
+        tlCode = await cmdFleetReceipt(['timeline', 'run-receipt-e2e']);
+        vCode = await cmdFleetReceipt(['verify', 'run-receipt-e2e', '--json']);
+      } finally { spy2.mockRestore(); }
+      expect(tlCode).toBe(0);
+      expect(laterWrites[0]).toContain('later    2 signed entries after close');
+      expect(laterWrites[0]).toContain(`success · head ${headSha.slice(0, 12)}`);
+      expect(laterWrites[0]).toContain(`squash · merge ${mergeSha.slice(0, 12)} · PR #5`);
+      expect(vCode).toBe(0);
+      expect(JSON.parse(laterWrites[1]!)).toMatchObject({ verified: true, later: 2 });
+      for (const w of laterWrites) for (const v of [planted, remoteToken, repo.dir]) expect(w).not.toContain(v);
       for (const w of writes) for (const v of [planted, remoteToken, repo.dir]) expect(w).not.toContain(v);
     } finally {
       if (prevFlag === undefined) delete process.env.ASHLR_RUN_RECEIPTS; else process.env.ASHLR_RUN_RECEIPTS = prevFlag;
