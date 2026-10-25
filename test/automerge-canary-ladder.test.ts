@@ -16,9 +16,9 @@ function sink(ok = true) {
 }
 
 describe('canary enforce ladder', () => {
-  it('defaults to shadow and the enforce gates are pinned false in code', () => {
+  it('defaults to shadow; cancellation is proven but enforce support stays pinned false in code', () => {
     expect(CANARY_LADDER_DEFAULT_STATE).toBe('shadow');
-    expect(enforceGates()).toEqual({ hostCancellationProven: false, enforceSupported: false });
+    expect(enforceGates()).toEqual({ hostCancellationProven: true, enforceSupported: false });
   });
 
   it('shadow -> armed is the only forward step available today', () => {
@@ -27,10 +27,10 @@ describe('canary enforce ladder', () => {
     expect(s.records).toEqual([{ schema: 1, kind: 'automerge-canary-ladder', at: '2026-10-25T07:00:00.000Z', from: 'shadow', event: 'arm', to: 'armed', result: 'applied', reason: null }]);
   });
 
-  it('armed -> enforce is refused because host cancellation is unproven', () => {
+  it('armed -> enforce is refused because enforce support is pinned off (cancellation is proven)', () => {
     const s = sink();
-    expect(transitionCanaryLadder('armed', 'enforce', s)).toEqual({ ok: false, state: 'armed', reason: 'host-cancellation-unproven' });
-    expect(s.records[0]).toMatchObject({ from: 'armed', event: 'enforce', to: null, result: 'refused', reason: 'host-cancellation-unproven' });
+    expect(transitionCanaryLadder('armed', 'enforce', s)).toEqual({ ok: false, state: 'armed', reason: 'enforce-unsupported' });
+    expect(s.records[0]).toMatchObject({ from: 'armed', event: 'enforce', to: null, result: 'refused', reason: 'enforce-unsupported' });
   });
 
   it('enforce is unreachable from every state with every event sequence', () => {
@@ -61,7 +61,7 @@ describe('canary enforce ladder', () => {
         expect(r.ok).toBe(false);
         expect(r.state).toBe(st);
         expect(s.records[0]!.result).toBe('refused');
-        expect(['illegal-transition', 'host-cancellation-unproven']).toContain((r as { reason: string }).reason);
+        expect(['illegal-transition', 'host-cancellation-unproven', 'enforce-unsupported']).toContain((r as { reason: string }).reason);
       }
     }
   });
@@ -99,9 +99,11 @@ describe('canary enforce ladder', () => {
     const src = readFileSync(new URL('../src/core/fleet/automerge-canary-ladder.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/process\.env|loadConfig|cfg\./);
     const cancel = readFileSync(new URL('../src/core/fleet/automerge-canary-cancel.ts', import.meta.url), 'utf8');
-    expect(cancel).toContain('export const HOST_CANCELLATION_PROVEN = false as const;');
-    process.env['ASHLR_HOST_CANCELLATION_PROVEN'] = '1';
-    try { expect(enforceGates().hostCancellationProven).toBe(false); } finally { delete process.env['ASHLR_HOST_CANCELLATION_PROVEN']; }
+    expect(cancel).toContain('export const HOST_CANCELLATION_PROVEN = true as const;');
+    const store = readFileSync(new URL('../src/core/fleet/automerge-canary-store.ts', import.meta.url), 'utf8');
+    expect(store).toContain('export const AUTOMERGE_CANARY_ENFORCE_SUPPORTED = false as const;');
+    process.env['ASHLR_AUTOMERGE_CANARY_ENFORCE_SUPPORTED'] = '1';
+    try { expect(enforceGates().enforceSupported).toBe(false); } finally { delete process.env['ASHLR_AUTOMERGE_CANARY_ENFORCE_SUPPORTED']; }
   });
 });
 
