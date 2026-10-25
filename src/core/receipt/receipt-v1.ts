@@ -32,7 +32,8 @@ export const EXECUTION_OUTCOMES = [
 export interface ReceiptV1Secrets {
   initialized: boolean | null;
   status_schema: number | null;
-  wrap: { wrapped: boolean; reason: (typeof UNWRAPPED_REASONS)[number] | null };
+  /** Null when the spawn's custody record is not known to the writer. */
+  wrap: { wrapped: boolean; reason: (typeof UNWRAPPED_REASONS)[number] | null } | null;
   preflight: { verdict: (typeof PREFLIGHT_VERDICTS)[number] | null; exit: number | null };
   injected_names_count: number | null;
   injected_names_digest: string | null;
@@ -44,7 +45,8 @@ export interface ReceiptV1Body {
   run_id: string;
   created_at: string;
   repo: string;
-  base_oid: string;
+  /** Null when the writer does not know the base revision. */
+  base_oid: string | null;
   head_oid: string | null;
   identity: { engine: string; seat: string | null; locus_pin_id: string | null; locus_observed: boolean };
   secrets: ReceiptV1Secrets;
@@ -101,7 +103,7 @@ const arrayOf = (c: Check, max: number): Check => (v) => Array.isArray(v) && v.l
 const SECRETS = record({
   initialized: nul(bool),
   status_schema: nul(int),
-  wrap: record({ wrapped: bool, reason: nul(oneOf(UNWRAPPED_REASONS)) }),
+  wrap: nul(record({ wrapped: bool, reason: nul(oneOf(UNWRAPPED_REASONS)) })),
   preflight: record({ verdict: nul(oneOf(PREFLIGHT_VERDICTS)), exit: nul(anyInt) }),
   injected_names_count: nul(int),
   injected_names_digest: nul(hex64),
@@ -113,14 +115,14 @@ const BODY_FIELDS: Record<string, Check> = {
   run_id: (v) => typeof v === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v),
   created_at: rfc3339,
   repo: (v) => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(v),
-  base_oid: oid,
+  base_oid: nul(oid),
   head_oid: nul(oid),
   identity: record({ engine: str(64), seat: nul(str(128)), locus_pin_id: nul(str(128)), locus_observed: bool }),
   secrets: (v) => {
     if (!SECRETS(v)) return false;
     const s = v as unknown as ReceiptV1Secrets;
     // wrapped:true carries no reason; wrapped:false must name one.
-    if (s.wrap.wrapped !== (s.wrap.reason === null)) return false;
+    if (s.wrap !== null && s.wrap.wrapped !== (s.wrap.reason === null)) return false;
     // Count and digest are both known or both unknown.
     return (s.injected_names_count === null) === (s.injected_names_digest === null);
   },

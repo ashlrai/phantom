@@ -271,6 +271,7 @@
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
+/test/custody-ledger.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -786,6 +787,7 @@
 /test/projection-authority-architecture-contract.test.ts @masonwyatt23
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
+/test/receipt-key.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
