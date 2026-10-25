@@ -28,9 +28,16 @@ export const HOST_CANCELLATION_MAX_READS = 3;
  * Whether host cancellation is proven for enforce. A code constant, never
  * config or env: it may only change in its own reviewed PR after the proof
  * tests (test/automerge-canary-host-cancellation.test.ts) pass against the
- * wired enforce path. Pinned false.
+ * wired enforce path.
+ *
+ * Set true on the evidence of the unit proof tests plus one live run on
+ * ashlrai/phantom (#906, 2026-10-25): auto-merge enabled while the required
+ * Merge Gate was unreported, this function returned cancelled-confirmed after
+ * one read, the API read back autoMergeRequest null, and the PR closed
+ * unmerged. Enforce stays unreachable while AUTOMERGE_CANARY_ENFORCE_SUPPORTED
+ * is false.
  */
-export const HOST_CANCELLATION_PROVEN = false as const;
+export const HOST_CANCELLATION_PROVEN = true as const;
 
 export function cancelHostAutoMerge(
   target: { repo: string; number: number; expectedHeadOid: string },
