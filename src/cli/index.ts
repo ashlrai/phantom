@@ -2176,6 +2176,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'receipt': {
+        // `phm receipt ...` is the same as `phm fleet receipt ...`.
+        const { cmdFleetReceipt } = await import('./receipt.js');
+        process.exitCode = await cmdFleetReceipt(rest);
+        break;
+      }
+
       case 'recovery': {
         const cmdRecovery = await loadRecoveryCmd();
         process.exitCode = await cmdRecovery(rest);

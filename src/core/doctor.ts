@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import type { AshlrConfig, DoctorCheck, DoctorCheckStatus, DoctorReport, McpRegistry, ToolsRegistry } from './types.js';
 import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
+import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { getProviderRegistry } from './providers.js';
 import {
@@ -543,6 +544,24 @@ export function checkPhantomPreflight(
     return check('phantom-preflight', title, 'warn', `${r.verdict} (exit ${r.exit}, ${scope})${ids}`, 'phantom agent doctor');
   } catch (err) {
     return check('phantom-preflight', title, 'warn', `Could not run the preflight: ${err instanceof Error ? err.name : 'error'}`);
+  }
+}
+
+/**
+ * Newest receipt.v1 verifies (value-free). Pass when there are no receipts;
+ * warn when the newest one fails verification, naming only the run id and reason.
+ */
+export function checkReceiptVerify(
+  opts: { status?: () => { receipts: number; latest: { runId: string; verified: boolean; reason: string | null } | null } } = {},
+): DoctorCheck {
+  const title = 'Run receipts';
+  try {
+    const s = (opts.status ?? receiptStatus)();
+    if (!s.latest) return check('receipt-verify', title, 'pass', 'no receipts yet');
+    if (s.latest.verified) return check('receipt-verify', title, 'pass', `newest of ${s.receipts} verifies`);
+    return check('receipt-verify', title, 'warn', `newest receipt ${s.latest.runId} does NOT verify (${s.latest.reason ?? 'unknown'})`, `phm receipt timeline ${s.latest.runId}`);
+  } catch (err) {
+    return check('receipt-verify', title, 'warn', `Could not read receipts: ${err instanceof Error ? err.name : 'error'}`);
   }
 }
 
@@ -1353,6 +1372,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkIndex());
   checks.push(checkPhantom());
   checks.push(checkPhantomPreflight());
+  checks.push(checkReceiptVerify());
   checks.push(checkLocus());
   checks.push(checkLocusFirm(cfg));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)

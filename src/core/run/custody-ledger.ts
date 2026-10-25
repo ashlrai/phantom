@@ -128,3 +128,32 @@ export function readCustodySummary(since: Date | null, text?: string): CustodySu
   }
   return out;
 }
+
+/** One value-free ledger line as read back: time, wrapped, reason (unwrapped only), engine name. */
+export interface CustodyWindowEntry { at: string; wrapped: boolean; reason: UnwrappedReason | null; engine: string }
+
+/** Records with `from <= at <= to`, oldest first (current file only). Never throws; malformed lines are counted, not returned. */
+export function readCustodyWindow(from: Date, to: Date, text?: string): { entries: CustodyWindowEntry[]; malformed: number } {
+  const out: { entries: CustodyWindowEntry[]; malformed: number } = { entries: [], malformed: 0 };
+  let body = text;
+  if (body === undefined) {
+    const r = readLedgerText();
+    if (r === null) return out;
+    if ('refused' in r) { out.malformed += 1; return out; }
+    body = r.text;
+  }
+  const lo = from.getTime();
+  const hi = to.getTime();
+  for (const raw of body.split('\n')) {
+    if (raw.trim() === '') continue;
+    let v: Record<string, unknown>;
+    try { v = JSON.parse(raw) as Record<string, unknown>; } catch { out.malformed += 1; continue; }
+    const at = typeof v?.['at'] === 'string' ? Date.parse(v['at']) : NaN;
+    if (!v || v['schema'] !== CUSTODY_LEDGER_SCHEMA || Number.isNaN(at) || typeof v['wrapped'] !== 'boolean') { out.malformed += 1; continue; }
+    if (at < lo || at > hi) continue;
+    const engine = typeof v['engine'] === 'string' && ENGINE_SHAPE.test(v['engine']) ? v['engine'] : 'unknown';
+    out.entries.push({ at: new Date(at).toISOString(), wrapped: v['wrapped'] === true, reason: v['wrapped'] === true ? null : normalizeUnwrappedReason(v['reason']), engine });
+  }
+  out.entries.sort((a, b) => a.at.localeCompare(b.at));
+  return out;
+}
