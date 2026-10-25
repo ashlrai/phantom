@@ -1,15 +1,12 @@
 name: Companion Smoke
 
 # Runs scripts/companion-workflow-smoke.mjs --published against what users
-# install from npm and GitHub releases. Every hour it reads the published
-# companion versions; the smoke runs only when that set (or the smoke script)
-# changed since the last run, so a companion release is checked within the hour
-# and quiet hours cost one lookup. A daily run and workflow_dispatch always run,
-# which also covers Cortex, whose deployments have no version to watch.
+# install from npm and GitHub releases. It runs once a day and on
+# workflow_dispatch, and records the published companion versions it checked
+# (including Cortex, whose deployments have no version to watch).
 
 on:
   schedule:
-    - cron: "23 * * * *"
     - cron: "41 6 * * *"
   workflow_dispatch:
 
@@ -56,29 +53,17 @@ jobs:
           cat companion-versions.txt
           echo "key=companion-smoke-v1-$(sha256sum companion-versions.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Look up an earlier run of this version set
-        id: seen
-        if: github.event_name == 'schedule' && github.event.schedule == '23 * * * *'
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-        with:
-          path: companion-versions.txt
-          key: ${{ steps.versions.outputs.key }}
-          lookup-only: true
 
       - name: Set up Bun (Ashlr.AI Plugin router)
-        if: steps.seen.outputs.cache-hit != 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install ripgrep (Ashlr.AI Plugin router)
-        if: steps.seen.outputs.cache-hit != 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       - name: Build Phantom (the smoke reads Phantom's own Locus parsers from dist)
-        if: steps.seen.outputs.cache-hit != 'true'
         run: npm ci && npm run build
 
       - name: Run the published smoke
-        if: steps.seen.outputs.cache-hit != 'true'
         run: |
           set -uo pipefail
           node scripts/companion-workflow-smoke.mjs --published --cortex-url "$CORTEX_MCP_URL" | tee smoke.txt
@@ -93,12 +78,3 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-
-      # Saved whatever the outcome, so one broken release fails one hourly run
-      # rather than every hour; the daily run keeps re-checking it.
-      - name: Remember this version set
-        if: always() && steps.seen.outcome == 'success' && steps.seen.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-        with:
-          path: companion-versions.txt
-          key: ${{ steps.versions.outputs.key }}
