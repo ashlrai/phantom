@@ -250,6 +250,7 @@
 /test/authority-standing-grant-310b.test.ts @masonwyatt23
 /test/authority-surface-310b.test.ts @masonwyatt23
 /test/authority-tier1-closure-310b.test.ts @masonwyatt23
+/test/automerge-canary-shadow-report.test.ts @masonwyatt23
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
@@ -294,6 +295,7 @@
 /test/devin-lane-315.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
+/test/engines-custody-record.test.ts @masonwyatt23
 /test/engines-judges-310b.test.ts @masonwyatt23
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
