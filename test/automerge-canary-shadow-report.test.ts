@@ -79,4 +79,12 @@ describe('canary Shadow Report', () => {
     }
     expect(AUTOMERGE_CANARY_ENFORCE_SUPPORTED).toBe(false);
   });
+  it('carries the custody summary when given, null otherwise, and prints it value-free', () => {
+    expect(buildCanaryShadowReport(read(null, [])).custody).toBeNull();
+    const custody = { spawns: 5, wrapped: 2, unwrapped: { 'worktree-namespace': 2, 'preflight-blocked': 1 }, malformed: 0 };
+    const r = buildCanaryShadowReport(read(null, []), custody);
+    expect(r.custody).toEqual(custody);
+    expect(r.activationPermitted).toBe(false);
+    expect(formatCanaryShadowReport(r, false)).toContain('custody: spawns 5, wrapped 2, unwrapped 3 (preflight-blocked 1, worktree-namespace 2)');
+  });
 });

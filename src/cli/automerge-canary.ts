@@ -9,6 +9,7 @@ import {
   type BigIntStats,
 } from 'node:fs';
 import { buildCanaryShadowReport, formatCanaryShadowReport } from '../core/fleet/automerge-canary-shadow-report.js';
+import { readCustodySummary } from '../core/run/custody-ledger.js';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -608,7 +609,10 @@ export async function cmdAutoMergeCanary(args: string[]): Promise<number> {
       return 2;
     }
     const read = automergeCanaryStatus();
-    process.stdout.write(formatCanaryShadowReport(buildCanaryShadowReport(read), rest.includes('--json')));
+    const base = buildCanaryShadowReport(read);
+    const firstSeen = [...base.wouldHaveMerged, ...base.blocked].map((e) => e.observedAt).sort()[0];
+    const custody = readCustodySummary(firstSeen ? new Date(firstSeen) : null);
+    process.stdout.write(formatCanaryShadowReport(buildCanaryShadowReport(read, custody), rest.includes('--json')));
     return read.sourceState === 'degraded' || read.severity === 'critical' ? 1 : 0;
   }
 
