@@ -279,10 +279,17 @@ export function gatewayViaMarker(target: GatewayTarget): GatewayViaMarker {
 /**
  * Audit summary suffix for a run of a governed client: ` via=gateway host=<host>`
  * when config routes it through a valid gateway, '' for first-party. Host only,
- * never the key, port, URL or path. An invalid config adds nothing here because
- * the client itself refuses before any contact.
+ * never the key, port, URL or path. A remote (non-loopback) target, which the
+ * clients refuse in this slice, gives ` gateway=refused reason=non-loopback`
+ * with no host. An invalid config adds nothing here because the client itself
+ * refuses before any contact.
  */
 export function gatewayAuditSuffix(client: GatewayClientId, gateways: unknown): string {
   const resolved = resolveGatewayTarget(client, gateways);
-  return resolved.ok && resolved.target.kind === 'gateway' ? ` via=gateway host=${resolved.target.host}` : '';
+  if (!resolved.ok || resolved.target.kind !== 'gateway') return '';
+  // This slice is loopback only: the clients refuse a remote https target
+  // before any contact, so the audit records that refusal (value-free, no
+  // host) and never a `via=gateway` line for a host that was not used.
+  if (!resolved.target.loopback) return ' gateway=refused reason=non-loopback';
+  return ` via=gateway host=${resolved.target.host}`;
 }

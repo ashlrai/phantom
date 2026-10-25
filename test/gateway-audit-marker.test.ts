@@ -27,6 +27,14 @@ describe('gateway audit marker', () => {
     expect(gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl: 'https://SECRETUSER:SECRETPW@gw.example.com' } })).toBe('');
   });
 
+  it('a remote https gateway records a value-free refusal, never via=gateway or the host', () => {
+    const remote = gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl: 'https://gw.example.com', allowedHosts: ['gw.example.com:443'] } });
+    expect(remote).toBe(' gateway=refused reason=non-loopback');
+    expect(remote).not.toContain('via=gateway');
+    expect(remote).not.toContain('host=');
+    expect(remote).not.toContain('gw.example.com');
+  });
+
   it('the confinement.run audit event in sandboxed-engine.ts appends the marker for claude-api', () => {
     const src = readFileSync(new URL('../src/core/run/sandboxed-engine.ts', import.meta.url), 'utf8');
     expect(src).toContain("engine === 'claude-api' ? gatewayAuditSuffix('anthropic', (cfg as { gateways?: unknown }).gateways) : ''");
