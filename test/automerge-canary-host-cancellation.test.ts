@@ -21,11 +21,11 @@ describe('canary host auto-merge cancellation proof (enforce stays off)', () => 
   });
 
   it('confirms only on positive evidence: open, same head, auto-merge absent, disable succeeded', () => {
-    expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open()) })).toEqual({ outcome: 'cancelled-confirmed', reads: 1 });
+    expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open()) })).toEqual({ outcome: 'cancelled-confirmed', reads: 2 });
   });
 
   it('eventual consistency: still-present auto-merge is re-read, then confirmed', () => {
-    expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open({ autoMergeRequest: present }), open()) })).toEqual({ outcome: 'cancelled-confirmed', reads: 2 });
+    expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open({ autoMergeRequest: present }), open()) })).toEqual({ outcome: 'cancelled-confirmed', reads: 3 });
   });
 
   it('auto-merge still present after every read is not confirmed', () => {
@@ -45,9 +45,26 @@ describe('canary host auto-merge cancellation proof (enforce stays off)', () => 
 
   it('host merged anyway (race) is reported as merged, never as cancelled', () => {
     expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open({ state: 'MERGED', mergedAt: '2026-10-25T06:01:00Z', mergeCommitOid: 'b'.repeat(40) })) }))
-      .toEqual({ outcome: 'merged', mergeCommitOid: 'b'.repeat(40), reads: 1 });
+      .toEqual({ outcome: 'merged', mergeCommitOid: 'b'.repeat(40), race: true, reads: 1 });
     expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open({ autoMergeRequest: present }), open({ state: 'MERGED', mergedAt: '2026-10-25T06:01:00Z' })) }))
       .toMatchObject({ outcome: 'merged', reads: 2 });
+  });
+
+  it('mid-cancel race: a merge seen on the settle read is a raced merge, never cancelled', () => {
+    const merged = open({ state: 'MERGED', mergedAt: '2026-10-25T06:01:00Z', mergeCommitOid: 'd'.repeat(40) });
+    expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open(), merged) }))
+      .toEqual({ outcome: 'merged', mergeCommitOid: 'd'.repeat(40), race: true, reads: 2 });
+  });
+
+  it('settle read that is unreadable, moved or shows auto-merge again is not confirmed', () => {
+    for (const settle of [null, new Error('x'), open({ headRefOid: 'e'.repeat(40) }), open({ autoMergeRequest: present }), open({ state: 'CLOSED', closed: true })]) {
+      expect(cancelHostAutoMerge(target, { exec: ok, view: seq(open(), settle) })).toEqual({ outcome: 'not-confirmed', reason: 'settle-unconfirmed', reads: 2 });
+    }
+  });
+
+  it('a merge after a failed disable is reported as merged without race', () => {
+    expect(cancelHostAutoMerge(target, { exec: () => ({ ok: false }), view: seq(open({ state: 'MERGED', mergedAt: '2026-10-25T06:01:00Z' })) }))
+      .toMatchObject({ outcome: 'merged', race: false });
   });
 
   it('a moved head is not confirmed (a new head could carry a new auto-merge)', () => {
