@@ -35,8 +35,13 @@ export async function cmdFleetReceipt(args: string[]): Promise<number> {
         out({ runId, verified: false, reason: r.reason }, `receipt ${runId}: NOT verified (${r.reason})`);
         return 1;
       }
-      if (sub === 'verify') out({ runId, verified: true, digest: r.digest, keyId: r.receipt.sig.key_id }, `receipt ${runId}: verified (digest ${r.digest.slice(0, 12)}, key ${r.receipt.sig.key_id.slice(0, 12)})`);
-      else out(r.receipt, JSON.stringify(r.receipt, null, 2));
+      const later = r.later ?? [];
+      if (sub === 'verify') out({ runId, verified: true, digest: r.digest, keyId: r.receipt.sig.key_id, later: later.length }, `receipt ${runId}: verified (digest ${r.digest.slice(0, 12)}, key ${r.receipt.sig.key_id.slice(0, 12)}, ${later.length} later)`);
+      else {
+        // Signed body as stored (its own later stays []), with the separately signed, chain-verified entries alongside.
+        const shown = { ...r.receipt, later };
+        out(shown, JSON.stringify(shown, null, 2));
+      }
       return 0;
     }
     default:
