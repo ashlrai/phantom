@@ -5,7 +5,7 @@ import {
   CANARY_LADDER_EVENTS,
   CANARY_LADDER_STATES,
   enforceGates,
-  transitionCanaryLadder,
+  transitionCanaryLadder, reconcileCanaryCancellation,
   type CanaryLadderAuditRecord,
 } from '../src/core/fleet/automerge-canary-ladder.js';
 
@@ -104,5 +104,28 @@ describe('canary enforce ladder', () => {
     expect(store).toContain('export const AUTOMERGE_CANARY_ENFORCE_SUPPORTED = false as const;');
     process.env['ASHLR_AUTOMERGE_CANARY_ENFORCE_SUPPORTED'] = '1';
     try { expect(enforceGates().enforceSupported).toBe(false); } finally { delete process.env['ASHLR_AUTOMERGE_CANARY_ENFORCE_SUPPORTED']; }
+  });
+});
+
+describe('canary cancellation reconcile (fail-safe)', () => {
+  const rec = () => { const records: unknown[] = []; return { records, writeAudit: (r: unknown) => { records.push(r); return true; } }; };
+  it('a raced merge is never cancelled, is audited value-free and rolls the ladder back to shadow', () => {
+    const s = rec();
+    const r = reconcileCanaryCancellation('armed', { outcome: 'merged', mergeCommitOid: 'f'.repeat(40), race: true, reads: 2 }, s);
+    expect(r).toEqual({ cancelled: false, state: 'shadow', auditWritten: true });
+    expect(s.records[0]).toMatchObject({ kind: 'automerge-canary-cancel', outcome: 'merged', race: true, rolled_back: true, reason: null });
+    expect(JSON.stringify(s.records[0])).not.toContain('f'.repeat(40));
+    expect(s.records[1]).toMatchObject({ kind: 'automerge-canary-ladder', event: 'rollback', to: 'shadow', result: 'applied' });
+  });
+  it('an unconfirmed cancel rolls back; a confirmed cancel keeps state and reports cancelled', () => {
+    expect(reconcileCanaryCancellation('armed', { outcome: 'not-confirmed', reason: 'settle-unconfirmed', reads: 2 }, rec()))
+      .toEqual({ cancelled: false, state: 'shadow', auditWritten: true });
+    expect(reconcileCanaryCancellation('armed', { outcome: 'cancelled-confirmed', reads: 2 }, rec()))
+      .toEqual({ cancelled: true, state: 'armed', auditWritten: true });
+  });
+  it('rollback still happens when the audit write fails; enforce support stays off', () => {
+    const r = reconcileCanaryCancellation('armed', { outcome: 'merged', mergeCommitOid: null, race: true, reads: 1 }, { writeAudit: () => { throw new Error('disk'); } });
+    expect(r).toEqual({ cancelled: false, state: 'shadow', auditWritten: false });
+    expect(enforceGates().enforceSupported).toBe(false);
   });
 });

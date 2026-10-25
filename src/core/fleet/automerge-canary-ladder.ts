@@ -11,7 +11,7 @@
  * the transition does not happen (fail closed), except a move to shadow, which
  * only lowers authority and is never blocked. Not wired into any runtime path.
  */
-import { HOST_CANCELLATION_PROVEN } from './automerge-canary-cancel.js';
+import { HOST_CANCELLATION_PROVEN, type HostCancellationResult } from './automerge-canary-cancel.js';
 import { AUTOMERGE_CANARY_ENFORCE_SUPPORTED } from './automerge-canary-store.js';
 
 export const CANARY_LADDER_STATES = ['shadow', 'armed', 'enforce'] as const;
@@ -101,4 +101,53 @@ export function transitionCanaryLadder(
   }
   if ('to' in outcome) return { ok: true, state: outcome.to, auditWritten: true };
   return { ok: false, state: stay, reason: outcome.reason };
+}
+
+/** Value-free audit record for a cancellation attempt. No repo, PR number, SHA or names. */
+export interface CanaryCancelAuditRecord {
+  schema: 1;
+  kind: 'automerge-canary-cancel';
+  at: string;
+  outcome: HostCancellationResult['outcome'];
+  race: boolean;
+  reason: string | null;
+  rolled_back: boolean;
+}
+
+export interface CanaryCancelReconcileResult {
+  /** True only for cancelled-confirmed. A raced merge is never cancelled. */
+  cancelled: boolean;
+  state: CanaryLadderState;
+  auditWritten: boolean;
+}
+
+/**
+ * Apply a cancellation result to the ladder. A merge (raced or not) and any
+ * unconfirmed cancel are fail-safe: never reported as cancelled, audited, and
+ * the ladder rolls back to shadow. Never throws.
+ */
+export function reconcileCanaryCancellation(
+  current: unknown,
+  result: HostCancellationResult,
+  deps: { writeAudit: (record: CanaryLadderAuditRecord | CanaryCancelAuditRecord) => boolean; now?: () => Date },
+): CanaryCancelReconcileResult {
+  const cancelled = result.outcome === 'cancelled-confirmed';
+  const rollBack = result.outcome === 'merged' || result.outcome === 'not-confirmed';
+  const record: CanaryCancelAuditRecord = {
+    schema: 1,
+    kind: 'automerge-canary-cancel',
+    at: (deps.now?.() ?? new Date()).toISOString(),
+    outcome: result.outcome,
+    race: result.outcome === 'merged' ? result.race === true : false,
+    reason: result.outcome === 'not-confirmed' ? result.reason : null,
+    rolled_back: rollBack,
+  };
+  let written = false;
+  try { written = deps.writeAudit(record) === true; } catch { written = false; }
+  if (rollBack) {
+    const r = transitionCanaryLadder(current, 'rollback', deps);
+    return { cancelled: false, state: r.state, auditWritten: written && r.ok && r.auditWritten };
+  }
+  const stay = isState(current) ? current : CANARY_LADDER_DEFAULT_STATE;
+  return { cancelled, state: stay, auditWritten: written };
 }

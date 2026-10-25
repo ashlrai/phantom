@@ -19,8 +19,9 @@ export type CancelView = () => PrView | null;
 export type HostCancellationResult =
   | { outcome: 'cancelled-confirmed'; reads: number }
   | { outcome: 'closed-unmerged'; reads: number }
-  | { outcome: 'merged'; mergeCommitOid: string | null; reads: number }
-  | { outcome: 'not-confirmed'; reason: 'disable-failed' | 'view-unavailable' | 'auto-merge-still-present' | 'auto-merge-unknown' | 'head-moved' | 'state-unknown'; reads: number };
+  /** The host merged. `race` is true when our disable call succeeded first (merge won the race). Never cancelled. */
+  | { outcome: 'merged'; mergeCommitOid: string | null; race: boolean; reads: number }
+  | { outcome: 'not-confirmed'; reason: 'disable-failed' | 'view-unavailable' | 'auto-merge-still-present' | 'auto-merge-unknown' | 'head-moved' | 'state-unknown' | 'settle-unconfirmed'; reads: number };
 
 export const HOST_CANCELLATION_MAX_READS = 3;
 
@@ -57,7 +58,7 @@ export function cancelHostAutoMerge(
     if (!v) { last = { outcome: 'not-confirmed', reason: 'view-unavailable', reads }; continue; }
     // A merge wins over everything: the host merged, cancellation failed.
     if (typeof v.mergedAt === 'string' || v.state === 'MERGED') {
-      return { outcome: 'merged', mergeCommitOid: v.mergeCommitOid ?? null, reads };
+      return { outcome: 'merged', mergeCommitOid: v.mergeCommitOid ?? null, race: disabled, reads };
     }
     if (v.state === 'CLOSED' && v.closed === true) return { outcome: 'closed-unmerged', reads };
     if (v.state !== 'OPEN') { last = { outcome: 'not-confirmed', reason: 'state-unknown', reads }; continue; }
@@ -66,7 +67,18 @@ export function cancelHostAutoMerge(
     if (v.autoMergeRequest.kind === 'present') { last = { outcome: 'not-confirmed', reason: 'auto-merge-still-present', reads }; continue; }
     // Absent auto-merge on an open PR is only trusted after our disable call succeeded.
     if (!disabled) return { outcome: 'not-confirmed', reason: 'disable-failed', reads };
-    return { outcome: 'cancelled-confirmed', reads };
+    // Mid-cancel race: a merge the host had already started can land after a
+    // read that showed auto-merge absent. One settle read must agree before we
+    // report cancelled; a merge seen here is reported as a raced merge.
+    let settle: PrView | null = null;
+    try { settle = deps.view(); } catch { settle = null; }
+    if (settle && (typeof settle.mergedAt === 'string' || settle.state === 'MERGED')) {
+      return { outcome: 'merged', mergeCommitOid: settle.mergeCommitOid ?? null, race: true, reads: reads + 1 };
+    }
+    if (!settle || settle.state !== 'OPEN' || settle.headRefOid !== target.expectedHeadOid || settle.autoMergeRequest.kind !== 'absent') {
+      return { outcome: 'not-confirmed', reason: 'settle-unconfirmed', reads: reads + 1 };
+    }
+    return { outcome: 'cancelled-confirmed', reads: reads + 1 };
   }
   return last;
 }
