@@ -25,6 +25,7 @@ import {
 import type { Stats } from 'node:fs';
 import type { AshlrConfig, TidyRule } from './types.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from './fleet/local-store-lock.js';
+import { validateGatewayBaseUrl } from './run/gateway-target.js';
 
 // ---------------------------------------------------------------------------
 // Path constants (exported, resolved immediately)
@@ -771,6 +772,7 @@ function readConfigOrDefaults(configPath: string): AshlrConfig {
   }
 
   warnUnknownFoundryKeys(parsed as Record<string, unknown>, configPath);
+  warnInvalidGateways(parsed as Record<string, unknown>, configPath);
 
   // Deep-merge the user's persisted config over the defaults so newly-added
   // fields always have a value even on older config files.
@@ -805,6 +807,12 @@ function readConfigStrict(configPath: string): AshlrConfig {
   }
 
   warnUnknownFoundryKeys(parsed as Record<string, unknown>, configPath);
+  const gatewayProblems = gatewaysConfigProblems((parsed as Record<string, unknown>)['gateways']);
+  if (gatewayProblems.length) {
+    throw new Error(
+      `[ashlr] Refusing autonomous activation: config at ${configPath} has an invalid gateways block: ${gatewayProblems.join('; ')}.`,
+    );
+  }
 
   return sanitizeExecutionIdentityConfigBoundary(
     deepMerge(defaultConfig(), parsed as Partial<AshlrConfig>),
@@ -1162,3 +1170,60 @@ export type GatewaysConfig = Partial<Record<GatewayClientId, GatewayEntryConfig>
 
 /** AshlrConfig as read from disk, with the optional `gateways` block. */
 export type AshlrConfigWithGateways = AshlrConfig & { gateways?: GatewaysConfig };
+
+// ---------------------------------------------------------------------------
+// gateways: load-time validation (clear, value-free errors)
+// ---------------------------------------------------------------------------
+
+const GATEWAY_ENTRY_KEYS: ReadonlySet<string> = new Set(['enabled', 'baseUrl', 'allowedHosts']);
+
+/**
+ * Validate a raw top-level `gateways` value as read from disk. Absent (or
+ * null) is a no-op and returns []. Each problem names only the fixed client
+ * id or field and a closed reason code; config values (URLs, hosts, unknown
+ * key names) are never echoed, because a mistaken URL can carry userinfo or a
+ * key. Disabled entries are checked too, so a typo surfaces before opt-in.
+ */
+export function gatewaysConfigProblems(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (typeof value !== 'object' || Array.isArray(value)) return ['gateways: must be an object'];
+  const problems: string[] = [];
+  const block = value as Record<string, unknown>;
+  const unknownClients = Object.keys(block).filter((k) => !(GATEWAY_CLIENT_IDS as readonly string[]).includes(k)).length;
+  if (unknownClients) {
+    problems.push(`gateways: ${unknownClients} unrecognized client key(s); supported: ${GATEWAY_CLIENT_IDS.join(', ')}`);
+  }
+  for (const client of GATEWAY_CLIENT_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(block, client)) continue;
+    const entry = block[client];
+    const label = `gateways.${client}`;
+    if (entry === undefined || entry === null) continue;
+    if (typeof entry !== 'object' || Array.isArray(entry)) { problems.push(`${label}: must be an object`); continue; }
+    const fields = entry as Record<string, unknown>;
+    const unknownKeys = Object.keys(fields).filter((k) => !GATEWAY_ENTRY_KEYS.has(k)).length;
+    if (unknownKeys) {
+      problems.push(`${label}: ${unknownKeys} unrecognized key(s); supported: enabled, baseUrl, allowedHosts (custom CA and extra headers are not supported)`);
+    }
+    if (fields['enabled'] !== undefined && typeof fields['enabled'] !== 'boolean') {
+      problems.push(`${label}.enabled: must be true or false`);
+    }
+    if (fields['enabled'] === true && fields['baseUrl'] === undefined) {
+      problems.push(`${label}.baseUrl: required when enabled`);
+      continue;
+    }
+    if (fields['baseUrl'] !== undefined || fields['allowedHosts'] !== undefined) {
+      const checked = validateGatewayBaseUrl(client, fields['baseUrl'], fields['allowedHosts']);
+      if (!checked.ok) problems.push(`${label}: ${checked.reason}`);
+    }
+  }
+  return problems;
+}
+
+function warnInvalidGateways(parsed: Record<string, unknown>, configPath: string): void {
+  const problems = gatewaysConfigProblems(parsed['gateways']);
+  if (!problems.length) return;
+  console.warn(
+    `[ashlr] Warning: ${configPath} has an invalid gateways block (${problems.join('; ')}). ` +
+      'An invalid entry is never used as a gateway target.',
+  );
+}

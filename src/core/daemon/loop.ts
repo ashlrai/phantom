@@ -1,4 +1,7 @@
 import { devinCliBindingCurrent, peekDevinCliExecutionBinding, peekDevinCliIdentityBinding } from '../devin/cli-admission.js';
+import { emitReceiptForDispatchEvent } from '../receipt/receipt-dispatch.js';
+import { installReceiptLaterHooks } from '../receipt/receipt-later-hooks.js';
+import { registerLedgerAppendObserver } from '../authority/ledger.js';
 import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
 /**
  * loop.ts — The M24 daemon operator.
@@ -3940,6 +3943,8 @@ export async function tick(
   opts: TickOptions,
 ): Promise<DaemonTick> {
   const now = new Date().toISOString();
+  // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
+  try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
   const activationAccepted =
     !opts.dryRun && isDaemonActivationCapability(opts.activationCapability);
   if (!opts.dryRun && !activationAccepted) {
@@ -8817,6 +8822,14 @@ export async function tick(
       if (!canonicalProductionRecorded) {
         productionWriteFailedItemIds.add(event.itemId);
         console.warn('[ashlr] daemon:tick failed-attempt witness persistence unavailable', witnessWrite.failureReasons);
+      }
+    }
+    // receipt.v1 at run close (opt-in ASHLR_RUN_RECEIPTS=1); only for events the ledger recorded.
+    if (canonicalProductionRecorded) {
+      const receipt = emitReceiptForDispatchEvent(event);
+      if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-applicable') {
+        // Value-free: only the fixed reason code, never the event or repo.
+        console.warn('[ashlr] daemon:tick run receipt not written', receipt.reason);
       }
     }
     const failedRepairItem = generatedRepairItemsById.get(event.itemId);

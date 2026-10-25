@@ -62,6 +62,7 @@ function harness(opts: {
   defaultBranch?: string | null;
   runDelayMs?: number;
   allowedRepos?: string[];
+  doneCheck?: CloudServiceDeps['doneCheck'];
 } = {}): Harness {
   const events: string[] = [];
   const prompts: string[] = [];
@@ -69,6 +70,7 @@ function harness(opts: {
   let runs = 0;
   const deps: CloudServiceDeps = {
     now: () => NOW,
+    doneCheck: opts.doneCheck ?? (async () => 'open'),
     tracker: {
       gh: async (args) => {
         events.push(`gh ${args[0]} ${args[1]}`);
@@ -153,6 +155,41 @@ describe('launchCloudTask — success', () => {
     const leader = await launchCloudTask({ ...REQ, origin: 'leader', needsYouId: 'ny_123', backlogItemId: 'leader-m1-1' }, harness().deps);
     expect(leader.task).toMatchObject({ origin: 'leader', requestedBy: 'leader', needsYouId: 'ny_123', backlogItemId: 'leader-m1-1' });
     expect((await launchCloudTask({ ...REQ, origin: 'chat' }, harness().deps)).task!.requestedBy).toBe('mason');
+  });
+});
+
+describe('launchCloudTask — lessons trial', () => {
+  const NOTE = 'Run the tracker suite with --pool=forks before pushing.';
+  async function approveNote(): Promise<string> {
+    const { updateKnowledge, noteIdFor } = await import('../src/core/learn/retro/store.js');
+    const scope = { repo: REQ.repo, pathGlobs: [], taskKinds: [] };
+    const id = noteIdFor(NOTE, scope);
+    await updateKnowledge((notes) => ({ notes: [...notes, { v: 1 as const, id, text: NOTE, scope, status: 'approved' as const, retroId: null, source: 'mason' as const,
+      createdAt: '2026-10-01T00:00:00.000Z', decidedAt: '2026-10-01T00:00:00.000Z', edited: false, hits: 0, lastHitAt: null, seen: 0, agentsMdTaskId: null }], result: undefined }));
+    return id;
+  }
+
+  it('the served arm gets the lessons and records the notes that applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'served' });
+    expect(h.prompts[0]).toContain(NOTE);
+    expect(res.task!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+  });
+
+  it('the holdout arm runs without them but still records which notes applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(h.prompts[0]).not.toContain(NOTE);
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'holdout', noteIds: [id] });
+  });
+
+  it('a launch no note applies to is not in the trial', async () => {
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(readCloudTask(res.task!.id)).not.toHaveProperty('lessons');
   });
 });
 
@@ -309,6 +346,23 @@ describe('runSelfImprove', () => {
   const padBacklog = () => appendUserBacklogItems(Array.from({ length: 5 }, (_, i) => (
     { id: `pad-${i}`, title: `Padding item ${i}`, prompt: 'Do it.', area: 'x', priority: 3 as const })));
   const backlogOrder = () => [...firstBuiltin.map((i) => i.id), ...Array.from({ length: 5 }, (_, i) => `pad-${i}`)];
+
+  it('skips items already satisfied on the default branch without spending a launch', async () => {
+    updateCloudBudget({ maxConcurrent: 10 });
+    // Two priority-1 user items right after the built-in priority-1 items: the first already holds on master.
+    appendUserBacklogItems([
+      { id: 'done-1', title: 'Already fixed', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/fixed.ts' } },
+      { id: 'open-1', title: 'Still open', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/missing.ts' } },
+    ]);
+    const checked: string[] = [];
+    const p1 = firstBuiltin.filter((it) => it.priority === 1).map((it) => it.id);
+    const res = await runSelfImprove({ auto: false, count: p1.length + 1 }, selfHarness({
+      doneCheck: async (item, repo) => { checked.push(`${item.id}@${repo}`); return item.id === 'done-1' ? 'satisfied' : 'open'; },
+    }).deps);
+    expect(res.launched.map((t) => t.backlogItemId)).toEqual([...p1, 'open-1']);
+    expect(res.skipped).toEqual([{ itemId: 'done-1', reason: 'Already satisfied on the default branch.' }]);
+    expect(checked).toEqual(['done-1@ashlrai/phantom', 'open-1@ashlrai/phantom']);
+  });
 
   it('the operator path still stops at the concurrency cap', async () => {
     padBacklog();

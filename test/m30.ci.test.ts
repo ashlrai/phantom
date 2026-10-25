@@ -168,6 +168,26 @@ describe('M30 CI workflow', () => {
     for (const name of full.filter((name) => !mac.includes(name))) {
       expect(superseded({ ...complete, [name]: 'cancelled', site: 'skipped' }), `${name}: cancelled`).toThrow();
     }
+    // Master push: the Mac lanes and Windows service authority are deferred to
+    // the nightly run, so only a skipped one is accepted. Failures still block,
+    // and the Linux and Windows portability matrix (ci) must succeed.
+    const pushDeferred = [...mac, 'windows-service-authority'];
+    const pushed = (outcomes: Record<string, string>) => {
+      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      }]));
+      return () => runInNewContext(source!, {
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', EVENT_NAME: 'push' } }, console: { log: () => {} },
+      });
+    };
+    expect(pushed({ ...complete, ...Object.fromEntries(pushDeferred.map((name) => [name, 'skipped'])), site: 'skipped' })).not.toThrow();
+    for (const name of pushDeferred) {
+      for (const outcome of ['failure', 'cancelled', 'neutral']) {
+        expect(pushed({ ...complete, [name]: outcome, site: 'skipped' }), `push ${name}: ${outcome}`).toThrow();
+      }
+    }
+    expect(pushed({ ...complete, ...Object.fromEntries(pushDeferred.map((name) => [name, 'skipped'])), ci: 'skipped', site: 'skipped' })).toThrow();
+    expect(pushed({ ...complete, ...Object.fromEntries(pushDeferred.map((name) => [name, 'skipped'])), ci: 'failure', site: 'skipped' })).toThrow();
     // Draft PR: every Mac lane may be skipped, nothing else; a Mac failure or
     // cancellation still blocks, and a PR no longer a draft defers nothing.
     const drafted = (outcomes: Record<string, string>) => {
@@ -425,16 +445,19 @@ describe('M30 CI workflow', () => {
     }
     for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
-      // Draft PRs skip only the Mac lanes; Linux and Windows run on every push.
+      // Draft PRs skip only the Mac lanes. A push to master runs the Linux and
+      // Windows portability matrix only; the nightly schedule runs the rest.
       const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}`);
+      const push = id === 'ci' ? '' : " && github.event_name != 'push'";
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}`);
     }
-    // The exhaustive Mac partition runs on master pushes, reusable calls and
-    // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
+    // The exhaustive Mac partition runs nightly, on reusable calls and on PRs
+    // labelled ci:full-mac; unlabelled PRs and master pushes defer it.
     expect(jobs['mac-general']!.needs).toBe('classify');
     expect(jobs['mac-general']!.if).toBe(
-      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
+      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
     );
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '41 7 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     expect(ci.strategy!.matrix.include).toHaveLength(7);
@@ -465,7 +488,7 @@ describe('M30 CI workflow', () => {
   it('keeps native cache reuse independent from test and artifact admission', () => {
     const native = workflowJob('native-macos-broker-foundation');
     expect(native).not.toMatch(/restore-keys:|enableCrossOsArchive:|continue-on-error:|pull_request_target|cache-mode:/);
-    expect(native).toContain("if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
+    expect(native).toContain("if: success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
     expect(native.match(/cache-hit/g)).toHaveLength(1);
     expect(native.match(/path: desktop\/src-tauri\/target\/debug\//g)).toHaveLength(2);
     expect(native.indexOf('- name: Bind candidate source')).toBeLessThan(native.indexOf('- name: Restore native compilation cache'));
