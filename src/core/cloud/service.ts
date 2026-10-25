@@ -29,6 +29,7 @@ import { buildCloudPrompt, companionToolsBlock } from './delivery-contract.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
 import { recordKnowledgeHits } from '../learn/retro/store.js';
 import { lessonArm, type LessonArm } from '../improve/lesson-trial.js';
+import { revertedPrKeys } from '../improve/reverted.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { launchCloudSession, readCloudSeatArgv, SEAT_NOT_READY_REASON, type CloudLaunchDeps } from './launcher.js';
 import { CLOUD_REPO_PATTERN, listCloudTasks, newCloudTaskId, readCloudBudget, writeCloudTask } from './store.js';
@@ -196,7 +197,7 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       // is measured against a holdout instead of assumed.
       const block = knowledgeBlockFor(
         { repo: task.repo, paths: [], kind: null, text: `${task.title}\n${task.prompt}` },
-        { fromLeader: task.origin === 'leader', recordHits: false },
+        { fromLeader: task.origin === 'leader', recordHits: false, revertedPrKeys: () => revertedPrKeys() },
       );
       const arm = block.noteIds.length > 0 ? (deps.lessonArm ?? lessonArm)(task.id) : 'served';
       if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
