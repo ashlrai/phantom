@@ -49,6 +49,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'wiki',
   // 3.15 versioned playbooks.
   'playbook',
+  // receipt.v1: `receipt` is the same as `fleet receipt`.
+  'receipt',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
