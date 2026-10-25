@@ -12,6 +12,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Run receipts now record what happened after close: the daemon appends signed
+  `later[]` entries when a run's PR checks settle (ci), it merges (merge), the
+  post-merge watch reports (survival) and a revert lands (revert). Best effort,
+  value-free, deduplicated; runs without a receipt are skipped.
 - Run receipts gain signed `later[]` entries for ci, merge, survival and revert
   (receipt.v1 R6). Each entry is signed separately and chained to the receipt
   digest, so the original signed body is never rewritten. `fleet receipt verify`,

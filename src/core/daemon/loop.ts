@@ -1,5 +1,7 @@
 import { devinCliBindingCurrent, peekDevinCliExecutionBinding, peekDevinCliIdentityBinding } from '../devin/cli-admission.js';
 import { emitReceiptForDispatchEvent } from '../receipt/receipt-dispatch.js';
+import { installReceiptLaterHooks } from '../receipt/receipt-later-hooks.js';
+import { registerLedgerAppendObserver } from '../authority/ledger.js';
 import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
 /**
  * loop.ts — The M24 daemon operator.
@@ -3941,6 +3943,8 @@ export async function tick(
   opts: TickOptions,
 ): Promise<DaemonTick> {
   const now = new Date().toISOString();
+  // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
+  try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
   const activationAccepted =
     !opts.dryRun && isDaemonActivationCapability(opts.activationCapability);
   if (!opts.dryRun && !activationAccepted) {
