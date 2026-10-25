@@ -12,6 +12,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- `phm pulse connect --token` with no value now asks for the Pulse PAT at a
+  hidden prompt, and `--token-stdin` reads it from a pipe. `--token <pat>` still
+  works but warns on stderr that the PAT is visible in the process list and
+  shell history. The PAT reaches `phantom add` only on stdin.
 - Group resource displays by provider while keeping configured references,
   current readings and verified account coverage separate. Unknown identities,
   balances and capacity stay unknown; grouping does not authorize execution.
@@ -23,6 +27,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   operator controls; source availability does not establish runtime acceptance.
 
 ### Fixed
+- Provider error bodies that echo the rejected API key no longer carry it into
+  thrown errors. The OpenAI-compatible client, visual grounding and the Devin
+  client now redact any run of 8 or more characters of the key they sent, so
+  opaque keys with no vendor prefix are covered as well as known key shapes.
 - Preserve original quota and credit expiry across resource cards, provider
   groups and capacity views. Connection and admission checks cannot refresh
   or extend retained usage evidence.

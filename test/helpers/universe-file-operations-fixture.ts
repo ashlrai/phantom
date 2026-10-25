@@ -42,7 +42,8 @@ export function markdownLines(lines: string[]): string[] {
 
 export function parserCandidate(source: string): string {
   const replacements: Array<[string, string]> = [
-    ["import { readFileSync } from 'node:fs';", "import { readFileSync } from 'node:fs';\nimport { markdownLines } from './markdown-lines.js';"],
+    // Anchor on the types import: the node:fs import list changes with the parser (#852).
+    ["import type { MilestoneDoc, ", "import { markdownLines } from './markdown-lines.js';\nimport type { MilestoneDoc, "],
     ['for (const rawLine of splitLines(content)) {', 'for (const rawLine of markdownLines(splitLines(content))) {'],
     ['const lines = splitLines(content);\n\n  let title', 'const lines = splitLines(content);\n  const visibleLines = markdownLines(lines);\n\n  let title'],
     ['const line = lines[i] as string;\n\n    const heading', 'const line = visibleLines[i] as string;\n\n    const heading'],

@@ -201,7 +201,7 @@ describe('M481 CI workflow action trust chain', () => {
     expect(save?.uses).toBe('actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809');
     expect(restore?.with).toEqual({ path: 'desktop/src-tauri/target/debug/', key: '${{ steps.cargo-inputs.outputs.key }}' });
     expect(save?.with).toEqual(restore?.with);
-    expect(save?.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
+    expect(save?.if).toBe("success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
     expect(steps.indexOf(restore!)).toBeLessThan(steps.findIndex((step) => step.name === 'Check native broker library'));
     expect(steps.indexOf(save!)).toBeGreaterThan(steps.findIndex((step) => step.name === 'Remove disposable Tauri sidecar fixture'));
     const guard = steps.find((step) => step.name === 'Validate native cache identity');
