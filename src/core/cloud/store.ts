@@ -211,9 +211,35 @@ export function isCloudTask(value: unknown): value is CloudTaskV1 {
     && (value['supersededBy'] === undefined || isSupersededBy(value['supersededBy'], value['repo'] as string))
     && (value['intake'] === undefined || isIntakeMemo(value['intake']))
     && (value['playbookRef'] === undefined || isPlaybookRef(value['playbookRef']))
+    && (value['lessons'] === undefined || isLessons(value['lessons']))
+    && (value['outcome'] === undefined || isOutcome(value['outcome']))
     && typeof value['estimatedCostUsd'] === 'number' && Number.isFinite(value['estimatedCostUsd']) && value['estimatedCostUsd'] >= 0
     && isNullableString(value['backlogItemId'])
     && isNullableString(value['needsYouId']);
+}
+
+function isLessons(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const l = v as Record<string, unknown>;
+  return (l['arm'] === 'served' || l['arm'] === 'holdout')
+    && Array.isArray(l['noteIds']) && l['noteIds'].length <= 64
+    && l['noteIds'].every((id) => typeof id === 'string' && id.length > 0 && id.length <= 80);
+}
+
+const SHA = /^[0-9a-f]{40}$/;
+const isSha = (v: unknown) => v === null || (typeof v === 'string' && SHA.test(v));
+
+function isOutcome(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o['observedAt'] === 'string'
+    && isSha(o['headSha']) && isSha(o['mergeSha'])
+    && (o['ci'] === null || ['success', 'failure', 'pending', 'none'].includes(o['ci'] as string))
+    && Array.isArray(o['failedChecks']) && o['failedChecks'].length <= 20
+    && o['failedChecks'].every((n) => typeof n === 'string' && n.length > 0 && n.length <= 120)
+    && (o['reviewDecision'] === null || ['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(o['reviewDecision'] as string))
+    && Number.isSafeInteger(o['changesRequested']) && (o['changesRequested'] as number) >= 0
+    && (o['revertedBy'] === undefined || isSha(o['revertedBy']));
 }
 
 function taskPath(id: string): string {
