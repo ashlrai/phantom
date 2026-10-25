@@ -16,8 +16,8 @@ configure and verify it.
 # 1. Set the endpoint (defaults to pulse.ashlr.ai)
 ashlr pulse connect https://pulse.ashlr.ai/api/otlp/v1/traces
 
-# 2. Store your Pulse PAT (never printed, never in config.json)
-ashlr pulse connect --token <your-pulse-pat>
+# 2. Store your Pulse PAT (hidden prompt; never printed, never in config.json)
+ashlr pulse connect --token
 
 # 3. Verify
 ashlr pulse connect --status
@@ -40,15 +40,31 @@ ashlr pulse connect https://pulse.ashlr.ai/api/otlp/v1/traces
 The default endpoint when you run `ashlr pulse connect` with no URL is:
 `https://pulse.ashlr.ai/api/otlp/v1/traces`
 
-### `ashlr pulse connect --token <pat>`
+### `ashlr pulse connect --token`
 
 Stores the Pulse PAT. The token is **never** printed, logged, or written to
 `config.json`.
 
+Three ways to give the PAT:
+
+- `ashlr pulse connect --token` (no value): hidden prompt when stdin is a
+  terminal. Without a terminal it exits 2 and points to `--token-stdin`.
+- `printf %s "$PAT" | ashlr pulse connect --token-stdin`: reads exactly one
+  non-empty line from a pipe (64 KiB cap). It refuses a terminal stdin.
+- `ashlr pulse connect --token <pat>`: still works for existing scripts, but
+  prints a warning on stderr, because a command-line argument is visible in the
+  process list (`ps`) and in shell history.
+
+Whichever form you use, the PAT is handed to `phantom add` on stdin only and
+never appears in a child process's arguments.
+
 **PAT storage and current sending support:**
 
 1. **Phantom vault storage** — stored as secret `ASHLR_PULSE_TOKEN` via
-   `phantom add ASHLR_PULSE_TOKEN <value>`. Requires `phantom.enabled: true` in
+   `phantom add ASHLR_PULSE_TOKEN --stdin` (the token is piped on stdin, never
+   passed as an argument; phantom-secrets refuses positional secret values).
+   To store it yourself, run `phantom add ASHLR_PULSE_TOKEN` for a hidden
+   prompt. Requires `phantom.enabled: true` in
    your config and the `phantom` CLI on PATH.
 
 2. **Current OTLP sending route: existing environment variable.** The command
