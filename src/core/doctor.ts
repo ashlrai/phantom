@@ -14,6 +14,7 @@ import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
 import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
+import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -514,6 +515,38 @@ function checkPhantom(): DoctorCheck {
       'warn',
       `Could not determine phantom status: ${String(err)}`,
     );
+  }
+}
+
+/**
+ * Local inference (P3): one loopback GET <baseUrl>/models, no key, 3 s timeout.
+ * Pass when not configured or when every configured role's model is listed.
+ * Never pulls a model; the fix only suggests the pull command.
+ */
+export async function checkLocalInference(
+  cfg: AshlrConfig,
+  opts: { fetchImpl?: ProbeFetch; timeoutMs?: number } = {},
+): Promise<DoctorCheck> {
+  const title = 'Local inference';
+  const p = await probeLocalInference((cfg as unknown as Record<string, unknown>)['localInference'], opts);
+  switch (p.status) {
+    case 'not-configured':
+      return check('local-inference', title, 'pass', 'not configured (localInference absent)');
+    case 'config-invalid':
+      return check('local-inference', title, 'warn', 'localInference block is invalid; openai-compat refuses to run', 'Fix localInference in ~/.ashlr/config.json');
+    case 'remote-not-probed':
+      return check('local-inference', title, 'warn', `${p.provider}: remote endpoint (allowRemote), not probed`);
+    case 'unreachable':
+      return check('local-inference', title, 'warn', `${p.provider}: not reachable on loopback`, p.provider === 'ollama' ? 'Start it: ollama serve' : 'Start the local server');
+    case 'bad-response':
+      return check('local-inference', title, 'warn', `${p.provider}: answered ${p.httpStatus ?? 'without'} status but no model list`);
+    case 'reachable': {
+      const missing = Object.entries(p.rolesPresent).filter(([, ok]) => !ok).map(([role]) => role);
+      const detail = `${p.provider}: reachable, ${p.modelCount} model(s)`;
+      if (!missing.length) return check('local-inference', title, 'pass', detail);
+      return check('local-inference', title, 'warn', `${detail}; missing model for ${missing.join(', ')}`,
+        p.provider === 'ollama' ? 'Pull the configured model: ollama pull <model>' : 'Load the configured model in the local server');
+    }
   }
 }
 
@@ -1415,6 +1448,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(await checkPlugins(cfg));
+  checks.push(await checkLocalInference(cfg));
 
   // --- Async: provider registry ---
   try {

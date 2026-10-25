@@ -15,6 +15,16 @@ export const SITE_ONLY_PATHS = Object.freeze([
   'site/sitemap.xml',
 ]);
 const allowed = new Set(SITE_ONLY_PATHS);
+
+// A PR whose every changed path is Markdown (anywhere) or lives under docs/
+// cannot change runtime behaviour on any OS, so it takes the docs lane:
+// documentation checks plus the tests that read Markdown, on Ubuntu only.
+// Anything else (src, test, scripts, workflows, package files, CODEOWNERS,
+// .github config) keeps the full Ubuntu, Windows and Mac matrix.
+export const DOCS_ONLY_PATH_PATTERNS = Object.freeze([
+  /^docs\/[^\0]+$/,
+  /^(?:[^/\0]+\/)*[^/\0]+\.md$/,
+]);
 const shaPattern = /^[0-9a-f]{40}$/;
 
 function git(cwd, args) {
@@ -49,9 +59,55 @@ export function classifySiteLane({ eventName, base, head, cwd }) {
   return 'site';
 }
 
+function changedPaths({ base, head, cwd }) {
+  if (!shaPattern.test(base ?? '') || !shaPattern.test(head ?? '')) {
+    throw new Error('PR base and head must be exact commit SHAs');
+  }
+  const checkedOut = git(cwd, ['rev-parse', 'HEAD']).toString('utf8').trim();
+  if (checkedOut !== head) throw new Error('checkout does not match PR head');
+  const mergeBase = git(cwd, ['merge-base', base, head]).toString('utf8').trim();
+  if (!shaPattern.test(mergeBase)) throw new Error('PR merge base is unavailable');
+  const changed = git(cwd, [
+    'diff', '--name-only', '-z', '--no-renames', mergeBase, head,
+  ]).toString('utf8');
+  if (!changed) return { mergeBase, paths: [] };
+  if (!changed.endsWith('\0')) throw new Error('Git returned an incomplete path list');
+  return { mergeBase, paths: changed.slice(0, -1).split('\0') };
+}
+
+export function isDocsOnlyPath(path) {
+  // Markdown under code, test, or config trees can be a fixture or template.
+  if (/^(?:\.github|src|test|tests|scripts|native|packages|bin)\//.test(path)) return false;
+  return DOCS_ONLY_PATH_PATTERNS.some((re) => re.test(path));
+}
+
+// 'docs' only for a pull request that exclusively changes docs-only paths,
+// each of which is absent or a regular non-executable file at both ends (so a
+// mode change, symlink, or submodule keeps full CI). Everything else, and every
+// non-PR event (master pushes, merge queue, schedule, reusable calls), is 'full'.
+export function classifyDocsLane({ eventName, base, head, cwd }) {
+  if (eventName !== 'pull_request') return 'full';
+  const { mergeBase, paths } = changedPaths({ base, head, cwd });
+  if (paths.length === 0) return 'full';
+  if (!paths.every(isDocsOnlyPath)) return 'full';
+  for (const path of paths) {
+    for (const ref of [mergeBase, head]) {
+      const tree = git(cwd, ['ls-tree', '-z', ref, '--', path]).toString('utf8');
+      if (tree && !regularBlobAt(cwd, ref, path)) return 'full';
+    }
+  }
+  return 'docs';
+}
+
+export function classifyLane(input) {
+  const site = classifySiteLane(input);
+  if (site !== 'full') return site;
+  return classifyDocsLane(input);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const lane = classifySiteLane({
+    const lane = classifyLane({
       eventName: process.env.GITHUB_EVENT_NAME,
       base: process.env.ASHLR_CI_BASE_SHA,
       head: process.env.ASHLR_CI_HEAD_SHA,
