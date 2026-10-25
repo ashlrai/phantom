@@ -275,6 +275,7 @@
 /test/custody-ledger.test.ts @masonwyatt23
 /test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
 /test/custody-unwrapped-fleet.test.ts @masonwyatt23
+/test/custody-wrap-receipt.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23

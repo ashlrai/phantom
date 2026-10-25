@@ -20,6 +20,7 @@ import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
  */
 
 import { runPhantomPreflight, type PreflightRunner } from './phantom-preflight.js';
+import { custodyRequiresWrap, noteSpawnCustody } from './custody-capture.js';
 import { appendCustodyRecord } from './custody-ledger.js';
 import { decidePhantomCustody, formatCustodyLine, isLinkedGitWorktree, type PhantomCustodyRecord } from './phantom-custody.js';
 import { spawnSync, execFileSync, spawn } from 'node:child_process';
@@ -886,6 +887,18 @@ async function spawnEngineInner(
   if (phantomEnabled) process.stderr.write(formatCustodyLine(custody));
   appendCustodyRecord(custody);
   opts?.onCustody?.(custody);
+  noteSpawnCustody(custody);
+  // Hold rule (design-custody-fleet.md 3.2): a task that declared it needs
+  // project secrets never runs unwrapped. Refused before the child starts; the
+  // custody record above already names the reason.
+  if (!custody.wrapped && custodyRequiresWrap()) {
+    return {
+      ok: false,
+      output: '',
+      error: `held: task needs secrets but the spawn would run unwrapped (${custody.reason})`,
+      terminationReason: 'error-exit',
+    };
+  }
 
   // M52: apply the OS sandbox launcher when provided. The launcher wraps the
   // already-phantom-wrapped command so the jail contains the entire chain.

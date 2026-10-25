@@ -1,5 +1,7 @@
 import { devinCliBindingCurrent, peekDevinCliExecutionBinding, peekDevinCliIdentityBinding } from '../devin/cli-admission.js';
 import { emitReceiptForDispatchEvent } from '../receipt/receipt-dispatch.js';
+import { itemNeedsSecrets, receiptWrapFromCustody, runWithCustodyCapture } from '../run/custody-capture.js';
+import type { PhantomCustodyRecord } from '../run/phantom-custody.js';
 import { installReceiptLaterHooks } from '../receipt/receipt-later-hooks.js';
 import { registerLedgerAppendObserver } from '../authority/ledger.js';
 import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
@@ -6716,6 +6718,9 @@ export async function tick(
     }
   };
 
+  // Custody step 2: each item's engine spawns report their custody decision
+  // into a per-item capture; the receipt reads it as secrets.wrap. In memory only.
+  const custodyByItemId = new Map<string, readonly PhantomCustodyRecord[]>();
   const tasks: Array<{ tier: 'local' | 'cloud'; lane: string | null; run: (assignedBackend?: EngineId, assignedReason?: string, assignedModel?: string | null) => Promise<ItemOutcome> }> = workedSet.map((item, _taskIdx) => {
     const attemptId = attemptIds.get(item.id)!;
     const leaseController = leaseAbortControllers.get(item.id)!;
@@ -8325,7 +8330,10 @@ export async function tick(
           fleetWatchdogController,
           async () => {
             try {
-              const result = await runItem(assignedBackend, assignedReason, assignedModel);
+              const result = await runWithCustodyCapture({ requireWrap: itemNeedsSecrets(item) }, async (capture) => {
+                custodyByItemId.set(item.id, capture.records);
+                return runItem(assignedBackend, assignedReason, assignedModel);
+              });
               if (outcomeDispatch && !await outcomeDispatch.finishWithRetry(result.dispatch?.production, dispatchSignal.aborted)) {
                 console.warn('[ashlr] outcome terminal history could not be joined for', item.id);
               }
@@ -8826,7 +8834,7 @@ export async function tick(
     }
     // receipt.v1 at run close (opt-in ASHLR_RUN_RECEIPTS=1); only for events the ledger recorded.
     if (canonicalProductionRecorded) {
-      const receipt = emitReceiptForDispatchEvent(event);
+      const receipt = emitReceiptForDispatchEvent(event, process.env, receiptWrapFromCustody(custodyByItemId.get(event.itemId) ?? []));
       if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-applicable') {
         // Value-free: only the fixed reason code, never the event or repo.
         console.warn('[ashlr] daemon:tick run receipt not written', receipt.reason);
