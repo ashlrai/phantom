@@ -881,10 +881,10 @@ async function spawnEngineInner(
   if (custody.wrapped) {
     effective = phantomWrap(cmd, cfg);
   }
-  if (phantomEnabled) {
-    process.stderr.write(formatCustodyLine(custody));
-    appendCustodyRecord(custody);
-  }
+  // The stderr line stays opt-in noise; the durable record is written for every
+  // spawn, including phantom-disabled, so "ran unwrapped" is never silent.
+  if (phantomEnabled) process.stderr.write(formatCustodyLine(custody));
+  appendCustodyRecord(custody);
   opts?.onCustody?.(custody);
 
   // M52: apply the OS sandbox launcher when provided. The launcher wraps the

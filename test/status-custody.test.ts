@@ -26,9 +26,9 @@ describe('phm status custody section', () => {
     });
     expect(s).toEqual({
       receipts: { keyPresent: true, keyId: 'k1', count: 3, latest: { runId: 'run-3', verified: true, reason: null } },
-      spawns: { windowHours: 24, total: 5, wrapped: 3, unwrapped: 2, malformed: 0 },
+      spawns: { windowHours: 24, total: 5, wrapped: 3, unwrapped: 2, unwrappedByReason: { 'preflight-blocked': 1, unknown: 1 }, malformed: 0 },
     });
-    expect(formatCustodyStatusLine(s!)).toBe('receipts 3 (latest verified) · key k1 · spawns 5 in 24h: 3 wrapped, 2 unwrapped');
+    expect(formatCustodyStatusLine(s!)).toBe('receipts 3 (latest verified) · key k1 · spawns 5 in 24h: 3 wrapped, 2 unwrapped (preflight-blocked 1, unknown 1)');
   });
 
   it('flags an unverified latest receipt and malformed ledger lines', () => {
