@@ -25,6 +25,7 @@ import { activeEnrollmentLenses, listEnrolled, isEnrolled } from '../sandbox/pol
 import { isMirrorPath } from '../fleet/mirrors.js';
 import { scrubSecrets as scrubSharedSecrets } from '../util/scrub.js';
 import { writePrivateFileAtomically } from '../verse/session-store.js';
+import { localOllamaBase } from '../providers.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing
@@ -596,7 +597,7 @@ export async function buildKnowledge(
   }
 
   // Detect local Ollama embedding model once (shared across repos)
-  const ollamaBase = 'http://localhost:11434';
+  const ollamaBase = localOllamaBase();
   let embedModel: { available: false } | { available: true; model: string };
   try {
     embedModel = await detectEmbeddingModel(ollamaBase);

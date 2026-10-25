@@ -332,6 +332,21 @@ describe('health — ENROLLMENT-SCOPED (non-enrolled repo hard-errors)', () => {
     const { code } = await capture(() => cmdHealth(['propose', tmpRepo]));
     expect(code).toBe(1);
   });
+
+  it('--json answers a non-enrolled repo with JSON and the exact enroll command', async () => {
+    const health = await import('../src/core/quality/health.js');
+    const computeHealthSpy = health.computeHealth as ReturnType<typeof vi.fn>;
+    computeHealthSpy.mockClear();
+
+    const { code, out } = await capture(() => cmdHealth([tmpRepo, '--json']));
+    expect(code).toBe(1);
+    expect(JSON.parse(out.trim())).toEqual({
+      ok: false,
+      error: `repo not enrolled for health review: ${tmpRepo}`,
+      next: `Enroll it first with \`phm enroll add ${tmpRepo}\` (health only reads ENROLLED repos).`,
+    });
+    expect(computeHealthSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

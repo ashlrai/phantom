@@ -148,7 +148,9 @@ environment.
 **Preferred — Phantom vault:**
 
 ```bash
-ashlr pulse connect --token <your-pulse-pat>
+ashlr pulse connect --token     # hidden prompt
+# or, from a pipe:
+printf %s "$PAT" | ashlr pulse connect --token-stdin
 ```
 
 This stores the token as `ASHLR_PULSE_TOKEN` in your Phantom vault.
@@ -189,7 +191,7 @@ ashlr goals list
 ashlr goals add "harden error handling in auth module"
 
 # Run one owner-invoked proposal path (not a resident or unattended loop)
-ashlr goal "harden error handling in auth module"
+ashlr goal "harden error handling in auth module" --project <enrolled-repo>
 
 # Open Mission Control UI (localhost:7777)
 ashlr serve
@@ -268,7 +270,7 @@ touch the live working tree. All mutations flow through the inbox.
 | Daemon not running | `ashlr daemon status` | Expected while compiled roots are empty; use `ashlr daemon start --once --dry-run` or owner-invoked `ashlr run`/`ashlr swarm` |
 | Kill switch engaged | `ashlr doctor` shows WARN | `ashlr enroll kill off` |
 | Repo not being worked | `ashlr enroll list` | `ashlr enroll add <path>` |
-| PAT rejected (401) | `ashlr pulse connect --test` | Re-run `ashlr pulse connect --token <fresh-pat>` |
+| PAT rejected (401) | `ashlr pulse connect --test` | Re-run `ashlr pulse connect --token` (hidden prompt) with a fresh PAT |
 
 ---
 

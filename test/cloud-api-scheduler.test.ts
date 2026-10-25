@@ -25,6 +25,11 @@ vi.mock('../src/core/cloud/store.js', () => ({
 }));
 vi.mock('../src/core/cloud/tracker.js', () => ({ refreshCloudTasks: core.refreshCloudTasks }));
 vi.mock('../src/core/cloud/budget.js', () => ({ cloudBudgetView: vi.fn() }));
+const discover = vi.hoisted(() => ({ autoDiscover: vi.fn(async () => ({ ran: true, added: 0, errors: [] as string[] })) }));
+vi.mock('../src/core/improve/discover.js', () => discover);
+const stop = vi.hoisted(() => ({ kill: false, paused: false }));
+vi.mock('../src/core/sandbox/policy.js', () => ({ killSwitchOn: () => stop.kill }));
+vi.mock('../src/core/comms/pause.js', () => ({ isPaused: () => stop.paused }));
 
 const {
   CLOUD_IMPROVE_EVERY_MS,
@@ -114,9 +119,26 @@ describe('cadence', () => {
     core.runSelfImprove.mockResolvedValue({ launched: [], skipped: [] });
     startCloudScheduler({}, { log: () => undefined });
     await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(discover.autoDiscover).toHaveBeenCalledTimes(1);
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
     await vi.advanceTimersByTimeAsync(CLOUD_REFRESH_EVERY_MS);
     expect(core.refreshCloudTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('Stop and Pause hold the unattended job before any GitHub read or launch', async () => {
+    for (const held of [{ kill: true, paused: false }, { kill: false, paused: true }]) {
+      Object.assign(stop, held);
+      discover.autoDiscover.mockClear();
+      core.runSelfImprove.mockClear();
+      const log = vi.fn();
+      startCloudScheduler({}, { refresh: async () => undefined, log });
+      await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+      expect(discover.autoDiscover).not.toHaveBeenCalled();
+      expect(core.runSelfImprove).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/cloud improve skipped: (the autonomy kill switch is on|Phantom is paused)/));
+      stopCloudScheduler();
+    }
+    Object.assign(stop, { kill: false, paused: false });
   });
 
   it('stop clears every timer', () => {

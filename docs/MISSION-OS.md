@@ -71,7 +71,7 @@ equivalent development invocation is `npm run dev -- vision ...`.
 
 | Command | Reads | Writes | Authority/effect |
 | --- | --- | --- | --- |
-| `ashlr vision show` | Current end-state spec | Nothing | Read-only |
+| `ashlr vision show [id] [--json]` | Current end-state spec (`--json` prints it as one object) | Nothing | Read-only |
 | `ashlr vision review [--project <repo>]` | Leader state, fleet digests, ledger, seat headroom | Leader state: due class-B actions applied, due moves graded, and a memo when a run is due | Alias of `ashlr leader tick --wait`; budget-gated; writes no briefing. Memo actions follow their class (A at once, B after the veto window, C to Needs you). `--project` is accepted but not applied: the Leader reviews the whole portfolio |
 | `ashlr leader show` / `ashlr leader veto <actionId>` | Leader state | `veto` runs the action's recorded inverse (`--memo <id>` undoes a whole memo) | `show` is read-only; `veto` only lowers what autonomy is doing |
 | `ashlr vision preview` | Latest briefing, enrollment, complete goal inventory | Nothing | Read-only; reports exact targets, selections, and hold reasons |

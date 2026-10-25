@@ -95,7 +95,8 @@ export function isRepo(dir: string): boolean;
 
 export function getGitStatus(repoPath: string): GitStatus | null;
 // Branch, dirty count (porcelain), ahead/behind vs upstream, last-commit ISO.
-// Returns null if not a repo or git unavailable.
+// Returns null if not a repo or git unavailable. A zero-commit repo returns
+// its branch with lastCommit null.
 
 export function getRemoteOrg(repoPath: string): { remote: string | null; org: string | null };
 // Parse `origin` remote URL; extract org from ashlrai/*, masonwyatt23/*, evero-consulting/* style paths.

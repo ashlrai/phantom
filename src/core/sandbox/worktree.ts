@@ -3379,15 +3379,44 @@ function currentStartRef(): string | undefined {
   return ownStartRef;
 }
 
-function safelyUnlinkLock(path: string, expected: { dev: number; ino: number }): boolean {
+/**
+ * Identity of one lock file: device, inode and change time. Inode numbers are
+ * reused as soon as a file is freed (ext4, tmpfs), so dev+ino alone cannot tell
+ * a stale lock from a fresh one another cleaner created in its place; the new
+ * file's change time is its creation time, which differs.
+ */
+interface LockFileIdentity {
+  dev: number;
+  ino: number;
+  ctimeNs: bigint;
+}
+
+function lockIdentity(stat: { dev: bigint; ino: bigint; ctimeNs: bigint }): LockFileIdentity {
+  return { dev: Number(stat.dev), ino: Number(stat.ino), ctimeNs: stat.ctimeNs };
+}
+
+function safelyUnlinkLock(path: string, expected: LockFileIdentity): boolean {
   try {
-    const current = lstatSync(path);
+    const current = lstatSync(path, { bigint: true });
     if (current.isSymbolicLink() || !current.isFile() ||
-      current.dev !== expected.dev || current.ino !== expected.ino ||
-      (typeof process.getuid === 'function' && current.uid !== process.getuid())) return false;
+      Number(current.dev) !== expected.dev || Number(current.ino) !== expected.ino ||
+      current.ctimeNs !== expected.ctimeNs ||
+      (typeof process.getuid === 'function' && Number(current.uid) !== process.getuid())) return false;
     unlinkSync(path);
     return true;
   } catch { return false; }
+}
+
+/**
+ * Tests only: snapshot a cleanup lock's identity, then try the guarded unlink
+ * against that snapshot (the stale-lock and release paths both do this).
+ */
+export function _cleanupLockUnlinkForTest(path: string): { snapshot: () => void; unlink: () => boolean } {
+  let identity: LockFileIdentity | undefined;
+  return {
+    snapshot: () => { identity = lockIdentity(lstatSync(path, { bigint: true })); },
+    unlink: () => identity !== undefined && safelyUnlinkLock(path, identity),
+  };
 }
 
 function cleanupLockOwnerState(
@@ -3442,26 +3471,29 @@ function acquireCleanupLock(id: string): { fd: number; path: string } | null {
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
         0o600,
       );
-      const stat = fstatSync(fd);
+      const stat = fstatSync(fd, { bigint: true });
       if (!stat.isFile()) { closeSync(fd); return null; }
       const startRef = currentStartRef();
-      if (!startRef) { closeSync(fd); safelyUnlinkLock(path, stat); return null; }
+      if (!startRef) { closeSync(fd); safelyUnlinkLock(path, lockIdentity(stat)); return null; }
       try {
         const owner = Buffer.from(`${JSON.stringify({ pid: process.pid, startRef })}\n`, 'utf8');
         if (writeSync(fd, owner) !== owner.length) throw new Error('short cleanup lock write');
         fchmodSync(fd, 0o600);
         fsyncSync(fd);
       } catch {
+        let written: LockFileIdentity | undefined;
+        try { written = lockIdentity(fstatSync(fd, { bigint: true })); } catch { /* best effort */ }
         try { closeSync(fd); } catch { /* best effort */ }
-        safelyUnlinkLock(path, stat);
+        if (written) safelyUnlinkLock(path, written);
         return null;
       }
       return { fd, path };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return null;
       try {
-        const stat = lstatSync(path);
-        if (stat.isSymbolicLink() || !stat.isFile()) return null;
+        const bigStat = lstatSync(path, { bigint: true });
+        if (bigStat.isSymbolicLink() || !bigStat.isFile()) return null;
+        const stat = lockIdentity(bigStat);
         const state = cleanupLockOwnerState(path, stat);
         const now = performance.now();
         if (state === 'dead') {
@@ -3492,8 +3524,8 @@ function acquireCleanupLock(id: string): { fd: number; path: string } | null {
 
 function releaseCleanupLock(lock: { fd: number; path: string } | null | undefined): void {
   if (!lock) return;
-  let snapshot: { dev: number; ino: number } | undefined;
-  try { const stat = fstatSync(lock.fd); snapshot = { dev: stat.dev, ino: stat.ino }; } catch { /* best effort */ }
+  let snapshot: LockFileIdentity | undefined;
+  try { snapshot = lockIdentity(fstatSync(lock.fd, { bigint: true })); } catch { /* best effort */ }
   try { closeSync(lock.fd); } catch { /* best effort */ }
   if (snapshot) safelyUnlinkLock(lock.path, snapshot);
 }

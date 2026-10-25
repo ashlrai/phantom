@@ -164,6 +164,23 @@ describe('gateway live tools discovery', () => {
     await expect(g.call('alpha__old')).rejects.toThrow('Unknown tool');
     expect(state.peers.get('alpha')!.callTool.mock.calls.map(([request]) => request.name)).toEqual(['new']);
   });
+
+  it('answers an unknown tool with JSON-RPC -32602 (invalid params) and keeps the message', async () => {
+    const g = await gateway();
+    state.peers.get('alpha')!.listTools.mockResolvedValue({ tools: [{ name: 'known' }] });
+    state.peers.get('beta')!.listTools.mockResolvedValue({ tools: [] });
+    await g.list();
+    // The SDK sends error.code (default -32603) and error.message unchanged.
+    await expect(g.call('alpha__missing')).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/^Unknown tool "alpha__missing"\./),
+    });
+    // A downstream failure is not the caller's mistake and is not recoded.
+    state.peers.get('alpha')!.callTool.mockRejectedValueOnce(new Error('downstream exploded'));
+    const failure = await g.call('alpha__known').then(() => undefined, (err: unknown) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as { code?: unknown }).code).toBeUndefined();
+  });
 });
 
 

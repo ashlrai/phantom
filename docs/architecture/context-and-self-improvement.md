@@ -79,9 +79,14 @@ A proposal earns credit only from a metric it declares up front:
   worktrees at the PR's exact merge base and head (twice each by default). The
   command's last stdout line must be `{"metric": "<name>", "value": <number>}`.
   It runs with a minimal environment (no tokens or API keys) and a private
-  empty HOME, with git hooks and fsmonitor disabled. A failed run, a
-  missing script, or two runs of one commit that disagree make the outcome
-  **unknown**, never zero.
+  empty HOME, with git hooks and fsmonitor disabled. Under a standing grant
+  the metric command also runs inside the verification sandbox (writes only
+  to its worktree, no network egress, HOME jailed), because the head is
+  agent-written code nobody reviewed; when that sandbox cannot be built the
+  measurement is unknown and the command does not run. `npm ci
+  --ignore-scripts` still runs outside it, since it needs the registry and
+  runs no package code. A failed run, a missing script, or two runs of one
+  commit that disagree make the outcome **unknown**, never zero.
 * `phm improve outcomes` lists outcomes and compares proposers. Proposals
   chosen by the deterministic rules are the baseline; each exact engine/model
   pair is a fixed-model group. A rate or comparison needs at least three
@@ -106,6 +111,31 @@ A proposal earns credit only from a metric it declares up front:
   else is refused with reasons, and every decision is recorded in the ledger.
   Without `--queue-merge` it only reports the decision. CONSTITUTION.md v3's
   self-improvement section admits exactly this gate and nothing wider.
+
+### Lessons from matched outcomes (`src/core/improve/lesson-trial.ts`)
+
+Approved lessons (learn/retro knowledge notes) are only worth injecting if
+runs that receive them land more often than runs that do not. That is measured
+with a randomized holdout, not with hit counts:
+
+* When a cloud launch has applicable notes, a hash of the task id picks its
+  arm. A fixed share (`ASHLR_LESSON_HOLDOUT`, default 0.2, 0 turns it off, at
+  most 0.5) runs without the lessons block. Both arms record which notes
+  applied (`CloudTaskV1.lessons`).
+* When the task's PR merges or closes, the cloud tracker records the exact
+  head and merge commit, the CI rollup on that head and the review verdict
+  (`CloudTaskV1.outcome`). A failed read leaves it absent, which is unknown,
+  never green.
+* `phm improve observe --repo <dir>` also checks merged cloud tasks for a
+  later default-branch revert and records it (`outcome.revertedBy`).
+* Cloud retros cite that evidence: a PR closed with failing checks becomes a
+  lesson candidate naming the checks and `owner/repo#n @sha`; a review that
+  asked for changes or a revert is cited as the cause. Candidates still need
+  approval before any run sees them, and a reason a person wrote outranks the
+  machine signals.
+* `phm improve lessons [--json]` compares the landed rate (merged and not
+  reverted) with and without lessons, overall and per note, with a 95%
+  interval. Below three finished runs in either arm the effect is unknown.
 
 ## 5. Roadmap
 
