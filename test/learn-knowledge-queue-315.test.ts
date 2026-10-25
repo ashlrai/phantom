@@ -8,11 +8,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { retroFromFleet } from '../src/core/learn/retro/extract.js';
+import { retroFromCloud, retroFromFleet } from '../src/core/learn/retro/extract.js';
 import { knowledgeBlockFor } from '../src/core/learn/retro/inject.js';
 import { agentsMdTask, buildLessonsState, decideKnowledge, enqueueCandidates, proposeAgentsMd, recurringCauses } from '../src/core/learn/retro/knowledge.js';
 import {
   knowledgePath,
+  normalizeEvidence,
   readApprovedKnowledgeSync,
   readKnowledge,
   readKnowledgeHits,
@@ -50,6 +51,33 @@ describe('queue', () => {
     // Pending notes are never injected.
     expect(readApprovedKnowledgeSync()).toEqual([]);
     expect(knowledgeBlockFor({ repo: 'ashlrai/widget', paths: ['src/parser/lex.ts'], kind: 'fix' }, { recordHits: false }).text).toBe('');
+  });
+
+  it('a CI-failed cloud close queues a cited note; the same lesson again adds its new citations', async () => {
+    const closed = (taskId: string, pr: number, sha: string) => retroFromCloud({
+      taskId, repo: 'ashlrai/widget', state: 'closed', endedAt: NOW, title: 'Fix flaky parser test', prompt: 'Fix it.',
+      stateReason: `Pull request #${pr} was closed without merging.`, failure: null, report: null, origin: 'operator', pr,
+      outcome: { headSha: sha, mergeSha: null, ci: 'failure', failedChecks: ['lint'], reviewDecision: null, changesRequested: 0 },
+    }, NOW);
+    expect(await enqueueCandidates(closed('ct_1', 4, 'a'.repeat(40)), NOW)).toBe(1);
+    let [note] = await readKnowledge();
+    expect(note!.evidence).toEqual([
+      { kind: 'pr', repository: 'ashlrai/widget', number: 4, sha: 'a'.repeat(40), detail: 'closed without landing' },
+      { kind: 'ci', repository: 'ashlrai/widget', number: 4, sha: 'a'.repeat(40), detail: 'lint' },
+    ]);
+    // The same close seen again (same text, same PR) bumps `seen`; its citations are not duplicated.
+    expect(await enqueueCandidates(closed('ct_2', 4, 'a'.repeat(40)), NOW)).toBe(0);
+    [note] = await readKnowledge();
+    expect(note!.seen).toBe(2);
+    expect(note!.evidence).toHaveLength(2);
+  });
+
+  it('evidence refs are validated and capped', () => {
+    const ok = { kind: 'ci', repository: 'ashlrai/widget', number: 3, sha: 'b'.repeat(40), detail: 'test' };
+    expect(normalizeEvidence(undefined)).toBeUndefined();
+    expect(normalizeEvidence([{ ...ok, kind: 'tweet' }, { ...ok, repository: 'not a repo' }, { ...ok, number: null, sha: 'short' }])).toBeUndefined();
+    expect(normalizeEvidence([ok, ok])).toEqual([ok]);
+    expect(normalizeEvidence(Array.from({ length: 12 }, (_, i) => ({ ...ok, number: i + 1 })))!.map((r) => r.number)).toEqual([5, 6, 7, 8, 9, 10, 11, 12]);
   });
 
   it('the knowledge file is private (0600) and the directory 0700', async () => {

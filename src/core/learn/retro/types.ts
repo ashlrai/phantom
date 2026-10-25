@@ -108,9 +108,27 @@ export interface RetroRootCause {
 }
 
 /** A note the retro suggests; becomes a KnowledgeNoteV1 in the review queue. */
+/**
+ * A fact a lesson rests on: the PR, a failed check on its head, or a review
+ * verdict. `repository` is owner/name; `sha` is the full 40-hex commit.
+ */
+export interface KnowledgeEvidenceRef {
+  kind: 'pr' | 'ci' | 'review';
+  repository: string;
+  number: number | null;
+  sha: string | null;
+  /** Check name or review state, at most 120 chars. */
+  detail: string | null;
+}
+
+/** Most evidence refs a candidate or note carries. */
+export const KNOWLEDGE_EVIDENCE_MAX = 8;
+
 export interface KnowledgeCandidate {
   text: string;
   scope: KnowledgeScope;
+  /** What the lesson was learned from; absent for rule-only candidates. */
+  evidence?: KnowledgeEvidenceRef[];
 }
 
 export interface RetroV1 {
@@ -175,6 +193,8 @@ export interface KnowledgeNoteV1 {
   seen: number;
   /** Fleet task that proposes it for AGENTS.md; null until requested. */
   agentsMdTaskId: string | null;
+  /** Evidence from every retro that suggested it, newest last; absent on older notes. */
+  evidence?: KnowledgeEvidenceRef[];
 }
 
 // ---------------------------------------------------------------------------

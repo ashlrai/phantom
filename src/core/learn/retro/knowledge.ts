@@ -24,6 +24,7 @@ import {
   noteIdFor,
   normalizeScope,
   readKnowledge,
+  normalizeEvidence,
   readKnowledgeHits,
   readSweepState,
   updateKnowledge,
@@ -59,6 +60,9 @@ export async function enqueueCandidates(retro: RetroV1, nowIso: string): Promise
       const existing = byId.get(id);
       if (existing) {
         existing.seen += 1;
+        // The same lesson learned again: keep its new citations too.
+        const evidence = normalizeEvidence([...(existing.evidence ?? []), ...(c.evidence ?? [])]);
+        if (evidence) existing.evidence = evidence;
         continue;
       }
       const note: KnowledgeNoteV1 = {
@@ -77,6 +81,8 @@ export async function enqueueCandidates(retro: RetroV1, nowIso: string): Promise
         seen: 1,
         agentsMdTaskId: null,
       };
+      const evidence = normalizeEvidence(c.evidence);
+      if (evidence) note.evidence = evidence;
       notes.push(note);
       byId.set(id, note);
       added += 1;
