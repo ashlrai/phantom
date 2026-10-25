@@ -4,6 +4,7 @@ import {
   interpretPhantomPreflight,
   runPhantomPreflight,
 } from '../src/core/run/phantom-preflight.js';
+import { decidePhantomCustody } from '../src/core/run/phantom-custody.js';
 
 function doc(verdict: string, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -81,5 +82,25 @@ describe('phantom strict preflight', () => {
         throw new Error('boom');
       }).verdict,
     ).toBe('unavailable');
+  });
+});
+
+describe('custody decision with a strict preflight', () => {
+  const base = { enabled: true, installed: true, initialized: true, linkedWorktree: false, engineBin: 'aider' };
+  it('ready keeps the wrap and records the exit', () => {
+    const p = interpretPhantomPreflight({ status: 0, stdout: JSON.stringify({ schema_version: 1, kind: 'phantom.agent.preflight', verdict: 'ready', vault_probed: false, checks: [] }) });
+    expect(decidePhantomCustody({ ...base, preflightExit: p.exit, preflight: p })).toEqual({ wrapped: true, engine: 'aider', preflight_schema: 1, preflight_exit: 0 });
+  });
+  it('blocked is recorded unwrapped as preflight-blocked', () => {
+    const r = decidePhantomCustody({ ...base, preflightExit: 1, preflight: { mayWrap: false, reason: 'preflight-blocked' } });
+    expect(r).toEqual({ wrapped: false, reason: 'preflight-blocked', engine: 'aider', preflight_schema: 1, preflight_exit: 1 });
+  });
+  it('unavailable or a missing reason never wraps', () => {
+    expect(decidePhantomCustody({ ...base, preflight: { mayWrap: false } })).toMatchObject({ wrapped: false, reason: 'preflight-unavailable' });
+    const p = runPhantomPreflight('/tmp', () => { throw new Error('boom'); });
+    expect(decidePhantomCustody({ ...base, preflightExit: p.exit, preflight: p })).toMatchObject({ wrapped: false, reason: 'preflight-unavailable', preflight_exit: null });
+  });
+  it('earlier unwrapped reasons still win over the preflight', () => {
+    expect(decidePhantomCustody({ ...base, linkedWorktree: true, preflight: { mayWrap: true } })).toMatchObject({ wrapped: false, reason: 'worktree-namespace' });
   });
 });

@@ -62,6 +62,11 @@ export interface PhantomCustodyInput {
   linkedWorktree: boolean;
   engineBin: string;
   preflightExit?: number | null;
+  /**
+   * Strict preflight outcome (section 3.5), when one ran. Only `mayWrap: true`
+   * keeps a wrap; anything else is recorded unwrapped with its reason.
+   */
+  preflight?: { mayWrap: boolean; reason?: 'preflight-blocked' | 'preflight-unavailable' };
 }
 
 export function decidePhantomCustody(input: PhantomCustodyInput): PhantomCustodyRecord {
@@ -80,6 +85,9 @@ export function decidePhantomCustody(input: PhantomCustodyInput): PhantomCustody
     return unwrapped(SELF_AUTHENTICATING.has(engine) ? 'self-authenticating-engine' : 'not-initialized');
   }
   if (input.linkedWorktree) return unwrapped('worktree-namespace');
+  if (input.preflight && !input.preflight.mayWrap) {
+    return unwrapped(input.preflight.reason === 'preflight-blocked' ? 'preflight-blocked' : 'preflight-unavailable');
+  }
   return { wrapped: true, engine, preflight_schema: 1, preflight_exit };
 }
 

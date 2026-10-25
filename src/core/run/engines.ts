@@ -19,6 +19,7 @@ import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
  *   - applyLocusPreMutateGate is opt-in (LOCUS_ENFORCE); fail-closed when enforce.
  */
 
+import { runPhantomPreflight, type PreflightRunner } from './phantom-preflight.js';
 import { decidePhantomCustody, formatCustodyLine, isLinkedGitWorktree, type PhantomCustodyRecord } from './phantom-custody.js';
 import { spawnSync, execFileSync, spawn } from 'node:child_process';
 import * as http from 'node:http';
@@ -382,6 +383,8 @@ export interface SpawnEngineOptions {
   onSpawn?: () => void;
   /** Value-free phantom custody record for this spawn (wrapped, or unwrapped with a reason). */
   onCustody?: (record: PhantomCustodyRecord) => void;
+  /** Test seam for the strict phantom preflight runner (ASHLR_PHANTOM_PREFLIGHT=1). */
+  preflightRunner?: PreflightRunner;
   /**
    * Caller ownership contract. Signaled POSIX runs own their invocation's
    * detached process group only. Descendants that deliberately escape it via
@@ -859,13 +862,21 @@ async function spawnEngineInner(
   let effective = cmd;
   const wrapCwd = cmd.cwd ?? process.cwd();
   const phantomEnabled = cfg.phantom?.enabled === true;
-  const custody = decidePhantomCustody({
+  const custodyInput = {
     enabled: phantomEnabled,
     installed: phantomEnabled && phantomInstalled(),
     initialized: phantomEnabled && phantomInitializedAt(wrapCwd),
     linkedWorktree: phantomEnabled && isLinkedGitWorktree(wrapCwd),
     engineBin: cmd.bin,
-  });
+  };
+  let custody = decidePhantomCustody(custodyInput);
+  // Strict preflight (design-custody-fleet.md 3.5), opt-in via
+  // ASHLR_PHANTOM_PREFLIGHT=1. Runs only when the spawn would otherwise wrap;
+  // any verdict but ready leaves the engine unwrapped with a preflight reason.
+  if (custody.wrapped && process.env['ASHLR_PHANTOM_PREFLIGHT'] === '1') {
+    const preflight = runPhantomPreflight(wrapCwd, opts?.preflightRunner);
+    custody = decidePhantomCustody({ ...custodyInput, preflightExit: preflight.exit, preflight });
+  }
   if (custody.wrapped) {
     effective = phantomWrap(cmd, cfg);
   }
