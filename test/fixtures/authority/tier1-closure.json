@@ -690,6 +690,7 @@
     "src/core/run/ollama-identity.ts",
     "src/core/run/orchestrator.ts",
     "src/core/run/outcome-admission.ts",
+    "src/core/run/phantom-custody.ts",
     "src/core/run/prompts/budget.ts",
     "src/core/run/prompts/index.ts",
     "src/core/run/prompts/layers.ts",
