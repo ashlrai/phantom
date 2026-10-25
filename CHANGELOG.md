@@ -12,6 +12,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Run receipts gain signed `later[]` entries for ci, merge, survival and revert
+  (receipt.v1 R6). Each entry is signed separately and chained to the receipt
+  digest, so the original signed body is never rewritten. `fleet receipt verify`,
+  `show` and `timeline` check and list them; tampering fails verification.
 - `phm pulse connect --token` with no value now asks for the Pulse PAT at a
   hidden prompt, and `--token-stdin` reads it from a pipe. `--token <pat>` still
   works but warns on stderr that the PAT is visible in the process list and
