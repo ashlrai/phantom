@@ -8823,7 +8823,8 @@ export async function tick(
     // receipt.v1 at run close (opt-in ASHLR_RUN_RECEIPTS=1); only for events the ledger recorded.
     if (canonicalProductionRecorded) {
       const receipt = emitReceiptForDispatchEvent(event);
-      if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-receiptable') {
+      if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-applicable') {
+        // Value-free: only the fixed reason code, never the event or repo.
         console.warn('[ashlr] daemon:tick run receipt not written', receipt.reason);
       }
     }

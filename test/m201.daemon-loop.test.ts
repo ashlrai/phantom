@@ -64,7 +64,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 import { hostname } from 'node:os';
@@ -11707,6 +11707,10 @@ describe('Group R: run receipt written by a real dispatch tick', () => {
       expect(os.homedir()).toBe(fx.home);
       const repo = fx.makeRepo();
       repo.enroll();
+      // Token-bearing origin remote (runtime token): only owner/name may reach the receipt.
+      const remoteToken = randomBytes(16).toString('hex');
+      execFileSync('git', ['-C', repo.dir, 'remote', 'add', 'origin', `https://x-access-token:${remoteToken}@github.com/acme/widget.git`]);
+      const warnSpy = vi.spyOn(console, 'warn');
       const items = makeItems(repo.dir, 1).map((item) => ({
         ...item,
         title: `fix with ${planted}`,
@@ -11733,7 +11737,12 @@ describe('Group R: run receipt written by a real dispatch tick', () => {
       const file = join(fx.home, '.ashlr', 'receipts', 'run-receipt-e2e.json');
       expect(fs.existsSync(file)).toBe(true);
       const text = fs.readFileSync(file, 'utf8');
-      expect(JSON.parse(text)).toMatchObject({ run_id: 'run-receipt-e2e', outcome: { execution: 'empty-diff' } });
+      expect(JSON.parse(text)).toMatchObject({ run_id: 'run-receipt-e2e', repo: 'acme/widget', outcome: { execution: 'empty-diff' } });
+      expect(text).not.toContain(repo.dir);
+      const warned = JSON.stringify(warnSpy.mock.calls);
+      warnSpy.mockRestore();
+      expect(warned).not.toContain('run receipt not written');
+      for (const v of [planted, remoteToken]) expect(warned).not.toContain(v);
 
       // 2. verifies through the CLI handler
       const { cmdFleetReceipt } = await import('../src/cli/receipt.js');
@@ -11754,7 +11763,8 @@ describe('Group R: run receipt written by a real dispatch tick', () => {
       // 3. no planted value anywhere in the receipt or CLI output
       expect(text).not.toContain(planted);
       expect(text).not.toContain(planted.slice(3));
-      for (const w of writes) expect(w).not.toContain(planted);
+      expect(text).not.toContain(remoteToken);
+      for (const w of writes) for (const v of [planted, remoteToken, repo.dir]) expect(w).not.toContain(v);
     } finally {
       if (prevFlag === undefined) delete process.env.ASHLR_RUN_RECEIPTS; else process.env.ASHLR_RUN_RECEIPTS = prevFlag;
       if (prevKey === undefined) delete process.env.ASHLR_E2E_PLANTED_KEY; else process.env.ASHLR_E2E_PLANTED_KEY = prevKey;
