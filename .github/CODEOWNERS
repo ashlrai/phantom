@@ -410,6 +410,7 @@
 /test/legacy-red-team-routing-310.test.ts @masonwyatt23
 /test/live-fleet-display-policy-315.test.ts @masonwyatt23
 /test/live-fleet-leader-315.test.ts @masonwyatt23
+/test/local-escalation.test.ts @masonwyatt23
 /test/local-eval-comparison.test.ts @masonwyatt23
 /test/local-eval-heldout.test.ts @masonwyatt23
 /test/local-leader-binding.test.ts @masonwyatt23
