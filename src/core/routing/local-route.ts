@@ -9,7 +9,7 @@
  *   - lane 'local': only local seats are offered; if none is eligible the
  *     request escalates to frontier (reason 'local-unavailable').
  *
- * Authority rules applied here before the policy, stricter than P4 alone:
+ * Authority rules (enforced first inside the P4 policy):
  *   - a step that merges to main, or holds merge rights, is frontier-only;
  *   - a step that holds credentials (phantom exec, OAuth, API keys) is
  *     frontier-only, whatever the local model (abliterated or not).
@@ -20,14 +20,9 @@ import { routeSeat, type RouteOptions } from './router.js';
 import type { SeatCapacity } from './headroom.js';
 import type { BudgetPolicy, RoutingRequest, SeatDecision } from './types.js';
 
-export type LocalRouteReason = EscalationReason | 'credentials-frontier-only' | 'merge-rights-frontier-only';
+export type LocalRouteReason = EscalationReason;
 
-export interface LocalRouteInput extends Omit<EscalationInput, 'localAvailable'> {
-  /** The role holds merge rights (even when this step is not itself a merge). */
-  holdsMergeRights?: boolean;
-  /** Local server configured and reachable (P3 probe). */
-  localAvailable: boolean;
-}
+export type LocalRouteInput = EscalationInput;
 
 export interface LocalRouteDecision extends SeatDecision {
   lane: 'local' | 'frontier';
@@ -38,9 +33,7 @@ export const isLocalSeat = (capacity: Pick<SeatCapacity, 'engine'>): boolean => 
 
 /** Pure lane choice with the authority rules first. */
 export function decideLocalRouteLane(input: LocalRouteInput, policy: EscalationPolicy = DEFAULT_ESCALATION_POLICY): { lane: 'local' | 'frontier'; reason: LocalRouteReason } {
-  if (input.mergesToMain === true) return { lane: 'frontier', reason: 'merge-to-main-frontier-only' };
-  if (input.holdsMergeRights === true) return { lane: 'frontier', reason: 'merge-rights-frontier-only' };
-  if (input.needsCredentials === true) return { lane: 'frontier', reason: 'credentials-frontier-only' };
+  // Merge, merge-rights and credential rules are enforced first inside the policy.
   return decideLocalEscalation(input, policy);
 }
 
