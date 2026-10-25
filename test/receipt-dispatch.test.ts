@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DispatchProductionEvent } from '../src/core/fleet/dispatch-production-ledger.js';
-import { emitReceiptForDispatchEvent, receiptBodyFromDispatchEvent } from '../src/core/receipt/receipt-dispatch.js';
+import { randomBytes } from 'node:crypto';
+import { emitReceiptForDispatchEvent, localRepoName, ownerNameFromRemote, receiptBodyFromDispatchEvent, receiptRepoName } from '../src/core/receipt/receipt-dispatch.js';
 import { readReceiptV1 } from '../src/core/receipt/receipt-store.js';
 
 const origHome = process.env.HOME;
@@ -48,5 +49,55 @@ describe('receipt at run close', () => {
     expect(r.ok).toBe(true);
     expect(readReceiptV1('run-dispatch-1').ok).toBe(true);
     expect(emitReceiptForDispatchEvent(ev(), { ASHLR_RUN_RECEIPTS: '1' })).toEqual({ ok: false, reason: 'exists' });
+  });
+});
+
+describe('receipt repo name mapping', () => {
+  const tok = () => randomBytes(16).toString('hex');
+  it('parses https, ssh and scp-like GitHub remotes to owner/name', () => {
+    expect(ownerNameFromRemote('https://github.com/ashlrai/phantom.git')).toBe('ashlrai/phantom');
+    expect(ownerNameFromRemote('https://github.com/ashlrai/phantom')).toBe('ashlrai/phantom');
+    expect(ownerNameFromRemote('git@github.com:ashlrai/phantom.git\n')).toBe('ashlrai/phantom');
+    expect(ownerNameFromRemote('ssh://git@github.com/ashlrai/phantom.git')).toBe('ashlrai/phantom');
+    expect(ownerNameFromRemote('ssh://git@github.com:22/ashlrai/phantom.git')).toBe('ashlrai/phantom');
+  });
+  it('strips userinfo so a token-bearing remote never leaks', () => {
+    const t = tok();
+    const out = ownerNameFromRemote(`https://x-access-token:${t}@github.com/acme/widget.git`)!;
+    expect(out).toBe('acme/widget');
+    expect(out).not.toContain(t);
+  });
+  it('returns null for non-GitHub or unparseable remotes', () => {
+    expect(ownerNameFromRemote('https://gitlab.com/acme/widget.git')).toBeNull();
+    expect(ownerNameFromRemote('https://github.com.evil.example/acme/widget')).toBeNull();
+    expect(ownerNameFromRemote('/srv/git/widget.git')).toBeNull();
+    expect(ownerNameFromRemote('https://github.com/acme/widget/extra')).toBeNull();
+    expect(ownerNameFromRemote('')).toBeNull();
+  });
+  it('falls back to local/<sanitized folder> and never returns the full path', () => {
+    expect(localRepoName('/home/u/work/my repo (copy)')).toBe('local/my-repo--copy-');
+    expect(localRepoName('/tmp/x/')).toBe('local/x');
+    expect(localRepoName('/')).toBe('local/repo');
+    expect(localRepoName('/tmp/..')).toBe('local/repo');
+    const t = tok();
+    const viaGitlab = receiptRepoName(`/home/u/secret-${t}/proj`, () => `https://u:${t}@gitlab.com/a/b.git`)!;
+    expect(viaGitlab).toBe('local/proj');
+    expect(viaGitlab).not.toContain('/home');
+    expect(receiptRepoName('/home/u/proj', () => null)).toBe('local/proj');
+    expect(receiptRepoName('/home/u/proj', () => `https://u:${t}@github.com/acme/widget`)).toBe('acme/widget');
+    expect(receiptRepoName('ashlrai/phantom', () => { throw new Error('not called'); })).toBe('ashlrai/phantom');
+    expect(receiptRepoName('not a repo', () => null)).toBeNull();
+  });
+  it('maps an absolute-path dispatch event to a valid receipt body', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'odd name '));
+    try {
+      const b = receiptBodyFromDispatchEvent(ev({ repo: dir }))!;
+      expect(b.repo).toMatch(/^local\/odd-name-/);
+      expect(JSON.stringify(b)).not.toContain(os.tmpdir());
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('shadow rows and run-less events are not-applicable, not errors', () => {
+    expect(emitReceiptForDispatchEvent(ev({ outcome: 'shadow-observation' }), { ASHLR_RUN_RECEIPTS: '1' })).toEqual({ ok: false, reason: 'not-applicable' });
+    expect(emitReceiptForDispatchEvent(ev({ runId: undefined }), { ASHLR_RUN_RECEIPTS: '1' })).toEqual({ ok: false, reason: 'not-applicable' });
   });
 });

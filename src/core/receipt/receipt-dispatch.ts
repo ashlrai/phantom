@@ -7,6 +7,8 @@
  * null (base revision, custody wrap, tokens, approvals). The event's free-text
  * fields (title, reason, routeReason) are never copied.
  */
+import { execFileSync } from 'node:child_process';
+import { basename, isAbsolute } from 'node:path';
 import { isCancelledDispatchProductionEvent, type DispatchProductionEvent } from '../fleet/dispatch-production-ledger.js';
 import { emitReceiptV1, type EmitReceiptResult } from './receipt-store.js';
 import { EXECUTION_OUTCOMES, isReceiptV1Body, RECEIPT_V1_SCHEMA, type ReceiptV1Body } from './receipt-v1.js';
@@ -27,6 +29,45 @@ function execution(event: DispatchProductionEvent): Execution {
   }
 }
 
+const RECEIPT_REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+
+/**
+ * Pure. owner/name from a GitHub remote URL (https, ssh, scp-like). Userinfo
+ * (which can carry a token) is never returned. Null for non-GitHub or
+ * unparseable remotes. The raw URL is never logged or stored.
+ */
+export function ownerNameFromRemote(url: string): string | null {
+  const u = url.trim();
+  const m = /^(?:(?:https?|ssh|git):\/\/(?:[^@/]*@)?github\.com(?::\d+)?\/|(?:[^@/:\s]+@)?github\.com:)([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?\/?$/i.exec(u);
+  if (!m) return null;
+  const out = `${m[1]}/${m[2]}`;
+  return RECEIPT_REPO.test(out) && m[2] !== '.' && m[2] !== '..' ? out : null;
+}
+
+/** Pure. local/<folder> with the folder sanitized to receipt characters. */
+export function localRepoName(dir: string): string {
+  const folder = basename(dir.replace(/[\\/]+$/, '')).replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 100).replace(/^\.+$/, '');
+  return `local/${folder || 'repo'}`;
+}
+
+function readOriginUrl(dir: string): string | null {
+  try {
+    return execFileSync('git', ['-C', dir, 'config', '--get', 'remote.origin.url'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Receipt repo field: owner/name as-is, a local path mapped via origin or local/<folder>. Never the full path. */
+export function receiptRepoName(repo: string, readOrigin: (dir: string) => string | null = readOriginUrl): string | null {
+  if (RECEIPT_REPO.test(repo) && !isAbsolute(repo)) return repo;
+  if (!isAbsolute(repo) && !/^[A-Za-z]:[\\/]/.test(repo)) return null;
+  const remote = readOrigin(repo);
+  return (remote ? ownerNameFromRemote(remote) : null) ?? localRepoName(repo);
+}
+
 const count = (v: unknown): number => (Number.isSafeInteger(v) && (v as number) >= 0 ? (v as number) : 0);
 
 /** Pure. Null when the event cannot produce a valid receipt (no run id, shadow rows, bad repo). */
@@ -34,11 +75,13 @@ export function receiptBodyFromDispatchEvent(event: DispatchProductionEvent): Re
   if (!event.runId || event.outcome === 'shadow-observation') return null;
   const createdAt = Date.parse(event.ts);
   if (!Number.isFinite(createdAt)) return null;
+  const repo = receiptRepoName(event.repo);
+  if (!repo) return null;
   const body: ReceiptV1Body = {
     schema: RECEIPT_V1_SCHEMA,
     run_id: event.runId,
     created_at: new Date(createdAt).toISOString(),
-    repo: event.repo,
+    repo,
     base_oid: null,
     head_oid: null,
     identity: { engine: event.backend ?? 'unknown', seat: null, locus_pin_id: null, locus_observed: false },
@@ -65,9 +108,10 @@ export function runReceiptsEnabled(env: NodeJS.ProcessEnv = process.env): boolea
 export function emitReceiptForDispatchEvent(
   event: DispatchProductionEvent,
   env: NodeJS.ProcessEnv = process.env,
-): EmitReceiptResult | { ok: false; reason: 'disabled' | 'not-receiptable' } {
+): EmitReceiptResult | { ok: false; reason: 'disabled' | 'not-applicable' | 'not-receiptable' } {
   try {
     if (!runReceiptsEnabled(env)) return { ok: false, reason: 'disabled' };
+    if (!event.runId || event.outcome === 'shadow-observation') return { ok: false, reason: 'not-applicable' };
     const body = receiptBodyFromDispatchEvent(event);
     return body ? emitReceiptV1(body) : { ok: false, reason: 'not-receiptable' };
   } catch {

@@ -64,8 +64,9 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import * as os from 'node:os';
 import { hostname } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type {
@@ -80,6 +81,7 @@ import type { DispatchPlan } from '../src/core/fabric/concurrent-dispatch.js';
 import { workItemCoverageKey } from '../src/core/fleet/proposal-matching.js';
 import { deriveCandidateAttemptIdentity } from '../src/core/fleet/attempt-identity.js';
 import { hashDiff, signProvenance } from '../src/core/foundry/provenance.js';
+import { randomBytes } from 'node:crypto';
 
 const privateStorageHarness = vi.hoisted(() => ({
   useSemanticAdapter: false,
@@ -11682,6 +11684,90 @@ describe('M201 — Group H: M505 learning-sweep observability', () => {
       expect(logged).toBe(false);
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group R: receipt.v1 end to end through the real tick (evidence for
+// default-on receipts). Stub engine is the mocked runGoal; HOME, ASHLR_HOME
+// and the enrolled repo all live in the H1 fixture temp dir.
+// ---------------------------------------------------------------------------
+
+describe('Group R: run receipt written by a real dispatch tick', () => {
+  it('R1: with ASHLR_RUN_RECEIPTS=1 a dispatched run writes a receipt that verifies and leaks no values', async () => {
+    const prevFlag = process.env.ASHLR_RUN_RECEIPTS;
+    const prevKey = process.env.ASHLR_E2E_PLANTED_KEY;
+    // Fake key value generated at runtime only; never a literal.
+    const planted = `pk_${randomBytes(18).toString('hex')}`;
+    process.env.ASHLR_RUN_RECEIPTS = '1';
+    process.env.ASHLR_E2E_PLANTED_KEY = planted;
+    const writes: string[] = [];
+    try {
+      expect(os.homedir()).toBe(fx.home);
+      const repo = fx.makeRepo();
+      repo.enroll();
+      // Token-bearing origin remote (runtime token): only owner/name may reach the receipt.
+      const remoteToken = randomBytes(16).toString('hex');
+      execFileSync('git', ['-C', repo.dir, 'remote', 'add', 'origin', `https://x-access-token:${remoteToken}@github.com/acme/widget.git`]);
+      const warnSpy = vi.spyOn(console, 'warn');
+      const items = makeItems(repo.dir, 1).map((item) => ({
+        ...item,
+        title: `fix with ${planted}`,
+        detail: `token=${planted}`,
+      }));
+      mockBuildBacklog.mockResolvedValue({ generatedAt: new Date().toISOString(), repos: [repo.dir], items });
+      mockRouteBackend.mockReturnValue({ backend: 'local-coder', tier: 'mid', reason: `route ${planted}` });
+      mockEngineTierOf.mockImplementation((backend: unknown) => backend === 'local-coder' ? 'mid' : 'local');
+      mockRunGoal.mockResolvedValueOnce({
+        id: 'run-receipt-e2e',
+        status: 'done',
+        usage: { totalTokens: 100, estCostUsd: 0.004, steps: 1 },
+        proposalOutcome: { kind: 'empty-diff', reason: `no changes ${planted}` },
+      });
+
+      const result = await tick(
+        { ...cfgBuiltin({ perTickItems: 1, parallel: 1 }), foundry: { allowedBackends: ['local-coder'] } } as AshlrConfig,
+        { dryRun: false },
+      );
+      expect(result.reason).toBe('ok');
+      expect(mockRunGoal).toHaveBeenCalledTimes(1);
+
+      // 1. written under the temp HOME
+      const file = join(fx.home, '.ashlr', 'receipts', 'run-receipt-e2e.json');
+      expect(fs.existsSync(file)).toBe(true);
+      const text = fs.readFileSync(file, 'utf8');
+      expect(JSON.parse(text)).toMatchObject({ run_id: 'run-receipt-e2e', repo: 'acme/widget', outcome: { execution: 'empty-diff' } });
+      expect(text).not.toContain(repo.dir);
+      const warned = JSON.stringify(warnSpy.mock.calls);
+      warnSpy.mockRestore();
+      expect(warned).not.toContain('run receipt not written');
+      for (const v of [planted, remoteToken]) expect(warned).not.toContain(v);
+
+      // 2. verifies through the CLI handler
+      const { cmdFleetReceipt } = await import('../src/cli/receipt.js');
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { writes.push(String(chunk)); return true; });
+      let verifyCode: number;
+      let statusCode: number;
+      try {
+        verifyCode = await cmdFleetReceipt(['verify', 'run-receipt-e2e', '--json']);
+        statusCode = await cmdFleetReceipt(['status', '--json']);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(verifyCode).toBe(0);
+      expect(JSON.parse(writes[0]!)).toMatchObject({ runId: 'run-receipt-e2e', verified: true });
+      expect(statusCode).toBe(0);
+      expect(JSON.parse(writes[1]!)).toMatchObject({ receipts: 1, latest: { runId: 'run-receipt-e2e', verified: true } });
+
+      // 3. no planted value anywhere in the receipt or CLI output
+      expect(text).not.toContain(planted);
+      expect(text).not.toContain(planted.slice(3));
+      expect(text).not.toContain(remoteToken);
+      for (const w of writes) for (const v of [planted, remoteToken, repo.dir]) expect(w).not.toContain(v);
+    } finally {
+      if (prevFlag === undefined) delete process.env.ASHLR_RUN_RECEIPTS; else process.env.ASHLR_RUN_RECEIPTS = prevFlag;
+      if (prevKey === undefined) delete process.env.ASHLR_E2E_PLANTED_KEY; else process.env.ASHLR_E2E_PLANTED_KEY = prevKey;
     }
   });
 });
