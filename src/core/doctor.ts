@@ -12,6 +12,8 @@ import { spawnSync } from 'node:child_process';
 import type { AshlrConfig, DoctorCheck, DoctorCheckStatus, DoctorReport, McpRegistry, ToolsRegistry } from './types.js';
 import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
+import { receiptStatus } from './receipt/receipt-store.js';
+import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -512,6 +514,54 @@ function checkPhantom(): DoctorCheck {
       'warn',
       `Could not determine phantom status: ${String(err)}`,
     );
+  }
+}
+
+/**
+ * Phantom strict preflight (`phantom agent doctor --json --strict`), the same
+ * gate fleet spawns use with ASHLR_PHANTOM_PREFLIGHT=1. Metadata-only by
+ * default; ASHLR_DOCTOR_PHANTOM_VAULT=1 adds `--vault` (opens the vault, which
+ * phantom audits). Only the verdict, exit code and kebab-case check ids are shown.
+ */
+export function checkPhantomPreflight(
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; runner?: PreflightRunner; status?: { installed: boolean; initialized: boolean } } = {},
+): DoctorCheck {
+  const env = opts.env ?? process.env;
+  const title = 'Phantom strict preflight';
+  try {
+    const status = opts.status ?? getPhantomStatus();
+    if (!status.installed || !status.initialized) {
+      return check('phantom-preflight', title, 'pass', 'skipped: phantom not installed or project not configured');
+    }
+    const vault = env['ASHLR_DOCTOR_PHANTOM_VAULT'] === '1';
+    const r = runPhantomPreflight(opts.cwd ?? process.cwd(), opts.runner, { vault });
+    const scope = vault ? 'with vault probe' : 'metadata only';
+    const ids = r.checkIds.length ? ` [${r.checkIds.slice(0, 8).join(', ')}]` : '';
+    if (r.verdict === 'ready') return check('phantom-preflight', title, 'pass', `ready (${scope})`);
+    if (r.verdict === 'unavailable') {
+      return check('phantom-preflight', title, 'warn', `could not evaluate (exit ${r.exit ?? 'none'}, ${scope})`, 'Update Phantom Secrets to a version with `phantom agent doctor --json --strict`');
+    }
+    return check('phantom-preflight', title, 'warn', `${r.verdict} (exit ${r.exit}, ${scope})${ids}`, 'phantom agent doctor');
+  } catch (err) {
+    return check('phantom-preflight', title, 'warn', `Could not run the preflight: ${err instanceof Error ? err.name : 'error'}`);
+  }
+}
+
+/**
+ * Newest receipt.v1 verifies (value-free). Pass when there are no receipts;
+ * warn when the newest one fails verification, naming only the run id and reason.
+ */
+export function checkReceiptVerify(
+  opts: { status?: () => { receipts: number; latest: { runId: string; verified: boolean; reason: string | null } | null } } = {},
+): DoctorCheck {
+  const title = 'Run receipts';
+  try {
+    const s = (opts.status ?? receiptStatus)();
+    if (!s.latest) return check('receipt-verify', title, 'pass', 'no receipts yet');
+    if (s.latest.verified) return check('receipt-verify', title, 'pass', `newest of ${s.receipts} verifies`);
+    return check('receipt-verify', title, 'warn', `newest receipt ${s.latest.runId} does NOT verify (${s.latest.reason ?? 'unknown'})`, `phm receipt timeline ${s.latest.runId}`);
+  } catch (err) {
+    return check('receipt-verify', title, 'warn', `Could not read receipts: ${err instanceof Error ? err.name : 'error'}`);
   }
 }
 
@@ -1321,6 +1371,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkConfig());
   checks.push(checkIndex());
   checks.push(checkPhantom());
+  checks.push(checkPhantomPreflight());
+  checks.push(checkReceiptVerify());
   checks.push(checkLocus());
   checks.push(checkLocusFirm(cfg));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)

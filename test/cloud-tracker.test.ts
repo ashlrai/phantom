@@ -121,7 +121,39 @@ describe('refreshCloudTasks', () => {
       deliveryPin: { number: 42, url: 'https://github.com/ashlrai/ashlr-hub/pull/42' },
       stateReason: 'Pull request #42 is open for review.',
     });
-    expect(calls).toHaveLength(2);
+    expect(readCloudTask(t.id)!.outcome).toBeUndefined();
+    // One lookup per refresh, plus the close-time evidence read.
+    expect(calls.filter((a) => a[1] === 'list')).toHaveLength(2);
+    expect(calls.filter((a) => a[1] === 'view')).toHaveLength(1);
+  });
+
+  it('records the exact head, CI rollup and review verdict when the PR closes', async () => {
+    const t = seed('aaaaaa', 'pr-open');
+    const head = 'a'.repeat(40);
+    const view = JSON.stringify({
+      headRefOid: head, mergeCommit: null, reviewDecision: 'CHANGES_REQUESTED',
+      reviews: [{ state: 'COMMENTED' }, { state: 'CHANGES_REQUESTED' }],
+      statusCheckRollup: [
+        { __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
+        { __typename: 'CheckRun', name: 'test (ubuntu)', status: 'COMPLETED', conclusion: 'FAILURE' },
+        { __typename: 'StatusContext', context: 'ci/legacy', state: 'ERROR' },
+      ],
+    });
+    const gh: Gh = async (args) => ({ ok: true, stdout: args[1] === 'view' ? view : ghPr(t, 'CLOSED'), stderr: '' });
+    await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) });
+    expect(readCloudTask(t.id)!.outcome).toEqual({
+      observedAt: new Date(T0 + HOUR).toISOString(), headSha: head, mergeSha: null, ci: 'failure',
+      failedChecks: ['test (ubuntu)', 'ci/legacy'], reviewDecision: 'CHANGES_REQUESTED', changesRequested: 1,
+    });
+  });
+
+  it('leaves the outcome absent (unknown) when the evidence read fails', async () => {
+    const t = seed('aaaaaa', 'pr-open');
+    const gh: Gh = async (args) => (args[1] === 'view' ? { ok: false, stdout: '', stderr: 'boom' } : { ok: true, stdout: ghPr(t, 'MERGED', REPORT, false), stderr: '' });
+    await refreshCloudTasks({ gh, now: () => new Date(T0 + HOUR) });
+    const done = readCloudTask(t.id)!;
+    expect(done.state).toBe('merged');
+    expect(done.outcome).toBeUndefined();
   });
 
   it('does not adopt a replacement PR or poll past the closed watch window', async () => {

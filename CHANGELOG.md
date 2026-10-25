@@ -12,6 +12,19 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Every engine spawn that is not wrapped by `phantom exec` now leaves a
+  value-free custody record with a fixed reason code, including when Phantom is
+  off (`phantom-disabled`). `phm status` and `status --json` break unwrapped
+  spawns down by reason. `.phantom.toml` is still never copied into sandbox
+  worktrees (it would select a different, empty vault).
+- Run receipts now record what happened after close: the daemon appends signed
+  `later[]` entries when a run's PR checks settle (ci), it merges (merge), the
+  post-merge watch reports (survival) and a revert lands (revert). Best effort,
+  value-free, deduplicated; runs without a receipt are skipped.
+- Run receipts gain signed `later[]` entries for ci, merge, survival and revert
+  (receipt.v1 R6). Each entry is signed separately and chained to the receipt
+  digest, so the original signed body is never rewritten. `fleet receipt verify`,
+  `show` and `timeline` check and list them; tampering fails verification.
 - `phm pulse connect --token` with no value now asks for the Pulse PAT at a
   hidden prompt, and `--token-stdin` reads it from a pipe. `--token <pat>` still
   works but warns on stderr that the PAT is visible in the process list and

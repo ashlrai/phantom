@@ -1398,6 +1398,18 @@ async function cmdStatus(args: string[]): Promise<void> {
     // silently omit — never break status
   }
 
+  // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
+  try {
+    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
+    const custody = gatherCustodyStatus();
+    if (custody) {
+      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
   try {
     const resourcesMod = await import('./resources.js' as unknown as string) as {
@@ -2161,6 +2173,13 @@ async function main(): Promise<void> {
         // plus `pause`/`resume` (kill-switch only).
         const cmdFleet = await loadFleetCmd();
         process.exitCode = await cmdFleet(rest);
+        break;
+      }
+
+      case 'receipt': {
+        // `phm receipt ...` is the same as `phm fleet receipt ...`.
+        const { cmdFleetReceipt } = await import('./receipt.js');
+        process.exitCode = await cmdFleetReceipt(rest);
         break;
       }
 

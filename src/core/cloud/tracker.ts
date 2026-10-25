@@ -33,7 +33,7 @@ import { FLEET_BRANCH_PREFIX } from '../fleet/host-merge.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { parseCloudReport } from './delivery-contract.js';
 import { listCloudTasks, readCloudTask, writeCloudTask } from './store.js';
-import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_TASK_EXPIRY_MS, type CloudDeliveryPin, type CloudTaskPr, type CloudTaskState, type CloudTaskV1 } from './types.js';
+import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_TASK_EXPIRY_MS, type CloudDeliveryPin, type CloudTaskOutcome, type CloudTaskPr, type CloudTaskState, type CloudTaskV1 } from './types.js';
 
 export interface CloudTrackerDeps {
   gh?: (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
@@ -131,6 +131,55 @@ export function matchesTask(gh: GhPr, task: Pick<CloudTaskV1, 'repo' | 'branch' 
 export function prFrom(gh: GhPr): CloudTaskPr {
   const state: CloudTaskPr['state'] = gh.state === 'OPEN' ? 'open' : gh.state === 'MERGED' ? 'merged' : 'closed';
   return { number: gh.number, url: gh.url, state, draft: gh.isDraft, title: gh.title.slice(0, 300) };
+}
+
+/** The `gh pr view --json` fields `parseOutcome` reads. */
+export const GH_PR_OUTCOME_FIELDS = 'headRefOid,mergeCommit,statusCheckRollup,reviewDecision,reviews';
+
+const SHA = /^[0-9a-f]{40}$/;
+const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR']);
+const REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
+
+/**
+ * CI and review evidence from `gh pr view --json GH_PR_OUTCOME_FIELDS`.
+ * Anything unreadable is null, never success: an absent rollup is 'none'
+ * only when GitHub returned an empty list.
+ */
+export function parseOutcome(stdout: string, observedAt: string): CloudTaskOutcome | null {
+  let v: unknown;
+  try { v = JSON.parse(stdout); } catch { return null; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const sha = (x: unknown) => (typeof x === 'string' && SHA.test(x) ? x : null);
+  const merge = o['mergeCommit'] && typeof o['mergeCommit'] === 'object' ? (o['mergeCommit'] as Record<string, unknown>)['oid'] : null;
+  let ci: CloudTaskOutcome['ci'] = null;
+  const failedChecks: string[] = [];
+  const rollup = o['statusCheckRollup'];
+  if (Array.isArray(rollup)) {
+    let pending = false;
+    for (const item of rollup) {
+      if (!item || typeof item !== 'object') continue;
+      const c = item as Record<string, unknown>;
+      const name = String(c['name'] ?? c['context'] ?? '').slice(0, 120);
+      const verdict = String(c['conclusion'] ?? c['state'] ?? '');
+      if (FAILED.has(verdict)) { if (name && failedChecks.length < 20 && !failedChecks.includes(name)) failedChecks.push(name); continue; }
+      if ((c['status'] !== undefined && c['status'] !== 'COMPLETED') || verdict === 'PENDING' || verdict === 'EXPECTED') pending = true;
+    }
+    ci = failedChecks.length > 0 ? 'failure' : pending ? 'pending' : rollup.length === 0 ? 'none' : 'success';
+  }
+  const decision = typeof o['reviewDecision'] === 'string' && REVIEW_DECISIONS.has(o['reviewDecision']) ? o['reviewDecision'] as CloudTaskOutcome['reviewDecision'] : null;
+  const reviews = Array.isArray(o['reviews']) ? o['reviews'] : [];
+  const changesRequested = reviews.filter((r) => r && typeof r === 'object' && (r as Record<string, unknown>)['state'] === 'CHANGES_REQUESTED').length;
+  return { observedAt, headSha: sha(o['headRefOid']), mergeSha: sha(merge), ci, failedChecks, reviewDecision: decision, changesRequested };
+}
+
+async function readOutcome(task: CloudTaskV1, number: number, gh: NonNullable<CloudTrackerDeps['gh']>, observedAt: string): Promise<CloudTaskOutcome | null> {
+  try {
+    const result = await gh(['pr', 'view', String(number), '--repo', task.repo, '--json', GH_PR_OUTCOME_FIELDS]);
+    return result.ok ? parseOutcome(result.stdout, observedAt) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function stateFor(pr: CloudTaskPr): { state: CloudTaskState; reason: string } {
@@ -331,6 +380,16 @@ export async function refreshCloudTasks(deps: CloudTrackerDeps = {}): Promise<{ 
       const report = parseCloudReport(ghPr.body);
       if (state !== task.state || !same(pr, task.pr) || !same(report, task.report) || reason !== task.stateReason) {
         next = { ...task, state, pr, report, deliveryPin: pin ?? { number: pr.number, url: pr.url }, stateReason: reason, failure: null };
+        // The one moment the run's CI and review verdict is final: keep it as
+        // evidence for retros and the lessons trial. A failed read leaves it absent.
+        if ((state === 'merged' || state === 'closed') && state !== task.state) {
+          const outcome = await readOutcome(task, pr.number, gh, new Date(nowMs).toISOString());
+          if (outcome) next.outcome = outcome;
+          else delete next.outcome;
+        } else if (state === 'pr-open') {
+          // Reopened: the close-time verdict no longer describes this PR.
+          delete next.outcome;
+        }
       } else if (!task.deliveryPin) {
         next = { ...task, deliveryPin: pin ?? { number: pr.number, url: pr.url } };
       }
