@@ -1,4 +1,7 @@
 import { devinCliBindingCurrent, peekDevinCliExecutionBinding, peekDevinCliIdentityBinding } from '../devin/cli-admission.js';
+import { emitReceiptForDispatchEvent } from '../receipt/receipt-dispatch.js';
+import { installReceiptLaterHooks } from '../receipt/receipt-later-hooks.js';
+import { registerLedgerAppendObserver } from '../authority/ledger.js';
 import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
 /**
  * loop.ts — The M24 daemon operator.
@@ -3941,6 +3944,8 @@ export async function tick(
   opts: TickOptions,
 ): Promise<DaemonTick> {
   const now = new Date().toISOString();
+  // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
+  try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
   const activationAccepted =
     !opts.dryRun && isDaemonActivationCapability(opts.activationCapability);
   if (!opts.dryRun && !activationAccepted) {
@@ -8827,6 +8832,14 @@ export async function tick(
         console.warn('[ashlr] daemon:tick failed-attempt witness persistence unavailable', witnessWrite.failureReasons);
       }
     }
+    // receipt.v1 at run close (opt-in ASHLR_RUN_RECEIPTS=1); only for events the ledger recorded.
+    if (canonicalProductionRecorded) {
+      const receipt = emitReceiptForDispatchEvent(event);
+      if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-applicable') {
+        // Value-free: only the fixed reason code, never the event or repo.
+        console.warn('[ashlr] daemon:tick run receipt not written', receipt.reason);
+      }
+    }
     const failedRepairItem = generatedRepairItemsById.get(event.itemId);
     const failedRepairReservation = generatedRepairReservations.get(event.itemId)?.record;
     if (
@@ -10008,6 +10021,38 @@ async function runDaemonInEnrollmentScope(
       }
     } catch (err) {
       console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
+    }
+    // Private scratch (verify-confine-*, fleet-git-*, patch-*.diff) a killed
+    // run left in ~/.ashlr/tmp: same owner rules, nothing else references it.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const scratch = reaper.sweepLeakedTmpScratch();
+      if (scratch.reaped.length > 0 || scratch.failed.length > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `tmp scratch sweep reaped=${scratch.reaped.length} kept=${scratch.kept.length} failed=${scratch.failed.length}`,
+          result: scratch.failed.length === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch {
+      // Best-effort: never blocks daemon start.
+    }
+    // A git process killed mid-update leaves packed-refs.lock / a ref .lock
+    // that fails every later ref update in that repo. Git records no owner, so
+    // the daemon only reports old ones (read-only); `phm doctor` repeats it.
+    try {
+      const { readGitLockHealth } = await import('../readiness.js');
+      const { describeStaleGitLocks } = await import('../sandbox/stale-git-locks.js');
+      const { locks } = readGitLockHealth();
+      if (locks.length > 0) {
+        const summary = describeStaleGitLocks(locks);
+        console.warn(`[ashlr] daemon: ${summary}; remove only if no git process is running there`);
+        audit({ action: 'daemon:start', repo: locks[0]!.repo, sandboxId: null, summary, result: 'error' });
+      }
+    } catch {
+      // Best-effort report: never blocks daemon start.
     }
   }
 

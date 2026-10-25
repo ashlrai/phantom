@@ -415,4 +415,62 @@ describe('h7 rollback — one-command inward-only undo', () => {
     expect(listEnrolled()).not.toContain(resolve(r.dir));
     expect(killSwitchOn()).toBe(true);
   });
+  it('a path that was never enrolled is refused, not reported as unenrolled (--json)', async () => {
+    expect.hasAssertions();
+    const r = repo!;
+    expect(listEnrolled()).toEqual([]);
+
+    const out: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      out.push(String(chunk));
+      return true;
+    });
+    const code = await cmdOnboard(['--rollback', r.dir, '--json']);
+
+    expect(code).toBe(1);
+    const payload = JSON.parse(out.join('')) as Record<string, unknown>;
+    expect(payload['ok']).toBe(false);
+    expect(payload['reason']).toBe('not-enrolled');
+    expect(payload['wasEnrolled']).toBe(false);
+    expect(payload['unenrolled']).toBe(false);
+    expect(String(payload['error'])).toMatch(/was not enrolled; nothing to roll back/);
+    expect(killSwitchOn()).toBe(false);
+  });
+
+  it('a never-enrolled path in prose exits 1 with a clear message; an enrolled one reports wasEnrolled', async () => {
+    expect.hasAssertions();
+    const r = repo!;
+    const errs: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await rollback(r.dir, { kill: false })).toBe(1);
+    expect(errs.join('\n')).toMatch(/was not enrolled; nothing to roll back/);
+
+    r.enroll();
+    const out: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      out.push(String(chunk));
+      return true;
+    });
+    expect(await rollback(r.dir, { kill: false, json: true })).toBe(0);
+    const payload = JSON.parse(out.join('')) as Record<string, unknown>;
+    expect(payload['ok']).toBe(true);
+    expect(payload['wasEnrolled']).toBe(true);
+    expect(payload['unenrolled']).toBe(true);
+  });
+
+  it('a never-enrolled path with --kill still stops autonomy and says nothing was unenrolled', async () => {
+    expect.hasAssertions();
+    const r = repo!;
+    const out: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      out.push(String(chunk));
+      return true;
+    });
+    expect(await rollback(r.dir, { kill: true, json: true })).toBe(0);
+    const payload = JSON.parse(out.join('')) as Record<string, unknown>;
+    expect(payload['wasEnrolled']).toBe(false);
+    expect(payload['unenrolled']).toBe(false);
+    expect(killSwitchOn()).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestEngineeringMissionConsole } from '../src/core/resources/engineering-mission-console.js';
+import { MAX_TRANSIENT_READ_FAILURES, requestEngineeringMissionConsole } from '../src/core/resources/engineering-mission-console.js';
 import type { ResourceConsoleServerHandle } from '../src/core/web/resource-console-server.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -23,6 +23,36 @@ describe('mission console bounded observation recovery', () => {
       expect(input).toMatchObject({ method: 'GET', redirect: 'error', headers: { 'x-ashlr-token': 'fixture-read' } });
     }
   });
+  it('retries a transient transport failure on a read, then succeeds', async () => {
+    const { fetch, options } = fixture();
+    fetch.mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValueOnce(Response.json({ state: 'ready' }));
+    expect(await requestEngineeringMissionConsole(options)).toEqual({ state: 'ready' });
+    expect(fetch).toHaveBeenCalledTimes(2); expect(options.wait).toHaveBeenCalledOnce();
+  });
+  it('bounds consecutive transport failures on a read', async () => {
+    const { fetch, options } = fixture(); fetch.mockRejectedValue(new TypeError('fetch failed'));
+    await expect(requestEngineeringMissionConsole(options)).rejects.toThrow('fetch failed');
+    expect(MAX_TRANSIENT_READ_FAILURES).toBe(3);
+    expect(fetch).toHaveBeenCalledTimes(MAX_TRANSIENT_READ_FAILURES + 1);
+    expect(options.wait).toHaveBeenCalledTimes(MAX_TRANSIENT_READ_FAILURES);
+  });
+  it('stops transport retries at the original deadline', async () => {
+    const { fetch, options } = fixture(); fetch.mockRejectedValue(new TypeError('fetch failed'));
+    options.remainingMs.mockReturnValueOnce(1000).mockReturnValueOnce(0);
+    await expect(requestEngineeringMissionConsole(options)).rejects.toThrow('Mission execution stopped');
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('never retries a mutation after a transport failure', async () => {
+    const { fetch, options } = fixture(); fetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(requestEngineeringMissionConsole({ ...options, body: { id: 'stable-task' } })).rejects.toThrow('fetch failed');
+    expect(fetch).toHaveBeenCalledOnce(); expect(options.wait).not.toHaveBeenCalled();
+  });
+  it.each([['abort', new DOMException('aborted', 'AbortError')], ['timeout', new DOMException('timed out', 'TimeoutError')], ['other', new Error('boom')]])(
+    'does not retry a non-transient %s error', async (_label, error) => {
+      const { fetch, options } = fixture(); fetch.mockRejectedValueOnce(error);
+      await expect(requestEngineeringMissionConsole(options)).rejects.toBe(error);
+      expect(fetch).toHaveBeenCalledOnce(); expect(options.wait).not.toHaveBeenCalled();
+    });
   it('stops unavailable reads when the original deadline expires', async () => {
     const { fetch, options } = fixture(); fetch.mockResolvedValueOnce(new Response('busy', { status: 503 }));
     options.remainingMs.mockReturnValueOnce(1000).mockReturnValueOnce(0);

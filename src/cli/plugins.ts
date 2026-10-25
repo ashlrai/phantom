@@ -19,6 +19,7 @@ import { join, basename } from 'node:path';
 
 import { loadConfig, saveConfig } from '../core/config.js';
 import { makeColors, isTty, pad } from './ui.js';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 const c = makeColors(isTty());
 
@@ -315,8 +316,9 @@ function initEntrySource(name: string, capability: InitCapability): string {
 }
 
 async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number> {
-  const name = args.find((a) => !a.startsWith('--'));
   const capIdx = args.indexOf('--capability');
+  // The value after --capability is not the name: `init --capability command foo` names foo.
+  const name = args.find((a, i) => !a.startsWith('--') && !(capIdx !== -1 && i === capIdx + 1));
   const capability = (capIdx !== -1 ? args[capIdx + 1] : 'scanner') as InitCapability;
 
   if (!name) {
@@ -373,6 +375,22 @@ async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number
   return 0;
 }
 
+/**
+ * Options each plugins verb reads. Anything else is refused before a manifest
+ * is read or a file written: `init <name> --capabilty command` used to
+ * scaffold a scanner plugin.
+ */
+const PLUGINS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  init: {
+    allowed: { flags: ['--json'], values: ['--capability'] },
+    usage: 'usage: ashlr plugins init <name> [--capability scanner|template|provider|command] [--json]',
+  },
+  list: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins list [--json]' },
+  info: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins info <name> [--json]' },
+  enable: { allowed: { flags: ['--yes', '--json'] }, usage: 'usage: ashlr plugins enable <name> [--yes] [--json]' },
+  disable: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins disable <name> [--json]' },
+};
+
 export async function cmdPlugins(args: string[]): Promise<number> {
   const sub = args[0];
   const jsonMode = args.includes('--json');
@@ -383,6 +401,14 @@ export async function cmdPlugins(args: string[]): Promise<number> {
   if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printPluginsHelp();
     return 0;
+  }
+  const spec = Object.hasOwn(PLUGINS_OPTIONS, sub) ? PLUGINS_OPTIONS[sub] : undefined;
+  if (spec) {
+    const bad = rejectUnknownOptions(args.slice(1), spec.allowed);
+    if (bad) {
+      process.stderr.write(`error: ${bad.message}\n${spec.usage}\n`);
+      return 2;
+    }
   }
   if (sub === 'list') return cmdPluginsList(jsonMode);
   if (sub === 'info') return cmdPluginsInfo(args[1], jsonMode);

@@ -1,7 +1,9 @@
 /**
  * Crash-leftover reaper for the throwaway worktrees inbox/merge.ts creates
  * under `~/.ashlr/tmp` (`vwt-<hex>` verify, `mwt-<hex>` staging build,
- * `mergewt-<hex>` local merge).
+ * `mergewt-<hex>` local merge), plus the `wt-<hex>` worktree inbox/apply.ts
+ * applies an approved proposal in (its `ashlr/proposal/…` branch is the
+ * output and is never deleted).
  *
  * Those worktrees are removed in a `finally`, which never runs when the daemon
  * is SIGKILLed / OOM-killed / self-SIGTERMed mid-run. The worktree directory,
@@ -15,7 +17,7 @@
  * caller runs {@link reapLeakedTempWorktrees} under the same lock it holds for
  * the creation. Fail-closed rules:
  *   - only registrations whose path is DIRECTLY under the ashlr tmp dir and
- *     whose basename matches ^(vwt|mwt|mergewt)-[0-9a-f]+$ are candidates;
+ *     whose basename matches ^(vwt|mwt|mergewt|wt)-[0-9a-f]+$ are candidates;
  *   - a valid marker reaps only when the owner is provably gone (ESRCH) or its
  *     pid was reused (verified start reference differs); anything uncertain
  *     keeps the worktree;
@@ -57,7 +59,7 @@ import {
 } from '../fleet/local-store-lock.js';
 
 const GIT_TIMEOUT = 30_000;
-const TEMP_WORKTREE_NAME = /^(vwt|mwt|mergewt)-[0-9a-f]+$/;
+const TEMP_WORKTREE_NAME = /^(vwt|mwt|mergewt|wt)-[0-9a-f]+$/;
 const VERIFY_BRANCH_REF = /^refs\/heads\/(ashlr\/verify\/[0-9a-f]+)$/;
 const START_SOURCES: readonly ProcessStartIdentitySource[] = [
   'self-clock-epoch-second', 'ps-lstart', 'linux-proc-start-ticks', 'windows-start-ticks',
@@ -463,7 +465,7 @@ export function tempWorktreeMarkerRepo(markerPath: string): string | null {
 }
 
 /**
- * Every repo owning at least one `vwt-` / `mwt-` / `mergewt-` leftover in the
+ * Every repo owning at least one `vwt-` / `mwt-` / `mergewt-` / `wt-` leftover in the
  * ashlr tmp dir: from each leftover directory's `.git` pointer and from each
  * owner marker's recorded repo (which still works once the directory is gone).
  */
@@ -586,4 +588,121 @@ export async function sweepLeakedTempWorktreesAtStart(
     }
   }
   return total;
+}
+
+// ---------------------------------------------------------------------------
+// Private scratch left in the ashlr tmp dir by a killed process
+// ---------------------------------------------------------------------------
+
+/**
+ * Plain scratch entries (never git worktrees) that other modules create
+ * directly under the ashlr tmp dir and remove in a `finally`:
+ *   - `verify-confine-XXXXXX` (inbox/merge.ts confined verification run dir),
+ *   - `fleet-git-XXXXXX` (fleet/host-merge.ts scratch repository),
+ *   - `patch-<12 hex>.diff` (inbox/apply.ts patch file).
+ * A SIGKILL skips the `finally`; nothing references them afterwards, so they
+ * only leak disk. They carry the same `<path>.owner` marker as temp worktrees.
+ */
+const TMP_SCRATCH_NAME = /^(?:verify-confine-[A-Za-z0-9]{6}|fleet-git-[A-Za-z0-9]{6}|patch-[0-9a-f]{12}\.diff)$/;
+
+/**
+ * Write the owner marker for scratch at `path` (a dir just made with mkdtemp,
+ * or a patch file about to be written). Best-effort: an unmarked entry is
+ * still reaped, only later, by the markerless age rule.
+ */
+export function writeTmpScratchOwner(path: string): void {
+  try {
+    const start = ownStartIdentity();
+    const body = {
+      schemaVersion: 1,
+      pid: process.pid,
+      ...(start ? { startRef: start.ref, startSource: start.source } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(markerPathFor(path), `${JSON.stringify(body)}\n`, { mode: 0o600, flag: 'wx' });
+  } catch { /* best-effort; see above */ }
+}
+
+/** Drop the owner marker of scratch at `path` once the scratch itself is gone. */
+export function releaseTmpScratchOwner(path: string): void {
+  try {
+    lstatSync(path);
+    return; // still there: keep the marker so a later sweep can judge it
+  } catch { /* gone */ }
+  unlinkQuietly(markerPathFor(path));
+}
+
+export interface TmpScratchSweepResult {
+  reaped: string[];
+  kept: string[];
+  failed: string[];
+}
+
+export interface TmpScratchSweepOptions {
+  /** Test seam. */
+  now?: number;
+  /** Markerless entries are removed only once older than this; default {@link MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS}. */
+  markerlessAgeMs?: number;
+}
+
+/**
+ * Remove private scratch a dead process left under the ashlr tmp dir. Same
+ * fail-closed owner rules as temp worktrees: a marker whose owner is provably
+ * gone (ESRCH, or a verified start reference that differs) is reaped; a live
+ * or uncertain owner keeps it; a missing or unreadable marker reaps only once
+ * the entry and marker are older than the markerless age. Only names matching
+ * the scratch patterns directly under the tmp dir are considered, symlinks are
+ * never followed or removed, and a marker whose scratch is already gone is
+ * dropped by the same rules. Never throws.
+ */
+export function sweepLeakedTmpScratch(options: TmpScratchSweepOptions = {}): TmpScratchSweepResult {
+  const result: TmpScratchSweepResult = { reaped: [], kept: [], failed: [] };
+  const now = options.now ?? Date.now();
+  const markerlessAgeMs = options.markerlessAgeMs ?? MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS;
+  const tmp = ashlrTmpDir();
+  let names: string[];
+  try {
+    names = readdirSync(tmp);
+  } catch {
+    return result;
+  }
+  const candidates = new Set<string>();
+  for (const name of names) {
+    if (TMP_SCRATCH_NAME.test(name)) candidates.add(name);
+    else if (name.endsWith('.owner') && TMP_SCRATCH_NAME.test(name.slice(0, -'.owner'.length))) {
+      candidates.add(name.slice(0, -'.owner'.length));
+    }
+  }
+  for (const name of candidates) {
+    const path = join(tmp, name);
+    const marker = markerPathFor(path);
+    let present = true;
+    try {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || (!st.isDirectory() && !st.isFile())) {
+        result.kept.push(path);
+        continue;
+      }
+    } catch {
+      present = false;
+    }
+    const state = readOwnerState(marker);
+    let reap = state === 'dead';
+    if (state === 'unknown') {
+      const newest = newestMtimeMs([path, marker]);
+      reap = newest !== null && now - newest >= markerlessAgeMs;
+    }
+    if (!reap) {
+      result.kept.push(path);
+      continue;
+    }
+    try {
+      if (present) rmSync(path, { recursive: true, force: true });
+      unlinkQuietly(marker);
+      result.reaped.push(path);
+    } catch {
+      result.failed.push(path);
+    }
+  }
+  return result;
 }

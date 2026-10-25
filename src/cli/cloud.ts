@@ -12,6 +12,7 @@
  *                      [--self-improve-max N] [--self-improve-max-open N]
  *                      [--reserve N] [--json]
  *   ashlr cloud backlog [--json]
+ *   ashlr cloud stats [--days N] [--json]
  *
  * Talks to the cloud service in-process (src/core/cloud/*), NOT to the Verse
  * server, and never imports cloud-api.ts — that module starts the background
@@ -27,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 
 import type {
   CloudBacklogView,
+  CloudLaunchFailureCode,
   CloudBudgetUpdate,
   CloudBudgetV1,
   CloudBudgetView,
@@ -57,6 +59,9 @@ Usage:
       --self-improve-max-open: self-improvement waits while this many of its PRs await review (default 3).
   ashlr cloud backlog [--json]
       The self-improvement backlog and what each item's latest task did.
+  ashlr cloud stats [--days N] [--json]
+      How tasks ended: merged, closed, failed, expired, and the share of finished PRs that merged.
+      --days: only tasks started in the last N days.
 
 Spend is an estimate: Claude doesn't expose the credit balance.`;
 
@@ -179,6 +184,71 @@ const STATE_LABEL: Readonly<Record<CloudTaskState, string>> = {
   failed: 'failed',
   expired: 'expired',
 };
+
+/** Delivery outcomes over a set of tasks: how far each got and whether its PR landed. */
+export interface CloudDeliveryStats {
+  /** null = every task; otherwise only tasks started in the last N days. */
+  days: number | null;
+  tasks: number;
+  merged: number;
+  /** Closed without merging, with or without a PR. */
+  closed: number;
+  /** Of `closed`: the session reported no change was needed (a correct verdict, not a failed PR). */
+  closedNoChange: number;
+  failed: number;
+  /** Launch failures by code. */
+  failures: Partial<Record<CloudLaunchFailureCode, number>>;
+  expired: number;
+  /** Not finished yet (queued, launching, running or PR open). */
+  inFlight: number;
+  /** Of `inFlight`: a PR is open and waiting. */
+  prOpen: number;
+  /** Finished PRs that carried a change: merged plus closed with a PR and no no-change report. */
+  finishedPrs: number;
+  /** merged / finishedPrs, rounded to 3 places; null when no PR has finished. */
+  mergedRate: number | null;
+}
+
+/** Tally how tasks ended. Exported for tests. */
+export function cloudDeliveryStats(tasks: readonly CloudTaskV1[], now: Date, days: number | null): CloudDeliveryStats {
+  const since = days === null ? null : now.getTime() - days * 24 * 60 * 60 * 1000;
+  const stats: CloudDeliveryStats = {
+    days, tasks: 0, merged: 0, closed: 0, closedNoChange: 0, failed: 0, failures: {}, expired: 0,
+    inFlight: 0, prOpen: 0, finishedPrs: 0, mergedRate: null,
+  };
+  for (const task of tasks) {
+    if (since !== null) {
+      const at = Date.parse(task.createdAt);
+      if (Number.isNaN(at) || at < since) continue;
+    }
+    stats.tasks += 1;
+    switch (task.state) {
+      case 'merged':
+        stats.merged += 1;
+        stats.finishedPrs += 1;
+        break;
+      case 'closed':
+        stats.closed += 1;
+        if (task.report?.status === 'no-change') stats.closedNoChange += 1;
+        else if (task.pr || task.deliveryPin) stats.finishedPrs += 1;
+        break;
+      case 'failed': {
+        stats.failed += 1;
+        const code = task.failure ?? 'unknown';
+        stats.failures[code] = (stats.failures[code] ?? 0) + 1;
+        break;
+      }
+      case 'expired':
+        stats.expired += 1;
+        break;
+      default:
+        stats.inFlight += 1;
+        if (task.state === 'pr-open') stats.prOpen += 1;
+    }
+  }
+  if (stats.finishedPrs > 0) stats.mergedRate = Math.round((stats.merged / stats.finishedPrs) * 1000) / 1000;
+  return stats;
+}
 
 /** Tasks `list` shows: everything in flight plus what finished recently; `all` shows every task. */
 export function tasksToList(tasks: readonly CloudTaskV1[], now: Date, all: boolean): CloudTaskV1[] {
@@ -429,13 +499,42 @@ function cmdBacklog(deps: CloudCliDeps, args: string[]): number {
   return 0;
 }
 
+function cmdStats(deps: CloudCliDeps, args: string[]): number {
+  const asJson = takeFlag(args, '--json');
+  const days = takeNumber(args, '--days', true);
+  rejectLeftovers(args);
+  if (days !== null && days < 1) throw new UsageError('--days must be 1 or more.');
+  const stats = cloudDeliveryStats(deps.listTasks(Number.MAX_SAFE_INTEGER), deps.now(), days);
+  if (asJson) {
+    json(deps, stats);
+    return 0;
+  }
+  const window = days === null ? '' : ` started in the last ${days} ${days === 1 ? 'day' : 'days'}`;
+  if (stats.tasks === 0) {
+    deps.out(`No cloud tasks${window}.`);
+    return 0;
+  }
+  const c = makeColors(deps.color);
+  deps.out(`Cloud delivery · ${stats.tasks} ${stats.tasks === 1 ? 'task' : 'tasks'}${window}`);
+  deps.out(`  Merged     ${stats.merged}`);
+  deps.out(`  Closed     ${stats.closed}${stats.closedNoChange > 0 ? c.dim(` (${stats.closedNoChange} reported no change needed)`) : ''}`);
+  const failures = Object.entries(stats.failures).map(([code, n]) => `${code} ${n}`).join(', ');
+  deps.out(`  Failed     ${stats.failed}${failures ? c.dim(` (${failures})`) : ''}`);
+  deps.out(`  Expired    ${stats.expired}${stats.expired > 0 ? c.dim(' (no PR arrived)') : ''}`);
+  deps.out(`  In flight  ${stats.inFlight}${stats.prOpen > 0 ? c.dim(` (${stats.prOpen} with a PR open)`) : ''}`);
+  deps.out(stats.mergedRate === null
+    ? 'Merged rate: no PR with a change has finished yet.'
+    : `Merged rate: ${stats.merged} of ${stats.finishedPrs} finished ${stats.finishedPrs === 1 ? 'PR' : 'PRs'} with a change merged (${Math.round(stats.mergedRate * 100)}%).`);
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 const HELP_VALUE_OPTIONS = new Set([
   '--count', '--max-concurrent', '--max-per-day', '--per-session', '--reserve', '--self-improve-max',
-  '--self-improve-max-open', '--spent', '--total', '--base', '--repo', '--self-improve', '--title',
+  '--self-improve-max-open', '--spent', '--total', '--base', '--repo', '--self-improve', '--title', '--days',
 ]);
 
 function wantsHelp(args: readonly string[]): boolean {
@@ -456,7 +555,7 @@ export async function runCloudCli(argv: string[], injected?: Partial<CloudCliDep
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
   }
-  const known = ['launch', 'list', 'ls', 'refresh', 'improve', 'budget', 'backlog'];
+  const known = ['launch', 'list', 'ls', 'refresh', 'improve', 'budget', 'backlog', 'stats'];
   if (!known.includes(sub)) {
     printErr(`Unknown cloud command "${sub}".\n\n${USAGE}`);
     return 2;
@@ -478,6 +577,7 @@ export async function runCloudCli(argv: string[], injected?: Partial<CloudCliDep
       case 'refresh': return await cmdRefresh(deps, args);
       case 'improve': return await cmdImprove(deps, args);
       case 'budget': return cmdBudget(deps, args);
+      case 'stats': return cmdStats(deps, args);
       default: return cmdBacklog(deps, args);
     }
   } catch (err) {

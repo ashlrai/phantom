@@ -20,13 +20,16 @@ describe.runIf(process.platform === 'linux')('bounded command process-group live
     // The backgrounded `setsid` execs in place (a job is not a group leader),
     // so `$!` leads its own group. It then sleeps (live) or exits (zombie);
     // its parent execs `sleep`, which never reaps, so the zombie persists.
+    // The zombie leader waits until its parent is `sleep` before exiting: if
+    // it exits first, the parent shell can reap it before the exec and its
+    // /proc entry is gone (ENOENT) instead of Z.
     const run = (body: string) => spawn('/bin/sh', ['-c', `setsid /bin/sh -c '${body}' & echo $!; exec sleep 5`],
       { stdio: ['ignore', 'pipe', 'ignore'] });
     const pidOf = (child: ReturnType<typeof run>) => new Promise<number>((resolvePid, reject) => {
       child.stdout!.once('data', (chunk: Buffer) => resolvePid(Number(String(chunk).trim())));
       child.once('error', reject);
     });
-    const zombieParent = run('exit 0');
+    const zombieParent = run('while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done; exit 0');
     const liveParent = run('sleep 5');
     let liveLeader = 0;
     try {

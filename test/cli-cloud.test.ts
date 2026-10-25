@@ -11,7 +11,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { localWhen, parseBudgetFlags, parseGithubRepo, runCloudCli, tasksToList, type CloudCliDeps } from '../src/cli/cloud.js';
+import { cloudDeliveryStats, localWhen, parseBudgetFlags, parseGithubRepo, runCloudCli, tasksToList, type CloudCliDeps } from '../src/cli/cloud.js';
 import { TOP_LEVEL_COMMANDS } from '../src/cli/completions.js';
 import { HELP_ENTRIES } from '../src/cli/help.js';
 import {
@@ -424,6 +424,78 @@ describe('backlog', () => {
   });
 });
 
+describe('stats', () => {
+  const pr = (n: number, state: 'open' | 'closed' | 'merged') => ({ number: n, url: `https://github.com/ashlrai/ashlr-hub/pull/${n}`, state, draft: false, title: 't' });
+  const report = (status: 'done' | 'no-change') => ({ status, summary: 's', testsRun: [], risks: [] });
+  const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * 60 * 60_000).toISOString();
+  function mixed(): CloudTaskV1[] {
+    return [
+      task({ state: 'merged', pr: pr(1, 'merged'), report: report('done') }),
+      task({ state: 'merged', pr: pr(2, 'merged'), report: report('done') }),
+      task({ state: 'closed', pr: pr(3, 'closed'), report: report('done') }),
+      task({ state: 'closed', pr: pr(4, 'closed'), report: report('no-change') }),
+      task({ state: 'failed', failure: 'auth' }),
+      task({ state: 'failed', failure: 'auth' }),
+      task({ state: 'failed', failure: 'budget' }),
+      task({ state: 'expired' }),
+      task({ state: 'pr-open', pr: pr(5, 'open') }),
+      task({ state: 'running' }),
+      task({ state: 'merged', pr: pr(6, 'merged'), createdAt: daysAgo(40) }),
+    ];
+  }
+
+  it('tallies how tasks ended; a no-change verdict is not a failed PR', () => {
+    expect(cloudDeliveryStats(mixed(), NOW, null)).toEqual({
+      days: null, tasks: 11, merged: 3, closed: 2, closedNoChange: 1, failed: 3, failures: { auth: 2, budget: 1 },
+      expired: 1, inFlight: 2, prOpen: 1, finishedPrs: 4, mergedRate: 0.75,
+    });
+  });
+
+  it('--days keeps only tasks started inside the window', () => {
+    const stats = cloudDeliveryStats(mixed(), NOW, 30);
+    expect(stats.tasks).toBe(10);
+    expect(stats.merged).toBe(2);
+    expect(stats.mergedRate).toBe(0.667);
+  });
+
+  it('prints the outcomes and the merged rate', async () => {
+    const h = harness();
+    h.tasks = mixed();
+    expect(await runCloudCli(['stats'], h.deps)).toBe(0);
+    expect(h.out).toEqual([
+      'Cloud delivery · 11 tasks',
+      '  Merged     3',
+      '  Closed     2 (1 reported no change needed)',
+      '  Failed     3 (auth 2, budget 1)',
+      '  Expired    1 (no PR arrived)',
+      '  In flight  2 (1 with a PR open)',
+      'Merged rate: 3 of 4 finished PRs with a change merged (75%).',
+    ]);
+    expect(h.deps.listTasks).toHaveBeenCalledWith(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('says so when nothing has finished or nothing matches', async () => {
+    const h = harness();
+    h.tasks = [task({ state: 'running' })];
+    await runCloudCli(['stats'], h.deps);
+    expect(h.out.at(-1)).toBe('Merged rate: no PR with a change has finished yet.');
+    h.out.length = 0;
+    h.tasks = [];
+    await runCloudCli(['stats', '--days', '7'], h.deps);
+    expect(h.out).toEqual(['No cloud tasks started in the last 7 days.']);
+  });
+
+  it('--json prints the tally; bad --days is usage', async () => {
+    const h = harness();
+    h.tasks = mixed();
+    expect(await runCloudCli(['stats', '--days', '30', '--json'], h.deps)).toBe(0);
+    expect(JSON.parse(text(h.out))).toMatchObject({ days: 30, tasks: 10, mergedRate: 0.667 });
+    expect(await runCloudCli(['stats', '--days', '0'], h.deps)).toBe(2);
+    expect(await runCloudCli(['stats', '--day', '3'], h.deps)).toBe(2);
+    expect(h.err.join('\n')).toContain('Unknown option --day');
+  });
+});
+
 describe('registration', () => {
   it('is a top-level command with its verbs in completions and help', async () => {
     expect(TOP_LEVEL_COMMANDS).toContain('cloud');
@@ -443,6 +515,6 @@ describe('registration', () => {
       spy.mockRestore();
       write.mockRestore();
     }
-    expect(lines.join('\n')).toMatch(/cloud\)[^;]*launch list refresh improve budget backlog/);
+    expect(lines.join('\n')).toMatch(/cloud\)[^;]*launch list refresh improve budget backlog stats/);
   });
 });
