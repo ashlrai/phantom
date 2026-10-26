@@ -27,15 +27,31 @@ const TOOLS = [
     name: 'ping',
     description: 'Returns pong',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    annotations: {
+      title: 'Ping',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   },
   {
     name: 'echo',
     description: 'Echoes back the message',
+    title: 'Echo',
     inputSchema: {
       type: 'object',
       properties: { message: { type: 'string' } },
       required: ['message'],
     },
+    outputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string' } },
+      required: ['text'],
+    },
+    icons: [{ src: 'data:image/svg+xml;base64,PHN2Zy8+', mimeType: 'image/svg+xml' }],
+    execution: { taskSupport: 'forbidden' },
+    _meta: { 'mock.example/role': 'echo-fixture' },
   },
 ];
 
@@ -88,10 +104,13 @@ rl.on('line', (line) => {
         result: { content: [{ type: 'text', text: 'pong' }] },
       });
     } else if (toolName === 'echo') {
+      const text = String(args.message ?? '');
       send({
         jsonrpc: '2.0',
         id,
-        result: { content: [{ type: 'text', text: String(args.message ?? '') }] },
+        // echo declares an outputSchema, so the result also carries
+        // structuredContent matching it (spec requirement).
+        result: { content: [{ type: 'text', text }], structuredContent: { text } },
       });
     } else {
       send({

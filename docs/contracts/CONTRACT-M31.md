@@ -76,6 +76,13 @@ export function callNativeTool(name: string, args: unknown):
   is skipped with a stderr WARN (native wins). Structural protection: native
   names use `_`, downstream keys always contain `__`.
 - Ready banner reports `N downstream + M native tool(s)`.
+- Protocol profile (CONTRACT-M3): serves `2026-07-28` ahead of the SDK's
+  supported versions, accepts the `params._meta` version carriers, answers
+  requests without a handshake, keeps JSON-RPC error discipline
+  (-32700/-32600/-32602/-32601), and exits when stdin closes. Downstream tool
+  listings keep spec-optional fields (`title`, `annotations`, `outputSchema`,
+  `icons`, `execution`, `_meta`) through namespacing.
+  → `test/mcp-conformance-2026-07-28.test.ts`.
 
 ## 4. CLI-first surface
 
@@ -136,5 +143,6 @@ export function callNativeTool(name: string, args: unknown):
 - [x] `src/core/web/api.ts` — read-only orient/health/backlog/impact routes.
 - [x] Tests: `test/m31.native-tools.test.ts`, `test/m31.orient.test.ts`,
       `test/m31.safety.test.ts`, `test/m31.gateway-native.test.ts`,
-      `test/m31.api.test.ts`, `test/m31.cli-agent.test.ts`.
+      `test/m31.api.test.ts`, `test/m31.cli-agent.test.ts`,
+      `test/mcp-conformance-2026-07-28.test.ts` (2026-07-28 wire profile).
 - [x] Docs: README agent-native section, CHANGELOG M31 entry.
