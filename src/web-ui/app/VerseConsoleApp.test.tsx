@@ -56,6 +56,22 @@ afterEach(() => {
 });
 
 describe('VerseConsoleApp', () => {
+  it('opens the decision inbox by desktop deep link and returns to the workspace', async () => {
+    window.history.replaceState(null, '', '/verse/#/inbox');
+    const net = verseFetch();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === '/api/inbox' ? Response.json({ pending: 0, proposals: [] }) : net.fetch(input, init)));
+    markCheckComplete(true);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Decision inbox' })).toBeInTheDocument();
+    expect(await screen.findByText(/No pending decisions/)).toBeInTheDocument();
+    act(() => {
+      window.history.replaceState(null, '', '/verse/');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await expectShellOnChat();
+  });
+
   it('is a scoped console on /verse', () => {
     expect(isVerseConsolePath('/verse')).toBe(true);
     expect(isVerseConsolePath('/verse/')).toBe(true);
