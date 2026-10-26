@@ -129,7 +129,7 @@ try {
     const script = [
       'set -u',
       ...scenario.setup.map((step, i) => `"$LOCUS_BIN" ${step.join(' ')} >/dev/null 2>&1; echo $? > "$RAW/setup.${i}"`),
-      'if [ "${LOCUS_EXPORT_CAPABILITY:-}" = 1 ]; then LOCUS_CONTROL_CAPABILITY="$(cat "$LOCUS_HOME/control_capability")"; export LOCUS_CONTROL_CAPABILITY; fi',
+      'if [ "${LOCUS_EXPORT_CAPABILITY:-}" = 1 ]; then [ -s "$LOCUS_HOME/control_capability" ] || exit 3; LOCUS_CONTROL_CAPABILITY="$(cat "$LOCUS_HOME/control_capability")"; export LOCUS_CONTROL_CAPABILITY; fi',
       ...PROBES.map(([file, args]) => `"$LOCUS_BIN" ${args.join(' ')} > "$RAW/${file}" 2>/dev/null </dev/null; echo $? > "$RAW/${file}.exit"`),
     ].join('\n');
     await run('/bin/sh', ['-c', script], cwd, { ...env, LOCUS_BIN: locusBin, RAW: raw });
