@@ -851,6 +851,13 @@ async function spawnEngineInner(
     };
   }
 
+  if (!selectedOutcomeAdmissionCurrent(opts?.selectedOutcomeAdmission)) return cancelledEngineResult();
+  const hostHeadroom = checkHostHeadroom();
+  if (!hostHeadroom.allowed) {
+    return { ok: false, output: '', error: hostHeadroom.reason ?? 'Host memory pressure; launch held.',
+      terminationReason: 'error-exit' };
+  }
+
   // Apply phantom-exec wrap when enabled, installed, AND the cwd contains
   // .phantom.toml. Self-authenticating CLIs (claude, codex) run in sandbox
   // worktrees that have no .phantom.toml -- wrapping them is both unnecessary
@@ -959,12 +966,6 @@ async function spawnEngineInner(
 
     if (!selectedOutcomeAdmissionCurrent(opts?.selectedOutcomeAdmission)) {
       resolve(cancelledEngineResult());
-      return;
-    }
-    const hostHeadroom = checkHostHeadroom();
-    if (!hostHeadroom.allowed) {
-      resolve({ ok: false, output: '', error: hostHeadroom.reason ?? 'Host memory pressure; launch held.',
-        terminationReason: 'error-exit' });
       return;
     }
     const child = spawn(spawnBin, spawnArgs, {

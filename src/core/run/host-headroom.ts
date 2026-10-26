@@ -42,17 +42,19 @@ export type HostHeadroomDecision = {
   reason: string | null;
 };
 
-/** Pure transition: a held host must clear both recovery thresholds. */
-export function assessHostHeadroom(reading: HostHeadroom | null, held = false): HostHeadroomDecision {
+export const HOST_SWAP_WINDOW_MS = 10 * 60 * 1000;
+const SWAP_GROWTH_LIMIT_GB = 2;
+
+/** Absolute swap and free-page counts are diagnostics, not pressure signals. */
+export function assessHostHeadroom(reading: HostHeadroom | null, swapGrowthGb = 0): HostHeadroomDecision {
   if (!reading || !Number.isFinite(reading.freePercent) || reading.freePercent < 0 || reading.freePercent > 100 ||
-      !Number.isFinite(reading.swapGb) || reading.swapGb < 0) {
+      !Number.isFinite(reading.swapGb) || reading.swapGb < 0 || !Number.isFinite(swapGrowthGb) || swapGrowthGb < 0) {
     return { allowed: false, reading: null, reason: 'Host memory telemetry unavailable; launch held.' };
   }
-  const allowed = held ? reading.freePercent >= 35 && reading.swapGb <= 6
-    : reading.freePercent >= 30 && reading.swapGb <= 8;
+  const allowed = swapGrowthGb <= SWAP_GROWTH_LIMIT_GB;
   return { allowed, reading, reason: allowed ? null
-    : `Host memory pressure: ${reading.freePercent.toFixed(1)}% free, ${reading.swapGb.toFixed(2)} GiB swap; `
-      + 'launch held until at least 35% free and at most 6 GiB swap.' };
+    : `Host memory pressure: swap grew ${swapGrowthGb.toFixed(2)} GiB within 10 minutes; `
+      + 'launch held until observed growth is at most 2 GiB.' };
 }
 
 type CommandReader = (file: string, args: string[]) => string;
@@ -69,20 +71,43 @@ export function readMacHostHeadroom(read: CommandReader = readCommand, totalByte
   } catch { return null; }
 }
 
-/** One latch per host process, shared across its lanes; every attempt samples afresh. */
-export function createHostHeadroomGate(read: () => HostHeadroom | null = readMacHostHeadroom): () => HostHeadroomDecision {
-  let held = false;
+/** Per-process window, sampled on launch attempts with a monotonic clock. */
+export function createHostHeadroomGate(
+  read: () => HostHeadroom | null = readMacHostHeadroom,
+  now: () => number = () => performance.now(),
+): () => HostHeadroomDecision {
+  let samples: { at: number; swapGb: number }[] = [];
+  let lastAt = -Infinity;
   return () => {
     let reading: HostHeadroom | null;
     try { reading = read(); } catch { reading = null; }
-    const decision = assessHostHeadroom(reading, held);
-    held = !decision.allowed;
-    return decision;
+    const validity = assessHostHeadroom(reading);
+    if (!validity.allowed || !reading) return validity;
+    const at = now();
+    if (!Number.isFinite(at) || at < 0) return assessHostHeadroom(null);
+    if (at < lastAt) samples = [];
+    lastAt = at;
+    samples = samples.filter(sample => at - sample.at <= HOST_SWAP_WINDOW_MS);
+    // Keep the minimum and its actual timestamp per second, at most 601
+    // observations. Partial buckets can lose less than one second of history;
+    // no sample older than the window can cause a hold.
+    const last = samples.at(-1);
+    if (last && Math.floor(last.at / 1000) === Math.floor(at / 1000)) {
+      if (reading.swapGb <= last.swapGb) { last.at = at; last.swapGb = reading.swapGb; }
+    } else {
+      samples.push({ at, swapGb: reading.swapGb });
+    }
+    const minimum = Math.min(...samples.map(sample => sample.swapGb));
+    return assessHostHeadroom(reading, Math.max(0, reading.swapGb - minimum));
   };
 }
 
-const macGate = createHostHeadroomGate();
-/** This collector is macOS-specific; other hosts retain their existing admission. */
+let macGate = createHostHeadroomGate();
+/** Exact opt-in, checked per attempt. Disabling also discards prior observations. */
 export function checkHostHeadroom(): HostHeadroomDecision {
-  return process.platform === 'darwin' ? macGate() : { allowed: true, reading: null, reason: null };
+  if (process.platform !== 'darwin' || process.env['ASHLR_HOST_MEMORY_HOLD'] !== '1') {
+    macGate = createHostHeadroomGate();
+    return { allowed: true, reading: null, reason: null };
+  }
+  return macGate();
 }

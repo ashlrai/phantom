@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { assessHostHeadroom, createHostHeadroomGate, parseSwapUsage, parseVmStat,
-  readMacHostHeadroom } from '../src/core/run/host-headroom.js';
+  readMacHostHeadroom, HOST_SWAP_WINDOW_MS } from '../src/core/run/host-headroom.js';
 
 const vm = readFileSync(new URL('./fixtures/host-headroom/vm_stat.txt', import.meta.url), 'utf8');
 const swap = readFileSync(new URL('./fixtures/host-headroom/swapusage.txt', import.meta.url), 'utf8');
@@ -52,44 +52,118 @@ describe('recorded macOS memory telemetry', () => {
   });
 });
 
-describe('launch refusal and hysteresis', () => {
-  it.each([[29.99, 0, false], [60, 8.01, false], [30, 8, true], [100, 0, true]])(
-    'free %s swap %s allows %s', (freePercent, swapGb, allowed) => {
-      expect(assessHostHeadroom({ freePercent, swapGb }).allowed).toBe(allowed);
-    });
+describe('launch refusal from recent swap growth', () => {
+  it.each([[0, true], [2, true], [2.01, false]])('growth %s allows %s', (growth, allowed) => {
+    expect(assessHostHeadroom({ freePercent: 0, swapGb: 19.35 }, growth).allowed).toBe(allowed);
+  });
 
-  it('holds every lane through the deadband and resumes only when both metrics recover', () => {
-    let reading = { freePercent: 40, swapGb: 9 };
-    const gate = createHostHeadroomGate(() => reading);
-    expect(gate().allowed).toBe(false);
-    for (const next of [{ freePercent: 40, swapGb: 8 }, { freePercent: 40, swapGb: 6.01 },
-      { freePercent: 34.99, swapGb: 6 }]) {
-      reading = next;
-      expect(gate().allowed).toBe(false);
-    }
-    reading = { freePercent: 35, swapGb: 6 };
+  it('allows the recorded stale swap with low free pages and flat growth', () => {
+    let at = 0;
+    const gate = createHostHeadroomGate(() => readMacHostHeadroom(file => file === '/usr/bin/vm_stat' ? vm : swap, total), () => at);
     expect(gate().allowed).toBe(true);
-    reading = { freePercent: 30, swapGb: 8 };
+    at = HOST_SWAP_WINDOW_MS / 2;
     expect(gate().allowed).toBe(true);
-    reading = { freePercent: 29, swapGb: 0 };
-    expect(gate().allowed).toBe(false);
-    reading = { freePercent: 32, swapGb: 0 };
-    expect(gate().allowed).toBe(false);
-    reading = { freePercent: 35, swapGb: 0 };
+    at = HOST_SWAP_WINDOW_MS;
     expect(gate().allowed).toBe(true);
   });
 
-  it('keeps the recovery latch through unknown telemetry and reader exceptions', () => {
-    const read = vi.fn().mockReturnValueOnce(null).mockImplementationOnce(() => { throw new Error('unavailable'); })
-      .mockReturnValueOnce({ freePercent: 32, swapGb: 7 }).mockReturnValue({ freePercent: 35, swapGb: 6 });
-    const gate = createHostHeadroomGate(read);
+  it('holds on growth, shares the window across attempts, and recovers without draining stale swap', () => {
+    let at = 0;
+    let swapGb = 19.35;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    at = 60_000;
+    swapGb += 2.01;
+    expect(gate()).toMatchObject({ allowed: false, reason: expect.stringContaining('within 10 minutes') });
+    at = HOST_SWAP_WINDOW_MS;
+    expect(gate().allowed).toBe(false);
+    at += 1;
+    expect(gate().allowed).toBe(true);
+    expect(swapGb).toBeGreaterThan(19.35);
+  });
+
+  it('recovers when swap falls, and detects growth from a later low point', () => {
+    let at = 0;
+    let swapGb = 19.35;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    at = 1000; swapGb = 18;
+    expect(gate().allowed).toBe(true);
+    at = 2000; swapGb = 20.01;
+    expect(gate().allowed).toBe(false);
+    at = 3000; swapGb = 20;
+    expect(gate().allowed).toBe(true);
+  });
+
+  it('detects growth within one second even after many attempts', () => {
+    let at = 0;
+    let swapGb = 19.35;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    for (let i = 1; i <= 1500; i++) {
+      at = i / 2;
+      swapGb = 19.35 + i / 500;
+      expect(gate().allowed).toBe(i <= 1000);
+    }
+  });
+
+  it('never holds on an expired minimum from a partially expired second', () => {
+    let at = 0;
+    let swapGb = 19.35;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    at = 500; swapGb = 20;
+    expect(gate().allowed).toBe(true);
+    at = 1000; swapGb = 21.5;
+    expect(gate().allowed).toBe(false);
+    at = HOST_SWAP_WINDOW_MS + 1;
+    expect(gate().allowed).toBe(true);
+    at += HOST_SWAP_WINDOW_MS;
+    expect(gate().allowed).toBe(true);
+  });
+
+  it('does not extrapolate growth across an idle gap longer than the window', () => {
+    let at = 0;
+    let swapGb = 0;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    at = HOST_SWAP_WINDOW_MS + 1; swapGb = 19.35;
+    expect(gate().allowed).toBe(true);
+  });
+
+  it('retains evidence through unavailable readings but does not latch an unknown sample forever', () => {
+    let at = 0;
+    const read = vi.fn().mockReturnValueOnce({ freePercent: 1, swapGb: 19.35 })
+      .mockReturnValueOnce(null).mockImplementationOnce(() => { throw new Error('unavailable'); })
+      .mockReturnValue({ freePercent: 1, swapGb: 22 });
+    const gate = createHostHeadroomGate(read, () => at);
+    expect(gate().allowed).toBe(true);
+    at = 1000;
     expect(gate().allowed).toBe(false);
     expect(gate().allowed).toBe(false);
     expect(gate().allowed).toBe(false);
+    at = HOST_SWAP_WINDOW_MS + 1;
+    expect(gate().allowed).toBe(true);
+  });
+
+  it('rejects an invalid clock and resets the window on clock rollback', () => {
+    let at = 1000;
+    let swapGb = 0;
+    const gate = createHostHeadroomGate(() => ({ freePercent: 1, swapGb }), () => at);
+    expect(gate().allowed).toBe(true);
+    at = NaN;
+    expect(gate().allowed).toBe(false);
+    at = 2000; swapGb = 3;
+    expect(gate().allowed).toBe(false);
+    at = 0;
     expect(gate().allowed).toBe(true);
   });
 
   it.each([null, { freePercent: NaN, swapGb: 0 }, { freePercent: 101, swapGb: 0 },
     { freePercent: -1, swapGb: 0 }, { freePercent: 40, swapGb: Infinity }, { freePercent: 40, swapGb: -1 }])(
     'refuses invalid telemetry %j', (reading) => { expect(assessHostHeadroom(reading).allowed).toBe(false); });
+
+  it.each([NaN, Infinity, -1])('refuses invalid growth %s', growth => {
+    expect(assessHostHeadroom({ freePercent: 40, swapGb: 1 }, growth).allowed).toBe(false);
+  });
 });
