@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideLocalEscalation, engineMayHoldMergeOrCredentials, isLocalEngine, isPublicHost, type EscalationInput } from '../src/core/routing/local-escalation.js';
+import { decideLocalEscalation, isLocalEngine, isPublicHost, type EscalationInput } from '../src/core/routing/local-escalation.js';
 
 const base: EscalationInput = { kind: 'edit', localAvailable: true, localModel: 'qwen3.8:27b' };
 
@@ -67,21 +67,21 @@ describe('decideLocalEscalation', () => {
 describe('tier-promotion gap: local engines never hold merge or credential roles', () => {
   it('a known local engine id promoted to tier frontier (and in mergeAuthority) is refused', () => {
     for (const engineId of ['local-coder', 'ollama', 'omlx', 'llama-server']) {
-      expect(engineMayHoldMergeOrCredentials({ engineId, tier: 'frontier' }), engineId).toBe(false);
+      expect(!isLocalEngine({ engineId, tier: 'frontier' }), engineId).toBe(false);
     }
   });
 
   it('a frontier-tier engine pointed at loopback is refused', () => {
     for (const baseUrl of ['http://127.0.0.1:11434/v1', 'http://localhost:8080', 'http://[::1]:1234/v1', 'http://127.0.0.2:9000']) {
-      expect(engineMayHoldMergeOrCredentials({ engineId: 'openai-compat', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
-      expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
+      expect(!isLocalEngine({ engineId: 'openai-compat', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
+      expect(!isLocalEngine({ engineId: 'claude', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
     }
     expect(isLocalEngine({ engineId: 'x', baseUrl: 'not a url' })).toBe(true);
   });
 
   it('remote frontier engines keep authority eligibility', () => {
-    expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', tier: 'frontier' })).toBe(true);
-    expect(engineMayHoldMergeOrCredentials({ engineId: 'codex', baseUrl: 'https://api.openai.com/v1', tier: 'frontier' })).toBe(true);
+    expect(!isLocalEngine({ engineId: 'claude', tier: 'frontier' })).toBe(true);
+    expect(!isLocalEngine({ engineId: 'codex', baseUrl: 'https://api.openai.com/v1', tier: 'frontier' })).toBe(true);
   });
 });
 
@@ -101,7 +101,7 @@ describe('review #926: fail-closed locality table', () => {
     'http://240.0.0.1', 'http://255.255.255.255',
   ])('endpoint %j is local (refused authority)', (baseUrl) => {
     expect(local('claude', baseUrl)).toBe(true);
-    expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', baseUrl, tier: 'frontier' })).toBe(false);
+    expect(!isLocalEngine({ engineId: 'claude', baseUrl, tier: 'frontier' })).toBe(false);
   });
 
   it.each(['https://api.openai.com/v1', 'https://api.anthropic.com', 'http://8.8.8.8', 'http://172.32.0.1', 'http://100.128.0.1', 'https://[2606:4700::1111]', 'https://example.com.',

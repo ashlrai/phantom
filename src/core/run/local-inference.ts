@@ -135,7 +135,9 @@ export function validateLocalBaseUrl(raw: unknown, opts: { allowRemote?: unknown
     if (opts.allowRemote !== true) return refuse('remote-not-allowed');
     if (scheme !== 'https') return refuse('remote-requires-https');
   }
-  return { ok: true, baseUrl: `${parsed.origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
+  // No name resolution for local endpoints (Security, #943): 'localhost' dials 127.0.0.1 directly.
+  const origin = host === 'localhost' ? `${parsed.protocol}//127.0.0.1${parsed.port ? `:${parsed.port}` : ''}` : parsed.origin;
+  return { ok: true, baseUrl: `${origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
 }
 
 /** Abliterated or uncensored weights (refusal removed). Matched by name. */
@@ -153,6 +155,8 @@ export interface LocalInferenceConfig {
   models: Partial<Record<LocalInferenceRole, string>>;
   allowRemote: boolean;
   allowAbliterated: boolean;
+  /** 'hybrid' lets fleet dispatch route coding loops to local seats (P4 policy). Default 'off'. */
+  routing: 'off' | 'hybrid';
 }
 
 export type LocalInferenceParse =
@@ -168,7 +172,7 @@ export function parseLocalInferenceConfig(value: unknown): LocalInferenceParse {
   if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, problems: ['localInference: must be an object'] };
   const v = value as Record<string, unknown>;
   const problems: string[] = [];
-  const known = new Set(['provider', 'baseUrl', 'models', 'allowRemote', 'allowAbliterated']);
+  const known = new Set(['provider', 'baseUrl', 'models', 'allowRemote', 'allowAbliterated', 'routing']);
   const unknown = Object.keys(v).filter((k) => !known.has(k)).length;
   if (unknown) problems.push(`localInference: ${unknown} unrecognized key(s)`);
   const provider = v['provider'];
@@ -182,6 +186,9 @@ export function parseLocalInferenceConfig(value: unknown): LocalInferenceParse {
   }
   const allowRemote = v['allowRemote'] === true;
   const allowAbliterated = v['allowAbliterated'] === true;
+  const rawRouting = v['routing'];
+  if (rawRouting !== undefined && rawRouting !== 'off' && rawRouting !== 'hybrid') problems.push("localInference.routing: must be 'off' or 'hybrid'");
+  const routing: 'off' | 'hybrid' = rawRouting === 'hybrid' ? 'hybrid' : 'off';
   const rawUrl = v['baseUrl'] ?? PROVIDER_DEFAULT_BASE_URL[p];
   let checked: LocalUrlCheck | null = null;
   if (rawUrl === null) problems.push('localInference.baseUrl: required for provider openai-compat');
@@ -226,7 +233,7 @@ export function parseLocalInferenceConfig(value: unknown): LocalInferenceParse {
   if (problems.length || !checked || !checked.ok) return { ok: false, problems };
   return {
     ok: true,
-    config: { provider: p, baseUrl: checked.baseUrl, loopback: checked.loopback, warning: checked.warning, models, allowRemote, allowAbliterated },
+    config: { provider: p, baseUrl: checked.baseUrl, loopback: checked.loopback, warning: checked.warning, models, allowRemote, allowAbliterated, routing },
   };
 }
 

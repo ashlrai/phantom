@@ -203,11 +203,3 @@ export function isLocalEngine(engine: EngineIdentity): boolean {
   return !isPublicHost(url.hostname);
 }
 
-/**
- * Pure. Merge authority and credential roles are refused for any local engine,
- * even when config promotes it to tier 'frontier' or lists it in mergeAuthority.
- * (Master gates main merges by tier only: src/core/inbox/merge.ts:809.)
- */
-export function engineMayHoldMergeOrCredentials(engine: EngineIdentity): boolean {
-  return !isLocalEngine(engine);
-}

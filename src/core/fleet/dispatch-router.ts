@@ -44,6 +44,7 @@ import { DAEMON_SPEND_GUARD_ITEM_CAPACITY } from '../daemon/state.js';
 import type { AshlrConfig, EngineId, EngineTier, WorkItem, WorkSource } from '../types.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import { describeExclusions, routeSeat, ROUTER_CONTEXT_FIT_FRACTION, type RouterWeights } from '../routing/router.js';
+import { routeSeatWithLocalEscalation, type LocalRouteContext, type LocalRouteInput } from '../routing/local-route.js';
 import { DEVIN_SEAT_ID, engineOfSeatId, type BudgetEngine } from '../routing/policy.js';
 import { reasonSentences } from '../routing/seat-reasons.js';
 import type { SeatCapacity } from '../routing/headroom.js';
@@ -520,6 +521,33 @@ export interface DispatchRouterContext {
   /** Engine tier (sandboxed-engine engineTierOf), injected so this module stays light. */
   tierOf: (engine: EngineId) => EngineTier | null;
   cfg?: AshlrConfig;
+  /**
+   * Hybrid local routing (opt-in: `localInference.routing: 'hybrid'`). Absent
+   * keeps master's routing exactly. Present: the P4 escalation policy picks the
+   * lane per item (local for coding loops; frontier for hard items, failures,
+   * retries and protected paths). Merge and publish go to frontier or loopback
+   * local seats under the same outcome gates; credentialed steps go to no seat;
+   * unknown engine ids are unclassified and unprivileged. `route.engines` is
+   * built from config (routing-engines.ts).
+   */
+  localEscalation?: Pick<LocalRouteInput, 'localAvailable' | 'localModel' | 'localContextLimit' | 'needsCredentials' | 'holdsMergeRights'>
+    & { route: Pick<LocalRouteContext, 'localInference' | 'engines'> };
+}
+
+/** Pure. The P4 escalation input for one work item. */
+export function localEscalationInputFor(
+  item: Pick<WorkItem, 'effort' | 'source' | 'tags' | 'title' | 'detail'> & { attempts?: number },
+  base: NonNullable<DispatchRouterContext['localEscalation']>,
+): LocalRouteInput {
+  const request = routingRequestFor(item);
+  const attempts = typeof item.attempts === 'number' && item.attempts > 0 ? item.attempts : 0;
+  const { route: _route, ...rest } = base;
+  return {
+    ...rest,
+    kind: request.difficulty === 'high' ? 'architecture' : 'edit',
+    retries: attempts,
+    ...(typeof request.contextTokens === 'number' ? { contextTokens: request.contextTokens } : {}),
+  };
 }
 
 export interface DispatchRoute {
@@ -641,12 +669,15 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
   }
 
   const request = routingRequestFor(item);
-  const decision = routeSeat(request, ctx.capacity, ctx.budget, {
+  const routeOpts = {
     nowMs: ctx.nowMs,
     ...(ctx.weights ? { weights: ctx.weights } : {}),
     ...(ctx.scheduling ? { scheduling: ctx.scheduling } : {}),
     ...(ctx.advisorySeatId ? { advisorySeatId: ctx.advisorySeatId } : {}),
-  });
+  };
+  const decision = ctx.localEscalation
+    ? routeSeatWithLocalEscalation(request, ctx.capacity, ctx.budget, routeOpts, localEscalationInputFor(item, ctx.localEscalation), ctx.localEscalation.route)
+    : routeSeat(request, ctx.capacity, ctx.budget, routeOpts);
   const extra: SeatExclusion[] = [];
   const kind = item.source;
   let chosenSeat: string | null = null;
