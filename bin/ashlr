@@ -1,10 +1,29 @@
 #!/usr/bin/env node
-// Thin shim: delegate to the compiled CLI entrypoint.
-// Resolve relative to this file so the symlink in ~/.local/bin works.
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, resolve } from 'node:path';
+// Resolve relative to this file so npm and ~/.local/bin symlinks work.
+import { readFileSync } from 'node:fs';
 
-const here = dirname(fileURLToPath(import.meta.url));
-// Use a file:// URL, not a raw path: on Windows `import('C:\\...')` throws
-// ERR_UNSUPPORTED_ESM_URL_SCHEME (the drive letter parses as a protocol).
-import(pathToFileURL(resolve(here, '../dist/cli/index.js')).href);
+const argv = process.argv.slice(2);
+// Match the dispatcher's removal of one internal background-worker marker.
+const workerFlagIdx = argv.indexOf('--_worker');
+if (workerFlagIdx !== -1) argv.splice(workerFlagIdx, 1);
+const command = argv[0];
+
+if (command === '--version' || command === '-v' || command === 'version') {
+  // Version must work without evaluating the CLI graph (even before a build).
+  let version = process.env.ASHLR_VERSION;
+  if (!version) {
+    try {
+      version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+    } catch {
+      version = 'unknown';
+    }
+  }
+  console.log(version);
+} else if (command === 'status') {
+  // The same handler as the full dispatcher, without its unrelated imports.
+  const { runStatus } = await import(new URL('../dist/cli/status.js', import.meta.url).href);
+  await runStatus(argv.slice(1));
+} else {
+  // URL resolution also handles Windows drive letters and escaped paths.
+  await import(new URL('../dist/cli/index.js', import.meta.url).href);
+}
