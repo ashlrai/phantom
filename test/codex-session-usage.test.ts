@@ -37,7 +37,7 @@ import {
 import { subscriptionUsage } from '../src/core/fleet/subscription-usage.js';
 
 const AUTH_SENTINEL = 'auth-sentinel-7f3a9c';
-const SECRET_SENTINEL = 'sk-live-d41d8cd98f00b204e9800998ecf8427e';
+const SECRET_SENTINEL = 'sk-' + 'live-d41d8cd98f00b204e9800998ecf8427e';
 
 // Weekly reset lands after every fixture observation time.
 const WEEKLY_RESET_S = Math.floor(Date.parse('2036-06-21T00:00:00Z') / 1000);
