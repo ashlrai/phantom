@@ -66,6 +66,7 @@ import { PlusIcon, SearchIcon, SidebarIcon } from './verse-icons.js';
 import { seatSubscription, type SeatSubscriptionView } from './seat-subscription.js';
 import { formatRelative, seatPillLabel } from './verse-model.js';
 import { SavedProjects } from './workspaces/SavedProjects.js';
+import { SidebarResources } from './SidebarResources.js';
 import { findCommand, formatChord } from './shell/command-catalog.js';
 import { pulse } from '../../components/motion/pulse.js';
 import styles from './Sidebar.module.css';
@@ -221,6 +222,7 @@ export function Sidebar(props: SidebarProps) {
             <SessionSearch query={query} onOpenSession={onSelect} selectedId={selectedId} />
           </Suspense>
         ) : null}
+        <SidebarResources />
       </div>
 
       <footer className={styles.footer}>
