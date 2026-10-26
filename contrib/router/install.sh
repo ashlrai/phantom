@@ -61,7 +61,9 @@ write_plist() {
 write_plist "$here/com.ashlr.router.plist.in" "$plist_dest"
 write_plist "$here/com.ashlr.router.keepalive.plist.in" "$keep_dest"
 
-if ! command -v launchctl >/dev/null 2>&1; then
+if [[ "${ASHLR_ROUTER_STUB_SIDE_EFFECTS:-}" == "1" ]]; then
+  printf 'install: side effects stubbed\n'
+elif ! command -v launchctl >/dev/null 2>&1; then
   printf 'install: launchctl is not available; the plists are written and the agents are not loaded\n'
 else
   domain="gui/$(id -u)"
@@ -73,7 +75,7 @@ else
   launchctl bootstrap "$domain" "$keep_dest"
 fi
 
-if [[ "${ASHLR_ROUTER_SKIP_PROBE:-}" == "1" ]]; then
+if [[ "${ASHLR_ROUTER_STUB_SIDE_EFFECTS:-}" == "1" || "${ASHLR_ROUTER_SKIP_PROBE:-}" == "1" ]]; then
   printf 'install: skip probe\n'
 else
   printf 'install: probe --record-only\n'

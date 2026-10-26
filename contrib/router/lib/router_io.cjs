@@ -1,9 +1,13 @@
 'use strict';
 
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const process = globalThis.process;
+const Buffer = globalThis.Buffer;
+const setTimeout = globalThis.setTimeout;
+const clearTimeout = globalThis.clearTimeout;
+const crypto = process.getBuiltinModule('crypto');
+const fs = process.getBuiltinModule('fs');
+const path = process.getBuiltinModule('path');
+const { spawn, spawnSync } = process.getBuiltinModule('child_process');
 
 const FORBIDDEN = new Set([
   '--yolo',
@@ -197,7 +201,7 @@ function headroom(ledgerText, nowIso, cooldownJson, cliCsv) {
   for (const line of String(ledgerText).split(/\n/)) {
     if (!line.trim()) continue;
     let row;
-    try { row = JSON.parse(line); } catch (_err) { continue; }
+    try { row = JSON.parse(line); } catch { continue; }
     if (row.event && row.event !== 'job') continue;
     const ts = Date.parse(row.ts || '');
     if (!Number.isFinite(ts) || now - ts > windowMs || ts > now + 60000) continue;
@@ -305,7 +309,7 @@ function readState(file) {
   if (!fs.existsSync(file)) return emptyState();
   try {
     return mergeObjects(emptyState(), JSON.parse(fs.readFileSync(file, 'utf8')));
-  } catch (_err) {
+  } catch {
     return emptyState();
   }
 }
@@ -355,7 +359,7 @@ function claudeAvailable(text, code) {
     const data = JSON.parse(text);
     if (data.authMethod === 'none' || data.loggedIn === false) return false;
     return true;
-  } catch (_err) {
+  } catch {
     return !/not logged|please login|please log in|login expired|sign in/i.test(text);
   }
 }
@@ -463,27 +467,50 @@ function ledgerPublic(obj) {
   return out;
 }
 
-function runTimeout(seconds, cmd) {
+function runTimeout(seconds, cmd, pgidFile) {
   if (!cmd.length) die('run-timeout missing command');
   const proc = spawn(cmd[0], cmd.slice(1), {
     stdio: 'inherit',
     detached: true,
   });
+  if (pgidFile) {
+    try { fs.writeFileSync(pgidFile, String(proc.pid)); } catch { /* shell reap is best effort */ }
+  }
+  const killGroup = (signal) => {
+    try { process.kill(-proc.pid, signal); } catch { /* already gone */ }
+  };
+  const groupAlive = () => {
+    try {
+      process.kill(-proc.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const exitAfterGroup = (code) => {
+    killGroup('SIGKILL');
+    const started = Date.now();
+    const tick = () => {
+      if (groupAlive() && Date.now() - started < 5000) {
+        setTimeout(tick, 50);
+        return;
+      }
+      process.exit(code);
+    };
+    tick();
+  };
   let timed = false;
   const timer = setTimeout(() => {
     timed = true;
-    try { process.kill(-proc.pid, 'SIGTERM'); } catch (_err) {
-      try { proc.kill('SIGTERM'); } catch (_err2) { /* already gone */ }
-    }
-    setTimeout(() => {
-      try { process.kill(-proc.pid, 'SIGKILL'); } catch (_err) { /* already gone */ }
-    }, 2000).unref();
+    killGroup('SIGTERM');
+    setTimeout(() => { killGroup('SIGKILL'); }, 2000);
   }, Number(seconds) * 1000);
   proc.on('exit', (code, signal) => {
     clearTimeout(timer);
-    if (timed) process.exit(124);
-    if (signal) process.exit(1);
-    process.exit(code == null ? 1 : code);
+    let status = 1;
+    if (timed) status = 124;
+    else if (!signal && code != null) status = code;
+    exitAfterGroup(status);
   });
   proc.on('error', (err) => {
     clearTimeout(timer);
@@ -561,7 +588,7 @@ function accountHeadroom(ledgerText, nowIso, cooldownJson, accountCsv) {
   for (const line of String(ledgerText).split(/\n/)) {
     if (!line.trim()) continue;
     let row;
-    try { row = JSON.parse(line); } catch (_err) { continue; }
+    try { row = JSON.parse(line); } catch { continue; }
     if (row.event && row.event !== 'job') continue;
     if (row.cli !== 'codex' || !row.account) continue;
     const ts = Date.parse(row.ts || '');
@@ -783,7 +810,7 @@ function readPoolsFile(file) {
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     return Array.isArray(data) ? data : [];
-  } catch (_err) {
+  } catch {
     return [];
   }
 }
@@ -987,7 +1014,7 @@ const DEVIN_ORG = /^org-[A-Za-z0-9_-]{1,120}$/;
 
 function devinView(text, expectedOrg) {
   let data;
-  try { data = JSON.parse(text); } catch (_err) { return 'skip\tbad-json'; }
+  try { data = JSON.parse(text); } catch { return 'skip\tbad-json'; }
   const status = data && data.status && typeof data.status === 'object' ? data.status : {};
   const budget = data && data.budget && typeof data.budget === 'object' ? data.budget : {};
   if (!DEVIN_ORG.test(String(expectedOrg || ''))) return 'skip\torg';
@@ -1005,7 +1032,7 @@ function safeHttps(value) {
 
 function devinLaunchView(text) {
   let data;
-  try { data = JSON.parse(text); } catch (_err) { return 'fail'; }
+  try { data = JSON.parse(text); } catch { return 'fail'; }
   if (!data || data.ok !== true || !data.task || typeof data.task !== 'object') return 'fail';
   const pr = data.task.pr && typeof data.task.pr === 'object' ? safeHttps(data.task.pr.url) : '';
   return `ok\t${pr}\t${safeHttps(data.task.sessionUrl)}`;
@@ -1078,7 +1105,7 @@ function hfSizeBytes(data) {
 
 function omlxNames(text) {
   let data;
-  try { data = JSON.parse(text); } catch (_err) { return []; }
+  try { data = JSON.parse(text); } catch { return []; }
   const rows = Array.isArray(data.data) ? data.data : (Array.isArray(data.models) ? data.models : []);
   const out = [];
   for (const row of rows) {
@@ -1092,7 +1119,7 @@ function omlxComplete(host, model, prompt) {
   if (!loopbackOk(host)) die('refusing non-loopback omlx host');
   if (!model) die('omlx requires a model');
   const url = `http://${host}/v1/chat/completions`;
-  return fetch(url, {
+  return globalThis.fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -1110,7 +1137,7 @@ function omlxComplete(host, model, prompt) {
       const content = data && data.choices && data.choices[0] && data.choices[0].message
         && data.choices[0].message.content;
       process.stdout.write(content == null ? '' : String(content));
-    } catch (_err) {
+    } catch {
       process.stdout.write(text);
     }
   });
@@ -1229,7 +1256,7 @@ function codeownerRegexesAt(wt, rev) {
     for (const pattern of codeownerPatterns(shown.stdout)) {
       try {
         regexes.push(compileGlob(pattern));
-      } catch (_err) {
+      } catch {
         regexes.push(/^$/);
       }
     }
@@ -1395,7 +1422,7 @@ function agedRelease(timeJson, days, nowMs) {
   let data;
   try {
     data = JSON.parse(timeJson);
-  } catch (_err) {
+  } catch {
     return '';
   }
   if (!data || typeof data !== 'object') return '';
@@ -1604,7 +1631,7 @@ function main() {
   }
   if (command === 'run-timeout') {
     const seconds = flags._[0];
-    runTimeout(seconds, flags._.slice(1));
+    runTimeout(seconds, flags._.slice(1), flags['pgid-file'] || '');
     return;
   }
   if (command === 'now') {
@@ -1803,7 +1830,7 @@ function main() {
   }
   if (command === 'model-size') {
     let data;
-    try { data = JSON.parse(readStdin()); } catch (_err) { process.exit(1); }
+    try { data = JSON.parse(readStdin()); } catch { process.exit(1); }
     const size = hfSizeBytes(data);
     if (!Number.isFinite(size)) process.exit(1);
     process.stdout.write(String(size) + '\n');

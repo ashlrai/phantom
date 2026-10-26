@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic checks for the Mac runner. Codex auth files are planted and must stay byte-for-byte.
+# This file does not run install.sh. Set ASHLR_ROUTER_RUN_INSTALL=1 to run it under the
+# temp HOME with ASHLR_ROUTER_STUB_SIDE_EFFECTS=1, which skips launchctl and the probe.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -435,6 +437,7 @@ if bash "$ROOT/omlx-mac.sh" prune qwen3.8:27b-ctx64k; then
   fail 'prune without --prune-ollama was accepted'
 fi
 
+if [[ "${ASHLR_ROUTER_RUN_INSTALL:-}" == "1" ]]; then
 (
   export HOME="$tmp/install-home"
   unset DEVIN_ORG_ID
@@ -445,7 +448,7 @@ printf '%s\n' "$*" >> "$HOME/launchctl.log"
 exit 0
 EOF
   chmod +x "$HOME/bin/launchctl"
-  PATH="$HOME/bin:$PATH" ASHLR_ROUTER_SKIP_PROBE=1 bash "$ROOT/install.sh" >/dev/null
+  PATH="$HOME/bin:$PATH" ASHLR_ROUTER_SKIP_PROBE=1 ASHLR_ROUTER_STUB_SIDE_EFFECTS=1 bash "$ROOT/install.sh" >/dev/null
   [[ -f "$HOME/Library/LaunchAgents/com.ashlr.router.plist" ]]
   [[ -f "$HOME/Library/LaunchAgents/com.ashlr.router.keepalive.plist" ]]
   grep -q 'keepalive' "$HOME/Library/LaunchAgents/com.ashlr.router.keepalive.plist"
@@ -456,7 +459,12 @@ EOF
   [[ -x "$HOME/ashlr-router/bin/omlx-mac.sh" ]]
   node -e 'const fs=require("fs"); const m=fs.statSync(process.argv[1]).mode & 0o777; if (m!==0o600) process.exit(1)' \
     "$HOME/ashlr-router/config.json"
+  if [[ -s "$HOME/launchctl.log" ]]; then
+    printf 'FAIL stubbed install called launchctl\n' >&2
+    exit 1
+  fi
 )
+fi
 
 if [[ "$(umask)" != "0077" ]]; then
   fail "runner umask is $(umask)"
@@ -642,6 +650,13 @@ if [[ -d "$empty" ]]; then
   fail 'replaced lock was not released'
 fi
 
+pgid=$(node -e 'const {spawn}=require("child_process"); const p=spawn("sleep",["30"],{detached:true,stdio:"ignore"}); p.unref(); process.stdout.write(String(p.pid));')
+printf '%s\n' "$pgid" > "$tmp/model.pgid"
+router_reap_model_group "$tmp/model.pgid"
+if kill -0 "$pgid" 2>/dev/null; then
+  fail 'model process group was still alive'
+fi
+
 : > "$ASHLR_TEST_CODEX_LOG"
 touch "$ASHLR_ROUTER_HOME/PAUSE"
 gh_before=$(wc -l < "$ASHLR_TEST_GH_LOG")
@@ -683,6 +698,7 @@ printf 'name: ci\n' > "$deny/.github/workflows/ci.yml"
 printf 'tier1\n' > "$deny/src/core/authority/protected-paths.ts"
 printf 'safe\n' > "$deny/src/ok.txt"
 deny_before=$(git -C "$deny" rev-parse HEAD)
+ROUTER_BASE_SHA=$deny_before
 if router_commit_and_push "$deny" ashlrai/phantom router/codex/99 master codex subject 99 workhorse 0 ""; then
   fail 'a protected path was published'
 fi
@@ -719,6 +735,11 @@ printf 'seed\n' > "$ok/README.md"
 git -C "$ok" add README.md
 git -C "$ok" commit -q -m seed
 printf 'change\n' > "$ok/NOTES.txt"
+mkdir -p "$ok/.git/hooks"
+printf '#!/bin/sh\nprintf hook-ran >> "%s"\nexit 1\n' "$tmp/hook.log" > "$ok/.git/hooks/pre-commit"
+chmod +x "$ok/.git/hooks/pre-commit"
+: > "$tmp/hook.log"
+ROUTER_BASE_SHA=$(git -C "$ok" rev-parse HEAD)
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${ASHLR_TEST_GH_LOG:?}"
@@ -772,6 +793,31 @@ fi
 if grep -q 'origin' "$tmp/push.log"; then
   fail "push targeted origin: $(cat "$tmp/push.log")"
 fi
+ok_sha=$(git -C "$ok" rev-parse HEAD)
+if ! grep -q "${ok_sha}:refs/heads/router/codex/100" "$tmp/push.log"; then
+  fail "push did not use the checked sha: $(cat "$tmp/push.log")"
+fi
+if grep -q 'HEAD:refs/heads' "$tmp/push.log"; then
+  fail "push used HEAD: $(cat "$tmp/push.log")"
+fi
+if ! grep -q 'core.hooksPath=/dev/null' "$tmp/push.log" || ! grep -q -- '--no-verify' "$tmp/push.log"; then
+  fail "push left hooks enabled: $(cat "$tmp/push.log")"
+fi
+if [[ -s "$tmp/hook.log" ]]; then
+  fail 'commit hook ran'
+fi
+unset ROUTER_BASE_SHA
+: > "$tmp/push.log"
+rm -f "$ASHLR_ROUTER_HOME/tmp/refused-104.txt"
+if router_commit_and_push "$ok" ashlrai/phantom router/codex/104 master codex subject 104 workhorse 0 ""; then
+  fail 'an empty base was published'
+fi
+if [[ -s "$tmp/push.log" ]]; then
+  fail "an empty base was pushed: $(cat "$tmp/push.log")"
+fi
+if ! grep -q 'The base commit is missing' "$ASHLR_ROUTER_HOME/tmp/refused-104.txt"; then
+  fail "empty base refusal missing: $(cat "$ASHLR_ROUTER_HOME/tmp/refused-104.txt" 2>/dev/null)"
+fi
 
 model=$tmp/model-github
 git init -q -b master "$model"
@@ -795,7 +841,7 @@ fi
 if [[ -s "$tmp/push.log" ]]; then
   fail "a model .github commit was pushed: $(cat "$tmp/push.log")"
 fi
-if ! grep -q 'Denied paths: 1' "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"; then
+if ! grep -q 'The model made a commit' "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"; then
   fail "refusal count was $(cat "$ASHLR_ROUTER_HOME/tmp/refused-101.txt" 2>/dev/null)"
 fi
 if grep -q '\.github\|ci\.yml' "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"; then
@@ -826,11 +872,45 @@ fi
 if [[ -s "$tmp/push.log" ]]; then
   fail "a model CODEOWNERS commit was pushed: $(cat "$tmp/push.log")"
 fi
-if ! grep -q 'Denied paths: 2' "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"; then
+if ! grep -q 'The model made a commit' "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"; then
   fail "CODEOWNERS refusal count was $(cat "$ASHLR_ROUTER_HOME/tmp/refused-102.txt" 2>/dev/null)"
 fi
 if grep -q 'CODEOWNERS\|src/kept\|x\.txt' "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"; then
   fail 'refusal comment named a CODEOWNERS path'
+fi
+
+hide=$tmp/hide-repo
+git init -q -b master "$hide"
+printf 'seed\n' > "$hide/README.md"
+git -C "$hide" add README.md
+git -C "$hide" commit -q -m seed
+ROUTER_BASE_SHA=$(git -C "$hide" rev-parse HEAD)
+mkdir -p "$hide/.github/workflows"
+printf 'name: bad\n' > "$hide/.github/workflows/ci.yml"
+git -C "$hide" add .github/workflows/ci.yml
+git -C "$hide" commit -q -m 'add denied'
+git -C "$hide" rm -q -r .github
+git -C "$hide" commit -q -m 'remove denied'
+if [[ -n "$(git -C "$hide" diff --name-only "$ROUTER_BASE_SHA" HEAD)" ]]; then
+  fail 'add-then-delete fixture still differs from the base tree'
+fi
+hide_head=$(git -C "$hide" rev-parse HEAD)
+: > "$tmp/push.log"
+rm -f "$ASHLR_ROUTER_HOME/tmp/refused-103.txt"
+if router_commit_and_push "$hide" ashlrai/phantom router/codex/103 master codex subject 103 workhorse 0 ""; then
+  fail 'a model add-then-delete was published'
+fi
+if [[ "$(git -C "$hide" rev-parse HEAD)" != "$hide_head" ]]; then
+  fail 'a model add-then-delete was rewritten'
+fi
+if [[ -s "$tmp/push.log" ]]; then
+  fail "a model add-then-delete was pushed: $(cat "$tmp/push.log")"
+fi
+if ! grep -q 'The model made a commit' "$ASHLR_ROUTER_HOME/tmp/refused-103.txt"; then
+  fail "add-then-delete refusal missing: $(cat "$ASHLR_ROUTER_HOME/tmp/refused-103.txt" 2>/dev/null)"
+fi
+if grep -q '\.github\|ci\.yml' "$ASHLR_ROUTER_HOME/tmp/refused-103.txt"; then
+  fail 'add-then-delete refusal named a path'
 fi
 unset ROUTER_BASE_SHA
 

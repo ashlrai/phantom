@@ -1323,6 +1323,33 @@ router_write_prompt() {
   } > "$dest"
 }
 
+router_reap_model_group() {
+  local file=$1
+  local pgid i
+  [[ -n "$file" && -f "$file" ]] || return 0
+  pgid=$(tr -d '\n' < "$file")
+  rm -f "$file"
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 0
+  kill -TERM -- "-${pgid}" 2>/dev/null || true
+  i=0
+  while [[ "$i" -lt 20 ]]; do
+    if ! kill -0 -- "-${pgid}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -KILL -- "-${pgid}" 2>/dev/null || true
+  i=0
+  while [[ "$i" -lt 20 ]]; do
+    if ! kill -0 -- "-${pgid}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+
 router_invoke_cli() {
   local cli=$1
   local model=$2
@@ -1330,8 +1357,10 @@ router_invoke_cli() {
   local prompt=$4
   local out=$5
   local err=$6
-  local argv_file prompt_text rc arg
+  local argv_file prompt_text rc arg pgid_file
   local -a args
+  pgid_file=$ROUTER_HOME/tmp/model-pgid-$$
+  ROUTER_MODEL_PGID_FILE=$pgid_file
   if [[ "$cli" == "omlx" ]]; then
     if ! node "$ROUTER_IO" loopback-ok "$ROUTER_LOCAL_HOST"; then
       printf 'refusing non-loopback omlx host\n' > "$err"
@@ -1362,20 +1391,21 @@ router_invoke_cli() {
   if [[ "$cli" == "omlx" ]]; then
     prompt_text=$(cat "$prompt")
     printf '%s' "$prompt_text" | router_exec_clean \
-      node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- \
+      node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- \
       node "$ROUTER_IO" omlx-complete --host "$ROUTER_LOCAL_HOST" --model "$model" \
       >"$out" 2>"$err"
     rc=$?
   elif [[ "$cli" == "codex" && -n "${ROUTER_CODEX_HOME_RUN:-}" ]]; then
     router_exec_clean "CODEX_HOME=${ROUTER_CODEX_HOME_RUN}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- \
-      node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
+      node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
       <"$prompt" >"$out" 2>"$err"
     rc=$?
   else
-    router_exec_clean node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
+    router_exec_clean node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
       <"$prompt" >"$out" 2>"$err"
     rc=$?
   fi
+  router_reap_model_group "$pgid_file"
   # Leave errexit to the caller. Restoring it here would abort on a non-zero CLI.
   return "$rc"
 }
@@ -1926,12 +1956,11 @@ router_refuse_paths() {
 }
 
 router_range_base() {
-  local wt=$1
-  if [[ -n "${ROUTER_BASE_SHA:-}" ]]; then
-    printf '%s\n' "$ROUTER_BASE_SHA"
-    return 0
+  local sha=${ROUTER_BASE_SHA:-}
+  if [[ ! "$sha" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+    return 1
   fi
-  git -C "$wt" rev-parse HEAD
+  printf '%s\n' "$sha"
 }
 
 router_commit_and_push() {
@@ -1945,9 +1974,24 @@ router_commit_and_push() {
   local tier=$8
   local verify_rc=$9
   local warning=${10:-}
-  local denied path any login name url prbody rc_pr base_sha made
+  local denied path any login name url prbody rc_pr base_sha made head_sha checked
   ROUTER_PR_URL=""
-  base_sha=$(router_range_base "$wt")
+  router_reap_model_group "${ROUTER_MODEL_PGID_FILE:-}"
+  if ! base_sha=$(router_range_base); then
+    router_log "refusing job; base commit is missing"
+    printf 'ashlr-router refused this job. The base commit is missing. Nothing was pushed.\n' \
+      > "$ROUTER_HOME/tmp/refused-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+    return 1
+  fi
+  head_sha=$(git -C "$wt" rev-parse HEAD)
+  if [[ "$head_sha" != "$base_sha" ]]; then
+    router_log "refusing job; model commit"
+    printf 'ashlr-router refused this job. The model made a commit. Nothing was pushed.\n' \
+      > "$ROUTER_HOME/tmp/refused-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+    return 1
+  fi
   made=0
   if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
     router_refuse_paths "$repo" "$number" "$denied"
@@ -1975,7 +2019,7 @@ router_commit_and_push() {
   if git -C "$wt" diff --cached --quiet; then
     return 2
   fi
-  if ! git -C "$wt" commit -m "router(${cli}): ${subject}" -m "Refs #${number}"; then
+  if ! git -C "$wt" -c core.hooksPath=/dev/null commit --no-verify -m "router(${cli}): ${subject}" -m "Refs #${number}"; then
     router_log "commit failed for $repo#$number"
     return 1
   fi
@@ -1987,6 +2031,7 @@ router_commit_and_push() {
     fi
     return 1
   fi
+  checked=$(git -C "$wt" rev-parse HEAD)
   if ! login=$(router_fork_login); then
     router_log "fork login unavailable; refusing to push to the base repository"
     return 1
@@ -2001,8 +2046,8 @@ router_commit_and_push() {
   gh repo fork "$repo" --clone=false >/dev/null 2>&1 \
     || router_log "fork ensure returned non-zero; the push target stays the fork"
   url="https://github.com/${login}/${name}.git"
-  if ! git -C "$wt" -c "credential.helper=!gh auth git-credential" \
-    push "$url" "HEAD:refs/heads/${branch}"; then
+  if ! git -C "$wt" -c core.hooksPath=/dev/null -c "credential.helper=!gh auth git-credential" \
+    push --no-verify "$url" "${checked}:refs/heads/${branch}"; then
     router_log "fork push failed for ${branch}; the base repository was not pushed"
     return 1
   fi
