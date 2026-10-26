@@ -129,7 +129,7 @@ describe('M30 CI workflow', () => {
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
     expect(gate.name).toBe('Merge Gate');
-    expect(gate.needs).toEqual(['classify', 'site', 'docs', ...full]);
+    expect(gate.needs).toEqual(['classify', 'secret-scan', 'site', 'docs', ...full]);
     expect(gate.if).toBe('${{ always() }}');
     expect(gate['runs-on']).toBe('ubuntu-latest');
     expect(gate['continue-on-error']).toBeUndefined();
@@ -139,8 +139,8 @@ describe('M30 CI workflow', () => {
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
     const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? classify : name === 'secret-scan' ? (outcomes['secret-scan'] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
@@ -149,6 +149,10 @@ describe('M30 CI workflow', () => {
     const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
     const complete = Object.fromEntries(full.map((name) => [name, 'success']));
     expect(execute('site', { ...site, site: 'success', docs: 'skipped' })).not.toThrow();
+    // Security floor: the diff secret scan must succeed in every lane.
+    for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+      expect(execute('docs', { ...site, site: 'skipped', docs: 'success', 'secret-scan': outcome }), `secret-scan: ${outcome}`).toThrow();
+    }
     // Docs-only lane: only the docs job runs; the whole Ubuntu, Windows and Mac
     // matrix and the site job must be skipped, and a docs failure blocks.
     expect(execute('docs', { ...site, site: 'skipped', docs: 'success' })).not.toThrow();
@@ -506,8 +510,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(19);
-    expect(new Set(names).size).toBe(19);
+    expect(names).toHaveLength(20);
+    expect(new Set(names).size).toBe(20);
+    expect(names).toContain('Secret scan (diff)');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
