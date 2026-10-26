@@ -293,6 +293,10 @@ describe('fresh public facts are data, not saved release authority', () => {
         status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
         ] });
+      jobs.push({ id: 904, name: 'Secret scan (diff)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
+          { name: 'Scan the commits this event adds', status: 'completed', conclusion: 'success' },
+        ] });
       value['total_count'] = jobs.length;
     }
     return value;
@@ -306,6 +310,29 @@ describe('fresh public facts are data, not saved release authority', () => {
   it('binds the new source Merge Gate while retaining all fifteen full qualification jobs', async () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each(['scan-failed', 'scan-missing', 'scan-step-skipped'])('withholds release facts when the secret scan is %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const index = jobs.findIndex((job) => job['name'] === 'Secret scan (diff)');
+        if (kind === 'scan-missing') jobs.splice(index, 1);
+        else if (kind === 'scan-failed') jobs[index] = { ...jobs[index], conclusion: 'failure' };
+        else jobs[index] = { ...jobs[index], steps: [{ name: 'Scan the commits this event adds', status: 'completed', conclusion: 'skipped' }] };
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it('withholds release facts when the source gate stops requiring the secret scan', async () => {
+    const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    for (const bytes of [source.replace('needs: [classify, secret-scan, site,', 'needs: [classify, site,'),
+      source.replace("if (outcome('secret-scan') !== 'success')", "if (false)")]) {
+      const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(bytes) });
+      await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+    }
   });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {

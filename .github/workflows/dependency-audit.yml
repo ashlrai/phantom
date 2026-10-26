@@ -64,6 +64,8 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          # Same list as the push path filter above.
+          DEPS: '^(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc|src/raycast/(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc)|scripts/npm-audit-with-osv-fallback\.sh|desktop/src-tauri/Cargo\.(toml|lock)|docs/DEPENDENCY-SECURITY\.md|\.github/dependabot\.yml|\.github/workflows/dependency-audit\.yml)$'
         shell: bash
         run: |
           set -euo pipefail
@@ -73,9 +75,8 @@ jobs:
               run=false
             else
               files="$(git diff --name-only "$BASE...$HEAD")"
-              deps='^(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc|src/raycast/(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc)|scripts/npm-audit-with-osv-fallback\.sh|desktop/src-tauri/Cargo\.(toml|lock)|docs/DEPENDENCY-SECURITY\.md|\.github/dependabot\.yml|\.github/workflows/dependency-audit\.yml)$'
               # Capture first so an early-exit grep cannot SIGPIPE under pipefail.
-              hits="$(printf '%s\n' "$files" | grep -E "$deps" || true)"
+              hits="$(printf '%s\n' "$files" | grep -E "$DEPS" || true)"
               if [ -z "$hits" ]; then run=false; fi
             fi
           fi
@@ -87,10 +88,6 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            src/raycast/package-lock.json
 
       - name: Install pinned npm
         if: steps.scope.outputs.run == 'true'

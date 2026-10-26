@@ -184,8 +184,8 @@ describe('M30 CI workflow', () => {
     // cancellation still fail the gate.
     const mac = ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'];
     const superseded = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full', mac: 'run' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' || name === 'secret-scan' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full', mac: 'run' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', MAC_SUPERSEDED: 'true' } }, console: { log: () => {} },
@@ -206,8 +206,8 @@ describe('M30 CI workflow', () => {
     // and the Linux and Windows portability matrix (ci) must succeed.
     const pushDeferred = [...mac, 'windows-service-authority'];
     const pushed = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' || name === 'secret-scan' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', EVENT_NAME: 'push' } }, console: { log: () => {} },
@@ -224,8 +224,8 @@ describe('M30 CI workflow', () => {
     // Draft PR: every Mac lane may be skipped, nothing else; a Mac failure or
     // cancellation still blocks, and a PR no longer a draft defers nothing.
     const drafted = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' || name === 'secret-scan' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'true', MAC_DRAFT_DEFERRED: 'true' } }, console: { log: () => {} },

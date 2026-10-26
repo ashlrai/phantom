@@ -144,7 +144,7 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
  * later site lane and merge gate. Neither replaces the 15 authority gates. */
-async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<'historical' | 'site' | 'gate' | 'gate-docs'> {
+async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-scan' | 'gate-docs-scan'> {
   const path = '.github/workflows/ci.yml';
   const file = object(await reader.github(`${base}/contents/${path}?ref=${sourceSha}`, signal));
   equal(file['type'], 'file', 'CI workflow type'); equal(file['path'], path, 'CI workflow path');
@@ -185,7 +185,15 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     equal(docs['name'], 'Docs PR (docs-only)', 'docs source name'); equal(docs['runs-on'], 'ubuntu-latest', 'docs source runner');
     equal(docs['needs'], 'classify', 'docs source dependency'); equal(docs['if'], "needs.classify.outputs.lane == 'docs'", 'docs source condition');
   }
-  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
+  // A secret-scan floor (diff-only gitleaks on every event) adds one Ubuntu job
+  // with no condition; when present the gate must require its success.
+  const hasSecretScan = Object.hasOwn(jobs, 'secret-scan');
+  if (hasSecretScan) {
+    const scan = object(jobs['secret-scan']);
+    equal(scan['name'], 'Secret scan (diff)', 'secret scan source name'); equal(scan['runs-on'], 'ubuntu-latest', 'secret scan source runner');
+    if (Object.hasOwn(scan, 'if') || Object.hasOwn(scan, 'needs') || Object.hasOwn(scan, 'continue-on-error')) throw new Error('Conditional source secret scan');
+  }
+  const required = ['classify', ...(hasSecretScan ? ['secret-scan'] : []), 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
     'native-macos-broker-foundation', 'windows-service-authority'];
   if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
@@ -194,13 +202,15 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(object(step['env'])['GATE_NEEDS'], '${{ toJSON(needs) }}', 'merge gate source input');
   const selection = hasDocs ? "const selected = lane === 'full' ? full : [lane];" : "const selected = lane === 'site' ? ['site'] : full;";
   if (typeof step['run'] !== 'string' || !step['run'].includes(selection) ||
-      !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')")) {
+      !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')") ||
+      (hasSecretScan && !step['run'].includes("if (outcome('secret-scan') !== 'success')"))) {
     throw new Error('Incomplete source merge gate decision');
   }
+  if (hasSecretScan) return hasDocs ? 'gate-docs-scan' : 'gate-scan';
   return hasDocs ? 'gate-docs' : 'gate';
 }
 
-function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean, docs = false): void {
+function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean, docs = false, scan = false): void {
   for (const name of ['Classify PR site lane', 'Site PR (ecosystem)', ...(docs ? ['Docs PR (docs-only)'] : [])]) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Ancillary qualification job missing or ambiguous');
@@ -232,6 +242,17 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
     const steps = job['steps'].map(object).filter((step) => step['name'] === 'Require selected CI lane');
     if (steps.length !== 1 || steps[0]!['status'] !== 'completed' || steps[0]!['conclusion'] !== 'success') throw new Error('Required merge gate step missing or skipped');
   }
+  if (scan) {
+    const matches = jobs.filter((job) => job['name'] === 'Secret scan (diff)');
+    if (matches.length !== 1) throw new Error('Secret scan job missing or ambiguous');
+    const job = matches[0]!;
+    equal(job['run_id'], id, 'secret scan run'); equal(job['head_sha'], sourceSha, 'secret scan candidate');
+    equal(job['status'], 'completed', 'secret scan status'); equal(job['conclusion'], 'success', 'secret scan outcome');
+    if (!Array.isArray(job['labels']) || job['labels'].includes('self-hosted') || !job['labels'].includes('ubuntu-latest')) throw new Error('Unexpected secret scan runner');
+    if (!Array.isArray(job['steps']) || job['steps'].some((step) => !['success', 'skipped'].includes(String(object(step)['conclusion'])) || object(step)['status'] !== 'completed')) throw new Error('Secret scan steps incomplete');
+    const steps = job['steps'].map(object).filter((step) => step['name'] === 'Scan the commits this event adds');
+    if (steps.length !== 1 || steps[0]!['status'] !== 'completed' || steps[0]!['conclusion'] !== 'success') throw new Error('Required secret scan step missing or skipped');
+  }
 }
 
 async function successfulRun(reader: ReleasePublicReader, base: string, repository: string, sourceSha: string, workflow: string, signal?: AbortSignal): Promise<{ id: number; attempt: number }> {
@@ -251,12 +272,13 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
   const jobs = await jobsFor(reader, base, id, attempt, signal);
   const names = workflow === 'ci.yml' ? RELEASE_CI_JOBS : ['Dependency audit (root + Raycast)'];
   const ancillary = workflow === 'ci.yml' ? await sourceCiAncillaryJobs(base, sourceSha, reader, signal) : 'historical';
+  const gated = ancillary.startsWith('gate'); const docs = ancillary.startsWith('gate-docs'); const scan = ancillary.endsWith('-scan');
   const allNames: readonly string[] = ancillary === 'historical' ? names :
-    [...names, 'Classify PR site lane', 'Site PR (ecosystem)', ...(ancillary === 'gate-docs' ? ['Docs PR (docs-only)'] : []),
-      ...(ancillary === 'gate' || ancillary === 'gate-docs' ? ['Merge Gate'] : [])];
+    [...names, 'Classify PR site lane', 'Site PR (ecosystem)', ...(docs ? ['Docs PR (docs-only)'] : []),
+      ...(gated ? ['Merge Gate'] : []), ...(scan ? ['Secret scan (diff)'] : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||
       new Set(jobs.map((job) => job['name'])).size !== jobs.length || jobs.some((job) => !allNames.includes(String(job['name'])))) throw new Error('Unexpected qualification job inventory');
-  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary === 'gate' || ancillary === 'gate-docs', ancillary === 'gate-docs');
+  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, gated, docs, scan);
   for (const name of names) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Required qualification job missing or ambiguous');
