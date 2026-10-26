@@ -7,7 +7,7 @@
  * pushes, tags or deploys directly; deploys happen only where the repository's
  * own merge-triggered CI already performs them.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { detectTestTampering, globMatches, protectedPathHits } from '../authority/protected-paths.js';
 import type { MetricSpec, ProposalOutcome } from './outcomes.js';
 

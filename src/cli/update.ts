@@ -30,7 +30,7 @@
  *   2  bad usage
  */
 
-import { spawnSync, execFileSync } from 'node:child_process';
+import { credentialSpawnSync as spawnSync, credentialExecFileSync as execFileSync } from '../core/integrations/secrets.js';
 import { existsSync, readlinkSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, resolve, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
