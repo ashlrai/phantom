@@ -449,7 +449,7 @@ export function verifyReleaseSuccessorPolicyFile(path, expectedVersion = null) {
 export const RELEASE_PATH_POLICY_SCHEMA_VERSION = 2;
 const RELEASE_PATH_POLICY_KEYS = [
   'schemaVersion', 'policyId', 'packages', 'repository', 'protectedBranch',
-  'publisherWorkflowPath', 'ciWorkflowPath', 'registry', 'provenancePredicateType', 'authority',
+  'publisherWorkflowPath', 'ciAppId', 'registry', 'provenancePredicateType', 'authority',
 ];
 const PACKAGE_NAME_RE = /^@ashlr\/[a-z0-9][a-z0-9-]{0,63}$/u;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
@@ -485,7 +485,7 @@ export function validateReleasePathPolicy(value) {
   }
   if (policy.protectedBranch !== 'master') fail('protectedBranch must be master');
   exactString(policy.publisherWorkflowPath, 'publisherWorkflowPath', /^\.github\/[a-z/-]+\.yml$/u, 96);
-  exactString(policy.ciWorkflowPath, 'ciWorkflowPath', /^\.github\/[a-z/-]+\.yml$/u, 96);
+  if (policy.ciAppId !== 15368) fail('ciAppId must be 15368 (GitHub Actions)');
   if (policy.registry !== 'https://registry.npmjs.org/') {
     fail('registry must be the canonical public npm registry');
   }
@@ -525,7 +525,7 @@ function npmPurl(name, packageVersion) {
 }
 
 // Pure check of one published release against the v2 policy. evidence:
-// { versionDocument, attestations, tarball (Buffer), tagRef, ciRun, candidateRevision }
+// { versionDocument, attestations, tarball (Buffer), tagRef, requiredChecks, checkRuns, candidateRevision }
 export function verifyPublishedRelease(policy, evidence) {
   validateReleasePathPolicy(policy);
   const doc = record(evidence.versionDocument, 'registry version document');
@@ -568,11 +568,7 @@ export function verifyPublishedRelease(policy, evidence) {
   const tagObject = record(tagRef.object, 'tag ref object');
   if (tagObject.type !== 'commit' || tagObject.sha !== candidate) fail('release tag must point directly at the candidate revision');
 
-  const ci = record(evidence.ciRun, 'CI run');
-  if (ci.path !== policy.ciWorkflowPath) fail('qualifying run is not the policy CI workflow');
-  if (record(ci.repository, 'CI repository').html_url !== policy.repository) fail('qualifying CI run is from another repository');
-  if (ci.head_sha !== candidate) fail('qualifying CI run is for a different revision');
-  if (ci.status !== 'completed' || ci.conclusion !== 'success') fail('qualifying CI run is not green');
+  const ci = verifyRequiredChecks(policy, evidence.requiredChecks, evidence.checkRuns);
 
   return Object.freeze({
     ok: true,
@@ -583,12 +579,41 @@ export function verifyPublishedRelease(policy, evidence) {
     candidateRevision: candidate,
     integrity: registryIntegrity,
     provenance: policy.provenancePredicateType,
-    ciRunId: ci.id,
+    requiredChecks: ci,
     authority: RELEASE_SUCCESSOR_POLICY_AUTHORITY,
   });
 }
 
-const RELEASE_PATH_USAGE = 'usage: verify-release-policy.mjs --release-path <policy> --version-document <json> --attestations <json> --tarball <tgz> --tag-ref <json> --ci-run <json> --candidate <sha>';
+// Green CI on the exact release SHA, from check runs the caller looked up for
+// that SHA (never a caller-chosen run id). Only GitHub Actions runs
+// (policy.ciAppId) from a merge_group event or a push to the protected branch
+// count. Every required name must be present among counted runs, and every
+// counted run with that name must be completed + success.
+export function verifyRequiredChecks(policy, requiredChecks, checkRuns) {
+  const required = exactArray(requiredChecks, 'required checks', 1, 32);
+  const runs = exactArray(checkRuns, 'check runs', 0, 512);
+  const counted = runs.filter((run) => {
+    const item = record(run, 'check run');
+    return item.appId === policy.ciAppId
+      && (item.event === 'merge_group'
+        || (item.event === 'push' && item.headBranch === policy.protectedBranch));
+  });
+  const names = [];
+  for (const [index, name] of required.entries()) {
+    exactString(name, `required checks[${index}]`, /^[^\n]{1,128}$/u, 256);
+    const same = counted.filter((run) => run.name === name);
+    if (same.length === 0) fail(`required check missing on the release revision: ${name}`);
+    for (const run of same) {
+      if (run.status !== 'completed' || run.conclusion !== 'success') {
+        fail(`required check not green on the release revision: ${name}`);
+      }
+    }
+    names.push(name);
+  }
+  return Object.freeze(names);
+}
+
+const RELEASE_PATH_USAGE = 'usage: verify-release-policy.mjs --release-path <policy> --version-document <json> --attestations <json> --tarball <tgz> --tag-ref <json> --checks <json> --candidate <sha>';
 
 function releasePathMain(argv) {
   const flags = new Map();
@@ -596,7 +621,7 @@ function releasePathMain(argv) {
     if (!argv[index]?.startsWith('--') || argv[index + 1] === undefined || flags.has(argv[index])) fail(RELEASE_PATH_USAGE);
     flags.set(argv[index], argv[index + 1]);
   }
-  const need = ['--release-path', '--version-document', '--attestations', '--tarball', '--tag-ref', '--ci-run', '--candidate'];
+  const need = ['--release-path', '--version-document', '--attestations', '--tarball', '--tag-ref', '--checks', '--candidate'];
   if (flags.size !== need.length || need.some((key) => !flags.has(key))) fail(RELEASE_PATH_USAGE);
   const json = (key) => parseCanonicalJsonBytes(readFileSync(flags.get(key)), key);
   const { policy, canonicalSha256 } = parseReleasePathPolicyBytes(readFileSync(flags.get('--release-path')));
@@ -605,7 +630,10 @@ function releasePathMain(argv) {
     attestations: JSON.parse(readFileSync(flags.get('--attestations'), 'utf8')),
     tarball: readFileSync(flags.get('--tarball')),
     tagRef: json('--tag-ref'),
-    ciRun: JSON.parse(readFileSync(flags.get('--ci-run'), 'utf8')),
+    ...(() => {
+      const checks = record(JSON.parse(readFileSync(flags.get('--checks'), 'utf8')), '--checks');
+      return { requiredChecks: checks.requiredChecks, checkRuns: checks.checkRuns };
+    })(),
     candidateRevision: flags.get('--candidate'),
   });
   process.stdout.write(`${JSON.stringify({ ...receipt, policySha256: canonicalSha256 })}\n`);

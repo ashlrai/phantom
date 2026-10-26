@@ -8,6 +8,7 @@ import {
   parseReleasePathPolicyBytes,
   validateReleasePathPolicy,
   verifyPublishedRelease,
+  verifyRequiredChecks,
 } from '../scripts/verify-release-policy.mjs';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -19,6 +20,10 @@ const sri = `sha512-${createHash('sha512').update(tarball).digest('base64')}`;
 
 function policy(): Record<string, unknown> {
   return structuredClone(parseReleasePathPolicyBytes(readFileSync(policyPath)).policy) as Record<string, unknown>;
+}
+
+function green(event: string, over: Record<string, unknown> = {}) {
+  return { name: 'Merge Gate', appId: 15368, status: 'completed', conclusion: 'success', event, headBranch: event === 'push' ? 'master' : 'gh-readonly-queue/master/pr-1', ...over };
 }
 
 function evidence(over: Record<string, unknown> = {}) {
@@ -38,7 +43,12 @@ function evidence(over: Record<string, unknown> = {}) {
     ] },
     tarball,
     tagRef: { ref: 'refs/tags/v3.29.15', object: { type: 'commit', sha: candidate } },
-    ciRun: { id: 1, path: '.github/workflows/ci.yml', repository: { html_url: 'https://github.com/ashlrai/phantom' }, head_sha: candidate, status: 'completed', conclusion: 'success' },
+    requiredChecks: ['Merge Gate'],
+    checkRuns: [
+      green('merge_group'),
+      green('push'),
+      { ...green('pull_request'), conclusion: 'failure' },
+    ],
     candidateRevision: candidate,
     ...over,
   };
@@ -75,11 +85,34 @@ describe('release-path policy v2', () => {
     expect(() => verifyPublishedRelease(policy(), e)).toThrow(/publisher/u);
   });
 
-  it('rejects a tag that is not v<version> on the candidate and a CI run that is not green', () => {
+  it('rejects a tag that is not v<version> on the candidate', () => {
     expect(() => verifyPublishedRelease(policy(), evidence({ tagRef: { ref: 'refs/tags/v3.29.14', object: { type: 'commit', sha: candidate } } }))).toThrow(/tag/u);
     expect(() => verifyPublishedRelease(policy(), evidence({ tagRef: { ref: 'refs/tags/v3.29.15', object: { type: 'commit', sha: '4'.repeat(40) } } }))).toThrow(/candidate/u);
-    const ci = evidence().ciRun;
-    expect(() => verifyPublishedRelease(policy(), evidence({ ciRun: { ...ci, conclusion: 'failure' } }))).toThrow(/not green/u);
-    expect(() => verifyPublishedRelease(policy(), evidence({ ciRun: { ...ci, head_sha: '5'.repeat(40) } }))).toThrow(/different revision/u);
+  });
+});
+
+describe('release-path policy v2 required checks on the release SHA', () => {
+  const p = () => policy();
+  it('accepts when every required name has only green merge_group or master push runs (PR runs ignored)', () => {
+    expect(verifyRequiredChecks(p(), ['Merge Gate'], evidence().checkRuns)).toEqual(['Merge Gate']);
+  });
+  it('rejects a missing required name', () => {
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate', 'Other'], [green('push')])).toThrow(/missing.*Other/u);
+  });
+  it('rejects a failed duplicate', () => {
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate'], [green('merge_group'), green('push', { conclusion: 'failure' })])).toThrow(/not green/u);
+  });
+  it('rejects a pending duplicate', () => {
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate'], [green('push'), green('merge_group', { status: 'in_progress', conclusion: null })])).toThrow(/not green/u);
+  });
+  it('ignores another app with the same name, so it cannot satisfy the check', () => {
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate'], [green('push', { appId: 99 })])).toThrow(/missing/u);
+  });
+  it('rejects PR-event-only evidence and pushes to other branches', () => {
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate'], [green('pull_request')])).toThrow(/missing/u);
+    expect(() => verifyRequiredChecks(p(), ['Merge Gate'], [green('push', { headBranch: 'codex/x' })])).toThrow(/missing/u);
+  });
+  it('fails the full release verification when CI on the release SHA is red', () => {
+    expect(() => verifyPublishedRelease(policy(), evidence({ checkRuns: [green('push', { conclusion: 'failure' })] }))).toThrow(/not green/u);
   });
 });

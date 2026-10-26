@@ -101,6 +101,7 @@
 /scripts/ship-local.mjs @masonwyatt23
 /scripts/local-app-transaction.mjs @masonwyatt23
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
+/scripts/verify-release-policy.mjs @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
 **/*.entitlements @masonwyatt23
