@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      full_os: ${{ steps.os.outputs.full_os }}
+      os_exclude: ${{ steps.os.outputs.os_exclude }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +53,38 @@ jobs:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+      # PRs run the Windows portability and macOS isolated/shared legs only when
+      # platform code changes or the PR has the `ci:full-os` label. Every other
+      # event (master push, nightly schedule, merge queue, workflow_call) runs
+      # every leg. Merge Gate treats the deferred legs as skipped, not failed.
+      - name: Classify platform-sensitive PR
+        id: os
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FULL_OS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full-os') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          full=true
+          if [ "$EVENT_NAME" = pull_request ] && [ "$FULL_OS_LABEL" != true ]; then
+            full=false
+            files=$(git diff --name-only "$BASE_SHA...$HEAD_SHA") || { full=true; files=''; }
+            # Platform paths: installers, platform scripts, native/desktop code,
+            # daemon and runtime service code, Rust and Node manifests, CI
+            # workflow and scripts, and any path named for an OS.
+            re='^(\.github/workflows/ci\.yml|\.github/scripts/|install\.sh|scripts/.*\.(sh|ps1)$|scripts/(cleanup-launchd|check-macos|install-)|desktop/src-tauri/|tools/custody/|src/core/daemon/|src/core/local-runtime/|test/helpers/|package(-lock)?\.json$)|Cargo\.(toml|lock)$|(windows|win32|darwin|macos|launchd|platform|portab)'
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              if printf '%s\n' "$f" | grep -Eqi "$re"; then full=true; echo "platform path: $f"; break; fi
+              # Tests named in an OS leg, and source that branches on the OS.
+              if grep -qF "$f" .github/workflows/ci.yml; then full=true; echo "OS-leg test: $f"; break; fi
+              if [ -f "$f" ] && grep -Eq 'process\.platform|os\.platform\(|cfg!?\((windows|unix|target_os)' "$f"; then full=true; echo "OS-specific source: $f"; break; fi
+            done <<< "$files"
+          fi
+          if [ "$full" = true ]; then exclude='[{"os":"none"}]'; else exclude='[{"os":"windows-latest"}]'; fi
+          echo "full_os=$full" >> "$GITHUB_OUTPUT"
+          echo "os_exclude=$exclude" >> "$GITHUB_OUTPUT"
+          echo "full OS legs: $full"
 
   site:
     name: Site PR (ecosystem)
@@ -133,6 +167,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        exclude: ${{ fromJSON(needs.classify.outputs.os_exclude) }}
         include:
           - os: ubuntu-latest
             label: ubuntu, authority 1/3
@@ -453,7 +488,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.full_os == 'true' && !github.event.pull_request.draft && github.event_name != 'push'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -571,7 +606,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && needs.classify.outputs.full_os == 'true' && !github.event.pull_request.draft && github.event_name != 'push'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -888,6 +923,7 @@ jobs:
       - name: Require selected CI lane
         env:
           EVENT_NAME: ${{ github.event_name }}
+          OS_LEGS_DEFERRED: ${{ github.event_name == 'pull_request' && needs.classify.outputs.full_os != 'true' }}
           COMMIT_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -935,6 +971,10 @@ jobs:
             : process.env.MAC_DRAFT_DEFERRED === 'true'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation']
             : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
+          // A PR with no platform path and no `ci:full-os` label skips the
+          // macOS isolated/shared legs; Windows portability is excluded from
+          // the `ci` matrix, whose Ubuntu authority legs must still pass.
+          if (process.env.OS_LEGS_DEFERRED === 'true') deferred.push('ci-shared-macos', 'mac-isolated');
           // A later master push's run replaced this Mac lane while it waited and
           // covers this commit's code; the cancelled check still marks this
           // commit's own Mac evidence incomplete.
