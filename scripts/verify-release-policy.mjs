@@ -449,7 +449,7 @@ export function verifyReleaseSuccessorPolicyFile(path, expectedVersion = null) {
 export const RELEASE_PATH_POLICY_SCHEMA_VERSION = 2;
 const RELEASE_PATH_POLICY_KEYS = [
   'schemaVersion', 'policyId', 'packages', 'repository', 'protectedBranch',
-  'publisherWorkflowPath', 'ciAppId', 'registry', 'provenancePredicateType', 'authority',
+  'publisherWorkflowPath', 'candidateSource', 'ciAppId', 'registry', 'provenancePredicateType', 'authority',
 ];
 const PACKAGE_NAME_RE = /^@ashlr\/[a-z0-9][a-z0-9-]{0,63}$/u;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
@@ -485,6 +485,9 @@ export function validateReleasePathPolicy(value) {
   }
   if (policy.protectedBranch !== 'master') fail('protectedBranch must be master');
   exactString(policy.publisherWorkflowPath, 'publisherWorkflowPath', /^\.github\/[a-z/-]+\.yml$/u, 96);
+  if (policy.candidateSource !== 'merged-protected-branch-commit') {
+    fail('candidateSource must be merged-protected-branch-commit');
+  }
   if (policy.ciAppId !== 15368) fail('ciAppId must be 15368 (GitHub Actions)');
   if (policy.registry !== 'https://registry.npmjs.org/') {
     fail('registry must be the canonical public npm registry');
@@ -525,7 +528,7 @@ function npmPurl(name, packageVersion) {
 }
 
 // Pure check of one published release against the v2 policy. evidence:
-// { versionDocument, attestations, tarball (Buffer), tagRef, requiredChecks, checkRuns, candidateRevision }
+// { versionDocument, attestations, tarball (Buffer), tagRef, requiredChecks, checkRuns, compare, candidateRevision }
 export function verifyPublishedRelease(policy, evidence) {
   validateReleasePathPolicy(policy);
   const doc = record(evidence.versionDocument, 'registry version document');
@@ -568,6 +571,7 @@ export function verifyPublishedRelease(policy, evidence) {
   const tagObject = record(tagRef.object, 'tag ref object');
   if (tagObject.type !== 'commit' || tagObject.sha !== candidate) fail('release tag must point directly at the candidate revision');
 
+  verifyCandidateOnProtectedBranch(evidence.compare);
   const ci = verifyRequiredChecks(policy, evidence.requiredChecks, evidence.checkRuns);
 
   return Object.freeze({
@@ -582,6 +586,17 @@ export function verifyPublishedRelease(policy, evidence) {
     requiredChecks: ci,
     authority: RELEASE_SUCCESSOR_POLICY_AUTHORITY,
   });
+}
+
+// The publisher releases only a merged commit of the protected branch, never a
+// PR head. Evidence is the compare API result for <protectedBranch>...<candidate>:
+// "identical" (candidate is the tip) or "behind" (candidate is an ancestor).
+export function verifyCandidateOnProtectedBranch(compare) {
+  const status = record(compare, 'compare result').status;
+  if (status !== 'identical' && status !== 'behind') {
+    fail(`candidate revision is not a merged commit of the protected branch (compare status: ${typeof status === 'string' ? status : 'unknown'})`);
+  }
+  return status;
 }
 
 // Green CI on the exact release SHA, from check runs the caller looked up for
@@ -613,7 +628,7 @@ export function verifyRequiredChecks(policy, requiredChecks, checkRuns) {
   return Object.freeze(names);
 }
 
-const RELEASE_PATH_USAGE = 'usage: verify-release-policy.mjs --release-path <policy> --version-document <json> --attestations <json> --tarball <tgz> --tag-ref <json> --checks <json> --candidate <sha>';
+const RELEASE_PATH_USAGE = 'usage: verify-release-policy.mjs --release-path <policy> --version-document <json> --attestations <json> --tarball <tgz> --tag-ref <json> --checks <json> --compare <json> --candidate <sha>';
 
 function releasePathMain(argv) {
   const flags = new Map();
@@ -621,7 +636,7 @@ function releasePathMain(argv) {
     if (!argv[index]?.startsWith('--') || argv[index + 1] === undefined || flags.has(argv[index])) fail(RELEASE_PATH_USAGE);
     flags.set(argv[index], argv[index + 1]);
   }
-  const need = ['--release-path', '--version-document', '--attestations', '--tarball', '--tag-ref', '--checks', '--candidate'];
+  const need = ['--release-path', '--version-document', '--attestations', '--tarball', '--tag-ref', '--checks', '--compare', '--candidate'];
   if (flags.size !== need.length || need.some((key) => !flags.has(key))) fail(RELEASE_PATH_USAGE);
   const json = (key) => parseCanonicalJsonBytes(readFileSync(flags.get(key)), key);
   const { policy, canonicalSha256 } = parseReleasePathPolicyBytes(readFileSync(flags.get('--release-path')));
@@ -630,6 +645,7 @@ function releasePathMain(argv) {
     attestations: JSON.parse(readFileSync(flags.get('--attestations'), 'utf8')),
     tarball: readFileSync(flags.get('--tarball')),
     tagRef: json('--tag-ref'),
+    compare: JSON.parse(readFileSync(flags.get('--compare'), 'utf8')),
     ...(() => {
       const checks = record(JSON.parse(readFileSync(flags.get('--checks'), 'utf8')), '--checks');
       return { requiredChecks: checks.requiredChecks, checkRuns: checks.checkRuns };

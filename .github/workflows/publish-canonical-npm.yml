@@ -288,6 +288,8 @@ jobs:
           curl --fail --silent --show-error --max-time 30 "https://registry.npmjs.org/@ashlr%2Fphantom/$VERSION" > "$evidence/version.json"
           curl --fail --silent --show-error --max-time 30 "https://registry.npmjs.org/-/npm/v1/attestations/@ashlr%2fphantom@$VERSION" > "$evidence/attestations.json"
           gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > "$evidence/tag.json"
+          # Candidate must be a merged master commit: compare master...candidate is identical or behind.
+          gh api "repos/$GITHUB_REPOSITORY/compare/master...$CANDIDATE_SHA" -q '{status, ahead_by, behind_by}' > "$evidence/compare.json"
           # Required checks and their runs for the exact release SHA, looked up
           # here (no caller-passed run id). Event and branch come from each
           # check run's workflow run (matched by check suite id).
@@ -299,7 +301,7 @@ jobs:
           node scripts/verify-release-policy.mjs --release-path .github/release-policies/release-path-v2.json \
             --version-document "$evidence/version.json" --attestations "$evidence/attestations.json" \
             --tarball "$RUNNER_TEMP/phantom-npm-admitted/$FILENAME" --tag-ref "$evidence/tag.json" \
-            --checks "$evidence/checks.json" --candidate "$CANDIDATE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            --checks "$evidence/checks.json" --compare "$evidence/compare.json" --candidate "$CANDIDATE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Promote accepted package and read back latest
         env:
           VERSION: ${{ steps.handoff.outputs.version }}

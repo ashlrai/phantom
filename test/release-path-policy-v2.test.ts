@@ -9,6 +9,7 @@ import {
   validateReleasePathPolicy,
   verifyPublishedRelease,
   verifyRequiredChecks,
+  verifyCandidateOnProtectedBranch,
 } from '../scripts/verify-release-policy.mjs';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -43,6 +44,7 @@ function evidence(over: Record<string, unknown> = {}) {
     ] },
     tarball,
     tagRef: { ref: 'refs/tags/v3.29.15', object: { type: 'commit', sha: candidate } },
+    compare: { status: 'behind' },
     requiredChecks: ['Merge Gate'],
     checkRuns: [
       green('merge_group'),
@@ -114,5 +116,15 @@ describe('release-path policy v2 required checks on the release SHA', () => {
   });
   it('fails the full release verification when CI on the release SHA is red', () => {
     expect(() => verifyPublishedRelease(policy(), evidence({ checkRuns: [green('push', { conclusion: 'failure' })] }))).toThrow(/not green/u);
+  });
+  it('rejects a candidate that is not on master (diverged or ahead), even with green checks', () => {
+    expect(() => verifyPublishedRelease(policy(), evidence({ compare: { status: 'diverged' } }))).toThrow(/not a merged commit/u);
+    expect(() => verifyPublishedRelease(policy(), evidence({ compare: { status: 'ahead' } }))).toThrow(/not a merged commit/u);
+    expect(() => verifyCandidateOnProtectedBranch({})).toThrow(/not a merged commit/u);
+  });
+  it('accepts a candidate on master (tip or ancestor) with green Merge Gate', () => {
+    expect(verifyCandidateOnProtectedBranch({ status: 'identical' })).toBe('identical');
+    expect(verifyPublishedRelease(policy(), evidence({ compare: { status: 'identical' }, checkRuns: [green('push')] }))).toMatchObject({ ok: true });
+    expect(verifyPublishedRelease(policy(), evidence({ compare: { status: 'behind' }, checkRuns: [green('merge_group')] }))).toMatchObject({ ok: true });
   });
 });
