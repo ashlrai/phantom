@@ -142,7 +142,8 @@ async function fetchOllamaModelSizes(ollamaBase: string): Promise<Map<string, st
     let response: Response;
     try {
       const url = ollamaBase.replace(/\/+$/, '') + '/api/tags';
-      response = await fetch(url, { signal: controller.signal });
+      // Never follow a 3xx off the local service (Security #952 L1).
+      response = await fetch(url, { redirect: 'error', signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }

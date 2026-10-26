@@ -871,6 +871,7 @@
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
+/test/standing-merge-pass-unclassified-952.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
 /test/status-custody.test.ts @masonwyatt23

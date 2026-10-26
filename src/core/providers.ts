@@ -15,6 +15,7 @@ import type { AshlrConfig, ProviderEndpoint, ProviderRegistry } from './types.js
 // started on a non-default port is reported as up here without the operator
 // having to restate the URL in a second place.
 import { resolveLlamaServerOrigin } from './local-runtime/llama/config.js';
+import { pinLoopbackHost } from './run/local-inference.js';
 
 // ---------------------------------------------------------------------------
 // Loopback-only reading of OLLAMA_HOST for the two code paths that talk to a
@@ -46,12 +47,12 @@ function isLoopbackHost(host: string): boolean {
 
 /**
  * The Ollama origin a local-only path may use: OLLAMA_HOST when it names a
- * loopback host, else `fallback` (default `http://localhost:11434`). No trailing
- * slash, no path.
+ * loopback host, else `fallback` (default `http://127.0.0.1:11434`). A localhost host is
+ * pinned to 127.0.0.1 (Security #952 L2). No trailing slash, no path.
  */
 export function localOllamaBase(
   env: Record<string, string | undefined> = process.env,
-  fallback = `http://localhost:${DEFAULT_LOCAL_OLLAMA_PORT}`,
+  fallback = `http://127.0.0.1:${DEFAULT_LOCAL_OLLAMA_PORT}`,
 ): string {
   const raw = (env['OLLAMA_HOST'] ?? '').trim().replace(/\/+$/, '');
   if (!raw) return fallback;
@@ -84,7 +85,7 @@ export function localOllamaBase(
   const portNum = Number(port);
   if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) return fallback;
   if (!isLoopbackHost(host)) return fallback;
-  return `${scheme}://${host}:${portNum}`;
+  return `${scheme}://${pinLoopbackHost(host)}:${portNum}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,8 @@ export async function probeEndpoint(id: string, url: string): Promise<ProviderEn
   try {
     const response = await fetch(probeUrl, {
       method: 'GET',
+      // Never follow a 3xx off the local service (Security #952 L1); a throw reads as down.
+      redirect: 'error',
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     });
