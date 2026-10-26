@@ -15,6 +15,7 @@
  */
 
 import type { AshlrConfig } from '../types.js';
+import { anthropicVersionHeaders } from '../run/model-catalog.js';
 import { collectUsageEvents } from './usage-source.js';
 import { modelToProviderKey } from './rollup.js';
 import { estCostUsd } from '../run/budget.js';
@@ -153,7 +154,7 @@ async function fetchAnthropicUsage(apiKey: string): Promise<ProviderLimitEntry> 
         method: 'GET',
         headers: {
           'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
+          ...anthropicVersionHeaders('anthropic'),
           'anthropic-beta': 'usage-1',
         },
       },

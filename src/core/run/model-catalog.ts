@@ -15,6 +15,33 @@
 
 import type { EngineId } from '../types.js';
 
+/**
+ * HTTP API version, independent of the Anthropic SDK major version.
+ * Migration: https://platform.claude.com/docs/en/api/migration-2026-10-21
+ * Messages using this version must omit temperature, top_p and top_k.
+ */
+export const ANTHROPIC_API_VERSION = '2026-10-21';
+
+/**
+ * Protocol compatibility does not imply support for Anthropic's version contract.
+ * Local runtimes do not negotiate that contract, so they omit the header.
+ */
+export const PROVIDER_API_CAPABILITIES = Object.freeze({
+  anthropic: Object.freeze({ anthropicVersionHeader: true }),
+  'llama-server': Object.freeze({ anthropicVersionHeader: false }),
+  ollama: Object.freeze({ anthropicVersionHeader: false }),
+});
+
+/** Relays to Anthropic retain its provider identity; unknown providers opt out. */
+export function anthropicVersionHeaders(provider: string): Record<string, string> {
+  const capabilities = Object.hasOwn(PROVIDER_API_CAPABILITIES, provider)
+    ? PROVIDER_API_CAPABILITIES[provider as keyof typeof PROVIDER_API_CAPABILITIES]
+    : undefined;
+  return capabilities?.anthropicVersionHeader === true
+    ? { 'anthropic-version': ANTHROPIC_API_VERSION }
+    : {};
+}
+
 /** Resolve identity for an already selected engine, without ranking catalog priors. */
 export function resolveSelectedEngineModel(input: {
   engine: string;
