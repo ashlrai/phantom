@@ -2,6 +2,10 @@
 
 # Phantom
 
+<!-- fresh:begin version-badge -->
+[![Source version 3.29.15](https://img.shields.io/badge/source-3.29.15-blue)](https://github.com/ashlrai/phantom)
+<!-- fresh:end -->
+
 **Give agents the work. Keep the evidence.**
 
 **The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**

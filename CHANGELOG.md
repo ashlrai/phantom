@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- fresh:begin version-table -->
+| Version source | Version |
+| --- | --- |
+| Source package | 3.29.15 |
+| Latest dated changelog release (2026-10-12) | 3.29.13 |
+<!-- fresh:end -->
+
 All notable changes to Phantom are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
