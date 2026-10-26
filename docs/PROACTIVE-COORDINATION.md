@@ -6,13 +6,10 @@ reply contains `dispatchAuthorized: false`; configured profiles remain unqualifi
 
 ## Product direction
 
-The intended product is one self-improving engineering workspace and service.
-Ashlr's own service work provides the dogfooding path toward SaaS and autonomous
-operations. Users configure goals, assignments and resources across providers:
-coding subscriptions, CLI accounts, APIs, cloud funding and local models.
-Allocation should improve independently verified outcome value, quality and
-time within cost and authority limits; token consumption and activity counts
-are not success criteria.
+The product direction is [VISION.md](VISION.md): a chat-first open-source
+assistant that can use subscriptions, command-line agents, API keys, and local
+models. This page is the current local coordination slice. It does not dispatch
+work. Token consumption and activity counts are not success criteria.
 
 **Work with me** and **Work for me** are a continuum over the same tasks,
 context, resources and evidence. A human should inspect priorities and criteria,

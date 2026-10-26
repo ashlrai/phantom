@@ -195,5 +195,5 @@ engineering yield or unattended production reliability.
 
 Next, [define your own experiment](ASHLR-UNIVERSE.md),
 [commission an explicit native or local worker](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity),
-or read the [North Star](NORTH-STAR.md). Keep the evaluator and acceptance criteria
+or read the [vision](VISION.md). Keep the evaluator and acceptance criteria
 stronger than the candidate's claim about its own success.
