@@ -28,6 +28,7 @@ that every integration, provider or autonomous effect is active.
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
+| Prepare queue driver operation, recovery and cutover (planned) | [Driver runbook](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |

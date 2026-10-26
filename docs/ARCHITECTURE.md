@@ -12,6 +12,8 @@ primarily uses Node builtins; its declared runtime dependencies (MCP transport v
 `reflect-metadata`) are all bundled. The manifest and lockfile are the canonical
 inventory, not this overview.
 
+For the planned queue driver, see the [driver operator runbook](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md).
+
 ## Source layout
 
 | Path | Contents |

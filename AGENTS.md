@@ -28,3 +28,5 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 - Before a PR: `npm run typecheck`, `npm run lint`, `npm run check:docs`, and the affected tests (`npx vitest run test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together.
 - Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md).
+
+- Driver operation and planned cutover: [docs/DRIVER.md](docs/DRIVER.md).
