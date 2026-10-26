@@ -2,6 +2,8 @@ name: Custody helper
 
 on:
   pull_request:
+    # ready_for_review starts the macOS job that a draft PR defers.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'tools/custody/**'
       - 'scripts/install-custody.sh'
@@ -24,10 +26,14 @@ concurrency:
 jobs:
   verify:
     name: Custody (macOS, Swift)
+    # Drafts skip this macOS job; it runs on ready_for_review and every push to master.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Test custody contracts without hardware or credentials
         run: swift test --package-path tools/custody
       - name: Compile the macOS security adapters
