@@ -1,0 +1,5 @@
+{"id":"stuck","state":"running","updatedAt":"2026-10-26T12:00:00Z"}
+{"id":"finished","state":"running","updatedAt":"2026-10-26T12:00:00Z"}
+{"id":"finished","state":"completed","updatedAt":"2026-10-26T13:59:00Z","prUrl":"https://github.com/ashlrai/phantom/pull/42"}
+{"id":"duplicate","state":"completed","updatedAt":"2026-10-26T13:59:00Z","prUrl":"https://github.com/ashlrai/phantom/pull/42"}
+{"id":"unsafe","state":"failed","updatedAt":"2026-10-26T13:59:00Z","prUrl":"https://example.com/pull/42"}
