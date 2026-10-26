@@ -71,15 +71,13 @@ function runCmd(cmd: string, args: string[]): string | null {
 
 async function checkPlugins(cfg: AshlrConfig): Promise<DoctorCheck> {
   try {
-    const { discoverPlugins } = await import('./plugins/registry.js');
-    const { hashEntry } = await import('./plugins/integrity.js');
-    const { join } = await import('node:path');
-
     const enabled = cfg.plugins?.enabled ?? [];
     if (enabled.length === 0) {
       return check('plugins', 'Plugins', 'pass', 'none enabled (default-off)');
     }
 
+    const { discoverPlugins } = await import('./plugins/registry.js');
+    const { hashEntry } = await import('./plugins/integrity.js');
     const found = discoverPlugins();
     const problems: string[] = [];
     for (const name of enabled) {
@@ -135,8 +133,8 @@ async function tryDiscoverMcpServers(): Promise<McpRegistry | null> {
  */
 async function tryGetToolsRegistry(): Promise<ToolsRegistry | null> {
   try {
-    const mod = await import('./tools-registry.js') as { getToolsRegistry: () => ToolsRegistry };
-    return mod.getToolsRegistry();
+    const mod = await import('./tools-registry.js');
+    return await mod.getToolsRegistry({ parallel: true });
   } catch {
     return null;
   }
@@ -214,12 +212,18 @@ async function tryGetTelemetrySinkInfo(
  */
 async function tryGetGenomeHealth(
   cfg: AshlrConfig,
+  providers: Promise<import('./types.js').ProviderRegistry | null>,
 ): Promise<import('./types.js').GenomeHealth | null> {
   try {
     const mod = await import('./genome/store.js') as {
-      genomeHealth: (cfg: AshlrConfig) => import('./types.js').GenomeHealth;
+      genomeHealth: typeof import('./genome/store.js').genomeHealth;
     };
-    return mod.genomeHealth(cfg);
+    const registry = await providers;
+    const ollama = registry?.providers.find(p => p.id === 'ollama');
+    // Only reuse the exact configured endpoint. Standalone genomeHealth keeps
+    // its existing fallback probe when no matching registry result exists.
+    return mod.genomeHealth(cfg, ollama && cfg.models.ollama
+      ? { ollamaModels: ollama.models } : undefined);
   } catch {
     return null;
   }
@@ -349,15 +353,13 @@ function checkGit(): DoctorCheck {
 }
 
 /** ~/.local/bin on PATH */
-function checkLocalBin(): DoctorCheck {
+function checkLocalBin(phm: string | null): DoctorCheck {
   const localBin = join(homedir(), '.local/bin');
   const pathDirs = (process.env['PATH'] ?? '').split(delimiter);
   if (pathDirs.includes(localBin)) {
     return check('local-bin', '~/.local/bin on PATH', 'pass', `${localBin} is on PATH`);
   }
   // A global npm install already puts phm on PATH; the ~/.local/bin link is then only a spare.
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const phm = runCmd(finder, ['phm']);
   if (phm) {
     return check('local-bin', '~/.local/bin on PATH', 'pass', `not needed: phm is on PATH at ${phm.split(/\r?\n/)[0]}`);
   }
@@ -371,11 +373,11 @@ function checkLocalBin(): DoctorCheck {
 }
 
 /** Workbench binary present: canonical phm or compatible ashlr. */
-function checkAshlrInstalled(): DoctorCheck {
+function checkAshlrInstalled(phm: string | null): DoctorCheck {
   // `which` is Unix-only; Windows uses `where`.
   const finder = process.platform === 'win32' ? 'where' : 'which';
   // `phantom` belongs to Secrets and cannot satisfy this workbench check.
-  const out = runCmd(finder, ['phm']) ?? runCmd(finder, ['ashlr']);
+  const out = phm ?? runCmd(finder, ['ashlr']);
   if (out) {
     return check('ashlr', 'Phantom CLI installed (phm / ashlr)', 'pass', out);
   }
@@ -468,9 +470,8 @@ function checkIndex(): DoctorCheck {
 }
 
 /** Values-free Secrets project metadata; configuration is not vault readiness. */
-function checkPhantom(): DoctorCheck {
+function checkPhantom(status: ReturnType<typeof getPhantomStatus>): DoctorCheck {
   try {
-    const status = getPhantomStatus();
     if (!status.installed) {
       return check(
         'phantom',
@@ -1384,13 +1385,15 @@ function checkGitLocks(): DoctorCheck {
  */
 export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
+  // One invocation-scoped snapshot: never reuse health across doctor runs.
+  const providers = getProviderRegistry(cfg).catch(() => null);
 
   // --- Pre-fetch M3 + M5 + M7 + M19 registry results (all async-safe, never throw) ---
   const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo] = await Promise.all([
     tryDiscoverMcpServers(),
     tryGetToolsRegistry(),
     tryBuildBudgetRollup(cfg),
-    tryGetGenomeHealth(cfg),
+    tryGetGenomeHealth(cfg, providers),
     tryGetIdentity(),
     tryEvalGovernance(cfg),
     tryGetTelemetrySinkInfo(cfg),
@@ -1399,12 +1402,15 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- Synchronous checks ---
   checks.push(checkNodeVersion());
   checks.push(checkGit());
-  checks.push(checkLocalBin());
-  checks.push(checkAshlrInstalled());
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const phm = runCmd(finder, ['phm']);
+  checks.push(checkLocalBin(phm));
+  checks.push(checkAshlrInstalled(phm));
   checks.push(checkConfig());
   checks.push(checkIndex());
-  checks.push(checkPhantom());
-  checks.push(checkPhantomPreflight());
+  const phantom = getPhantomStatus();
+  checks.push(checkPhantom(phantom));
+  checks.push(checkPhantomPreflight({ status: phantom }));
   checks.push(checkReceiptVerify());
   checks.push(checkLocus());
   checks.push(checkLocusFirm(cfg));
@@ -1452,7 +1458,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
 
   // --- Async: provider registry ---
   try {
-    const registry = await getProviderRegistry(cfg);
+    const registry = await providers;
+    if (!registry) throw new Error('Provider registry unavailable');
     // With every local endpoint down (the usual fresh install), one line says
     // so; a warning per endpoint would repeat the same fact three times.
     const anyLocalUp = registry.providers.some(p => p.up);

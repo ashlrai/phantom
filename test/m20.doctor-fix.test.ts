@@ -45,7 +45,10 @@ afterEach(() => {
 // Mock child_process
 // ---------------------------------------------------------------------------
 
-const mockExecFile = vi.fn();
+const mockExecFile = vi.fn((_cmd: string, _args: string[], _options: unknown, callback?: (error: Error, stdout: string, stderr: string) => void) => {
+  // Async inventory probes must complete just like the synchronous absent-tool mock.
+  callback?.(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', '');
+});
 const mockExecFileSync = vi.fn();
 const mockSpawnSync = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
 const mockSpawn = vi.fn(() => ({

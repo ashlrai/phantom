@@ -30,6 +30,9 @@ let _mockResponses: Map<string, MockResponse> = new Map();
 // Default fallback (ENOENT = not found).
 let _defaultResponse: MockResponse;
 let _execFileCalls: string[] = [];
+let _activeAsync = 0;
+let _peakAsync = 0;
+let _closedStdin = 0;
 let _execFileOptions: Array<{ key: string; options: unknown }> = [];
 const origSystemRoot = process.env.SystemRoot;
 
@@ -77,6 +80,18 @@ function whichResult(binPath: string): MockResponse {
 }
 
 vi.mock('node:child_process', () => ({
+  execFile: (cmd: string, args: string[], options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+    const key = `${cmd} ${args.join(' ')}`.trim();
+    _execFileCalls.push(key);
+    _execFileOptions.push({ key, options });
+    const response = _mockResponses.get(key) ?? _mockResponses.get(cmd) ?? _defaultResponse;
+    _peakAsync = Math.max(_peakAsync, ++_activeAsync);
+    queueMicrotask(() => {
+      _activeAsync--;
+      callback(response.error ?? (response.status !== 0 ? new Error('nonzero') : null), response.stdout, response.stderr);
+    });
+    return { stdin: { end: () => { _closedStdin++; } } };
+  },
   spawnSync: (cmd: string, args: string[] = [], _opts?: unknown): MockResponse => {
     const key = `${cmd} ${args.join(' ')}`.trim();
     if (_mockResponses.has(key)) return _mockResponses.get(key)!;
@@ -129,6 +144,9 @@ beforeEach(() => {
   _mockResponses = new Map();
   _defaultResponse = enoent('__default__');
   _execFileCalls = [];
+  _activeAsync = 0;
+  _peakAsync = 0;
+  _closedStdin = 0;
   _execFileOptions = [];
   // Reset app-path presence — no apps present by default.
   _existingPaths = new Set();
@@ -552,5 +570,46 @@ describe('getToolsRegistry — ashlr-md app detection', () => {
     const count = reg.tools.filter(t => t.installed).length;
     expect(reg.installedCount).toBe(count);
     expect(reg.installedCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('getToolsRegistry — parallel probes', () => {
+  it('preserves ordered results and security options while overlapping independent probes', async () => {
+    mockInstalled('phantom', 'phantom 0.6.0', '/tools/phantom');
+    mockInstalled('locus', 'locus 0.5.1', '/tools/locus');
+    mockInstalled('stack', 'stack 1.2.3', '/tools/stack');
+    const expected = getToolsRegistry();
+    _execFileOptions = [];
+    expect(await getToolsRegistry({ parallel: true })).toEqual(expected);
+    expect(_peakAsync).toBeGreaterThan(1);
+    expect(_closedStdin).toBe(_execFileOptions.length);
+    expect(_execFileOptions.every(({ options }) => {
+      const opts = options as { timeout: number; killSignal: string; shell?: boolean };
+      return opts.timeout === 3000 && opts.killSignal === 'SIGKILL' && !opts.shell;
+    })).toBe(true);
+  });
+
+  it('returns a fresh inventory after a tool disappears', async () => {
+    mockInstalled('phantom', 'phantom 0.6.0', '/tools/phantom');
+    expect((await getToolsRegistry({ parallel: true })).tools.find(t => t.id === 'phantom')?.installed).toBe(true);
+    mockAbsent('phantom');
+    expect((await getToolsRegistry({ parallel: true })).tools.find(t => t.id === 'phantom')?.installed).toBe(false);
+  });
+
+  it('uses the Windows PATH-only locator and fails closed without SystemRoot', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    process.env.SystemRoot = 'C:\\Windows';
+    mockInstalled('phantom', 'phantom 0.6.0', 'C:\\Tools\\phantom.exe');
+    expect(await getToolsRegistry({ parallel: true })).toEqual(getToolsRegistry());
+    expect(_execFileCalls).not.toContain('which phantom');
+    delete process.env.SystemRoot;
+    const windir = process.env.WINDIR;
+    delete process.env.WINDIR;
+    try {
+      const registry = await getToolsRegistry({ parallel: true });
+      expect(registry.tools.find(t => t.id === 'phantom')?.installed).toBe(false);
+    } finally {
+      if (windir !== undefined) process.env.WINDIR = windir;
+    }
   });
 });

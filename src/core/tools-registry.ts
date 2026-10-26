@@ -6,7 +6,7 @@
  * tool yields { installed: false, version: null, path: null }.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
@@ -78,16 +78,9 @@ const PROBE_KILL_SIGNAL = 'SIGKILL';
  */
 function findBinary(binary: string): string | null {
   try {
-    let locator = 'which';
-    let query = binary;
-    if (process.platform === 'win32') {
-      const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-      if (!systemRoot || !win32.isAbsolute(systemRoot)) return null;
-      locator = win32.join(systemRoot, 'System32', 'where.exe');
-      // The $PATH: prefix excludes the current directory from where.exe lookup.
-      query = `$PATH:${binary}`;
-    }
-    const result = execFileSync(locator, [query], {
+    const locator = binaryLocator(binary);
+    if (!locator) return null;
+    const result = execFileSync(locator[0], [locator[1]], {
       encoding: 'utf8',
       timeout: LOCATOR_TIMEOUT_MS,
       killSignal: PROBE_KILL_SIGNAL,
@@ -97,6 +90,14 @@ function findBinary(binary: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Keep both inventory paths on the same PATH-only Windows lookup. */
+function binaryLocator(binary: string): [string, string] | null {
+  if (process.platform !== 'win32') return ['which', binary];
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  if (!systemRoot || !win32.isAbsolute(systemRoot)) return null;
+  return [win32.join(systemRoot, 'System32', 'where.exe'), `$PATH:${binary}`];
 }
 
 /**
@@ -359,7 +360,11 @@ const TOOL_SPECS: ToolSpec[] = [
  * Probe a single ToolSpec and return a ToolInfo.
  * Never throws.
  */
-function probeTool(spec: ToolSpec): ToolInfo {
+function probeTool(
+  spec: ToolSpec,
+  locate = findBinary,
+  versionOutput = runVersionCmd,
+): ToolInfo {
   // App-type tools (e.g. Tauri desktop apps) are detected by filesystem path,
   // not by a CLI binary in PATH. Short-circuit before the locator probe.
   if (spec.appPaths && spec.appPaths.length > 0) {
@@ -374,7 +379,7 @@ function probeTool(spec: ToolSpec): ToolInfo {
   let resolvedPath: string | null = null;
   let resolvedBinary: string | null = null;
   for (const bin of spec.binaries) {
-    const p = findBinary(bin);
+    const p = locate(bin);
     if (p) {
       resolvedPath = p;
       resolvedBinary = bin;
@@ -397,7 +402,7 @@ function probeTool(spec: ToolSpec): ToolInfo {
     // Execute the located path, not a second PATH lookup that could resolve a
     // different file. Windows script shims fail closed because no shell is used.
     const args: string[] = spec.versionArgs ?? [resolvedPath, '--version'];
-    const raw = runVersionCmd(args);
+    const raw = versionOutput(args);
 
     if (raw) {
       version = spec.parseVersion ? spec.parseVersion(raw) : extractSemver(raw);
@@ -433,7 +438,10 @@ function probeTool(spec: ToolSpec): ToolInfo {
  * path:null }. Detects: phantom, locus, ashlr/ashlr-plugin, stack, pulse/pulse-agent,
  * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app), ashlr-hub.
  */
-export function getToolsRegistry(): ToolsRegistry {
+export function getToolsRegistry(options: { parallel: true }): Promise<ToolsRegistry>;
+export function getToolsRegistry(): ToolsRegistry;
+export function getToolsRegistry(options?: { parallel: true }): ToolsRegistry | Promise<ToolsRegistry> {
+  if (options?.parallel) return getToolsRegistryAsync();
   const tools: ToolInfo[] = [];
 
   for (const spec of TOOL_SPECS) {
@@ -453,4 +461,51 @@ export function getToolsRegistry(): ToolsRegistry {
 
   const installedCount = tools.filter((t) => t.installed).length;
   return { tools, installedCount };
+}
+
+/** Same inventory as getToolsRegistry, with independent child probes in parallel. */
+async function getToolsRegistryAsync(): Promise<ToolsRegistry> {
+  const tools = await Promise.all(TOOL_SPECS.map(async spec => {
+    try {
+      if (spec.appPaths?.length) return probeTool(spec);
+      let binary: string | undefined;
+      let path: string | null = null;
+      for (const candidate of spec.binaries) {
+        const locator = binaryLocator(candidate);
+        if (!locator) break;
+        const output = await runProbeAsync(locator[0], [locator[1]], LOCATOR_TIMEOUT_MS, false);
+        path = output?.split(/\r?\n/u).map(line => line.trim()).find(Boolean) ?? null;
+        if (path) {
+          binary = candidate;
+          break;
+        }
+      }
+      const args = spec.versionArgs ?? (path ? [path, '--version'] : []);
+      const raw = path && spec.versionArgs !== null
+        ? await runProbeAsync(args[0]!, args.slice(1), VERSION_TIMEOUT_MS, true)
+        : null;
+      // Reuse the canonical fallback, ambiguity and version parsing rules.
+      return probeTool(spec, candidate => candidate === binary ? path : null, () => raw);
+    } catch {
+      return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
+    }
+  }));
+  return { tools, installedCount: tools.filter(tool => tool.installed).length };
+}
+
+function runProbeAsync(cmd: string, args: string[], timeout: number, includeErrorOutput: boolean): Promise<string | null> {
+  return new Promise(resolve => {
+    const child = execFile(cmd, args, {
+      encoding: 'utf8', timeout, killSignal: PROBE_KILL_SIGNAL,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (!error) {
+        resolve(stdout.trim() || null);
+        return;
+      }
+      resolve(includeErrorOutput ? [stdout, stderr].map(value => value.trim()).filter(Boolean).join('\n') || null : null);
+    });
+    // Match the synchronous inventory's ignored stdin: MCP shims may wait for EOF.
+    child?.stdin?.end();
+  });
 }

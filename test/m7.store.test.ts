@@ -56,7 +56,7 @@ let appendHubEntry: (input: LearnInput) => GenomeEntry;
 // (lazy import below; type-import lint intentionally not applied)
 let hubStorePath: () => string;
 // (lazy import below; type-import lint intentionally not applied)
-let genomeHealth: (cfg: AshlrConfig) => import('../src/core/types.js').GenomeHealth;
+let genomeHealth: typeof import('../src/core/genome/store.js').genomeHealth;
 // (lazy import below; type-import lint intentionally not applied)
 let genomeHubHealth: () => import('../src/core/types.js').GenomeHealth;
 
@@ -648,6 +648,13 @@ describe('appendHubEntry — append-only, never overwrites', () => {
 // ---------------------------------------------------------------------------
 
 describe('genomeHealth — counts match reality', () => {
+  it('uses supplied Ollama models, including an empty unavailable snapshot', () => {
+    const cfg = makeConfig();
+    expect(genomeHealth(cfg, { ollamaModels: ['NOMIC-EMBED-TEXT:latest'] }).embeddingsAvailable).toBe(true);
+    expect(genomeHealth(cfg, { ollamaModels: ['qwen3:8b'] }).embeddingsAvailable).toBe(false);
+    expect(genomeHealth(cfg, { ollamaModels: [] }).embeddingsAvailable).toBe(false);
+  });
+
   it('returns totalEntries=0 and hubEntries=0 when genome is empty', () => {
     const health = genomeHealth(makeConfig());
     expect(health.totalEntries).toBe(0);
