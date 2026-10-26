@@ -81,6 +81,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { classifyVerseCliError, pinnedClaudeVersion } from './adapters/claude.js';
 import {
   adapterFor as defaultAdapterFor,
+  backendFor,
   VERSE_TELEMETRY_POLL_MS,
   type VerseAdapter,
   type VerseAdapterTurnContext,
@@ -682,10 +683,6 @@ const DEFAULT_WATCHDOG_MS = 3 * 60_000;
  */
 export const VERSE_DEVIN_CLOUD_TURN_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
-/** Engines whose vendor names the conversation (codex thread id, Devin task / ACP session): no pre-minted id. */
-function vendorNamesConversation(engine: VerseEngine): boolean {
-  return engine === 'codex' || engine === 'devin';
-}
 const DEFAULT_WATCHDOG_POLL_MS = 30_000;
 
 /**
@@ -2213,7 +2210,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
           // No note: a bare new session still beats a dead chat.
         }
       }
-      const nativeSessionId = vendorNamesConversation(session.engine) ? null : randomUUID();
+      const nativeSessionId = backendFor(session.engine).capabilities.providerAssignedSessionId ? null : randomUUID();
       const fresh: VerseSession = { ...cloneSession(session), nativeSessionId, turnCount: 0 };
       const turnLaunch = adapterFor(session.engine).buildLaunch(fresh, text, turn.seatLaunch);
       const lost = code === 'native-thread-missing'
@@ -2861,7 +2858,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         accountId: seat.accountId,
         seatId: seat.id,
         model,
-        nativeSessionId: vendorNamesConversation(engine) ? null : randomUUID(),
+        nativeSessionId: backendFor(engine).capabilities.providerAssignedSessionId ? null : randomUUID(),
         createdAt: at,
         updatedAt: at,
         status: 'idle',
