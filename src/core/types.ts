@@ -3788,6 +3788,8 @@ export interface NotifyTarget {
  * shape that both the OTLP emitter and the local-file sink consume.
  */
 export interface GenAiSpan {
+  /** Optional allowlisted memory benchmark metadata; no process content. */
+  memory?: import('./observability/memory-benchmark.js').MemoryMeasurement & { scope: 'job' | 'merged_pr' };
   tokenEvidence?: RunTokenEvidence;
   /** Span name (e.g. the operation/task identifier — metadata, not content). */
   name: string;
