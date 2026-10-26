@@ -1,0 +1,47 @@
+{
+  "fixtureOrigin": "Synthetic documents derived from producer source; not recorded binary executions.",
+  "producers": [
+    {
+      "repo": "ashlrai/locus",
+      "commit": "cba5f65061003f60e34f27eeea6784d3294f9be7",
+      "sources": [
+        {
+          "path": "schema/agent-report.schema.json",
+          "sha256": "b2ec77aec91b8ea359c0f3751cc325e0c7bd50600d3f59055db0989fabade1c4"
+        },
+        {
+          "path": "crates/locus-core/src/agent_report.rs",
+          "sha256": "58b3f8c245f7bb1e3d457670b8f172889edff0707ae634a4302f57117ddc5be8"
+        }
+      ]
+    },
+    {
+      "repo": "ashlrai/lexicon",
+      "commit": "3d39b2bc5fa72b421f86aa20921cfd55bff4f33e",
+      "sources": [
+        {
+          "path": "src/cli/handshake.ts",
+          "sha256": "dadd89dd8d2003f0195d0be541c5c9d202fdb33c91144e4f3dc995e74acad3df"
+        },
+        {
+          "path": "tests/contract/ashlr-handshake.v1.json",
+          "sha256": "1f6679138a048f6882eb33f84ab2894b54e51898f887a5cb9c19cc9731c5c171"
+        }
+      ]
+    },
+    {
+      "repo": "ashlrai/phantom-secrets",
+      "commit": "58c81eac0f3d2880a1c1ee1ece729fe998c187ff",
+      "sources": [
+        {
+          "path": "docs/hub-status-contract.md",
+          "sha256": "930e05c23a1d6016c1fc0b73b80ca448ca72650aca0fa6cd221823aafeea7604"
+        },
+        {
+          "path": "crates/phantom-cli/src/commands/status.rs",
+          "sha256": "9ca7c481bebe10cecf4f38004b9ec38619252f0324c57dd73639589506d2622f"
+        }
+      ]
+    }
+  ]
+}
