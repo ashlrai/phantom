@@ -761,6 +761,7 @@
 /test/mcp-firm-resources.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
+/test/merge-authority-local-engine.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/mirror-git-bounded.test.ts @masonwyatt23

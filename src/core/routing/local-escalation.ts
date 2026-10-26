@@ -153,3 +153,44 @@ export function isLocalEngine(engine: EngineIdentity): boolean {
 export function engineMayHoldMergeOrCredentials(engine: EngineIdentity): boolean {
   return !isLocalEngine(engine);
 }
+
+/**
+ * Pure (env passed in). Every endpoint config may give `engine`: the
+ * engine-specific block (cfg.foundry[engine].baseUrl, e.g. nim/kimi/grok),
+ * the engine registry (cfg.foundry.engines[engine].defaultBaseUrl and the env
+ * var it names), openai-compat's OPENAI_COMPAT_BASE_URL, and localInference.
+ */
+export function engineEndpointsForAuthority(
+  cfg: unknown,
+  engine: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): string[] {
+  const out: string[] = [];
+  const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null);
+  const push = (v: unknown): void => { if (typeof v === 'string' && v.trim()) out.push(v.trim()); };
+  const root = obj(cfg);
+  const foundry = obj(root?.['foundry']);
+  push(obj(foundry?.[engine])?.['baseUrl']);
+  const spec = obj(obj(foundry?.['engines'])?.[engine]);
+  push(spec?.['defaultBaseUrl']);
+  push(spec?.['baseUrl']);
+  const envName = spec?.['baseUrlEnv'];
+  if (typeof envName === 'string') push(env[envName]);
+  if (engine === 'openai-compat') {
+    push(env['OPENAI_COMPAT_BASE_URL']);
+    push(obj(root?.['localInference'])?.['baseUrl']);
+  }
+  return out;
+}
+
+/** Pure. Authority check for an `engine:model` string: false when the engine is local by id or any endpoint. */
+export function engineModelMayHoldMergeAuthority(
+  cfg: unknown,
+  engineModel: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): boolean {
+  const sep = engineModel.indexOf(':');
+  const engineId = sep > 0 ? engineModel.slice(0, sep) : engineModel;
+  if (!engineMayHoldMergeOrCredentials({ engineId })) return false;
+  return engineEndpointsForAuthority(cfg, engineId, env).every((baseUrl) => engineMayHoldMergeOrCredentials({ engineId, baseUrl }));
+}

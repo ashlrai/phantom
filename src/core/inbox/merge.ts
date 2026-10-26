@@ -232,6 +232,7 @@ import {
   REMOTE_HANDOFF_RECOVERY_MARKER,
 } from './remote-handoff.js';
 import { findLocalRealizedMergeDescendant } from './realized-merge.js';
+import { engineModelMayHoldMergeAuthority } from '../routing/local-escalation.js';
 import {
   ashlrTmpDir,
   reapLeakedTempWorktrees,
@@ -832,6 +833,16 @@ export function evaluateMergeAuthority(
     return {
       authorized: false,
       reason: `engineModel '${engineModel}' has no concrete model pinned (':default') — merge authority requires a vetted model`,
+    };
+  }
+
+  // Local engines never carry merge authority, even when config promotes them
+  // to tier 'frontier' or lists them in mergeAuthority (known local id or a
+  // loopback endpoint). See src/core/routing/local-escalation.ts.
+  if (!engineModelMayHoldMergeAuthority(cfg, engineModel, process.env)) {
+    return {
+      authorized: false,
+      reason: `engine of '${engineModel}' runs locally (known local id or loopback endpoint) — local engines never carry merge authority, whatever their tier`,
     };
   }
 
