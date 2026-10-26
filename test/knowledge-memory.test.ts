@@ -65,15 +65,15 @@ describe('per-agent chat memory', () => {
   // Synthetic shapes only. Test labels and failure messages contain no credential values.
   const secretShapes = [
     'api_key=' + 'Z9'.repeat(16),
-    JSON.stringify({ password: 'synthetic-password' }),
-    'DB_PASSWORD=synthetic-password',
+    JSON.stringify({ password: ['FAKE', 'password'].join('-') }),
+    ['DB_PASSWORD', '=', 'FAKE', '-password'].join(''),
     'ghp_' + 'a'.repeat(36),
     'sk_live_' + 'a'.repeat(24),
     'AKIA' + 'A'.repeat(16),
-    'eyJabc.eyJdef.signature',
+    ['eyJabc', 'eyJdef', 'FAKEsignature'].join('.'),
     'ab'.repeat(16),
-    ['-----BEGIN', 'PRIVATE KEY-----\nsynthetic\n-----END', 'PRIVATE KEY-----'].join(' '), // FAKE: synthetic PEM fixture
-    'https://' + 'user:synthetic-password' + '@example.com', // FAKE: synthetic URL credential fixture
+    ['-----', 'BEGIN', ' PRIVATE KEY', '-----\nFAKE\n-----', 'END', ' PRIVATE KEY', '-----'].join(''),
+    ['https://', 'FAKEuser', ':', 'FAKEpassword', '@', 'example.com'].join(''),
   ];
   it.each(secretShapes.map((text, index) => ({ text, index })))(
     'rejects secret pattern $index without altering existing memory', ({ text }) => {
