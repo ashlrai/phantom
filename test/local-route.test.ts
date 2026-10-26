@@ -3,7 +3,7 @@ import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { EscalationInput } from '../src/core/routing/local-escalation.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { routeSeat } from '../src/core/routing/router.js';
-import { isKnownRemoteSeat, isLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
+import { classifyEngine, engineClassMayHoldAuthority, engineIdentityOf, isKnownRemoteSeat, isLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
 
 const NOW = Date.parse('2026-10-25T20:00:00Z');
 const at = new Date(NOW - 60_000).toISOString();
@@ -31,6 +31,7 @@ const AUTHORITY: EscalationInput[] = [
   { ...base, mergesToMain: true },
   { ...base, holdsMergeRights: true },
   { ...base, needsCredentials: true },
+  { ...base, publishes: true } as EscalationInput,
   { ...base, needsCredentials: true, localModel: 'huihui-qwen-abliterated@sha256:' + 'a'.repeat(64) },
 ];
 
@@ -107,6 +108,33 @@ describe('routeSeatWithLocalEscalation', () => {
     expect(d.seatId).toBe('fast');
     // A hosted id re-pointed at loopback is local again.
     expect(isKnownRemoteSeat(claude, { claude: { baseUrl: 'http://127.0.0.1:9000' } })).toBe(false);
+  });
+
+  it('no ctx.engines and an unknown loopback id: refused for authority work', () => {
+    // 'fast-coder' really runs on loopback, but without ctx.engines routing cannot know that.
+    expect(classifyEngine(promoted)).toBe('unclassified');
+    for (const input of AUTHORITY) {
+      expect(route(input, { localInference: undefined }, [promoted]).seatId).toBeNull();
+      expect(route(input, on, [promoted]).seatId).toBeNull();
+    }
+  });
+
+  it('classifies engines into frontier, local and unclassified; only frontier may hold authority', () => {
+    expect(classifyEngine(claude)).toBe('frontier');
+    expect(classifyEngine(local)).toBe('local');
+    expect(classifyEngine(promoted)).toBe('unclassified');
+    expect(classifyEngine(promoted, engines)).toBe('local');
+    expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://api.example.com/v1' } })).toBe('frontier');
+    expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://u:p@api.example.com/v1' } })).toBe('unclassified');
+    expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayHoldAuthority(c as never))).toEqual([true, false, false]);
+  });
+
+  it('passes no secret or credential value into any seat routing context', () => {
+    const SECRET = 'sk-test-SENTINEL-0123456789';
+    const leaky = { 'fast-coder': { baseUrl: 'https://api.example.com/v1', tier: 'frontier', apiKey: SECRET, headers: { Authorization: SECRET } } } as never;
+    expect(engineIdentityOf('fast-coder', leaky)).toEqual({ engineId: 'fast-coder', baseUrl: 'https://api.example.com/v1', tier: 'frontier' });
+    const d = routeSeatWithLocalEscalation({ ...req, autonomous: false } as never, [claude, promoted], budget, opts, { ...base, mergesToMain: true }, { ...on, engines: leaky });
+    expect(JSON.stringify(d)).not.toContain(SECRET);
   });
 
   it('the local lane is loopback-only: an allowRemote endpoint escalates to frontier', () => {

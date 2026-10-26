@@ -45,32 +45,74 @@ export interface LocalRouteContext {
   policy?: EscalationPolicy;
 }
 
-/** Pure. A seat is local if its engine is local by id or by configured endpoint. */
-export function isLocalSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: LocalRouteContext['engines'] = {}): boolean {
-  const engineId = String(capacity.engine);
-  const configured = Object.prototype.hasOwnProperty.call(engines, engineId) ? engines[engineId] : undefined;
-  return isLocalEngine({ ...configured, engineId });
-}
+/**
+ * Engine classification, three explicit tiers:
+ *   - 'frontier': a known hosted id (HOSTED_ENGINE_IDS) or an engine listed in
+ *     `engines` whose endpoint is http(s) to a public host;
+ *   - 'local': a known local id or family, or a listed non-public endpoint;
+ *   - 'unclassified': anything else, including any id when `engines` is missing.
+ * Unclassified is unprivileged: never merge, merge-rights, credential or publish work.
+ *
+ * Secrets: routing inputs carry only engine ids, endpoints, tiers and limits.
+ * `engineIdentityOf` projects each configured entry to { engineId, baseUrl, tier },
+ * so no key, token or other credential value enters any seat's routing context,
+ * and an endpoint carrying userinfo (user:pass@) is unclassified.
+ */
+export type EngineClass = 'frontier' | 'local' | 'unclassified';
 
-/** Hosted provider engine ids (BudgetEngine minus 'local'). Explicit allowlist: a new id is refused authority until added. */
+/** Hosted provider engine ids (BudgetEngine minus 'local'). Explicit allowlist: a new id is unclassified until added. */
 export const HOSTED_ENGINE_IDS: ReadonlySet<string> = new Set(['claude', 'claude-api', 'codex', 'grok', 'devin']);
 
-/**
- * Pure. Fail-closed eligibility for merge, merge-rights and credential work:
- * true only for a hosted id from HOSTED_ENGINE_IDS, or an engine listed in
- * `engines` with an http(s) endpoint to a public host, and never for an engine
- * `isLocalEngine` calls local. A missing `engines` map counts as unknown.
- */
-export function isKnownRemoteSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: LocalRouteContext['engines'] = {}): boolean {
-  const engineId = String(capacity.engine);
-  const configured = Object.prototype.hasOwnProperty.call(engines, engineId) ? engines[engineId] : undefined;
-  if (isLocalEngine({ ...configured, engineId })) return false;
-  const listedPublic = typeof configured?.baseUrl === 'string' && configured.baseUrl.trim() !== '';
-  return listedPublic || HOSTED_ENGINE_IDS.has(engineId.trim().toLowerCase());
+type EngineMap = LocalRouteContext['engines'];
+
+/** Pure. The only fields of a configured engine routing ever reads. */
+export function engineIdentityOf(engineId: string, engines: EngineMap = {}): EngineIdentity {
+  const c = Object.prototype.hasOwnProperty.call(engines, engineId) ? engines[engineId] : undefined;
+  const baseUrl = typeof c?.baseUrl === 'string' ? c.baseUrl : undefined;
+  const tier = typeof c?.tier === 'string' ? c.tier : undefined;
+  return { engineId, ...(baseUrl !== undefined ? { baseUrl } : {}), ...(tier !== undefined ? { tier } : {}) };
 }
 
-const holdsAuthority = (i: EscalationInput): boolean =>
-  Boolean(i.mergesToMain) || Boolean(i.holdsMergeRights) || Boolean(i.needsCredentials);
+const hasUserinfo = (raw: string): boolean => {
+  try { const u = new URL(raw.trim()); return u.username !== '' || u.password !== ''; } catch { return false; }
+};
+
+/** Pure. Classifies a seat's engine; unknown or unlisted fails to 'unclassified'. */
+export function classifyEngine(capacity: Pick<SeatCapacity, 'engine'>, engines: EngineMap = {}): EngineClass {
+  const id = engineIdentityOf(String(capacity.engine), engines);
+  if (isLocalEngine(id)) return 'local';
+  if (typeof id.baseUrl === 'string' && id.baseUrl.trim() !== '') return hasUserinfo(id.baseUrl) ? 'unclassified' : 'frontier';
+  return HOSTED_ENGINE_IDS.has(id.engineId.trim().toLowerCase()) ? 'frontier' : 'unclassified';
+}
+
+/** Pure. A seat is local if its engine is local by id or by configured endpoint. */
+export function isLocalSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: EngineMap = {}): boolean {
+  return classifyEngine(capacity, engines) === 'local';
+}
+
+/**
+ * Single decision point for authority eligibility (merge, merge-rights,
+ * credential, publish). Local is refused pending an explicit policy change;
+ * there is deliberately no config knob. Unclassified is always refused.
+ */
+export function engineClassMayHoldAuthority(cls: EngineClass): boolean {
+  switch (cls) {
+    case 'frontier': return true;
+    case 'local': return false;
+    case 'unclassified': return false;
+  }
+}
+
+/** Pure. Fail-closed authority eligibility for a seat. */
+export function isKnownRemoteSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: EngineMap = {}): boolean {
+  return engineClassMayHoldAuthority(classifyEngine(capacity, engines));
+}
+
+/** Routing input: the escalation input plus publish work (publish needs credentials). */
+export type LocalRouteInput = EscalationInput & { publishes?: boolean };
+
+const holdsAuthority = (i: LocalRouteInput): boolean =>
+  Boolean(i.mergesToMain) || Boolean(i.holdsMergeRights) || Boolean(i.needsCredentials) || Boolean(i.publishes);
 
 /**
  * Pure. Routes `req` on the lane the escalation policy picks. No fetching
@@ -83,10 +125,11 @@ export function routeSeatWithLocalEscalation(
   capacity: readonly SeatCapacity[],
   budget: BudgetPolicy,
   opts: RouteOptions,
-  input: EscalationInput,
+  input: LocalRouteInput,
   ctx: LocalRouteContext,
 ): LocalRouteDecision {
   const local = (c: SeatCapacity): boolean => isLocalSeat(c, ctx.engines);
+  const policyInput: EscalationInput = { ...input, needsCredentials: Boolean(input.needsCredentials) || Boolean(input.publishes) };
   // Authority work only sees positively-remote seats; other work excludes known-local seats.
   const frontierSeats = holdsAuthority(input)
     ? capacity.filter((c) => isKnownRemoteSeat(c, ctx.engines))
@@ -96,11 +139,11 @@ export function routeSeatWithLocalEscalation(
 
   const parsed = parseLocalInferenceConfig(ctx.localInference);
   if (!parsed.ok || parsed.config === null) {
-    if (holdsAuthority(input)) return frontier(decideLocalEscalation(input).reason);
+    if (holdsAuthority(input)) return frontier(decideLocalEscalation(policyInput).reason);
     return { ...routeSeat(req, capacity, budget, opts), lane: 'frontier', laneReason: 'policy-off' };
   }
   const choice = decideLocalEscalation(
-    { ...input, localAvailable: Boolean(input.localAvailable) && parsed.config.loopback },
+    { ...policyInput, localAvailable: Boolean(input.localAvailable) && parsed.config.loopback },
     ctx.policy ?? DEFAULT_ESCALATION_POLICY,
   );
   if (choice.lane === 'local') {
