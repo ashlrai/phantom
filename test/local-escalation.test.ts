@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideLocalEscalation, localLaneMayMergeToMain, type EscalationInput } from '../src/core/routing/local-escalation.js';
+import { decideLocalEscalation, engineMayHoldMergeOrCredentials, isLocalEngine, localLaneMayMergeToMain, type EscalationInput } from '../src/core/routing/local-escalation.js';
 
 const base: EscalationInput = { kind: 'edit', localAvailable: true, localModel: 'qwen3.8:27b' };
 
@@ -63,5 +63,26 @@ describe('decideLocalEscalation', () => {
   it('is deterministic', () => {
     const i = { ...base, retries: 3, touchesProtectedPath: true };
     expect(decideLocalEscalation(i)).toEqual(decideLocalEscalation(i));
+  });
+});
+
+describe('tier-promotion gap: local engines never hold merge or credential roles', () => {
+  it('a known local engine id promoted to tier frontier (and in mergeAuthority) is refused', () => {
+    for (const engineId of ['local-coder', 'ollama', 'omlx', 'llama-server']) {
+      expect(engineMayHoldMergeOrCredentials({ engineId, tier: 'frontier' }), engineId).toBe(false);
+    }
+  });
+
+  it('a frontier-tier engine pointed at loopback is refused', () => {
+    for (const baseUrl of ['http://127.0.0.1:11434/v1', 'http://localhost:8080', 'http://[::1]:1234/v1', 'http://127.0.0.2:9000']) {
+      expect(engineMayHoldMergeOrCredentials({ engineId: 'openai-compat', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
+      expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', baseUrl, tier: 'frontier' }), baseUrl).toBe(false);
+    }
+    expect(isLocalEngine({ engineId: 'x', baseUrl: 'not a url' })).toBe(true);
+  });
+
+  it('remote frontier engines keep authority eligibility', () => {
+    expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', tier: 'frontier' })).toBe(true);
+    expect(engineMayHoldMergeOrCredentials({ engineId: 'codex', baseUrl: 'https://api.openai.com/v1', tier: 'frontier' })).toBe(true);
   });
 });
