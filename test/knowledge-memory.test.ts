@@ -72,8 +72,8 @@ describe('per-agent chat memory', () => {
     'AKIA' + 'A'.repeat(16),
     'eyJabc.eyJdef.signature',
     'ab'.repeat(16),
-    '-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----',
-    'https://user:synthetic-password@example.com',
+    ['-----BEGIN', 'PRIVATE KEY-----\nsynthetic\n-----END', 'PRIVATE KEY-----'].join(' '), // FAKE: synthetic PEM fixture
+    'https://' + 'user:synthetic-password' + '@example.com', // FAKE: synthetic URL credential fixture
   ];
   it.each(secretShapes.map((text, index) => ({ text, index })))(
     'rejects secret pattern $index without altering existing memory', ({ text }) => {
