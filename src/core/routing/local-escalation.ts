@@ -18,7 +18,7 @@
  *   - local inference is not configured or not reachable.
  * Otherwise stay local. Every decision names one closed reason code.
  */
-import { isAbliteratedModel } from '../run/local-inference.js';
+import { isAbliteratedModel, isLoopbackHost } from '../run/local-inference.js';
 
 export const LOCAL_TASK_KINDS = ['edit', 'test', 'lint', 'tool-loop', 'draft', 'review', 'plan', 'architecture'] as const;
 export type LocalTaskKind = (typeof LOCAL_TASK_KINDS)[number];
@@ -108,4 +108,48 @@ export function decideLocalEscalation(
  */
 export function localLaneMayMergeToMain(): false {
   return false;
+}
+
+/**
+ * Engine ids that run on this machine by default. Config may re-point or
+ * promote them (tier 'frontier', mergeAuthority), so the id alone is enough
+ * to refuse authority.
+ */
+export const KNOWN_LOCAL_ENGINE_IDS: ReadonlySet<string> = new Set([
+  'local', 'local-coder', 'ollama', 'omlx', 'llama-server', 'lmstudio', 'builtin', 'ashlrcode', 'aw',
+]);
+
+export interface EngineIdentity {
+  engineId: string;
+  /** Configured endpoint, if any (openai-compat, ollama, custom engines). */
+  baseUrl?: string | null;
+  /** Configured tier; ignored for the locality decision on purpose. */
+  tier?: string | null;
+}
+
+function hostOf(url: string): string | null {
+  try {
+    const h = new URL(url).hostname;
+    return h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
+  } catch { return null; }
+}
+
+/** Pure. True when the engine is local by id or by a loopback endpoint, whatever its tier. */
+export function isLocalEngine(engine: EngineIdentity): boolean {
+  if (KNOWN_LOCAL_ENGINE_IDS.has(engine.engineId.toLowerCase())) return true;
+  if (typeof engine.baseUrl === 'string' && engine.baseUrl.length > 0) {
+    const host = hostOf(engine.baseUrl);
+    if (host === null) return true; // unparseable endpoint fails closed
+    if (isLoopbackHost(host) || host === '::1' || /^127\./.test(host) || host === '0.0.0.0') return true;
+  }
+  return false;
+}
+
+/**
+ * Pure. Merge authority and credential roles are refused for any local engine,
+ * even when config promotes it to tier 'frontier' or lists it in mergeAuthority.
+ * (Master gates main merges by tier only: src/core/inbox/merge.ts:809.)
+ */
+export function engineMayHoldMergeOrCredentials(engine: EngineIdentity): boolean {
+  return !isLocalEngine(engine);
 }
