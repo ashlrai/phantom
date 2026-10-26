@@ -317,7 +317,3 @@ export function supervisorRunning(): boolean {
   return timer !== null;
 }
 
-export function stopSupervisor(): void {
-  if (timer) clearInterval(timer);
-  timer = null;
-}

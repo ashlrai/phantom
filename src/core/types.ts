@@ -3653,26 +3653,6 @@ export interface CostForecast {
 // ---------------------------------------------------------------------------
 
 /**
- * The summary-only payload captured from a completed run/swarm (or an explicit
- * teach) before it is appended to the genome. METADATA/SUMMARY ONLY — never
- * carries secrets, raw prompts/completions, tool args, or file contents.
- */
-export interface GenomeCapture {
-  /** The top-level goal the run/swarm pursued (or the teach note's subject). */
-  goal: string;
-  /** Absolute project path this capture is scoped to, or null when global. */
-  project: string | null;
-  /** Concise approach/outcome summary (capped length; secret-free). */
-  summary: string;
-  /** Tags for filtering/grouping (e.g. project, status, engine, source). */
-  tags: string[];
-  /** Terminal outcome of the work being captured. */
-  outcome: 'done' | 'aborted' | 'failed';
-  /** Where the capture originated. */
-  source: 'run' | 'swarm' | 'teach';
-}
-
-/**
  * A synthesized "how we've approached this before" playbook for a goal: the
  * recalled past entries plus a concise synthesis of what worked / what failed
  * / cost. Bounded; injected into planning context. LOCAL synthesis with a

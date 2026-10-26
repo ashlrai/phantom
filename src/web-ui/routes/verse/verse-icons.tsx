@@ -21,19 +21,7 @@
  * a color state; drawn in rail-icons.tsx with the other rail glyphs) and `McpIcon` (a plug — the shared set has no connector
  * glyph, and every candidate in it already means another rail section).
  */
-import {
-  IconChevronDown,
-  IconChevronRight,
-  IconCpu,
-  IconGauge,
-  IconInbox,
-  IconMoon,
-  IconPlus,
-  IconSearch,
-  IconSliders,
-  IconTrash,
-  type IconProps,
-} from '../../components/primitives/icons.js';
+import { IconChevronDown, IconChevronRight, IconGauge, IconPlus, IconSearch, IconSliders, type IconProps } from '../../components/primitives/icons.js';
 import { Icon, RAIL_ICON } from './rail-icons.js';
 import type { ComponentType } from 'react';
 import type { VerseSectionId } from './verse-ui-store.js';
@@ -120,20 +108,10 @@ export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconPro
   automations: AutomationsIcon,
 };
 
-/**
- * Aliases onto the shared set. The names are the ones the Verse rail, sidebar
- * and composer already import — keeping them means this reconciliation
- * touched no call site.
- */
-export const AutonomyIcon = IconCpu;
-export const ApprovalsIcon = IconInbox;
 export const SearchIcon = IconSearch;
 export const PlusIcon = IconPlus;
-export const TrashIcon = IconTrash;
 export const ArrowDownIcon = IconChevronDown;
 export const ChevronIcon = IconChevronRight;
-/** The rail's theme quick-toggle. One glyph for the control, not per-theme. */
-export const ThemeIcon = IconMoon;
 
 export function PanelIcon(props: IconProps) {
   return <Icon {...props}><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="M10 3v10" /></Icon>;

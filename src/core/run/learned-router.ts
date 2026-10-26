@@ -1282,20 +1282,6 @@ export function buildOperationalEngineScores(
   };
 }
 
-export function buildOperationalProducerScores(
-  taskClass: string,
-  nowMs?: number,
-  sinceMs?: number,
-): OperationalLearningScores {
-  const observational = buildProducerScores(taskClass, nowMs, sinceMs);
-  const authority = inspectRoutingLearningAuthority(taskClass, nowMs);
-  return {
-    authority,
-    observational,
-    operational: authority.operationalSteering ? observational : new Map(),
-  };
-}
-
 export function operationalEngineScoresForRouting(taskClass: string): EngineScoreMap {
   const authority = inspectRoutingLearningAuthority(taskClass);
   return authority.operationalSteering ? buildEngineScores(taskClass) : new Map();

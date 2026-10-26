@@ -155,15 +155,6 @@ export function _clearHandlers(): void {
   _registry.clear();
 }
 
-/** Return a snapshot of handler counts per kind.  For testing only. */
-export function _handlerCounts(): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const [kind, set] of _registry) {
-    out[kind] = set.size;
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // Built-in handler (a): regression:detected → enqueue a fix goal/work-item
 // ---------------------------------------------------------------------------
