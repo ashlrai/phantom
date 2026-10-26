@@ -3,7 +3,7 @@ import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { EscalationInput } from '../src/core/routing/local-escalation.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { routeSeat } from '../src/core/routing/router.js';
-import { classifyEngine, engineClassMayHoldAuthority, engineIdentityOf, isKnownRemoteSeat, isLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
+import { classifyEngine, engineClassMayHoldSecrets, engineClassMayMergeOrPublish, engineIdentityOf, isLoopbackLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
 
 const NOW = Date.parse('2026-10-25T20:00:00Z');
 const at = new Date(NOW - 60_000).toISOString();
@@ -27,32 +27,17 @@ const base: EscalationInput = { kind: 'edit', localAvailable: true, localModel: 
 const on: LocalRouteContext = { localInference: { provider: 'ollama' } };
 const route = (input: EscalationInput, ctx: LocalRouteContext = on, seats: SeatCapacity[] = [claude, local]) =>
   routeSeatWithLocalEscalation(req as never, seats, budget, opts, input, ctx);
-const AUTHORITY: EscalationInput[] = [
+const MERGE_OR_PUBLISH: EscalationInput[] = [
   { ...base, mergesToMain: true },
   { ...base, holdsMergeRights: true },
-  { ...base, needsCredentials: true },
   { ...base, publishes: true } as EscalationInput,
-  { ...base, needsCredentials: true, localModel: 'huihui-qwen-abliterated@sha256:' + 'a'.repeat(64) },
 ];
+const iroute = (input: EscalationInput, ctx: LocalRouteContext, seats: SeatCapacity[]) =>
+  routeSeatWithLocalEscalation({ ...req, autonomous: false } as never, seats, budget, opts, input, ctx);
 
 describe('routeSeatWithLocalEscalation', () => {
   it('routes a plain coding loop to the local seat when localInference is configured', () => {
     expect(route(base)).toMatchObject({ lane: 'local', laneReason: 'local-ok', seatId: 'local' });
-  });
-
-  it('merge and credential seats always route to frontier, configured or not', () => {
-    for (const ctx of [on, { localInference: undefined }]) {
-      for (const input of AUTHORITY) {
-        const d = route(input, ctx);
-        expect(d.lane).toBe('frontier');
-        expect(d.seatId).toBe('claude');
-        expect(d.candidates).not.toContain('local');
-        // Only local seats: nothing routes rather than falling back to local.
-        expect(route(input, ctx, [local]).seatId).toBeNull();
-      }
-    }
-    expect(route({ ...base, mergesToMain: true }).laneReason).toBe('merge-to-main-frontier-only');
-    expect(route({ ...base, needsCredentials: true }).laneReason).toBe('credentials-frontier-only');
   });
 
   it('unconfigured or invalid localInference changes nothing for non-authority work', () => {
@@ -64,82 +49,79 @@ describe('routeSeatWithLocalEscalation', () => {
     }
   });
 
-  it('a config-promoted local engine is still refused merge authority', () => {
-    expect(isLocalSeat(promoted, engines)).toBe(true);
-    expect(isLocalSeat(promoted)).toBe(false);
-    for (const input of AUTHORITY) {
-      for (const ctx of [{ ...on, engines }, { localInference: undefined, engines }]) {
-        const d = route(input, ctx, [claude, promoted]);
-        expect(d.seatId).toBe('claude');
-        expect(d.candidates).not.toContain('fast');
-        expect(route(input, ctx, [promoted]).seatId).toBeNull();
-      }
-    }
-  });
-
-  it('fails closed with no ctx.engines: an unknown-id seat is refused merge and credential work', () => {
-    expect(isKnownRemoteSeat(promoted)).toBe(false);
-    for (const input of AUTHORITY) {
-      for (const ctx of [on, { localInference: undefined }]) {
-        const d = route(input, ctx, [claude, promoted]);
-        expect(d.seatId).toBe('claude');
-        expect(d.candidates).not.toContain('fast');
-        expect(route(input, ctx, [promoted]).seatId).toBeNull();
-      }
-    }
-  });
-
-  it('refuses an unknown id listed with a loopback endpoint, including [::1] and localhost', () => {
-    for (const baseUrl of ['http://127.0.0.1:8080/v1', 'http://[::1]:11434/v1', 'http://localhost:1234/v1']) {
-      const eng = { 'fast-coder': { baseUrl } };
-      expect(isLocalSeat(promoted, eng)).toBe(true);
-      expect(isKnownRemoteSeat(promoted, eng)).toBe(false);
-      expect(route({ ...base, mergesToMain: true }, { ...on, engines: eng }, [promoted]).seatId).toBeNull();
-    }
-  });
-
-  it('allows a known hosted id and a listed public https endpoint for authority work', () => {
-    expect(isKnownRemoteSeat(claude)).toBe(true);
-    expect(route({ ...base, needsCredentials: true }, { localInference: undefined }, [claude]).seatId).toBe('claude');
-    const eng = { 'fast-coder': { baseUrl: 'https://api.example.com/v1' } };
-    expect(isKnownRemoteSeat(promoted, eng)).toBe(true);
-    // Interactive request: the budget policy has no autonomous seat entry for the custom 'fast' seat.
-    const d = routeSeatWithLocalEscalation({ ...req, autonomous: false } as never, [promoted], budget, opts, { ...base, mergesToMain: true }, { ...on, engines: eng });
-    expect(d.seatId).toBe('fast');
-    // A hosted id re-pointed at loopback is local again.
-    expect(isKnownRemoteSeat(claude, { claude: { baseUrl: 'http://127.0.0.1:9000' } })).toBe(false);
-  });
-
-  it('no ctx.engines and an unknown loopback id: refused for authority work', () => {
-    // 'fast-coder' really runs on loopback, but without ctx.engines routing cannot know that.
-    expect(classifyEngine(promoted)).toBe('unclassified');
-    for (const input of AUTHORITY) {
-      expect(route(input, { localInference: undefined }, [promoted]).seatId).toBeNull();
-      expect(route(input, on, [promoted]).seatId).toBeNull();
-    }
-  });
-
-  it('classifies engines into frontier, local and unclassified; only frontier may hold authority', () => {
+  it('classifies engines into frontier, local and unclassified', () => {
     expect(classifyEngine(claude)).toBe('frontier');
     expect(classifyEngine(local)).toBe('local');
     expect(classifyEngine(promoted)).toBe('unclassified');
     expect(classifyEngine(promoted, engines)).toBe('local');
     expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://api.example.com/v1' } })).toBe('frontier');
     expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://u:p@api.example.com/v1' } })).toBe('unclassified');
-    expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayHoldAuthority(c as never))).toEqual([true, false, false]);
+    expect(classifyEngine(claude, { claude: { baseUrl: 'http://127.0.0.1:9000' } })).toBe('local');
+    expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayMergeOrPublish(c as never))).toEqual([true, true, false]);
+    expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayHoldSecrets(c as never))).toEqual([false, false, false]);
   });
 
-  it('passes no secret or credential value into any seat routing context', () => {
-    const SECRET = 'sk-test-SENTINEL-0123456789';
-    const leaky = { 'fast-coder': { baseUrl: 'https://api.example.com/v1', tier: 'frontier', apiKey: SECRET, headers: { Authorization: SECRET } } } as never;
-    expect(engineIdentityOf('fast-coder', leaky)).toEqual({ engineId: 'fast-coder', baseUrl: 'https://api.example.com/v1', tier: 'frontier' });
-    const d = routeSeatWithLocalEscalation({ ...req, autonomous: false } as never, [claude, promoted], budget, opts, { ...base, mergesToMain: true }, { ...on, engines: leaky });
-    expect(JSON.stringify(d)).not.toContain(SECRET);
+  it('local is eligible for merge and publish on equal terms with frontier (loopback, configured)', () => {
+    for (const input of MERGE_OR_PUBLISH) {
+      expect(route(input, on, [local]).seatId).toBe('local');
+      expect(route(input, on, [local]).lane).toBe('local');
+      expect(iroute(input, { ...on, engines }, [promoted]).seatId).toBe('fast');
+      expect(route(input, on, [claude, local]).candidates).toEqual(expect.arrayContaining(['claude', 'local']));
+      // Default-off: without localInference, local gets no grant.
+      expect(route(input, { localInference: undefined }, [local]).seatId).toBeNull();
+    }
   });
 
-  it('the local lane is loopback-only: an allowRemote endpoint escalates to frontier', () => {
+  it('no ctx.engines and an unknown loopback id: refused for authority work', () => {
+    // 'fast-coder' really runs on loopback, but without ctx.engines routing cannot know that.
+    for (const input of MERGE_OR_PUBLISH) {
+      for (const ctx of [on, { localInference: undefined }]) {
+        expect(iroute(input, ctx, [promoted]).seatId).toBeNull();
+        const d = iroute(input, ctx, [claude, promoted]);
+        expect(d.seatId).toBe('claude');
+        expect(d.candidates).not.toContain('fast');
+      }
+    }
+  });
+
+  it('a non-loopback local seat is refused merge and publish, and the local lane', () => {
+    for (const baseUrl of ['http://10.0.0.5:11434/v1', 'http://192.168.1.9:8080/v1', 'http://gpu.local:1234/v1']) {
+      const eng = { 'fast-coder': { baseUrl } };
+      expect(classifyEngine(promoted, eng)).toBe('local');
+      expect(isLoopbackLocalSeat(promoted, eng)).toBe(false);
+      for (const input of MERGE_OR_PUBLISH) expect(iroute(input, { ...on, engines: eng }, [promoted]).seatId).toBeNull();
+    }
+    for (const baseUrl of ['http://127.0.0.1:8080/v1', 'http://[::1]:11434/v1', 'http://localhost:1234/v1']) {
+      expect(isLoopbackLocalSeat(promoted, { 'fast-coder': { baseUrl } })).toBe(true);
+    }
     const remote = { localInference: { provider: 'openai-compat', baseUrl: 'https://llm.example.com/v1', allowRemote: true } };
     expect(route(base, remote)).toMatchObject({ lane: 'frontier', laneReason: 'local-unavailable', seatId: 'claude' });
+    expect(route({ ...base, mergesToMain: true }, remote, [local]).seatId).toBeNull();
+  });
+
+  it('abliterated local models never get merge or publish work', () => {
+    const abl = { ...base, localModel: 'huihui-qwen-abliterated@sha256:' + 'a'.repeat(64) };
+    expect(route({ ...abl, mergesToMain: true }, on, [local]).seatId).toBeNull();
+    expect(route({ ...abl, mergesToMain: true }, on, [claude, local]).seatId).toBe('claude');
+  });
+
+  it('credential and secret-value work is routed to no model seat', () => {
+    for (const seats of [[claude], [local], [claude, local]]) {
+      const d = route({ ...base, needsCredentials: true }, on, seats);
+      expect(d).toMatchObject({ seatId: null, laneReason: 'credentials-frontier-only' });
+    }
+  });
+
+  it('passes no secret, credential or publish key value into any seat routing context', () => {
+    // Routing inputs carry only ids, endpoints, tiers and limits. Publish eligibility means a seat may
+    // author or trigger the sanctioned release workflow, which holds the publish key; no seat holds it.
+    const SECRET = 'sk-test-SENTINEL-0123456789';
+    const leaky = { 'fast-coder': { baseUrl: 'https://api.example.com/v1', tier: 'frontier', apiKey: SECRET, publishKey: SECRET, headers: { Authorization: SECRET } } } as never;
+    expect(engineIdentityOf('fast-coder', leaky)).toEqual({ engineId: 'fast-coder', baseUrl: 'https://api.example.com/v1', tier: 'frontier' });
+    for (const input of [...MERGE_OR_PUBLISH, base]) {
+      const d = iroute(input, { ...on, engines: leaky }, [claude, promoted, local]);
+      expect(JSON.stringify(d)).not.toContain(SECRET);
+    }
   });
 
   it('escalates to frontier on a missing or non-finite limit and on over-limit counts', () => {

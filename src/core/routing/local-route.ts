@@ -7,17 +7,14 @@
  * Invariants:
  *   - Default-off: with no valid `localInference` config, non-authority work
  *     routes exactly as `routeSeat` over the full capacity list.
- *   - A step or role that merges, holds merge rights or holds credentials never
- *     gets a local seat, configured or not. Locality is judged by
- *     `isLocalEngine` (id or endpoint), so a local engine that config promotes
- *     to tier 'frontier' is still refused.
- *   - Authority work fails closed: a seat is eligible only when its engine is
- *     positively known remote (`isKnownRemoteSeat`). Anything else, including
- *     an unknown id with no `ctx.engines` entry, is refused.
+ *   - Merge and publish work fails closed: only frontier and loopback local
+ *     seats are eligible (`engineClassMayMergeOrPublish`); unclassified seats,
+ *     including any unknown id with no `ctx.engines` entry, are refused.
+ *   - No model seat holds secrets: credentialed steps route to no seat.
  *   - The local lane is loopback-only: a config with `allowRemote` pointing off
  *     this machine escalates to frontier.
  */
-import { parseLocalInferenceConfig } from '../run/local-inference.js';
+import { isAbliteratedModel, isLoopbackHost, parseLocalInferenceConfig } from '../run/local-inference.js';
 import {
   decideLocalEscalation,
   DEFAULT_ESCALATION_POLICY,
@@ -91,34 +88,60 @@ export function isLocalSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: Eng
 }
 
 /**
- * Single decision point for authority eligibility (merge, merge-rights,
- * credential, publish). Local is refused pending an explicit policy change;
- * there is deliberately no config knob. Unclassified is always refused.
+ * Single decision point for merge and publish eligibility (ENGINEER-RULES hard
+ * limit 5, Mason 02:00 ET Oct 26: all engines, local or cloud, are gated the
+ * same way, by outcome). Eligibility only means the seat may be chosen; the
+ * outcome gates (green required checks, cross-model review, path checks, merge
+ * queue, sanctioned release workflow) are enforced elsewhere and unchanged.
+ * Unknown engine ids get no privileges. There is deliberately no config knob.
+ *
+ * 'Publish eligible' means only that the seat may author or trigger the
+ * sanctioned release workflow, which holds the publish key itself. No model
+ * seat ever holds secrets or the publish key.
  */
-export function engineClassMayHoldAuthority(cls: EngineClass): boolean {
+export function engineClassMayMergeOrPublish(cls: EngineClass): boolean {
   switch (cls) {
     case 'frontier': return true;
-    case 'local': return false;
+    case 'local': return true;
     case 'unclassified': return false;
   }
 }
 
-/** Pure. Fail-closed authority eligibility for a seat. */
-export function isKnownRemoteSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: EngineMap = {}): boolean {
-  return engineClassMayHoldAuthority(classifyEngine(capacity, engines));
+/**
+ * Secret-value access (credentials, API keys, the publish key) is denied to
+ * every model seat, whatever its class. Credentialed steps run through
+ * `phantom exec` outside any model context, so no seat is routed for them.
+ */
+export function engineClassMayHoldSecrets(_cls: EngineClass): false {
+  return false;
 }
 
-/** Routing input: the escalation input plus publish work (publish needs credentials). */
+/** Pure. A local seat is loopback-only: a listed endpoint must be a loopback host. */
+export function isLoopbackLocalSeat(capacity: Pick<SeatCapacity, 'engine'>, engines: EngineMap = {}): boolean {
+  if (classifyEngine(capacity, engines) !== 'local') return false;
+  const { baseUrl } = engineIdentityOf(String(capacity.engine), engines);
+  if (baseUrl === undefined || baseUrl === null) return true; // known local runtime id, no network endpoint
+  try {
+    const u = new URL(baseUrl.trim());
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.username === '' && u.password === '' && isLoopbackHost(u.hostname);
+  } catch { return false; }
+}
+
+/** Routing input: the escalation input plus publish work. */
 export type LocalRouteInput = EscalationInput & { publishes?: boolean };
 
-const holdsAuthority = (i: LocalRouteInput): boolean =>
-  Boolean(i.mergesToMain) || Boolean(i.holdsMergeRights) || Boolean(i.needsCredentials) || Boolean(i.publishes);
+const mergesOrPublishes = (i: LocalRouteInput): boolean =>
+  Boolean(i.mergesToMain) || Boolean(i.holdsMergeRights) || Boolean(i.publishes);
 
 /**
  * Pure. Routes `req` on the lane the escalation policy picks. No fetching
  * happens here: the dispatch slice that calls a local endpoint must disable
  * redirect following and connect to 127.0.0.1 or ::1 rather than resolving
  * `localhost` (Security nits on #943).
+ *
+ * Merge and publish work is routed over every eligible seat: frontier seats,
+ * plus loopback local seats when localInference is configured on loopback and
+ * the local model is not abliterated. Unclassified seats are never offered.
  */
 export function routeSeatWithLocalEscalation(
   req: RoutingRequest,
@@ -128,26 +151,42 @@ export function routeSeatWithLocalEscalation(
   input: LocalRouteInput,
   ctx: LocalRouteContext,
 ): LocalRouteDecision {
-  const local = (c: SeatCapacity): boolean => isLocalSeat(c, ctx.engines);
-  const policyInput: EscalationInput = { ...input, needsCredentials: Boolean(input.needsCredentials) || Boolean(input.publishes) };
-  // Authority work only sees positively-remote seats; other work excludes known-local seats.
-  const frontierSeats = holdsAuthority(input)
-    ? capacity.filter((c) => isKnownRemoteSeat(c, ctx.engines))
-    : capacity.filter((c) => !local(c));
+  const engines = ctx.engines;
+  const local = (c: SeatCapacity): boolean => isLocalSeat(c, engines);
+  const frontierSeats = capacity.filter((c) => !local(c));
   const frontier = (laneReason: LocalRouteDecision['laneReason']): LocalRouteDecision =>
     ({ ...routeSeat(req, frontierSeats, budget, opts), lane: 'frontier', laneReason });
-
   const parsed = parseLocalInferenceConfig(ctx.localInference);
-  if (!parsed.ok || parsed.config === null) {
-    if (holdsAuthority(input)) return frontier(decideLocalEscalation(policyInput).reason);
+  const config = parsed.ok ? parsed.config : null;
+
+  if (input.needsCredentials) {
+    // No model seat may hold secrets: route nowhere.
+    const none = routeSeat(req, capacity.filter((c) => engineClassMayHoldSecrets(classifyEngine(c, engines))), budget, opts);
+    return { ...none, lane: 'frontier', laneReason: 'credentials-frontier-only' };
+  }
+  if (mergesOrPublishes(input)) {
+    const localOk = config !== null && config.loopback && !(input.localModel && isAbliteratedModel(input.localModel));
+    const eligible = capacity.filter((c) => {
+      const cls = classifyEngine(c, engines);
+      if (!engineClassMayMergeOrPublish(cls)) return false;
+      return cls !== 'local' || (localOk && isLoopbackLocalSeat(c, engines));
+    });
+    const d = routeSeat(req, eligible, budget, opts);
+    const chosen = capacity.find((c) => c.seatId === d.seatId);
+    const lane = chosen && local(chosen) ? 'local' : 'frontier';
+    const laneReason = input.mergesToMain ? 'merge-to-main-frontier-only' : input.holdsMergeRights ? 'merge-rights-frontier-only' : 'local-ok';
+    return { ...d, lane, laneReason: lane === 'local' ? 'local-ok' : laneReason };
+  }
+
+  if (config === null) {
     return { ...routeSeat(req, capacity, budget, opts), lane: 'frontier', laneReason: 'policy-off' };
   }
   const choice = decideLocalEscalation(
-    { ...policyInput, localAvailable: Boolean(input.localAvailable) && parsed.config.loopback },
+    { ...input, localAvailable: Boolean(input.localAvailable) && config.loopback },
     ctx.policy ?? DEFAULT_ESCALATION_POLICY,
   );
   if (choice.lane === 'local') {
-    const d = routeSeat(req, capacity.filter(local), budget, opts);
+    const d = routeSeat(req, capacity.filter((c) => isLoopbackLocalSeat(c, engines)), budget, opts);
     if (d.seatId !== null) return { ...d, lane: 'local', laneReason: choice.reason };
     return frontier('local-unavailable');
   }
