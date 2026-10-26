@@ -1,0 +1,13 @@
+{
+  "schema": "fleet.v1",
+  "agents": [
+    { "id": "producer", "seatId": "codex-work", "modelId": "shared", "mcpIds": ["locus"] },
+    { "id": "reviewer", "seatId": "claude-work" }
+  ],
+  "mcp": [{ "id": "locus" }],
+  "edges": [
+    { "kind": "can-message", "from": "producer", "to": "reviewer" },
+    { "kind": "can-delegate", "from": "reviewer", "to": "producer" },
+    { "kind": "reviews", "from": "reviewer", "to": "producer" }
+  ]
+}
