@@ -195,8 +195,8 @@ H4 proves and that a human must consciously confirm — plus the dry-run (read-o
 
 ## BUILD ITEM 4 — one-command rollback
 
-**Surface:** `ashlr onboard --rollback <repo>` (primary) — alias `ashlr unenroll <repo> --cleanup`
-acceptable if BUILD prefers, both routing to the SAME `rollback()` in `onboard.ts`.
+**Surface:** `ashlr onboard --rollback <repo>` routes to `rollback()` in `onboard.ts`.
+The proposed unenroll alias was not implemented.
 
 **Steps (INWARD CLEANUP ONLY, in order):**
 1. `unenroll(repo)` — remove from the enrollment registry (H6-audited `enroll:remove`).
@@ -281,7 +281,6 @@ repos) and, where a fault is needed, `test/helpers/h2-faults.ts`. `probeEndpoint
 ashlr preflight [--json]                  # read-only readiness check
 ashlr onboard [--yes]                     # guided first-activation walkthrough
 ashlr onboard --rollback <repo> [--kill]  # one-command undo of a first activation
-ashlr unenroll <repo> --cleanup           # alias of onboard --rollback (BUILD's option)
 ashlr doctor                              # now also runs the 5 new read-only probes
 ```
 
