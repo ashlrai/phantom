@@ -280,6 +280,41 @@ describe('M30 CI workflow', () => {
     expect(execute('unknown', { ...complete, site: 'skipped', docs: 'skipped' })).toThrow();
   });
 
+  it('defers macOS and Windows service lanes only on non-platform pull requests (PLATFORM_DEFERRED)', () => {
+    const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
+    const steps = jobs['merge-gate']!.steps as { env: Record<string, string>; run: string }[];
+    expect(steps[0]!.env.PLATFORM_DEFERRED).toBe("${{ github.event_name == 'pull_request' && needs.classify.outputs.platform != 'true' }}");
+    expect(ciYml).toContain("          PLATFORM_DEFERRED: ${{ github.event_name == 'pull_request' && needs.classify.outputs.platform != 'true' }}");
+    const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
+    expect(source).toBeTruthy();
+    const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+    const lanes = ['ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+    const execute = (env: Record<string, string>, outcomes: Record<string, string>) => {
+      const results: Record<string, string> = { ...Object.fromEntries(full.map((n) => [n, 'success'])), 'mac-general': 'skipped', ...outcomes };
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' || name === 'secret-scan' ? 'success' : name === 'site' || name === 'docs' ? 'skipped' : results[name],
+        ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      }]));
+      return () => runInNewContext(source!, {
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'true', ...env } }, console: { log: () => {} },
+      });
+    };
+    const pr = { EVENT_NAME: 'pull_request', PLATFORM_DEFERRED: 'true' };
+    expect(execute(pr, Object.fromEntries(lanes.map((n) => [n, 'skipped'])))).not.toThrow();
+    for (const name of lanes) {
+      expect(execute(pr, { [name]: 'skipped' }), `${name} skipped`).not.toThrow();
+      for (const outcome of ['failure', 'cancelled']) {
+        expect(execute(pr, { [name]: outcome }), `${name} ${outcome} while deferred`).toThrow();
+      }
+      for (const env of [{ EVENT_NAME: 'merge_group' }, { EVENT_NAME: 'pull_request' }, { EVENT_NAME: 'merge_group', PLATFORM_DEFERRED: 'false' }]) {
+        for (const outcome of ['skipped', 'cancelled']) {
+          expect(execute(env, { [name]: outcome }), `${name} ${outcome} with ${JSON.stringify(env)}`).toThrow();
+        }
+      }
+    }
+    expect(execute({ EVENT_NAME: 'merge_group' }, {})).not.toThrow();
+  });
+
   it('is reusable as the canonical release verification authority', () => {
     expect(ciYml).toMatch(/(?:^|\n)\s{2}workflow_call:\s*(?:\n|$)/);
     // Policy-bearing permissions are independent of explanatory header comments.
@@ -465,7 +500,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Job> };
     const ci = jobs.ci!;
     const shared = jobs['ci-shared-macos']!;
-    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}' });
+    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}', platform: '${{ steps.platform.outputs.platform }}' });
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
@@ -482,7 +517,9 @@ describe('M30 CI workflow', () => {
       // Windows portability matrix only; the nightly schedule runs the rest.
       const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
       const push = id === 'ci' ? '' : " && github.event_name != 'push'";
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}`);
+      // CI diet: macOS and Windows service lanes skip on non-platform PRs and run in merge_group.
+      const platform = id === 'ci' ? '' : " && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')";
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}${platform}`);
     }
     // The exhaustive Mac partition runs nightly, on reusable calls and on PRs
     // labelled ci:full-mac; unlabelled PRs and master pushes defer it.
