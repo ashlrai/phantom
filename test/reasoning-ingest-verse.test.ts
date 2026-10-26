@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   flushVerseReasoning,
   flushVerseReasoningQueue,
@@ -29,6 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetVerseReasoningTap(null);
+  vi.useRealTimers();
   process.env['HOME'] = savedHome;
   rmSync(home, { recursive: true, force: true });
 });
@@ -94,6 +95,7 @@ describe('recordVerseReasoning (live tap)', () => {
   });
 
   it('batches live writes: nothing hits disk until the flush window or the batch size', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const readRaw = async (): Promise<number> => {
       const out: ReasoningStepV1[] = [];
       await scanSteps(wide, (s) => { out.push(s); });
@@ -102,7 +104,9 @@ describe('recordVerseReasoning (live tap)', () => {
     recordVerseReasoning({ seq: 1, at: t(1), type: 'thinking', turnId: 'q', text: 'a' }, session);
     recordVerseReasoning({ seq: 2, at: t(2), type: 'tool-use', turnId: 'q', toolUseId: 'x', name: 'Bash', input: {} }, session);
     expect(await readRaw()).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await vi.advanceTimersByTimeAsync(249);
+    expect(await readRaw()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(await readRaw()).toBe(1);
   });
 

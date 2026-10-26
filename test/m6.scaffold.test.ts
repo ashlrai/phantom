@@ -19,7 +19,7 @@
  *   - never throws (all errors surface via ScaffoldResult)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -107,10 +107,6 @@ function tmpProjectDir(name = 'test-project'): string {
   return dir;
 }
 
-beforeEach(() => {
-  freshTmpDir();
-});
-
 afterEach(() => {
   for (const d of createdDirs.splice(0)) {
     try {
@@ -127,7 +123,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 function makeSpec(overrides: Partial<ScaffoldSpec> = {}): ScaffoldSpec {
-  const dir = tmpProjectDir();
+  const dir = overrides.dir ?? tmpProjectDir();
   assertNotRealDesktop(dir);
   return {
     name: 'test-project',
@@ -185,119 +181,97 @@ describe('targetDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('scaffoldProject — success (minimal template)', () => {
+  // These cases only read the same generated result and files. Keep one real
+  // scaffold alive for the suite; refusal/mutation cases still get fresh dirs.
+  let root: string;
+  let spec: ScaffoldSpec;
+  let result: ReturnType<typeof scaffoldProject>;
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m6-shared-'));
+    spec = makeSpec({ dir: path.join(root, 'test-project') });
+    result = scaffoldProject(spec);
+  });
+  afterAll(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
   it('returns ok:true', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(result.ok).toBe(true);
   });
 
   it('returns the correct dir', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(result.dir).toBe(spec.dir);
   });
 
   it('creates the target directory', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     expect(fs.existsSync(spec.dir)).toBe(true);
     expect(fs.statSync(spec.dir).isDirectory()).toBe(true);
   });
 
   it('filesWritten is a non-empty array', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(Array.isArray(result.filesWritten)).toBe(true);
     expect(result.filesWritten.length).toBeGreaterThan(0);
   });
 
   it('all filesWritten are absolute paths', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     for (const f of result.filesWritten) {
       expect(path.isAbsolute(f)).toBe(true);
     }
   });
 
   it('all filesWritten paths are under spec.dir', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     for (const f of result.filesWritten) {
       expect(f.startsWith(spec.dir)).toBe(true);
     }
   });
 
   it('all listed files actually exist on disk', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     for (const f of result.filesWritten) {
       expect(fs.existsSync(f)).toBe(true);
     }
   });
 
   it('writes .mcp.json', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const mcpPath = path.join(spec.dir, '.mcp.json');
     expect(fs.existsSync(mcpPath)).toBe(true);
   });
 
   it('mcpWired is true', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(result.mcpWired).toBe(true);
   });
 
   it('warnings is an array', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(Array.isArray(result.warnings)).toBe(true);
   });
 
   it('error is absent on success', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     expect(result.error).toBeUndefined();
   });
 
   it('registered is true (synchronous index registration succeeded)', () => {
-    const spec = makeSpec();
-    const result = scaffoldProject(spec);
     // registration runs synchronously and the result reflects the real outcome
     expect(result.registered).toBe(true);
   });
 
   it('writes CLAUDE.md', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const claudePath = path.join(spec.dir, 'CLAUDE.md');
     expect(fs.existsSync(claudePath)).toBe(true);
   });
 
   it('writes package.json', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const pkgPath = path.join(spec.dir, 'package.json');
     expect(fs.existsSync(pkgPath)).toBe(true);
   });
 
   it('writes README.md', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const readmePath = path.join(spec.dir, 'README.md');
     expect(fs.existsSync(readmePath)).toBe(true);
   });
 
   it('writes .gitignore', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const giPath = path.join(spec.dir, '.gitignore');
     expect(fs.existsSync(giPath)).toBe(true);
   });
 
   it('.mcp.json written is valid JSON with "ashlr" in mcpServers', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const raw = fs.readFileSync(path.join(spec.dir, '.mcp.json'), 'utf8');
     const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
     expect(parsed.mcpServers).toBeDefined();
@@ -305,8 +279,6 @@ describe('scaffoldProject — success (minimal template)', () => {
   });
 
   it('package.json is valid JSON', () => {
-    const spec = makeSpec();
-    scaffoldProject(spec);
     const raw = fs.readFileSync(path.join(spec.dir, 'package.json'), 'utf8');
     expect(() => JSON.parse(raw)).not.toThrow();
   });

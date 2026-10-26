@@ -118,7 +118,8 @@ function session(overrides: Partial<VerseSession> = {}): VerseSession {
 }
 
 function launch(overrides: Partial<VerseSeatLaunch> = {}): VerseSeatLaunch {
-  return { seat: SEAT, launcher: ['/usr/local/bin/node', '/home/u/.ashlr/native-profiles/claude-max/launcher.mjs'], ollamaBaseUrl: 'http://127.0.0.1:11434', ...overrides };
+  // Keep missing-profile probes inside the fixture, away from host automounts.
+  return { seat: SEAT, launcher: ['/usr/local/bin/node', join(tmpHome, 'native-profiles', 'claude-max', 'launcher.mjs')], ollamaBaseUrl: 'http://127.0.0.1:11434', ...overrides };
 }
 
 function feed(parser: { push(l: string): unknown[]; finish(c: number | null): unknown[] }, lines: unknown[], exitCode: number | null = 0): VerseParsedEvent[] {
@@ -168,7 +169,7 @@ describe('claude adapter — buildLaunch', () => {
   it('turn 1 uses --session-id via the account launcher; later turns --resume', () => {
     const a = adapterFor('claude');
     const first = a.buildLaunch(session(), 'hello world', launch());
-    expect(first.argv.slice(0, 2)).toEqual(['/usr/local/bin/node', '/home/u/.ashlr/native-profiles/claude-max/launcher.mjs']);
+    expect(first.argv.slice(0, 2)).toEqual(['/usr/local/bin/node', join(tmpHome, 'native-profiles', 'claude-max', 'launcher.mjs')]);
     expect(first.argv).toContain('-p');
     // `-p` is boolean; the prompt is the positional, last, behind `--`.
     expect(first.argv.slice(-2)).toEqual(['--', 'hello world']);
