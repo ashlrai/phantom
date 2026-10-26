@@ -2,7 +2,7 @@
  * M31 — gateway integration: the real `ashlr mcp` gateway (this repo's built
  * CLI) must advertise every native tool with ZERO downstream servers.
  *
- * Uses the m3 probeServer pattern: spawn the gateway as a child under an
+ * Uses a direct SDK client: spawn the gateway as a child under an
  * isolated tmp HOME (so no real downstream MCP servers are discovered), list
  * its tools, tear down. Requires a prior `npm run build` and never builds
  * dist/ itself: a lazy in-suite build rewrites the shared dist/ while sibling
@@ -86,13 +86,27 @@ describe('gateway serves native tools', () => {
   }, 60_000);
 
   it('advertises all native tools with zero downstreams', async () => {
-    const health = await probeServer(gatewaySpec(), 20_000);
-    expect(health.ok).toBe(true);
-    const expected = listNativeTools().map((t) => t.name);
-    for (const name of expected) {
-      expect(health.tools).toContain(name);
+    const client = new Client({ name: 'native-inventory-test', version: '1.0.0' });
+    const transport = new StdioClientTransport({ command: process.execPath, args: [cliEntry, 'mcp'],
+      cwd: repoRoot, stderr: 'pipe', env: { HOME: fx.home, USERPROFILE: fx.home,
+        ASHLR_HOME: fx.ashlrDir, PATH: process.env.PATH ?? '' } });
+    transport.stderr?.on('data', () => undefined);
+    try {
+      await client.connect(transport, { timeout: 20_000 });
+      const listed = await client.listTools({}, { timeout: 20_000 });
+      const tools = listed.tools.map((tool) => tool.name);
+      const expected = listNativeTools().map((tool) => tool.name);
+      for (const name of expected) expect(tools).toContain(name);
+      // tmp HOME discovers no downstream servers — only natives are present.
+      expect(tools).toHaveLength(expected.length);
+    } finally {
+      await client.close();
+      await transport.close();
     }
-    // tmp HOME discovers no downstream servers — only natives are present.
-    expect(health.toolCount).toBe(expected.length);
+  }, 30_000);
+
+  it('refuses a nested native gateway launched as a downstream probe', async () => {
+    const health = await probeServer(gatewaySpec(), 20_000);
+    expect(health).toMatchObject({ ok: false, toolCount: 0, tools: [] });
   }, 30_000);
 });
