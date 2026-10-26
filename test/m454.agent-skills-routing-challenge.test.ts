@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { requireBuiltDist } from './helpers/require-built-dist.js';
 import {
   evaluateSkillRoutingCalibration,
   type SkillRoutingCalibrationSnapshotV1,
@@ -289,6 +290,9 @@ describe('M454 pinned upstream routing challenge', () => {
     expect(firstProvenance.snapshotDigest).toBe(PINNED_SNAPSHOT_DIGEST);
     expect(sha256(snapshotBytes)).toBe(PINNED_SNAPSHOT_DIGEST);
 
+    requireBuiltDist(IMPLEMENTATION_FILES
+      .map(([relativePath]) => relativePath)
+      .filter((relativePath) => relativePath.startsWith('dist/')));
     const implementationInput: unknown[] = ['ashlr.m454.projection-implementation.v1'];
     for (const [path, expectedDigest] of IMPLEMENTATION_FILES) {
       const actualDigest = sha256Text(readFileSync(join(REPO_ROOT, path)));
@@ -532,6 +536,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'CONTRACT-M454',
       UPSTREAM_COMMIT,
     ];
+    requireBuiltDist(['dist']);
     for (const root of [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'dist'), join(REPO_ROOT, 'bin')]) {
       for (const path of recursiveFiles(root)) {
         const source = readFileSync(path, 'utf8');
