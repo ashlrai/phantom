@@ -4,9 +4,10 @@
  * expiry are valid. An unknown balance stays spendable until a conservative
  * per-day soft cap. A known expiry that has passed is not spendable.
  *
- * Order: soon-to-expire credits, then credits whose expiry is unknown, then
- * subscriptions, then local models that meet the tier floor, then metered APIs.
- * Headroom breaks ties inside a class. Unknown headroom ranks after a known one.
+ * Order after expiring credits: codex-primary, codex-secondary, other
+ * subscriptions, Devin, a grok subscription login, local models (oMLX before
+ * Ollama), then metered APIs. Headroom breaks ties inside a class. Unknown
+ * headroom ranks after a known one. It does not move a pool into an earlier class.
  */
 
 export const POOL_BILLINGS = ['credit', 'subscription', 'metered', 'local'] as const;
@@ -34,6 +35,13 @@ export interface SpendPool {
   headroomPercent: number | null;
   cooledUntilMs?: number | null;
   meteredOptIn?: boolean;
+  /**
+   * Named place in the spend order. Absent pools use billing and id.
+   * `spendFully` skips the unknown-balance soft cap so the pool is used until
+   * a known balance is exhausted.
+   */
+  lane?: 'codex-primary' | 'codex-secondary' | 'devin' | 'grok-subscription' | 'local-omlx' | 'local-fallback';
+  spendFully?: boolean;
 }
 
 export interface RankSpendInput {
@@ -53,9 +61,14 @@ function groupOf(pool: SpendPool, nowMs: number): number {
     if (Number.isFinite(expiry) && expiry > nowMs) return 0;
     return 1;
   }
-  if (pool.billing === 'subscription') return 2;
-  if (pool.billing === 'local') return 3;
-  return 4;
+  if (pool.lane === 'codex-primary' || pool.id === 'codex:codex-primary') return 2;
+  if (pool.lane === 'codex-secondary' || pool.id === 'codex:codex-secondary') return 3;
+  if (pool.lane === 'devin' || pool.id === 'devin-acu') return 5;
+  if (pool.lane === 'grok-subscription') return 6;
+  if (pool.lane === 'local-omlx' || pool.id.startsWith('omlx:')) return 7;
+  if (pool.billing === 'subscription') return 4;
+  if (pool.billing === 'local' || pool.lane === 'local-fallback') return 8;
+  return 9;
 }
 
 export function spendablePool(pool: SpendPool, input: RankSpendInput): boolean {
@@ -68,7 +81,7 @@ export function spendablePool(pool: SpendPool, input: RankSpendInput): boolean {
     if (Number.isFinite(expiry) && expiry <= input.nowMs) return false;
   }
   if (pool.balance !== null && pool.balance <= 0) return false;
-  if (pool.balance === null && pool.usedToday >= pool.softCapPerDay) return false;
+  if (pool.balance === null && pool.spendFully !== true && pool.usedToday >= pool.softCapPerDay) return false;
   return true;
 }
 

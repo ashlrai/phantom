@@ -4,9 +4,10 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { classifyJob, jobShapeHeuristic, type JobShape } from '../src/core/decide/job-shape.js';
 import type { Decision } from '../src/core/decide/types.js';
@@ -17,12 +18,14 @@ import { routeSeat } from '../src/core/routing/router.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { roleAllowed } from '../src/core/routing/backend-roles.js';
 import { rankSpendPools, UNKNOWN_BALANCE_SOFT_CAP_PER_DAY, type SpendPool } from '../src/core/resources/pool-spend.js';
-import { accountEnv, bestAccount, failoverAccount, resolveAccounts } from '../src/core/providers/coding-cli/accounts.js';
+import { accountEnv, bestAccount, failoverAccount, resolveAccounts, type CodingAccount } from '../src/core/providers/coding-cli/accounts.js';
 import { loadCatalog } from '../src/core/providers/coding-cli/catalog.js';
+import type { CodexHomeFs } from '../src/core/providers/coding-cli/codex-home.js';
 import { DOCUMENTED_DEVIN_ORG_ID, devinCredentials } from '../src/core/providers/coding-cli/devin-gate.js';
 import { parseCliCooldown } from '../src/core/providers/coding-cli/limits.js';
 import { chooseCodingSeat, planLabelledWork } from '../src/core/providers/coding-cli/policy.js';
-import { formatPoolFigures, seedCodingPools } from '../src/core/providers/coding-cli/pools.js';
+import { formatPoolFigures, loadCodingFigures, seedCodingPools } from '../src/core/providers/coding-cli/pools.js';
+import { emptyAccountPoolState } from '../src/core/providers/coding-cli/pool-state.js';
 import { executeStep } from '../src/core/providers/coding-cli/worker-plan.js';
 import { shouldEscalate } from '../src/core/run/router.js';
 import type { CascadeDecision } from '../src/core/run/router.js';
@@ -44,6 +47,18 @@ function pool(partial: Partial<SpendPool> & Pick<SpendPool, 'id' | 'billing'>): 
     tier: 'frontier',
     headroomPercent: null,
     ...partial,
+  };
+}
+
+function healthyHomes(exists: (path: string) => boolean = () => true): CodexHomeFs {
+  return {
+    stat: () => ({ isDirectory: () => true }),
+    access: () => undefined,
+    exists: (path) => {
+      if (path.includes('auth.json.')) throw new Error(`backup path ${path}`);
+      if (!path.endsWith('/auth.json')) throw new Error(`not auth.json ${path}`);
+      return exists(path);
+    },
   };
 }
 
@@ -75,6 +90,31 @@ describe('pool spend order', () => {
     expect(order).toEqual(['soon', 'later', 'unknown-credit', 'sub', 'meter']);
   });
 
+  it('spends codex primary hard, then secondary, Devin, a grok subscription, local, then metered', () => {
+    const order = rankSpendPools([
+      pool({ id: 'grok-api', billing: 'metered', meteredOptIn: true, headroomPercent: 100 }),
+      pool({ id: 'ollama:ollama', billing: 'local', tier: 'frontier', lane: 'local-fallback', headroomPercent: 100 }),
+      pool({ id: 'omlx:omlx', billing: 'local', tier: 'frontier', lane: 'local-omlx', headroomPercent: 10 }),
+      pool({ id: 'grok:subscription', billing: 'subscription', lane: 'grok-subscription', headroomPercent: 1 }),
+      pool({ id: 'devin-acu', billing: 'metered', lane: 'devin', spendFully: true, meteredOptIn: true, usedToday: 5, headroomPercent: 0 }),
+      pool({ id: 'claude:claude', billing: 'subscription', headroomPercent: 99 }),
+      pool({ id: 'codex:codex-secondary', billing: 'subscription', headroomPercent: 95 }),
+      pool({ id: 'codex:codex-primary', billing: 'subscription', spendFully: true, headroomPercent: 5 }),
+      pool({ id: 'soon', billing: 'credit', expiresAt: '2026-10-26T06:00:00.000Z', balance: 5, headroomPercent: 1 }),
+    ], rank).map((row) => row.id);
+    expect(order).toEqual([
+      'soon',
+      'codex:codex-primary',
+      'codex:codex-secondary',
+      'claude:claude',
+      'devin-acu',
+      'grok:subscription',
+      'omlx:omlx',
+      'ollama:ollama',
+      'grok-api',
+    ]);
+  });
+
   it('keeps an unknown balance spendable until the soft cap, and records that figures are missing', () => {
     const unknown = pool({ id: 'cloud-credits', billing: 'credit' });
     expect(rankSpendPools([unknown], rank).map((row) => row.id)).toEqual(['cloud-credits']);
@@ -90,6 +130,9 @@ describe('pool spend order', () => {
     expect(text).toContain('expiry unknown');
     expect(text).toContain(String(DEFAULT_CLOUD_BUDGET.creditsTotalUsd));
     expect(text).toContain(String(DEFAULT_DEVIN_BUDGET.acuBudgetTotal));
+    expect(text).toContain('usage unknown');
+    expect(text).toContain('operator estimate, not a live balance');
+    expect(text).not.toMatch(/balance 50|balance 250/);
   });
 
   it('drops local models under a frontier floor and holds metered work until it is enabled', () => {
@@ -108,13 +151,17 @@ describe('pool spend order', () => {
 describe('accounts and route:any', () => {
   const catalog = loadCatalog();
 
-  it('prefers the Codex account with more headroom and fails over after a fixture rate limit', async () => {
+  it('spends the primary Codex account before the secondary and fails over after a fixture rate limit', async () => {
     const accounts = resolveAccounts(catalog, { CODEX_HOME_ALT: '/tmp/codex-alt' }, {
       'codex-primary': { usedPercent: 80, resetsAt: '2026-10-27T00:00:00.000Z' },
       'codex-secondary': { usedPercent: 10, resetsAt: '2026-10-28T00:00:00.000Z' },
     });
-    expect(bestAccount(accounts, 'codex', NOW)?.id).toBe('codex-secondary');
-    expect(failoverAccount(accounts, 'codex', 'codex-secondary', NOW)?.id).toBe('codex-primary');
+    expect(accounts.find((row) => row.id === 'codex-primary')?.home).toBe(join(homedir(), '.codex'));
+    expect(accounts.find((row) => row.id === 'codex-secondary')?.home).toBe('/tmp/codex-alt');
+    const unset = resolveAccounts(catalog, {});
+    expect(unset.find((row) => row.id === 'codex-secondary')?.home).toBe(join(homedir(), '.codex-2'));
+    expect(bestAccount(accounts, 'codex', NOW)?.id).toBe('codex-primary');
+    expect(failoverAccount(accounts, 'codex', 'codex-primary', NOW)?.id).toBe('codex-secondary');
     expect(accountEnv({ PATH: '/usr/bin', GH_TOKEN: 'ghp_secret' }, accounts.find((row) => row.id === 'codex-secondary') ?? null)).toMatchObject({
       CODEX_HOME: '/tmp/codex-alt',
     });
@@ -144,9 +191,10 @@ describe('accounts and route:any', () => {
         if (homes.length === 1) return { code: 1, stdout: '', stderr: line('codex rate limit:') };
         return { code: 0, stdout: 'ok', stderr: '' };
       },
-    }, { PATH: '/usr/bin', GH_TOKEN: 'nope' }, { get: () => null }, { accounts, nowMs: NOW });
+    }, { PATH: '/usr/bin', GH_TOKEN: 'nope' }, { get: () => null }, { accounts, nowMs: NOW, codexHomes: healthyHomes() });
     expect(result.ok).toBe(true);
-    expect(homes).toEqual(['/tmp/codex-alt', undefined]);
+    expect(homes).toEqual(['/tmp/codex-alt', join(homedir(), '.codex')]);
+    expect(result.deadAccounts).toEqual(['codex-secondary']);
     expect(JSON.stringify(result)).not.toContain('nope');
   });
 
@@ -253,12 +301,203 @@ describe('seat router options', () => {
   });
 });
 
+describe('Codex home failover', () => {
+  const catalog = loadCatalog();
+  const primary = '/tmp/codex-primary-home';
+  const secondary = '/tmp/codex-secondary-home';
+
+  function accounts(): CodingAccount[] {
+    return resolveAccounts(catalog, { CODEX_HOME: primary, CODEX_HOME_ALT: secondary }, {
+      'codex-primary': { usedPercent: 90, resetsAt: null },
+      'codex-secondary': { usedPercent: 5, resetsAt: null },
+    });
+  }
+
+  async function run(fs: CodexHomeFs, stderr: string | null): Promise<{ homes: string[]; args: string[][]; dead: readonly string[] }> {
+    const state = emptyAccountPoolState();
+    const homes: string[] = [];
+    const args: string[][] = [];
+    const rows = accounts();
+    await executeStep({
+      number: 5,
+      title: 'Failover',
+      action: 'run',
+      reason: 'pinned',
+      route: 'route:codex',
+      backend: 'codex',
+      billing: 'subscription',
+      model: null,
+      role: 'produce',
+      accountId: 'codex-primary',
+      poolId: 'codex:codex-primary',
+      worktree: '/tmp/issue-5',
+      pullRequest: 'draft',
+    }, { number: 5, title: 'Failover', body: '', labels: ['route:codex'] }, catalog, {
+      run: async (bin, argv, env) => {
+        args.push([bin, ...argv]);
+        if (argv.includes('logout')) return { code: 9, stdout: '', stderr: 'logout was invoked' };
+        if (bin === 'git' || bin === 'gh') return { code: 0, stdout: '', stderr: '' };
+        homes.push(env['CODEX_HOME'] ?? '');
+        if (stderr && homes.length === 1 && env['CODEX_HOME'] === primary) return { code: 1, stdout: '', stderr };
+        return { code: 0, stdout: 'ok', stderr: '' };
+      },
+    }, { PATH: '/usr/bin' }, { get: () => 'lookup-must-not-run' }, { accounts: rows, nowMs: NOW, poolState: state, codexHomes: fs });
+    const again = await executeStep({
+      number: 6,
+      title: 'Again',
+      action: 'run',
+      reason: 'pinned',
+      route: 'route:codex',
+      backend: 'codex',
+      billing: 'subscription',
+      model: null,
+      role: 'produce',
+      accountId: 'codex-primary',
+      poolId: 'codex:codex-primary',
+      worktree: '/tmp/issue-6',
+      pullRequest: 'draft',
+    }, { number: 6, title: 'Again', body: '', labels: ['route:codex'] }, catalog, {
+      run: async (bin, argv, env) => {
+        args.push([bin, ...argv]);
+        if (bin === 'git' || bin === 'gh') return { code: 0, stdout: '', stderr: '' };
+        homes.push(env['CODEX_HOME'] ?? '');
+        return { code: 0, stdout: 'ok', stderr: '' };
+      },
+    }, { PATH: '/usr/bin' }, { get: () => null }, { accounts: rows, nowMs: NOW, poolState: state, codexHomes: fs });
+    expect(args.some((argv) => argv.includes('logout'))).toBe(false);
+    expect(again.ok).toBe(true);
+    return { homes, args, dead: state.dead };
+  }
+
+  it('fails over when the primary home is missing and does not retry it', async () => {
+    const result = await run({
+      stat: (path) => {
+        if (path === primary) { const error = new Error('missing') as NodeJS.ErrnoException; error.code = 'ENOENT'; throw error; }
+        return { isDirectory: () => true };
+      },
+      access: () => undefined,
+      exists: (path) => path === `${secondary}/auth.json`,
+    }, null);
+    expect(result.dead).toContain('codex-primary');
+    expect(result.homes.every((home) => home === secondary)).toBe(true);
+    expect(result.homes.length).toBeGreaterThan(0);
+  });
+
+  it('fails over when the primary home is unreadable', async () => {
+    const result = await run({
+      stat: () => ({ isDirectory: () => true }),
+      access: (path) => { if (path === primary) throw new Error('EACCES'); },
+      exists: (path) => path.endsWith('/auth.json') && !path.includes(primary),
+    }, null);
+    expect(result.dead).toContain('codex-primary');
+    expect(result.homes.every((home) => home === secondary)).toBe(true);
+  });
+
+  it('fails over when auth.json is absent and does not read a backup', async () => {
+    const seen: string[] = [];
+    const result = await run({
+      stat: () => ({ isDirectory: () => true }),
+      access: () => undefined,
+      exists: (path) => {
+        seen.push(path);
+        if (path.includes('auth.json.')) throw new Error('backup');
+        return path === `${secondary}/auth.json`;
+      },
+    }, null);
+    expect(result.dead).toContain('codex-primary');
+    expect(seen.every((path) => path.endsWith('/auth.json') && !path.includes('auth.json.'))).toBe(true);
+    expect(result.homes.every((home) => home === secondary)).toBe(true);
+  });
+
+  it('fails over on an auth error and on a login error', async () => {
+    for (const stderr of [line('codex auth error:'), line('codex login error:')]) {
+      const result = await run(healthyHomes(), stderr);
+      expect(result.dead[0]).toBe('codex-primary');
+      expect(result.homes[0]).toBe(primary);
+      expect(result.homes.slice(1).every((home) => home === secondary)).toBe(true);
+    }
+  });
+
+  it('marks the primary dead after a rate limit instead of retrying it', async () => {
+    const result = await run(healthyHomes(), line('codex rate limit:'));
+    expect(result.dead).toEqual(['codex-primary']);
+    expect(result.homes[0]).toBe(primary);
+    expect(result.homes.filter((home) => home === primary)).toEqual([primary]);
+  });
+});
+
+describe('live pool figures', () => {
+  it('reads Devin ACU usage and leaves the balance unknown', async () => {
+    const key = 'cog_livefigurekey99';
+    vi.stubEnv('DEVIN_API_KEY', key);
+    const catalog = loadCatalog();
+    let seenUrl = '';
+    let seenAuth = '';
+    const loaded = await loadCodingFigures({
+      catalog,
+      accounts: resolveAccounts(catalog, {}),
+      env: { DEVIN_API_KEY: 'cog_not_from_this_bag' },
+      devinFetch: async (url, init) => {
+        seenUrl = url;
+        seenAuth = init.headers['Authorization'] ?? '';
+        return {
+          status: 200,
+          headers: { get: () => null },
+          text: async () => JSON.stringify({ total_acus: 12, consumption_by_date: [] }),
+        };
+      },
+    });
+    const text = formatPoolFigures(loaded.figures);
+    expect(seenUrl).toBe(`https://api.devin.ai/v3/organizations/${DOCUMENTED_DEVIN_ORG_ID}/consumption/daily`);
+    expect(seenAuth).toBe(`Bearer ${key}`);
+    expect(text).toContain('usage 12 ACU');
+    expect(text).toContain('balance unknown');
+    expect(text).toContain('operator estimate, not a live balance');
+    expect(text).not.toContain(key);
+    expect(text).not.toContain('cog_not_from_this_bag');
+    expect(text).not.toMatch(/balance 12|balance 50/);
+    const failed = await loadCodingFigures({
+      catalog,
+      accounts: resolveAccounts(catalog, {}),
+      env: {},
+      devinFetch: async () => { throw new Error(key); },
+    });
+    const failedText = formatPoolFigures(failed.figures);
+    expect(failedText).toContain('usage unknown');
+    expect(failedText).not.toContain(key);
+    vi.unstubAllEnvs();
+  });
+
+  it('ranks a reported grok subscription ahead of the metered API pool', () => {
+    const catalog = loadCatalog();
+    const seeded = seedCodingPools({
+      catalog,
+      accounts: resolveAccounts(catalog, {}),
+      grokStatus: line('grok subscription:'),
+    });
+    expect(seeded.pools.some((pool) => pool.lane === 'grok-subscription')).toBe(true);
+    const metered = seedCodingPools({
+      catalog,
+      accounts: resolveAccounts(catalog, {}),
+      grokStatus: line('grok models:'),
+    });
+    expect(metered.pools.some((pool) => pool.lane === 'grok-subscription')).toBe(false);
+  });
+});
+
 describe('Devin gate', () => {
-  it('enables the adapter only when the env key and an org id are both present', async () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('enables the adapter only when process.env.DEVIN_API_KEY and an org id are both present', async () => {
     expect(devinCredentials({})).toBeNull();
     expect(devinCredentials({ DEVIN_ORG_ID: DOCUMENTED_DEVIN_ORG_ID })).toBeNull();
-    expect(devinCredentials({ DEVIN_API_KEY: 'not-a-cog-key' })).toBeNull();
-    const creds = devinCredentials({ DEVIN_API_KEY: 'cog_testkeyvalue' });
+    expect(devinCredentials({ DEVIN_API_KEY: 'cog_testkeyvalue' })).toBeNull();
+    vi.stubEnv('DEVIN_API_KEY', 'not-a-cog-key');
+    expect(devinCredentials({})).toBeNull();
+    vi.stubEnv('DEVIN_API_KEY', 'cog_testkeyvalue');
+    const creds = devinCredentials({ DEVIN_API_KEY: 'cog_from_the_bag' });
     expect(creds).toEqual({ apiKey: 'cog_testkeyvalue', orgId: DOCUMENTED_DEVIN_ORG_ID });
     const catalog = loadCatalog();
     expect(catalog.backends['devin']?.orgId).toBe(DOCUMENTED_DEVIN_ORG_ID);
@@ -280,7 +519,7 @@ describe('Devin gate', () => {
       pullRequest: 'draft',
     }, { number: 8, title: 'Devin', body: 'draft a fix', labels: [] }, catalog, {
       run: async () => { throw new Error('runner must not be called'); },
-    }, { DEVIN_API_KEY: 'cog_testkeyvalue' }, { get: () => 'cog_from_lookup_not_env' }, {
+    }, { DEVIN_API_KEY: 'cog_from_source_env' }, { get: () => 'cog_from_lookup_not_env' }, {
       devinFetch: async (url, init) => {
         seenUrl = url;
         seenAuth = init.headers['Authorization'] ?? '';
@@ -302,14 +541,28 @@ describe('Devin gate', () => {
     expect(result.detail).not.toContain('cog_testkeyvalue');
     expect(result.commands.join('\n')).not.toContain('cog_testkeyvalue');
     expect(JSON.stringify(result)).not.toContain('cog_from_lookup_not_env');
+    expect(JSON.stringify(result)).not.toContain('cog_from_source_env');
+    expect(JSON.stringify(result)).not.toContain('cog_testkeyvalue');
     const choice = chooseCodingSeat({
       catalog,
       shape: { ...jobShapeHeuristic('a hard migration'), complexity: 'high', risk: 'high' },
       nowMs: NOW,
-      env: { DEVIN_API_KEY: 'cog_testkeyvalue' },
+      env: {},
       usedToday: { 'cloud-credits': 1 },
     });
-    expect(choice?.backend).not.toBe('devin');
+    expect(choice?.poolId).toBe('codex:codex-primary');
+    const exhausted = resolveAccounts(catalog, {}).map((account) => (
+      account.backend === 'codex' || account.backend === 'claude' ? { ...account, health: 'dead' as const } : account
+    ));
+    const devinChoice = chooseCodingSeat({
+      catalog,
+      shape: { ...jobShapeHeuristic('a hard migration'), complexity: 'high', risk: 'high' },
+      nowMs: NOW,
+      env: {},
+      accounts: exhausted,
+      usedToday: { 'cloud-credits': 1 },
+    });
+    expect(devinChoice?.backend).toBe('devin');
   });
 });
 

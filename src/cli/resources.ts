@@ -189,9 +189,17 @@ export async function cmdResources(args: string[]): Promise<number> {
   if (args[0] === 'figures') {
     const { loadCatalog } = await import('../core/providers/coding-cli/catalog.js');
     const { resolveAccounts } = await import('../core/providers/coding-cli/accounts.js');
-    const { formatPoolFigures, seedCodingPools } = await import('../core/providers/coding-cli/pools.js');
+    const { formatPoolFigures, loadCodingFigures } = await import('../core/providers/coding-cli/pools.js');
     const catalog = loadCatalog();
-    const seeded = seedCodingPools({ catalog, accounts: resolveAccounts(catalog, process.env), env: process.env });
+    const seeded = await loadCodingFigures({
+      catalog,
+      accounts: resolveAccounts(catalog, process.env),
+      env: process.env,
+      devinFetch: async (url, init) => {
+        const response = await fetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal });
+        return { status: response.status, headers: { get: (name: string) => response.headers.get(name) }, text: () => response.text() };
+      },
+    });
     console.log(formatPoolFigures(seeded.figures));
     return 0;
   }

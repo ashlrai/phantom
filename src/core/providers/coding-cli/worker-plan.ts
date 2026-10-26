@@ -11,10 +11,14 @@ import type { BillingClass } from '../../routing/billing-class.js';
 import { adapterById } from './adapters.js';
 import type { CodingCliCatalog } from './catalog.js';
 import { accountEnv, bestAccount, failoverAccount, type CodingAccount } from './accounts.js';
+import { codexAuthOrLogin, inspectCodexHome, realCodexHomeFs, type CodexHomeFs } from './codex-home.js';
 import { devinCredentials } from './devin-gate.js';
 import { cooldownActive, parseCliCooldown, type CliCooldown } from './limits.js';
 import { omlxBaseUrl } from './omlx.js';
+import { emptyAccountPoolState, isAccountDead, markAccountDead, type AccountPoolState } from './pool-state.js';
 import type { CliResult, CliRunner } from './probe.js';
+
+export { devinApiKeyFromProcess } from './devin-gate.js';
 
 export const ROUTE_LABELS = ['route:codex', 'route:claude', 'route:grok', 'route:any'] as const;
 export type RouteLabel = (typeof ROUTE_LABELS)[number];
@@ -268,6 +272,8 @@ export interface ExecuteResult {
   detail: string;
   /** Names the runner was asked to spawn, in order. Never secret values. */
   commands: string[];
+  /** Account ids marked dead during this call. Primary is not retried. */
+  deadAccounts: readonly string[];
 }
 
 function goalText(issue: IssueJob): string {
@@ -280,17 +286,10 @@ export interface ExecuteOptions {
   nowMs?: number;
   /** Injected transport. Absent means this call does not contact Devin. */
   devinFetch?: DevinFetch;
-}
-
-/**
- * The Devin key is this process environment variable and nothing else.
- * Catalog `secretName` and `SecretLookup.get` are not consulted.
- */
-export function devinApiKeyFromProcess(): string | null {
-  const value = process.env['DEVIN_API_KEY'];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
+  /** Shared across a drain. A dead primary stays dead. */
+  poolState?: AccountPoolState;
+  /** Home probe. The default implementation checks auth.json existence only. */
+  codexHomes?: CodexHomeFs;
 }
 
 /**
@@ -308,8 +307,9 @@ export async function executeStep(
   options: ExecuteOptions = {},
 ): Promise<ExecuteResult> {
   void secrets;
+  const poolState = options.poolState ?? emptyAccountPoolState();
   const commands: string[] = [];
-  const fail = (detail: string): ExecuteResult => ({ number: step.number, ok: false, detail, commands });
+  const fail = (detail: string): ExecuteResult => ({ number: step.number, ok: false, detail, commands, deadAccounts: poolState.dead });
   if (step.action !== 'run' || !step.backend || !step.worktree || step.role !== 'produce') {
     return fail(step.reason || 'step is not runnable');
   }
@@ -328,7 +328,13 @@ export async function executeStep(
     return fail(`${step.backend} execution is stubbed on this worker`);
   }
   const accounts = options.accounts ?? [];
+  const nowMs = options.nowMs ?? Date.now();
+  const homes = options.codexHomes ?? realCodexHomeFs();
   let account = accounts.find((row) => row.id === step.accountId) ?? null;
+  if (step.backend === 'codex' && (account || accounts.length > 0)) {
+    account = selectCodexAccount(account, accounts, poolState, homes, nowMs);
+    if (!account) return fail('codex primary is dead and no other Codex home is usable');
+  }
   let env = accountEnv(sourceEnv, account);
   const branch = `phantom/issue-${step.number}`;
   const worktreeArgs = ['worktree', 'add', '-b', branch, step.worktree, 'HEAD'];
@@ -336,26 +342,62 @@ export async function executeStep(
   const worktree: CliResult = await runner.run('git', worktreeArgs, env);
   if (worktree.code !== 0) return fail('git worktree add failed');
   const execArgs = adapter.execArgs(goalText(issue), step.worktree, step.model);
+  if (execArgs.includes('logout')) return fail('refusing codex logout');
   const render = (bin: string, args: readonly string[]): string => `${bin} ${args.map((arg) => (arg.includes(' ') ? '<goal>' : arg)).join(' ')}`;
   commands.push(render(adapter.bin, execArgs));
   let run = await runner.run(adapter.bin, execArgs, env);
   if (run.code !== 0) {
-    const nowMs = options.nowMs ?? Date.now();
-    const limited = parseCliCooldown(step.backend, `${run.stdout}\n${run.stderr}`, nowMs);
-    const next = limited && account ? failoverAccount(accounts, step.backend, account.id, nowMs) : null;
-    if (!next) return fail('adapter exec failed');
+    const output = `${run.stdout}\n${run.stderr}`;
+    const limited = parseCliCooldown(step.backend, output, nowMs);
+    const retired = limited !== null || codexAuthOrLogin(output) !== null;
+    if (retired && account && step.backend === 'codex') markAccountDead(poolState, account.id);
+    const next = retired && account
+      ? selectCodexAccount(failoverAccount(accounts, step.backend, account.id, nowMs, poolState.dead), accounts, poolState, homes, nowMs)
+      : null;
+    if (!next || next.id === account?.id) return fail('adapter exec failed');
     account = next;
     env = accountEnv(sourceEnv, account);
     commands.push(render(adapter.bin, execArgs));
     run = await runner.run(adapter.bin, execArgs, env);
-    if (run.code !== 0) return fail('adapter exec failed');
+    if (run.code !== 0) {
+      const again = `${run.stdout}\n${run.stderr}`;
+      if (parseCliCooldown(step.backend, again, nowMs) || codexAuthOrLogin(again)) markAccountDead(poolState, account.id);
+      return fail('adapter exec failed');
+    }
   }
   const prArgs = ['pr', 'create', '--draft', '--title', issue.title, '--body', issue.body || issue.title];
   commands.push(`gh ${prArgs.join(' ')}`);
   if (prArgs.includes('merge') || !prArgs.includes('--draft')) return fail('PR command was not draft-only');
   const pr = await runner.run('gh', prArgs, env);
   if (pr.code !== 0) return fail('draft PR create failed');
-  return { number: step.number, ok: true, detail: 'draft PR requested', commands };
+  return { number: step.number, ok: true, detail: 'draft PR requested', commands, deadAccounts: poolState.dead };
+}
+
+function selectCodexAccount(
+  start: CodingAccount | null,
+  accounts: readonly CodingAccount[],
+  state: AccountPoolState,
+  homes: CodexHomeFs,
+  nowMs: number,
+): CodingAccount | null {
+  let current = start ?? bestAccount(accounts, 'codex', nowMs, state.dead);
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current.id)) return null;
+    seen.add(current.id);
+    if (isAccountDead(state, current.id) || current.health === 'dead') {
+      current = failoverAccount(accounts, 'codex', current.id, nowMs, state.dead);
+      continue;
+    }
+    const problem = current.home ? inspectCodexHome(current.home, homes) : 'missing';
+    if (problem && current.backend === 'codex') {
+      markAccountDead(state, current.id);
+      current = failoverAccount(accounts, 'codex', current.id, nowMs, state.dead);
+      continue;
+    }
+    return current;
+  }
+  return null;
 }
 
 async function runDevin(
@@ -376,7 +418,7 @@ async function runDevin(
     const session = await client.createSession(creds.orgId, { prompt: goalText(issue), title: issue.title });
     const detail = `Devin session ${session.sessionId}`;
     if (detail.includes(creds.apiKey)) return fail('Devin session was created, and the detail was withheld.');
-    return { number: step.number, ok: true, detail, commands };
+    return { number: step.number, ok: true, detail, commands, deadAccounts: options.poolState?.dead ?? [] };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Devin session create failed';
     return fail(message.includes(creds.apiKey) ? 'Devin session create failed' : message);

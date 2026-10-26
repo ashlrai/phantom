@@ -21,10 +21,22 @@ export function resolveDevinOrgId(env: NodeJS.ProcessEnv, configured?: string | 
   return DEVIN_ORG_ID_PATTERN.test(fallback) ? fallback : null;
 }
 
+/**
+ * The key is `process.env.DEVIN_API_KEY` only. A caller-supplied env bag, a
+ * catalog secret name, and `SecretLookup.get` cannot supply it.
+ */
+export function devinApiKeyFromProcess(): string | null {
+  const value = process.env['DEVIN_API_KEY'];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!DEVIN_KEY_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
 /** Both values must be present. An empty or non-cog_ key disables the adapter. */
 export function devinCredentials(env: NodeJS.ProcessEnv, configuredOrg?: string | null): DevinCredentials | null {
-  const apiKey = env['DEVIN_API_KEY']?.trim() ?? '';
-  if (!DEVIN_KEY_PATTERN.test(apiKey)) return null;
+  const apiKey = devinApiKeyFromProcess();
+  if (!apiKey) return null;
   const orgId = resolveDevinOrgId(env, configuredOrg);
   if (!orgId) return null;
   return { apiKey, orgId };

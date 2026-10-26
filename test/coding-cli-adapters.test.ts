@@ -331,7 +331,7 @@ describe('worker plan', () => {
     const absent = await executeStep(step, issue, catalog, runner(() => {
       throw new Error('runner must not be called');
     }), { DEVIN_API_KEY: sourceEnvKey }, { get: () => lookup });
-    expect(absent.detail).toMatch(/No key is configured/);
+    expect(absent.detail).toMatch(/disabled until DEVIN_API_KEY/);
     expect(absent.detail).not.toContain(lookup);
     expect(absent.detail).not.toContain(sourceEnvKey);
     for (const spy of spies) spy.mockRestore();

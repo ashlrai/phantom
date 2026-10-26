@@ -37,7 +37,7 @@ function modelTier(shape: JobShape): 'frontier' | 'workhorse' | 'cheap' | 'local
 }
 
 function modelFor(catalog: CodingCliCatalog, backend: string, shape: JobShape): string | null {
-  const names = backend === 'ollama' ? (['local', modelTier(shape)] as const) : ([modelTier(shape)] as const);
+  const names = backend === 'ollama' || backend === 'omlx' ? (['local', modelTier(shape)] as const) : ([modelTier(shape)] as const);
   for (const name of names) {
     const hit = catalog.tiers[name].find((row) => row.backend === backend && row.task !== 'embed');
     const usable = usableModelName(hit);
@@ -47,7 +47,7 @@ function modelFor(catalog: CodingCliCatalog, backend: string, shape: JobShape): 
 }
 
 function seatFor(pool: SpendPool, account: CodingAccount | null, nowMs: number, meteredEnabled: boolean): SeatCapacity | null {
-  const engine = pool.billing === 'local' || account?.backend === 'ollama'
+  const engine = pool.billing === 'local' || account?.backend === 'ollama' || account?.backend === 'omlx'
     ? 'local'
     : account?.backend === 'grok' || pool.id === 'devin-acu'
       ? 'grok'
