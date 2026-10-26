@@ -9,10 +9,13 @@
  * Value-free: no URL, header or error text in the result; model ids only when
  * they match a conservative model-name charset.
  */
+import { LOCAL_PROBE_MAX_BODY_BYTES, readCappedBody } from './bounded-body.js';
 import { parseLocalInferenceConfig, type LocalInferenceProvider, type LocalInferenceRole } from './local-inference.js';
 
+export { LOCAL_PROBE_MAX_BODY_BYTES, readCappedBody } from './bounded-body.js';
+
 export const LOCAL_INFERENCE_PROBE_TIMEOUT_MS = 3_000;
-const MAX_BODY_BYTES = 256 * 1024;
+const MAX_BODY_BYTES = LOCAL_PROBE_MAX_BODY_BYTES;
 const MAX_MODELS = 20;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 
@@ -42,27 +45,6 @@ export type ProbeFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 function base(status: LocalInferenceProbeStatus, provider: LocalInferenceProvider | null = null, loopback: boolean | null = null): LocalInferenceProbe {
   return { status, provider, loopback, reachable: false, httpStatus: null, modelCount: 0, models: [], rolesPresent: {} };
-}
-
-/**
- * Stream the body and stop as soon as it passes `max` bytes, so a huge or
- * endless reply never buffers past the cap. Null when over the cap or unreadable.
- */
-export async function readCappedBody(res: Response, max: number, controller?: AbortController): Promise<string | null> {
-  const declared = Number(res.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); controller?.abort(); return null; }
-  if (!res.body) return '';
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) { await reader.cancel().catch(() => {}); controller?.abort(); return null; }
-    chunks.push(value);
-  }
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); } catch { return null; }
 }
 
 /** Pure. Model ids from an OpenAI `{data:[{id}]}` or Ollama `{models:[{name}]}` body. */

@@ -137,16 +137,18 @@ describe('routing ledger (status --json)', () => {
 });
 
 describe('doctor routing row (never fails)', () => {
-  it('passes when absent, warns on invalid or no coder model', () => {
-    expect(checkRouting(cfgOf(undefined)).status).toBe('pass');
-    expect(checkRouting(cfgOf('nope')).status).toBe('warn');
-    expect(checkRouting(cfgOf({ provider: 'ollama', routing: 'hybrid' })).status).toBe('warn');
-    expect(checkRouting(cfgOf({ provider: 'ollama', routing: 'hybrid', models: { coder: 'qwen3-coder' } })).status).toBe('pass');
+  const up = async () => new Response(JSON.stringify({ data: [{ id: 'qwen3-coder' }] }), { status: 200 });
+  it('warns when absent, invalid, or missing a coder model, and passes when the loopback server is up', async () => {
+    expect((await checkRouting(cfgOf(undefined))).status).toBe('warn');
+    expect((await checkRouting(cfgOf('nope'))).status).toBe('warn');
+    expect((await checkRouting(cfgOf({ provider: 'ollama', routing: 'hybrid' }))).status).toBe('warn');
+    expect((await checkRouting(cfgOf({ provider: 'ollama', routing: 'hybrid', models: { coder: 'qwen3-coder' } }), { fetchImpl: up })).status).toBe('pass');
   });
-  it('warns on an unclassified configured engine', () => {
+  it('warns on an unclassified configured engine', async () => {
     const cfg = { localInference: { provider: 'ollama', routing: 'hybrid', models: { coder: 'q' } }, engines: { weird: { id: 'weird', kind: 'cli-agent', tier: 'frontier' } } } as unknown as AshlrConfig;
-    const c = checkRouting(cfg);
+    const c = await checkRouting(cfg, { fetchImpl: up });
     expect(c.status).toBe('warn');
     expect(c.detail).toContain('weird');
+    expect(c.status).not.toBe('fail');
   });
 });

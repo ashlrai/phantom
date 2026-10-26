@@ -15,6 +15,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AshlrConfig, LocalModelInfo } from '../types.js';
 import { probeEndpoint, localOllamaBase } from '../providers.js';
+import { readJsonBounded } from './bounded-body.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -148,7 +149,9 @@ async function fetchOllamaModelSizes(ollamaBase: string): Promise<Map<string, st
       clearTimeout(timer);
     }
     if (!response.ok) return map;
-    const body = (await response.json()) as unknown;
+    const parsed = await readJsonBounded(response);
+    if (!parsed.ok) return map;
+    const body = parsed.value;
     if (
       typeof body !== 'object' ||
       body === null ||
