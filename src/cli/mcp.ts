@@ -950,6 +950,7 @@ function printHelp(): void {
 
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
+    ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop; no companion probes).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -968,6 +969,9 @@ function printHelp(): void {
   console.log('');
   console.log(`    ${dim('# Run as MCP server (stdio)')}`)
   console.log(`    ashlr mcp`);
+  console.log('');
+  console.log(`    ${dim('# Read-only fleet server for any MCP client: command "phm", args ["mcp", "fleet"]')}`);
+  console.log('    phm mcp fleet');
   console.log('');
   console.log(`    ${dim('# List what would be aggregated')}`);
   console.log(`    ashlr mcp list`);
@@ -1006,6 +1010,25 @@ export async function cmdMcp(args: string[]): Promise<number> {
   if (sub === '--help' || sub === '-h' || sub === 'help') {
     printHelp();
     return 0;
+  }
+
+  if (sub === 'fleet') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp fleet\n');
+      return 2;
+    }
+    try {
+      const { startFleetServer } = await import('../mcp/fleet-server.js');
+      await startFleetServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp fleet] server unavailable\n');
+      return 1;
+    }
   }
 
   // Default / explicit "run"
