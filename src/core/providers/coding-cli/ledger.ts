@@ -4,9 +4,35 @@
  * the merge gate.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import type { PoolBilling } from '../../resources/pool-spend.js';
+
+export function codingCliStateDir(home = homedir()): string {
+  return join(home, '.ashlr', 'coding-cli');
+}
+
+export function defaultLedgerPath(home = homedir()): string {
+  return join(codingCliStateDir(home), 'ledger.jsonl');
+}
+
+export function defaultWeightsPath(home = homedir()): string {
+  return join(codingCliStateDir(home), 'weights.json');
+}
+
+export function defaultBacklogPath(home = homedir()): string {
+  return join(codingCliStateDir(home), 'backlog.json');
+}
+
+export function defaultCiFailuresPath(home = homedir()): string {
+  return join(codingCliStateDir(home), 'ci-failures.json');
+}
+
+export function defaultReviewCommentsPath(home = homedir()): string {
+  return join(codingCliStateDir(home), 'review-comments.json');
+}
 
 export interface SpendDecision {
   ts: string;
@@ -127,5 +153,13 @@ export function reweight(rows: readonly SpendDecision[]): Readonly<Record<string
       : costKnown.reduce((sum, row) => sum + (row.cost ?? 0), 0) / merges.length;
     weights[poolId] = Math.round((mergeRate * ciRate / (1 + costPerMerged)) * 1_000_000) / 1_000_000;
   }
+  return weights;
+}
+
+/** Write pick weights for one drain cycle. This file is not role policy. */
+export function writeReweight(file: string, rows: readonly SpendDecision[]): Readonly<Record<string, number>> {
+  const weights = reweight(rows);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify({ version: 1, weights }, null, 2)}\n`, 'utf8');
   return weights;
 }

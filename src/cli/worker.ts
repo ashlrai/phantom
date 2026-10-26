@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 
 import { loadConfig, saveConfig } from '../core/config.js';
 import { loadCatalog } from '../core/providers/coding-cli/catalog.js';
+import { defaultLedgerPath, defaultWeightsPath, readSpendDecisions, writeReweight } from '../core/providers/coding-cli/ledger.js';
 import { planLabelledWork } from '../core/providers/coding-cli/policy.js';
 import { formatPlan, parseIssues } from '../core/providers/coding-cli/worker-plan.js';
 import { noColorRequested } from './ui.js';
@@ -232,7 +233,7 @@ const WORKER_USAGE = [
   '  ashlr worker status',
   '  ashlr worker --dry-run [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
   '  ashlr worker plan [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
-  '  ashlr worker drain --issues-file <json> --repo <path> [--enable-metered]',
+  '  ashlr worker drain --issues-file <json> --repo <path> [--enable-metered] [--ledger <path>] [--weights <path>]',
 ];
 
 function flagValue(args: readonly string[], name: string): string | undefined {
@@ -245,13 +246,17 @@ function flagValue(args: readonly string[], name: string): string | undefined {
 
 /**
  * Print the queue plan. `--dry-run` and `plan` never spawn a CLI or open a PR.
- * `drain` is refused here until the policy pass lands: this slice plans only.
+ * `drain` reweights from the ledger, writes those weights locally, and still
+ * refuses to execute. The weights file is not role policy.
  */
 async function cmdWorkerQueue(args: string[]): Promise<number> {
   const execute = args[0] === 'drain' && !args.includes('--dry-run');
   const issuesPath = flagValue(args, '--issues-file');
   const repo = flagValue(args, '--repo') ?? process.cwd();
   if (execute) {
+    const ledgerPath = flagValue(args, '--ledger') ?? defaultLedgerPath();
+    const weightsPath = flagValue(args, '--weights') ?? defaultWeightsPath();
+    writeReweight(weightsPath, readSpendDecisions(ledgerPath));
     console.error('worker drain is not wired in this slice. Re-run with --dry-run to print the plan.');
     return 2;
   }

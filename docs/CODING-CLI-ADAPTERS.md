@@ -59,6 +59,7 @@ Main merges stay frontier-only through the existing merge gate. Subscription, lo
 - `worker drain` refuses to execute. `worker --dry-run` and `worker plan` print the plan.
 - The cloud credit pool is selected first, and this worker does not launch it. `phm cloud` remains the launcher. Cursor cloud dispatch and the Ollama edit loop are still stubbed.
 - Lint failure escalates through the existing cascade, and the worker does not re-run the attempt until drain is wired.
-- Spend decisions append to a JSONL ledger. `reweight` turns merge rate, CI pass rate, and cost per merged PR into pick weights. Nothing in that step writes the role refusals or the merge gate, and drain does not apply the weights on its own.
+- Spend decisions append to a JSONL ledger. Each `worker drain` reads that ledger, runs `reweight` from merge rate, CI pass rate, and cost per merged PR, and writes the weights to a local JSON file. That file is not role policy and drain still refuses to execute.
+- `phm learn mine` reads the ledger, a local file of failed CI runs, and a local file of PR review comments. It writes candidate backlog items to a local JSON file. It creates no issues and no comments. `--publish` is refused and stays off.
 - Claude login on the inventoried Mac was expired, so Claude aliases `fable`, `opus` and `sonnet` stay `unverified`.
 - The probe runner in production is `spawnCli`. Tests point it at fake binaries and fixture stdout. They do not call the real CLIs or the network.
