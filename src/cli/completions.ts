@@ -18,7 +18,7 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'bus', 'steward', 'improve', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -55,6 +55,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  bus: ['send', 'inbox', 'ack', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],

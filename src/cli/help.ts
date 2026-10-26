@@ -39,6 +39,24 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm bus send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>] --json',
+    description: 'Append one local durable message. Same ID and identical envelope deduplicate without renewing TTL. Labels grant no identity or authority; no remote dispatch or engine execution. Exit 0 accepted/replayed, 1 operational refusal, 2 usage.',
+    safety: 'append',
+    jsonShape: '{ok:true,id,replayed} or {ok:false,error:{code,message}}',
+  },
+  {
+    usage: 'phm bus inbox --to <label> [--limit <1..1000>] --json',
+    description: 'Read pending, unexpired local messages in priority/acceptance order; does not acknowledge. hasMore reports truncation. Unreadable/incomplete storage refuses; missing storage is empty. Exit 0 read, 1 operational refusal, 2 usage.',
+    safety: 'read',
+    jsonShape: '{ok:true,messages:BusEnvelope[],hasMore} or {ok:false,error:{code,message}}',
+  },
+  {
+    usage: 'phm bus ack <id> --to <label> --json',
+    description: 'Append an idempotent local acknowledgment after checking the stored recipient. Same-user routing labels are not authenticated identities. Exit 0 acknowledged/replayed, 1 operational refusal or missing message, 2 usage.',
+    safety: 'append',
+    jsonShape: '{ok:true,id,acknowledged:true,replayed} or {ok:false,error:{code,message}}',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -670,6 +688,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.', topic: 'integrations' },
   { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
+  { cmd: 'bus send|inbox|ack [--json]', desc: 'Local durable message bus: send JSON, read a recipient inbox and acknowledge messages; phm bus --help for options.', topic: 'integrations' },
   { cmd: 'team <view|join|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
   { cmd: 'companions [--json] [--root <dir>] [--bin-dir <dir>]', desc: 'Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.', topic: 'integrations' },
   { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
