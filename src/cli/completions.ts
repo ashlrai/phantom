@@ -36,7 +36,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // V3.10 Track B: standing authority, the Leader, fleet mirrors.
   'authority', 'leader', 'mirror',
   // 3.11 cloud lane.
-  'cloud',
+  'cloud', 'queue',
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
@@ -55,6 +55,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  queue: ['control', 'help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],

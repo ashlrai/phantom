@@ -743,6 +743,12 @@ const loadCloudCmd = lazyCmd(
   'cloud command requires a current build of src/cli/cloud.ts (3.11 cloud lane unit C2).',
 );
 
+const loadQueueCmd = lazyCmd(
+  () => import('./queue.js'),
+  (m) => m.cmdQueue as Cmd,
+  'queue command requires a current build of src/cli/queue.ts.',
+);
+
 // ─── 3.15 Jev decision layer ────────────────────────────────────────
 const loadJevCmd = lazyCmd(
   () => import('./jev.js'),
@@ -2462,6 +2468,11 @@ async function main(): Promise<void> {
         // budget / backlog (src/cli/cloud.ts). Launches spend Claude credits.
         const cmdCloud = await loadCloudCmd();
         process.exitCode = await cmdCloud(rest);
+        break;
+      }
+
+      case 'queue': {
+        process.exitCode = await (await loadQueueCmd())(rest);
         break;
       }
 
