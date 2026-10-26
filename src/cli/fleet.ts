@@ -2,7 +2,7 @@
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
  * Subcommands:
- *   fleet status [--json]
+ *   fleet status [--json] [--legacy]
  *       Print a READ-ONLY snapshot of the whole fleet: daemon liveness +
  *       today's spend, per-backend recent dispatches + quota, queue size,
  *       proposal counts (pending / frontier-pending / applied), recent
@@ -2286,7 +2286,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
-  status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2335,6 +2335,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   switch (sub) {
     case 'status':
+      // This baseline's status handler already produces the legacy control-plane
+      // report; accept the explicit selector used by activation-readiness callers.
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
@@ -2381,7 +2383,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
-  console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
