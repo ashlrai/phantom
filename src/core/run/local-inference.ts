@@ -88,6 +88,14 @@ export function isLoopbackHost(host: string): boolean {
  * Validate a local inference base URL. Loopback passes. Anything else needs
  * `allowRemote === true` and https, and then carries a warning.
  */
+/**
+ * No name resolution for local endpoints (Security, #943 and #952 L2): any
+ * case of 'localhost' dials 127.0.0.1 directly. Other hosts are returned as is.
+ */
+export function pinLoopbackHost(host: string): string {
+  return host.toLowerCase() === 'localhost' ? '127.0.0.1' : host;
+}
+
 export function validateLocalBaseUrl(raw: unknown, opts: { allowRemote?: unknown } = {}): LocalUrlCheck {
   const refuse = (reason: LocalUrlRefusal): LocalUrlCheck => ({ ok: false, reason });
   if (typeof raw !== 'string') return refuse('base-url-invalid');
@@ -136,7 +144,7 @@ export function validateLocalBaseUrl(raw: unknown, opts: { allowRemote?: unknown
     if (scheme !== 'https') return refuse('remote-requires-https');
   }
   // No name resolution for local endpoints (Security, #943): 'localhost' dials 127.0.0.1 directly.
-  const origin = host === 'localhost' ? `${parsed.protocol}//127.0.0.1${parsed.port ? `:${parsed.port}` : ''}` : parsed.origin;
+  const origin = host === 'localhost' ? `${parsed.protocol}//${pinLoopbackHost(host)}${parsed.port ? `:${parsed.port}` : ''}` : parsed.origin;
   return { ok: true, baseUrl: `${origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
 }
 
