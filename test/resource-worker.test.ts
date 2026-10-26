@@ -479,4 +479,64 @@ describe('resource local-chat worker transport', () => {
     expect(result).toMatchObject({ status: 'timed-out', reason: 'worker-timed-out', inputTokens: 12, outputTokens: 4 });
     expect(fixture.requests).toHaveLength(1);
   });
+
+  it('requests extended prompt-cache retention only for a long job with a large prompt', async () => {
+    const qualifying = await endpoint((res) => res.end(JSON.stringify(completion())));
+    expect(await executeResourceWorker(worker('local'), qualifying.binding,
+      task({ timeoutMs: 600_000, prompt: 'x'.repeat(40_000) }))).toMatchObject({ status: 'completed' });
+    expect(qualifying.requests).toHaveLength(1);
+    expect(qualifying.requests[0]?.body).toMatchObject({ prompt_cache_retention: '12h' });
+    for (const patch of [
+      { timeoutMs: 599_999, prompt: 'x'.repeat(40_000) },
+      { timeoutMs: 600_000, prompt: 'x'.repeat(32_767) },
+      {},
+    ] as const) {
+      const ordinary = await endpoint((res) => res.end(JSON.stringify(completion())));
+      expect(await executeResourceWorker(worker('local'), ordinary.binding, task(patch))).toMatchObject({ status: 'completed' });
+      expect(ordinary.requests[0]?.body).not.toHaveProperty('prompt_cache_retention');
+    }
+  });
+
+  it.each([
+    [400, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', param: 'service_tier' } }],
+    [400, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', code: 'invalid_service_tier' } }],
+    [429, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } }],
+    [503, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'service_tier_unavailable' } }],
+  ])('maps a structured service-tier refusal to unavailable pool capacity %#', async (status, payload) => {
+    const fixture = await endpoint((res) => { res.statusCode = status; res.end(JSON.stringify(payload)); });
+    const result = await executeResourceWorker(worker('local'), fixture.binding, task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-service-tier-unavailable',
+      inputTokens: null, outputTokens: null, observation: { workerId: 'worker-a', health: 'ready', windows: [] } });
+    expect(fixture.requests).toHaveLength(1);
+    const observed = result.observation!;
+    expect(Date.parse(observed.expiresAt)).toBeGreaterThan(Date.parse(observed.observedAt));
+    expect(observed.retryAfter === null || Date.parse(observed.retryAfter) > Date.parse(observed.observedAt)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_TIER_DETAIL');
+  });
+
+  it.each([
+    [400, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'invalid_request_error', param: 'messages' } }],
+    [503, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'server_error' } }],
+    [429, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'rate_limit_error', code: 'rate_limit_exceeded' } }],
+  ])('keeps ordinary provider errors on worker-transport-failed %#', async (status, payload) => {
+    const fixture = await endpoint((res) => { res.statusCode = status; res.end(JSON.stringify(payload)); });
+    const result = await executeResourceWorker(worker('local'), fixture.binding, task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-transport-failed', inputTokens: null, outputTokens: null });
+    expect(result.observation).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_VENDOR_ERROR');
+  });
+
+  it('bounds a provider retry hint on a service-tier refusal and defaults one when absent', async () => {
+    const hinted = await endpoint((res) => { res.statusCode = 429; res.setHeader('retry-after', '120');
+      res.end(JSON.stringify({ error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } })); });
+    const result = await executeResourceWorker(worker('local'), hinted.binding, task());
+    const observation = result.observation!;
+    const delta = Date.parse(observation.retryAfter!) - Date.parse(observation.observedAt);
+    expect(delta).toBeGreaterThanOrEqual(119_000); expect(delta).toBeLessThanOrEqual(121_000);
+    const defaulted = await endpoint((res) => { res.statusCode = 503;
+      res.end(JSON.stringify({ error: { type: 'service_tier_unavailable' } })); });
+    const second = await executeResourceWorker(worker('local'), defaulted.binding, task());
+    const fallback = Date.parse(second.observation!.retryAfter!) - Date.parse(second.observation!.observedAt);
+    expect(fallback).toBeGreaterThanOrEqual(60_000); expect(fallback).toBeLessThanOrEqual(61_000);
+  });
 });
