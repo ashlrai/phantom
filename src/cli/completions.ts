@@ -22,7 +22,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'sandbox', 'audit',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',

@@ -1873,6 +1873,12 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'router-calibration': {
+        const { cmdRouterCalibration } = await import('./router-calibration.js');
+        process.exitCode = await cmdRouterCalibration(rest);
+        break;
+      }
+
       case 'index':
         cmdIndex(rest);
         break;
