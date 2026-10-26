@@ -21,6 +21,7 @@ import { completeReportedTokens, validateTokenEvidence } from '../run/token-evid
 
 import { randomBytes } from 'node:crypto';
 import type { GenAiSpan, RunState, SwarmRun } from '../types.js';
+import type { QueueEventV1 } from './queue-events.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -75,6 +76,43 @@ interface OtlpResourceSpans {
 
 export interface OtlpTrace {
   resourceSpans: OtlpResourceSpans[];
+}
+
+/** Queue boundaries share the configured telemetry transport, never GenAI usage. */
+export function buildQueueTrace(events: readonly QueueEventV1[]): OtlpTrace {
+  const traceId = newTraceId();
+  return {
+    resourceSpans: [{
+      resource: { attributes: [strAttr('service.name', SCOPE_NAME)] },
+      scopeSpans: [{
+        scope: { name: SCOPE_NAME, version: SCOPE_VERSION },
+        spans: events.map(event => {
+          // Each boundary is a point event. Keep the original visit interval in
+          // attributes so consumers can pair an exit with its earlier enter.
+          const timestamp = isoToUnixNano(event.exit_ts ?? event.enter_ts);
+          return {
+            traceId,
+            spanId: newSpanId(),
+            kind: SPAN_KIND_INTERNAL,
+            name: 'queue.v1',
+            startTimeUnixNano: timestamp,
+            endTimeUnixNano: timestamp,
+            status: { code: 0 },
+            attributes: [
+              strAttr('event.name', 'queue.v1'),
+              strAttr('job_id', event.job_id),
+              ...(event.pr === null ? [] : [intAttr('pr', event.pr)]),
+              strAttr('station', event.station),
+              strAttr('pool', event.pool),
+              strAttr('tier', event.tier),
+              strAttr('enter_ts', event.enter_ts),
+              ...(event.exit_ts === null ? [] : [strAttr('exit_ts', event.exit_ts)]),
+            ],
+          };
+        }),
+      }],
+    }],
+  };
 }
 
 // ---------------------------------------------------------------------------
