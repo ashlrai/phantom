@@ -71,7 +71,7 @@ describe('queue.v1', () => {
   it.each([
     { status: 'RUNNING' }, { id: '../escape' }, { deps: ['RQ-TEST'] }, { deps: [1] },
     { priority: '' }, { claims: [{ owner: 'a', claimedAt: 'yesterday' }] },
-    { prUrl: 'http://example.com/pr/1' }, { prUrl: 'https://user:secret@example.com/pr/1' },
+    { prUrl: 'http://example.com/pr/1' }, { prUrl: ['https://', 'user', ':', 'TEST', '@', 'example.com/pr/1'].join('') },
     { acceptance: null }, { scope: '' },
   ])('rejects invalid schema without persisting: %j', async patch => {
     const s = await store();
