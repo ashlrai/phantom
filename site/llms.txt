@@ -1,0 +1,61 @@
+# Phantom
+
+> Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.
+
+MIT-licensed open source. Install the CLI with `npm i -g @ashlr/phantom`,
+then open the console with `phm verse`. Requires Node.js 22.15+ and Git.
+
+## Site
+
+- [Phantom](https://verse.ashlr.ai/): the engineering agent workbench
+- [Install](https://verse.ashlr.ai/install): install the CLI and open the console
+- [Ecosystem](https://verse.ashlr.ai/ecosystem): the Ashlr tool family and its GitHub history
+- [capabilities.json](https://verse.ashlr.ai/capabilities.json): machine-readable capability manifest
+- [MCP server manifest](https://verse.ashlr.ai/.well-known/mcp/server.json): MCP registry metadata
+- [llms-full.txt](https://verse.ashlr.ai/llms-full.txt): the complete documentation index
+
+## Guides by task
+
+- [Executable demo](https://github.com/ashlrai/phantom/blob/master/docs/DEMO.md): See real candidates, rejection and parent-linked improvement without model credentials
+- [Phantom North Star](https://github.com/ashlrai/phantom/blob/master/docs/NORTH-STAR.md): Understand the objective and how progress is measured
+- [Autonomy gap map](https://github.com/ashlrai/phantom/blob/master/docs/AUTONOMY-GAP.md): Separate tested firm machinery from remaining activation and integration work
+- [Firm graph fixture](https://github.com/ashlrai/phantom/blob/master/docs/FIRM-DEMO.md): Exercise signed graph execution and a deliberately lying candidate
+- [Autonomy engineering brief](https://github.com/ashlrai/phantom/blob/master/docs/UNIVERSE-AUTONOMY-RESEARCH.md): Connect autonomy research to engineering acceptance
+- [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md): Compare Phantom with current agent platforms using measurable acceptance gates
+- [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): Connect a resource and make a first useful turn
+- [Companion setup and inspection](https://github.com/ashlrai/phantom/blob/master/docs/COMPANIONS.md): Install companion tools separately and distinguish CLI inventory from MCP setup
+- [Automatic work](https://github.com/ashlrai/phantom/blob/master/docs/AUTOMATIC-OUTCOMES.md): Choose chat or fleet work, understand routing and inspect results
+- [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md#current-runtime-map): Understand the current components and their boundaries
+- [Universe operator guide](https://github.com/ashlrai/phantom/blob/master/docs/ASHLR-UNIVERSE.md): Configure experiments, campaigns, portfolios and artifact delivery
+- [Resource Pools](https://github.com/ashlrai/phantom/blob/master/docs/RESOURCE-POOLS.md): Configure native/local workers, quotas, the foreground queue and fleet map
+- [Pinned runtime](https://github.com/ashlrai/phantom/blob/master/docs/ASHLR-UNIVERSE.md#install-a-pinned-local-runtime): Install or roll back an exact trusted local package
+- [Contributing - source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): Change code and verify it locally
+- [Releasing - source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md): Build release evidence and distinguish distribution from activation
+- [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md): Run agents in Phantom against your accounts and a local model
+- [OpenAI Agents integration](https://github.com/ashlrai/phantom/blob/master/docs/OPENAI-AGENTS-INTEGRATION.md): Inspect managed OpenAI Agents sessions through the read-only CLI
+- [Dots companion](https://github.com/ashlrai/phantom/blob/master/docs/DOTS-COMPANION.md): Understand supported Dots companion workflows and the plugin-event integration path
+- [Agent harness evolution](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-HARNESS-EVOLUTION.md): Apply durable sessions, steering, tool discovery and context ideas to the existing harness
+- [Operator preferences and evidence](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences): Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks
+- [Execution feedback](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-FEEDBACK.md): Inspect recorded producer outcomes and their deterministic learning path
+- [Resource evidence](https://github.com/ashlrai/phantom/blob/master/docs/RESOURCE-EVIDENCE.md): Read current and historical account usage, credit units, captured dollar balances and cloud estimates
+- [Run token totals - source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md): Distinguish reported run tokens from estimates, reservations and unknown totals
+- [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md): Decide whether to give one agent the whole context window or four a quarter each
+- [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md): Finalize and publish original qualified release artifacts locally
+- [Workspaces build contract](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-WORKSPACES.md): See what multi-folder workspaces, GitHub and MCP management still need
+- [Context windows - source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md): Read a Phantom chat's context meter, choose standard or expansive context, and continue a long session in a fresh chat
+- [Phantom user guide - source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md): Use the Phantom workbench: Command, Fleet, Growth and Lessons, Mind, Chat and its panel (terminal, browser, changes, sources, reasoning), the Needs-you and Resources drawers, the repo wiki, playbooks, automations, ⌘K, budget modes and account health
+- [The Leader - source guide](https://github.com/ashlrai/phantom/blob/master/docs/LEADER.md): Talk to the Leader from Phantom, Telegram or the CLI: directives, answers, approvals, briefs, founder mode
+- [Cloud lane - source guide](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD.md): Hand work to Claude Code cloud sessions or Devin, and triage what they deliver
+- [Devin - source guide](https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md): Hand work to Claude Code cloud sessions or Devin, and triage what they deliver
+- [Standing authority - source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md): Understand the standing authority design, and turn autonomy on under a grant that starts in shadow
+- [Current activation state](https://github.com/ashlrai/phantom/blob/master/docs/AUTONOMY-GAP.md#current-activation-state-315): Understand the standing authority design, and turn autonomy on under a grant that starts in shadow
+- [Verse build contract - source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console): Find a Verse route family, its gates and wire shapes
+
+## Repository
+
+- [README](https://github.com/ashlrai/phantom/blob/master/README.md): install, feature tour and quickstart
+- [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): one canonical guide per task
+- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent constitution, layout and verification
+- [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): conventions, tests and contracts
+- [Changelog](https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md): milestone release history
+- [License](https://github.com/ashlrai/phantom/blob/master/LICENSE): MIT

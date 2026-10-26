@@ -49,6 +49,7 @@ describe('static ecosystem page', () => {
     expect(entries.map((entry) => entry.querySelector('loc')?.textContent)).toEqual([
       'https://verse.ashlr.ai/',
       'https://verse.ashlr.ai/ecosystem',
+      'https://verse.ashlr.ai/install',
     ]);
     for (const entry of entries) {
       expect(entry.querySelector('lastmod')?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
