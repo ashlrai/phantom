@@ -1649,6 +1649,12 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 async function cmdConfig(args: string[]): Promise<void> {
   const subCmd = args[0];
 
+  // `config set <key> --help` (or `set --help <value>`) used to store "--help"
+  // as the value or the key. Refuse with the usage line before any config IO.
+  if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
+    die('Usage: ashlr config set <key> <value>', 2);
+  }
+
   if (subCmd === 'effective') {
     const jsonMode = args.includes('--json');
     const { loadEffectiveConfigSnapshot } = await import('../core/effective-config.js');

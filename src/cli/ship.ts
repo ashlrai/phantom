@@ -378,8 +378,10 @@ function printShipHelp(): void {
  *   2  bad usage
  */
 export async function cmdShip(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit, anywhere: parseShipArgs ignores --help/-h as "handled
+  // upstream", so `ship --deploy gh --confirm --help` used to run the gate and
+  // deploy. --deploy's value is a target name, never a help flag.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printShipHelp();
     return 0;
   }

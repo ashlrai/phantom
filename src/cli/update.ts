@@ -520,8 +520,10 @@ function printHelp(): void {
 // ---------------------------------------------------------------------------
 
 export async function cmdUpdate(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit, anywhere: parseUpdateArgs ignores --help/-h as "handled
+  // upstream", so `update --yes --help` used to apply the update. --channel's
+  // value is git or npm, never a help flag.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printHelp();
     return 0;
   }
