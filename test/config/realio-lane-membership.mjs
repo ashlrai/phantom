@@ -43,6 +43,9 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/fleet-coordination.test.ts', // #941: real fleet coordination store IO.
+  'test/fleet-cli.test.ts', // #941: spawns the fleet CLI with real temp HOME and files.
+  'test/fleet-snapshot.test.ts', // #941: writes the shared fleet.v1 snapshot to real paths.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 

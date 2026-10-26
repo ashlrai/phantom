@@ -97,7 +97,7 @@ describe('compiled activation-readiness surface', () => {
     const configDir = join(home, '.ashlr');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, 'config.json'), `${JSON.stringify(config())}\n`, 'utf8');
-    const cli = spawnSync(process.execPath, [binPath, 'fleet', 'status', '--json'], {
+    const cli = spawnSync(process.execPath, [binPath, 'fleet', 'status', '--legacy', '--json'], {
       cwd: process.cwd(),
       encoding: 'utf8',
       env: {
