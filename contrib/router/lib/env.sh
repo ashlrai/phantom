@@ -14,19 +14,57 @@ router_clean_env_names() {
 }
 
 router_exec_clean() {
-  local user lang term tmp host codex_home
-  local -a cmd
+  local user lang term tmp host codex_home home path
+  local -a cmd extras
   user=${USER:-$(id -un)}
   lang=${LANG:-C.UTF-8}
   term=${TERM:-dumb}
   tmp=${TMPDIR:-/tmp}
-  cmd=(env -i "PATH=${PATH:-}" "HOME=${HOME}" "USER=${user}" "LANG=${lang}" "TERM=${term}" "TMPDIR=${tmp}")
+  home=${HOME}
+  path=${PATH:-}
+  extras=()
   while [[ $# -gt 0 && "$1" == *=* ]]; do
     case "$1" in
+      HOME=*)
+        home=${1#HOME=}
+        case "$home" in
+          *$'\n'*|*$'\r'*)
+            printf 'refusing home for a clean command\n' >&2
+            return 1
+            ;;
+          /*)
+            case "$home" in
+              *"/.codex"*|*"/.config/gh"*|*"/.ssh"*)
+                printf 'refusing home for a clean command\n' >&2
+                return 1
+                ;;
+            esac
+            ;;
+          *)
+            printf 'refusing home for a clean command\n' >&2
+            return 1
+            ;;
+        esac
+        shift
+        ;;
+      PATH=*)
+        path=${1#PATH=}
+        case "$path" in
+          *$'\n'*|*$'\r'*|*"/.codex"*|*"/.config/gh"*|*"/.ssh"*)
+            printf 'refusing PATH for a clean command\n' >&2
+            return 1
+            ;;
+        esac
+        shift
+        ;;
+      DEVIN_API_KEY=*|DEVIN_ORG_ID=*)
+        extras+=("$1")
+        shift
+        ;;
       OLLAMA_HOST=*|OMLX_HOST=*)
         host=${1#*=}
         case "$host" in
-          127.0.0.1|127.0.0.1:*|localhost|localhost:*) cmd+=("$1") ;;
+          127.0.0.1|127.0.0.1:*|localhost|localhost:*) extras+=("$1") ;;
           *)
             printf 'refusing non-loopback model host\n' >&2
             return 1
@@ -35,7 +73,7 @@ router_exec_clean() {
         shift
         ;;
       npm_config_offline=true)
-        cmd+=("$1")
+        extras+=("$1")
         shift
         ;;
       CODEX_HOME=*|CODEX_HOME_ALT=*)
@@ -47,7 +85,7 @@ router_exec_clean() {
             return 1
             ;;
           /*)
-            cmd+=("$1")
+            extras+=("$1")
             ;;
           *)
             printf 'refusing relative Codex home\n' >&2
@@ -65,8 +103,24 @@ router_exec_clean() {
   if [[ "${1:-}" == "--" ]]; then
     shift
   fi
+  cmd=(env -i "PATH=${path}" "HOME=${home}" "USER=${user}" "LANG=${lang}" "TERM=${term}" "TMPDIR=${tmp}")
+  if [[ ${#extras[@]} -gt 0 ]]; then
+    cmd+=("${extras[@]}")
+  fi
   cmd+=("$@")
   "${cmd[@]}"
+}
+
+router_exec_devin() {
+  local -a extra
+  extra=()
+  if [[ -n "${DEVIN_API_KEY:-}" ]]; then
+    extra+=("DEVIN_API_KEY=${DEVIN_API_KEY}")
+  fi
+  if [[ -n "${DEVIN_ORG_ID:-}" ]]; then
+    extra+=("DEVIN_ORG_ID=${DEVIN_ORG_ID}")
+  fi
+  router_exec_clean "${extra[@]}" -- "$@"
 }
 
 router_format_clean() {

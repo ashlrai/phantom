@@ -40,9 +40,14 @@
   "pools": [],
   "ledger_issue_repo": "ashlrai/phantom",
   "ledger_issue_title": "router-ledger",
+  "verify": {
+    "host": false
+  },
+  "ledger_mirror": false,
   "freshness": {
-    "enabled": true,
+    "enabled": false,
     "interval_days": 7,
+    "min_age_days": 3,
     "codex_probe": true
   },
   "grok": {
@@ -82,7 +87,7 @@
       "bin": "codex",
       "model_flag": "--model",
       "version_args": ["--version"],
-      "update": ["npm", "i", "-g", "@openai/codex@latest"],
+      "update": [],
       "args": [
         "exec",
         "--sandbox",

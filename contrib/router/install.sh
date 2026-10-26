@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the launchd agent. Writes only under ~/Library/LaunchAgents and ~/ashlr-router.
 set -euo pipefail
+umask 077
 
 here=$(cd "$(dirname "$0")" && pwd)
 dest="$HOME/ashlr-router"

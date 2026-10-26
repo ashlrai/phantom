@@ -121,9 +121,20 @@ omlx_install() {
   else
     printf 'install: omlx is already on PATH\n'
   fi
-  printf 'install: omlx start\n'
-  omlx start
+  omlx_start_loopback
+  OMLX_HOST=127.0.0.1:8000
   omlx_health
+}
+
+omlx_start_loopback() {
+  node "$OMLX_IO" loopback-ok "127.0.0.1:8000"
+  printf 'install: omlx serve --host 127.0.0.1 --port 8000\n'
+  if [[ "${OMLX_SERVE_FOREGROUND:-}" == "1" ]]; then
+    omlx serve --host 127.0.0.1 --port 8000
+    return $?
+  fi
+  omlx serve --host 127.0.0.1 --port 8000 >>"${OMLX_SERVE_LOG:-${TMPDIR:-/tmp}/omlx-serve.log}" 2>&1 &
+  printf '%s\n' "$!"
 }
 
 omlx_main() {
@@ -179,7 +190,7 @@ omlx_main() {
       cat <<'EOF'
 usage: omlx-mac.sh <install|health|download|--prune-ollama>
 
-  install                  macOS only. brew install jundot/omlx/omlx, then omlx start, then health
+  install                  macOS only. brew install jundot/omlx/omlx, then omlx serve --host 127.0.0.1 --port 8000, then health
   health                   GET http://127.0.0.1:8000/v1/models
   download [--check-only] owner/name
                            refuse when the download would leave less than 20 GB free

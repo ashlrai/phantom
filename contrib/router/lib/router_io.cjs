@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const FORBIDDEN = new Set([
   '--yolo',
@@ -111,8 +111,11 @@ function emitConfig(cfg) {
   set('ROUTER_MIN_BATT', cfg.min_battery_pct == null ? 30 : cfg.min_battery_pct);
   set('ROUTER_TIMEOUT_S', cfg.job_timeout_s == null ? 2700 : cfg.job_timeout_s);
   set('ROUTER_VERIFY_TIMEOUT_S', cfg.verify_timeout_s == null ? 600 : cfg.verify_timeout_s);
-  set('ROUTER_FRESHNESS_ENABLED', cfg.freshness && cfg.freshness.enabled === false ? '0' : '1');
+  set('ROUTER_FRESHNESS_ENABLED', cfg.freshness && cfg.freshness.enabled === true ? '1' : '0');
   set('ROUTER_FRESHNESS_DAYS', (cfg.freshness && cfg.freshness.interval_days) || 7);
+  set('ROUTER_FRESHNESS_MIN_AGE_DAYS', (cfg.freshness && cfg.freshness.min_age_days) || 3);
+  set('ROUTER_HOST_VERIFY', cfg.verify && cfg.verify.host === true ? '1' : '0');
+  set('ROUTER_LEDGER_MIRROR', cfg.ledger_mirror === true ? '1' : '0');
   set('ROUTER_CODEX_PROBE', cfg.freshness && cfg.freshness.codex_probe === false ? '0' : '1');
   set('ROUTER_GROK_ENABLED', cfg.grok && cfg.grok.enabled ? '1' : '0');
   set('ROUTER_GROK_METERED', cfg.grok && cfg.grok.metered === false ? '0' : '1');
@@ -158,10 +161,6 @@ function configuredModels(cfg, cli) {
 
 function parseUsage(text, nowMs) {
   const limited = /rate[- ]limit|usage[- ]limit|quota exceeded|out of quota|insufficient quota|quota reached|too many requests|hit your limit|\b429\b|credits[_ ]depleted|spend control reached|usage limit reached/i.test(text);
-  const lines = String(text).split(/\r?\n/).filter((line) => (
-    /rate[- ]limit|usage[- ]limit|quota|too many requests|\b429\b|reset|remaining/i.test(line)
-  ));
-  const raw = lines.join('\n').slice(0, 2000);
   let reset = '';
   const iso = String(text).match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/);
   if (limited && iso) reset = iso[0].replace(/\.\d+Z$/, 'Z');
@@ -181,7 +180,12 @@ function parseUsage(text, nowMs) {
   const rem = String(text).match(/(\d+)\s*(?:%|requests?|tokens?)?\s*remaining/i)
     || String(text).match(/remaining[^0-9]{0,8}(\d+)/i);
   if (rem) remaining = rem[1];
-  return { limited, reset, raw, usage: raw, remaining };
+  return {
+    limited,
+    reset,
+    remaining,
+    outcome: limited ? 'limited' : 'ok',
+  };
 }
 
 function headroom(ledgerText, nowIso, cooldownJson, cliCsv) {
@@ -402,11 +406,17 @@ function gbFromKb(kb) {
   return (value / (1024 * 1024)).toFixed(1);
 }
 
+function ledgerOutcome(flags) {
+  const named = flags.outcome || '';
+  if (named === 'ok' || named === 'limited' || named === 'error' || named === 'timeout') return named;
+  if (flags['rate-limit']) return 'limited';
+  if (Number(flags.exit) === 124) return 'timeout';
+  if (Number(flags.exit || 0) !== 0) return 'error';
+  return 'ok';
+}
+
 function appendJob(file, flags) {
-  let raw = flags.raw || '';
-  if (flags['raw-file']) {
-    raw = fs.readFileSync(flags['raw-file'], 'utf8').slice(0, 2000);
-  }
+  const remaining = flags.remaining === undefined || flags.remaining === '' ? '' : Number(flags.remaining);
   const obj = {
     ts: flags.ts || '',
     event: flags.event || 'job',
@@ -423,22 +433,34 @@ function appendJob(file, flags) {
       ? ''
       : Number(flags['verify-exit']),
     pr_url: flags['pr-url'] || '',
-    usage: flags.usage || raw,
     rate_limit: flags['rate-limit'] || '',
     reset: flags.reset || '',
-    raw,
-    remaining: flags.remaining === undefined || flags.remaining === '' ? '' : Number(flags.remaining),
+    remaining: Number.isFinite(remaining) ? remaining : '',
+    outcome: ledgerOutcome(flags),
+    pool: flags.pool || flags.account || flags.cli || '',
     metered: flags.metered === '1' || flags.metered === 'true',
     version: flags.version || '',
     version_before: flags['version-before'] || '',
     version_after: flags['version-after'] || '',
-    warning: flags.warning || '',
+    warning: String(flags.warning || '').slice(0, 200),
     account: flags.account || '',
     billing: flags.billing || '',
     pools: readPoolsFile(flags['pools-file']),
   };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, JSON.stringify(obj) + '\n');
+}
+
+function ledgerPublic(obj) {
+  const keep = [
+    'ts', 'event', 'repo', 'issue', 'cli', 'account', 'pool', 'outcome',
+    'remaining', 'reset', 'exit', 'tier', 'model', 'pr_url', 'billing', 'metered', 'attempt',
+  ];
+  const out = {};
+  for (const key of keep) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) out[key] = obj[key];
+  }
+  return out;
 }
 
 function runTimeout(seconds, cmd) {
@@ -1105,6 +1127,239 @@ function isoFromMs(ms) {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+}
+
+function compileGlob(pattern) {
+  const p = pattern.toLowerCase();
+  let out = '';
+  let i = 0;
+  while (i < p.length) {
+    const c = p[i];
+    if (c === '*') {
+      if (p[i + 1] === '*') {
+        if (p[i + 2] === '/') {
+          out += '(?:[^/]+/)*';
+          i += 3;
+        } else {
+          out += '.*';
+          i += 2;
+        }
+        continue;
+      }
+      out += '[^/]*';
+      i += 1;
+      continue;
+    }
+    if (c === '?') {
+      out += '[^/]';
+      i += 1;
+      continue;
+    }
+    out += escapeRegExp(c);
+    i += 1;
+  }
+  return new RegExp(`^${out}$`);
+}
+
+const DENY_GLOBS = [
+  '.github/**',
+  '**/.github/**',
+  'CODEOWNERS',
+  '**/CODEOWNERS',
+  '.releaserc',
+  '.releaserc.*',
+  '**/.releaserc',
+  '**/.releaserc.*',
+  'release*.yml',
+  'release*.yaml',
+  '**/release*.yml',
+  '**/release*.yaml',
+  'scripts/publish*',
+  'scripts/**/publish*',
+  '**/publish.sh',
+  '**/publish.mjs',
+  '**/publish.js',
+  '**/publish.cjs',
+  '**/rulesets/**',
+  '**/*ruleset*.yml',
+  '**/*ruleset*.yaml',
+  '**/*ruleset*.json',
+  '**/.env',
+  '**/.env.*',
+  '**/*.pem',
+  '**/*.p12',
+  '**/*.key',
+  '**/id_rsa*',
+  '**/id_ed25519*',
+  '**/id_ecdsa*',
+].map(compileGlob);
+
+function gitCapture(wt, args) {
+  return spawnSync('git', ['-C', wt, ...args], { encoding: 'utf8' });
+}
+
+function unsafeRepoPath(file) {
+  if (!file || typeof file !== 'string') return true;
+  if (file.includes('\n') || file.includes('\r') || file.includes('\0')) return true;
+  if (file.startsWith('/') || file.startsWith('\\')) return true;
+  const parts = file.split('/');
+  return parts.some((part) => part === '..' || part === '');
+}
+
+function codeownerPatterns(text) {
+  const patterns = [];
+  for (const line of String(text || '').split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    let pattern = trimmed.split(/\s+/)[0];
+    if (!pattern || pattern.startsWith('#')) continue;
+    if (pattern.startsWith('/')) pattern = pattern.slice(1);
+    patterns.push(pattern);
+  }
+  return patterns;
+}
+
+function codeownerRegexesAt(wt, rev) {
+  const regexes = [];
+  for (const spec of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
+    const shown = gitCapture(wt, ['show', `${rev}:${spec}`]);
+    if (!shown || shown.status !== 0 || !shown.stdout) continue;
+    for (const pattern of codeownerPatterns(shown.stdout)) {
+      try {
+        regexes.push(compileGlob(pattern));
+      } catch (_err) {
+        regexes.push(/^$/);
+      }
+    }
+  }
+  return regexes;
+}
+
+function headCodeownerRegexes(wt) {
+  return codeownerRegexesAt(wt, 'HEAD');
+}
+
+function porcelainPaths(buffer) {
+  const paths = [];
+  const text = Buffer.isBuffer(buffer) ? buffer : Buffer.from(String(buffer || ''), 'utf8');
+  let i = 0;
+  while (i + 3 <= text.length) {
+    const x = String.fromCharCode(text[i]);
+    const y = String.fromCharCode(text[i + 1]);
+    i += 3;
+    const nul = text.indexOf(0, i);
+    if (nul < 0) break;
+    const first = text.slice(i, nul).toString('utf8');
+    i = nul + 1;
+    if (first) paths.push(first);
+    if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+      const nul2 = text.indexOf(0, i);
+      if (nul2 < 0) break;
+      const second = text.slice(i, nul2).toString('utf8');
+      i = nul2 + 1;
+      if (second) paths.push(second);
+    }
+  }
+  return paths;
+}
+
+function changedPaths(wt) {
+  const status = gitCapture(wt, ['status', '--porcelain=v1', '-z']);
+  if (!status || status.status !== 0) return null;
+  return porcelainPaths(Buffer.from(status.stdout || '', 'utf8'));
+}
+
+function packageAltersRelease(wt, file, rev) {
+  const base = file.split('/').pop();
+  if (base !== 'package.json') return false;
+  let text = '';
+  if (rev) {
+    const diff = gitCapture(wt, ['diff', rev, 'HEAD', '--', file]);
+    text = (diff && diff.stdout) || '';
+  } else {
+    const diff = gitCapture(wt, ['diff', 'HEAD', '--', file]);
+    const cached = gitCapture(wt, ['diff', '--cached', '--', file]);
+    text = `${(diff && diff.stdout) || ''}\n${(cached && cached.stdout) || ''}`;
+    const tracked = gitCapture(wt, ['ls-files', '--error-unmatch', '--', file]);
+    if (!tracked || tracked.status !== 0) {
+      const untracked = gitCapture(wt, ['diff', '--no-index', '--', '/dev/null', file]);
+      text += `\n${(untracked && untracked.stdout) || ''}`;
+    }
+  }
+  return /(^|\n)[+-].*"(publish|prepublish|prepublishOnly|postpublish|prepare|release)"\s*:/.test(text)
+    || /(^|\n)[+-].*publishConfig/.test(text);
+}
+
+function matchDenied(wt, paths, owners, rev) {
+  if (paths == null) return ['<unreadable>'];
+  const denied = [];
+  for (const file of paths) {
+    if (unsafeRepoPath(file)) {
+      denied.push(file || '<unsafe>');
+      continue;
+    }
+    const lower = file.toLowerCase();
+    const globHit = DENY_GLOBS.some((re) => re.test(lower)) || owners.some((re) => re.test(lower));
+    if (globHit || packageAltersRelease(wt, file, rev)) denied.push(file);
+  }
+  return denied;
+}
+
+function deniedPaths(wt) {
+  return matchDenied(wt, changedPaths(wt), headCodeownerRegexes(wt), '');
+}
+
+function diffTreePaths(wt, rev) {
+  const shown = gitCapture(wt, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', rev]);
+  if (!shown || shown.status !== 0) return null;
+  const paths = [];
+  const buf = Buffer.from(shown.stdout || '', 'utf8');
+  let i = 0;
+  while (i < buf.length) {
+    const nul = buf.indexOf(0, i);
+    if (nul < 0) break;
+    const file = buf.slice(i, nul).toString('utf8');
+    i = nul + 1;
+    if (file) paths.push(file);
+  }
+  return paths;
+}
+
+function deniedCommitPaths(wt) {
+  return matchDenied(wt, diffTreePaths(wt, 'HEAD'), codeownerRegexesAt(wt, 'HEAD~1'), 'HEAD~1');
+}
+
+function branchAllowed(branch) {
+  return /^(router\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+|cursor\/router-[A-Za-z0-9._-]+)$/.test(String(branch || ''));
+}
+
+function agedRelease(timeJson, days, nowMs) {
+  let data;
+  try {
+    data = JSON.parse(timeJson);
+  } catch (_err) {
+    return '';
+  }
+  if (!data || typeof data !== 'object') return '';
+  const minAge = Number(days) * 24 * 3600 * 1000;
+  let best = '';
+  let bestTime = -1;
+  for (const [ver, stamp] of Object.entries(data)) {
+    if (ver === 'modified' || ver === 'created') continue;
+    if (!/^\d+\.\d+\.\d+/.test(ver)) continue;
+    const then = Date.parse(stamp);
+    if (!Number.isFinite(then)) continue;
+    if (nowMs - then < minAge) continue;
+    if (then >= bestTime) {
+      bestTime = then;
+      best = ver;
+    }
+  }
+  return best;
+}
+
 function main() {
   const [command, ...rest] = process.argv.slice(2);
   const flags = parseFlags(rest);
@@ -1256,6 +1511,35 @@ function main() {
   if (command === 'freshness-due') {
     process.exit(freshnessDue(flags.last || '', flags.days || '7') ? 0 : 1);
   }
+  if (command === 'publish-check' || command === 'commit-check') {
+    const wt = flags.worktree || flags._[0] || '';
+    const denied = command === 'commit-check' ? deniedCommitPaths(wt) : deniedPaths(wt);
+    if (denied.length) {
+      process.stdout.write(`${denied.join('\n')}\n`);
+      process.exit(1);
+    }
+    return;
+  }
+  if (command === 'stage-list') {
+    const paths = changedPaths(flags.worktree || flags._[0] || '');
+    if (paths == null) process.exit(1);
+    writeNul(paths);
+    return;
+  }
+  if (command === 'branch-ok') {
+    process.exit(branchAllowed(flags._[0] || '') ? 0 : 1);
+  }
+  if (command === 'aged-release') {
+    const now = Number(flags.now || Date.now());
+    const nowMs = now < 1e12 ? now * 1000 : now;
+    const ver = agedRelease(readStdin(), flags.days || '3', nowMs);
+    process.stdout.write(`${ver}\n`);
+    process.exit(ver ? 0 : 1);
+  }
+  if (command === 'ledger-public') {
+    process.stdout.write(`${JSON.stringify(ledgerPublic(JSON.parse(readStdin())))}\n`);
+    return;
+  }
   if (command === 'cooled') {
     process.exit(cooled(flags.until || '') ? 0 : 1);
   }
@@ -1277,6 +1561,8 @@ function main() {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     for (const line of lines) {
       const obj = JSON.parse(line);
+      delete obj.raw;
+      delete obj.usage;
       obj.pr_url = pr;
       const stamped = JSON.stringify(obj);
       fs.appendFileSync(dest, stamped + '\n');
@@ -1287,9 +1573,10 @@ function main() {
   if (command === 'set-cooldown') {
     const file = flags._[0];
     const state = readState(file);
+    const reason = flags.reason === 'auth' ? 'auth' : 'rate-limit';
     state.cooldowns[flags.cli] = {
       until: flags.until || '',
-      reason: String(flags.reason || '').slice(0, 500),
+      reason,
     };
     writeState(file, state);
     return;

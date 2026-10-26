@@ -299,6 +299,7 @@ printf 'Not signed in\n' | node "$ROOT/lib/router_io.cjs" grok-auth | grep -qx '
 cat > "$tmp/bin/ashlr" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$HOME/ashlr-invocations.log"
+env | awk -F= '$1 ~ /^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|XAI_API_KEY|DEVIN_API_KEY|DEVIN_ORG_ID)$/ { print $1 }' | sort >> "$HOME/ashlr-env.names"
 if [[ "$*" == *status* ]]; then
   printf '%s\n' '{"status":{"state":"ready","connected":true,"orgId":"org-test"},"budget":{"acuRemaining":12,"canLaunch":{"ok":true}}}'
   exit 0
@@ -312,6 +313,11 @@ exit 1
 EOF
 chmod +x "$tmp/bin/ashlr"
 export DEVIN_ORG_ID=org-test
+export DEVIN_API_KEY=devin-secret
+export GH_TOKEN=gh-secret
+export OPENAI_API_KEY=openai-secret
+export XAI_API_KEY=xai-secret
+: > "$HOME/ashlr-env.names"
 : > "$ASHLR_ROUTER_HOME/logs/router.log"
 router_probe_devin
 if grep -q 'cog_secret_key' "$ASHLR_ROUTER_HOME/logs/router.log"; then
@@ -319,6 +325,23 @@ if grep -q 'cog_secret_key' "$ASHLR_ROUTER_HOME/logs/router.log"; then
 fi
 if ! grep -q 'devin ready' "$ASHLR_ROUTER_HOME/logs/router.log"; then
   fail 'devin probe did not record ready'
+fi
+if grep -q 'devin-secret\|gh-secret\|openai-secret\|xai-secret' "$ASHLR_ROUTER_HOME/logs/router.log"; then
+  fail 'devin probe log contains a secret value'
+fi
+if ! grep -qx 'DEVIN_API_KEY' "$HOME/ashlr-env.names" || ! grep -qx 'DEVIN_ORG_ID' "$HOME/ashlr-env.names"; then
+  fail 'devin status did not receive DEVIN_API_KEY and DEVIN_ORG_ID'
+fi
+if grep -Eq '^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|XAI_API_KEY)$' "$HOME/ashlr-env.names"; then
+  fail 'devin status received a non-Devin token'
+fi
+: > "$HOME/ashlr-env.names"
+router_run_devin_job "ashlrai/phantom" 11 codex workhorse "" "devin fixture" "$body" ""
+if grep -Eq '^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|XAI_API_KEY)$' "$HOME/ashlr-env.names"; then
+  fail 'devin launch received a non-Devin token'
+fi
+if ! grep -qx 'DEVIN_API_KEY' "$HOME/ashlr-env.names"; then
+  fail 'devin launch did not receive DEVIN_API_KEY'
 fi
 node "$ROOT/lib/router_io.cjs" record-grok-auth --state "$ASHLR_ROUTER_HOME/state.json" --class subscription >/dev/null
 scores=$(printf 'codex\t10\nclaude\t10\ndevin\t10\ngrok\t10\nomlx\t10\n' | node "$ROOT/lib/router_io.cjs" budget-scores --state "$ASHLR_ROUTER_HOME/state.json" --now "$(date +%s)")
@@ -431,6 +454,281 @@ EOF
     exit 1
   fi
   [[ -x "$HOME/ashlr-router/bin/omlx-mac.sh" ]]
+  node -e 'const fs=require("fs"); const m=fs.statSync(process.argv[1]).mode & 0o777; if (m!==0o600) process.exit(1)' \
+    "$HOME/ashlr-router/config.json"
 )
+
+if [[ "$(umask)" != "0077" ]]; then
+  fail "runner umask is $(umask)"
+fi
+if grep -n 'git add -A\|git add --all\|git add \.' "$ROOT/ashlr-router" "$ROOT"/lib/*.sh "$ROOT/lib/router_io.cjs"; then
+  fail 'runner stages with git add -A'
+fi
+if grep -n '@latest' "$ROOT/ashlr-router" "$ROOT"/lib/*.sh "$ROOT/lib/router_io.cjs" "$ROOT/config.example.json"; then
+  fail 'runner still installs @latest'
+fi
+if ! node "$ROOT/lib/router_io.cjs" branch-ok 'router/codex/9'; then
+  fail 'router/codex/9 was rejected'
+fi
+if ! node "$ROOT/lib/router_io.cjs" branch-ok 'cursor/router-security'; then
+  fail 'cursor/router-security was rejected'
+fi
+if node "$ROOT/lib/router_io.cjs" branch-ok 'feature/router'; then
+  fail 'a non-router branch was accepted'
+fi
+node "$ROOT/lib/router_io.cjs" emit-config "$ROOT/config.example.json" | grep -q "ROUTER_FRESHNESS_ENABLED='0'" \
+  || fail 'freshness is on by default'
+node "$ROOT/lib/router_io.cjs" emit-config "$ROOT/config.example.json" | grep -q "ROUTER_HOST_VERIFY='0'" \
+  || fail 'host verify is on by default'
+node "$ROOT/lib/router_io.cjs" emit-config "$ROOT/config.example.json" | grep -q "ROUTER_LEDGER_MIRROR='0'" \
+  || fail 'ledger mirror is on by default'
+aged=$(printf '%s\n' '{"1.0.0":"2020-01-01T00:00:00.000Z","2.0.0":"2026-10-25T00:00:00.000Z","modified":"2026-10-25T00:00:00.000Z"}' \
+  | node "$ROOT/lib/router_io.cjs" aged-release --days 3 --now 1761436800)
+printf '%s\n' "$aged" | grep -qx '1.0.0' || fail "aged release was $aged"
+usage=$(printf 'SECRET TOKEN line\nrate limit\n3 remaining\nreset 2026-01-02T03:04:05Z\n' \
+  | node "$ROOT/lib/router_io.cjs" parse-usage --now 1761436800)
+node -e '
+  const o = JSON.parse(process.argv[1]);
+  if (Object.prototype.hasOwnProperty.call(o, "raw") || Object.prototype.hasOwnProperty.call(o, "usage")) process.exit(2);
+  if (JSON.stringify(o).includes("SECRET")) process.exit(3);
+  if (String(o.remaining) !== "3" || o.outcome !== "limited" || o.reset !== "2026-01-02T03:04:05Z") process.exit(4);
+' "$usage" || fail 'parseUsage kept transcript text'
+printf 'SECRET\n' > "$tmp/raw-secret.txt"
+node "$ROOT/lib/router_io.cjs" append-job "$tmp/ledger-privacy.jsonl" \
+  --ts 2026-01-02T03:04:05Z --event job --repo ashlrai/phantom --issue 1 --cli codex \
+  --exit 0 --remaining 4 --reset 2026-01-02T03:04:05Z --raw-file "$tmp/raw-secret.txt" --usage 'SECRET TOKEN'
+if grep -q 'SECRET\|"raw"\|"usage"' "$tmp/ledger-privacy.jsonl"; then
+  fail 'ledger stored transcript text'
+fi
+mirror_before=$(wc -l < "$ASHLR_TEST_GH_LOG")
+router_mirror_line '{"raw":"SECRET-MIRROR","outcome":"ok"}'
+mirror_after=$(wc -l < "$ASHLR_TEST_GH_LOG")
+if [[ "$mirror_before" != "$mirror_after" ]]; then
+  fail 'ledger mirror posted by default'
+fi
+
+vdir=$tmp/verify-repo
+mkdir -p "$vdir/node_modules"
+printf '%s\n' '{"scripts":{"test":"true","lint":"true"}}' > "$vdir/package.json"
+cat > "$tmp/bin/npm" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s\n' "$HOME" >> "${TMPDIR:-/tmp}/npm-verify.txt"
+if [[ -f "$HOME/.codex/auth.json" || -d "$HOME/.config/gh" ]]; then
+  printf 'SAW_CREDENTIAL_DIR\n' >> "${TMPDIR:-/tmp}/npm-verify.txt"
+fi
+env | awk -F= '/TOKEN|KEY/ { print $1 }' >> "${TMPDIR:-/tmp}/npm-verify.txt"
+exit 0
+EOF
+chmod +x "$tmp/bin/npm"
+rm -f "${TMPDIR:-/tmp}/npm-verify.txt"
+router_verify "$vdir"
+if [[ -f "${TMPDIR:-/tmp}/npm-verify.txt" ]]; then
+  fail 'default host verify ran npm'
+fi
+export ROUTER_HOST_VERIFY=1
+router_verify "$vdir"
+unset ROUTER_HOST_VERIFY
+if ! grep -q '^HOME=' "${TMPDIR:-/tmp}/npm-verify.txt"; then
+  fail 'optional verify did not run'
+fi
+verify_home=$(awk -F= '/^HOME=/ { print $2; exit }' "${TMPDIR:-/tmp}/npm-verify.txt")
+if [[ "$verify_home" == "$HOME" || "$verify_home" == *"/.codex"* || "$verify_home" == *"/.config/gh"* ]]; then
+  fail "optional verify HOME was $verify_home"
+fi
+if grep -q 'SAW_CREDENTIAL_DIR\|GH_TOKEN\|OPENAI_API_KEY\|XAI_API_KEY' "${TMPDIR:-/tmp}/npm-verify.txt"; then
+  fail 'optional verify could see credential material'
+fi
+
+cat > "$tmp/bin/omlx" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${OMLX_SERVE_LOG:?}"
+exit 0
+EOF
+chmod +x "$tmp/bin/omlx"
+export OMLX_SERVE_FOREGROUND=1
+export OMLX_SERVE_LOG=$tmp/omlx-args.txt
+# shellcheck source=../omlx-mac.sh
+source "$ROOT/omlx-mac.sh"
+omlx_start_loopback >/dev/null
+if ! grep -q -- '--host 127.0.0.1' "$OMLX_SERVE_LOG" || ! grep -q -- '--port 8000' "$OMLX_SERVE_LOG"; then
+  fail "omlx was not bound to loopback: $(cat "$OMLX_SERVE_LOG")"
+fi
+if grep -q '0.0.0.0' "$OMLX_SERVE_LOG"; then
+  fail 'omlx bind included 0.0.0.0'
+fi
+
+ROUTER_PICKED_CLIS=""
+if router_cli_at_capacity codex; then
+  fail 'an idle CLI was at capacity'
+fi
+router_note_cli_pick codex
+if ! router_cli_at_capacity codex; then
+  fail 'max_per_cli did not count a selected CLI'
+fi
+why=$(router_cli_block_reason codex workhorse dry | tr -d '\n')
+if [[ "$why" != "busy" ]]; then
+  fail "selected codex was not busy: $why"
+fi
+ROUTER_PICKED_CLIS=""
+
+lock=$ASHLR_ROUTER_HOME/locks/jobs/pidcheck
+rm -rf "$lock"
+(
+  router_acquire_lock "$lock"
+  sleep 30
+) &
+child=$!
+ready=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [[ -f "$lock/pid" ]]; then
+    ready=1
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$ready" -ne 1 ]]; then
+  fail 'child lock was not created'
+fi
+got=$(cat "$lock/pid")
+if [[ "$got" == "$$" ]]; then
+  fail "lock pid is the parent $$"
+fi
+router_release_lock "$lock"
+if [[ ! -d "$lock" ]]; then
+  fail 'parent released a child lock'
+fi
+kill "$child" 2>/dev/null || true
+wait "$child" 2>/dev/null || true
+rm -rf "$lock"
+lock2=$ASHLR_ROUTER_HOME/locks/jobs/pidcheck-owner
+(
+  router_acquire_lock "$lock2"
+  router_release_lock "$lock2"
+)
+if [[ -d "$lock2" ]]; then
+  fail 'lock owner did not release it'
+fi
+
+: > "$ASHLR_TEST_CODEX_LOG"
+touch "$ASHLR_ROUTER_HOME/PAUSE"
+gh_before=$(wc -l < "$ASHLR_TEST_GH_LOG")
+router_queue_jobs live
+gh_after=$(wc -l < "$ASHLR_TEST_GH_LOG")
+if [[ "$gh_before" != "$gh_after" ]]; then
+  fail 'PAUSE did not stop selection'
+fi
+printf 'ashlrai/phantom\t8\tuse\tcodex\tworkhorse\t-\t\twork\t\ttitle\t%s\n' "$body" > "$ASHLR_ROUTER_HOME/tmp/paused-queue"
+router_launch_from_file "$ASHLR_ROUTER_HOME/tmp/paused-queue"
+if [[ -s "$ASHLR_TEST_CODEX_LOG" ]]; then
+  fail 'PAUSE did not stop launch'
+fi
+rm -f "$ASHLR_ROUTER_HOME/PAUSE"
+
+real_git=$GIT_BIN
+cat > "$tmp/bin/git" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *push* ]]; then
+  printf '%s\\n' "\$*" >> "$tmp/push.log"
+  exit 0
+fi
+exec "$real_git" "\$@"
+EOF
+chmod +x "$tmp/bin/git"
+hash -r
+: > "$tmp/push.log"
+
+deny=$tmp/deny-repo
+git init -q -b master "$deny"
+mkdir -p "$deny/.github"
+printf '%s\n' '/.github/** @owner' '/CODEOWNERS @owner' 'src/core/authority/** @owner' > "$deny/.github/CODEOWNERS"
+printf 'seed\n' > "$deny/README.md"
+git -C "$deny" add README.md .github/CODEOWNERS
+git -C "$deny" commit -q -m seed
+mkdir -p "$deny/.github/workflows" "$deny/src/core/authority"
+printf 'name: ci\n' > "$deny/.github/workflows/ci.yml"
+printf 'tier1\n' > "$deny/src/core/authority/protected-paths.ts"
+printf 'safe\n' > "$deny/src/ok.txt"
+deny_before=$(git -C "$deny" rev-parse HEAD)
+if router_commit_and_push "$deny" ashlrai/phantom router/codex/99 master codex subject 99 workhorse 0 ""; then
+  fail 'a protected path was published'
+fi
+deny_after=$(git -C "$deny" rev-parse HEAD)
+if [[ "$deny_before" != "$deny_after" ]]; then
+  fail 'a protected path was committed'
+fi
+if [[ -s "$tmp/push.log" ]]; then
+  fail "a protected path was pushed: $(cat "$tmp/push.log")"
+fi
+
+pkg=$tmp/pkg-repo
+git init -q -b master "$pkg"
+printf '%s\n' '{ "name": "demo", "version": "1.0.0", "description": "old" }' > "$pkg/package.json"
+git -C "$pkg" add package.json
+git -C "$pkg" commit -q -m seed
+printf '%s\n' '{ "name": "demo", "version": "1.0.0", "description": "new" }' > "$pkg/package.json"
+if ! node "$ROOT/lib/router_io.cjs" publish-check --worktree "$pkg"; then
+  fail 'a package.json description change was denied'
+fi
+printf '%s\n' '{ "name": "demo", "version": "1.0.0", "scripts": { "publish": "npm publish" } }' > "$pkg/package.json"
+if node "$ROOT/lib/router_io.cjs" publish-check --worktree "$pkg" >/dev/null; then
+  fail 'a package.json publish script change was allowed'
+fi
+git -C "$pkg" checkout -q -- package.json
+printf 'release: true\n' > "$pkg/release.yml"
+if node "$ROOT/lib/router_io.cjs" publish-check --worktree "$pkg" >/dev/null; then
+  fail 'release.yml was allowed'
+fi
+
+ok=$tmp/ok-repo
+git init -q -b master "$ok"
+printf 'seed\n' > "$ok/README.md"
+git -C "$ok" add README.md
+git -C "$ok" commit -q -m seed
+printf 'change\n' > "$ok/NOTES.txt"
+cat > "$tmp/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${ASHLR_TEST_GH_LOG:?}"
+cmd=$1
+shift || true
+case "$cmd" in
+  api)
+    printf 'tester\n'
+    exit 0
+    ;;
+  repo)
+    sub=${1:-}
+    if [[ "$sub" == "fork" ]]; then
+      exit 0
+    fi
+    printf 'unexpected repo %s\n' "$sub" >&2
+    exit 1
+    ;;
+  pr)
+    sub=${1:-}
+    shift || true
+    if [[ "$sub" == "create" ]]; then
+      printf 'https://example.test/pull/9\n'
+      exit 0
+    fi
+    printf 'unexpected pr %s\n' "$sub" >&2
+    exit 1
+    ;;
+  *)
+    printf 'unexpected gh %s\n' "$cmd" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"
+: > "$tmp/push.log"
+if ! router_commit_and_push "$ok" ashlrai/phantom router/codex/100 master codex subject 100 workhorse 0 ""; then
+  fail 'an allowed path did not publish to the fork'
+fi
+if ! grep -q 'https://github.com/tester/phantom.git' "$tmp/push.log"; then
+  fail "fork push URL missing: $(cat "$tmp/push.log")"
+fi
+if grep -q 'origin' "$tmp/push.log"; then
+  fail "push targeted origin: $(cat "$tmp/push.log")"
+fi
 
 printf 'ok pools keepalive devin grok omlx\n'

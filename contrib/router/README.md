@@ -57,7 +57,7 @@ The log line is `keepalive success` or `keepalive failure`. The command output i
 
 ## Devin
 
-Devin is the third pool. The runner shells out to `ashlr devin status --json` and `ashlr devin launch`. It does not read the API key. The key stays in the macOS Keychain, where `ashlr devin connect` put it. The org on the status payload must equal `DEVIN_ORG_ID` (`org-` plus 1 to 120 letters, digits, `_`, or `-`).
+Devin is the third pool. The runner shells out to `ashlr devin status --json` and `ashlr devin launch` through `env -i`. That environment keeps `PATH`, `HOME`, `USER`, `LANG`, `TERM`, and `TMPDIR`, and adds only `DEVIN_API_KEY` and `DEVIN_ORG_ID` when they are already set. `GH_TOKEN`, `OPENAI_API_KEY`, `XAI_API_KEY`, and every other token or key are left out. The org on the status payload must equal `DEVIN_ORG_ID` (`org-` plus 1 to 120 letters, digits, `_`, or `-`).
 
 A Devin launch delivers its own draft pull request. The runner claims the issue, records the launch, and does not open a second pull request. Status JSON is not copied into the log. The log says `devin ready` or `devin unavailable`.
 
@@ -84,7 +84,7 @@ bash contrib/router/omlx-mac.sh download mlx-community/Qwen3-8B-4bit
 bash contrib/router/omlx-mac.sh --prune-ollama qwen3.8:27b-ctx64k --omlx-model mlx-community/Qwen3-8B-4bit
 ```
 
-`install` is macOS only. It runs `brew install jundot/omlx/omlx`, then `omlx start`, then the health check. `download` reads the model size and refuses when free disk minus that size would drop below 20 GB. An unknown size is also refused. `--prune-ollama` runs `ollama rm` only after the oMLX model is listed and a tiny completion returns.
+`install` is macOS only. It runs `brew install jundot/omlx/omlx`, then `omlx serve --host 127.0.0.1 --port 8000`, then the health check. The bind address is the flag, not the default in settings. `download` reads the model size and refuses when free disk minus that size would drop below 20 GB. An unknown size is also refused. `--prune-ollama` runs `ollama rm` only after the oMLX model is listed and a tiny completion returns.
 
 ## Lease
 
@@ -98,7 +98,13 @@ Codex subscription rows use adapter `codex-rate-limits`. A SuperGrok login uses 
 
 ## Guardrails
 
-No `*_TOKEN` or `*_KEY` variable is passed to a model CLI. Pull requests are drafts. At most 2 jobs run at once, and at most 1 job per CLI. Free disk under 20 GB, or battery power under 30 percent, skips a tick. A `PAUSE` file in the router home skips new jobs. Lease recovery still runs.
+No `*_TOKEN` or `*_KEY` variable is passed to a model CLI. Devin is the exception for `DEVIN_API_KEY` only, and only inside its clean environment. Pull requests are drafts. At most 2 jobs run at once, and at most `max_per_cli` jobs per CLI (the default is 1). Free disk under 20 GB, or battery power under 30 percent, skips a tick. A `PAUSE` file in the router home skips selection and skips each job launch. Lease recovery still runs.
+
+The runner does not push to the base repository. A push there starts `on: push` workflows, and those workflows can see repository secrets. Before commit it lists every changed path. If any path matches `.github/**`, `CODEOWNERS`, release or publish config (`.releaserc*`, `release*.yml`, publish scripts, or a `package.json` change that alters `publishConfig` or a publish or release script), or a path in that repo's `CODEOWNERS` list at `HEAD`, the job stops. Nothing is staged for a later push, and nothing is pushed. The branch prefix `router/*` or `cursor/router-*` is checked as well.
+
+When the path check passes, the runner pushes the branch to the authenticated user's fork (`gh repo fork --clone=false`, then `git push` to `https://github.com/<login>/<repo>.git`) and opens the draft with `--head <login>:<branch>`. If the fork login or the fork push fails, the job stops. It does not fall back to the base repository. The installer and the runner set `umask 077`.
+
+Host verification is off. The draft pull request's CI is the test run. `verify.host` can turn on a local `npm test` and `npm run lint`, and that run uses a throwaway `HOME` and an allowlisted `PATH`. Ledger lines keep structured fields (`remaining`, `reset`, `pool`, `outcome`) and do not keep transcript text. Ledger lines are not copied to GitHub issue comments unless `ledger_mirror` is true, and then only those structured fields are posted. Weekly CLI auto-update is off. When `freshness.enabled` is true, Codex updates only to a release that is at least `min_age_days` old (default 3). It does not install `@latest`.
 
 `ashlr-router status` prints jobs, accounts, pools, cooldowns, disk, battery, and the last 10 ledger lines. `ashlr-router dry-run` prints the plan and does not claim or run a model CLI.
 
@@ -122,10 +128,10 @@ Grok, only after the subscription check above:
 env -i PATH HOME USER LANG TERM TMPDIR grok --prompt-file "$PROMPT" --model "$MODEL" --permission-mode acceptEdits --sandbox workspace --output-format json --no-auto-update --cwd "$WORKTREE"
 ```
 
-Devin keeps the parent environment so `ashlr` can reach the Keychain. The runner does not put the API key on the command line:
+Devin, clean environment, only the Devin variables when they are already set:
 
 ```text
-ashlr devin launch "<issue text>" --repo owner/name --title "<title>" --json
+env -i PATH HOME USER LANG TERM TMPDIR DEVIN_API_KEY DEVIN_ORG_ID ashlr devin launch "<issue text>" --repo owner/name --title "<title>" --json
 ```
 
 oMLX, loopback only:
@@ -144,13 +150,13 @@ The model flag is omitted when the probe rejected the configured model. Codex pr
 - The work `~/.codex` pool stays dead after an auth failure until the pool state is edited by hand.
 - Local oMLX applies a unified diff and never downloads. It is off by default. `omlx-mac.sh download` is a separate, disk-guarded step.
 - `phantom route --json` is optional. An invalid pick falls back to the spend order. A returned `ollama` cli is treated as `omlx`.
-- Verification runs `npm test` and `npm run lint` only when `package.json` and `node_modules` already exist, with `npm_config_offline=true`.
+- Host verification is off by default. Draft PR CI is the check. An opted-in local verify uses a throwaway HOME.
 - `git worktree remove` is never forced. A dirty tree is left in place after its patch is saved.
 - The launchd `PATH` is the install-time `PATH` plus the usual Homebrew and user bin directories.
 - The lock is one Mac, not a multi-host lease. Rate-limit parsing is best effort.
-- CLI stdout is stored in the ledger and can echo secrets if a tool prints them. The keepalive log does not store that stdout.
+- Ledger rows do not store CLI transcript lines. The keepalive log does not store command stdout.
 - The draft body contains `Fixes #N`, so merging the draft would close the issue. A Devin launch can open its own draft as well.
 - A Codex probe can touch files under that account's `CODEX_HOME` even with `--ephemeral`.
 - `workspace-write` does not fully block network access. Claude `acceptEdits` is a permission mode, not an OS sandbox.
 - Timeout exit 124 can collide with a CLI that exits 124.
-- An empty recorded version is treated as older, so a weekly Codex update is attempted.
+- Auto-update is off unless `freshness.enabled` is true. A Codex update then pins a release at least 3 days old.

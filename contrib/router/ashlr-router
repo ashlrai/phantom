@@ -3,6 +3,7 @@
 # Model CLIs run with an allowlisted environment. The runner, not the model,
 # commits, pushes, and opens the draft.
 set -euo pipefail
+umask 077
 
 ROUTER_ROOT=""
 ROUTER_LIB=""
@@ -64,6 +65,12 @@ router_ensure_state() {
   fi
 }
 
+# bash 3.2 keeps $$ as the parent inside a background job. exec replaces the
+# command-substitution shell, so sh's PPID is the shell that owns the lock.
+router_self_pid() {
+  exec sh -c 'echo "$PPID"'
+}
+
 router_lock_alive() {
   local dir=$1
   local pid
@@ -75,9 +82,11 @@ router_lock_alive() {
 
 router_acquire_lock() {
   local dir=$1
+  local pid
+  pid=$(router_self_pid)
   mkdir -p "$(dirname "$dir")"
   if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "$dir/pid"
+    printf '%s\n' "$pid" > "$dir/pid"
     return 0
   fi
   if router_lock_alive "$dir"; then
@@ -85,7 +94,7 @@ router_acquire_lock() {
   fi
   rm -rf "$dir"
   if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "$dir/pid"
+    printf '%s\n' "$pid" > "$dir/pid"
     return 0
   fi
   return 1
@@ -93,10 +102,11 @@ router_acquire_lock() {
 
 router_release_lock() {
   local dir=$1
-  local pid
+  local pid self
   [[ -d "$dir" ]] || return 0
   pid=$(cat "$dir/pid" 2>/dev/null || true)
-  if [[ "$pid" == "$$" ]]; then
+  self=$(router_self_pid)
+  if [[ -n "$pid" && "$pid" == "$self" ]]; then
     rm -rf "$dir"
   fi
 }
@@ -127,9 +137,49 @@ router_active_jobs() {
   printf '%s\n' "$n"
 }
 
+router_cli_picked_count() {
+  local cli=$1
+  local n=0 item
+  local IFS=','
+  for item in ${ROUTER_PICKED_CLIS:-}; do
+    if [[ "$item" == "$cli" ]]; then
+      n=$((n + 1))
+    fi
+  done
+  printf '%s\n' "$n"
+}
+
+router_cli_active_count() {
+  local cli=$1
+  local n
+  n=$(router_cli_picked_count "$cli")
+  if router_lock_alive "$ROUTER_HOME/locks/cli-$cli"; then
+    n=$((n + 1))
+  fi
+  printf '%s\n' "$n"
+}
+
+router_cli_at_capacity() {
+  local cli=$1
+  local max n
+  max=${ROUTER_MAX_PER_CLI:-1}
+  [[ "$max" =~ ^[0-9]+$ ]] || max=1
+  n=$(router_cli_active_count "$cli")
+  [[ "$n" -ge "$max" ]]
+}
+
 router_cli_busy() {
   local cli=$1
-  router_lock_alive "$ROUTER_HOME/locks/cli-$cli"
+  router_cli_at_capacity "$cli"
+}
+
+router_note_cli_pick() {
+  local cli=$1
+  ROUTER_PICKED_CLIS="${ROUTER_PICKED_CLIS:-},$cli"
+}
+
+router_paused() {
+  [[ -e "$ROUTER_HOME/PAUSE" ]]
 }
 
 router_account_dead() {
@@ -201,15 +251,16 @@ router_reserve_account() {
     rm -rf "$dir"
   fi
   mkdir "$dir"
-  printf '%s\n' "$$" > "$dir/pid"
+  printf '%s\n' "$(router_self_pid)" > "$dir/pid"
 }
 
 router_release_reserve() {
   local dir=$ROUTER_HOME/locks/reserve-codex-$1
-  local pid
+  local pid self
   [[ -d "$dir" ]] || return 0
   pid=$(cat "$dir/pid" 2>/dev/null || true)
-  if [[ "$pid" == "$$" ]]; then
+  self=$(router_self_pid)
+  if [[ -n "$pid" && "$pid" == "$self" ]]; then
     rm -rf "$dir"
   fi
 }
@@ -353,7 +404,7 @@ router_sync_pools() {
     --verify-exit "" --pr-url "" --usage "" --rate-limit "" --reset "" \
     --remaining "" --metered 0 --warning "" \
     --pools-file "$ROUTER_HOME/tmp/pools-snapshot.json"
-  if [[ -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+  if [[ "$ROUTER_LEDGER_MIRROR" == "1" && -f "$ROUTER_HOME/ledger.jsonl" ]]; then
     line=$(tail -n 1 "$ROUTER_HOME/ledger.jsonl")
     router_mirror_line "$line" || true
   fi
@@ -592,7 +643,6 @@ router_read_nul() {
 router_update_cli() {
   local cli=$1
   local before after remote rc
-  local -a args
   before=$(router_capture_version "$cli" | tr -d '\n')
   router_log "freshness $cli before=$before"
   if [[ "$ROUTER_FRESHNESS_ENABLED" != "1" ]]; then
@@ -605,34 +655,29 @@ router_update_cli() {
     router_store_version "$cli" "$before" "$before" "report-only" 0
     return 0
   fi
-  router_read_nul < <(node "$ROUTER_IO" update-argv --config "$ROUTER_CONFIG" --cli "$cli")
-  args=("${ROUTER_ARGV[@]}")
-  if [[ ${#args[@]} -eq 0 ]]; then
-    router_log "$cli has no updater configured"
+  if [[ "$cli" != "codex" ]]; then
+    router_log "$cli updater skipped; release age cannot be proven"
     router_store_version "$cli" "$before" "$before" "report-only" 0
     return 0
   fi
-  if [[ "$cli" == "codex" ]]; then
-    set +e
-    remote=$(router_exec_clean npm view @openai/codex version 2>&1)
-    set -e
-    remote=$(printf '%s' "$remote" | node "$ROUTER_IO" version-of | tr -d '\n')
-    if [[ -z "$remote" ]]; then
-      router_log "codex version lookup failed; jobs are not blocked"
-      router_store_version "$cli" "$before" "$before" "lookup-failed" 1
-      return 0
-    fi
-    if [[ -n "$before" ]] && ! node "$ROUTER_IO" semver-lt "$before" "$remote"; then
-      router_log "codex $before is current ($remote)"
-      router_store_version "$cli" "$before" "$before" "current" 0
-      return 0
-    fi
-    router_log "updating codex ${before:-unknown} -> $remote"
-  else
-    router_log "running $cli updater from ${before:-unknown}"
-  fi
   set +e
-  router_exec_clean "${args[@]}"
+  remote=$(router_exec_clean npm view @openai/codex time --json 2>/dev/null)
+  set -e
+  remote=$(printf '%s' "$remote" | node "$ROUTER_IO" aged-release --days "${ROUTER_FRESHNESS_MIN_AGE_DAYS:-3}" --now "$(date +%s)" || true)
+  remote=$(printf '%s' "$remote" | tr -d '\n')
+  if [[ -z "$remote" ]]; then
+    router_log "no codex release is ${ROUTER_FRESHNESS_MIN_AGE_DAYS:-3} days old; not updating"
+    router_store_version "$cli" "$before" "$before" "too-new" 0
+    return 0
+  fi
+  if [[ -n "$before" ]] && ! node "$ROUTER_IO" semver-lt "$before" "$remote"; then
+    router_log "codex $before is current enough ($remote)"
+    router_store_version "$cli" "$before" "$before" "current" 0
+    return 0
+  fi
+  router_log "updating codex ${before:-unknown} -> $remote"
+  set +e
+  router_exec_clean npm i -g "@openai/codex@${remote}"
   rc=$?
   set -e
   after=$(router_capture_version "$cli" | tr -d '\n')
@@ -917,6 +962,10 @@ router_cli_block_reason() {
   local tier=$2
   local live=$3
   local installed
+  if router_cli_at_capacity "$cli"; then
+    printf 'busy\n'
+    return 0
+  fi
   case "$cli" in
     grok)
       if [[ "$(router_state_get models.grok.auth | tr -d '\n')" != "subscription" ]]; then
@@ -1204,9 +1253,13 @@ router_comment_file() {
 
 router_mirror_line() {
   local line=$1
-  local list num url body
+  local list num url body public
+  if [[ "$ROUTER_LEDGER_MIRROR" != "1" ]]; then
+    return 0
+  fi
+  public=$(printf '%s\n' "$line" | node "$ROUTER_IO" ledger-public)
   body=$ROUTER_HOME/tmp/mirror-$$.json
-  printf '%s\n' "$line" > "$body"
+  printf '%s\n' "$public" > "$body"
   list=$(gh issue list --repo "$ROUTER_LEDGER_REPO" --state open --limit 20 \
     --search "in:title ${ROUTER_LEDGER_TITLE}" --json number,title 2>/dev/null || printf '[]')
   num=$(printf '%s' "$list" | node "$ROUTER_IO" exact-title --title "$ROUTER_LEDGER_TITLE" | tr -d '\n')
@@ -1350,15 +1403,14 @@ router_usage_fields() {
   ROUTER_LIMITED=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.limited?"1":"0")' "$json")
   ROUTER_RESET=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.reset||"")' "$json")
   ROUTER_REMAINING=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.remaining==null?"":String(o.remaining))' "$json")
-  ROUTER_RAW_TEXT=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.raw||"")' "$json")
+  ROUTER_OUTCOME=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.outcome||"")' "$json")
 }
 
 router_set_cooldown() {
   local cli=$1
   local reset=$2
-  local reason=$3
   [[ -n "$reset" ]] || return 0
-  node "$ROUTER_IO" set-cooldown "$ROUTER_STATE" --cli "$cli" --until "$reset" --reason "$reason"
+  node "$ROUTER_IO" set-cooldown "$ROUTER_STATE" --cli "$cli" --until "$reset" --reason rate-limit
   router_log "cooldown $cli until $reset"
 }
 
@@ -1426,7 +1478,7 @@ router_probe_devin() {
     router_log "devin skipped; ashlr is not installed"
   else
     set +e
-    out=$(ashlr devin status --json 2>/dev/null)
+    out=$(router_exec_devin ashlr devin status --json 2>/dev/null)
     set -e
     view=$(printf '%s' "$out" | node "$ROUTER_IO" devin-view --org "$org" | tr -d '\r')
     unset out
@@ -1472,7 +1524,7 @@ router_run_devin_job() {
   prompt=$ROUTER_HOME/tmp/prompt-${name}-${number}-devin.txt
   router_write_prompt "$prompt" "$repo" "$number" "$title" "$body_file"
   set +e
-  out=$(ashlr devin launch "$(cat "$prompt")" --repo "$repo" --title "$title" --json 2>/dev/null)
+  out=$(router_exec_devin ashlr devin launch "$(cat "$prompt")" --repo "$repo" --title "$title" --json 2>/dev/null)
   rc=$?
   set -e
   parsed=$(printf '%s' "$out" | node "$ROUTER_IO" devin-launch | tr -d '\r')
@@ -1508,7 +1560,7 @@ router_run_devin_job() {
     --verify-exit "" --pr-url "$pr_url" --usage "" --rate-limit "" --reset "" \
     --remaining "" --metered 0 --warning "$session" --account "" --billing acu \
     --pools-file "$pools_file"
-  if [[ -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+  if [[ "$ROUTER_LEDGER_MIRROR" == "1" && -f "$ROUTER_HOME/ledger.jsonl" ]]; then
     router_mirror_line "$(tail -n 1 "$ROUTER_HOME/ledger.jsonl")" || true
   fi
 }
@@ -1525,9 +1577,13 @@ router_run_job() {
   local account=${9:-}
   local held lock_job name prompt attempt cur_tier cur_request resolved warn_line
   local rc verify_rc started ended out err combined model_note metered rate
-  local no_changes push_failed pr_url subject prbody attempt_log existing key
+  local no_changes push_failed pr_url subject attempt_log existing key
   local timeout_until next_cli model_recorded now_iso duration next_tier
   local failover_used tier_retried retry_attempt rc_pr billing pools_file cool_key picked_live
+  if router_paused; then
+    router_log "pause; not launching $repo#$number"
+    return 0
+  fi
   if [[ "$cli" == "devin" ]]; then
     router_run_devin_job "$@"
     return $?
@@ -1641,7 +1697,7 @@ EOF
       else
         cool_key=$cli
       fi
-      router_set_cooldown "$cool_key" "$ROUTER_RESET" "$ROUTER_RAW_TEXT"
+      router_set_cooldown "$cool_key" "$ROUTER_RESET"
     else
       rate=""
     fi
@@ -1689,16 +1745,15 @@ EOF
       metered=0
     fi
     model_note=$requested
-    printf '%s' "$ROUTER_RAW_TEXT" > "$ROUTER_HOME/tmp/raw-${name}-${number}-a${attempt}.txt"
     duration=$((ended - started))
     router_append_job "$attempt_log" \
       --ts "$now_iso" --event job --repo "$repo" --issue "$number" --cli "$cli" \
       --model "$model_recorded" --model-requested "$model_note" --tier "$cur_tier" \
       --attempt "$attempt" --duration-s "$duration" --exit "$rc" \
       --verify-exit "$verify_rc" --pr-url "" --rate-limit "$rate" --reset "$ROUTER_RESET" \
-      --remaining "$ROUTER_REMAINING" --metered "$metered" \
-      --warning "$warning" --account "${ROUTER_ACCOUNT:-}" --billing "$billing" \
-      --pools-file "$pools_file" --raw-file "$ROUTER_HOME/tmp/raw-${name}-${number}-a${attempt}.txt"
+      --remaining "$ROUTER_REMAINING" --outcome "${ROUTER_OUTCOME:-}" --metered "$metered" \
+      --warning "$warning" --account "${ROUTER_ACCOUNT:-}" --pool "${ROUTER_ACCOUNT:-$cli}" --billing "$billing" \
+      --pools-file "$pools_file"
     if [[ "$rc" -eq 124 ]]; then
       break
     fi
@@ -1779,59 +1834,31 @@ EOF
     router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/timeout-$number.txt" || true
     router_drop_claim "$repo" "$number" || true
     node "$ROUTER_IO" replay-ledger "$attempt_log" "$ROUTER_HOME/ledger.jsonl" --pr-url "" | while IFS= read -r line; do
-      printf '%s\n' "$line" > "$ROUTER_HOME/tmp/one-line.txt"
-      router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/one-line.txt" || true
       router_mirror_line "$line" || true
     done
     router_remove_worktree "$ROUTER_CLONE" "$ROUTER_WT" || true
     return 0
   fi
   subject=$(printf '%s' "$title" | tr '\n\r' '  ' | cut -c 1-80)
-  git -C "$ROUTER_WT" add -A
-  router_unstage_secrets "$ROUTER_WT" || true
-  if git -C "$ROUTER_WT" diff --cached --quiet; then
+  set +e
+  router_commit_and_push "$ROUTER_WT" "$repo" "$ROUTER_BRANCH" "$ROUTER_BASE" "$cli" "$subject" "$number" "$cur_tier" "$verify_rc" "$warning"
+  rc_pr=$?
+  set -e
+  if [[ "$rc_pr" -eq 2 ]]; then
     no_changes=1
     printf 'ashlr-router: %s exited %s and made no file changes.\n' "$cli" "$rc" \
       > "$ROUTER_HOME/tmp/nochange-$number.txt"
     router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/nochange-$number.txt" || true
+  elif [[ "$rc_pr" -ne 0 ]]; then
+    push_failed=1
+    pr_url=""
   else
-    if ! git -C "$ROUTER_WT" commit -m "router(${cli}): ${subject}" -m "Refs #${number}"; then
-      router_log "commit failed for $repo#$number"
-      push_failed=1
-    elif ! git -C "$ROUTER_WT" -c "credential.helper=!gh auth git-credential" \
-      push -u origin "HEAD:${ROUTER_BRANCH}"; then
-      router_log "push failed for ${ROUTER_BRANCH}"
-      push_failed=1
-    else
-      prbody=$ROUTER_HOME/tmp/pr-$number.md
-      {
-        printf 'Draft opened by ashlr-router.\n\n'
-        printf 'CLI: %s\nTier: %s\nVerification exit: %s\n' "$cli" "$cur_tier" "${verify_rc:-}"
-        if [[ -n "$warning" ]]; then
-          printf 'Warning: %s\n' "$warning"
-        fi
-        printf '\nFixes #%s\n' "$number"
-      } > "$prbody"
-      set +e
-      pr_url=$(gh pr create --repo "$repo" --draft --head "$ROUTER_BRANCH" --base "$ROUTER_BASE" \
-        --title "router(${cli}): ${subject}" --body-file "$prbody")
-      rc_pr=$?
-      set -e
-      if [[ "$rc_pr" -ne 0 ]]; then
-        router_log "pr create failed for $repo#$number"
-        push_failed=1
-        pr_url=""
-      else
-        pr_url=$(printf '%s\n' "$pr_url" | grep -Eo 'https://[^ ]+' | head -n 1 || true)
-      fi
-    fi
+    pr_url=$ROUTER_PR_URL
   fi
   if [[ "$ROUTER_LIMITED" == "1" ]]; then
     router_drop_claim "$repo" "$number" || true
   fi
   node "$ROUTER_IO" replay-ledger "$attempt_log" "$ROUTER_HOME/ledger.jsonl" --pr-url "$pr_url" | while IFS= read -r line; do
-    printf '%s\n' "$line" > "$ROUTER_HOME/tmp/one-line.txt"
-    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/one-line.txt" || true
     router_mirror_line "$line" || true
   done
   if [[ "$no_changes" -eq 0 && "$push_failed" -eq 0 ]]; then
@@ -1841,6 +1868,119 @@ EOF
   else
     router_log "left worktree in place after a git or PR failure: $ROUTER_WT"
   fi
+}
+
+router_fork_login() {
+  local login
+  login=$(gh api user --jq .login 2>/dev/null || true)
+  login=$(printf '%s' "$login" | tr -d '\n\r ')
+  case "$login" in
+    ""|*[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  printf '%s\n' "$login"
+}
+
+router_refuse_paths() {
+  local repo=$1
+  local number=$2
+  local denied=$3
+  local text
+  text=$(printf '%s' "$denied" | tr '\n' ' ' | cut -c 1-500)
+  router_log "refusing job; protected path"
+  printf 'ashlr-router refused this job before commit. Protected path: %s\nNothing was pushed.\n' \
+    "$text" > "$ROUTER_HOME/tmp/refused-$number.txt"
+  router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+}
+
+router_commit_and_push() {
+  local wt=$1
+  local repo=$2
+  local branch=$3
+  local base=$4
+  local cli=$5
+  local subject=$6
+  local number=$7
+  local tier=$8
+  local verify_rc=$9
+  local warning=${10:-}
+  local denied path any login name url prbody rc_pr
+  ROUTER_PR_URL=""
+  if ! denied=$(node "$ROUTER_IO" publish-check --worktree "$wt"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    git -C "$wt" reset -q || true
+    return 1
+  fi
+  if ! node "$ROUTER_IO" branch-ok "$branch"; then
+    router_log "refusing branch ${branch}; nothing was pushed"
+    return 1
+  fi
+  any=0
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" ]] || continue
+    any=1
+    git -C "$wt" add -- "$path"
+  done < <(node "$ROUTER_IO" stage-list --worktree "$wt")
+  if [[ "$any" -eq 0 ]]; then
+    return 2
+  fi
+  if ! denied=$(node "$ROUTER_IO" publish-check --worktree "$wt"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    git -C "$wt" reset -q || true
+    return 1
+  fi
+  if git -C "$wt" diff --cached --quiet; then
+    return 2
+  fi
+  if ! git -C "$wt" commit -m "router(${cli}): ${subject}" -m "Refs #${number}"; then
+    router_log "commit failed for $repo#$number"
+    return 1
+  fi
+  if ! denied=$(node "$ROUTER_IO" commit-check --worktree "$wt"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    git -C "$wt" reset -q --mixed HEAD~1 || true
+    return 1
+  fi
+  if ! login=$(router_fork_login); then
+    router_log "fork login unavailable; refusing to push to the base repository"
+    return 1
+  fi
+  name=${repo#*/}
+  case "$name" in
+    ""|*[!A-Za-z0-9._-]*)
+      router_log "refusing repository name for a fork push"
+      return 1
+      ;;
+  esac
+  gh repo fork "$repo" --clone=false >/dev/null 2>&1 \
+    || router_log "fork ensure returned non-zero; the push target stays the fork"
+  url="https://github.com/${login}/${name}.git"
+  if ! git -C "$wt" -c "credential.helper=!gh auth git-credential" \
+    push "$url" "HEAD:refs/heads/${branch}"; then
+    router_log "fork push failed for ${branch}; the base repository was not pushed"
+    return 1
+  fi
+  prbody=$ROUTER_HOME/tmp/pr-$number.md
+  {
+    printf 'Draft opened by ashlr-router.\n\n'
+    printf 'CLI: %s\nTier: %s\nVerification exit: %s\n' "$cli" "$tier" "${verify_rc:-}"
+    if [[ -n "$warning" ]]; then
+      printf 'Warning: %s\n' "$warning"
+    fi
+    printf '\nThe branch is on the fork. The base repository was not pushed.\n'
+    printf '\nFixes #%s\n' "$number"
+  } > "$prbody"
+  set +e
+  ROUTER_PR_URL=$(gh pr create --repo "$repo" --draft --head "${login}:${branch}" --base "$base" \
+    --title "router(${cli}): ${subject}" --body-file "$prbody")
+  rc_pr=$?
+  set -e
+  if [[ "$rc_pr" -ne 0 ]]; then
+    router_log "pr create failed for $repo#$number"
+    ROUTER_PR_URL=""
+    return 1
+  fi
+  ROUTER_PR_URL=$(printf '%s\n' "$ROUTER_PR_URL" | grep -Eo 'https://[^ ]+' | head -n 1 || true)
+  return 0
 }
 
 router_print_plan() {
@@ -1874,7 +2014,7 @@ router_print_plan() {
   if [[ "$cli" == "omlx" ]]; then
     printf 'omlx chat http://%s/v1/chat/completions model=%s\n' "$ROUTER_LOCAL_HOST" "$model"
   elif [[ "$cli" == "devin" ]]; then
-    printf 'ashlr devin launch --repo %s --title <title> --json\n' "$repo"
+    printf 'env -i PATH HOME USER LANG TERM TMPDIR DEVIN_API_KEY DEVIN_ORG_ID ashlr devin launch --repo %s --title <title> --json\n' "$repo"
   elif [[ "$cli" == "codex" && -n "$account" ]]; then
     home=$(router_codex_home "$account" | tr -d '\n')
     router_format_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" "${ROUTER_ARGV[@]}"
@@ -1944,6 +2084,10 @@ router_launch_from_file() {
   pids=()
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
+    if router_paused; then
+      router_log "pause; not launching a selected job"
+      break
+    fi
     repo=${line%%$'\t'*}
     rest=${line#*$'\t'}
     number=${rest%%$'\t'*}
@@ -1985,10 +2129,15 @@ router_queue_jobs() {
   local live=$1
   local out line repo number labels title_b64 body_b64 title body route
   local label_model label_tier body_model body_tier requested tier body_file decision
-  local active slots picked key kind
+  local active slots picked key kind rest account
   local sel=$ROUTER_HOME/locks/select
   out=$ROUTER_HOME/tmp/queue-$$
   : > "$out"
+  ROUTER_PICKED_CLIS=""
+  if router_paused; then
+    router_log "pause; not selecting jobs"
+    return 0
+  fi
   if ! router_acquire_lock "$sel"; then
     router_log "another selection is running"
     return 0
@@ -2003,6 +2152,10 @@ router_queue_jobs() {
   fi
   while IFS=$'\t' read -r repo number labels title_b64 body_b64; do
     [[ "$picked" -lt "$slots" ]] || break
+    if router_paused; then
+      router_log "pause; stopping selection"
+      break
+    fi
     [[ "$number" =~ ^[0-9]+$ ]] || continue
     route=$(router_route_from_labels "$labels")
     if [[ "$route" == skip* ]]; then
@@ -2033,6 +2186,17 @@ EOF
       router_log "skip $repo#$number ${decision#skip$'\t'}"
       continue
     fi
+    rest=${decision#*$'\t'}
+    kind=${rest%%$'\t'*}
+    if router_cli_at_capacity "$kind"; then
+      router_log "skip $repo#$number cli-cap $kind"
+      if [[ "$kind" == "codex" ]]; then
+        account=${rest##*$'\t'}
+        router_release_reserve "$account"
+      fi
+      continue
+    fi
+    router_note_cli_pick "$kind"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$number" "$decision" "$requested" "$title" "$body_file" >> "$out"
     picked=$((picked + 1))
   done < <(router_collect_issues)
