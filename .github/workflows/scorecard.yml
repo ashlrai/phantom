@@ -1,17 +1,17 @@
 name: Scorecard
 
-# Push is the default branch. This repository's default branch is master.
-# Weekly otherwise, on a minute that does not collide with the other
-# scheduled workflows in this repo or the ashlr-md Saturday 01:30 UTC run.
-# publish_results needs id-token: write. The Scorecard API accepts this
-# public repository when the job uses the actions below.
+# Weekly only, plus a manual run. No push and no pull_request.
+# Tuesday 04:19 UTC stays off CI (41 7), companion smoke (41 6), the
+# dependency audit (17 9), CodeQL (53 8), and the ashlr-md Saturday
+# 01:30 UTC run. publish_results needs id-token: write. The Scorecard
+# API accepts this public repository when the job uses the actions below.
 on:
-  push:
-    branches: [master]
   schedule:
     - cron: "19 4 * * 2"
+  workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   analysis:

@@ -49,7 +49,8 @@ Dependabot version-update entries are removed. Renovate opens version pull
 requests before 6am America/New_York on Monday. Non-major updates share one
 pull request. GitHub Actions non-major updates, including digest and pin
 updates, are their own group. Each major update opens its own pull request.
-`prConcurrentLimit` is 3,
+Renovate waits 3 days after a release (`minimumReleaseAge`) before opening
+a version pull request. `prConcurrentLimit` is 3,
 `prHourlyLimit` is 2, and automerge is off.
 
 Dependabot alerts and secret-scanning push protection remain enabled.

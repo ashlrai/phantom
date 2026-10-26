@@ -531,6 +531,7 @@ exit "\${TEST_OSV_RC:-0}"
       prConcurrentLimit: number;
       prHourlyLimit: number;
       automerge: boolean;
+      minimumReleaseAge: string;
       vulnerabilityAlerts: { enabled: boolean; automerge: boolean };
       packageRules: Array<{
         groupName?: string;
@@ -544,6 +545,7 @@ exit "\${TEST_OSV_RC:-0}"
     expect(renovate.prConcurrentLimit).toBe(3);
     expect(renovate.prHourlyLimit).toBe(2);
     expect(renovate.automerge).toBe(false);
+    expect(renovate.minimumReleaseAge).toBe('3 days');
     expect(renovate.vulnerabilityAlerts).toEqual({ enabled: true, automerge: false });
     expect(
       renovate.packageRules.flatMap((rule) => (rule.groupName ? [rule.groupName] : [])),

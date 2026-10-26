@@ -13,6 +13,11 @@ on:
     - cron: "53 8 * * *"
   workflow_dispatch:
 
+# A burst of pushes to master cancels the older scan.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
