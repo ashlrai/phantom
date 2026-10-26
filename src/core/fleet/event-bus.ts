@@ -17,7 +17,7 @@
  *   pre-M241 behaviour; default-on when key is absent or true).
  *
  * SAFETY INVARIANTS
- *   - Handlers may only ENQUEUE proposals / goals (proposal-only path).
+ *   - Handlers may only ENQUEUE proposals / goals / jobs (proposal-only path).
  *   - NO handler may call merge/push/apply or any destructive primitive.
  *   - The gate at the merge/push path (autoMergeProposal, merge.ts, M47,
  *     kill-switch) is NEVER touched from here.
@@ -27,7 +27,8 @@
  *
  * BUILT-IN HANDLERS (registered at module load)
  *   (a) regression:detected  → enqueue a fix work-item goal (proposal-only)
- *   (b) merge:shipped        → notify operators (M212); no learning credit
+ *   (b) merge:shipped        → notify operators (M212), enqueue an authenticated
+ *                              router follow-up when configured; no learning credit
  *   (c) goal:done            → log + optionally trigger invent-engine for a
  *                              follow-up (flag-gated cfg.foundry.generative)
  *
@@ -273,6 +274,33 @@ async function _handleMergeShipped(
   }
 }
 
+/**
+ * Queueing follow-up work conveys no merge authority. Lifecycle payloads are
+ * merely hints: only the stored, authenticated GitHub merge determines the job.
+ */
+async function _handleRouterQueueFollowup(payload: FleetBusPayload<'merge:shipped'>): Promise<void> {
+  const { routerQueueConfigured, enqueueRouterFollowup } = await import('./router-queue.js');
+  if (!routerQueueConfigured()) return;
+  const id = payload.proposalId;
+  // Match the inbox filename guard before any store access.
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(id) || id === '.' || id === '..') return;
+  const { loadProposal } = await import('../inbox/store.js');
+  const proposal = loadProposal(id);
+  if (!proposal) return;
+  const { canonicalRealizedMergeIdentity } = await import('../inbox/realized-merge.js');
+  const identity = canonicalRealizedMergeIdentity(proposal);
+  const evidence = proposal.realizedMerge;
+  if (identity?.source !== 'github-host' || evidence?.source !== 'github-host') return;
+  enqueueRouterFollowup({
+    v: 1,
+    state: 'MERGED',
+    prUrl: identity.prUrl,
+    headSha: evidence.expectedHeadOid,
+    mergeSha: identity.mergeCommitOid,
+    mergedAt: evidence.mergedAt,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Built-in handler (c): goal:done → log + optional invent-engine trigger
 // ---------------------------------------------------------------------------
@@ -318,6 +346,7 @@ async function _handleGoalDone(
 export function registerBuiltInHandlers(): void {
   onFleetEvent('regression:detected', _handleRegressionDetected);
   onFleetEvent('merge:shipped', _handleMergeShipped);
+  onFleetEvent('merge:shipped', _handleRouterQueueFollowup);
   onFleetEvent('goal:done', _handleGoalDone);
 }
 

@@ -65,6 +65,70 @@ those (except `README.md`) must also appear in `package.json` `files`
 unpackaged one through a `https://github.com/ashlrai/phantom/blob/master/...`
 source link, which the checker resolves locally.
 
+### Merged-PR router queue
+
+`phm fleet queue` supplies the RQ bridge with follow-up work. It does not run
+jobs or grant review/merge authority. The bridge must deliver **every** verified
+GitHub merge (including manual and external merges), retry failed ingestion,
+and replay missed events after downtime. The internal `merge:shipped` event
+also enqueues authenticated inbox merges when configured; that event is best
+effort and is not a complete GitHub event feed.
+
+The operator provisions `~/.ashlr/router-queue/` (0700) and `config.json`
+(0600) in the supervisor's HOME, outside every job HOME. Configuration has
+exactly the keys `v: 1` and `repositories`, an array of exactly seven unique,
+lowercase `ashlrai/<repo>` names from the owner's approved scope. There is no
+inferred/default repository list, and forks are not queue targets. Keep this
+configuration and the queue's metadata sidecars inaccessible to jobs. Do not
+give workers this HOME or the supervisor's environment/credentials.
+
+After independently verifying a PR is merged, the bridge pipes a JSON object
+to `phm fleet queue merged --json` on stdin, with exactly these fields:
+
+```json
+{
+  "v": 1,
+  "state": "MERGED",
+  "prUrl": "https://github.com/ashlrai/phantom/pull/42",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mergeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "mergedAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+This is an example envelope, not evidence that this PR merged. The stdin
+adapter validates shape and scope; it cannot authenticate a GitHub event by
+itself. Only the trusted bridge should call it with verified metadata.
+An accepted PR creates one deterministic follow-up asking for the next bounded,
+evidence-supported improvement. Replay is idempotent, even after completion;
+conflicting SHA/time metadata for the same PR is refused.
+
+`phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
+The bridge passes `prompt` only as untrusted model input, never as shell,
+command arguments, configuration, an execution path, or authority. It must
+not copy prompts into `fleet.json` or logs. This command is a snapshot, not a
+worker lease: the existing supervisor must serialize assignment/claim work
+before dispatch. When work finishes, the trusted supervisor acknowledges it
+with `phm fleet queue complete <job-id> --json`.
+
+`router-queue.md` holds JSON data in Markdown job sections. Operators can edit
+task strings; identities, repositories and SHAs must still match durable
+receipts in `state.json`. Every successful read records an ordered, hash-only
+replacement hunk in `read-diffs.jsonl` before any task is returned, including
+unchanged reads and malformed edits within the size bound. No task/model/diff
+text or environment is written to metadata or audit logs. Invalid or unreadable
+state fails closed. Queue reads and mutations share the existing process lock;
+atomic writes and write-ahead receipts recover an interrupted queue write on
+the next read/replay. Deleted outstanding entries are restored; use `complete`
+to acknowledge work. Completed receipts are retained for deduplication.
+
+The queue is bounded to 2 MiB and 10,000 lifetime PR receipts; capacity errors
+require operator attention, not silent eviction. Missing audit/deduplication
+state, unsupported pre-existing Markdown, and scope changes affecting retained
+receipts require operator reconciliation. Do not reset sidecars to bypass a
+refusal. Review isolation, sensitive-path checks, PAUSE, rate limits, CI/revert
+halts and credentials remain the supervisor's independent gates.
+
 ## 2. Installing and running Phantom
 
 ```sh
