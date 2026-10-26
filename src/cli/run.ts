@@ -68,6 +68,8 @@ async function importStreaming(): Promise<StreamingMod> {
 import { pad, makeColors, isTty, isStderrTty } from './ui.js';
 import { parsePositiveInt } from './args.js';
 import { resolveEngineSpec } from '../core/run/engine-registry.js';
+import { claudeSandboxHostRefusal } from './run-preflight.js';
+import { isStaleRunning } from '../core/run/run-staleness.js';
 
 const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -342,7 +344,8 @@ function printRunSummary(state: RunState): void {
   console.log(`  ${bold('Goal:')}    ${goal}`);
   console.log(
     `  ${bold('Status:')}  ${statusColor(status)}` +
-    (status === 'aborted' ? yellow('  ⚠ budget/step limit reached') : ''),
+    (status === 'aborted' ? yellow('  ⚠ budget/step limit reached') : '') +
+    (isStaleRunning(state) ? yellow(`  ⚠ stale: last update ${relativeTime(updatedAt)}, likely orphaned`) : ''),
   );
   console.log(`  ${bold('Engine:')}  ${engine}  ${dim('·')}  ${bold('Provider:')} ${cyan(provider)}`);
   console.log(`  ${bold('Duration:')} ${duration}`);
@@ -440,6 +443,17 @@ function printCloudRefusal(err: Error, jsonMode: boolean): void {
   ].join('\n');
 
   if (jsonMode) {
+    // --json promises a machine-readable result on stdout, refusal included.
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      status: 'refused',
+      reason: 'local-first',
+      error: err.message,
+      fix: [
+        'Start a local model: ollama serve (or LM Studio\'s local server)',
+        'Or re-run with --allow-cloud and the provider API key set',
+      ],
+    }, null, 2) + '\n');
     process.stderr.write(msg + '\n');
   } else {
     process.stdout.write(msg + '\n');
@@ -527,6 +541,17 @@ export async function cmdRun(args: string[]): Promise<number> {
       process.stdout.write(renderEstimate(est) + '\n');
     }
     return 0;
+  }
+
+  const hostRefusal = claudeSandboxHostRefusal(
+    parsed.engine, parsed.sandboxEngine ?? false, process.env, process.getuid?.());
+  if (hostRefusal) {
+    if (parsed.json) {
+      process.stdout.write(JSON.stringify({ ok: false, status: 'refused', ...hostRefusal }, null, 2) + '\n');
+    }
+    process.stderr.write(red('error: ') + hostRefusal.error + '\n' +
+      hostRefusal.fix.map((f) => `  - ${f}\n`).join(''));
+    return 2;
   }
 
   // Build RunOptions
@@ -680,6 +705,9 @@ export async function cmdRun(args: string[]): Promise<number> {
       return 3;
     }
     const msg = err instanceof Error ? err.message : String(err);
+    if (parsed.json) {
+      process.stdout.write(JSON.stringify({ ok: false, status: 'error', error: msg }, null, 2) + '\n');
+    }
     process.stderr.write(red('error: ') + msg + '\n');
     return 1;
   }
@@ -773,12 +801,15 @@ export async function cmdRuns(args: string[]): Promise<number> {
     void providerStr; // not shown in list (too wide); shown in `show`
 
     console.log(
-      `  ${pad(dim(r.id), idW)}  ${pad(statusColor(r.status), statusW)}  ` +
+      `  ${pad(dim(r.id), idW)}  ${pad(isStaleRunning(r) ? yellow('stale') : statusColor(r.status), statusW)}  ` +
       `${pad(totalTokens.toLocaleString(), tokW, 'right')}  ${pad(gray(when), timeW)}  ${goalTrunc}`,
     );
   }
 
   console.log('');
+  if (runs.some(r => isStaleRunning(r))) {
+    console.log(dim('  stale = running with no update for 30+ min; its process likely crashed or was killed.'));
+  }
   console.log(dim(`  Use 'ashlr run show <id>' to see details.`));
   console.log('');
 

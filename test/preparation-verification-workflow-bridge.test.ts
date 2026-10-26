@@ -105,13 +105,15 @@ describe('fixed candidate-linked workflow packaging', () => {
     expect(PREPARATION_BUILTIN_FILES).toEqual(installedFiles);
     expect(readdirSync(first).sort()).toEqual(installedFiles.slice().sort());
     for (const name of installedFiles.filter(name => !['preparation-bridge.mjs', 'preparation-verification-fixtures.mjs', 'preparation-verification.mjs'].includes(name))) {
-      expect(readFileSync(join(first, name))).toEqual(readFileSync(join(repository, 'scripts/evaluators', name)));
+      expect(readFileSync(join(first, name)).equals(readFileSync(join(repository, 'scripts/evaluators', name))), name).toBe(true);
     }
   });
 
   it('is byte deterministic and ignores a candidate-supplied workflow or dependency source', () => {
     expect(readdirSync(second).sort()).toEqual(readdirSync(first).sort());
-    for (const name of readdirSync(first)) expect(readFileSync(join(second, name))).toEqual(readFileSync(join(first, name)));
+    // Buffer.equals is O(n) native; toEqual on multi-MB Buffers walks bytes in JS and
+    // pushed this test past its 60 s timeout on loaded runners.
+    for (const name of readdirSync(first)) expect(readFileSync(join(second, name)).equals(readFileSync(join(first, name))), name).toBe(true);
     const graphs = builds.filter(entry => entry.options.metafile === true).map(entry => entry.result.metafile);
     expect(graphs).toHaveLength(6);
     expect(graphs[3]).toEqual(graphs[0]);

@@ -287,6 +287,8 @@ describe('fresh public facts are data, not saved release authority', () => {
     const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
     if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
       const jobs = value['jobs'] as Record<string, unknown>[];
+      jobs.push({ id: 903, name: 'Docs PR (docs-only)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
       jobs.push({ id: 902, name: 'Merge Gate', run_id: 20, head_sha: SOURCE,
         status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
@@ -304,6 +306,20 @@ describe('fresh public facts are data, not saved release authority', () => {
   it('binds the new source Merge Gate while retaining all fifteen full qualification jobs', async () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const index = jobs.findIndex((job) => job['name'] === 'Docs PR (docs-only)');
+        if (kind === 'docs-ran') jobs[index]!['conclusion'] = 'success';
+        if (kind === 'docs-missing') jobs.splice(index, 1);
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each(['missing', 'failure', 'skipped-step', 'wrong-runner'])('withholds release facts for Merge Gate %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {

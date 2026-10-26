@@ -84,7 +84,7 @@ export function AccountCard({
   const engineStyle = { '--engine-color': card.color } as CSSProperties;
   const showReconnect = card.verdict.state === 'signed-out';
   const openable = onOpen !== undefined && card.hasDetail;
-  const historical = card.evidence.state !== 'observed';
+  const historical = card.quotaCurrent === false || card.evidence.state !== 'observed';
 
   const head = (
     <>
@@ -150,7 +150,7 @@ export function AccountCard({
         </div>
       ) : null}
 
-      <CreditsRow credits={card.credits} historical={historical} />
+      <CreditsRow credits={card.credits} historical={card.creditsCurrent === false || card.evidence.state !== 'observed'} />
 
       {showReconnect ? (
         <div className={styles.actionBlock}>

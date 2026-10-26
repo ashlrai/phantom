@@ -67,6 +67,8 @@ Rules:
 
 ```ts
 export function createSandbox(sourceRepo:string, opts?:{allowAnyRepo?:boolean}):Sandbox;
+export function createSandboxAsync(sourceRepo:string,
+  opts?:{allowAnyRepo?:boolean; fenceWaitMs?:number; signal?:AbortSignal; repoLease?:RepoLease}):Promise<Sandbox>;
 export function sandboxDiff(sb:Sandbox):SandboxDiff;
 export function removeSandbox(sb:Sandbox):void;
 export function sandboxesDir():string;
@@ -83,8 +85,20 @@ Rules:
   - Read the source HEAD commit (`baseHead`) WITHOUT mutating it.
   - Generate a unique `id`; create a NEW scratch branch (e.g. `ashlr/sandbox/<id>`) and add an
     isolated worktree under `~/.ashlr/sandboxes/<id>/` via `git worktree add -b <branch>
-    <path> <baseHead>` run in `sourceRepo`. This MUST NOT modify the source working tree,
-    index, HEAD, or any user branch.
+    <path> <baseHead> --no-checkout` run in `sourceRepo`, then check it out the way
+    `git worktree add` itself does (`reset --hard --no-recurse-submodules` with the worktree's
+    own administrative directory). This MUST NOT modify the source working tree, index, HEAD,
+    or any user branch.
+  - Two phases: REGISTER (gate, reservation, `worktree add --no-checkout`, validation) holds the
+    outward mutation fence; POPULATE (checkout, post-create writer, validation, the gate again)
+    runs after the fence is released, holding a creation execution lease (so kill / unenroll
+    drain it) and an own-removal right. A POPULATE failure, an aborted lease, KILL or a lost
+    enrollment rolls the registration back under the fence (and the repo lease) and throws; a
+    rollback that cannot run marks the sandbox `abandonedAt` so the orphan sweep reclaims it.
+    The checkout may take a transient `refs/heads/<branch>.lock` in the common directory outside
+    the repo lease (the ref value is unchanged); a concurrent pack-refs / gc fails it closed.
+  - `createSandboxAsync(..., { repoLease })`: the caller's lease on this repo is released once
+    REGISTER is done and re-taken only for a rollback; releasing it again is harmless.
   - Persist sandbox metadata (so `listSandboxes()` can recover it) and audit `result:'ok'`.
   - Return the `Sandbox`.
 - `sandboxDiff(sb)`: run `git diff` of the worktree vs `sb.baseHead` INSIDE `sb.worktreePath`

@@ -168,7 +168,7 @@ describe('setup: resident runtime step', () => {
   });
 
   it('waits on you when the running plist drifted from config (budget changed)', async () => {
-    const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 20 } });
+    const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 20, installedKeepAwake: false, expectedKeepAwake: true } });
     const { step } = await residentStep(h);
     expect(step.status).toBe('waiting-on-you');
     expect(step.detail).toMatch(/installed budget \$50\/day, config says \$20\/day/);
@@ -295,11 +295,11 @@ describe('resident stop and status', () => {
   });
 
   it('status --json is one machine-readable document and changes nothing', async () => {
-    const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 20 } });
+    const h = harness({ observed: { plist: 'drifted', installedBudgetUsd: 50, expectedBudgetUsd: 20, installedKeepAwake: false, expectedKeepAwake: true } });
     expect(await runAuthorityCli(['resident', 'status', '--json'], h.deps)).toBe(0);
     expect(h.out).toHaveLength(1);
     const doc = JSON.parse(h.out[0]!) as { schema: string; admission: ResidentAdmission; service: ResidentServiceObservation };
-    expect(doc).toMatchObject({ schema: 'ashlr.resident-status.v1', admission: { code: 'admitted' }, service: { plist: 'drifted', expectedBudgetUsd: 20 } });
+    expect(doc).toMatchObject({ schema: 'ashlr.resident-status.v1', admission: { code: 'admitted' }, service: { plist: 'drifted', expectedBudgetUsd: 20, installedKeepAwake: false, expectedKeepAwake: true } });
     expect(h.resident.calls).toEqual([]);
   });
 

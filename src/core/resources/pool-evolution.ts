@@ -12,6 +12,7 @@ import { decodeResourcePoolState, readResourceJson, requireResourcePoolSettlemen
 import { decodeResourceConsoleState, previewResourceConsolePoolEvolution, type ResourceConsoleDurableState } from './pool-supervisor.js';
 import { MAX_RESOURCE_POOL_CONFIGURATIONS, resourcePoolConfigSnapshot, validateResourcePoolAdditiveEvolution,
   validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
+import { assertOfflineResourcePoolCommissioningHistory, assertResourcePoolCommissioningCustody } from './pool-commissioning-custody.js';
 import type { ResourcePoolEvolutionOptions, ResourcePoolEvolutionPlan, ResourcePoolEvolutionReport } from './pool-evolution-types.js';
 import { ResourcePoolEvolutionError } from './pool-evolution-types.js';
 export { ResourcePoolEvolutionError } from './pool-evolution-types.js';
@@ -56,13 +57,13 @@ interface Staged {
   stateDigests: { beforePool: string; afterPool: string; beforeConsole: string; afterConsole: string };
   consoleProof: ConsoleProof; plan: ResourcePoolEvolutionPlan;
 }
-interface ConsoleProof {
+export interface ConsoleProof {
   scopeDigest: string | null;
   jobs: Array<{ id: string; identityDigest: string; historyDigest: string | null; contextDigest: string | null;
     inputDigest: string | null; terminalDigest: string | null; queued: boolean }>;
 }
 const STAGES = ['beforePool', 'afterPool'] as const;
-function consoleProof(state: ResourceConsoleDurableState | null): ConsoleProof {
+export function consoleProof(state: ResourceConsoleDurableState | null): ConsoleProof {
   return { scopeDigest: state ? sha({ scopeDigest: state.scopeDigest, originPoolDigest: state.originPoolDigest }) : null,
     jobs: state?.jobs.map(job => ({ id: job.id, identityDigest: sha({ id: job.id, taskDigest: job.taskDigest,
       submissionDigest: job.submissionDigest ?? null, parent: job.parent ?? null, projectId: job.projectId ?? 'default',
@@ -82,7 +83,7 @@ function validConsoleProof(value: unknown): value is ConsoleProof {
     typeof row.queued === 'boolean' && (row.queued ? row.terminalDigest === null : hash(row.terminalDigest))) &&
     new Set(value.jobs.map(row => row.id)).size === value.jobs.length;
 }
-function assertConsolePreserved(current: ResourceConsoleDurableState | null, original: ConsoleProof): void {
+export function assertConsolePreserved(current: ResourceConsoleDurableState | null, original: ConsoleProof): void {
   if (original.scopeDigest === null) return; // No console existed to preserve.
   const proof = consoleProof(current);
   if (proof.scopeDigest !== original.scopeDigest) throw new Error('Pool evolution console origin changed');
@@ -173,6 +174,7 @@ function finalized(scope: Captured, staged: Staged): boolean {
   const current = readOptional(scope.poolFile);
   if (current === null || (current as ResourcePoolState).pendingEvolution !== undefined) return false;
   const pool = decodeResourcePoolState(current, scope.to.pool, scope.to.bindings);
+  assertOfflineResourcePoolCommissioningHistory(scope.options.root, pool);
   if (canonical(pool.configurationHistory) !== canonical(staged.afterPool.configurationHistory)) throw new Error('Pool evolution history changed after publication');
   // A completed migration may already have admitted new work. Never overwrite
   // those later receipts or console changes merely to replay this configuration.
@@ -215,8 +217,11 @@ export function checkResourcePoolEvolution(input: ResourcePoolEvolutionOptions):
     if (!finalized(scope, staged)) throw new Error('Pool evolution replay evidence changed'); return staged.plan;
   }
   requireOffline(scope.options.root);
-  if (staged) { phase(scope, staged); return staged.plan; }
+  if (staged) { phase(scope, staged);
+    if (staged.beforePool !== null) assertResourcePoolCommissioningCustody(scope.options.root, decodeResourcePoolState(staged.beforePool, scope.from.pool, scope.from.bindings));
+    return staged.plan; }
   const beforePool = readOptional(scope.poolFile); const beforeConsole = readOptional(scope.consoleFile);
+  if (beforePool !== null) assertResourcePoolCommissioningCustody(scope.options.root, decodeResourcePoolState(beforePool, scope.from.pool, scope.from.bindings));
   const plan = derive(scope, beforePool, beforeConsole).plan;
   if (canonical(readOptional(scope.poolFile)) !== canonical(beforePool) || canonical(readOptional(scope.consoleFile)) !== canonical(beforeConsole)) {
     throw new ResourcePoolEvolutionError('state-conflict');
@@ -248,6 +253,7 @@ export function applyResourcePoolEvolution(input: ResourcePoolEvolutionOptions &
     if (!finalized(scope, completed)) throw new Error('Pool evolution replay evidence changed');
     return { ...completed.plan, status: 'applied', disposition: 'replayed' };
   }
+  const custodyBaseline = completed?.beforePool ?? readOptional(scope.poolFile);
   const consoleLock = acquireLocalStoreLock(join(options.root, '.resource-console.lock'), 0, { anchorPath: options.root, exactPrivateStorage: true });
   if (!consoleLock) throw new ResourcePoolEvolutionError('ownership-present');
   let poolLock: ReturnType<typeof acquireLocalStoreLock> = null;
@@ -260,7 +266,8 @@ export function applyResourcePoolEvolution(input: ResourcePoolEvolutionOptions &
     if (!quotaLock) throw new ResourcePoolEvolutionError('ownership-present');
     if (present(join(options.root, '.resource-quota-refresh-pending.json'))) throw new ResourcePoolEvolutionError('uncertain-work');
     const guard = (): void => { inspectPrivateDirectory(options.root);
-      if (!ownsLocalStoreLock(consoleLock) || !poolLock || !ownsLocalStoreLock(poolLock) || !quotaLock || !ownsLocalStoreLock(quotaLock)) throw new Error('Pool evolution ownership lost'); };
+      if (!ownsLocalStoreLock(consoleLock) || !poolLock || !ownsLocalStoreLock(poolLock) || !quotaLock || !ownsLocalStoreLock(quotaLock)) throw new Error('Pool evolution ownership lost');
+      if (custodyBaseline !== null) assertOfflineResourcePoolCommissioningHistory(options.root, decodeResourcePoolState(custodyBaseline, scope.from.pool, scope.from.bindings)); };
     outcome = { result: (() => {
     let staged = loadJournal(scope); const resumed = staged !== null;
     if (!staged) {

@@ -218,6 +218,10 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/routes/verse/verse-readouts.ts': 'token and turn readouts — the workspace, meters and usage panels',
   'core/verse/types.ts': 'verse-store takes the transient-event guard from transient-events.ts',
   'web-ui/data/appearance-presets.ts': 'Settings ▸ Appearance only',
+  'web-ui/app/verse-first-paint.ts': "the shell's bounded first-paint wait — VerseConsoleApp imports it as it evaluates",
+  'web-ui/app/sidecar-restart.ts': 'desktop sidecar re-adoption — VerseConsoleApp imports it after mount',
+  'web-ui/routes/verse/shell/NeedsYouDrawer.tsx': 'VerseApp overlay (warm-up)',
+  'web-ui/routes/verse/shell/ShortcutsOverlay.tsx': 'VerseApp overlay (warm-up)',
 };
 
 describe('the chat first-paint static closure (whole graph)', () => {

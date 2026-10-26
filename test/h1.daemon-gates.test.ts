@@ -151,6 +151,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fx.cleanup();
 });
 
@@ -163,8 +164,13 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Persist a daemon state pre-seeded with today's spend already at `spentUsd`. */
+/** Persist a daemon state pre-seeded with today's spend already at `spentUsd`.
+ * Freezes Date at the current instant first (afterEach restores it), so a run
+ * crossing 00:00 UTC cannot seed one budget day and tick against the next,
+ * which would reset the seeded spend. Timers stay real. */
 function seedSpend(spentUsd: number): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
   const state: DaemonState = {
     running: false,
     pid: null,

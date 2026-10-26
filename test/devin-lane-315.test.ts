@@ -89,7 +89,7 @@ function devinPolicy(repos: Parameters<typeof standingPolicy>[0], roles: Array<'
   return {
     ...base,
     engines: [...base.engines, 'devin' as const],
-    spend: { ...base.spend, seats: { ...base.spend.seats, devin: { seatId: 'devin', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles } } },
+    spend: { ...base.spend, meteredUsdPerDay: 25, seats: { ...base.spend.seats, devin: { seatId: 'devin', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles } } },
   };
 }
 
@@ -685,9 +685,48 @@ describe('launch', () => {
   });
 });
 
+describe('fleet API metered billing authority', () => {
+  it.each([-1, NaN, Infinity, undefined])('holds an unverified metered allowance %s before keys or new task records', async allowance => {
+    await connect();
+    const policy = devinPolicy([repoPolicy(REPO)]);
+    policy.spend.meteredUsdPerDay = allowance as number;
+    api.requests.length = 0; keychain.calls.length = 0;
+    const result = await launchDevinTask({ repo: REPO, prompt: 'Synthetic missing allowance', origin: 'fleet' },
+      deps({ config: () => ({ enabled: true, fleet: true }), policy: () => policy }));
+    expect(result).toMatchObject({ ok: false, task: null, failure: 'budget', error: expect.stringContaining('metered API allowance is unavailable') });
+    expect(api.requests).toEqual([]); expect(keychain.calls).toEqual([]); expect(listDevinTasks()).toEqual([]);
+  });
+
+  it('publishes the billing hold without changing the manual chat readiness or reading provider quota', async () => {
+    await connect();
+    mkdirSync(devinTasksDir(), { recursive: true });
+    const policy = devinPolicy([repoPolicy(REPO)]); policy.spend.meteredUsdPerDay = 0;
+    api.requests.length = 0;
+    const status = await devinStatus(deps({ config: () => ({ enabled: true, fleet: true }), policy: () => policy }));
+    expect(status.fleet).toMatchObject({ ready: false, word: 'Billing held', roles: [],
+      detail: expect.stringContaining('$0/day'), fix: { command: 'ashlr authority draft' } });
+    expect(status.chat).toMatchObject({ ready: true }); expect(api.requests).toEqual([]);
+  });
+
+  it.each([false, true])('refuses a $0 standing cap before keys, provider contact or queue writes (selected human: %s)', async selectedHuman => {
+    await connect();
+    if (selectedHuman) await selectDevinHumanSeat('mason@example.com', deps());
+    updateDevinBudget({ acuBudgetTotal: 100, reserveAcu: 0, maxAcuPerDay: 100 });
+    updateBudgetPolicy({ mode: 'balanced' });
+    const policy = devinPolicy([repoPolicy(REPO)]);
+    policy.spend.meteredUsdPerDay = 0;
+    api.requests.length = 0; keychain.calls.length = 0;
+    const result = await launchDevinTask({ repo: REPO, prompt: 'Synthetic zero-dollar authority regression', origin: 'fleet' },
+      deps({ config: () => ({ enabled: true, fleet: true }), policy: () => policy }));
+    expect(result).toMatchObject({ ok: false, task: null, failure: 'budget', error: expect.stringMatching(/metered.*allowance/i) });
+    expect(api.requests).toEqual([]); expect(keychain.calls).toEqual([]); expect(ghCalls).toEqual([]);
+    expect(listDevinTasks()).toEqual([]);
+  });
+});
+
 describe('create admission after asynchronous preparation', () => {
   type Phase = 'key' | 'branch' | '429';
-  type Change = 'stop' | 'grant' | 'repo' | 'producer' | 'opt-out' | 'lane-off' | 'connection' | 'pending-connection' | 'routing-off' | 'session-cap' | 'daily-cap' | 'other-hold';
+  type Change = 'stop' | 'grant' | 'repo' | 'producer' | 'opt-out' | 'lane-off' | 'connection' | 'pending-connection' | 'routing-off' | 'session-cap' | 'daily-cap' | 'other-hold' | 'metered';
   async function pendingLaunch(phase: Phase, origin: 'fleet' | 'operator' = 'fleet') {
     await connect();
     updateDevinBudget({ acuBudgetTotal:100, reserveAcu:0, pauseAtFraction:1, maxAcuPerSession:10, maxAcuPerDay:100 });
@@ -718,6 +757,7 @@ describe('create admission after asynchronous preparation', () => {
     const mutate = (change: Change) => {
       switch (change) {
         case 'stop': stop=true; break;
+        case 'metered': policy!.spend.meteredUsdPerDay=0; break;
         case 'grant': policy=null; break;
         case 'repo': policy=devinPolicy([repoPolicy('ashlrai/replaced')]); break;
         case 'producer': policy=devinPolicy([repoPolicy(REPO)], ['judge']); break;
@@ -734,7 +774,7 @@ describe('create admission after asynchronous preparation', () => {
     return { launch, mutate, release, request };
   }
 
-  const changes: Change[] = ['stop','grant','repo','producer','opt-out','lane-off','connection','pending-connection','routing-off','session-cap','daily-cap','other-hold'];
+  const changes: Change[] = ['stop','grant','repo','producer','opt-out','lane-off','connection','pending-connection','routing-off','session-cap','daily-cap','other-hold','metered'];
   for (const phase of ['key','branch','429'] as const) {
     it.each(changes.filter(change => phase === '429' || change !== 'session-cap'))(`refuses %s changed during ${phase} without a new POST or ambiguous exposure`, async change => {
       const pending = await pendingLaunch(phase);
@@ -744,6 +784,7 @@ describe('create admission after asynchronous preparation', () => {
       expect(result.ok).toBe(false);
       expect(api.requests.filter(r => r.method === 'POST')).toHaveLength(phase === '429' ? 1 : 0);
       expect(api.sessions.size).toBe(0);
+      if (change === 'metered' && phase !== '429') expect(listDevinTasks()).toEqual([]);
       if (result.task) {
         expect(result.task).toMatchObject({ state:'failed', sessionId:null });
         expect(result.failure).not.toBe('network');

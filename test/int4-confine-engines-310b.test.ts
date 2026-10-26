@@ -84,6 +84,8 @@ import {
   requireVerifiedSandboxGit,
   sandboxDiff,
   SandboxGitVerificationError,
+  filterDriverOverrides,
+  repoScopedFilterDrivers,
   withDaemonGitHardening,
 } from '../src/core/sandbox/worktree.js';
 import { setKill } from '../src/core/sandbox/policy.js';
@@ -268,6 +270,24 @@ describe('withDaemonGitHardening (B-U6 → U2: hooks / fsmonitor off)', () => {
   });
 });
 
+describe('repository filter drivers are nulled at command scope', () => {
+  it('names only local / worktree drivers; global and system ones (git-lfs) stay', () => {
+    const listing = ['system', 'filter.lfs.smudge', 'global', 'filter.mine.clean', 'local', 'filter.evil.process',
+      'local', 'filter.evil.required', 'worktree', 'filter.Ev.il.smudge', 'local', 'core.bare', ''].join('\0');
+    expect(repoScopedFilterDrivers(listing)).toEqual(['Ev.il', 'evil']);
+    expect(repoScopedFilterDrivers('')).toEqual([]);
+  });
+
+  it('leaves each named driver with no program and not required', () => {
+    const env = withDaemonGitHardening({}, filterDriverOverrides(['evil']));
+    const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+    expect(pairs).toEqual(expect.arrayContaining([
+      ['filter.evil.process', ''], ['filter.evil.clean', ''], ['filter.evil.smudge', ''], ['filter.evil.required', 'false'],
+    ]));
+    expect(pairs[0]).toEqual(['core.hooksPath', process.platform === 'win32' ? 'NUL' : '/dev/null']);
+  });
+});
+
 describe('nativeSeatConfinement (B-U7 → U2: the legacy profile and the grok seat)', () => {
   const launch = { command: ['/usr/bin/true', '/seat/grok-a/launcher.mjs'] as [string, string], nativeStatePath: '/seat/grok-a/native-state', executable: '/usr/bin/true' };
 
@@ -437,6 +457,41 @@ describe('worktree.ts daemon git on agent-touched trees', () => {
         requireVerifiedSandboxGit(sb.id);
         const diff = sandboxDiff(sb);
         expect(diff.files).toBe(2);
+        expect(diff.patch).toContain('+agent file');
+        expect(existsSync(marker) ? readFileSync(marker, 'utf8') : '').toBe('');
+      } finally {
+        await removeSandboxAsync(sb);
+      }
+      expect(existsSync(marker) ? readFileSync(marker, 'utf8') : '').toBe('');
+    });
+  });
+
+  it('never runs a planted filter routed by committed or info/attributes during create + capture', async () => {
+    await withTmpHome(async (fx) => {
+      const repo = fx.makeRepo();
+      repo.enroll();
+      const marker = join(fx.home, 'PWNED');
+      const payload = join(fx.home, 'payload.sh');
+      writeFileSync(payload, `#!/bin/sh\necho "$0 $*" >> "${marker}"\ncat\n`, { mode: 0o755 });
+      // --attr-source covers the worktree's own .gitattributes, not these two:
+      // a committed .gitattributes checked out by `worktree add`, and
+      // $GIT_DIR/info/attributes, which every linked worktree reads.
+      writeFileSync(join(repo.dir, '.gitattributes'), '*.txt filter=evil\n');
+      writeFileSync(join(repo.dir, 'seed.txt'), 'seed\n');
+      git(repo.dir, ['add', '.gitattributes', 'seed.txt']);
+      git(repo.dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'attrs']);
+      mkdirSync(join(repo.dir, '.git', 'info'), { recursive: true });
+      writeFileSync(join(repo.dir, '.git', 'info', 'attributes'), '* filter=evil\n');
+      git(repo.dir, ['config', 'filter.evil.clean', payload]);
+      git(repo.dir, ['config', 'filter.evil.smudge', payload]);
+      git(repo.dir, ['config', 'filter.evil.process', payload]);
+      git(repo.dir, ['config', 'filter.evil.required', 'true']);
+      const sb = createSandbox(repo.dir, { allowAnyRepo: true });
+      try {
+        expect(readFileSync(join(sb.worktreePath, 'seed.txt'), 'utf8')).toBe('seed\n');
+        writeFileSync(join(sb.worktreePath, 'new.txt'), 'agent file\n');
+        requireVerifiedSandboxGit(sb.id);
+        const diff = sandboxDiff(sb);
         expect(diff.patch).toContain('+agent file');
         expect(existsSync(marker) ? readFileSync(marker, 'utf8') : '').toBe('');
       } finally {

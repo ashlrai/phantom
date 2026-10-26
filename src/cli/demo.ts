@@ -35,6 +35,7 @@
 
 import { makeColors, isTty } from './ui.js';
 import { makeDemoContext, type DemoContext } from './demo-sandbox.js';
+import { rejectUnknownOptions } from './args.js';
 
 import type { AshlrConfig } from '../core/types.js';
 import { enroll, listEnrolled } from '../core/sandbox/policy.js';
@@ -159,6 +160,13 @@ export async function cmdDemo(
   if (args.includes('--help') || args.includes('-h')) {
     printDemoHelp();
     return 0;
+  }
+  // Refuse before the tmp context exists: `--no-clean` used to clean up anyway.
+  const bad = rejectUnknownOptions(args, { flags: ['--no-cleanup', '--json'] });
+  if (bad) {
+    console.error(bad.message);
+    console.error('Usage: ashlr demo [--no-cleanup] [--json]');
+    return 2;
   }
   const noCleanup = args.includes('--no-cleanup');
   const asJson = args.includes('--json');

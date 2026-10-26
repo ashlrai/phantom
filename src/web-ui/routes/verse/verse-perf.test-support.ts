@@ -58,15 +58,42 @@ export function realisticLog(targetEvents: number, deltasPerTurn = 20): VerseEve
   return events;
 }
 
-/** Best (minimum) wall time of `runs` executions — robust against a noisy machine. */
-export function bestOf(runs: number, fn: () => void): number {
-  let best = Infinity;
-  for (let i = 0; i < runs; i++) {
-    const t0 = performance.now();
-    fn();
-    best = Math.min(best, performance.now() - t0);
+/**
+ * The quietest (minimum) wall time of each case, sampled in interleaved
+ * rounds until every case has run once under its limit, `maxRounds` rounds
+ * have run, or `budgetMs` of sampling has passed.
+ *
+ * Why not the minimum of seven back-to-back runs per case: those samples sit
+ * in one ~20 ms window, so one stretch of a loaded hosted runner (CPU time-sliced
+ * with other test files, a GC, starved background JIT threads) inflates all
+ * of them and the minimum with them. Interleaving the cases and spreading the
+ * samples over up to `budgetMs` gives each case a chance at a quiet slice.
+ *
+ * This does not weaken the limit: noise only ever adds time, so the minimum
+ * converges on the real cost from above. Code whose real cost is over the
+ * limit never produces a sample under it, however many rounds run, and a
+ * quadratic regression (seconds per replay) spends the whole budget in its
+ * first round and fails at once.
+ */
+export function quietestOf<K extends string>(
+  cases: Record<K, { run: () => void; limitMs: number }>,
+  { maxRounds = 25, budgetMs = 2000 }: { maxRounds?: number; budgetMs?: number } = {},
+): { best: Record<K, number>; rounds: number } {
+  const keys = Object.keys(cases) as K[];
+  const best = Object.fromEntries(keys.map((k) => [k, Infinity])) as Record<K, number>;
+  const started = performance.now();
+  let rounds = 0;
+  while (rounds < maxRounds) {
+    rounds += 1;
+    for (const k of keys) {
+      const t0 = performance.now();
+      cases[k].run();
+      best[k] = Math.min(best[k], performance.now() - t0);
+    }
+    if (keys.every((k) => best[k] < cases[k].limitMs)) break;
+    if (performance.now() - started >= budgetMs) break;
   }
-  return best;
+  return { best, rounds };
 }
 
 /** Median of per-iteration timings. */

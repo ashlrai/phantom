@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,21 @@ import { appendCampaignEvent } from '../src/core/universe/campaign-store.js';
 import { appendRecord, manifestRecord, newRun, selectWinners } from '../src/core/universe/store.js';
 
 const roots: string[] = [];
+// Comparison only reads ledgers; no Universe run or evaluator launch is
+// started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'comparison-reader-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 afterEach(() => {
   vi.restoreAllMocks();
   const writable = (path: string): void => {
@@ -36,7 +51,7 @@ function fixture() {
   const manifest: UniverseManifest = { schemaVersion: 1, id: 'baseline-universe', name: 'Comparison fixture', objective: 'Inspect without running',
     seed: { repo, revision: git('rev-parse', 'HEAD') }, metric: { name: 'score', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxDurationMs: 1000, trialTimeoutMs: 1000, maxParallel: 1 },
-    evaluation: { command: [process.execPath, 'never-run.mjs'], timeoutMs: 1000 },
+    evaluation: { command: [pinnedEvaluator, 'never-run.mjs'], timeoutMs: 1000 },
     variants: [{ id: 'never-run', niche: 'quality', hypothesis: 'Only inspect', command: [process.execPath, 'never-run.mjs'] }] };
   const init = (id = 'baseline-universe') => initUniverse({ ...manifest, id }, { root });
   const campaign = (id: string, universeId = 'baseline-universe') => initUniverseCampaign({ schemaVersion: 1, id, universeId, feedback: false,

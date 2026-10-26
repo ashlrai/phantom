@@ -19,6 +19,7 @@ import {
   launchCloudSession,
   parseCloudLaunchOutput,
   readCloudSeatArgv,
+  SEAT_NOT_READY_REASON,
   shellQuote,
   stripTerminalSequences,
   trustCloudCheckoutFolder,
@@ -194,8 +195,19 @@ describe('launchCloudSession', () => {
   it('reports seat-unavailable without spawning when there is no seat argv', async () => {
     let ran = false;
     const res = await launchCloudSession({ cwd: '/tmp', prompt: 'x' }, { seatArgv: () => null, run: async () => { ran = true; return { output: '', code: 0, timedOut: false }; } });
-    expect(res).toEqual({ ok: false, failure: 'seat-unavailable', message: "The Claude seat isn't set up on this Mac." });
+    expect(res).toEqual({ ok: false, failure: 'seat-unavailable', message: "The Claude seat isn't set up on this computer." });
     expect(ran).toBe(false);
+  });
+
+  it('words the missing-seat reason without naming an OS, whatever the platform', async () => {
+    // Regression: the reason used to say "on this Mac" even on Linux and Windows.
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      const res = await launchCloudSession({ cwd: '/tmp', prompt: 'x' }, { platform, seatArgv: () => null });
+      expect(res).toMatchObject({ ok: false, failure: 'seat-unavailable' });
+      if (res.ok) continue;
+      expect(res.message).toBe(SEAT_NOT_READY_REASON);
+    }
+    expect(SEAT_NOT_READY_REASON).not.toMatch(/\b(Mac|macOS|Linux|Windows)\b/);
   });
 
   it('reads the real seat command.json by default', async () => {

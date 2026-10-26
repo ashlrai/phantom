@@ -10,10 +10,10 @@
  *   - invalid run id: 400 (never reaches loadRun/fs).
  *   - unknown-but-well-formed run id: 404.
  *   - live sequence: step-started / step-output-chunk / step-done frames
- *     arrive with strictly increasing `id:` as the mocked run "progresses"
+ *     arrive with independently advancing cursor fields as the mocked run "progresses"
  *     across real poll ticks, then run-done closes the stream.
- *   - resume: reconnecting with Last-Event-ID only replays events after
- *     that id — no duplicates.
+ *   - resume: an opaque Last-Event-ID resumes each event family; legacy
+ *     scalar ids conservatively replay other families.
  *   - stall: a run that stops changing gets an explicit `stall` event
  *     carrying an age, instead of silently going quiet.
  *   - scrubbing: a fixture containing a fake secret token never reaches the
@@ -28,6 +28,8 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { EventEmitter } from 'node:events';
+import { handleRunEventsSse } from '../src/core/web/run-stream.js';
 import type { AshlrConfig, WebServerOptions } from '../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -156,8 +158,9 @@ function collectSseFrames(
           });
           return;
         }
-        res.on('data', (chunk: Buffer) => {
-          buffer += chunk.toString('utf8');
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          buffer += chunk;
           let sep: number;
           while ((sep = buffer.indexOf('\n\n')) !== -1) {
             const raw = buffer.slice(0, sep);
@@ -323,7 +326,7 @@ describe('GET /api/run/:id/events — live sequence', () => {
       expect(names).toContain('step-done');
       expect(names[names.length - 1]).toBe('run-done');
 
-      const ids = frames.filter((f) => f.id !== undefined).map((f) => Number(f.id));
+      const ids = frames.filter((f) => f.id !== undefined).map((f) => Number(f.id!.split(':')[2]));
       const sorted = [...ids].sort((a, b) => a - b);
       expect(ids).toEqual(sorted);
       expect(new Set(ids).size).toBe(ids.length); // no duplicate ids
@@ -347,8 +350,7 @@ describe('GET /api/run/:id/events — live sequence', () => {
         auth.headers,
         (frames) => frames.filter((f) => f.event === 'step-done').length >= 2,
       );
-      const seenIds = first.frames.filter((f) => f.id !== undefined).map((f) => Number(f.id));
-      const lastId = seenIds.length > 0 ? Math.max(...seenIds) : undefined;
+      const lastId = first.frames.at(-1)?.id;
       expect(lastId).toBeDefined();
 
       currentRun = runAt({ stepCount: 2, status: 'done', taskStatus: 'done' });
@@ -359,8 +361,8 @@ describe('GET /api/run/:id/events — live sequence', () => {
         (frames) => frames.some((f) => f.event === 'run-done'),
       );
 
-      const resumedIds = resumed.frames.filter((f) => f.id !== undefined).map((f) => Number(f.id));
-      for (const id of resumedIds) expect(id).toBeGreaterThan(lastId as number);
+      const resumedIds = resumed.frames.filter((f) => f.id !== undefined).map((f) => Number(f.id!.split(':')[2]));
+      for (const id of resumedIds) expect(id).toBeGreaterThan(Number(lastId!.split(':')[2]));
       // The already-seen step-started/step-output-chunk/step-done for the
       // first two steps must not reappear.
       const resumedStepDones = resumed.frames.filter((f) => f.event === 'step-done').length;
@@ -454,7 +456,7 @@ function writeStreamFileLines(runId: string, lines: Array<{ kind: string; text: 
 
 describe('GET /api/run/:id/events — output-chunk (durable stream file)', () => {
   it(
-    'interleaves output-chunk frames with step events, all under one monotonic id space',
+    'interleaves output-chunk frames with independently resumable step events',
     async () => {
       const h = await startServer(makeConfig(), makeOpts());
       openHandles.push(h);
@@ -488,20 +490,10 @@ describe('GET /api/run/:id/events — output-chunk (durable stream file)', () =>
       const toolCallFrame = outputFrames.find((f) => (f.data as { text: string }).text === 'tool: read_file');
       expect((toolCallFrame!.data as { taskId: string | null }).taskId).toBe('t1');
 
-      // Step/task/run-done ids and output-chunk ids live in two disjoint,
-      // independently-monotonic ranges (see run-stream.ts's lastStepSeq /
-      // lastOutputSeq comment) — each is strictly increasing and dup-free
-      // WITHIN its own family; they are not required to interleave in
-      // numeric order on the wire (output-chunk ids, OUTPUT_SEQ_BASE=1e7+,
-      // are always numerically larger than any real step id).
-      const allIds = frames.filter((f) => f.id !== undefined).map((f) => Number(f.id));
-      const OUTPUT_SEQ_BASE = 10_000_000;
-      const stepIds = allIds.filter((n) => n < OUTPUT_SEQ_BASE);
-      const outputIds = allIds.filter((n) => n >= OUTPUT_SEQ_BASE);
-      for (const ids of [stepIds, outputIds]) {
-        const sorted = [...ids].sort((a, b) => a - b);
-        expect(ids).toEqual(sorted);
-        expect(new Set(ids).size).toBe(ids.length);
+      // Every family advances independently inside the opaque cursor.
+      const vectors = frames.filter((f) => f.id).map((f) => f.id!.split(':').slice(1).map(Number));
+      for (let i = 1; i < vectors.length; i++) {
+        for (let family = 0; family < 3; family++) expect(vectors[i]![family]).toBeGreaterThanOrEqual(vectors[i - 1]![family]!);
       }
       expect(names_(frames)).toContain('run-done');
     },
@@ -525,8 +517,7 @@ describe('GET /api/run/:id/events — output-chunk (durable stream file)', () =>
         auth.headers,
         (frames) => frames.filter((f) => f.event === 'output-chunk').length >= 2,
       );
-      const seenIds = first.frames.filter((f) => f.id !== undefined).map((f) => Number(f.id));
-      const lastId = Math.max(...seenIds);
+      const lastId = first.frames.at(-1)!.id!;
 
       writeStreamFileLines('r1', [{ kind: 'model-delta', text: 'chunk three' }]);
       currentRun = runAt({ stepCount: 0, status: 'done', taskStatus: 'done' });
@@ -540,18 +531,10 @@ describe('GET /api/run/:id/events — output-chunk (durable stream file)', () =>
       const resumedOutputTexts = resumed.frames
         .filter((f) => f.event === 'output-chunk')
         .map((f) => (f.data as { text: string }).text);
-      // Output-chunk dedup works precisely here because lastId is itself an
-      // output-chunk id: only the genuinely-new chunk replays.
       expect(resumedOutputTexts).toEqual(['chunk three']);
-      const resumedOutputIds = resumed.frames
-        .filter((f) => f.event === 'output-chunk' && f.id !== undefined)
-        .map((f) => Number(f.id));
-      for (const oid of resumedOutputIds) expect(oid).toBeGreaterThan(lastId);
-      // The step/task/run-done family, by contrast, replays from scratch on
-      // this reconnect (documented tradeoff in run-stream.ts: a single
-      // Last-Event-ID can only seed the ONE threshold whose range it falls
-      // in — lastId here is an output-space id, so the step family's
-      // threshold resets to -1 rather than risk suppressing it forever).
+      const resumedOutputIds = resumed.frames.filter((f) => f.event === 'output-chunk')
+        .map((f) => Number(f.id!.split(':')[3]));
+      for (const oid of resumedOutputIds) expect(oid).toBeGreaterThan(Number(lastId.split(':')[3]));
       expect(names_(resumed.frames)).toContain('run-done');
     },
     10_000,
@@ -646,4 +629,200 @@ describe('GET /api/run/:id/events — live engine output integration', () => {
     },
     10_000,
   );
+});
+
+
+describe('run SSE replay correctness', () => {
+  it('drains terminal history including a UTF-8 record larger than one read', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    currentRun = runAt({ stepCount: 1, status: 'done' });
+    const text = '🌊'.repeat(90_000);
+    writeStreamFileLines('r1', [
+      { kind: 'model-delta', text },
+      ...Array.from({ length: 500 }, (_, i) => ({ kind: 'log', text: `tail ${i} ${'x'.repeat(800)}` })),
+    ]);
+    const auth = await authenticatedSse(h);
+    const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'run-done'));
+    const output = frames.filter((f) => f.event === 'output-chunk');
+    expect(output).toHaveLength(501);
+    expect((output[0]!.data as { text: string }).text === text).toBe(true);
+    expect((output.at(-1)!.data as { text: string }).text).toMatch(/^tail 499 /);
+    expect(frames.at(-1)!.event).toBe('run-done');
+  });
+
+  it('delivers later task starts live and across reconnect after completed steps', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    const initial = runAt({ stepCount: 1 });
+    initial.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'pending' });
+    currentRun = initial;
+    const auth = await authenticatedSse(h);
+    const first = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'step-done'));
+    const cursor = first.frames.at(-1)!.id!;
+    const next = runAt({ stepCount: 1 });
+    next.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'running' });
+    currentRun = next;
+    const resumed = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`,
+      { ...auth.headers, 'Last-Event-ID': cursor },
+      (frames) => frames.some((f) => f.event === 'step-started' && (f.data as { taskId: string }).taskId === 't2'), 1500);
+    expect(resumed.frames.filter((f) => f.event === 'step-started').map((f) => (f.data as { taskId: string }).taskId)).toEqual(['t2']);
+    expect(resumed.frames.some((f) => f.event === 'step-done')).toBe(false);
+  });
+
+  it('drains a final burst larger than one read on a live terminal transition', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    currentRun = runAt({ stepCount: 0 });
+    const auth = await authenticatedSse(h);
+    const collecting = collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'run-done'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    writeStreamFileLines('r1', Array.from({ length: 800 }, (_, i) => ({ kind: 'log', text: `${i} ${'x'.repeat(600)}` })));
+    currentRun = runAt({ stepCount: 0, status: 'done' });
+    const { frames } = await collecting;
+    expect(frames.filter((f) => f.event === 'output-chunk')).toHaveLength(800);
+    expect(frames.at(-1)!.event).toBe('run-done');
+  });
+});
+
+
+describe('run SSE bounded flow control and resume', () => {
+  function blockedResponse(expiresIn = 60_000) {
+    const req = new EventEmitter() as http.IncomingMessage;
+    req.headers = {};
+    const res = new EventEmitter() as http.ServerResponse;
+    const lines: string[] = [];
+    let blocked = false;
+    res.writeHead = vi.fn(() => res);
+    res.write = vi.fn((line: string) => {
+      lines.push(line);
+      if (!blocked && line.includes('event: output-chunk')) { blocked = true; return false; }
+      return true;
+    }) as unknown as typeof res.write;
+    res.end = vi.fn(() => res) as typeof res.end;
+    handleRunEventsSse(req, res, 'r1', { id: 'test-read-session', expiresAt: Date.now() + expiresIn });
+    return { req, res, lines };
+  }
+
+  it('waits for drain before more replay and run-done; then releases listeners', async () => {
+    currentRun = runAt({ stepCount: 0, status: 'done' });
+    writeStreamFileLines('r1', [{ kind: 'log', text: 'first' }, { kind: 'log', text: 'second' }]);
+    const { req, res, lines } = blockedResponse();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(lines.filter((line) => line.includes('event: output-chunk'))).toHaveLength(1);
+    expect(res.end).not.toHaveBeenCalled();
+    expect(res.listenerCount('drain')).toBe(1);
+    res.emit('drain');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(lines.filter((line) => line.includes('event: output-chunk'))).toHaveLength(2);
+    expect(lines.at(-1)).toContain('event: run-done');
+    expect(res.end).toHaveBeenCalledTimes(1);
+    expect(res.eventNames()).toEqual([]);
+    expect(req.eventNames()).toEqual([]);
+  });
+
+  it.each(['close', 'expiry'])('cleans a blocked replay on %s without sending a false done', async (cause) => {
+    currentRun = runAt({ stepCount: 0, status: 'done' });
+    writeStreamFileLines('r1', [{ kind: 'log', text: 'first' }, { kind: 'log', text: 'second' }]);
+    const { res, lines } = blockedResponse(cause === 'expiry' ? 15 : 60_000);
+    if (cause === 'close') res.emit('close');
+    else await new Promise((resolve) => setTimeout(resolve, 30));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(res.end).toHaveBeenCalledTimes(1);
+    expect(lines.some((line) => line.includes('event: run-done'))).toBe(false);
+    expect(res.eventNames()).toEqual([]);
+  });
+
+  it('declares corrupt and unterminated records before terminal completion', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    currentRun = runAt({ stepCount: 0, status: 'done' });
+    writeStreamFileLines('r1', [{ kind: 'log', text: 'valid' }]);
+    fs.appendFileSync(path.join(tmpHome, '.ashlr', 'run-streams', 'r1.log'), '{bad}\n{"text":"unfinished');
+    const auth = await authenticatedSse(h);
+    const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'run-done'));
+    expect(frames.filter((f) => f.event === 'stream-gap').map((f) => (f.data as { reason: string }).reason))
+      .toEqual(['invalid-output-record', 'incomplete-output-record']);
+    expect(frames.at(-1)!.event).toBe('run-done');
+  });
+
+  it('declares an oversized captured file instead of silently claiming complete replay', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    currentRun = runAt({ stepCount: 0, status: 'done' });
+    writeStreamFileLines('r1', []);
+    fs.truncateSync(path.join(tmpHome, '.ashlr', 'run-streams', 'r1.log'), 8 * 1024 * 1024 + 1);
+    const auth = await authenticatedSse(h);
+    const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'run-done'));
+    expect(frames.find((f) => f.event === 'stream-gap')?.data).toEqual({ reason: 'stream-unreadable' });
+  });
+
+  it('legacy step cursors conservatively replay task starts while resuming steps', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    currentRun = runAt({ stepCount: 1, status: 'done' });
+    const auth = await authenticatedSse(h);
+    const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`,
+      { ...auth.headers, 'Last-Event-ID': '1000001' }, (frames) => frames.some((f) => f.event === 'run-done'));
+    expect(frames.map((f) => f.event)).toEqual(['step-started', 'run-done']);
+    expect(frames.at(-1)!.id).toMatch(/^v1:/);
+  });
+
+  it('does not lose an earlier pending task after a later task started out of order', async () => {
+    const h = await startServer(makeConfig(), makeOpts());
+    openHandles.push(h);
+    const initial = runAt({ stepCount: 1 });
+    initial.tasks[0]!.status = 'pending';
+    initial.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'running' });
+    currentRun = initial;
+    const auth = await authenticatedSse(h);
+    const first = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+      (frames) => frames.some((f) => f.event === 'step-done'));
+    const next = runAt({ stepCount: 1, status: 'done' });
+    next.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'done' });
+    currentRun = next;
+    const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`,
+      { ...auth.headers, 'Last-Event-ID': first.frames.at(-1)!.id! }, (frames) => frames.some((f) => f.event === 'run-done'));
+    expect(frames.filter((f) => f.event === 'step-started').map((f) => (f.data as { taskId: string }).taskId)).toEqual(['t1', 't2']);
+  });
+});
+
+
+it('delivers sequential task starts on one live connection after completed steps', async () => {
+  const h = await startServer(makeConfig(), makeOpts());
+  openHandles.push(h);
+  const initial = runAt({ stepCount: 1 });
+  initial.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'pending' });
+  currentRun = initial;
+  const auth = await authenticatedSse(h);
+  const collecting = collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+    (frames) => frames.some((f) => f.event === 'run-done'));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const next = runAt({ stepCount: 2, status: 'done' });
+  next.tasks.push({ id: 't2', goal: 'second', deps: [], status: 'done' });
+  currentRun = next;
+  const { frames } = await collecting;
+  expect(frames.filter((f) => f.event === 'step-started').map((f) => (f.data as { taskId: string }).taskId)).toEqual(['t1', 't2']);
+});
+
+
+it('resumes mixed output and step history together without duplicate frames', async () => {
+  const h = await startServer(makeConfig(), makeOpts());
+  openHandles.push(h);
+  currentRun = runAt({ stepCount: 1 });
+  writeStreamFileLines('r1', [{ kind: 'log', text: 'before reconnect' }]);
+  const auth = await authenticatedSse(h);
+  const first = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`, auth.headers,
+    (frames) => frames.some((f) => f.event === 'step-done'));
+  currentRun = runAt({ stepCount: 2, status: 'done' });
+  writeStreamFileLines('r1', [{ kind: 'log', text: 'after reconnect' }]);
+  const { frames } = await collectSseFrames(`${h.url}/api/run/r1/events${auth.query}`,
+    { ...auth.headers, 'Last-Event-ID': first.frames.at(-1)!.id! }, (frames) => frames.some((f) => f.event === 'run-done'));
+  expect(frames.map((f) => f.event)).toEqual(['output-chunk', 'step-output-chunk', 'step-done', 'run-done']);
+  expect((frames[0]!.data as { text: string }).text).toBe('after reconnect');
 });

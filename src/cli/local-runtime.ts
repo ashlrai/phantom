@@ -80,7 +80,7 @@ import type {
 } from '../core/local-runtime/llama/index.js';
 import { makeColors, isTty } from './ui.js';
 
-const USAGE = `usage: ashlr local-runtime <status|start|stop|restart|install|uninstall|logs|resolve-model> [options]
+const USAGE = `usage: ashlr local-runtime <status|start|stop|restart|reshape|install|uninstall|logs|resolve-model> [options]
 
   status                 Health, model, slots, uptime. --json for the typed snapshot.
   start                  Launch llama-server (or adopt one already on the port).

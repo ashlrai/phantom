@@ -12,7 +12,7 @@ import { validateResourceObservations, validateResourcePool, type ResourceObserv
 import { readResourceJson, readResourcePoolHistory, resourcePoolStatus, runResourceTask, validateResourceTask, validateUnavailableResourceWorkerIds,
   type ResourcePoolConfigSnapshot, type ResourceTask, type ResourceTaskReceipt } from './pool-runtime.js';
 import { validateResourceBindings, type ResourceBinding } from './worker.js';
-import { resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
+import { crossesResourceCommissioning, resourcePoolConfigSnapshot, validateResourcePoolConfigHistory } from './pool-evolution-policy.js';
 import { MAX_RESOURCE_CONVERSATION_BYTES, resourceConsoleConversationPrompt, resourceConsoleTranscriptDigest,
   validateResourceConsoleContext, validateResourceConsoleParent } from './console-conversation.js';
 import { matchesResourceConsoleProject, pinResourceConsoleProject, validateResourceConsoleProjectBindings,
@@ -303,6 +303,10 @@ export function decodeResourceConsoleState(value: unknown, options: {
         const needsContext = row.input !== null || retained && row.history !== null;
         if (needsContext) {
           context = validateResourceConsoleContext(row.context, row.id, parent.taskId);
+          if (context.some(turn => {
+            const source = (value.jobs as DurableJob[]).find(job => job.id === turn.taskId);
+            return source && crossesResourceCommissioning([...epochs.values()], epochFor(value, source).poolDigest, epoch.poolDigest);
+          })) throw new Error('Conversation context crosses commissioning boundary');
           if (context.some((turn) => !ids.has(turn.taskId))) throw new Error('Conversation source identity unavailable');
           if (context.some((turn) =>
             (value.jobs as DurableJob[]).find((job) => job.id === turn.taskId)?.projectId !== row.projectId)) {
@@ -536,6 +540,8 @@ export async function createResourcePoolSupervisor(options: ResourcePoolSupervis
   }
   function own(): void {
     if (!ownsLocalStoreLock(lock)) { fault('supervisor-ownership-lost'); throw new ResourceSupervisorError('UNAVAILABLE', 'Resource supervisor ownership lost'); }
+    try { readResourcePoolHistory(root, pool, bindings); }
+    catch { fault('supervisor-commissioning-custody-unavailable'); throw new ResourceSupervisorError('UNAVAILABLE', 'Resource commissioning custody unavailable'); }
   }
   function persist(next: DurableState): void {
     own();
@@ -759,6 +765,9 @@ export async function createResourcePoolSupervisor(options: ResourcePoolSupervis
       const descriptor = object(value) ? Object.getOwnPropertyDescriptor(value, 'id') : undefined;
       const previous = descriptor && 'value' in descriptor && typeof descriptor.value === 'string'
         ? state.jobs.find((job) => job.id === descriptor.value) : undefined;
+      if (previous && crossesResourceCommissioning(configHistory, originFor(previous).poolDigest, poolDigest)) {
+        throw new ResourceSupervisorError('CONFLICT', 'Historical request crosses commissioning boundary; use a new explicitly scoped request');
+      }
       const retryCodec = previous ? originCodec(previous) : null;
       const input = retryCodec ? retryCodec.taskInput(value) : taskInput(value);
       if (previous) {
@@ -787,6 +796,10 @@ export async function createResourcePoolSupervisor(options: ResourcePoolSupervis
       let context: ResourceConsoleContextTurn[] | undefined;
       if (input.parent) {
         const parent = state.jobs.find((job) => job.id === input.parent!.taskId);
+        if (parent && [parent.id, ...(parent.context ?? []).map(turn => turn.taskId)].some(id => {
+          const source = state.jobs.find(job => job.id === id);
+          return !source || crossesResourceCommissioning(configHistory, originFor(source).poolDigest, poolDigest);
+        })) throw new ResourceSupervisorError('CONFLICT', 'Retained context crosses commissioning boundary; sharing requires a separate reviewed consent path');
         if (!parent?.history) throw new ResourceSupervisorError('NOT_FOUND', 'Parent transcript is unavailable or deleted');
         if (parent.projectId !== input.projectId) throw new ResourceSupervisorError('CONFLICT', 'Follow-up must remain in its parent project');
         if (parent.state !== 'settled' && parent.state !== 'cancelled') {

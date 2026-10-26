@@ -20,7 +20,7 @@
  */
 
 import type { AshlrConfig, TelemetryEmitResult, GovernanceStatus, GenAiSpan } from '../core/types.js';
-import { C, makeColors, isTty, pad } from './ui.js';
+import { ansi as C, makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, green, yellow, red, cyan, gray } = makeColors(isTty());
 

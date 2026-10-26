@@ -37,12 +37,13 @@ import { buildRollup } from './observability/rollup.js';
 import { buildSnapshot } from './dashboard.js';
 import { buildOrientation } from './orient.js';
 import { selectGenomeSync, selectInboxStore, selectBacklogSource } from './seams/index.js';
-import { loadDaemonState } from './daemon/state.js';
+import { loadDaemonState, loadDaemonStateStrict } from './daemon/state.js';
 import { buildFleetDigest } from './fleet/digest.js';
 import { computeQualityMetrics } from './fleet/quality-metrics.js';
 import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { listProposals } from './inbox/store.js';
+import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
 // M169: best-effort imports for new elite-state tools
 // Each is wrapped in a lazy async import inside the handler so module-level
@@ -169,11 +170,11 @@ interface NativeToolImpl extends NativeToolDef {
 const TOOLS: NativeToolImpl[] = [
   {
     name: 'phm_proactive_agents_list', description: 'Read a page of configured personal-agent profile summaries and operation readiness. Profiles do not prove a connected adapter or authorize spending.',
-    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', enum: ['openai-dot', 'grok-bot', 'meta-muse', 'other'] }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
   },
   {
-    name: 'phm_proactive_agents_create', description: 'Save private personal-agent metadata with its real provider/account/agent identity. Enabled records a preference for future planning; current planners do not consume profiles. Never enables transport or spending.',
+    name: 'phm_proactive_agents_create', description: 'Save private agent metadata with its provider/account/agent identity, declared capabilities and local assignment preferences. Saving does not establish a connected adapter, autonomous dispatch or spending authority.',
     inputSchema: { type: 'object', properties: { profile: PROACTIVE_PROFILE_INPUT_SCHEMA }, required: ['profile'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).createProactiveProfile(args),
   },
@@ -194,7 +195,7 @@ const TOOLS: NativeToolImpl[] = [
       outcomeId: { type: 'string' }, taskId: { type: 'string', description: 'The stable task ID returned by the saved outcome.' },
       asOf: { type: 'string', description: 'Optional event-time view with an explicit timezone offset.' },
       observedThrough: { type: 'string', description: 'Optional knowledge-time cutoff with an explicit timezone offset.' },
-      maxEvents: { type: 'number', description: 'Positive retrieval size. Partial context remains visible.' },
+      maxEvents: { type: 'number', description: 'Positive integer retrieval size, at most 100000. Partial context remains visible.' },
     }, required: ['outcomeId', 'taskId'], additionalProperties: false },
     safety: 'read',
     handler: async args => {
@@ -206,8 +207,43 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
-    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',
-    inputSchema: { type: 'object', properties: { profile: { type: 'string', enum: ['phantom-public-web'] }, expectedMerge: { type: 'string', pattern: '^[a-f0-9]{40}$' } }, required: ['profile','expectedMerge'], additionalProperties: false },
+    name: 'phm_team_register', description: 'Register this agent (Claude Code, Codex, Grok Bot, Meta Muse, OpenAI dot, Devin, local) on the local team bus with its capabilities. Identity only; grants no authority.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_register, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamRegister(args),
+  },
+  {
+    name: 'phm_team_publish', description: 'Post a team message or a presence/status heartbeat to the local team bus. Credential-shaped text is refused.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_publish, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamPublish(args),
+  },
+  {
+    name: 'phm_team_view', description: 'Read the team view: members and presence, active repo/branch/path claims, handoffs, pending approvals and recent messages.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_view, safety: 'read',
+    handler: async args => (await import('./teams/tools.js')).teamView(args),
+  },
+  {
+    name: 'phm_team_claim', description: 'Acquire or release a lease on a repo, branch or path so humans and agent fleets do not collide. Returns conflicts instead of overriding another holder.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_claim, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamClaim(args),
+  },
+  {
+    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff between agents and humans. Consequential actions (push-main, deploy, release, merge, rotate-secret, external-message, delete, spend) wait for human owner/admin approval before anyone can accept.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_handoff, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamHandoff(args),
+  },
+  {
+    name: 'phm_team_context_add', description: 'Add scoped shared context (owner personal/company/client:<name>, project, person) with required provenance. Credential-shaped values are refused; reference secrets as phm_<name>.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_add, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamContextAdd(args),
+  },
+  {
+    name: 'phm_team_context_get', description: 'Retrieve a compact, cited context pack for a query under a token budget. Scope-filtered: client context never crosses clients and personal context stays personal.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_get, safety: 'read',
+    handler: async args => (await import('./teams/tools.js')).teamContextGet(args),
+  },
+  {
+    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. Returns queued, already-recorded, or held (nothing queued) when publication is not commissioned or no valid standing grant exists; queued is not published. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',
+    inputSchema: { type: 'object', properties: { profile: { type: 'string', enum: ['phantom-public-web'] }, expectedMerge: { type: 'string', pattern: '^[a-f0-9]{40}$', description: 'Full 40-character lowercase SHA of the merged revision.' } }, required: ['profile','expectedMerge'], additionalProperties: false },
     safety: 'append', handler: async (args) => (await import('./website/host-release.js')).requestWebsitePublication(args),
   },
   {
@@ -291,7 +327,7 @@ const TOOLS: NativeToolImpl[] = [
         text: { type: 'string', description: 'The learning to store.' },
         title: { type: 'string', description: 'Short title (derived when omitted).' },
         project: { type: 'string', description: 'Project name to scope to (optional).' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Tags (optional).' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags (optional). Reserved internal tags are dropped.' },
       },
       required: ['text'],
     },
@@ -319,8 +355,8 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        repo: { type: 'string', description: 'Filter to one repo (optional).' },
-        limit: { type: 'number', description: 'Max items (default 10).' },
+        repo: { type: 'string', description: 'Filter to one repo by exact path or trailing name (optional).' },
+        limit: { type: 'number', description: 'Max items, 1–50 (default 10).' },
       },
     },
     safety: 'read',
@@ -417,7 +453,7 @@ const TOOLS: NativeToolImpl[] = [
     name: 'ashlr_impact',
     description:
       'Impact analysis for a file or symbol: references and dependents within and ' +
-      'across enrolled repos (from the knowledge graph). Read-only.',
+      'across enrolled repos, from a bounded live text scan (not a persisted index). Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -543,7 +579,7 @@ const TOOLS: NativeToolImpl[] = [
       'approves via `ashlr inbox`. Natural-language instructions are recorded as context, ' +
       'not executed or verified; observation-only outcomes do not mark the task applied. ' +
       'Requires a Claude-in-Chrome (or compatible) MCP ' +
-      'server to be configured; browser tasks are refused cleanly in headless / ' +
+      'server to be configured; at apply time browser tasks are refused cleanly in headless / ' +
       'daemon contexts where no browser MCP is reachable. ' +
       'Requires the repo to be enrolled and the kill switch to be off.',
     inputSchema: {
@@ -621,14 +657,19 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_fleet_status',
     description:
-      'Live fleet status: daemon running/pid, last tick, today\'s spend vs budget, ' +
-      'items processed, recent tick history (concurrency + per-backend dispatch counts), ' +
-      'and pending-proposal count. Combines daemon state + fleet digest. Read-only.',
+      'Live fleet status: daemon running/pid, last tick, today\'s estimated spend, ' +
+      'items processed, the last 20 ticks (items considered, proposals created, spend, reason, ' +
+      'per-backend dispatch counts), pending-proposal count, a 7d fleet digest, and budget: ' +
+      'the daily cap the daemon enforces (config or $1 default; 0 = stopped) vs spend recorded ' +
+      'for the current UTC day, remaining, and whether the paid cap is reached (spend is null, ' +
+      'not 0, when daemon state is unreadable). Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
-    handler: async (_args, _cfg) => {
+    handler: async (_args, cfg) => {
       // loadDaemonState and buildFleetDigest both never throw.
       const ds = loadDaemonState();
+      let budget: import('./fleet/budget-view.js').FleetBudget | null;
+      try { budget = (await import('./fleet/budget-view.js')).fleetBudget(cfg, loadDaemonStateStrict()); } catch { budget = null; }
       const digest = await buildFleetDigest('7d');
       // Bound ticks to last 20 for output size.
       const recentTicks = Array.isArray(ds.ticks) ? ds.ticks.slice(-20) : [];
@@ -640,6 +681,7 @@ const TOOLS: NativeToolImpl[] = [
         todaySpentUsd: ds.todaySpentUsd,
         itemsProcessed: ds.itemsProcessed,
         recentTicks,
+        budget,
         pendingProposals: digest.totalPending,
         digest: {
           totalProposed: digest.totalProposed,
@@ -696,9 +738,9 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_routing',
     description:
-      'Recent routing decisions: which engine:model handled which task and the reason. ' +
-      'Derives history from proposal engineModel fields (always populated by M127) and ' +
-      'merges any routing-tagged decisions-ledger entries that carry a reason. ' +
+      'Recent routing decisions: which engine:model handled which task. ' +
+      'Derives history from proposals that carry an engineModel field and ' +
+      'merges decisions-ledger entries with an engine (only these carry a reason). ' +
       'Returns { recent: RoutingRow[], modelSplit: Record<string,number> }. ' +
       'Best-effort — recent is [] when no proposals exist yet. Read-only.',
     inputSchema: {
@@ -723,9 +765,13 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_north_star',
     description:
-      'Human-leverage north-star metric for the autonomous fleet (7d window): ' +
-      'substantive merges, estimated engineering hours saved, leverage score (0–100), ' +
-      'and week-over-week trend. Read-only.',
+      'Human-leverage north-star metric for the autonomous fleet (7d window). leverageScore ' +
+      '(0–100, 50 = neutral) comes from self-improvement outcomes measured at exact merge base ' +
+      'vs head in the outcome ledger (phm improve measure); it and the week-over-week trend are ' +
+      'null / unknown below 3 measured outcomes or on a broken ledger, and `leverage` carries ' +
+      'the counts. Substantive merges and hours saved stay dormant (0) pending a post-merge ' +
+      'proof verifier; raw 7d proposal metrics (merged, accept/empty/trivial rates, avg diff ' +
+      'lines) are factual. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
@@ -737,6 +783,7 @@ const TOOLS: NativeToolImpl[] = [
           engHoursSaved7d: metric.engHoursSaved7d,
           leverageScore: metric.leverageScore,
           trend: metric.trend,
+          leverage: metric.leverage,
           computedAt: metric.computedAt,
           summary: northStarSummary(metric),
           raw: metric.raw,
@@ -745,8 +792,8 @@ const TOOLS: NativeToolImpl[] = [
         return {
           substantiveMerges7d: 0,
           engHoursSaved7d: 0,
-          leverageScore: 0,
-          trend: 'flat',
+          leverageScore: null,
+          trend: 'unknown',
           computedAt: new Date().toISOString(),
           summary: '=== NORTH-STAR: HUMAN LEVERAGE ===\nMetric unavailable.',
           raw: null,
@@ -759,8 +806,8 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'ashlr_self_heal',
     description:
-      'Read-only self-heal queue summary: how many repos are being monitored, ' +
-      'which are currently broken, and the queued high-priority heal work items. ' +
+      'Read-only self-heal queue summary: whether self-heal is enabled, the enrolled ' +
+      'repo count, and up to 10 queued heal work items from ~/.ashlr/self-heal-queue.json. ' +
       'Never triggers a heal cycle — purely observational. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
@@ -900,7 +947,7 @@ const TOOLS: NativeToolImpl[] = [
       properties: {
         repo: {
           type: 'string',
-          description: 'Absolute path of an enrolled repo. Required — target must reside within it.',
+          description: 'Absolute path of an enrolled repo. Required — the proposal is scoped to it.',
         },
         action_type: {
           type: 'string',
@@ -909,7 +956,7 @@ const TOOLS: NativeToolImpl[] = [
         },
         target: {
           type: 'string',
-          description: 'Absolute path to open (must be within the enrolled repo).',
+          description: 'Absolute path to open. Checked at apply time: must resolve (following symlinks) inside an enrolled repo.',
         },
         title: {
           type: 'string',
@@ -1074,6 +1121,13 @@ function textResult(payload: unknown, isError = false): NativeToolResult {
   return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
 }
 
+/** A handler's `{ error: "<reason>" }` refusal (a non-empty string error). */
+function isRefusalPayload(payload: unknown): payload is { error: string } {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const error = (payload as Record<string, unknown>)['error'];
+  return typeof error === 'string' && error.trim().length > 0;
+}
+
 /**
  * Audit one native-tool outcome. Every call site shares the same
  * 'mcp:native-call' action with null repo/sandbox and a `${tool} keys=${keys}`
@@ -1138,6 +1192,12 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
 
   try {
     const payload = await tool.handler(args, cfg);
+    // Handlers refuse with a `{ error }` payload (not enrolled, bad kind, ...).
+    // That is a failed call: flag it so clients do not read it as success.
+    if (isRefusalPayload(payload)) {
+      auditNativeCall(`${tool.name} keys=${argKeys} — refused: ${payload.error}`, 'refused');
+      return textResult(payload, true);
+    }
     auditNativeCall(`${tool.name} keys=${argKeys} — ok`, 'ok');
     if (tool.name === 'phm_task_context') {
       const { renderOutcomeTaskContextText } = await import('./verse/outcome-task-context-output.js');

@@ -38,6 +38,21 @@ import {
 
 const CLAUDE = { ...CLAUDE_TIGHT_SEAT, id: 'claude-a', accountId: 'claude-a' };
 
+describe('independent resource observation times', () => {
+  it('keeps usage provenance separate from a later connection check', () => {
+    const usageAt = '2026-01-01T12:00:00.000Z';
+    const connectionAt = '2026-01-01T12:04:00.000Z';
+    const seat = nativeSeat(capacity({ observedAt: usageAt }), { id: 'synthetic-seat', label: 'Synthetic account' });
+    const row = buildCapacityRows([seat], { now: Date.parse(connectionAt), health: [report(seat.id, { checkedAt: connectionAt })] })[0]!;
+    expect(row.usageObservedAt).toBe(usageAt);
+    expect(row.connectionCheckedAt).toBe(connectionAt);
+    const untimed = nativeSeat(capacity({ observedAt: null }), { id: 'synthetic-seat' });
+    const untimedRow = buildCapacityRows([untimed], { now: Date.parse(connectionAt), health: [report(untimed.id, { checkedAt: connectionAt })] })[0]!;
+    expect(untimedRow.usageObservedAt).toBeNull();
+    expect(untimedRow.connectionCheckedAt).toBe(connectionAt);
+  });
+});
+
 function report(seatId: string, over: Partial<SeatHealthReport> = {}): SeatHealthReport {
   return {
     seatId,

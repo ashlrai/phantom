@@ -80,7 +80,7 @@
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--status-running-solid);
-  animation: activity-pulse var(--duration-pulse) ease-in-out infinite;
+  /* Breathes: ActivityGroup.tsx plays RUNNING_PULSE (components/motion/pulse.ts). */
 }
 
 .time {
@@ -155,19 +155,6 @@
   font-size: var(--text-xs-size);
   color: var(--text-tertiary);
 }
-
-@keyframes activity-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-/* --duration-pulse is 0s under reduced motion, which already stops the
-   animation; these name it too, because an `infinite` animation with a 0s
-   duration still burns frames in some engines. */
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion='full']) .pulse { animation: none; }
-}
-:root[data-motion='reduce'] .pulse { animation: none; }
 
 @media (max-width: 479.98px) {
   .state::before { display: none; }

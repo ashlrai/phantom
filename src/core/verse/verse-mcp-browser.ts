@@ -200,7 +200,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_status',
     scope: 'browser',
-    description: 'What the operator\'s Browser pane in Verse is showing on this chat (URL, title, which capture features this shell has), and the dev servers found for this chat\'s folders. Call first.',
+    description: 'What the operator\'s Browser pane in Phantom is showing on this chat (URL, title, which capture features this shell has), and the dev servers found for this chat\'s folders. Call first.',
     annotations: observe('Browser status'),
     inputSchema: EMPTY_SCHEMA,
     handler: status,
@@ -229,7 +229,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_read_text',
     scope: 'browser',
-    description: 'The visible text of the page in the Browser pane\'s active tab (untrusted page content).',
+    description: 'The visible text of the page in the Browser pane\'s active tab (untrusted page content; needs the Ashlr desktop app).',
     annotations: observe('Read page text'),
     inputSchema: {
       type: 'object',
@@ -241,7 +241,7 @@ export const tools: VerseMcpTool[] = [
   {
     name: 'browser_console',
     scope: 'browser',
-    description: 'Recent console messages, uncaught errors and failed network requests from the page in the Browser pane\'s active tab.',
+    description: 'Recent console messages, uncaught errors and failed network requests from the page in the Browser pane\'s active tab (needs the Ashlr desktop app).',
     annotations: observe('Read page console'),
     inputSchema: {
       type: 'object',

@@ -89,12 +89,13 @@ export function capacity(over: Partial<Capacity> = {}): Capacity {
   return {
     // Fixture metadata is explicitly unexpired; expiry behavior has separate clocked tests.
     creditsExpiresAt: '2033-01-01T00:00:00.000Z',
+    quotaExpiresAt: '2033-01-01T00:00:00.000Z',
     planType: null,
     binding: null,
     windows: [],
     credits: null,
     usability: 'unknown',
-    observedAt: null,
+    observedAt: '2020-01-01T00:00:00.000Z',
     evidenceSource: 'collector',
     notes: [],
     ...over,
@@ -230,7 +231,7 @@ export const CODEX_CONTEXT_SEAT: VerseSeat = {
   cliVersion: '0.155.0',
 };
 
-export const CODEX_CATALOG_NOTE = "Model list is Verse's built-in list until this seat's first turn fetches its own catalog.";
+export const CODEX_CATALOG_NOTE = "Model list is Phantom's built-in list until this seat's first turn fetches its own catalog.";
 
 /** codex-a: never ran a turn, so no catalog yet — the documented fallback list, and a note saying so. */
 export const CODEX_UNFETCHED_SEAT: VerseSeat = {

@@ -636,6 +636,8 @@ pub struct ResidentPlan {
     pub plist: String,
     pub plist_path: Option<String>,
     pub budget_usd: Option<f64>,
+    pub expected_keep_awake: Option<bool>,
+    pub installed_keep_awake: Option<bool>,
 }
 
 /// PURE: read the status JSON (`ashlr.resident-status.v1`).
@@ -661,6 +663,8 @@ pub fn parse_resident_status(stdout: &str) -> Option<ResidentPlan> {
         plist: s(service, "plist").unwrap_or_else(|| "unknown".to_string()),
         plist_path: s(service, "plistPath"),
         budget_usd: service.get("expectedBudgetUsd").and_then(Value::as_f64),
+        expected_keep_awake: service.get("expectedKeepAwake").and_then(Value::as_bool),
+        installed_keep_awake: service.get("installedKeepAwake").and_then(Value::as_bool),
     })
 }
 
@@ -685,9 +689,19 @@ pub fn resident_dialog_text(op: FleetOp, cli: &Path, plan: &ResidentPlan) -> (St
     } else {
         "ashlr authority resident start"
     };
+    let awake = match plan.expected_keep_awake {
+        Some(true) => "On while the service runs on AC power",
+        Some(false) => "Off",
+        None => "Unknown",
+    };
+    let installed_awake = match plan.installed_keep_awake {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "unknown",
+    };
     let body = format!(
         "The resident daemon (ai.ashlr.daemon) runs the fleet under your standing grant.\n\n\
-         Grant #{} · expires {}\nRelease {}\nService {} ({}, plist {})\nBudget {} (config daemon.dailyBudgetUsd)\n\n\
+         Grant #{} · expires {}\nRelease {}\nService {} ({}, plist {})\nBudget {} (config daemon.dailyBudgetUsd)\nKeep Mac awake {} (installed: {}; config daemon.keepAwake). Closing the lid or choosing Sleep can still sleep the Mac.\n\n\
          Runs: {}\n({})\n\nlaunchd: enable + bootstrap gui/{}/ai.ashlr.daemon. Every tick re-verifies the grant, Stop and the switch; Stop in the Fleet tab halts it at once.",
         plan.grant_seq.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string()),
         plan.expires_at.as_deref().unwrap_or("?"),
@@ -696,6 +710,8 @@ pub fn resident_dialog_text(op: FleetOp, cli: &Path, plan: &ResidentPlan) -> (St
         plan.service_state,
         plan.plist,
         budget,
+        awake,
+        installed_awake,
         action,
         cli.display(),
         unsafe { libc::geteuid() },
@@ -1326,17 +1342,23 @@ mod tests {
 
     #[test]
     fn resident_status_parses_the_cli_schema() {
-        let json = r#"{"schema":"ashlr.resident-status.v1","admission":{"ok":true,"reason":"ok","grantSeq":2,"expiresAt":"2026-10-26T00:00:00.000Z","revision":"abcdef0123456789"},"service":{"state":"not-loaded","plist":"absent","plistPath":"/Users/m/Library/LaunchAgents/ai.ashlr.daemon.plist","expectedBudgetUsd":25}}"#;
+        let json = r#"{"schema":"ashlr.resident-status.v1","admission":{"ok":true,"reason":"ok","grantSeq":2,"expiresAt":"2026-10-26T00:00:00.000Z","revision":"abcdef0123456789"},"service":{"state":"not-loaded","plist":"drifted","plistPath":"/Users/m/Library/LaunchAgents/ai.ashlr.daemon.plist","expectedBudgetUsd":25,"expectedKeepAwake":true,"installedKeepAwake":false}}"#;
         let plan = parse_resident_status(&format!("noise\n{json}")).unwrap();
         assert!(plan.admitted);
         assert_eq!(plan.grant_seq, Some(2));
         assert_eq!(plan.budget_usd, Some(25.0));
+        assert_eq!(plan.expected_keep_awake, Some(true));
+        assert_eq!(plan.installed_keep_awake, Some(false));
         let (title, body) = resident_dialog_text(
             FleetOp::ResidentStart,
             Path::new("/opt/homebrew/bin/ashlr"),
             &plan,
         );
         assert_eq!(title, "Start the fleet daemon?");
+        assert!(
+            body.contains("Keep Mac awake On while the service runs on AC power (installed: off")
+        );
+        assert!(body.contains("Closing the lid or choosing Sleep can still sleep the Mac."));
         assert!(body.contains("Grant #2"));
         assert!(body.contains("abcdef012345"));
         assert!(body.contains("$25/day"));

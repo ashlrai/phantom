@@ -123,6 +123,10 @@ describe('M481 CI workflow action trust chain', () => {
         'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
         'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       ],
+      docs: [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
       ci: [
         'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
         'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
@@ -201,7 +205,7 @@ describe('M481 CI workflow action trust chain', () => {
     expect(save?.uses).toBe('actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809');
     expect(restore?.with).toEqual({ path: 'desktop/src-tauri/target/debug/', key: '${{ steps.cargo-inputs.outputs.key }}' });
     expect(save?.with).toEqual(restore?.with);
-    expect(save?.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
+    expect(save?.if).toBe("success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
     expect(steps.indexOf(restore!)).toBeLessThan(steps.findIndex((step) => step.name === 'Check native broker library'));
     expect(steps.indexOf(save!)).toBeGreaterThan(steps.findIndex((step) => step.name === 'Remove disposable Tauri sidecar fixture'));
     const guard = steps.find((step) => step.name === 'Validate native cache identity');

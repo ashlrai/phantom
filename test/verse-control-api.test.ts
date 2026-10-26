@@ -33,6 +33,9 @@ import type {
 } from '../src/core/verse/control-types.js';
 import type { SafetyReport } from '../src/cli/verify-safety.js';
 import { setVerseDaemonSpawnerForTest } from '../src/core/verse/control-api.js';
+import { loadConfigReadOnlyStrict } from '../src/core/config.js';
+import { daemonServiceInstallOptions } from '../src/core/daemon/service-config.js';
+import { generateServiceDefinition } from '../src/core/daemon/service.js';
 import { setKill } from '../src/core/sandbox/policy.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
 
@@ -223,6 +226,52 @@ describe('GET /api/verse/control', () => {
     const { port } = await boot();
     const res = await request(port, 'GET', '/api/verse/control');
     expect(res.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET/POST /api/verse/caps
+// ---------------------------------------------------------------------------
+
+describe('/api/verse/resident-awake', () => {
+  it('keeps service preference outside the live caps contract and refuses malformed or unauthenticated writes', async () => {
+    const { port, read, mutate } = await boot();
+    const initial = await request(port, 'GET', '/api/verse/resident-awake', read);
+    expect(initial.status).toBe(200);
+    expect(initial.json).toMatchObject({ schema: 'ashlr.resident-awake.v1', configured: false, saved: false });
+    expect((await request(port, 'GET', '/api/verse/resident-awake')).status).toBe(401);
+    expect((await request(port, 'POST', '/api/verse/resident-awake', { 'content-type': 'application/json' }, '{"keepAwake":true}')).status).toBe(401);
+    for (const body of ['{}', '{"keepAwake":"true"}', '{"keepAwake":true,"dailyBudgetUsd":999}']) {
+      expect((await request(port, 'POST', '/api/verse/resident-awake', mutate, body)).status).toBe(400);
+    }
+    expect(loadConfigReadOnlyStrict().daemon?.keepAwake).toBeUndefined();
+  });
+
+  it.skipIf(process.platform !== 'darwin')('saves a boolean, reads it back, and distinguishes pending service restart from a live cap', async () => {
+    const { port, read, mutate } = await boot();
+    const current = loadConfigReadOnlyStrict();
+    const old = generateServiceDefinition({ ...daemonServiceInstallOptions(current, { autostart: true }), homeDir: tmpHome, platform: 'darwin' });
+    fs.mkdirSync(path.dirname(old.filePath), { recursive: true });
+    fs.writeFileSync(old.filePath, old.content);
+
+    const saved = await request(port, 'POST', '/api/verse/resident-awake', mutate, '{"keepAwake":true}');
+    expect(saved.status).toBe(200);
+    expect(saved.json).toMatchObject({ configured: true, installed: false, serviceInstalled: true, restartRequired: true, saved: true });
+    expect(loadConfigReadOnlyStrict().daemon?.keepAwake).toBe(true);
+    const after = await request(port, 'GET', '/api/verse/resident-awake', read);
+    expect(after.json).toMatchObject({ configured: true, installed: false, restartRequired: true, saved: false });
+    const caps = await request(port, 'GET', '/api/verse/caps', read);
+    expect(caps.status).toBe(200);
+    expect(caps.body).not.toContain('keepAwake');
+
+    // Only a separate native confirmed resident start/restart installs this
+    // generated argv. A settings POST never rewrites the launchd plist.
+    expect(fs.readFileSync(old.filePath, 'utf8')).toBe(old.content);
+    const next = generateServiceDefinition({ ...daemonServiceInstallOptions(loadConfigReadOnlyStrict(), { autostart: true }), homeDir: tmpHome, platform: 'darwin' });
+    fs.writeFileSync(old.filePath, next.content);
+    expect((await request(port, 'GET', '/api/verse/resident-awake', read)).json).toMatchObject({
+      configured: true, installed: true, restartRequired: false,
+    });
   });
 });
 

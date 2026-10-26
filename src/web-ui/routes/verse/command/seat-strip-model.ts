@@ -142,6 +142,7 @@ export function seatAutonomy(budget: { status: BudgetSeatStatus; why: string } |
 
 /** The reset phrase for a row: the binding window's own wording, always led by "resets". */
 function resetOf(row: CapacityRow, status: AccountStatus): string | null {
+  if (row.quotaCurrent === false) return null;
   // A spent seat's status already names the reset that brings it back (the LAST spent window's).
   if (status.kind === 'spent') return status.detail;
   const binding = row.windows.find((w) => w.binding) ?? null;

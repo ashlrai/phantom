@@ -2,7 +2,10 @@
 
 Jev is a "System One" decision model: you send state plus typed questions and get back a label, a
 probability distribution over the options, and a **separate confidence value**. Their framing is the
-one that matters for this codebase: *the answer tells you what, confidence tells you whether to act.*
+one that matters for this codebase is advisory selection after deterministic admission.
+Confidence describes distribution sharpness, not calibrated correctness; thresholds
+need measured task-specific evaluation. It never grants account access or spend authority.
+See [TypeSafe confidence](https://docs.typesafe.ai/confidence).
 
 ## Wire format and recorded response example
 

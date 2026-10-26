@@ -11,6 +11,7 @@ const USAGE = `usage: ashlr resources pool status --root ABS --pool ABS --bindin
        ashlr resources pool engineering predecessor --help
        ashlr resources pool engineering mission --help
        ashlr resources pool evolve --help
+       ashlr resources pool commission check --help
        ashlr resources pool spark --help
        ashlr resources pool benchmark --help
        ashlr resources pool probe --help
@@ -147,6 +148,10 @@ export async function cmdResourcePool(args: string[]): Promise<number> {
   if (args[0] === 'spark') {
     const { cmdResourceSparkEnrollment } = await import('./resource-spark-enrollment.js');
     return cmdResourceSparkEnrollment(args.slice(1));
+  }
+  if (args[0] === 'commission') {
+    const { cmdResourcePoolCommissioningCheck } = await import('./resource-pool-commissioning-check.js');
+    return cmdResourcePoolCommissioningCheck(args.slice(1));
   }
   if (args[0] === 'evolve') {
     const { cmdResourcePoolEvolution } = await import('./resource-pool-evolution.js');

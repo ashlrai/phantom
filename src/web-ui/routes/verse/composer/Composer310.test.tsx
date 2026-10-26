@@ -30,7 +30,8 @@ import type {
   VerseQueueResponse,
   VerseSessionControlsResponse,
 } from '../../../../core/verse/workbench-types.js';
-import { CLAUDE_SEAT, CODEX_SEAT, GROK_SEAT, LOCAL_SEAT } from '../fixtures.test-support.js';
+import { CLAUDE_SEAT as LEGACY_CLAUDE_SEAT, CODEX_SEAT, GROK_SEAT, LOCAL_SEAT } from '../fixtures.test-support.js';
+import { capacity, seatWindow } from '../seat-fixtures.test-support.js';
 import { Composer, type ComposerProps } from '../Composer.js';
 import { ContextMeter } from '../ContextMeter.js';
 import { ControlMenu } from './ControlMenu.js';
@@ -43,6 +44,8 @@ import { mockCompactViewport, type ViewportMock } from '../shell/viewport.test-s
 const MOD = detectKeyPlatform() === 'mac' ? 'Meta' : 'Control';
 const chord = (key: string, shift = true) => `{${MOD}>}${shift ? '{Shift>}' : ''}${key}${shift ? '{/Shift}' : ''}{/${MOD}}`;
 
+// This suite measures a current native ring; the shared V1 fixture has no expiry proof.
+const CLAUDE_SEAT: VerseSeat = { ...LEGACY_CLAUDE_SEAT };
 const SEATS = [CLAUDE_SEAT, CODEX_SEAT, LOCAL_SEAT, GROK_SEAT];
 const SID = 'vs_1';
 
@@ -188,6 +191,10 @@ async function renderReady(p: ComposerProps = props()) {
 }
 
 beforeEach(() => {
+  const now = Date.now();
+  const windows = LEGACY_CLAUDE_SEAT.health.windows.map(window => seatWindow(window));
+  CLAUDE_SEAT.capacity = capacity({ windows, binding: windows[0]!, usability: 'ready',
+    observedAt: new Date(now).toISOString(), quotaExpiresAt: new Date(now + 60_000).toISOString() });
   // Each fake server owns a fresh read cache, including lazily loaded playbooks.
   evictAll();
   localStorage.clear();
@@ -918,7 +925,7 @@ describe('footer — folds instead of truncating', () => {
   });
 
   it('measures again when the seat’s capacity ring appears or goes (it takes room without changing a word)', async () => {
-    const unread: VerseSeat = { ...CLAUDE_SEAT, health: { ...CLAUDE_SEAT.health, summary: null, windows: [] } };
+    const unread: VerseSeat = { ...CLAUDE_SEAT, capacity: undefined, health: { ...CLAUDE_SEAT.health, summary: null, windows: [] } };
     // No ring: fold 2 is 29 chars and fits 30. With the ring it is 32 and does not.
     limitChars = 30;
     server = installServer({ controls: controlsView({ effort: 'high' }) });
@@ -939,7 +946,7 @@ describe('footer — folds instead of truncating', () => {
   });
 
   it('words that change while the footer has no size are measured when it gets one back, even at the same width', async () => {
-    const unread: VerseSeat = { ...CLAUDE_SEAT, health: { ...CLAUDE_SEAT.health, summary: null, windows: [] } };
+    const unread: VerseSeat = { ...CLAUDE_SEAT, capacity: undefined, health: { ...CLAUDE_SEAT.health, summary: null, windows: [] } };
     // No ring: 47 chars, fits 48. With the ring: 50 — fold 1 (42).
     limitChars = 48;
     server = installServer({ controls: controlsView({ effort: 'high' }) });

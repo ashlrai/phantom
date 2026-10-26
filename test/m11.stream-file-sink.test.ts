@@ -906,8 +906,14 @@ describe('readRunStreamChunk — fail-closed reader', () => {
     privateFile('bounded-read', 'x'.repeat(MAX_STREAM_READ_BYTES + 17));
     const first = readRunStreamChunk('bounded-read', 0);
     expect(first?.bytes).toHaveLength(MAX_STREAM_READ_BYTES);
+    expect(first?.eof).toBe(false);
     const second = readRunStreamChunk('bounded-read', first!.nextOffset, first!.identity);
     expect(second?.bytes).toHaveLength(17);
+    expect(second?.eof).toBe(true);
+    const empty = readRunStreamChunk('bounded-read', second!.nextOffset, second!.identity);
+    expect(empty?.bytes).toHaveLength(0);
+    expect(empty?.eof).toBe(true);
+    expect(readRunStreamChunk('bounded-read', second!.nextOffset + 1, second!.identity)).toBeUndefined();
   });
 
   it('rejects final symlinks and oversized files before reading', () => {

@@ -1,3 +1,4 @@
+import { useCapacityClock } from './seat-subscription.js';
 /**
  * routes/verse/SeatSelector.tsx — grouped seat/model picker. A native
  * <select> with one <optgroup> per engine (Claude · Codex · Grok · Local)
@@ -244,6 +245,7 @@ export function SeatSelector({
   modeFor,
   healthReports = null,
 }: SeatSelectorProps) {
+  const capacityNow = useCapacityClock(undefined, seats.map(seat => seat.capacity));
   const generated = useId();
   const selectId = id ?? generated;
   const [search, setSearch] = useState('');
@@ -283,7 +285,7 @@ export function SeatSelector({
           for (const seat of group.seats) {
             // Reachability first, then the engine's own refusal (V3.10).
             const seatReason = seatUnavailableReason(seat) ?? seatBlockedNote(seat, seats, healthReports);
-            const capacity = seatSubscription(seat);
+            const capacity = seatSubscription(seat, capacityNow);
             // `unread` is left unsaid: "no reading" on every Claude row
             // would be noise, and the absent figure already says it. A local
             // seat is left unsaid too — it has no subscription to report,

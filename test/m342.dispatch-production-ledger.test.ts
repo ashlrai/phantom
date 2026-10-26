@@ -951,7 +951,17 @@ beforeEach(() => {
   process.env.ASHLR_HOME = home;
 });
 
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it): the ledger partitions by each event's UTC day and bounds
+ * cross-day acceptance by the current day, so a case that derives the day
+ * itself must not straddle 00:00 UTC. Timers stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   _setDispatchProductionLedgerRetentionHooksForTest(undefined);
   useNativePrivateStorageFixture();
   if (prevAshlrHome === undefined) delete process.env.ASHLR_HOME;
@@ -1999,6 +2009,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('retires an uncommitted intent so a cross-day retry can acquire authority', () => {
+    freezeDate();
     useWindowsSemanticPrivateStorageFixture();
     seedUnrelatedDatedPartitions(40);
     const currentDayStart = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -2296,6 +2307,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('accepts a bounded cross-midnight run while rejecting an older legacy replay', () => {
+    freezeDate();
     seedUnrelatedDatedPartitions(40);
     const currentDayStart = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
     const crossing = makeProofEvent({
@@ -4786,6 +4798,7 @@ describe('M342 dispatch production ledger', () => {
   });
 
   it('propagates bounded read quality while withholding yield wrappers', () => {
+    freezeDate();
     const dir = dispatchProductionDir();
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -6808,10 +6821,17 @@ describe('M342 dispatch production ledger', () => {
         .filter((name) => name.endsWith('.json'))
         .slice(0, 512)
         .map((name) => join(receiptDir, name));
+      // The adapter reports a 15s spawn timeout and a script failure with the
+      // same reason; the elapsed time tells them apart when this fails.
+      const batchStarted = performance.now();
       const batchPreflight = assurePrivateStoragePaths(receiptPaths, {
         anchorPath: dispatchProductionDir(),
       });
-      expect({ batchPreflight, write: recordDispatchProduction(witness) }).toEqual({
+      const batchElapsedMs = Math.round(performance.now() - batchStarted);
+      expect(
+        { batchPreflight, write: recordDispatchProduction(witness) },
+        `${receiptPaths.length}-path batch preflight returned after ${batchElapsedMs}ms`,
+      ).toEqual({
         batchPreflight: { ok: true, reason: 'owned-safe-paths' },
         write: { attempted: 1, recorded: 1, failed: 0 },
       });

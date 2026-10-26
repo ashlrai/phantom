@@ -21,11 +21,15 @@ import type {
 } from './types.js';
 import { CLOUD_BRANCH_PREFIX, CLOUD_PROMPT_MAX_CHARS, CLOUD_SEAT_ID, CLOUD_TASK_SCHEMA_VERSION } from './types.js';
 import { readCloudBacklog, nextBacklogItem, type BacklogClaimTask } from './backlog.js';
+import { checkDoneWhen, type DoneChecker } from './backlog-done.js';
 import { listDevinTasks } from '../devin/store.js';
 import { cloudBudgetView } from './budget.js';
-import { ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
-import { buildCloudPrompt } from './delivery-contract.js';
+import { declaredMcpServers, ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
+import { buildCloudPrompt, companionToolsBlock } from './delivery-contract.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
+import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { lessonArm, type LessonArm } from '../improve/lesson-trial.js';
+import { revertedPrKeys } from '../improve/reverted.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { launchCloudSession, readCloudSeatArgv, SEAT_NOT_READY_REASON, type CloudLaunchDeps } from './launcher.js';
 import { CLOUD_REPO_PATTERN, listCloudTasks, newCloudTaskId, readCloudBudget, writeCloudTask } from './store.js';
@@ -36,6 +40,10 @@ export interface CloudServiceDeps {
   launcher?: CloudLaunchDeps;
   tracker?: CloudTrackerDeps;
   now?: () => Date;
+  /** Acceptance check for backlog items with `doneWhen` (default: GitHub contents at the default branch). */
+  doneCheck?: DoneChecker;
+  /** Lessons-trial arm for a task id (default: improve/lesson-trial.ts lessonArm with the configured holdout). */
+  lessonArm?: (taskId: string) => LessonArm;
 }
 
 /** Internal launches (Leader approvals, self-improvement) carry their origin + backlog item. */
@@ -184,11 +192,18 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       writeCloudTask(task);
       const checkout = await ensureCloudCheckout(repo, baseBranch, deps.checkout);
       if (!checkout.ok) return fail(checkout.failure, checkout.message);
-      const lessons = knowledgeBlockFor(
+      // Lessons trial (improve/lesson-trial.ts): a fixed share of launches
+      // eligible for lessons runs without them, so their effect on landing
+      // is measured against a holdout instead of assumed.
+      const block = knowledgeBlockFor(
         { repo: task.repo, paths: [], kind: null, text: `${task.title}\n${task.prompt}` },
-        { fromLeader: task.origin === 'leader' },
-      ).text;
-      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block) }, deps.launcher);
+        { fromLeader: task.origin === 'leader', recordHits: false, revertedPrKeys: () => revertedPrKeys() },
+      );
+      const arm = block.noteIds.length > 0 ? (deps.lessonArm ?? lessonArm)(task.id) : 'served';
+      if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
+      if (arm === 'served' && block.noteIds.length > 0) void recordKnowledgeHits(block.noteIds);
+      const lessons = arm === 'served' ? block.text : '';
+      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path))) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {
         state: 'running',
@@ -227,11 +242,21 @@ export async function runSelfImprove(opts: { count?: number; auto: boolean }, de
   const launched: CloudTaskV1[] = [];
   const skipped: CloudImproveResponse['skipped'] = [];
   const repo = readCloudBudget().selfImprove.repo;
+  const satisfied = new Set<string>();
+  const doneCheck: DoneChecker = deps.doneCheck ?? ((item, target) => checkDoneWhen(item, target, deps.tracker?.gh ?? defaultCloudGh));
   for (let i = 0; i < count; i += 1) {
     // Re-read each round: the previous launch's task now claims its item.
     // Claims span both delivery lanes (3.15): an item a Devin session holds is not the cloud's to take.
-    const item = nextBacklogItem([...listCloudTasks(), ...backlogClaimsFromDevin()], repo, clock());
+    const item = nextBacklogItem([...listCloudTasks(), ...backlogClaimsFromDevin()], repo, clock(), satisfied);
     if (!item) break;
+    // An item whose acceptance condition already holds on the default branch
+    // would only come back "no-change"; skip it without spending a launch slot.
+    if (item.doneWhen && await doneCheck(item, item.repo ?? repo) === 'satisfied') {
+      satisfied.add(item.id);
+      skipped.push({ itemId: item.id, reason: 'Already satisfied on the default branch.' });
+      i -= 1;
+      continue;
+    }
     const res = await launchWithGate({
       repo: item.repo ?? repo,
       title: item.title,

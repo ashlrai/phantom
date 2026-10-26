@@ -3,8 +3,8 @@ import { tokenEvidenceLabel } from '../../../core/run/token-evidence.js';
 /**
  * components/stream/RunStreamPanel.tsx — live view of one in-progress run:
  * current status, elapsed time/usage, and the step transcript as it builds
- * (M416 "live run streaming"). Backed by useRunStream's polling, not a
- * push channel — see that hook's header comment for why, and
+ * (M416 "live run streaming"). Uses per-run SSE with a polling fallback.
+ * See that hook's header comment and
  * RUN_STREAM_POLL_MS / the 'stalled' phase for how staleness is surfaced
  * rather than hidden.
  *
@@ -62,6 +62,14 @@ function PhaseBanner({
       <div className={styles.banner} role="status">
         <span className={styles.bannerDot} data-tone="connecting" aria-hidden="true" />
         Connecting to run…
+      </div>
+    );
+  }
+  if (phase === 'draining' || phase === 'reconnecting') {
+    return (
+      <div className={styles.banner} role="status">
+        <span className={styles.bannerDot} data-tone="connecting" aria-hidden="true" />
+        {phase === 'draining' ? 'Run finished — loading captured output…' : 'Reconnecting to captured output…'}
       </div>
     );
   }
@@ -128,7 +136,7 @@ export function RunStreamPanelSkeleton() {
 
 export function RunStreamPanel({ runId }: { runId: string }) {
   const stream = useRunStream(runId);
-  const { phase, run, error, lastChangedAt, transport, stallAgeMs, outputChunks } = stream;
+  const { phase, run, error, lastChangedAt, transport, stallAgeMs, outputChunks, outputGap } = stream;
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   // Mirrors stickToBottomRef in React state purely so the "Follow" button can
@@ -195,7 +203,7 @@ export function RunStreamPanel({ runId }: { runId: string }) {
       <header className={styles.header}>
         <div className={styles.headerTop}>
           <h3 className={styles.title}>{run?.goal ?? `Run ${runId}`}</h3>
-          {run ? <StatusBadge status={run.status} /> : null}
+          {run ? <StatusBadge status={stream.completion?.status ?? run.status} /> : null}
         </div>
         {run ? (
           <dl className={styles.statRow}>
@@ -235,6 +243,12 @@ export function RunStreamPanel({ runId }: { runId: string }) {
         transport={transport}
         error={error}
       />
+
+      {outputGap ? (
+        <div className={`${styles.banner} ${styles.bannerWarning}`} role="status" aria-live="polite">
+          Captured output is incomplete or unavailable. Run status and recorded steps are shown separately.
+        </div>
+      ) : null}
 
       {outputChunks.length > 0 ? (
         <div className={styles.transcriptWrap}>

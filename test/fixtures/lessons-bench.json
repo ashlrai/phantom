@@ -1,0 +1,1918 @@
+{
+ "about": "Lesson-selection benchmark for src/core/learn/retro/inject.ts. 60 approved notes and 50 tuning tasks by one author; 50 validation tasks by a second author who saw only the notes. The selection rule was chosen on tuning tasks only; validation was scored once. 'relevant' lists the notes a competent engineer would want in that task's prompt.",
+ "notes": [
+  {
+   "id": "n01",
+   "text": "Pin third-party GitHub Actions by full commit SHA, not a moving tag; the supply-chain gate refuses new steps that use refs like @v4.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n02",
+   "text": "Never print an environment variable's value in a log line or test failure message; assert on the variable name and pass any value through the redaction helper.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n03",
+   "text": "If the default branch moved while you worked, rebase before filing; diffs computed against a stale base are refused as not applying.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n04",
+   "text": "Do not commit lockfile churn you did not cause: if npm or cargo rewrote the lockfile without a dependency edit, restore it before proposing.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n05",
+   "text": "Snapshot tests that embed timestamps or absolute temp paths break on CI runners; normalize them to placeholders before comparing.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n06",
+   "text": "Tests that bind a fixed TCP port collide when CI runs suites in parallel; bind port 0 and read the assigned port back.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n07",
+   "text": "A revert should be a plain git revert of the offending merge commit; land any follow-up fix in its own PR, never inside the revert.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n08",
+   "text": "Before a major-version dependency bump, read the changelog for removed APIs and changed defaults and grep every call site; recent majors compiled cleanly but changed runtime behavior.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n09",
+   "text": "Any process that speaks a stdio protocol (MCP servers, editor hooks) must keep stdout for protocol frames only; one stray console.log or println corrupts the JSON-RPC stream. Log to stderr.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n10",
+   "text": "Checked-in generated artifacts (bundles, CLI reference docs, JSON schemas) must be regenerated in the same commit as the source change, or the drift check fails.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n11",
+   "text": "CI shells run with set -euo pipefail; a variable that is unset on the runner aborts the job even if it works locally. Default it with ${VAR:-}.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n12",
+   "text": "macOS runners have BSD sed and bash 3.2: give sed -i an explicit suffix argument (sed -i '' or -i.bak) and avoid bash-4 features such as associative arrays in scripts that must run on both.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n13",
+   "text": "Changelog entries go under the Unreleased heading; the release script fails when an entry lands under a version that is already tagged.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n14",
+   "text": "Do not weaken, skip or delete an existing assertion to get green; if the test encodes a requirement your change breaks, stop and report the conflict.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n15",
+   "text": "Keep each proposal under roughly 400 changed lines; bigger diffs hit the size cap and have to be split anyway.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n16",
+   "text": "Intermittent CI failures that pass on rerun usually trace to tests writing to the real HOME or a shared temp dir; give each test its own tempdir before suspecting timing.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n17",
+   "text": "Secret-shaped fixtures (sk-..., ghp_..., xoxb-...) trip GitHub push protection; build them at runtime from fragments or use obviously fake values such as sk-test-FAKE0000.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n18",
+   "text": "On windows-latest, compare paths only after normalizing separators; assertions with hard-coded forward slashes failed there.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n19",
+   "text": "Cross-repo pins (the phantom-secrets crates locus consumes, the lexicon package phantom consumes) move only after the producer release is actually published; bump the consumer in a separate follow-up.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n20",
+   "text": "Ship a fix with a regression test that fails before the change and passes after; reviewers have closed fixes that had none.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n21",
+   "text": "npm run typecheck in phantom also builds the browser-safe Verse views; a Node-only import (fs, path, child_process) in a module those views import breaks the web build.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n22",
+   "text": "The retro and knowledge stores in phantom are append-only JSONL; never rewrite earlier lines in place, append a superseding record instead.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n23",
+   "text": "In phantom, null means unknown and must never be stored or shown as 'none' or 0; reviewers reject coercions like ?? 0 on values nobody measured.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n24",
+   "text": "cargo is not on PATH on the phantom-secrets dev box: call ~/.cargo/bin/cargo, and run clippy with --all-targets -- -D warnings because CI also fails on warnings in test code.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n25",
+   "text": "In phantom-secrets every type that holds a secret value must zeroize on drop (Zeroize/ZeroizeOnDrop or a Zeroizing wrapper); review blocks plain String fields for vault material.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n26",
+   "text": "The phantom-secrets proxy binds 127.0.0.1 only; a change that made the listen address configurable was reverted. Do not add a host or bind flag.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n27",
+   "text": "Audit entries in phantom-secrets are HMAC-chained over the serialized form; reordering or renaming fields breaks phantom audit verify on existing logs. Append new fields last and make them optional.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n28",
+   "text": "locus-mcp stdout carries protocol frames only; eprintln! is fine, but a println! anywhere reachable from the MCP binary breaks every client.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n29",
+   "text": "locus tests must set LOCUS_HOME to a tempdir; code that falls back to ~/.locus pollutes the runner and has caused order-dependent failures.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n30",
+   "text": "Run a locus pin/whoami smoke as one shell script: the authority broker dies with the process that pinned, so split steps fail with 'no current broker endpoint'.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n31",
+   "text": "Never put a raw credential in a locus binding TOML or test fixture; use phm:NAME or env:NAME refs. Release builds reject test: refs.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n32",
+   "text": "In lexicon, any change under src/core, src/mcp, src/hooks or src/cli (and any dependency bump) needs npm run build:bundle and the regenerated plugin/ files committed; check:bundle fails on drift.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n33",
+   "text": "lexicon is NodeNext ESM: relative imports need the .js extension even from .ts sources, and default exports are not allowed.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n34",
+   "text": "After adding a tool, command, export/import format or pack to lexicon, run npm run check:facts; README and docs state counts that CI recomputes from the code.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n35",
+   "text": "No em-dashes in lexicon docs or user-facing strings, and the company is written Ashlr.AI; review bounces both.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n36",
+   "text": "ashlr-stack is a pnpm workspace: add packages with pnpm add --filter <pkg>. Running npm install there produced a package-lock.json that CI rejects.",
+   "scope": {
+    "repo": "ashlrai/ashlr-stack",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n37",
+   "text": "In ashlr-stack the e2e job waits on docker compose healthchecks; a service without a healthcheck makes that step hang until the job times out.",
+   "scope": {
+    "repo": "ashlrai/ashlr-stack",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n38",
+   "text": "ashlr-cortex embedding tests use the stub provider only when CORTEX_EMBEDDINGS=stub is set; without it they reach for the network and stall on CI.",
+   "scope": {
+    "repo": "ashlrai/ashlr-cortex",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n39",
+   "text": "Schema changes in ashlr-cortex need a new numbered migration; editing an already-applied migration was reverted because existing databases had run it.",
+   "scope": {
+    "repo": "ashlrai/ashlr-cortex",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n40",
+   "text": "ashlr-md renders untrusted Markdown: any new HTML passthrough goes through the sanitizer allowlist, and script tags and on* attributes must stay stripped.",
+   "scope": {
+    "repo": "ashlrai/ashlr-md",
+    "pathGlobs": [],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n41",
+   "text": "Modules in src/core/learn whose header says PURE take no fs, no Date.now() and no model calls; pass inputs and the clock in so their tests stay deterministic.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [
+     "src/core/learn/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n42",
+   "text": "The Verse views under src/web-ui are covered by vitest.config.web.ts, which the default npm test config does not include; run npx vitest -c vitest.config.web.ts as well.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [
+     "src/web-ui/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n43",
+   "text": "Merge-gate codes in src/core/fleet are a persisted vocabulary that retros and the Lessons chart group on; add new codes, never rename or remove existing ones.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [
+     "src/core/fleet/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n44",
+   "text": "For phantom dependency updates, keep package.json and package-lock.json in one commit and verify with npm ci from a clean tree; vite and vitest majors must move together.",
+   "scope": {
+    "repo": "ashlrai/phantom",
+    "pathGlobs": [],
+    "taskKinds": [
+     "deps"
+    ]
+   }
+  },
+  {
+   "id": "n45",
+   "text": "Proxy integration tests use the recording mock in test_server.rs; assert on the auth header the mock received, and never expect a phm_ token in a client header or body to be resolved.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [
+     "crates/phantom-proxy/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n46",
+   "text": "When changing KDF settings in phantom-vault, keep the legacy-default Argon2id fallback, or vaults encrypted with older parameters stop opening.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [
+     "crates/phantom-vault/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n47",
+   "text": "The phantom-mcp tool catalog is declared in crates/phantom-mcp/src/server.rs; a new tool also needs the catalog test and the README tool table updated in the same PR.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [
+     "crates/phantom-mcp/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n48",
+   "text": "New importers return BTreeMap<String, String> and must be registered in importers::import_from; reviewers want a fixture per format covering quoted values, multiline values and comments.",
+   "scope": {
+    "repo": "ashlrai/phantom-secrets",
+    "pathGlobs": [
+     "crates/phantom-core/src/importers/**"
+    ],
+    "taskKinds": [
+     "feature"
+    ]
+   }
+  },
+  {
+   "id": "n49",
+   "text": "Every account selector a locus adapter accepts must go through freeze_string_arg; an adapter that read the selector straight from call args let a session switch scope and was reverted.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [
+     "crates/locus-core/src/adapters/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n50",
+   "text": "isolation.rs scrubs ambient identity; a new provider's env vars (AWS_PROFILE, GH_TOKEN, CLOUDSDK_* and the like) must be added to the scrub list or workers inherit the human's account.",
+   "scope": {
+    "repo": "ashlrai/locus",
+    "pathGlobs": [
+     "crates/locus-core/src/isolation.rs",
+     "crates/locus-core/src/adapters/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n51",
+   "text": "src/core/matcher.ts must stay pure (no IO, env or logging); a debug log added there broke the purity test and pushed the hook past its 200ms budget.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [
+     "src/core/matcher.ts"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n52",
+   "text": "The lexicon hook must exit 0 on every input, including an unreadable or malformed lexicon file; an uncaught parse error once blocked every prompt submit.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [
+     "src/hooks/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n53",
+   "text": "When a lexicon CLI flag or command changes, regenerate docs/CLI.md with npm run docs:cli; CI diffs it against --help.",
+   "scope": {
+    "repo": "ashlrai/lexicon",
+    "pathGlobs": [
+     "src/cli/**"
+    ],
+    "taskKinds": [
+     "feature",
+     "refactor"
+    ]
+   }
+  },
+  {
+   "id": "n54",
+   "text": "Docs must describe what the code does today: check every command, flag and count against the source before writing it. Docs PRs describing planned behavior get closed.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [
+     "**/*.md",
+     "docs/**"
+    ],
+    "taskKinds": [
+     "docs"
+    ]
+   }
+  },
+  {
+   "id": "n55",
+   "text": "pull_request_target workflows that check out the PR head are refused by the security gate; trigger on pull_request and keep secrets out of jobs that run fork code.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [
+     ".github/workflows/**"
+    ],
+    "taskKinds": [
+     "ci"
+    ]
+   }
+  },
+  {
+   "id": "n56",
+   "text": "A revert PR body must name the merge commit it undoes and the check that went red, so the retro can link cause and fix.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": [
+     "revert"
+    ]
+   }
+  },
+  {
+   "id": "n57",
+   "text": "Put new tests in the repo's established layout (Rust: #[cfg(test)] mod tests in the source file; TS: the existing tests/ or test/ dir, one file per module) rather than inventing a new location.",
+   "scope": {
+    "repo": null,
+    "pathGlobs": [],
+    "taskKinds": [
+     "tests"
+    ]
+   }
+  },
+  {
+   "id": "n58",
+   "text": "ashlr-cortex retrieval scoring has a golden eval set; any ranking change must rerun npm run eval:retrieval and put before/after recall@8 in the PR.",
+   "scope": {
+    "repo": "ashlrai/ashlr-cortex",
+    "pathGlobs": [
+     "src/retrieval/**"
+    ],
+    "taskKinds": []
+   }
+  },
+  {
+   "id": "n59",
+   "text": "Rendering fixes in ashlr-md need a fixture pair under fixtures/render (input .md plus expected .html); the snapshot runner discovers them automatically.",
+   "scope": {
+    "repo": "ashlrai/ashlr-md",
+    "pathGlobs": [
+     "src/render/**"
+    ],
+    "taskKinds": [
+     "fix"
+    ]
+   }
+  },
+  {
+   "id": "n60",
+   "text": "ashlr-stack pins base images by digest; update the digest and its tag comment together. Renovate PRs that changed only one were closed.",
+   "scope": {
+    "repo": "ashlrai/ashlr-stack",
+    "pathGlobs": [
+     "docker/**",
+     "infra/**"
+    ],
+    "taskKinds": []
+   }
+  }
+ ],
+ "tuning": [
+  {
+   "id": "t01",
+   "text": "Add a Bitwarden importer\nSupport `phantom import bitwarden export.json` next to the doppler and infisical importers. Parse the unencrypted JSON export.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/importers/bitwarden.rs",
+    "crates/phantom-core/src/importers/mod.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n48",
+    "n17",
+    "n24"
+   ],
+   "why": "importer contract and fixture rules, fake key fixtures, Rust lint invocation"
+  },
+  {
+   "id": "t02",
+   "text": "Add a 'port' column to phantom status\nShow which port the local daemon is listening on in the status table.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/cli/status.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "shares 'port' with test-port and proxy-bind notes but none applies"
+  },
+  {
+   "id": "t03",
+   "text": "Fix hook freeze when lexicon.yaml uses tab indentation\nUsers report prompt submit stalls after editing the YAML by hand.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/hooks/user-prompt-submit.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n52",
+    "n32",
+    "n20"
+   ],
+   "why": "hook must exit 0 on bad input; bundle rebuild; regression test"
+  },
+  {
+   "id": "t04",
+   "text": "Add a Vercel provider adapter\nAccount switching across Vercel teams through the vercel CLI, selected by team slug.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/adapters/vercel.rs",
+    "crates/locus-core/src/adapters/mod.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n49",
+    "n50",
+    "n31"
+   ],
+   "why": "selector freezing, env scrub for new provider, credential refs"
+  },
+  {
+   "id": "t05",
+   "text": "Lessons view shows 'none' for notes that were never injected\nlastHitAt renders as 'none' when it is null; it should read as not yet known.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/web-ui/lessons/LessonsView.tsx"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n23",
+    "n42",
+    "n21"
+   ],
+   "why": "null-is-unknown rule, web test config, browser-safe imports"
+  },
+  {
+   "id": "t06",
+   "text": "Darken the Lexicon demo page accent color\nThe site accent fails WCAG AA contrast on white backgrounds; pick a darker shade.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "site/styles.css"
+   ],
+   "kind": "fix",
+   "relevant": [],
+   "why": "pure CSS tweak; Lexicon notes on bundles, em-dashes and ESM do not bear on it"
+  },
+  {
+   "id": "t07",
+   "text": "Let the proxy listen on 0.0.0.0 for dev containers\nUsers in Docker want the proxy reachable from the container network.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-proxy/src/server.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n26"
+   ],
+   "why": "this exact change was reverted; loopback-only is a rule"
+  },
+  {
+   "id": "t08",
+   "text": "Store OAuth refresh tokens with their expiry in the vault\nAdd a struct that keeps the refresh token next to its expiry timestamp.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-vault/src/oauth.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n25",
+    "n24"
+   ],
+   "why": "paraphrase: secret-holding struct must wipe memory on drop"
+  },
+  {
+   "id": "t09",
+   "text": "Rename the cortex migrate --dry flag to --dry-run\nKeep --dry as a hidden alias for one release.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/cli/migrate.ts"
+   ],
+   "kind": "refactor",
+   "relevant": [],
+   "why": "mentions migrate but does not add a migration"
+  },
+  {
+   "id": "t10",
+   "text": "Record which command triggered a rotation in audit entries\nAdd a rotated_by field so audit show can say who rotated a secret.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/audit.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n27",
+    "n24"
+   ],
+   "why": "HMAC chain over serialized fields; append-only optional field"
+  },
+  {
+   "id": "t11",
+   "text": "Raise Argon2 memory cost to 128 MiB\nNew encrypted vaults should use stronger KDF parameters than OWASP balanced.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-vault/src/file.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n46",
+    "n24"
+   ],
+   "why": "legacy fallback must survive a KDF change"
+  },
+  {
+   "id": "t12",
+   "text": "Reword the locus doctor warning for a missing phantom\nThe WARN line should tell the user how to install phantom.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-cli/src/doctor.rs"
+   ],
+   "kind": "other",
+   "relevant": [],
+   "why": "string-only change in locus-cli; locus notes target MCP stdout, adapters, tests"
+  },
+  {
+   "id": "t13",
+   "text": "Expose diagnostics as an MCP tool in phantom-secrets\nAgents should be able to run the doctor checks through the MCP server.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-mcp/src/server.rs",
+    "crates/phantom-mcp/src/tools/doctor.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n47",
+    "n09",
+    "n24"
+   ],
+   "why": "catalog test and README table, stdout discipline, lint"
+  },
+  {
+   "id": "t14",
+   "text": "Integration test: SSE responses are scrubbed chunk by chunk\nCover streaming responses through the proxy with the mock upstream.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-proxy/src/test_server.rs",
+    "crates/phantom-proxy/src/lib.rs"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n45",
+    "n57",
+    "n06"
+   ],
+   "why": "recording mock usage, test layout, port collisions"
+  },
+  {
+   "id": "t15",
+   "text": "Add a word count to the ashlr-md status bar\nShow words and estimated reading time in the editor footer.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/editor/StatusBar.tsx"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "editor UI only; sanitizer and render-fixture notes do not apply"
+  },
+  {
+   "id": "t16",
+   "text": "Time each tools/call in locus-mcp\nEmit per-call timing so slow workers are easier to debug.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-mcp/src/main.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n28",
+    "n09"
+   ],
+   "why": "paraphrase: timing output must not go to stdout"
+  },
+  {
+   "id": "t17",
+   "text": "Cover seal expiry denial with tests\nAdd unit tests proving an expired session seal is rejected.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/seal.rs"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n29",
+    "n57"
+   ],
+   "why": "LOCUS_HOME isolation and in-file test module"
+  },
+  {
+   "id": "t18",
+   "text": "Sort the inbox by priority, then age\nThe inbox list currently sorts by age only.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/inbox/list.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "plain sorting change; no phantom note covers inbox ordering"
+  },
+  {
+   "id": "t19",
+   "text": "CI smoke step fails with a broker endpoint error\nscripts/smoke.sh runs quickstart and whoami as separate workflow steps.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    ".github/workflows/ci.yml",
+    "scripts/smoke.sh"
+   ],
+   "kind": "ci",
+   "relevant": [
+    "n30",
+    "n11"
+   ],
+   "why": "broker dies with pinning shell; strict CI shell"
+  },
+  {
+   "id": "t20",
+   "text": "Add a Talon list exporter\nExport the lexicon as a .talon-list file for Talon voice users.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/core/exporters/talon.ts",
+    "src/core/exporters/index.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n34",
+    "n32",
+    "n33"
+   ],
+   "why": "fact counts, bundle rebuild, ESM import rules"
+  },
+  {
+   "id": "t21",
+   "text": "Add --json output to stack ps\nPrint service names and states as JSON for scripts.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "packages/cli/src/commands/ps.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "mentions services and output, but no stack note concerns CLI output"
+  },
+  {
+   "id": "t22",
+   "text": "Prefer the longer alias when matches overlap\n'Ashlr.AI' and 'Ashlr' both fire on the same span; the longer one should win.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/core/matcher.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n51",
+    "n32",
+    "n20"
+   ],
+   "why": "matcher purity, bundle rebuild, regression test"
+  },
+  {
+   "id": "t23",
+   "text": "Rewrite the lexicon README quick start\nThe quick start still describes the old install flow.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "README.md"
+   ],
+   "kind": "docs",
+   "relevant": [
+    "n35",
+    "n54"
+   ],
+   "why": "style rules and docs-match-code"
+  },
+  {
+   "id": "t24",
+   "text": "Retro extraction: teach the lockfile-drift gate code\nAdd a cause spec for the new gate so retros explain it.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/learn/retro/extract.ts",
+    "src/core/fleet/merge-gates.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n41",
+    "n43"
+   ],
+   "why": "purity of extract.ts; gate codes are a persisted vocabulary"
+  },
+  {
+   "id": "t25",
+   "text": "Expose retrieval top-k in cortex.toml\nRead retrieval.topK from config; the default stays 8.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/config.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "config plumbing only; ranking is unchanged so the eval note does not apply"
+  },
+  {
+   "id": "t26",
+   "text": "Bump vitest to 3.x\nUpgrade vitest and fix any config breakage.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "package.json",
+    "package-lock.json",
+    "vitest.config.ts"
+   ],
+   "kind": "deps",
+   "relevant": [
+    "n44",
+    "n08"
+   ],
+   "why": "deps rule for phantom, major-bump diligence"
+  },
+  {
+   "id": "t27",
+   "text": "Rename gate code files-over-cap to diff-files-over-cap\nThe new name reads better in gate memos.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/fleet/merge-gates.ts"
+   ],
+   "kind": "refactor",
+   "relevant": [
+    "n43"
+   ],
+   "why": "note forbids renaming persisted gate codes"
+  },
+  {
+   "id": "t28",
+   "text": "Draft this week's portfolio digest\nSummarize merged and reverted PRs across all repos for Mason.",
+   "repo": null,
+   "paths": [],
+   "kind": "leader",
+   "relevant": [],
+   "why": "leader writing task; no coding lesson bears on it"
+  },
+  {
+   "id": "t29",
+   "text": "Verse Lessons: show approved bytes against the cap as a bar\nRender approvedBytes / capBytes in the knowledge panel header.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/web-ui/lessons/KnowledgePanel.tsx"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n42",
+    "n21"
+   ],
+   "why": "web test config and browser-safe imports"
+  },
+  {
+   "id": "t30",
+   "text": "Doctor should report the configured Devin key\nShow whether DEVIN_API_KEY is set and its first characters.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/doctor.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n02"
+   ],
+   "why": "paraphrase: never surface a credential value"
+  },
+  {
+   "id": "t31",
+   "text": "Add Redis to the default stack\nNew redis service in compose for the queue workers.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "docker/compose.yml"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n37",
+    "n60"
+   ],
+   "why": "healthcheck gate, digest-pinned images"
+  },
+  {
+   "id": "t32",
+   "text": "Bump the dark theme code block background\nCode blocks are hard to read in dark mode.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/theme/dark.css"
+   ],
+   "kind": "fix",
+   "relevant": [],
+   "why": "theme CSS outside src/render; render-fixture note does not apply"
+  },
+  {
+   "id": "t33",
+   "text": "Add a source_url column to documents\nStore where each ingested document came from.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "migrations/0007_source_url.sql",
+    "src/db/schema.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n39"
+   ],
+   "why": "new numbered migration rule"
+  },
+  {
+   "id": "t34",
+   "text": "Keyword hits drowned out in hybrid search\nBM25 contribution is too small next to vector scores; rebalance the weights.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/retrieval/hybrid.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n58"
+   ],
+   "why": "paraphrase: ranking change needs golden eval numbers"
+  },
+  {
+   "id": "t35",
+   "text": "embed suite hangs on CI\nThe embedding tests run about ten minutes on the runner and then fail.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "test/embed.test.ts"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n38"
+   ],
+   "why": "paraphrase: stub provider env var"
+  },
+  {
+   "id": "t36",
+   "text": "Rename phantom goals ls to phantom goals list\nKeep ls as a hidden alias.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/cli/goals.ts"
+   ],
+   "kind": "refactor",
+   "relevant": [],
+   "why": "CLI rename in phantom; the docs:cli note is lexicon-only"
+  },
+  {
+   "id": "t37",
+   "text": "Allow details and summary elements in rendered Markdown\nUsers want collapsible sections in their notes.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/render/sanitize.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n40"
+   ],
+   "why": "sanitizer allowlist rule"
+  },
+  {
+   "id": "t38",
+   "text": "Inline code containing a pipe splits table columns\n`a|b` inside backticks in a table cell creates an extra column.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/render/tables.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n59",
+    "n20"
+   ],
+   "why": "render fixture pair; regression test"
+  },
+  {
+   "id": "t39",
+   "text": "Revert #812 in phantom after main went red\nThe post-merge typecheck failed on the default branch.",
+   "repo": "ashlrai/phantom",
+   "paths": [],
+   "kind": "revert",
+   "relevant": [
+    "n07",
+    "n56"
+   ],
+   "why": "pure revert, revert PR body rules"
+  },
+  {
+   "id": "t40",
+   "text": "check:bundle red after bumping yaml\nBumped yaml to 2.6 and the bundle drift job fails.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "package.json",
+    "package-lock.json"
+   ],
+   "kind": "ci",
+   "relevant": [
+    "n32",
+    "n10"
+   ],
+   "why": "paraphrase: regenerate committed bundle"
+  },
+  {
+   "id": "t41",
+   "text": "Upload coverage from CI\nAdd a codecov upload step to the main workflow.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    ".github/workflows/ci.yml"
+   ],
+   "kind": "ci",
+   "relevant": [
+    "n01",
+    "n55"
+   ],
+   "why": "action pinning, workflow trigger safety"
+  },
+  {
+   "id": "t42",
+   "text": "Change the stack default log level to warn\nUsers find stack up output too noisy.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "packages/cli/src/log.ts"
+   ],
+   "kind": "other",
+   "relevant": [],
+   "why": "logging default; no stack note concerns logging"
+  },
+  {
+   "id": "t43",
+   "text": "Doctor test is flaky on the macOS runner\ndoctor_reports_missing_phantom passes on Linux and fails now and then on macos-latest.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-cli/src/doctor.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n29",
+    "n16"
+   ],
+   "why": "paraphrase: tests touching the real home directory"
+  },
+  {
+   "id": "t44",
+   "text": "Add an OpenRouter route to the proxy\nRoute /openrouter to openrouter.ai with the Authorization header.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-proxy/src/routes.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n45",
+    "n17",
+    "n24"
+   ],
+   "why": "mock-based route tests, fake key fixtures, lint"
+  },
+  {
+   "id": "t45",
+   "text": "Update locus to phantom-secrets 0.8.0\nThe new release adds the workspace contract types.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "Cargo.toml",
+    "Cargo.lock"
+   ],
+   "kind": "deps",
+   "relevant": [
+    "n19",
+    "n08"
+   ],
+   "why": "cross-repo pin ordering, major bump diligence"
+  },
+  {
+   "id": "t46",
+   "text": "Prepare the 3.16 changelog\nCollect the release notes for the lessons and playbook work.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "CHANGELOG.md"
+   ],
+   "kind": "docs",
+   "relevant": [
+    "n13",
+    "n54"
+   ],
+   "why": "Unreleased heading; docs match code"
+  },
+  {
+   "id": "t47",
+   "text": "install.sh fails on macOS\nscripts/install.sh dies with 'sed: 1: extra characters at the end of p command'.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "scripts/install.sh"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n12",
+    "n11"
+   ],
+   "why": "paraphrase: BSD sed on macOS; strict shell"
+  },
+  {
+   "id": "t48",
+   "text": "Classify sk-ant- keys as secrets\nlooks_like_secret misses Anthropic keys in .env files.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/dotenv.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n17",
+    "n20",
+    "n24"
+   ],
+   "why": "push protection on key fixtures, regression test, lint"
+  },
+  {
+   "id": "t49",
+   "text": "gcloud workers use the human's default project\nWorkers for the gcloud adapter run against whatever project the user has set locally.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/isolation.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n50"
+   ],
+   "why": "paraphrase: ambient identity scrub list"
+  },
+  {
+   "id": "t50",
+   "text": "Add a copy-heading-link button to ashlr-md\nHovering a heading shows a button that copies its anchor URL.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/editor/HeadingAnchor.tsx"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "editor UI; no note applies"
+  }
+ ],
+ "validation": [
+  {
+   "id": "v01",
+   "text": "Add a Bitwarden JSON export importer\nUsers migrating from Bitwarden want `phantom import --from bitwarden vault.json`. Parse login items whose custom fields hold API keys and map them to env-style names.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/importers/bitwarden.rs",
+    "crates/phantom-core/src/importers/mod.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n48",
+    "n24"
+   ],
+   "why": "New importer must return BTreeMap, register in import_from and ship per-format fixtures; Rust build/lint path on this box."
+  },
+  {
+   "id": "v02",
+   "text": "Proxy drops anthropic-version header on Anthropic route\nRequests through /anthropic fail with 400 because the anthropic-version header never reaches the upstream. Preserve it while still replacing x-api-key.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-proxy/src/routes.rs",
+    "crates/phantom-proxy/tests/test_server.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n45",
+    "n20"
+   ],
+   "why": "Proxy header behavior is verified with the recording mock; a fix needs a failing-then-passing regression test."
+  },
+  {
+   "id": "v03",
+   "text": "Let containers reach the phantom proxy\nUsers running their app inside Docker cannot reach 127.0.0.1 on the host. Add an option so the proxy can listen on 0.0.0.0 or the docker bridge address.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-proxy/src/server.rs",
+    "crates/phantom-cli/src/commands/exec.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n26"
+   ],
+   "why": "A configurable listen address was already reverted; the engineer must know this is off-limits."
+  },
+  {
+   "id": "v04",
+   "text": "Harden key derivation for the encrypted file vault\nRaise the memory cost of the password hash used to derive the vault key to 128 MiB on desktop platforms.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-vault/src/file.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n46"
+   ],
+   "why": "Paraphrase of Argon2id KDF change; old-parameter fallback must remain or existing vaults break."
+  },
+  {
+   "id": "v05",
+   "text": "Record the calling process in audit events\nAdd the parent command name (e.g. `exec`, `mcp`) to each audit.log entry so incident review can tell which surface touched a secret.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/audit.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n27"
+   ],
+   "why": "Audit entries are HMAC-chained over serialized form; new fields must be appended last and optional."
+  },
+  {
+   "id": "v06",
+   "text": "Expose expiring secrets to agents over MCP\nAdd a `phantom_list_expiring` tool that returns secret names with expiry within N days, so Claude Code can warn before a key lapses.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-mcp/src/server.rs",
+    "crates/phantom-mcp/src/tools/expiry.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n47",
+    "n09"
+   ],
+   "why": "New MCP tool needs catalog test and README table; stdio server must keep stdout for protocol."
+  },
+  {
+   "id": "v07",
+   "text": "CI red: clippy failing on phantom-secrets main\nThe lint job fails on `needless_borrow` and `unused_mut` in test helpers that pass locally with plain `cargo clippy`.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [],
+   "kind": "ci",
+   "relevant": [
+    "n24"
+   ],
+   "why": "Paraphrase: local clippy misses test code; CI runs --all-targets -D warnings and cargo lives in ~/.cargo/bin."
+  },
+  {
+   "id": "v08",
+   "text": "Detect Stripe restricted keys as secrets\n`phantom init` leaves STRIPE_RESTRICTED_KEY=rk_live_... in .env untouched. Extend the value heuristics so rk_live_/rk_test_ values are treated as secrets.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "crates/phantom-core/src/dotenv.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n17",
+    "n20"
+   ],
+   "why": "Tests need secret-shaped rk_live fixtures that trip push protection; fix needs a regression test."
+  },
+  {
+   "id": "v09",
+   "text": "Refresh the phm.dev landing page hero copy\nReplace the hero headline and subhead with the new positioning line from marketing; keep the proxy diagram and install snippet as they are.",
+   "repo": "ashlrai/phantom-secrets",
+   "paths": [
+    "site/index.html",
+    "site/styles.css"
+   ],
+   "kind": "other",
+   "relevant": [],
+   "why": "Static marketing copy; no Rust, proxy, vault or docs-accuracy note bears on it."
+  },
+  {
+   "id": "v10",
+   "text": "Add a Vercel adapter to locus\nSupport binding a Vercel team so workers can run `vercel` commands as that team only. Account selector is the team slug.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/adapters/vercel.rs",
+    "crates/locus-core/src/adapters/mod.rs",
+    "crates/locus-core/src/isolation.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n49",
+    "n50",
+    "n31"
+   ],
+   "why": "Adapter selectors must be frozen, VERCEL_* ambient env scrubbed, and fixture credentials must be refs."
+  },
+  {
+   "id": "v11",
+   "text": "Trace gate decisions in locus-mcp\nWhen debugging client wiring it is hard to see why a tool call was denied. Print each allow/deny/require_approval decision with the tool name as it happens.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-mcp/src/main.rs"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n28"
+   ],
+   "why": "The natural println! would corrupt the MCP stream; output must go to stderr."
+  },
+  {
+   "id": "v12",
+   "text": "Store tests flaky in CI\n`store::tests::list_sessions_after_leave` fails about one run in five on CI and never locally; it sees sessions from another test.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/store.rs"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n29",
+    "n16"
+   ],
+   "why": "Cross-test pollution via ~/.locus; each test needs its own LOCUS_HOME tempdir."
+  },
+  {
+   "id": "v13",
+   "text": "Workers still act as the human's Google Cloud account\nA gcp-bound worker ran `gcloud projects list` and got the developer's personal projects instead of the binding's service account.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/isolation.rs"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n50"
+   ],
+   "why": "Paraphrase: CLOUDSDK_* / gcloud config env must be in the ambient-identity scrub list."
+  },
+  {
+   "id": "v14",
+   "text": "Workspace tests fail on the Windows runner\nThe new windows job in the locus matrix reports `assertion failed: left == right` in workspace allowlist tests; Linux and macOS are green.",
+   "repo": "ashlrai/locus",
+   "paths": [],
+   "kind": "tests",
+   "relevant": [
+    "n18"
+   ],
+   "why": "Path assertions with hard-coded forward slashes fail on Windows; normalize separators."
+  },
+  {
+   "id": "v15",
+   "text": "Rename the require_approval label in policy output\nHumans read `require_approval` in `locus whoami`; product wants it displayed as `needs approval`. Display string only, the TOML key stays.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-core/src/policy.rs"
+   ],
+   "kind": "refactor",
+   "relevant": [],
+   "why": "Cosmetic display rename; no MCP stdout, isolation, credential or test-home note applies."
+  },
+  {
+   "id": "v16",
+   "text": "Move locus to phantom-secrets 0.8\nphantom-secrets 0.8.0 is tagged on main but crates are not out yet; bump the phantom-core and phantom-vault dependencies so locus can use the new resolve API.",
+   "repo": "ashlrai/locus",
+   "paths": [],
+   "kind": "deps",
+   "relevant": [
+    "n19",
+    "n08"
+   ],
+   "why": "Consumer pin must wait for the published producer release; a breaking bump needs changelog review."
+  },
+  {
+   "id": "v17",
+   "text": "Point the phantom-missing doctor warning at the install page\n`locus doctor` prints `WARN phantom not found`. Append the https://phm.dev install URL to that message.",
+   "repo": "ashlrai/locus",
+   "paths": [
+    "crates/locus-cli/src/doctor.rs"
+   ],
+   "kind": "other",
+   "relevant": [],
+   "why": "One-string change; shares 'phantom' and 'doctor' words with notes but none bear on it."
+  },
+  {
+   "id": "v18",
+   "text": "Add an Espanso export format\nLet `lexicon export --format espanso` write a match file so text-expander users get the same corrections.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/core/exporters/espanso.ts",
+    "src/core/exporters/index.ts",
+    "tests/exporters.test.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n34",
+    "n32",
+    "n33"
+   ],
+   "why": "New format changes counts checked by check:facts, touches src/core so bundle must be rebuilt, and imports need .js."
+  },
+  {
+   "id": "v19",
+   "text": "Prompt submit blocked when lexicon.yaml is empty\nAfter `lexicon init` wrote a zero-byte file, Claude Code refused every prompt with a hook error until the file was deleted.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/hooks/user-prompt-submit.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n52",
+    "n32",
+    "n20"
+   ],
+   "why": "Hook must exit 0 on malformed input; hooks change requires bundle rebuild; fix needs regression test."
+  },
+  {
+   "id": "v20",
+   "text": "Explain why the matcher picked a phonetic match\nAdd a LEXICON_DEBUG switch that writes which tier (alias, phonetic, fuzzy) matched each token, to help tune aliases.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/core/matcher.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n51",
+    "n32"
+   ],
+   "why": "matcher.ts must stay pure (no env, no logging); src/core change needs bundle rebuild."
+  },
+  {
+   "id": "v21",
+   "text": "Add --dry-run to lexicon import\nShow which entries an import would add, merge or skip without writing the lexicon file.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "src/cli/cmd-import.ts",
+    "src/cli/index.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n53",
+    "n32"
+   ],
+   "why": "New CLI flag requires docs:cli regeneration and a plugin bundle rebuild."
+  },
+  {
+   "id": "v22",
+   "text": "Rewrite the README intro\nThe opening paragraph undersells the agent use case and calls the company \"Ashlr AI\". Rewrite it around voice-to-agents and link the plugin install.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "README.md"
+   ],
+   "kind": "docs",
+   "relevant": [
+    "n35",
+    "n54"
+   ],
+   "why": "Brand spelling and no em-dash rule; docs must describe current behavior only."
+  },
+  {
+   "id": "v23",
+   "text": "Extension popup clips long alias lists\nIn the browser extension popup, entries with more than six aliases overflow and the bottom rows are hidden. Make the list scroll.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "extension/src/popup.css"
+   ],
+   "kind": "fix",
+   "relevant": [],
+   "why": "CSS-only extension fix outside src/core/cli/hooks; no bundle, ESM or docs note applies."
+  },
+  {
+   "id": "v24",
+   "text": "Show entry count in the LexiconBar tooltip\nHovering the macOS menu bar icon should show how many canonical entries are loaded.",
+   "repo": "ashlrai/lexicon",
+   "paths": [
+    "apps/macos/LexiconBar/Sources/LexiconBar/StatusItem.swift"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "Swift UI tweak; the 'counts' note is about doc fact checks for tools/formats, not this."
+  },
+  {
+   "id": "v25",
+   "text": "Upgrade commander to v13\nRenovate flagged commander 12 -> 13 for lexicon. Apply the bump and fix anything that breaks.",
+   "repo": "ashlrai/lexicon",
+   "paths": [],
+   "kind": "deps",
+   "relevant": [
+    "n32",
+    "n08"
+   ],
+   "why": "Dependency bump needs bundle rebuild; major bump needs changelog review of removed APIs/defaults."
+  },
+  {
+   "id": "v26",
+   "text": "install.sh breaks on Macs\nUsers report `sed: 1: \"...\": extra characters at the end of p command` from the curl | sh installer on macOS; Linux works.",
+   "repo": "ashlrai/lexicon",
+   "paths": [],
+   "kind": "fix",
+   "relevant": [
+    "n12"
+   ],
+   "why": "Paraphrase of BSD sed -i incompatibility on macOS."
+  },
+  {
+   "id": "v27",
+   "text": "Lessons view shows \"0 hits\" for notes that were never measured\nApproved notes imported before hit counting existed show 0 hits; they should read as unknown.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/web-ui/views/lessons/KnowledgeList.tsx",
+    "src/core/learn/retro/state.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n23",
+    "n42"
+   ],
+   "why": "null-is-unknown rule; web-ui changes need the separate web vitest config."
+  },
+  {
+   "id": "v28",
+   "text": "Deduplicate the retro store on load\nRetros for the same task end appear twice after a sweep retry. Collapse duplicates by sourceKey and write the cleaned file back.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/learn/retro/store.ts"
+   ],
+   "kind": "refactor",
+   "relevant": [
+    "n22"
+   ],
+   "why": "Store is append-only JSONL; writing a cleaned file back violates that."
+  },
+  {
+   "id": "v29",
+   "text": "Add a merge-gate refusal for oversized diffs\nIntroduce a gate result for proposals over the line cap so retros can tell size refusals apart from protected-path refusals; tidy the existing code names while there.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/fleet/gates.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n43"
+   ],
+   "why": "Gate codes are a persisted vocabulary; add new, never rename existing."
+  },
+  {
+   "id": "v30",
+   "text": "Normalize retro paths with node:path\nRetro paths sometimes carry ./ prefixes or backslashes. Add a normalizePaths helper next to the retro types using path.posix.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/core/learn/retro/types.ts"
+   ],
+   "kind": "refactor",
+   "relevant": [
+    "n21",
+    "n41"
+   ],
+   "why": "types.ts is imported by browser views (no Node imports) and learn modules stay pure."
+  },
+  {
+   "id": "v31",
+   "text": "Bump vitest to 3.x\nvitest 2 is out of support. Upgrade phantom's test runner and fix any config changes.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "package.json",
+    "package-lock.json",
+    "vitest.config.ts"
+   ],
+   "kind": "deps",
+   "relevant": [
+    "n44",
+    "n08"
+   ],
+   "why": "vite/vitest majors move together with lockfile in one commit; major bump changelog review."
+  },
+  {
+   "id": "v32",
+   "text": "Revert #812 (knowledge inject ranking)\nmain has been red since #812 merged; m55 lessons suite fails. Back it out now and we will redo the ranking separately.",
+   "repo": "ashlrai/phantom",
+   "paths": [],
+   "kind": "revert",
+   "relevant": [
+    "n07",
+    "n56"
+   ],
+   "why": "Plain git revert with no bundled fix; PR body must name the merge commit and red check."
+  },
+  {
+   "id": "v33",
+   "text": "Run web tests on fork PRs with the preview token\nAdd a workflow so outside contributors' PRs run the Verse web suite and post a preview, using the deploy token.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    ".github/workflows/web-preview.yml"
+   ],
+   "kind": "ci",
+   "relevant": [
+    "n55",
+    "n01"
+   ],
+   "why": "Fork code plus secrets is the pull_request_target trap; new action steps must be SHA-pinned."
+  },
+  {
+   "id": "v34",
+   "text": "Add --since to phm improve list\nLet `phm improve list --since 7d` filter proposals by creation time.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/cli/improve.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "Simple CLI filter; no store, null, web-build or gate note bears on it."
+  },
+  {
+   "id": "v35",
+   "text": "Report the Node version in phm doctor\n`phm doctor` should print the running Node version and warn when it is below the engines floor in package.json.",
+   "repo": "ashlrai/phantom",
+   "paths": [],
+   "kind": "feature",
+   "relevant": [],
+   "why": "Small diagnostic addition; shares 'warn' and 'package.json' with notes but none bear on it."
+  },
+  {
+   "id": "v36",
+   "text": "Get m42 lessons suite green after the inject cap change\nm42 asserts every approved note is injected; with the 16 KiB cap it now fails. Make the suite pass.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "test/m42.lessons.test.ts"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n14",
+    "n57"
+   ],
+   "why": "Temptation to weaken the assertion; tests stay in the established test/ layout."
+  },
+  {
+   "id": "v37",
+   "text": "Show the gate memo in the fleet PR comment\nWhen a gate refuses a proposal the PR comment only says 'refused'; include the memo text under a details block.",
+   "repo": "ashlrai/phantom",
+   "paths": [
+    "src/cli/fleet/comment.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "Display-only CLI change outside src/core/fleet; shares 'gate' with n43 but no codes change."
+  },
+  {
+   "id": "v38",
+   "text": "Add redis to the e2e compose stack\nThe new queue worker needs redis in e2e. Add a redis service to the compose file used by the e2e job and wire REDIS_URL into the api.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "docker/compose.e2e.yml",
+    "apps/api/src/config.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n37"
+   ],
+   "why": "e2e waits on compose healthchecks; a new service without one hangs the job."
+  },
+  {
+   "id": "v39",
+   "text": "Add zod to the api package\nWe want request validation in apps/api. Add zod as a dependency there only.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [],
+   "kind": "deps",
+   "relevant": [
+    "n36"
+   ],
+   "why": "pnpm workspace: use pnpm add --filter, not npm install."
+  },
+  {
+   "id": "v40",
+   "text": "Rename NEXT_PUBLIC_API to NEXT_PUBLIC_API_URL\nThe web app's API base env var name is ambiguous. Rename it in the config loader and .env.example.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "apps/web/src/config.ts",
+    "apps/web/.env.example"
+   ],
+   "kind": "refactor",
+   "relevant": [],
+   "why": "Env var rename shares words with the redaction note but nothing is logged or printed."
+  },
+  {
+   "id": "v41",
+   "text": "Add a service table to `stack status`\nPrint each service with its state and uptime in an aligned table instead of the current one-line summary.",
+   "repo": "ashlrai/ashlr-stack",
+   "paths": [
+    "packages/cli/src/status.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "CLI output formatting; 'service' overlaps the healthcheck note but compose/e2e are untouched."
+  },
+  {
+   "id": "v42",
+   "text": "Blend keyword matches into retrieval scores\nPure vector search misses exact identifiers. Add a BM25 term to the scorer with a tunable weight.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/retrieval/score.ts",
+    "src/retrieval/bm25.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n58"
+   ],
+   "why": "Ranking change must rerun the golden retrieval eval and report recall@8."
+  },
+  {
+   "id": "v43",
+   "text": "Store the source URL for each document\nIngest knows where a document came from but drops it. Persist it on the documents table and return it in search hits.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [],
+   "kind": "feature",
+   "relevant": [
+    "n39"
+   ],
+   "why": "Paraphrase of a schema change: needs a new numbered migration, not an edited one."
+  },
+  {
+   "id": "v44",
+   "text": "Embeddings suite hangs on CI\ntest/embeddings.test.ts times out after 10 minutes on GitHub runners; locally it finishes in seconds.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "test/embeddings.test.ts"
+   ],
+   "kind": "tests",
+   "relevant": [
+    "n38"
+   ],
+   "why": "Without CORTEX_EMBEDDINGS=stub the tests hit the network and stall on CI."
+  },
+  {
+   "id": "v45",
+   "text": "Ingest progress bar spams non-TTY logs\n`cortex ingest` piped to a file writes thousands of carriage-return frames. Fall back to periodic plain lines when stdout is not a TTY.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/cli/ingest.ts"
+   ],
+   "kind": "fix",
+   "relevant": [],
+   "why": "Mentions stdout but is not a stdio protocol server; no cortex note applies."
+  },
+  {
+   "id": "v46",
+   "text": "Add --limit to cortex search\n`cortex search` always prints 20 hits. Add a --limit flag and pass it to the query.",
+   "repo": "ashlrai/ashlr-cortex",
+   "paths": [
+    "src/cli/search.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "Result-count flag in the CLI does not change ranking, so the eval note does not apply."
+  },
+  {
+   "id": "v47",
+   "text": "Table column alignment ignored\nGFM tables with `:---:` separators render all cells left-aligned in ashlr-md output.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/render/table.ts"
+   ],
+   "kind": "fix",
+   "relevant": [
+    "n59",
+    "n20"
+   ],
+   "why": "Render fixes need a fixtures/render input/expected pair, which doubles as the regression test."
+  },
+  {
+   "id": "v48",
+   "text": "Allow collapsible sections in rendered docs\nAuthors want <details> and <summary> blocks to render instead of being escaped.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/render/html.ts",
+    "src/sanitize/allowlist.ts"
+   ],
+   "kind": "feature",
+   "relevant": [
+    "n40"
+   ],
+   "why": "Raw HTML passthrough must go through the sanitizer allowlist with on* attributes stripped."
+  },
+  {
+   "id": "v49",
+   "text": "Add --watch to the ashlr-md CLI\nRe-render the output file whenever the input Markdown changes, debounced to 100ms.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [
+    "src/cli/watch.ts"
+   ],
+   "kind": "feature",
+   "relevant": [],
+   "why": "File-watch CLI feature; no sanitizer or render-fixture note bears on it."
+  },
+  {
+   "id": "v50",
+   "text": "Split the renderer into plugins\nMove each block type (tables, code, footnotes, math) out of the monolithic renderer into a plugin interface so they can be toggled.",
+   "repo": "ashlrai/ashlr-md",
+   "paths": [],
+   "kind": "refactor",
+   "relevant": [
+    "n15"
+   ],
+   "why": "A broad refactor will blow the per-proposal size cap and must be split."
+  }
+ ]
+}

@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -66,7 +67,9 @@ import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocatio
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
+import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
+import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
@@ -277,7 +280,7 @@ const loadPulseCmd = lazyCmd(
 
 const loadPulseTestCmd = lazyCmd(
   () => import('./pulse.js' as unknown as string),
-  (m) => ((_args: string[]) => (m.cmdPulseTest as () => Promise<number>)()) as Cmd,
+  (m) => m.cmdPulseTest as Cmd,
   'pulse-test command requires src/cli/pulse.ts (M91 module not yet built).',
 );
 
@@ -817,8 +820,8 @@ async function tryGetIdentity(): Promise<GetIdentityFn | null> {
 
 // ─── ANSI helpers ──────────────────────────────────────────────────────────────
 
-// index.ts colorizes unconditionally (output is always color-coded regardless
-// of TTY), so we bind the shared colorizers with tty=true.
+// index.ts colorizes regardless of TTY, so we bind the shared colorizers with
+// tty=true; NO_COLOR still turns them off (makeColors honors it).
 const { bold, dim, red, green, yellow, cyan, gray, magenta } = makeColors(true);
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -1115,7 +1118,7 @@ function printItemSummary(item: IndexedItem): void {
 function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(yellow('  No git repos are being tracked yet.'));
   console.log('');
-  console.log(`  ashlr scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
+  console.log(`  phm scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
   console.log('');
   if (cfg.roots.length === 0) {
     console.log(`    ${red('✗')} ${dim('(no roots configured)')}`);
@@ -1128,27 +1131,42 @@ function printNoReposHelp(cfg: AshlrConfig): void {
     }
   }
   console.log('');
-  console.log(`  ${bold('Fix it')} ${dim('— point ashlr at the folder that holds your repos')}`);
+  console.log(`  ${bold('Fix it')} ${dim('— point phm at the folder that holds your repos')}`);
   console.log(`  ${dim('(repos must be direct children, e.g.')} ${cyan('<root>/my-app/.git')}${dim('):')}`);
   console.log('');
   console.log(`    ${cyan('1.')} Set your roots:`);
-  console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
-  console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  // Only this platform's quoting: a Linux user should not have to skip past PowerShell.
+  if (process.platform === 'win32') {
+    console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
+    console.log(`       ${cyan('phm config set roots --json \'[""C:/Users/you/code""]\'')}`);
+  } else {
+    console.log(`       ${cyan(`phm config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
+  }
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
-  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);
+  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('phm index --refresh')}`);
   console.log('');
-  console.log(`  ${dim('Then re-run')} ${cyan('ashlr status')}${dim('.')}`);
+  console.log(`  ${dim('Then re-run')} ${cyan('phm status')}${dim('.')}`);
   console.log('');
 }
 
-async function cmdStatus(_args: string[]): Promise<void> {
+async function cmdStatus(args: string[]): Promise<void> {
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
 
-  const repos = idx.items.filter(i => i.kind === 'repo' && i.git);
+  if (args.includes('--json')) {
+    await printStatusJson(cfg, idx, {
+      getToolsRegistry: tryGetToolsRegistry,
+      discoverMcpServers: tryDiscoverMcpServers,
+      buildRollup: tryBuildRollup,
+      githubStatus: tryGithubStatus,
+      vercelStatus: tryVercelStatus,
+      getIdentity: tryGetIdentity,
+    });
+    return;
+  }
+
+  const { repos, dirty, offSync, stale } = classifyRepos(idx, cfg.staleDays);
 
   // Zero repos → the index is empty or roots are misconfigured. Show actionable
   // setup guidance instead of an empty attention board, then stop.
@@ -1159,14 +1177,6 @@ async function cmdStatus(_args: string[]): Promise<void> {
     printNoReposHelp(cfg);
     return;
   }
-
-  const dirty   = repos.filter(i => (i.git?.dirty ?? 0) > 0);
-  const offSync  = repos.filter(i => !dirty.includes(i) && ((i.git?.ahead ?? 0) > 0 || (i.git?.behind ?? 0) > 0));
-  const stale   = repos.filter(i =>
-    !dirty.includes(i) &&
-    !offSync.includes(i) &&
-    daysSince(i.lastModified) > cfg.staleDays
-  );
 
   const nameW  = 30;
   const branchW = 18;
@@ -1388,6 +1398,30 @@ async function cmdStatus(_args: string[]): Promise<void> {
     // silently omit — never break status
   }
 
+  // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
+  try {
+    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
+    const custody = gatherCustodyStatus();
+    if (custody) {
+      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
+  // Phantom strict preflight: only when the spawn gate is on (value-free)
+  try {
+    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
+    const pre = gatherPreflightStatus();
+    if (pre) {
+      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
   try {
     const resourcesMod = await import('./resources.js' as unknown as string) as {
@@ -1483,6 +1517,10 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
+  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
+  const md = planMarkdownOpen(chosen.path, cfg);
+  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
+  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -1744,12 +1782,13 @@ async function cmdConfig(args: string[]): Promise<void> {
  * M32: help moved to src/cli/help.ts (topic-grouped, searchable, --all).
  * This thin wrapper keeps `ashlr help` working even if the module is missing.
  */
-async function cmdHelp(rest: string[] = []): Promise<void> {
+async function cmdHelp(rest: string[] = []): Promise<number> {
   try {
     const mod = await import('./help.js');
-    await mod.cmdHelp(rest);
+    return await mod.cmdHelp(rest);
   } catch {
     console.log('Phantom — local-first command center. Run `phm help` or see the README (ashlr remains compatible).');
+    return 0;
   }
 }
 
@@ -1866,6 +1905,24 @@ async function main(): Promise<void> {
         // Keep onboarding and its provider/service graph off unrelated CLI startup.
         const { cmdDoctor } = await import('./doctor-init.js');
         process.exitCode = await cmdDoctor(rest);
+        break;
+      }
+
+      case 'improve': {
+        const { cmdImprove } = await import('./improve.js');
+        process.exitCode = await cmdImprove(rest);
+        break;
+      }
+
+      case 'steward': {
+        const { cmdSteward } = await import('./steward.js');
+        process.exitCode = await cmdSteward(rest);
+        break;
+      }
+
+      case 'team': {
+        const { cmdTeam } = await import('./team.js');
+        process.exitCode = await cmdTeam(rest);
         break;
       }
 
@@ -1990,7 +2047,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
@@ -2130,6 +2189,13 @@ async function main(): Promise<void> {
         // plus `pause`/`resume` (kill-switch only).
         const cmdFleet = await loadFleetCmd();
         process.exitCode = await cmdFleet(rest);
+        break;
+      }
+
+      case 'receipt': {
+        // `phm receipt ...` is the same as `phm fleet receipt ...`.
+        const { cmdFleetReceipt } = await import('./receipt.js');
+        process.exitCode = await cmdFleetReceipt(rest);
         break;
       }
 
@@ -2365,6 +2431,12 @@ async function main(): Promise<void> {
       case 'authority': {
         // V3.10: standing authority — Touch ID grants, the autonomy switch,
         // Stop, revoke, the ledger, rulesets and the guided Phase-0 setup.
+        const offMac = authoritySetupPlatformRefusal(rest);
+        if (offMac) {
+          for (const line of offMac) console.error(`  ${line}`);
+          process.exitCode = 1;
+          break;
+        }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
         break;
@@ -2467,10 +2539,26 @@ async function main(): Promise<void> {
         break;
       }
 
+      case '--ashlr-handshake': {
+        // Companion handshake v1: one JSON object, no network, exit 0.
+        let version = process.env.ASHLR_VERSION;
+        if (!version) {
+          try {
+            const { createRequire } = await import('node:module');
+            version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+          } catch {
+            version = 'unknown';
+          }
+        }
+        const { buildPhmHandshake } = await import('./handshake.js');
+        console.log(JSON.stringify(buildPhmHandshake(version)));
+        break;
+      }
+
       case 'help':
       case '--help':
       case '-h':
-        await cmdHelp(rest);
+        process.exitCode = await cmdHelp(rest);
         break;
 
       default: {

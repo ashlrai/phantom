@@ -1,3 +1,4 @@
+import { validSubscriptionOnlyBoundary } from '../routing/subscription-only.js';
 /** Pure task admission: no credential lookup, provider contact, reservation or execution. */
 import { resourceQuotaBuckets, validateResourceQuotaScope, type ResourceQuotaScope } from './quota-scope.js';
 export interface ResourceWorker {
@@ -31,12 +32,19 @@ export interface ResourceQuotaWindow {
    */
   limitReached?: true;
 }
+export interface ResourceObservationCommissioning {
+  planDigest: string; poolDigest: string; profileMetadataDigest: string; profileEpochDigest: string;
+  collectorBindingDigest: string; collectorOwner: string;
+  /** Optional genuine native source evidence, never inferred from quota or credits. */
+  subscriptionOnlyBoundary?: import('../routing/reset-spending-types.js').SubscriptionOnlyBoundary;
+}
 export interface ResourceObservation {
   workerId: string;
   observedAt: string;
   expiresAt: string;
   /** Latest partial update; older retained windows keep observedAt/expiresAt conservative. */
   updatedAt?: string;
+  commissioning?: ResourceObservationCommissioning;
   /** Transport/worker readiness is distinct from whether quota percentages are known. */
   health: 'ready' | 'unavailable';
   windows: ResourceQuotaWindow[];
@@ -72,7 +80,8 @@ export type ResourceExclusionReason =
   | 'quota-reserve-reached'
   | 'concurrency-exhausted'
   | 'operator-task-cap-reached'
-  | 'operator-quota-scope-excluded';
+  | 'operator-quota-scope-excluded'
+  | 'commissioning-quota-provenance-required' | 'commissioning-billing-boundary-required';
 export interface ResourceAssignmentCandidate {
   workerId: string;
   provider: ResourceWorker['provider'];
@@ -181,20 +190,26 @@ export function validateResourcePool(value: unknown): ResourcePool {
 }
 
 /** Missing observations are allowed as input, never implicitly interpreted as known capacity. */
+function validCommissioning(value: unknown): boolean {
+  if (!object(value) || !exact(value, ['planDigest', 'poolDigest', 'profileMetadataDigest', 'profileEpochDigest', 'collectorBindingDigest', 'collectorOwner'], ['subscriptionOnlyBoundary'])) return false;
+  if (!['planDigest', 'poolDigest', 'profileMetadataDigest', 'profileEpochDigest', 'collectorBindingDigest', 'collectorOwner'].every(key => typeof value[key] === 'string' && /^[a-f0-9]{64}$/.test(value[key] as string))) return false;
+  return value.subscriptionOnlyBoundary === undefined || validSubscriptionOnlyBoundary(value.subscriptionOnlyBoundary);
+}
 export function validateResourceObservations(value: unknown, pool: ResourcePool): ResourceObservation[] {
   const definition = validateResourcePool(pool);
   if (!array(value, 0, definition.workers.length)) throw new Error('Invalid resource observations: bounded array required');
   const known = new Set(definition.workers.map((worker) => worker.id)); const seen = new Set<string>();
   const observations: ResourceObservation[] = [];
   for (const observation of value) {
-    if (!object(observation) || !exact(observation, ['workerId', 'observedAt', 'expiresAt', 'health', 'windows', 'retryAfter'], ['updatedAt']) ||
+    if (!object(observation) || !exact(observation, ['workerId', 'observedAt', 'expiresAt', 'health', 'windows', 'retryAfter'], ['updatedAt', 'commissioning']) ||
         !identifier(observation.workerId) || !known.has(observation.workerId) || seen.has(observation.workerId) ||
         !timestamp(observation.observedAt) || !timestamp(observation.expiresAt) || observation.expiresAt <= observation.observedAt ||
         Date.parse(observation.expiresAt) - Date.parse(observation.observedAt) > MAX_RESOURCE_OBSERVATION_AGE_MS ||
         (observation.updatedAt !== undefined && (!timestamp(observation.updatedAt) || observation.updatedAt < observation.observedAt)) ||
         typeof observation.health !== 'string' || !['ready', 'unavailable'].includes(observation.health) ||
         !array(observation.windows, 0, MAX_RESOURCE_OBSERVATION_WINDOWS) ||
-        (observation.retryAfter !== null && !timestamp(observation.retryAfter))) {
+        (observation.retryAfter !== null && !timestamp(observation.retryAfter)) ||
+        (observation.commissioning !== undefined && !validCommissioning(observation.commissioning))) {
       throw new Error('Invalid resource observations: unique enrolled identities and canonical time bounds required');
     }
     const windowIds = new Set<string>(); const windows: ResourceQuotaWindow[] = [];
@@ -218,7 +233,8 @@ export function validateResourceObservations(value: unknown, pool: ResourcePool)
     }
     seen.add(observation.workerId); observations.push({ workerId: observation.workerId, observedAt: observation.observedAt,
       expiresAt: observation.expiresAt, health: observation.health as ResourceObservation['health'], windows,
-      retryAfter: observation.retryAfter, ...(observation.updatedAt === undefined ? {} : { updatedAt: observation.updatedAt }) });
+      retryAfter: observation.retryAfter, ...(observation.updatedAt === undefined ? {} : { updatedAt: observation.updatedAt }),
+      ...(observation.commissioning === undefined ? {} : { commissioning: structuredClone(observation.commissioning as ResourceObservationCommissioning) }) });
   }
   return immutable(observations);
 }

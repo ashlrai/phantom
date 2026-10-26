@@ -15,7 +15,15 @@ export class ResourcePoolEvolutionError extends Error {
   }
 }
 
-export interface ResourcePoolConfigSnapshot { poolDigest: string; pool: ResourcePool; bindings: ResourceBinding[] }
+export interface ResourcePoolCommissioningTransition {
+  schemaVersion: 1; kind: 'explicit-native-roster-enrollment'; subscriptionOnlyBoundaryRequired: true; requestDigest: string; planDigest: string; rosterDigest: string;
+  workers: Array<{ workerId: string; capacityKey: string; seatId: string; profileMetadataDigest: string; collectorBindingDigest: string; quotaAccountHint: string | null; quotaBucketIds: string[] }>;
+}
+export interface ResourcePoolConfigSnapshot {
+  poolDigest: string; pool: ResourcePool; bindings: ResourceBinding[];
+  /** Structural transition only; runtime admission also requires immutable journal custody. */
+  commissioning?: ResourcePoolCommissioningTransition;
+}
 export interface ResourcePoolEvolutionOptions {
   root: string; workspace: string; pool: unknown; bindings: unknown; nextPool: unknown; nextBindings: unknown;
 }

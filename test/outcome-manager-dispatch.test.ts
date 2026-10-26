@@ -200,6 +200,33 @@ describe('actual tool-capable manager host bridge', () => {
     expect(reconcileOutcomeManagerTerminals(f.store, f.admission)).toBe(1);
     expect(f.state().manager!.stages[0]).toMatchObject({ state: 'aborted', terminalRunId: 'run-parent' });
   });
+  it.each([['never saved', null], ['left running', 'running']] as const)(
+    'settles a stage whose daemon died before its run %s, but only under the exclusive daemon owner', (_label, status) => {
+      const f = fixture();
+      // The previous daemon process recorded the claim, then was killed (SIGKILL, OOM, reboot).
+      const next = f.manager.project().next!;
+      expect(f.manager.claimRun(f.command(), next, f.repo, f.route, 'crashed-run', f.admission).ok).toBe(true);
+      mocks.run.mockImplementation(id => id === 'crashed-run' && status ? { ...f.run(), id, status } : null);
+      // A non-owner (ad hoc tick, other process) can never prove the child is gone.
+      expect(reconcileOutcomeManagerTerminals(f.store, f.admission)).toBe(0);
+      expect(reconcileOutcomeManagerTerminals(f.store, f.admission, { exclusiveOwner: () => false })).toBe(0);
+      expect(f.manager.project().running?.state).toBe('running');
+      // The restarted singleton daemon owns every live stage; this one is not among them.
+      expect(reconcileOutcomeManagerTerminals(f.store, f.admission, { exclusiveOwner: () => true })).toBe(1);
+      expect(f.state().manager!.stages[0]).toMatchObject({ state: 'aborted', terminalRunId: 'crashed-run', resultDigest: null });
+      // The next stage is offered again on a fresh basis (the failure is evidence), not blocked forever.
+      expect(f.manager.project()).toMatchObject({ running: null, next: { intent: 'plan' } });
+      expect(f.manager.project().next!.workItemId).not.toBe(next.workItemId);
+      expect(f.state().graphDigest).toBeNull();
+    });
+  it('never settles a stage the owning daemon is still executing', async () => {
+    const f = fixture(); const d = f.dispatch(); expect(d.begin()).toBe(true);
+    mocks.run.mockImplementation(id => id === 'run-parent' ? { ...f.run(), status: 'running' } : null);
+    expect(reconcileOutcomeManagerTerminals(f.store, f.admission, { exclusiveOwner: () => true })).toBe(0);
+    expect(f.state().manager!.stages[0]!.state).toBe('running');
+    mocks.run.mockImplementation(id => id === 'run-parent' ? f.run() : null);
+    expect(await d.finishWithRetry()).toBe(true); expect(f.state().manager!.stages[0]!.state).toBe('succeeded');
+  });
   it('does not require a new contact quota ticket to retain a valid completed plan', async () => {
     const f = fixture(); const d = f.dispatch(); expect(d.begin()).toBe(true);
     f.admission.routeAllowed = () => false; // The actual call used the last allowance in its window.

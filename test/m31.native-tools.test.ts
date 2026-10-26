@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -87,6 +87,13 @@ describe('native tool registry', () => {
         'phm_proactive_agents_update',
         'phm_proactive_agents_delete',
         'phm_task_context',
+        'phm_team_claim',
+        'phm_team_context_add',
+        'phm_team_context_get',
+        'phm_team_handoff',
+        'phm_team_publish',
+        'phm_team_register',
+        'phm_team_view',
       ].sort(),
     );
   });
@@ -158,6 +165,33 @@ describe('callNativeTool', () => {
     expect(resultText(r)).toContain('ashlr backlog refresh');
   });
 
+  it('ashlr_health on a non-enrolled repo names the exact enroll command', async () => {
+    // Tool output is secret-scrubbed, and macOS's per-user temp dir
+    // (/var/folders/xx/<32 random chars>/T) is high-entropy enough to be
+    // redacted. Put the repo under a fixed low-entropy parent so the exact path
+    // survives; Windows keeps the fixture home.
+    const parent = process.platform === 'win32' ? null : realpathSync(mkdtempSync('/tmp/ashlr-m31-repo-'));
+    try {
+      const repo = join(parent ?? fx.home, 'not-enrolled');
+      mkdirSync(repo, { recursive: true });
+      const r = await callNativeTool('ashlr_health', { repo });
+      const payload = JSON.parse(resultText(r)) as { error?: string };
+      expect(payload.error).toContain(`repo not enrolled for health review: ${resolve(repo)}`);
+      // Shell-quoted only when the path needs it (a Windows path has `\` and `:`).
+      const arg = /^[\w@%+=:,./-]+$/u.test(resolve(repo)) ? resolve(repo) : `'${resolve(repo)}'`;
+      expect(payload.error).toContain(`; enroll it with \`ashlr enroll add ${arg}\``);
+    } finally {
+      if (parent) rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('tool output still redacts a high-entropy path segment (macOS /var/folders shape)', () => {
+    const segment = ['vtw8zd2j', '31d1gdrt', 'ntc5y460', '0000gn'].join('');
+    const text = renderToolText({ error: `repo not enrolled: /private/var/folders/nj/${segment}/T/x/not-enrolled` });
+    expect(text).toContain('[REDACTED]');
+    expect(text).not.toContain(segment);
+  });
+
   it('ashlr_orient returns a valid OrientResult on empty stores', async () => {
     const r = await callNativeTool('ashlr_orient', {});
     expect(r.isError).toBeUndefined();
@@ -166,6 +200,26 @@ describe('callNativeTool', () => {
     expect(Array.isArray(o['genomeHits'])).toBe(true);
     expect(Array.isArray(o['backlogItems'])).toBe(true);
     expect(typeof o['pendingProposals']).toBe('number');
+  });
+
+  it('flags handler refusals ({ error }) as isError so clients do not read them as success', async () => {
+    const notEnrolled = join(fx.home, 'not-enrolled');
+    mkdirSync(notEnrolled, { recursive: true });
+    const calls: [string, Record<string, unknown>, RegExp][] = [
+      ['ashlr_health', { repo: notEnrolled }, /not enrolled/],
+      ['ashlr_browser_task', { repo: notEnrolled, instructions: 'read the page', title: 't', summary: 's' }, /not enrolled/],
+      ['ashlr_browser_task', { repo: notEnrolled, instructions: '   ', title: 't', summary: 's' }, /instructions must be/],
+      ['ashlr_desktop_open', { repo: notEnrolled, action_type: 'open-editor', target: 'README.md', title: 't', summary: 's' }, /not enrolled/],
+    ];
+    for (const [name, args, reason] of calls) {
+      const r = await callNativeTool(name, args);
+      expect(r.isError, name).toBe(true);
+      // The payload shape is unchanged: still parseable JSON with the reason.
+      expect((JSON.parse(resultText(r)) as { error: string }).error).toMatch(reason);
+    }
+    // A successful call that merely mentions "error" text stays a success.
+    const ok = await callNativeTool('ashlr_learn', { text: 'an error budget convention', title: 'errors' });
+    expect(ok.isError).toBeUndefined();
   });
 
   it('caps oversized output with a visible truncation marker', () => {

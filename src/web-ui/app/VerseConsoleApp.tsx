@@ -9,9 +9,9 @@
  * shell will mount (Chat, unless the operator left another one open) used to
  * start downloading only AFTER the bootstrap probe answered: index →
  * this module → probe → section chunk, one round trip after another. Now
- * this module starts that import the moment it evaluates, in parallel with
- * the probe (Vite shares the in-flight import with the lazy() that mounts
- * it later), and preloads the Latin font subsets the first paint needs (the
+ * the import starts the moment this module evaluates (through
+ * app/verse-first-paint.ts since 3.29.16), in parallel with the probe, and
+ * this module preloads the Latin font subsets the first paint needs (the
  * display face only once the signed-in app is what will paint).
  *
  * V3.10 — a restarted desktop sidecar is re-adopted at once. The desktop
@@ -22,14 +22,13 @@
  * next 401 → failed renewal → SessionGate → adoption.
  */
 import { PRODUCT_NAME } from './product-brand.js';
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { ToastProvider } from '../components/primitives/Toast.js';
 import { adoptInjectedTokens, markCheckComplete } from '../data/auth-store.js';
 import { getQuerySnapshot, runQuery } from '../data/cache.js';
 import { useAuthPhase } from '../data/hooks.js';
-import { SECTION_MODULES, VerseApp } from '../routes/verse/VerseApp.js';
-import { invalidateVerseLists, verseBootstrapQuery } from '../routes/verse/verse-queries.js';
-import { getVerseUiState, VERSE_SECTIONS } from '../routes/verse/verse-ui-store.js';
+import { VerseApp } from '../routes/verse/VerseApp.js';
+import { verseBootstrapQuery } from '../routes/verse/verse-queries.js';
 import uiFontLatin from '../design/fonts/AshlrSans-latin.woff2?url';
 import displayFontLatin from '../design/fonts/SpaceGrotesk-latin.woff2?url';
 import { SkipToContent } from './SkipToContent.js';
@@ -76,13 +75,22 @@ export function preloadVerseFirstPaint(
   doc: Document | null = typeof document === 'undefined' ? null : document,
   signedIn: boolean = typeof window !== 'undefined' && window.__ASHLR_TOKENS__ !== undefined,
 ): void {
-  const section = VERSE_SECTIONS.find((s) => s.id === getVerseUiState().section);
-  const importer = section ? SECTION_MODULES[`./sections/${section.module}.tsx`] : undefined;
-  if (importer) void importer().catch(() => undefined);
+  // The opening section's chunk starts in app/verse-first-paint.ts, imported below.
   preloadVerseFonts(doc, signedIn);
 }
 
 preloadVerseFirstPaint();
+
+/**
+ * Resolves once the shell's first-paint chunks are in (or a bounded wait ran
+ * out; app/verse-first-paint.ts). The signed-in shell mounts after it, so it
+ * paints whole instead of committing skeletons that React then holds for its
+ * 300 ms Suspense reveal throttle. The wait itself is a chunk of its own: it
+ * runs alongside first paint, never costs it bytes.
+ */
+const firstPaintSurface: Promise<void> = typeof window === 'undefined'
+  ? Promise.resolve()
+  : import('./verse-first-paint.js').then((m) => m.firstPaintSurface(), () => undefined);
 
 /**
  * The session gate is a dynamic import: a signed-in cold load (the common
@@ -98,59 +106,17 @@ function preloadSessionGate(): void {
   void importSessionGate().catch(() => undefined);
 }
 
-/** DOM event the desktop shell fires after handing a restarted sidecar's tokens to this page. */
-export const SIDECAR_RESTARTED_EVENT = 'ashlr:sidecar-restarted';
-
-/**
- * Re-adopt host tokens whenever the desktop shell says its sidecar restarted.
- * Returns the disposer.
- *
- * Installed for the page's whole life, whatever the auth phase: the event may
- * land while the SessionGate is showing (adoption then replaces the prompt,
- * because establishReadSession flips the phase) or while the app looks
- * authenticated on a dead cookie. After a successful adoption the lists are
- * refetched — the restarted server may have marked turns interrupted — and
- * the live streams reconnect on their own: their next attempt now carries a
- * valid cookie. A failed adoption changes nothing; the ordinary 401 path
- * still ends at the SessionGate. The event carries no data, so a page script
- * firing it can at most make the page re-read tokens that are already there.
- */
-export function listenForSidecarRestart(target: Pick<Window, 'addEventListener' | 'removeEventListener'> = window): () => void {
-  let inFlight = false;
-  let again = false;
-  let disposed = false;
-  const onRestart = (): void => {
-    if (disposed) return;
-    // Restarts in quick succession: adoption reads `window.__ASHLR_TOKENS__`
-    // when it STARTS, so a second restart during an exchange left newer
-    // tokens behind it. Run exactly once more after the current exchange
-    // instead of racing a second one for the cookie.
-    if (inFlight) {
-      again = true;
-      return;
-    }
-    inFlight = true;
-    void adoptInjectedTokens()
-      .then((adopted) => { if (adopted) invalidateVerseLists(); })
-      .catch(() => undefined)
-      .finally(() => {
-        inFlight = false;
-        if (again) {
-          again = false;
-          onRestart();
-        }
-      });
-  };
-  target.addEventListener(SIDECAR_RESTARTED_EVENT, onRestart);
-  return () => {
-    disposed = true;
-    target.removeEventListener(SIDECAR_RESTARTED_EVENT, onRestart);
-  };
-}
-
 export function VerseConsoleApp() {
   const phase = useAuthPhase();
-  useEffect(() => listenForSidecarRestart(), []);
+  const [surface, setSurface] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let off: (() => void) | undefined;
+    void firstPaintSurface.then(() => { if (live) setSurface(true); });
+    // app/sidecar-restart.ts: a chunk of its own, off the first-paint path.
+    void import('./sidecar-restart.js').then((m) => { if (live) off = m.listenForSidecarRestart(); }, () => undefined);
+    return () => { live = false; off?.(); };
+  }, []);
   useEffect(() => {
     if (phase === 'authenticated') preloadVerseFonts(document, true);
     if (phase !== 'checking') return;
@@ -164,7 +130,9 @@ export function VerseConsoleApp() {
     });
     return () => { cancelled = true; };
   }, [phase]);
-  if (phase === 'checking') return <p className={styles.checking} role="status">Checking for an existing Phantom session…</p>;
+  if (phase === 'checking' || (phase === 'authenticated' && !surface)) {
+    return <p className={styles.checking} role="status">Checking for an existing Phantom session…</p>;
+  }
   if (phase === 'unauthenticated') {
     return (
       <Suspense fallback={<p className={styles.checking} role="status">Checking for an existing Phantom session…</p>}>

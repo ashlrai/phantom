@@ -117,7 +117,10 @@ stored task keeps only your text. The contract tells the session to:
    ````
 
    `status` is one of `done`, `partial`, `blocked` or `no-change`.
-   `filesChanged` is optional.
+   `filesChanged` is optional. When the repository's `.mcp.json` declares
+   Phantom's companion servers, the prompt also names each one and when to
+   call it, and the report may carry `"toolsUsed"`: the companion tools the
+   session called. `ashlr cloud list` prints it as a `Companion tools:` line.
 6. If nothing needs changing, still push an empty commit and open the PR with
    status `no-change`, so Phantom sees that the task finished.
 
@@ -214,17 +217,17 @@ A refused launch is recorded nowhere and costs nothing. It comes back with the
 Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 
 - **Built-in items** live in `src/core/cloud/improvement-backlog.ts`. Each is
-  a complete brief for a session working in `ashlrai/ashlr-hub`: long-failing
-  tests, the first-paint JavaScript target, the runtime probe's event-loop
-  stall, harness settings at dispatch, the router's λ weights, and similar
-  gaps known as of 3.10.1. The delivery contract is appended to each brief.
+  a complete brief for a session working in `ashlrai/phantom`, re-verified
+  against master before it is added. The delivery contract is appended to
+  each brief.
 - **Your items and the Leader's** are added to `~/.ashlr/cloud/backlog.json`.
   The file is validated and holds at most 200 items. The Leader turns
   code-change actions from its memos into items with ids like
   `leader-<memoId>-<n>`. Its class-C actions still go to Needs you.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
-  after it ends `merged`.
+  after it ends `merged` or its session reported `no-change` (the work was
+  already done).
 - **Order.** The next item is the highest priority (1 first), then built-in
   order.
 
@@ -275,9 +278,16 @@ ashlr cloud improve [--count N]            # launch backlog items now
 ashlr cloud budget --total 250 --spent 12 --per-session 3 --max-per-day 20 \
                    --self-improve on --self-improve-max 4 --self-improve-max-open 3 --reserve 40
 ashlr cloud backlog
+ashlr cloud stats [--days N] [--json]      # how tasks ended, and the merged rate
 ```
 
 `launch` defaults `--repo` to the current directory's GitHub origin.
+
+`stats` counts every task by how it ended (merged, closed, failed with its
+launch failure code, expired) and what is still in flight. Its merged rate is
+merged PRs over finished PRs that carried a change: a PR closed after the
+session reported no change was needed is a correct verdict, so it is counted
+under closed but left out of the rate.
 
 ### Triage in Needs you
 

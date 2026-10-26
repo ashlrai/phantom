@@ -107,7 +107,7 @@ describe('/api/verse/devin', () => {
     setDevinApiDepsForTest({ service: deps });
     const response = await get('/api/verse/devin');
     expect(response.status).toBe(200);
-    expect(JSON.parse(response.text).status.fleet).toMatchObject({ ready: true, word: 'Ready' });
+    expect(JSON.parse(response.text).status.fleet).toMatchObject({ ready: false, word: 'Billing held', detail: expect.stringContaining('$0/day') });
     expect(display).toHaveBeenCalledTimes(1);
     expect(api.requests).toHaveLength(0);
 

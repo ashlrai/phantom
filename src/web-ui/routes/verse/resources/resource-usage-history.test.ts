@@ -27,7 +27,7 @@ describe('Historical startup usage display', () => {
     const w = seatWindow({ id: 'weekly', usedPercent: 22 });
     const creditHistory = { reading: { hasCredits: true, unlimited: false, balance: '24999.50' },
       observedAt: '2026-09-30T12:00:00.000Z', expiresAt: '2026-09-30T12:01:00.000Z', planType: 'pro' };
-    const s = nativeSeat(capacity({ windows: [w], binding: w, credits: null }),
+    const s = nativeSeat(capacity({ windows: [w], binding: w, credits: null, usability: 'ready', observedAt: new Date(NOW).toISOString() }),
       { engine: 'codex', lastKnownUsage: history({ creditHistory }) });
     const projected = buildCapacityRows([s], { now: NOW })[0]!;
     expect(projected.historicalUsage).toBeNull(); expect(projected.credits).toBeNull();
@@ -36,6 +36,7 @@ describe('Historical startup usage display', () => {
     expect(display.value).toBe('22% used'); expect(display.creditLabel).toBe('Credits ≈$1,000 · last');
     expect(display.detail.join(' ')).toContain('current balance and availability are unconfirmed');
     const zero = buildCapacityRows([{ ...s, capacity: capacity({ windows: [w], binding: w,
+      observedAt: new Date(NOW).toISOString(),
       credits: { hasCredits: false, unlimited: false, balance: '0' }, creditsExpiresAt: new Date(NOW + 1).toISOString() }) }], { now: NOW })[0]!;
     expect(barRows([zero], { now: NOW, healthRead: false })[0]?.creditLabel).toBe('No credits reported');
     expect(barRows([{ ...projected, signedOut: true }], { now: NOW, healthRead: false })[0]?.creditLabel).toBe('Credits unconfirmed');
@@ -59,7 +60,7 @@ describe('Historical startup usage display', () => {
   });
   it('lets live measurements replace history immediately, and never shows cached signed-out usage', () => {
     const w = seatWindow({ id: 'seven_day', usedPercent: 22 });
-    const s = seat(); s.capacity = capacity({ windows: [w], binding: w });
+    const s = seat(); s.capacity = capacity({ windows: [w], binding: w, usability: 'ready', observedAt: new Date(NOW).toISOString() });
     const current = buildCapacityRows([s], { now: NOW })[0]!;
     expect(current.historicalUsage).toBeNull(); expect(barRows([current], { now: NOW, healthRead: false })[0]!.value).toBe('78% left');
     const signedOut = buildCapacityRows([nativeSeat(capacity({ usability: 'signed-out', windows: [], binding: null }), { lastKnownUsage: history() })], { now: NOW })[0]!;

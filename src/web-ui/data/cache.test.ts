@@ -322,6 +322,89 @@ describe('cache — unchanged payloads', () => {
   });
 });
 
+describe('cache — quiet background refresh (invalidate)', () => {
+  beforeEach(() => {
+    evictAll();
+  });
+
+  it('re-reads without a refreshing flip, and an equal result notifies no one', async () => {
+    const fetcher = vi.fn(async () => ({ sessions: [{ id: 'a', status: 'running' }] }));
+    await runQuery('k', fetcher);
+    const before = getQuerySnapshot('k');
+    const listener = vi.fn();
+    const off = subscribeQuery('k', listener);
+
+    invalidate('k');
+    // Still the snapshot subscribers hold: no `refreshing` render.
+    expect(getQuerySnapshot('k')).toBe(before);
+    await settle();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(listener).not.toHaveBeenCalled();
+    expect(getQuerySnapshot('k')).toBe(before);
+    expect(before.status).toBe('success');
+    off();
+  });
+
+  it('keeps freshness current after a quiet equal read', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const fetcher = vi.fn(async () => 'same');
+    await runQuery('k', fetcher);
+    now.mockReturnValue(50_000);
+    invalidate('k');
+    await settle();
+    expect(getQuerySnapshot('k').updatedAt).toBe(50_000);
+    // A mount within the freshness window makes no request.
+    now.mockReturnValue(50_500);
+    await ensureQuery('k', fetcher, 1_000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    now.mockRestore();
+  });
+
+  it('notifies once, straight to success, when the re-read changed something', async () => {
+    let status = 'running';
+    const fetcher = vi.fn(async () => ({ status }));
+    await runQuery('k', fetcher);
+    const seen: string[] = [];
+    const off = subscribeQuery('k', () => seen.push(getQuerySnapshot('k').status));
+
+    status = 'idle';
+    invalidate('k');
+    await settle();
+
+    expect(seen).toEqual(['success']);
+    expect(getQuerySnapshot('k').data).toEqual({ status: 'idle' });
+    off();
+  });
+
+  it('still reports a failed background read', async () => {
+    let fail = false;
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error('offline');
+      return 'ok';
+    });
+    await runQuery('k', fetcher);
+    const listener = vi.fn();
+    const off = subscribeQuery('k', listener);
+
+    fail = true;
+    invalidate('k');
+    await settle();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(getQuerySnapshot('k')).toMatchObject({ data: 'ok', status: 'error' });
+    off();
+  });
+
+  it('a key with no good data yet still shows loading', async () => {
+    await runQuery('k', () => Promise.reject(new Error('down')));
+    invalidate('k');
+    // A quiet read only skips the flip over GOOD data.
+    expect(getQuerySnapshot('k').status).toBe('loading');
+    await settle();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The concurrency gate — the burst fix
 // ---------------------------------------------------------------------------

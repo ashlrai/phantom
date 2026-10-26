@@ -47,6 +47,8 @@ export const DEFAULT_ECOSYSTEM_FOCUS: EcosystemFocus = {
     'ashlr-pulse',
     'ashlrcode',
     'ashlr-workbench',
+    'lexicon',
+    'locus',
   ],
   forceMultiplierRepos: [
     'ashlr-core-efficiency',

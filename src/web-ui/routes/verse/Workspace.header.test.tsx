@@ -1,3 +1,4 @@
+import { capacity, seatWindow } from './seat-fixtures.test-support.js';
 /**
  * Workspace.header.test.tsx — the chat pane's header strip.
  *
@@ -217,7 +218,8 @@ describe('Workspace header — a chat is open', () => {
   });
 
   it('names a tight seat in the chip and says why in its focus tooltip', async () => {
-    const tight = { ...CLAUDE_SEAT, health: { ...CLAUDE_SEAT.health, windows: [{ id: '7d', usedPercent: 92, resetsAt: null }] } };
+    const window = seatWindow({id:'7d',usedPercent:92});
+    const tight = { ...CLAUDE_SEAT, capacity:capacity({windows:[window],binding:window,usability:'tight'}), health: { ...CLAUDE_SEAT.health, windows: [{ id: '7d', usedPercent: 92, resetsAt: null }] } };
     render(<Workspace {...props({ view: opened(), seats: [tight, CODEX_SEAT, LOCAL_SEAT] })} />);
     const chip = screen.getByTestId('chat-status');
     expect(chip).toHaveAttribute('data-seat-capacity', 'tight');

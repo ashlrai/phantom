@@ -79,7 +79,7 @@ export function AccountDetail({
 }): ReactNode {
   const { evidence } = card;
   const credits = card.credits;
-  const historical = evidence.state !== 'observed';
+  const historical = card.quotaCurrent === false || evidence.state !== 'observed';
 
   // Move focus to the heading when this opens, and again when the selection
   // moves to a different account.
@@ -193,7 +193,7 @@ export function AccountDetail({
 
           {credits ? (
             <div className={styles.creditsRow}>
-              <span className={styles.figureLabel}>{historical ? 'Last reported credits' : 'Credits'}</span>
+              <span className={styles.figureLabel}>{card.creditsCurrent === false || evidence.state !== 'observed' ? 'Last reported credits' : 'Credits'}</span>
               <span className={styles.num} title={nativeCreditBalanceTitle(credits.balance) ?? undefined}>
                 {credits.unlimited
                   ? 'unlimited'
@@ -202,7 +202,7 @@ export function AccountDetail({
                     : (formatDecimalMetric(credits.balance) ?? credits.balance ?? 'not reported')}
               </span>
               <p className={styles.reason}>
-                {accountCreditDetail(credits, historical)}
+                {accountCreditDetail(credits, card.creditsCurrent === false || evidence.state !== 'observed')}
               </p>
             </div>
           ) : null}

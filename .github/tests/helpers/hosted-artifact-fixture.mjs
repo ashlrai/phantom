@@ -37,7 +37,7 @@ export function fixture(t, complete = false, repository = hub.legacyName, packag
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init', '--quiet'); fs.writeFileSync(join(root, '.gitignore'), 'dist/\n');
   fs.writeFileSync(join(root, 'package.json'), JSON.stringify({ name: packageName, version: '3.24.3', files: ['dist'] }));
-  fs.writeFileSync(join(root, 'package-lock.json'), '{}'); git('add', '.');
+  fs.writeFileSync(join(root, 'package-lock.json'), '{}');
   if (complete) {
     for (const p of ['.github/workflows/ci.yml', 'scripts/test-ci-sharded.mjs', 'vitest.config.ts', 'vitest.config.web.ts']) {
       fs.mkdirSync(join(root, p, '..'), { recursive: true }); fs.copyFileSync(new URL(`../../../${p}`, import.meta.url), join(root, p));
@@ -46,12 +46,13 @@ export function fixture(t, complete = false, repository = hub.legacyName, packag
     for (const p of [...suites, marker, 'src/web-ui/example.test.tsx', ...[1, 2, 3, 4].map((n) => `test/general-${n}.test.ts`)]) {
       fs.mkdirSync(join(root, p, '..'), { recursive: true }); fs.writeFileSync(join(root, p), '// synthetic fixture; never executed\n');
     }
-    git('add', '.');
   }
   for (const [path, bytes] of Object.entries(sourceFiles)) {
     assert.ok(!path.startsWith('/') && path.split('/').every(part => part && part !== '..' && part !== '.'));
     fs.mkdirSync(join(root, path, '..'), { recursive: true }); fs.writeFileSync(join(root, path), bytes);
   }
+  // Nothing observes the index until this final stage: avoid re-staging the
+  // same private fixture after each population phase.
   git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'synthetic');
   const revision = git('rev-parse', 'HEAD'); process.env.ASHLR_CI_SOURCE_SHA = revision;
@@ -73,7 +74,7 @@ export function fixture(t, complete = false, repository = hub.legacyName, packag
   return { ...options, options, write, git, parent };
 }
 
-function laneFiles(f, role, directory, timings = false) {
+function laneFiles(f, role, directory, timings = false, tree = f.git('rev-parse', 'HEAD^{tree}')) {
   fs.mkdirSync(join(directory, 'reports'), { recursive: true });
   const scope = isolatedScope(f.root);
   const files = role === 'web' ? [{ file: 'web.json', module: 'src/web-ui/example.test.tsx' }] : role === 'mac-isolated' ?
@@ -95,7 +96,7 @@ function laneFiles(f, role, directory, timings = false) {
       return { id: digest(`${module}\0${row.fullName}\0${occurrence}`), name: row.fullName, state: row.status };
     }) }] };
   });
-  const lane = { schemaVersion: 1, role, source: { revision: f.sha, tree: f.git('rev-parse', 'HEAD^{tree}'), eventSha: 'b'.repeat(40) }, run: { id: '100', attempt: '1' },
+  const lane = { schemaVersion: 1, role, source: { revision: f.sha, tree, eventSha: 'b'.repeat(40) }, run: { id: '100', attempt: '1' },
     nodeVersion: 'v22.22.3', startedAt: '2026-10-06T00:00:00Z', finishedAt: '2026-10-06T00:00:01Z', exitCode: 0, reports };
   fs.writeFileSync(join(directory, 'lane.json'), JSON.stringify(lane)); return directory;
 }
@@ -111,7 +112,9 @@ export function qualifiedFixture(t, { repository = hub.legacyName, schemaVersion
   const roles = ['mac-general-1', 'mac-general-2', 'mac-general-3', 'mac-general-4', 'mac-isolated'];
   const artifactMap = { producer: { id: 200, name: 'ashlr-build-100-1', digest: `sha256:${'d'.repeat(64)}` }, lanes: roles.map((role, i) =>
     ({ role, id: 201 + i, name: `ashlr-qualification-${role}-100-1`, digest: `sha256:${String(i + 1).repeat(64)}` })) };
-  for (const role of roles) laneFiles(f, role, join(f.out, 'coverage', role), timings);
+  // These expected lane records describe one committed fixture tree. Reuse
+  // the tree read above; real qualification still independently checks source.
+  for (const role of roles) laneFiles(f, role, join(f.out, 'coverage', role), timings, tree);
   const jobs = requiredJobPolicy(f.root).map((required, index) => ({ id: index + 10, run_id: 100, head_sha: f.sha, name: required.name, labels: required.labels,
     status: 'completed', conclusion: 'success', steps: required.steps.map((name) => ({ name, status: 'completed', conclusion: 'success' })) }));
   const api = { metadata: metadata(repository), producerRepo: metadata(repository), attestorRepo: metadata(repository) };

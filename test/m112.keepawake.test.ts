@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { plistKeepAwake } from '../src/core/authority/resident.js';
 
 // ---------------------------------------------------------------------------
 // Hermetic HOME + prevent OS side-effects
@@ -69,6 +70,9 @@ describe('M112 — service.ts keepAwake plist generation', () => {
     const cafIdx  = def.content.indexOf('<string>caffeinate</string>');
     const nodeIdx = def.content.indexOf('<string>/usr/local/bin/node</string>');
     expect(cafIdx).toBeLessThan(nodeIdx);
+    expect(def.launchdRuntime?.program).toBe('caffeinate');
+    expect(def.launchdRuntime?.arguments.slice(0, 3)).toEqual(['caffeinate', '-i', '-s']);
+    expect(plistKeepAwake(def.content)).toBe(true);
   });
 
   it('keepAwake: false → no caffeinate in ProgramArguments', () => {
@@ -81,6 +85,7 @@ describe('M112 — service.ts keepAwake plist generation', () => {
     });
 
     expect(def.content).not.toContain('<string>caffeinate</string>');
+    expect(plistKeepAwake(def.content)).toBe(false);
   });
 
   it('keepAwake omitted (default) → no caffeinate', () => {
@@ -92,6 +97,14 @@ describe('M112 — service.ts keepAwake plist generation', () => {
     });
 
     expect(def.content).not.toContain('<string>caffeinate</string>');
+  });
+
+  it('does not classify malformed or unrelated launchd argv as awake or asleep', () => {
+    expect(plistKeepAwake(null)).toBeNull();
+    expect(plistKeepAwake('<plist><dict/></plist>')).toBeNull();
+    const awake = generateServiceDefinition({ platform: 'darwin', homeDir: tmpHome, keepAwake: true });
+    expect(plistKeepAwake(awake.content.replace('<string>-s</string>', '<string>-x</string>'))).toBeNull();
+    expect(plistKeepAwake(awake.content.replace('<string>daemon</string>\n\t\t<string>start</string>', '<string>start</string>\n\t\t<string>daemon</string>'))).toBeNull();
   });
 
   it('linux platform is unaffected by keepAwake', () => {

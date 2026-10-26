@@ -6,7 +6,7 @@
  * counted as applied/merged until a reconciler proves the host outcome.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,6 +31,23 @@ const privateStorageHarness = vi.hoisted(() => ({
   useSemanticAdapter: false,
   realCalls: 0,
 }));
+
+// The auto-merge canary shadow observer is non-authoritative and runs after the
+// outward result is fixed. Under vitest its child boots tsx and re-imports the
+// whole module graph (seconds per merge on Windows). Run the same observer
+// in-process instead; m402 covers the real child-process boundary.
+vi.mock('../src/core/fleet/automerge-canary-observer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/fleet/automerge-canary-observer.js')>();
+  return {
+    ...actual,
+    observeAutoMergeCanaryShadowAsync: async (
+      input: Parameters<typeof actual.observeAutoMergeCanaryShadowAsync>[0],
+    ) => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return actual.observeAutoMergeCanaryShadow(input);
+    },
+  };
+});
 
 vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
@@ -329,6 +346,34 @@ function recordVerificationAuthority(proposalId: string, diff: string): void {
   });
 }
 
+// One seeded repo + bare origin is built once per file and copied per test:
+// every test still gets its own private working repo, index and bare remote
+// (with the origin URL rebound to its own copy), but skips ~10 git spawns.
+let templateRoot: string;
+let templateRepo: string;
+let templateBare: string;
+beforeAll(() => {
+  templateRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-template-')));
+  templateRepo = path.join(templateRoot, 'repo');
+  templateBare = path.join(templateRoot, 'bare');
+  const templateHome = path.join(templateRoot, 'home');
+  fs.mkdirSync(templateHome);
+  setFixtureEnvironment(templateHome);
+  try {
+    initRepo(templateRepo);
+    execFileSync('git', ['init', '--bare', templateBare], { stdio: 'pipe' });
+    git(templateRepo, ['remote', 'add', 'origin', templateBare]);
+    git(templateRepo, ['push', '-u', 'origin', 'main']);
+    git(templateRepo, ['fetch', 'origin']);
+    git(templateRepo, ['remote', 'set-head', 'origin', 'main']);
+  } finally {
+    restoreFixtureEnvironment();
+  }
+});
+afterAll(() => {
+  fs.rmSync(templateRoot, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   tmpHome = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-home-')));
   tmpRepo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m315-repo-')));
@@ -360,7 +405,12 @@ beforeEach(() => {
     return '';
   });
   setKill(false);
-  initRepo(tmpRepo);
+  fs.cpSync(templateRepo, tmpRepo, { recursive: true });
+  fs.cpSync(templateBare, bareRepo, { recursive: true });
+  git(tmpRepo, ['remote', 'set-url', 'origin', bareRepo]);
+  // The copied index carries the template's stat data; refresh it so the
+  // checkout is exactly as clean as a freshly committed repository.
+  git(tmpRepo, ['update-index', '-q', '--refresh']);
   originAuthorityMock.mockReset();
   originAuthorityMock.mockImplementation(() => ({
     nameWithOwner: 'ashlrai/fixture',
@@ -387,11 +437,6 @@ beforeEach(() => {
     policySnapshot: TEST_POLICY_SNAPSHOT,
     detail: 'Live branch protection confirmed with required checks',
   }));
-  execFileSync('git', ['init', '--bare', bareRepo], { stdio: 'pipe' });
-  git(tmpRepo, ['remote', 'add', 'origin', bareRepo]);
-  git(tmpRepo, ['push', '-u', 'origin', 'main']);
-  git(tmpRepo, ['fetch', 'origin']);
-  git(tmpRepo, ['remote', 'set-head', 'origin', 'main']);
   enroll(tmpRepo);
   viewPrMock.mockReset();
   createPrMock.mockReset();
@@ -693,7 +738,7 @@ describe('M315 remote PR handoff truth', () => {
     localCfg.foundry!.autoMerge!.pushToRemote = false;
     git(tmpRepo, ['checkout', '-b', 'operator']);
     const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
-    const diff = addFileDiff('docs/local-authority.md', 'local merge requires live authority');
+    const diff = addFileDiff('docs/local-recheck.md', 'local merge requires live authority');
     const diffHash = hashDiff(diff);
     const proposal = createProposal({
       repo: tmpRepo,
@@ -717,6 +762,125 @@ describe('M315 remote PR handoff truth', () => {
     expect(localIntentPersistedHookMock).toHaveBeenCalledTimes(1);
     expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
     expect(git(tmpRepo, ['rev-parse', '--verify', `refs/heads/ashlr/merge/${proposal.id}`])).toMatch(/^[a-f0-9]{40}$/);
+  }, 60_000);
+
+  function localMergeProposal(filename: string, content: string): { id: string } {
+    const diff = addFileDiff(filename, content);
+    const diffHash = hashDiff(diff);
+    const proposal = createProposal({
+      repo: tmpRepo,
+      origin: 'agent',
+      kind: 'patch',
+      title: 'local merge pinning',
+      summary: 'Merge exactly the staged commit.',
+      diff,
+      diffHash,
+      provenanceSig: signProvenance('codex:gpt-5.5', 'frontier', diffHash),
+      engineModel: 'codex:gpt-5.5',
+      engineTier: 'frontier',
+    });
+    setStatus(proposal.id, 'approved');
+    return proposal;
+  }
+
+  /** A child of `parent` whose tree also carries EVIL.md, written straight into the object store. */
+  function plantedCommit(parent: string): string {
+    const blob = execFileSync('git', ['-C', tmpRepo, 'hash-object', '-w', '--stdin'], {
+      input: 'never gated\n', encoding: 'utf8',
+    }).trim();
+    const entries = `${git(tmpRepo, ['ls-tree', `${parent}^{tree}`])}\n100644 blob ${blob}\tEVIL.md\n`;
+    const tree = execFileSync('git', ['-C', tmpRepo, 'mktree'], { input: entries, encoding: 'utf8' }).trim();
+    return git(tmpRepo, ['commit-tree', tree, '-p', parent, '-m', 'planted']);
+  }
+
+  function localMergeCfg(): AshlrConfig {
+    const localCfg = cfg();
+    localCfg.foundry!.autoMerge!.pushToRemote = false;
+    git(tmpRepo, ['checkout', '-b', 'operator']);
+    return localCfg;
+  }
+
+  it('a tag named like the staging branch cannot redirect the local merge', async () => {
+    const localCfg = localMergeCfg();
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+    const proposal = localMergeProposal('docs/pinned-tag.md', 'gated content');
+    localIntentPersistedHookMock.mockImplementationOnce(() => {
+      git(tmpRepo, ['tag', `ashlr/merge/${proposal.id}`, plantedCommit(mainBefore)]);
+    });
+
+    const result = await autoMergeProposal(proposal.id, localCfg);
+
+    expect(result).toMatchObject({ ok: true, merged: true });
+    expect(git(tmpRepo, ['rev-parse', 'main^1'])).toBe(mainBefore);
+    expect(git(tmpRepo, ['ls-tree', '--name-only', '-r', 'main'])).toContain('docs/pinned-tag.md');
+    expect(git(tmpRepo, ['ls-tree', '--name-only', '-r', 'main'])).not.toContain('EVIL.md');
+  }, 60_000);
+
+  it('refuses a local merge when the staging branch moved after it was staged', async () => {
+    const localCfg = localMergeCfg();
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+    const proposal = localMergeProposal('docs/pinned-branch.md', 'gated content');
+    localIntentPersistedHookMock.mockImplementationOnce(() => {
+      git(tmpRepo, ['update-ref', `refs/heads/ashlr/merge/${proposal.id}`, plantedCommit(mainBefore)]);
+    });
+
+    const result = await autoMergeProposal(proposal.id, localCfg);
+
+    expect(result).toMatchObject({ ok: false, merged: false });
+    expect(result.reason).toMatch(/moved since it was staged/);
+    expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
+  }, 60_000);
+
+  it('a replace ref cannot swap the staged commit during the local merge', async () => {
+    const localCfg = localMergeCfg();
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+    const proposal = localMergeProposal('docs/pinned-replace.md', 'gated content');
+    localIntentPersistedHookMock.mockImplementationOnce(() => {
+      const staged = git(tmpRepo, ['rev-parse', `refs/heads/ashlr/merge/${proposal.id}`]);
+      git(tmpRepo, ['replace', staged, plantedCommit(mainBefore)]);
+    });
+
+    const result = await autoMergeProposal(proposal.id, localCfg);
+
+    expect(result).toMatchObject({ ok: true, merged: true });
+    const mergedTree = execFileSync('git', ['--no-replace-objects', '-C', tmpRepo, 'ls-tree', '--name-only', '-r', 'main'], {
+      encoding: 'utf8',
+    });
+    expect(mergedTree).toContain('docs/pinned-replace.md');
+    expect(mergedTree).not.toContain('EVIL.md');
+  }, 60_000);
+
+  it.each([
+    ['CONSTITUTION.md', /protected path: CONSTITUTION\.md/],
+    ['AGENTS.md', /protected path: AGENTS\.md/],
+    ['packages/app/CLAUDE.md', /agent-instructions/],
+    ['.claude/settings.json', /agent-instructions/],
+    ['.mcp.json', /agent-instructions/],
+  ])('never auto-merges a change to %s', async (filename, reason) => {
+    const localCfg = localMergeCfg();
+    // Medium is the highest risk an operator can allow; classifyRisk rates
+    // most of these files low or medium, so the path rule must refuse them.
+    localCfg.foundry!.autoMerge!.maxRisk = 'medium';
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+    const proposal = localMergeProposal(filename, 'the fleet may merge anything');
+
+    const result = await autoMergeProposal(proposal.id, localCfg);
+
+    expect(result).toMatchObject({ ok: false, merged: false });
+    expect(result.reason).toMatch(reason);
+    expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
+  }, 60_000);
+
+  it('never auto-merges a diff that weakens a test', async () => {
+    const localCfg = localMergeCfg();
+    const mainBefore = git(tmpRepo, ['rev-parse', 'main']);
+    const proposal = localMergeProposal('test/gate.test.ts', "it.skip('gate holds', () => {});");
+
+    const result = await autoMergeProposal(proposal.id, localCfg);
+
+    expect(result).toMatchObject({ ok: false, merged: false });
+    expect(result.reason).toMatch(/test tampering/);
+    expect(git(tmpRepo, ['rev-parse', 'main'])).toBe(mainBefore);
   }, 60_000);
 
   it('tier mode refuses an unprotected remote before any push or PR creation', async () => {
