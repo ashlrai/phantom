@@ -88,7 +88,7 @@ export PATH="$ROOT/bin:$PATH"
 "$REAL_GIT" -C "$BRIDGE_PROJECTS_DIR/phantom" config user.name 'Bridge Test'
 "$REAL_GIT" -C "$BRIDGE_PROJECTS_DIR/phantom" config user.email 'bridge-test@example.invalid'
 printf 'initial\n' > "$BRIDGE_PROJECTS_DIR/phantom/file.txt"
-printf '**/guarded.txt @owner\n' > "$BRIDGE_PROJECTS_DIR/phantom/CODEOWNERS"
+printf '* @default-owner\n**/guarded.txt @owner\n' > "$BRIDGE_PROJECTS_DIR/phantom/CODEOWNERS"
 printf 'protected initial\n' > "$BRIDGE_PROJECTS_DIR/phantom/guarded.txt"
 seq 1 600 > "$BRIDGE_PROJECTS_DIR/phantom/large.txt"
 "$REAL_GIT" -C "$BRIDGE_PROJECTS_DIR/phantom" add .
@@ -135,12 +135,14 @@ pass '14 concurrent relaunches refuse a live PID/worktree claim'
 
 # The empty fast path must bypass even a currently held worktree lock.
 printf '# Notes only\n' > "$BRIDGE_PROJECTS_DIR/wt/parallel-1/BRIDGE_NOTES.md"
+# The dependency-helper symlink fallback leaves an untracked node_modules link.
+ln -s "$ROOT/home" "$BRIDGE_PROJECTS_DIR/wt/parallel-1/node_modules"
 start=$(now_ms)
 publish parallel-1 || fail 'empty publish failed while agent lock was held'
 assert_result parallel-1 'RESULT EMPTY'
 [ $(( $(now_ms) - start )) -lt 3000 ] || fail 'empty publish waited on a lock'
 [ ! -e "$BRIDGE_TEST_STATE/gh-calls" ] || fail 'empty publish contacted GitHub'
-pass 'notes-only empty publish bypasses a live worktree lock and GitHub'
+pass 'notes-only empty publish (with a node_modules link) bypasses a live worktree lock and GitHub'
 
 printf 'agent change\n' >> "$BRIDGE_PROJECTS_DIR/wt/parallel-1/file.txt"
 if publish parallel-1; then fail 'nonempty publish entered active claim'; fi

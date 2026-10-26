@@ -60,7 +60,7 @@ BASE=$(git rev-parse --verify "$BASE^{commit}" 2>/dev/null) || abort invalid-bas
 is_empty() {
   GIT_OPTIONAL_LOCKS=0 git diff --quiet "$BASE" -- . ':(exclude)BRIDGE_NOTES.md' || return 1
   local others
-  others=$(git ls-files --others --exclude-standard -- . ':(exclude)BRIDGE_NOTES.md') || return 1
+  others=$(git ls-files --others --exclude-standard -- . ':(exclude)BRIDGE_NOTES.md' ':(exclude)node_modules') || return 1
   [ -z "$others" ]
 }
 if is_empty; then OUTCOME=empty; echo 'RESULT EMPTY'; exit 0; fi
@@ -82,7 +82,7 @@ NAME=${REPO#*/}
 TEMP_INDEX=$(mktemp "$R/$J.index.XXXXXX") || abort temporary-index
 rm -f -- "$TEMP_INDEX"
 GIT_INDEX_FILE="$TEMP_INDEX" git read-tree "$BASE" || abort read-tree
-GIT_INDEX_FILE="$TEMP_INDEX" git add -A -- . ':(exclude)BRIDGE_NOTES.md' || abort candidate
+GIT_INDEX_FILE="$TEMP_INDEX" git add -A -- . ':(exclude)BRIDGE_NOTES.md' ':(exclude)node_modules' || abort candidate
 TREE=$(GIT_INDEX_FILE="$TEMP_INDEX" git write-tree) || abort candidate-tree
 # Inspect NUL-delimited paths to handle whitespace/newlines without bypassing
 # the protected-path or deletion gates. Unknown/binary deletions fail closed.
@@ -97,6 +97,9 @@ for path in ('.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS'):
     proc = subprocess.run(['git', 'show', base + ':' + path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if proc.returncode == 0:
         patterns.extend(line.split()[0] for line in proc.stdout.decode('utf-8', 'replace').splitlines() if line.strip() and not line.lstrip().startswith('#'))
+# A repository-wide default owner (`*`, `**`) names a reviewer, not a protected
+# path; matching it would deny every job. Specific patterns stay protected.
+patterns = [p for p in patterns if p.lstrip('/') not in ('*', '**', '**/*')]
 def owned(path, pattern):
     pattern = pattern.lstrip('/')
     # CODEOWNERS **/ also matches zero directory levels, including in the
