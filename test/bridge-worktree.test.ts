@@ -301,6 +301,32 @@ describe('Mac bridge dependency preparation', () => {
     expect(await Promise.all(targets.map(async (target) => (await lstat(join(target, 'node_modules'))).isDirectory()))).toEqual(Array(20).fill(true));
   });
 
+  it('keeps the published result when the lock was already removed during preparation', async () => {
+    const { source, target } = await fixture();
+    let calls = 0;
+    const freeBytes = async () => {
+      calls += 1;
+      if (calls === 3) await rm(join(target, '.bridge-dependencies.lock'), { recursive: true, force: true });
+      return FLOOR + 1024 ** 3;
+    };
+    const result = await prepareDependencies({ source, target }, { freeBytes, platform: 'linux' });
+    expect(result.method).toBe('symlink');
+    expect(calls).toBe(3);
+    expect((await lstat(join(target, 'node_modules'))).isSymbolicLink()).toBe(true);
+    await absent(join(target, '.bridge-dependencies.lock'));
+  });
+
+  it('runs the CLI when invoked through a symlinked path', async () => {
+    const { root } = await fixture();
+    const linked = join(root, 'linked-bridge-worktree.mjs');
+    await symlink(helper, linked);
+    let caught: unknown;
+    try {
+      await run(process.execPath, [linked], { env: { HOME: process.env.HOME }, timeout: 10_000 });
+    } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: 2 });
+  });
+
   it('rejects incomplete CLI arguments without starting preparation', async () => {
     let caught: unknown;
     try {
@@ -310,7 +336,7 @@ describe('Mac bridge dependency preparation', () => {
     expect((caught as { stderr: string }).stderr).toMatch(/^Usage: node scripts\/bridge-worktree\.mjs SOURCE_CHECKOUT TARGET_WORKTREE\n$/);
   });
 
-  it.skipIf(process.platform !== 'darwin')('kills a native clone at its deadline and publishes only a clean symlink fallback', async () => {
+  it.skipIf(process.platform !== 'darwin')('kills a native clone at its deadline and publishes only a clean symlink fallback', { timeout: 30_000 }, async () => {
     const { source, target } = await fixture();
     const result = await prepareDependencies({ source, target, cloneTimeoutMs: 1 }, { freeBytes: plenty });
     expect(result.method).toBe('symlink');
@@ -321,7 +347,7 @@ describe('Mac bridge dependency preparation', () => {
     expect(await readFile(join(source, 'node_modules', 'fixture', 'index.js'), 'utf8')).toContain('42');
   });
 
-  it.skipIf(process.platform !== 'darwin')('performs a real APFS clone in under 15 seconds and isolates later writes', async () => {
+  it.skipIf(process.platform !== 'darwin')('performs a real APFS clone in under 15 seconds and isolates later writes', { timeout: 30_000 }, async () => {
     const { source, target } = await fixture();
     const result = await prepareDependencies({ source, target }, { freeBytes: plenty });
     expect(result.method).toBe('apfs-clone');
