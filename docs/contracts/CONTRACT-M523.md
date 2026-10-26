@@ -33,7 +33,7 @@ exact GitHub API body bytes. Any later body or asset edit invalidates this lane.
 
 ## Admission and effect
 
-`.github/workflows/finalize-github-release.yml` is manual, serialized, and
+`.github/workflows/finalize-github-release.yml` (retired 2026-10-26 after its one-shot v3.3.2 run 33937472105; history only) was manual, serialized, and
 one-shot. It must run from current protected `master`, and the release source
 must remain in that branch's history. A read-only preflight job performs the
 package, provenance, and evidence checks without a protected environment or

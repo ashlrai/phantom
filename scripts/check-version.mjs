@@ -3,7 +3,7 @@
  * scripts/check-version.mjs — release-gate: the pushed tag must equal the
  * package.json version (tag `v<X.Y.Z>` ⇔ version `<X.Y.Z>`).
  *
- * Used by .github/workflows/release.yml before `npm publish`. Exits 1 with a
+ * Historically used by the retired .github/workflows/release.yml before `npm publish`. Exits 1 with a
  * clear message on mismatch so a mistagged release can never publish.
  */
 
@@ -16,7 +16,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 // Explicit argv wins over the ambient env: GITHUB_REF_NAME is set on EVERY
 // Actions run (it's the branch name on push builds), so an explicitly passed
-// tag (tests, local dry-runs) must take precedence. release.yml passes no
+// tag (tests, local dry-runs) must take precedence. the retired release.yml passed no
 // argv, so the tag-triggered publish path still reads GITHUB_REF_NAME.
 const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME ?? '';
 if (!tag) {

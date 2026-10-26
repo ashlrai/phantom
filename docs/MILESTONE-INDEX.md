@@ -541,7 +541,7 @@ part of a batched CHANGELOG entry instead (see `docs/ARCHITECTURE.md`'s
 | M476 | Release current-tip store (immutable no-clobber sequence ledger) | Shipped | `test/m476.*.test.ts` |
 | M477 | Public JSON readiness (secret/path scrubbing for dashboard/API payloads) | Shipped | `test/m477.*.test.ts` |
 | M478 | Root verification contract (repo execution-profile detection, observational) | Shipped | `test/m478.*.test.ts` |
-| M479 | npm release workflow supply-chain admission (action pinning, branch gating) | Shipped | `test/m479.*.test.ts` |
+| M479 | npm release workflow supply-chain admission (action pinning, branch gating) | Retired 2026-10-26 (release.yml removed) | none |
 | M480 | Mobile navigation (dashboard responsive shell) | Shipped | `test/m480.*.test.ts` |
 | M481 | CI workflow action trust chain (pinned action commits) | Shipped | `test/m481.*.test.ts` |
 | M482 | Release artifact contract (dependency inventory + manifest integrity) | Shipped | `test/m482.*.test.ts` |
@@ -566,12 +566,12 @@ part of a batched CHANGELOG entry instead (see `docs/ARCHITECTURE.md`'s
 | M505 | Host auto-merge experiment | Removed; protected PR handoff remains terminal | No production effect or config |
 | M506 | Signed release canary; rejected host auto-merge E2E experiment | Canary shipped; host merge removed | `test/m506.signed-release-canary.test.ts` |
 | M513 | Verified protected PR handoff | Shipped | `test/m513.*.test.ts` |
-| M514 | Release canary workflow | Shipped | `test/m514.*.test.ts` |
+| M514 | Release canary workflow | Retired 2026-10-26 (release.yml removed) | none |
 | M515 | Release publish authority split; runtime activation launch handoff (two unrelated test files, one number) | Shipped | `test/m515.*.test.ts` |
 | M516 | Fleet-status cache; goal-conductor activation permit; goal-conductor CAS; goal-conductor one-shot (four test files, one number, see §6) | Shipped | `test/m516.*.test.ts` |
 | M517 | Goal-conductor quota bridge (provider quota tickets) | Shipped | `test/m517.*.test.ts` |
 | M518 | Goal-conductor permit operator (cold-custody conductor-permit CLI, incl. the reachability guard replacing the old filename-ban test); goal timestamp repair | Shipped | `test/m518.*.test.ts` |
-| M519 | Release candidate supersession | Shipped | `test/m519.*.test.ts` |
+| M519 | Release candidate supersession | Retired 2026-10-26 (release.yml removed) | none |
 | M568 | Version-general stopped-selection broker permit protocol (authority-free) | Shipped | `test/m568.*.test.ts` |
 | M570 | Version-general release-successor policy schema and canonical verifier (authority-free) | Shipped | `test/m570.*.test.ts` |
 </details>

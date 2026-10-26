@@ -2,7 +2,7 @@
 /**
  * scripts/extract-changelog.mjs — print the CHANGELOG.md section for the
  * current package.json version (between its `## [X.Y.Z]` heading and the next
- * `## [` heading). Used by release.yml as the GitHub release notes.
+ * `## [` heading). Historically used by the retired release.yml for GitHub release notes.
  *
  * Exits 1 when the section is missing — forcing changelog discipline: a
  * version without a changelog entry cannot be released.

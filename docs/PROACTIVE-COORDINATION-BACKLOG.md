@@ -277,8 +277,8 @@ exact hosted CI, independent Audit and trusted attestation, reuses the original
 archive, reconciles uncertain publication with reads, verifies public bytes and
 provenance plus an isolated consumer, then promotes and reads back `latest`.
 Source and documented historical commissioning do not establish a release of
-this milestone. Follow [the current release guide](RELEASING.md); the legacy
-`release.yml` and [successor policy verifier](../scripts/verify-release-policy.mjs)
+this milestone. Follow [the current release guide](RELEASING.md); the retired
+`release.yml` (removed 2026-10-26) and [successor policy verifier](../scripts/verify-release-policy.mjs)
 remain frozen evidence contracts, not a canonical or generic release fallback.
 
 The local milestone now includes the pure

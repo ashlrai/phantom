@@ -689,7 +689,6 @@
 /test/m473.verifier-execution-authority.test.ts @masonwyatt23
 /test/m475.verifier-execution-policy-approval.test.ts @masonwyatt23
 /test/m476.release-current-tip-store.test.ts @masonwyatt23
-/test/m479.release-workflow-policy.test.ts @masonwyatt23
 /test/m47_1.provenance.test.ts @masonwyatt23
 /test/m48.automerge-pass.test.ts @masonwyatt23
 /test/m48.fleet-supervisor.test.ts @masonwyatt23
@@ -712,7 +711,6 @@
 /test/m504.goal-direct-authority.test.ts @masonwyatt23
 /test/m51.trust.test.ts @masonwyatt23
 /test/m513.verified-protected-pr-handoff.test.ts @masonwyatt23
-/test/m515.release-publish-authority-split.test.ts @masonwyatt23
 /test/m515.runtime-activation-launch-handoff.test.ts @masonwyatt23
 /test/m516.goal-conductor-activation-permit.test.ts @masonwyatt23
 /test/m516.goal-conductor-one-shot.test.ts @masonwyatt23
