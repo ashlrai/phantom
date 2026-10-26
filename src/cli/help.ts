@@ -39,6 +39,18 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm budget show [--json]',
+    description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
+    safety: 'read',
+    jsonShape: '{ budgets: PoolBudgetSnapshot }',
+  },
+  {
+    usage: 'phm budget add <pool> --bucket <bucket> --remaining N [--reset-at UTC] [--at UTC] [--json]',
+    description: 'Append a manual reading, or import counts and times with --source cli|log --input <file|->. Manual readings override automatic readings until reset.',
+    safety: 'append',
+    jsonShape: '{ budgets: PoolBudgetSnapshot }',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
