@@ -20,6 +20,7 @@ that every integration, provider or autonomous effect is active.
 |-----------|-----------------|
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
