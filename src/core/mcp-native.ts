@@ -22,6 +22,8 @@
  * size-capped so a tool reply can never blow agent context or leak credentials.
  */
 
+import { existsSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
 import { loadConfig } from './config.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
@@ -264,8 +266,20 @@ const TOOLS: NativeToolImpl[] = [
       },
     },
     safety: 'read',
-    handler: async (args, cfg) =>
-      buildOrientation(cfg, typeof args['repo'] === 'string' ? args['repo'] : undefined),
+    handler: async (args, cfg) => {
+      const repo = typeof args['repo'] === 'string' && args['repo'].trim() !== '' ? args['repo'] : undefined;
+      // The gateway's cwd is not the agent's: a relative path (or a typo)
+      // used to orient on a directory that does not exist and look healthy.
+      if (repo !== undefined) {
+        if (!isAbsolute(repo)) {
+          return { error: `repo must be an absolute path, got '${repo}'. Pass the repo checkout's full path.` };
+        }
+        if (!existsSync(repo) || !statSync(repo).isDirectory()) {
+          return { error: `repo '${repo}' is not a directory. Pass an existing repo checkout's full path.` };
+        }
+      }
+      return buildOrientation(cfg, repo);
+    },
   },
   {
     name: 'ashlr_ask',
