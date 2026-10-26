@@ -94,22 +94,19 @@ infeasible and the greedy fallback is not used.
   decisions are frontier. Local, subscription, loopback, and metered backends
   never receive a merge or credential role (`roleAllowed` is unchanged).
   Credential jobs stay unassigned.
-- Grok Ultra pacing. Let \(R\) be the remaining fraction, \(\rho\) the
-  orchestration reserve (default 0.15 of what remains), \(T\) the time to
-  reset, and \(w\) the pacing window (`paceTickMs`, default one day):
-
-\[
-\text{total spend} \le R \cdot \min(1, w / T)
-\]
-
-\[
-\text{cloud spend} \le (R - \rho R) \cdot \min(1, w / T)
-\]
-
-  While the reset is farther away than one window, spending the whole cap
-  leaves a positive remainder, which is the even-pace runway. Cloud agents
-  cannot enter the reserve. The orchestrator can. There is no overage variable
-  unless `extraUsageCredits` is explicitly overridden.
+- Grok Ultra pacing is a receding horizon to that pool's own reset, not a
+  fresh slice of whatever remains. The ideal line runs from 0 at the window
+  start to 1 at reset. This tick may spend only its first period, and only
+  while used quota sits under that line plus a small flex. Quota already
+  ahead of the line waits. Unused allowance stays in the remainder and the
+  next cycle replans it, so a skipped period is carried forward. A safety
+  buffer (default 2% of the quota) and the orchestration reserve (default
+  15% of the quota, cloud agents only) shrink linearly to 0 over the last
+  12 hours (`horizon.bufferWindowMs`). The plan itself still lands on 100%
+  at the reset. There is no overage variable unless `extraUsageCredits` is
+  explicitly overridden. Varying period values are a small HiGHS LP with the
+  same time budget and the even plan as fallback. Flat values use that even
+  plan directly.
 
 ## Solver
 
@@ -148,9 +145,11 @@ They do not create GitHub issues or comments.
 The sink is a no-op unless `posthog.enabled` is true and both `host` and
 `apiKey` are set. Events:
 
-- `phantom_pool_burndown` — remaining fraction, reset, estimate label, sub-usage
+- `phantom_pool_burndown` — remaining fraction, reset, estimate label, sub-usage, derived landing and uncertainty. `is_reading` is false.
 - `phantom_grok_ultra_runway` — hours to reset and paced runway
 - `phantom_pool_value_per_dollar` — net value over monetary cost, or null when the pool has no dollar cost
+
+Manual readings live in a fleet file (`PHANTOM_FLEET_FILE`, for example `/workspace/phantom-work/fleet.json`) under `readings`: `{ poolId, value, timestamp, source: "manual" }`. The value is a used fraction. A projection built from it carries that timestamp's age and a stale flag. It is not a live reading.
 
 `docs/router/posthog-coding-pools.json` is the dashboard definition. In
 PostHog, create a dashboard and add the three trends queries, or use the file
@@ -161,6 +160,7 @@ as the insight spec.
 Edit `config/router-scheduler.json` or pass overrides into `schedule` /
 `loadSchedulerConfig`. The fields that move decisions are `preferencePenalty`,
 `cloudShadowPrice`, `orchestrationReserveFraction`, `paceTickMs`,
+`horizon.bufferFraction`, `horizon.bufferWindowMs`, `horizon.flex`,
 `loseItWeight`, `canaryPercent`, `solverBudgetMs`, `diskFloorGb`, and
 `batteryFloorPercent`. Lower the shadow price only when cloud-agent jobs are
 waiting behind a full Mac and the posterior says they are worth the weekly

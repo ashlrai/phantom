@@ -19,6 +19,7 @@ import {
   mulberry32,
   sampleValue,
 } from './learn.js';
+import { paceWindow, seriesFromManual, stubSeries, type PoolPaceSeries, type ReadingStamp } from './horizon.js';
 import {
   buildRuntimePools,
   hostBlocks,
@@ -28,8 +29,10 @@ import {
   type RuntimePool,
   type UltraProjection,
 } from './pools.js';
+import type { DerivedReading } from './readings.js';
 import {
   armKey,
+  SCHEDULER_POOL_IDS,
   type Assignment,
   type BanditState,
   type EligibleRef,
@@ -61,6 +64,10 @@ export interface ScheduleInput {
   solver?: MilpSolver;
   /** Replaces the learned value for one pair. Named so it does not collide with Object.valueOf. */
   valueOverride?: (job: SchedulerJob, poolId: SchedulerPoolId, consumer: UltraConsumer | null) => number | undefined;
+  /** Manual fleet readings already derived. Estimates stay marked derived. */
+  manualReadings?: readonly DerivedReading[];
+  /** Overrides PHANTOM_FLEET_FILE for this tick. */
+  fleetFile?: string;
 }
 
 export interface ScheduleResult {
@@ -73,6 +80,8 @@ export interface ScheduleResult {
   ultra: UltraProjection;
   objective: number | null;
   runwayHours: number;
+  /** Actual burn, ideal pace, and projected landing for each pool. */
+  poolSeries: PoolPaceSeries[];
 }
 
 interface Variable {
@@ -99,6 +108,7 @@ interface Prepared {
   valueOverride?: ScheduleInput['valueOverride'];
   totalPace: number;
   cloudPace: number;
+  poolSeries: PoolPaceSeries[];
 }
 
 interface ScoredPair {
@@ -284,6 +294,28 @@ function quotaRoom(pool: RuntimePool): number | null {
   return Math.max(0, pool.remaining);
 }
 
+function latestReading(readings: readonly DerivedReading[] | undefined, poolId: string): DerivedReading | undefined {
+  let chosen: DerivedReading | undefined;
+  for (const reading of readings ?? []) {
+    if (reading.poolId !== poolId) continue;
+    if (!chosen || reading.readingAtMs >= chosen.readingAtMs) chosen = reading;
+  }
+  return chosen;
+}
+
+function configStamp(config: SchedulerConfig, nowMs: number): ReadingStamp {
+  const atMs = Date.parse(config.grokUltraWeekly.usedFractionAsOf);
+  const ageMs = Number.isFinite(atMs) ? Math.max(0, nowMs - atMs) : 0;
+  const window = Math.max(1, config.horizon.staleAfterMs);
+  return {
+    source: 'config',
+    atMs: Number.isFinite(atMs) ? atMs : nowMs,
+    ageMs,
+    stale: ageMs > config.horizon.staleAfterMs,
+    uncertainty: Math.min(1, ageMs / window),
+  };
+}
+
 function prepare(input: ScheduleInput): Prepared {
   const config = input.config
     ? applyOverrides(input.config, input.overrides)
@@ -295,12 +327,57 @@ function prepare(input: ScheduleInput): Prepared {
     nowMs: input.nowMs,
     ...(input.inFlight ? { inFlight: input.inFlight } : {}),
   });
-  const timeLeft = Math.max(0, built.ultra.resetAtMs - input.nowMs);
-  const pace = timeLeft === 0 ? 1 : Math.min(1, config.paceTickMs / timeLeft);
-  const reserve = config.grokUltraWeekly.orchestrationReserveFraction * built.ultra.remaining;
-  const cloudBudget = Math.max(0, built.ultra.remaining - reserve);
-  const totalPace = config.grokUltraWeekly.extraUsageCredits ? Number.POSITIVE_INFINITY : built.ultra.remaining * pace;
-  const cloudPace = Math.min(cloudBudget, cloudBudget * pace);
+  const ultraReading = latestReading(input.manualReadings, 'grok-ultra-weekly');
+  const used = ultraReading?.used ?? built.ultra.usedFraction;
+  const stamp: ReadingStamp = ultraReading
+    ? {
+      source: 'manual',
+      atMs: ultraReading.readingAtMs,
+      ageMs: ultraReading.ageMs,
+      stale: ultraReading.stale,
+      uncertainty: ultraReading.uncertainty,
+    }
+    : configStamp(config, input.nowMs);
+  const windowMs = config.grokUltraWeekly.resetEveryDays * 86_400_000;
+  const shared = {
+    poolId: 'grok-ultra-weekly',
+    used,
+    nowMs: input.nowMs,
+    resetAtMs: built.ultra.resetAtMs,
+    windowStartMs: built.ultra.resetAtMs - windowMs,
+    stamp,
+    knobs: {
+      bufferFraction: config.horizon.bufferFraction,
+      bufferWindowMs: config.horizon.bufferWindowMs,
+      flex: config.horizon.flex,
+      deviationWeight: config.horizon.deviationWeight,
+      flexPenalty: config.horizon.flexPenalty,
+      landingWeight: config.horizon.landingWeight,
+      periodMs: config.paceTickMs,
+      maxPeriods: config.horizon.maxPeriods,
+      reserveFraction: 0,
+    },
+  };
+  const totalPlan = paceWindow(shared);
+  const cloudPlan = paceWindow({
+    ...shared,
+    knobs: { ...shared.knobs, reserveFraction: config.grokUltraWeekly.orchestrationReserveFraction },
+  });
+  const totalPace = config.grokUltraWeekly.extraUsageCredits ? Number.POSITIVE_INFINITY : totalPlan.allowance;
+  const cloudPace = config.grokUltraWeekly.extraUsageCredits ? Number.POSITIVE_INFINITY : cloudPlan.allowance;
+  const poolSeries = SCHEDULER_POOL_IDS.map((id) => {
+    if (id === 'grok-ultra-weekly') return totalPlan.series;
+    const reading = latestReading(input.manualReadings, id);
+    if (!reading) return stubSeries(id);
+    return seriesFromManual({
+      poolId: id,
+      used: reading.used,
+      atMs: reading.readingAtMs,
+      ageMs: reading.ageMs,
+      stale: reading.stale,
+      uncertainty: reading.uncertainty,
+    });
+  });
   return {
     config,
     jobs: input.jobs,
@@ -316,6 +393,7 @@ function prepare(input: ScheduleInput): Prepared {
     ...(input.valueOverride ? { valueOverride: input.valueOverride } : {}),
     totalPace,
     cloudPace,
+    poolSeries,
   };
 }
 
@@ -407,10 +485,10 @@ function buildModel(prepared: Prepared, nowMs: number): { lp: string; variables:
     }
   }
   const ultraVars = variables.filter((variable) => variable.poolId === 'grok-ultra-weekly');
-  if (ultraVars.length > 0) {
+  if (ultraVars.length > 0 && Number.isFinite(prepared.totalPace)) {
     lines.push(` pace_ultra: ${ultraVars.map((variable) => `${variable.demand.toFixed(6)} ${variable.name}`).join(' + ')} <= ${prepared.totalPace.toFixed(6)}`);
     const cloudVars = ultraVars.filter((variable) => variable.consumer === 'cloud-agent');
-    if (cloudVars.length > 0) {
+    if (cloudVars.length > 0 && Number.isFinite(prepared.cloudPace)) {
       lines.push(` pace_cloud: ${cloudVars.map((variable) => `${variable.demand.toFixed(6)} ${variable.name}`).join(' + ')} <= ${prepared.cloudPace.toFixed(6)}`);
     }
     constraints += 1;
@@ -592,6 +670,7 @@ function resultFrom(
     ultra: prepared.ultra,
     objective: objective ?? built.objective,
     runwayHours: runwayHours(prepared, built.assignments, nowMs),
+    poolSeries: prepared.poolSeries,
   };
 }
 

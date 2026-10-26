@@ -67,6 +67,11 @@ export function eventsFromSchedule(result: ScheduleResult, nowMs: number, distin
       estimate: true,
       source: result.ultra.source,
       extra_usage_credits: result.ultra.extraUsageCredits,
+      is_reading: false,
+      projection: 'derived',
+      projected_landing: result.poolSeries.find((series) => series.poolId === 'grok-ultra-weekly')?.projectedLanding ?? null,
+      uncertainty: result.poolSeries.find((series) => series.poolId === 'grok-ultra-weekly')?.uncertainty ?? null,
+      stale: result.poolSeries.find((series) => series.poolId === 'grok-ultra-weekly')?.stale ?? false,
     },
   };
   const runway: SchedulerEvent = {

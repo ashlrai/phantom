@@ -1,6 +1,8 @@
 export { embeddedSchedulerConfig, loadSchedulerConfig, parseSchedulerConfig, defaultSchedulerConfigPath } from './defaults.js';
 export type { SchedulerConfig, SchedulerOverrides } from './defaults.js';
 export { projectUltra, buildRuntimePools } from './pools.js';
+export { planHorizon, paceWindow, safetyBuffer } from './horizon.js';
+export { loadFleetReadings, fleetReadingsPath, FLEET_READINGS_ENV } from './readings.js';
 export {
   emptyBandit,
   updateBandit,

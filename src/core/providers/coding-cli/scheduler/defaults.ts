@@ -57,6 +57,19 @@ export interface GrokUltraDefaults {
   label: string;
 }
 
+export interface HorizonDefaults {
+  bufferFraction: number;
+  bufferWindowMs: number;
+  flex: number;
+  deviationWeight: number;
+  flexPenalty: number;
+  landingWeight: number;
+  maxPeriods: number;
+  staleAfterMs: number;
+  /** Who set the horizon policy, and when. */
+  source: string;
+}
+
 export interface SchedulerConfig {
   version: 1;
   source: string;
@@ -76,6 +89,7 @@ export interface SchedulerConfig {
   postIssues: false;
   posthog: { enabled: boolean; host: string | null; apiKey: string | null };
   grokUltraWeekly: GrokUltraDefaults;
+  horizon: HorizonDefaults;
   pools: Readonly<Record<SchedulerPoolId, PoolDefaults>>;
 }
 
@@ -113,6 +127,7 @@ export interface SchedulerOverrides {
   promotionMinRows?: number;
   posthog?: { enabled?: boolean; host?: string | null; apiKey?: string | null };
   grokUltraWeekly?: Partial<Omit<GrokUltraDefaults, 'id' | 'separateCursorCloudPool' | 'quotaReadableFromApi' | 'estimate' | 'sharedBy'>>;
+  horizon?: Partial<HorizonDefaults>;
   pools?: Partial<Record<SchedulerPoolId, PoolOverride>>;
 }
 
@@ -174,6 +189,17 @@ export function embeddedSchedulerConfig(): SchedulerConfig {
       cloudShadowPrice: 0.75,
       jobFraction: 0.01,
       label: 'estimate from Mason, Oct 25 2026 11:26 PM ET; not an API reading',
+    },
+    horizon: {
+      bufferFraction: 0.02,
+      bufferWindowMs: 12 * 3_600_000,
+      flex: 1.5,
+      deviationWeight: 0.05,
+      flexPenalty: 10,
+      landingWeight: 100,
+      maxPeriods: 24,
+      staleAfterMs: 86_400_000,
+      source: 'Mason, Oct 26 2026 12:12 AM ET',
     },
     pools: {
       'codex-primary': pool({ billing: 'subscription', tier: 'frontier', host: 'mac', concurrency: 1, preferencePenalty: 0, monetaryCost: 0 }),
@@ -278,6 +304,22 @@ function applyUltra(base: GrokUltraDefaults, raw: unknown): GrokUltraDefaults {
   return next;
 }
 
+function applyHorizon(base: HorizonDefaults, raw: unknown): HorizonDefaults {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base;
+  const row = raw as Record<string, unknown>;
+  const next: HorizonDefaults = { ...base };
+  if (row['bufferFraction'] !== undefined) next.bufferFraction = numberIn(row['bufferFraction'], 'bufferFraction', 0, 1);
+  if (row['bufferWindowMs'] !== undefined) next.bufferWindowMs = numberIn(row['bufferWindowMs'], 'bufferWindowMs', 0, 366 * 86_400_000);
+  if (row['flex'] !== undefined) next.flex = numberIn(row['flex'], 'flex', 1, 100);
+  if (row['deviationWeight'] !== undefined) next.deviationWeight = numberIn(row['deviationWeight'], 'deviationWeight', 0, 1_000);
+  if (row['flexPenalty'] !== undefined) next.flexPenalty = numberIn(row['flexPenalty'], 'flexPenalty', 0, 1_000_000);
+  if (row['landingWeight'] !== undefined) next.landingWeight = numberIn(row['landingWeight'], 'landingWeight', 0, 1_000_000);
+  if (row['maxPeriods'] !== undefined) next.maxPeriods = numberIn(row['maxPeriods'], 'maxPeriods', 1, 512);
+  if (row['staleAfterMs'] !== undefined) next.staleAfterMs = numberIn(row['staleAfterMs'], 'staleAfterMs', 0, 366 * 86_400_000);
+  if (typeof row['source'] === 'string' && row['source'].trim() !== '') next.source = row['source'];
+  return next;
+}
+
 export function parseSchedulerConfig(text: string, overrides?: SchedulerOverrides): SchedulerConfig {
   let raw: unknown;
   try {
@@ -301,6 +343,7 @@ export function parseSchedulerConfig(text: string, overrides?: SchedulerOverride
     ...base,
     pools,
     grokUltraWeekly: applyUltra(base.grokUltraWeekly, row['grokUltraWeekly']),
+    horizon: applyHorizon(base.horizon, row['horizon']),
     postIssues: false,
   };
   if (typeof row['source'] === 'string' && row['source'].trim() !== '') config.source = row['source'];
@@ -334,6 +377,19 @@ export function applyOverrides(config: SchedulerConfig, overrides?: SchedulerOve
     const patch = overrides.pools?.[id];
     if (patch) pools[id] = { ...pools[id], ...patch };
   }
+  const horizonPatch = overrides.horizon;
+  const horizon: HorizonDefaults = {
+    ...config.horizon,
+    bufferFraction: horizonPatch?.bufferFraction ?? config.horizon.bufferFraction,
+    bufferWindowMs: horizonPatch?.bufferWindowMs ?? config.horizon.bufferWindowMs,
+    flex: horizonPatch?.flex ?? config.horizon.flex,
+    deviationWeight: horizonPatch?.deviationWeight ?? config.horizon.deviationWeight,
+    flexPenalty: horizonPatch?.flexPenalty ?? config.horizon.flexPenalty,
+    landingWeight: horizonPatch?.landingWeight ?? config.horizon.landingWeight,
+    maxPeriods: horizonPatch?.maxPeriods ?? config.horizon.maxPeriods,
+    staleAfterMs: horizonPatch?.staleAfterMs ?? config.horizon.staleAfterMs,
+    source: horizonPatch?.source ?? config.horizon.source,
+  };
   const ultraPatch = overrides.grokUltraWeekly;
   const ultra: GrokUltraDefaults = {
     ...config.grokUltraWeekly,
@@ -359,6 +415,7 @@ export function applyOverrides(config: SchedulerConfig, overrides?: SchedulerOve
     tokenReference: overrides.tokenReference ?? config.tokenReference,
     promotionMinRows: overrides.promotionMinRows ?? config.promotionMinRows,
     pools,
+    horizon,
     grokUltraWeekly: ultra,
     posthog: {
       enabled: posthog?.enabled ?? config.posthog.enabled,

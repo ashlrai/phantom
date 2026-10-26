@@ -8,6 +8,7 @@ import { classifyJob } from '../../../decide/job-shape.js';
 import type { TierFloor } from '../../../resources/pool-spend.js';
 import type { IssueJob } from '../worker-plan.js';
 import { appendRouterDecision } from './log.js';
+import { fleetReadingsPath, loadFleetReadings } from './readings.js';
 import { schedule, type ScheduleInput, type ScheduleResult } from './solve.js';
 import { emitSchedule, type SchedulerTelemetry } from './telemetry.js';
 import { isJobKind, type JobKind, type SchedulerJob, type SchedulerRole } from './types.js';
@@ -87,7 +88,11 @@ export async function jobsFromIssues(issues: readonly IssueJob[], classify: (tex
 
 export async function runDrainTick(input: DrainTickInput): Promise<DrainTickResult> {
   const jobs = input.jobs ?? await jobsFromIssues(input.issues ?? [], input.classify ?? classifyJob);
-  const scheduleInput: ScheduleInput = { ...input, jobs };
+  const fleetPath = input.fleetFile ?? fleetReadingsPath(process.env);
+  const manualReadings = input.manualReadings ?? (fleetPath
+    ? loadFleetReadings({ path: fleetPath, nowMs: input.nowMs, staleAfterMs: input.config?.horizon.staleAfterMs })
+    : undefined);
+  const scheduleInput: ScheduleInput = { ...input, jobs, ...(manualReadings ? { manualReadings } : {}) };
   const result = await schedule(scheduleInput);
   if (input.decisionLogPath) {
     for (const row of result.decisions) appendRouterDecision(input.decisionLogPath, row);

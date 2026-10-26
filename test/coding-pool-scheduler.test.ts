@@ -29,7 +29,9 @@ import { appendRouterDecision, readRouterDecisions } from '../src/core/providers
 import { projectUltra } from '../src/core/providers/coding-cli/scheduler/pools.js';
 import { computeRegret, regretBacklog, writeRegretBacklog } from '../src/core/providers/coding-cli/scheduler/regret.js';
 import { runDrainTick } from '../src/core/providers/coding-cli/scheduler/drain.js';
-import { schedule, type ScheduleInput } from '../src/core/providers/coding-cli/scheduler/solve.js';
+import { planHorizon, safetyBuffer } from '../src/core/providers/coding-cli/scheduler/horizon.js';
+import { loadFleetReadings } from '../src/core/providers/coding-cli/scheduler/readings.js';
+import { highsSolver, schedule, type ScheduleInput } from '../src/core/providers/coding-cli/scheduler/solve.js';
 import { createPosthogSink, createTelemetry, eventsFromSchedule } from '../src/core/providers/coding-cli/scheduler/telemetry.js';
 import { armKey, SCHEDULER_POOL_IDS, type RouterOutcome, type SchedulerJob } from '../src/core/providers/coding-cli/scheduler/types.js';
 import { runRouterCli } from '../src/cli/router.js';
@@ -187,6 +189,7 @@ describe('milp assignment', () => {
   it('does not give merge or credential work to a subscription, local, or loopback pool', async () => {
     const merge = await schedule(input({
       jobs: [job({ id: 'merge', jobType: 'merge-decision' })],
+      overrides: { grokUltraWeekly: { usedFraction: 0.02 } },
     }));
     const credential = await schedule(input({
       jobs: [job({ id: 'cred', role: 'credential', jobType: 'coding' })],
@@ -231,7 +234,7 @@ describe('milp assignment', () => {
     expect(paced.ultra.remaining).toBeGreaterThan(0);
     const fits = await schedule(input({
       jobs: [job({ id: 'cloud', quotaByPool: { 'grok-ultra-weekly': 0.05 } })],
-      overrides: { ...wideOpen, paceTickMs: 86_400_000 },
+      overrides: { ...wideOpen, paceTickMs: 86_400_000, grokUltraWeekly: { usedFraction: 0.05 } },
       valueOverride: valued(1),
     }));
     expect(fits.assignments[0]).toEqual(expect.objectContaining({
@@ -544,3 +547,149 @@ describe('phm router regret', () => {
 function NOW_ISO(): string {
   return new Date(NOW).toISOString();
 }
+
+describe('receding horizon and manual readings', () => {
+  const day = 86_400_000;
+  const start = Date.parse('2026-10-26T00:00:00.000Z');
+  const reset = start + 4 * day;
+  const knobs = {
+    bufferFraction: 0,
+    bufferWindowMs: 12 * 3_600_000,
+    reserveFraction: 0,
+    flex: 2,
+    deviationWeight: 0.05,
+    flexPenalty: 10,
+    landingWeight: 100,
+    periodMs: day,
+    maxPeriods: 8,
+  };
+
+  it('lands near 100% at reset, carries unused budget, and shrinks the buffer', async () => {
+    expect(safetyBuffer(12 * 3_600_000, 0.2, 12 * 3_600_000)).toBeCloseTo(0.2);
+    expect(safetyBuffer(6 * 3_600_000, 0.2, 12 * 3_600_000)).toBeCloseTo(0.1);
+    expect(safetyBuffer(0, 0.2, 12 * 3_600_000)).toBe(0);
+    expect(safetyBuffer(48 * 3_600_000, 0.2, 12 * 3_600_000)).toBeCloseTo(0.2);
+
+    const curve = [0.2, 2, 0.2, 2];
+    const shaped = await planHorizon({
+      poolId: 'codex-primary',
+      used: 0,
+      nowMs: start,
+      resetAtMs: reset,
+      windowStartMs: start,
+      values: curve,
+      knobs,
+      solver: highsSolver,
+      solverBudgetMs: 5_000,
+    });
+    expect(shaped.solver).toBe('highs');
+    expect(shaped.spends[1]).toBeGreaterThan((shaped.spends[0] ?? 0) + 0.02);
+    expect(shaped.projectedLanding).toBeGreaterThan(0.97);
+    expect(shaped.projectedLanding).toBeLessThanOrEqual(1.02);
+    expect(shaped.series.projection).toBe('derived');
+    expect(shaped.series.isReading).toBe(false);
+    expect(shaped.series.actualCumulative).toBe(0);
+    expect(shaped.series.points.some((point) => point.idealPace > 0 && point.actualCumulative === null)).toBe(true);
+
+    async function simulate(skipFirst: boolean): Promise<number> {
+      let used = 0;
+      let now = start;
+      let step = 0;
+      while (now < reset - 1_000) {
+        const plan = await planHorizon({
+          poolId: 'codex-primary',
+          used,
+          nowMs: now,
+          resetAtMs: reset,
+          windowStartMs: start,
+          values: curve,
+          knobs,
+          solver: highsSolver,
+          solverBudgetMs: 5_000,
+        });
+        const spend = skipFirst && step === 0 ? 0 : Math.min(1 - used, plan.allowance);
+        used += spend;
+        expect(used).toBeLessThanOrEqual(1 + 1e-4);
+        now += day;
+        step += 1;
+      }
+      return used;
+    }
+
+    expect(await simulate(false)).toBeGreaterThan(0.97);
+    expect(await simulate(true)).toBeGreaterThan(0.97);
+
+    const ahead = await planHorizon({
+      poolId: 'grok-ultra-weekly',
+      used: 0.8,
+      nowMs: start,
+      resetAtMs: reset,
+      windowStartMs: start,
+      values: [1, 1, 1, 1],
+      knobs,
+    });
+    expect(ahead.allowance).toBe(0);
+    expect(ahead.series.isReading).toBe(false);
+
+    const hold = { ...knobs, bufferFraction: 0.2, periodMs: 12 * 3_600_000 };
+    const window = 12 * 3_600_000;
+    const far = await planHorizon({
+      poolId: 'claude',
+      used: 0,
+      nowMs: reset - window,
+      resetAtMs: reset,
+      windowStartMs: reset - window,
+      knobs: hold,
+    });
+    const mid = await planHorizon({
+      poolId: 'claude',
+      used: 0,
+      nowMs: reset - window / 2,
+      resetAtMs: reset,
+      windowStartMs: reset - window,
+      knobs: hold,
+    });
+    const end = await planHorizon({
+      poolId: 'claude',
+      used: 0,
+      nowMs: reset,
+      resetAtMs: reset,
+      windowStartMs: reset - window,
+      knobs: hold,
+    });
+    expect(far.allowance).toBeCloseTo(0.8, 1);
+    expect(mid.allowance).toBeCloseTo(0.9, 1);
+    expect(end.allowance).toBeCloseTo(1, 1);
+  });
+
+  it('flags a stale manual reading and keeps the projection derived', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-readings-'));
+    const path = join(dir, 'fleet.json');
+    const now = Date.parse('2026-10-26T12:00:00.000Z');
+    writeFileSync(path, JSON.stringify({
+      readings: [
+        { poolId: 'claude', value: 0.4, timestamp: '2026-10-20T12:00:00.000Z', source: 'manual' },
+        { poolId: 'codex-primary', value: 0.2, timestamp: '2026-10-26T11:00:00.000Z', source: 'manual' },
+        { poolId: 'devin', value: 0.1, timestamp: '2026-10-26T11:00:00.000Z', source: 'api' },
+      ],
+    }));
+    const staleAfterMs = 24 * 3_600_000;
+    const rows = loadFleetReadings({ path, nowMs: now, staleAfterMs });
+    const claude = rows.find((row) => row.poolId === 'claude');
+    const codex = rows.find((row) => row.poolId === 'codex-primary');
+    expect(claude?.stale).toBe(true);
+    expect(claude?.projection).toBe('derived');
+    expect(claude?.isReading).toBe(false);
+    expect(claude?.source).toBe('manual');
+    expect(claude?.ageMs).toBe(6 * 24 * 3_600_000);
+    expect(claude?.uncertainty).toBeGreaterThan(codex?.uncertainty ?? 1);
+    expect(codex?.stale).toBe(false);
+    expect(rows.find((row) => row.poolId === 'devin')).toBeUndefined();
+    const fromEnv = loadFleetReadings({
+      env: { PHANTOM_FLEET_FILE: path },
+      nowMs: now,
+      staleAfterMs,
+    });
+    expect(fromEnv).toHaveLength(2);
+  });
+});

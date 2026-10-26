@@ -8,6 +8,17 @@
   "canaryPercent": 10,
   "solverBudgetMs": 100,
   "paceTickMs": 86400000,
+  "horizon": {
+    "bufferFraction": 0.02,
+    "bufferWindowMs": 43200000,
+    "flex": 1.5,
+    "deviationWeight": 0.05,
+    "flexPenalty": 10,
+    "landingWeight": 100,
+    "maxPeriods": 24,
+    "staleAfterMs": 86400000,
+    "source": "Mason, Oct 26 2026 12:12 AM ET"
+  },
   "loseItWeight": 0.5,
   "latencyWeight": 0.1,
   "latencyReferenceMs": 600000,
