@@ -17,6 +17,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig, EngineCommand } from '../src/core/types.js';
+import { checkHostHeadroom } from '../src/core/run/host-headroom.js';
+
+// Engine lifecycle tests must not depend on the developer host's memory pressure.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: vi.fn(() => ({ allowed: true, reading: null, reason: null })),
+}));
 
 // ---------------------------------------------------------------------------
 // We mock child_process so no real engine is ever spawned.
@@ -435,6 +441,7 @@ describe('phantomWrap', () => {
 describe('spawnEngine — never throws on failure', () => {
   beforeEach(async () => {
     vi.resetAllMocks();
+    vi.mocked(checkHostHeadroom).mockReturnValue({ allowed: true, reading: null, reason: null });
     _spawnControl = null;
     // Re-install the default spawn mock after resetAllMocks().
     const { spawn } = await import('node:child_process');
@@ -446,6 +453,20 @@ describe('spawnEngine — never throws on failure', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('refuses a pressured launch before spawning and permits a recovered host', async () => {
+    const { spawn } = await import('node:child_process');
+    vi.mocked(checkHostHeadroom).mockReturnValueOnce({ allowed: false,
+      reading: { freePercent: 40, swapGb: 9 }, reason: 'Host memory pressure; launch held.' });
+    const cmd: EngineCommand = { bin: 'codex', args: ['exec', '--json', GOAL] };
+    const refused = await spawnEngine(cmd, makeConfig());
+    expect(refused).toMatchObject({ ok: false, error: 'Host memory pressure; launch held.' });
+    expect(spawn).not.toHaveBeenCalled();
+    const resumed = spawnEngine(cmd, makeConfig());
+    getSpawnControl().resolve(0, null, 'recovered\n');
+    expect((await resumed).ok).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 
   it('returns { ok: true } on zero-exit with output', async () => {
