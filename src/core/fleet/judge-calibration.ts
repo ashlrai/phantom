@@ -120,7 +120,7 @@ export interface RaterPair {
  * computed from its historical traces (its "dark current").
  */
 export interface DarkCurrent {
-  /** Judge engine identifier (e.g. 'claude-sonnet-4-5'). */
+  /** Judge engine identifier (e.g. 'claude-opus-5-5'). */
   judgeEngine: string;
   /** Total traces used to compute this baseline. */
   traceCount: number;

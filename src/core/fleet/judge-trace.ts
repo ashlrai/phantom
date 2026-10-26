@@ -75,7 +75,7 @@ export interface JudgeTrace {
   traceId?: string;
   /** Proposal id this trace belongs to. */
   proposalId: string;
-  /** Model/engine that produced the verdict (e.g. 'claude-sonnet-4-5'). */
+  /** Model/engine that produced the verdict (e.g. 'claude-opus-5-5'). */
   judgeEngine: string;
   /** Parsed verdict: ship | review | noise | harmful. */
   verdict: 'ship' | 'review' | 'noise' | 'harmful';
