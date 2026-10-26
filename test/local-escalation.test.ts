@@ -95,12 +95,17 @@ describe('review #926: fail-closed locality table', () => {
     'http://10.0.0.5', 'http://172.16.0.1', 'http://172.31.255.255', 'http://192.168.1.10', 'http://169.254.169.254', 'http://100.64.0.1',
     'http://0.0.0.0', 'http://0', 'http://0x7f000001', 'http://2130706433', 'http://api.openai.com@127.0.0.1',
     'http://[fc00::1]', 'http://[fd12::1]', 'http://[fe80::1]', 'http://[febf::1]',
+    'http://localhost.localdomain', 'http://[::127.0.0.1]', 'http://[::7f00:1]', 'http://[::ffff:0:127.0.0.1]', 'http://[1::]',
+    'http://[64:ff9b::7f00:1]', 'http://[64:ff9b::10.0.0.1]', 'http://[64:ff9b:1::7f00:1]', 'http://[2002:7f00:1::]', 'http://[2002:a00:1::]',
+    'http://[fec0::1]', 'http://[ff02::1]', 'http://224.0.0.1', 'http://239.255.255.250', 'http://198.18.0.1', 'http://198.19.255.255',
+    'http://240.0.0.1', 'http://255.255.255.255',
   ])('endpoint %j is local (refused authority)', (baseUrl) => {
     expect(local('claude', baseUrl)).toBe(true);
     expect(engineMayHoldMergeOrCredentials({ engineId: 'claude', baseUrl, tier: 'frontier' })).toBe(false);
   });
 
-  it.each(['https://api.openai.com/v1', 'https://api.anthropic.com', 'http://8.8.8.8', 'http://172.32.0.1', 'http://100.128.0.1', 'https://[2606:4700::1111]', 'https://example.com.'])(
+  it.each(['https://api.openai.com/v1', 'https://api.anthropic.com', 'http://8.8.8.8', 'http://172.32.0.1', 'http://100.128.0.1', 'https://[2606:4700::1111]', 'https://example.com.',
+    'http://198.20.0.1', 'http://223.255.255.255', 'https://[64:ff9b::808:808]', 'https://[2002:808:808::]', 'https://[::ffff:8.8.8.8]'])(
     'public endpoint %j is remote', (baseUrl) => expect(local('claude', baseUrl)).toBe(false),
   );
 
@@ -109,7 +114,9 @@ describe('review #926: fail-closed locality table', () => {
   );
 
   it('hosted engines with no endpoint stay eligible', () => {
-    for (const id of ['claude', 'codex', 'gemini']) expect(local(id), id).toBe(false);
+    for (const id of ['claude', 'codex', 'gpt-5', 'gemini', 'grok', 'mistral', 'openrouter', 'anthropic', 'openai', 'deepseek', 'qwen', 'kimi', 'cursor', 'copilot', 'aider', 'amp']) {
+      expect(local(id), id).toBe(false);
+    }
     expect(isPublicHost('')).toBe(false);
   });
 

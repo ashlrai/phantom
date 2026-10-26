@@ -20,6 +20,12 @@
  *
  * Policy only: nothing in src/ calls this yet. Enforcement at inbox/merge.ts
  * evaluateMergeAuthority and fleet/automerge-pass.ts follows in the next PR.
+ *
+ * Endpoint locality is judged from the URL literal only; DNS is not resolved.
+ * Public names that resolve to loopback (localtest.me, *.nip.io) are not caught
+ * here. Runtime enforcement belongs to the call-site PR and network policy.
+ * The `llama` and `mlx` id prefixes also refuse hosted Llama/MLX providers
+ * (fail closed); those need an explicit allow later if they should hold authority.
  */
 import { isIP } from 'node:net';
 import { isAbliteratedModel } from '../run/local-inference.js';
@@ -128,30 +134,50 @@ function isLocalEngineId(id: string): boolean {
   return KNOWN_LOCAL_ENGINE_IDS.has(lower) || LOCAL_ENGINE_FAMILIES.some((f) => flat.startsWith(f));
 }
 
-// Non-public IPv4 ranges: unspecified, 10/8, CGNAT 100.64/10, loopback, link-local, 172.16/12, 192.168/16.
+// Non-public IPv4 ranges: unspecified 0/8, 10/8, CGNAT 100.64/10, loopback 127/8, link-local 169.254/16,
+// 172.16/12, 192.168/16, benchmark 198.18/15, multicast 224/4, reserved 240/4 (includes broadcast).
 const PRIVATE_V4: ReadonlyArray<[number, number]> = [
-  [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8],
-  [0xa9fe0000, 16], [0xac100000, 12], [0xc0a80000, 16],
+  [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8], [0xa9fe0000, 16],
+  [0xac100000, 12], [0xc0a80000, 16], [0xc6120000, 15], [0xe0000000, 4], [0xf0000000, 4],
 ];
 
 function v4IsPublic(n: number): boolean {
   return !PRIVATE_V4.some(([net, bits]) => (n >>> (32 - bits)) === (net >>> (32 - bits)));
 }
 
-/** Pure. True only for a routable public host: not loopback, private, link-local, CGNAT, unspecified or a local suffix. */
+/** Eight 16-bit words of a valid IPv6 literal (embedded dotted IPv4 allowed). */
+function v6Words(host: string): number[] {
+  const m = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+  const v6 = m ? m[1] + m[2].split('.').reduce((acc, o, i) => acc + (i % 2 ? '' : (i ? ':' : '')) + Number(o).toString(16).padStart(2, '0'), '') : host;
+  const [head, tail] = v6.split('::');
+  const parse = (part?: string): number[] => (part ? part.split(':').map((w) => parseInt(w, 16)) : []);
+  const h = parse(head);
+  const t = tail === undefined ? [] : parse(tail);
+  return [...h, ...new Array<number>(8 - h.length - t.length).fill(0), ...t];
+}
+
+function v6IsPublic(host: string): boolean {
+  const w = v6Words(host);
+  const v4 = (hi: number, lo: number): boolean => v4IsPublic(hi * 65536 + lo);
+  if (w.slice(0, 4).every((x) => x === 0)) {
+    // ::/96 (IPv4-compatible, ::, ::1) and ::ffff:0:0/96 (mapped) check the embedded IPv4; other forms fail closed.
+    return w[4] === 0 && (w[5] === 0 || w[5] === 0xffff) && v4(w[6], w[7]);
+  }
+  if (w[0] < 0x100) return w[0] === 0x64 && w[1] === 0xff9b && v4(w[6], w[7]); // reserved ::/8; only NAT64 64:ff9b::/96 and 64:ff9b:1::/48 pass, by embedded IPv4
+  if (w[0] === 0x2002) return v4(w[1], w[2]); // 6to4
+  // ULA fc00::/7, link-local fe80::/10, site-local fec0::/10, multicast ff00::/8.
+  return (w[0] & 0xfe00) !== 0xfc00 && (w[0] & 0xff80) !== 0xfe80 && (w[0] & 0xff00) !== 0xff00;
+}
+
+/** Pure. True only for a routable public host literal (DNS is not resolved). */
 export function isPublicHost(raw: string): boolean {
   const host = raw.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
   if (host === '') return false;
   const ip = isIP(host);
   if (ip === 4) return v4IsPublic(host.split('.').reduce((n, o) => n * 256 + Number(o), 0));
-  if (ip === 6) {
-    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-    if (mapped) return v4IsPublic(parseInt(mapped[1], 16) * 65536 + parseInt(mapped[2], 16));
-    if (host.startsWith('::ffff:')) return false; // any other mapped form fails closed
-    return !(/^::1?$/.test(host) || /^f[cd]/.test(host) || /^fe[89ab]/.test(host));
-  }
+  if (ip === 6) return v6IsPublic(host);
   if (!host.includes('.')) return false; // single-label names are LAN or local
-  return !/(^|\.)(localhost|local|internal)$/.test(host);
+  return !/(^|\.)(localhost|localdomain|local|internal)$/.test(host);
 }
 
 export interface EngineIdentity {
