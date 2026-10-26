@@ -65,6 +65,7 @@ import { parseGoalPreferences, resolveGoalPreferences, unavailableGoalPreference
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { lstatSync, readdirSync } from 'node:fs';
+import { ctimeSettleDelayMs } from '../util/stable-file-read.js';
 import { constants as fsConstants } from 'node:fs';
 import { lstat as lstatAsync, open as openAsync } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -1295,7 +1296,7 @@ function projectFleetEssentials(
 // PERF (3.10) read caches for the cockpit aggregate
 // ---------------------------------------------------------------------------
 
-let pendingMemo: { dirKey: string; signature: string; fullCheckedAt: number; count: number } | null = null;
+let pendingMemo: { dirKey: string; dirSettled: boolean; signature: string; fullCheckedAt: number; count: number } | null = null;
 
 /**
  * Re-verify the per-file fingerprint at least this often even when the
@@ -1305,12 +1306,17 @@ let pendingMemo: { dirKey: string; signature: string; fullCheckedAt: number; cou
  */
 const PENDING_FULL_CHECK_MS = 10_000;
 
-/** Inbox directory identity + nanosecond mtime: one lstat. */
-function inboxDirKey(): string | null {
+/**
+ * Inbox directory identity + nanosecond mtime: one lstat. `settled` is false
+ * while the directory's ctime is still inside the coarse-clock window
+ * (util/stable-file-read.ts): a rename into it in the same tick would leave
+ * this key unchanged, so a stamp taken then cannot vouch for later reads.
+ */
+function inboxDirStamp(now: number): { key: string; settled: boolean } | null {
   try {
     // sync-io-ok: lstat of ~/.ashlr/inbox, the private proposal store, never an operator folder
     const st = lstatSync(inboxDir(), { bigint: true });
-    return `${st.dev}:${st.ino}:${st.mtimeNs}`;
+    return { key: `${st.dev}:${st.ino}:${st.mtimeNs}`, settled: ctimeSettleDelayMs(st.ctimeNs, now) === 0 };
   } catch {
     return null;
   }
@@ -1343,26 +1349,43 @@ function inboxSignature(): string | null {
   }
 }
 
+type InboxStamp = { dir: { key: string; settled: boolean } | null; signature: string | null };
+
 /**
- * pendingCount(), recomputed only when the inbox changes. Fast path: the
+ * The memoised pending count when the inbox provably has not changed, else
+ * the stamps a recount should be remembered under. Fast path: a settled
  * directory stamp (every store write is a rename or link into it). Every
- * PENDING_FULL_CHECK_MS the per-file fingerprint is re-taken as well.
+ * PENDING_FULL_CHECK_MS, and whenever the stamp is unsettled, the per-file
+ * fingerprint is re-taken as well.
  */
-export function cachedPendingCount(): number {
-  const dirKey = inboxDirKey();
-  const now = Date.now();
-  if (dirKey !== null && pendingMemo && pendingMemo.dirKey === dirKey &&
+function probePendingMemo(now: number): { hit: number } | InboxStamp {
+  const dir = inboxDirStamp(now);
+  if (dir !== null && pendingMemo && pendingMemo.dirKey === dir.key && pendingMemo.dirSettled &&
       now - pendingMemo.fullCheckedAt < PENDING_FULL_CHECK_MS) {
-    return pendingMemo.count;
+    return { hit: pendingMemo.count };
   }
   const signature = inboxSignature();
-  if (dirKey !== null && signature !== null && pendingMemo?.signature === signature) {
-    pendingMemo = { ...pendingMemo, dirKey, fullCheckedAt: now };
-    return pendingMemo.count;
+  if (dir !== null && signature !== null && pendingMemo?.signature === signature) {
+    pendingMemo = { ...pendingMemo, dirKey: dir.key, dirSettled: dir.settled, fullCheckedAt: now };
+    return { hit: pendingMemo.count };
   }
+  return { dir, signature };
+}
+
+function rememberPendingCount({ dir, signature }: InboxStamp, now: number, count: number): void {
+  pendingMemo = dir === null || signature === null
+    ? null
+    : { dirKey: dir.key, dirSettled: dir.settled, signature, fullCheckedAt: now, count };
+}
+
+/** pendingCount(), recomputed only when the inbox changes (probePendingMemo). */
+export function cachedPendingCount(): number {
+  const now = Date.now();
+  const probe = probePendingMemo(now);
+  if ('hit' in probe) return probe.hit;
   // sync-io-ok: the synchronous twin, kept for non-server callers; routes pass a worker to cachedPendingCountAsync
   const count = pendingCount();
-  pendingMemo = dirKey === null || signature === null ? null : { dirKey, signature, fullCheckedAt: now, count };
+  rememberPendingCount(probe, now, count);
   return count;
 }
 
@@ -1377,17 +1400,9 @@ export function cachedPendingCount(): number {
 export async function cachedPendingCountAsync(reader?: ReadProjectionReader): Promise<number> {
   // sync-io-ok: only without a read-projection worker (tests, embedded callers); the servers always pass one
   if (!reader) return cachedPendingCount();
-  const dirKey = inboxDirKey();
   const now = Date.now();
-  if (dirKey !== null && pendingMemo && pendingMemo.dirKey === dirKey &&
-      now - pendingMemo.fullCheckedAt < PENDING_FULL_CHECK_MS) {
-    return pendingMemo.count;
-  }
-  const signature = inboxSignature();
-  if (dirKey !== null && signature !== null && pendingMemo?.signature === signature) {
-    pendingMemo = { ...pendingMemo, dirKey, fullCheckedAt: now };
-    return pendingMemo.count;
-  }
+  const probe = probePendingMemo(now);
+  if ('hit' in probe) return probe.hit;
   // Stale-while-revalidate, like the worker fleet read: the worker runs its
   // projections one at a time, so a slow one ahead of ours must not stall the
   // cockpit. Only the very first count waits.
@@ -1401,7 +1416,7 @@ export async function cachedPendingCountAsync(reader?: ReadProjectionReader): Pr
     current.inFlight = reader.read('pending-count')
       .then((count) => {
         current.value = count;
-        pendingMemo = dirKey === null || signature === null ? null : { dirKey, signature, fullCheckedAt: now, count };
+        rememberPendingCount(probe, now, count);
         return count;
       })
       .finally(() => {

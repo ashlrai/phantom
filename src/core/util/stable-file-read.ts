@@ -358,3 +358,49 @@ export function readStableRegularFile(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Racy timestamps
+// ---------------------------------------------------------------------------
+
+/**
+ * Racy timestamps: when may a file's stat stamps stand in for its content?
+ *
+ * Kernels stamp mtime/ctime from a coarse clock that advances once per tick
+ * (a Linux jiffy is 1–10 ms before multigrain timestamps; Windows can be
+ * 15.6 ms), and some filesystems keep whole seconds (HFS+ 1 s, FAT 2 s). A
+ * change made in the same tick as an observation can therefore leave every
+ * stamp identical, and an unlink + recreate often reuses the inode number
+ * too, so (dev, ino, size, mtime, ctime) cannot tell the two apart. This is
+ * git's "racily clean" index entry problem.
+ *
+ * The fix is git's: an observation only counts once the clock has moved past
+ * the observed ctime by more than one tick. After that, any later change gets
+ * a strictly later ctime. ctime is the anchor because the kernel sets it on
+ * every content or metadata change and userland cannot set it (utimes can
+ * forge mtime, not ctime). A reader that also holds the content must re-read
+ * it after the wait: a change made during the wait, still in the same tick,
+ * shows only in the bytes.
+ */
+
+/** Longer than one coarse tick on Linux (≤ 10 ms at HZ=100) and Windows (15.6 ms). */
+export const SUBSECOND_SETTLE_MS = 20;
+/** Whole-second filesystems: FAT stamps in 2 s steps. */
+export const WHOLE_SECOND_SETTLE_MS = 2_000;
+
+/**
+ * Milliseconds until a change could no longer share `ctimeNs`; 0 once it
+ * has settled. A ctime ahead of the clock (a backward clock step, or a test's
+ * fake clock) gives 0: there is nothing to wait for that would help.
+ */
+export function ctimeSettleDelayMs(ctimeNs: bigint, nowMs: number = Date.now()): number {
+  const windowMs = ctimeNs % 1_000_000_000n === 0n ? WHOLE_SECOND_SETTLE_MS : SUBSECOND_SETTLE_MS;
+  const ageMs = nowMs - Number(ctimeNs / 1_000_000n);
+  if (ageMs < 0) return 0;
+  return Math.max(0, windowMs - ageMs);
+}
+
+/** Block the calling thread for `ms` of real time (immune to fake timers). */
+export function sleepSync(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}

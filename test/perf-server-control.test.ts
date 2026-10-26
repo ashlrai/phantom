@@ -13,7 +13,7 @@
  * under that tmp HOME.
  */
 
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -211,10 +211,12 @@ describe('GET /api/verse/control', () => {
 
   it('catches an in-place edit (no directory change) within the full-check window', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    const start = Date.now();
     const inbox = join(homedir(), '.ashlr', 'inbox');
     mkdirSync(inbox, { recursive: true, mode: 0o700 });
     writeFileSync(join(inbox, 'prop-1.json'), '{}');
+    // Past the coarse-clock window of those writes, so the directory stamp is settled.
+    const start = Date.now() + 1_000;
+    vi.setSystemTime(start);
     controlApi.cachedPendingCount();
     const base = seen.pendingCalls;
     writeFileSync(join(inbox, 'prop-1.json'), '{"status":"changed"}');
@@ -225,6 +227,28 @@ describe('GET /api/verse/control', () => {
     expect(seen.pendingCalls).toBe(base + 1);
     // A later check with nothing changed stays cached.
     vi.setSystemTime(start + 20_002);
+    controlApi.cachedPendingCount();
+    expect(seen.pendingCalls).toBe(base + 1);
+  });
+
+  it('does not trust a directory stamp taken in the same clock tick as an inbox change', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const inbox = join(homedir(), '.ashlr', 'inbox');
+    mkdirSync(inbox, { recursive: true, mode: 0o700 });
+    writeFileSync(join(inbox, 'prop-1.json'), '{}');
+    // The clock still reads the directory's ctime: on a coarse-clock filesystem
+    // a rename landing now would leave the directory stamp unchanged.
+    const ctimeMs = Number(lstatSync(inbox, { bigint: true }).ctimeNs / 1_000_000n);
+    vi.setSystemTime(ctimeMs);
+    controlApi.cachedPendingCount();
+    const base = seen.pendingCalls;
+    writeFileSync(join(inbox, 'prop-1.json'), '{"status":"changed"}');
+    controlApi.cachedPendingCount();
+    expect(seen.pendingCalls).toBe(base + 1); // unsettled stamp: the fingerprint is re-taken
+    // Once the stamp settles, the one-lstat fast path is trusted again.
+    vi.setSystemTime(ctimeMs + 1_000);
+    controlApi.cachedPendingCount();
+    writeFileSync(join(inbox, 'prop-1.json'), '{"status":"changed again"}');
     controlApi.cachedPendingCount();
     expect(seen.pendingCalls).toBe(base + 1);
   });
