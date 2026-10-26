@@ -459,6 +459,12 @@ const loadTelemetryCmd = lazyCmd(
 
 // ─── M21 command loaders ────────────────────────────────────────────
 
+const loadNodeCmd = lazyCmd(
+  () => import('./node.js'),
+  (m) => m['cmdNode'] as Cmd,
+  'node command requires src/cli/node.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -2138,6 +2144,12 @@ async function main(): Promise<void> {
       case 'telemetry': {
         const cmdTelemetry = await loadTelemetryCmd();
         process.exitCode = await cmdTelemetry(rest);
+        break;
+      }
+
+      case 'node': {
+        const cmdNode = await loadNodeCmd();
+        process.exitCode = await cmdNode(rest);
         break;
       }
 
