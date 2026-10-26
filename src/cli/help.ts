@@ -39,6 +39,12 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm graph nodes|edges|status [--json]',
+    description: 'Read-only GRAPH-1 nodes, edges, and availability. No provider calls or writes. Exit 0 success/help, 1 unavailable or loader failure, 2 bad usage; unavailable counts are unknown.',
+    safety: 'read',
+    jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -479,6 +485,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status [--json]',              desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
+  { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },
