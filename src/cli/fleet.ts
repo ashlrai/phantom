@@ -1669,9 +1669,13 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   try {
     const snapshot = await buildCodingFleetSnapshot();
     writeCodingFleetSnapshot(snapshot);
-    const { emitFleetTelemetry } = await import('../core/fleet/coding-telemetry.js');
-    const { loadSchedulerConfig } = await import('../core/providers/coding-cli/scheduler/defaults.js');
-    emitFleetTelemetry(snapshot, loadSchedulerConfig().posthog);
+    try {
+      const { emitFleetTelemetry } = await import('../core/fleet/coding-telemetry.js');
+      const { loadSchedulerConfig } = await import('../core/providers/coding-cli/scheduler/defaults.js');
+      emitFleetTelemetry(snapshot, loadSchedulerConfig().posthog);
+    } catch {
+      // Publication is complete; optional telemetry must not hide its result.
+    }
     process.stdout.write((jsonMode ? JSON.stringify(snapshot, null, 2) : formatCodingFleetSnapshot(snapshot)) + '\n');
     return 0;
   } catch {

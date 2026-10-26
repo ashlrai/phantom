@@ -1,17 +1,25 @@
 # Coding fleet and phone dashboard
 
 Run `phm fleet status --json` on the host to collect a `fleet.v1` snapshot and
-write the same JSON atomically to `/workspace/phantom-work/fleet.json`. Set
+write the same JSON atomically to `$ASHLR_HOME/fleet/fleet.json` (`ASHLR_HOME`
+defaults to `~/.ashlr`). Set
 `PHANTOM_FLEET_PATH` in both the host CLI and remote gateway environment to use
 a different private, writable path. Files are owner-only (`0600`); the parent
-directory must be private. A failed write exits nonzero. `phm fleet status`
+directory must be private. An existing unreadable, unsafe or invalid snapshot
+is preserved and the refresh exits nonzero; correct the local file or its
+permissions before retrying. A valid edit or another refresh made during
+collection is also preserved; rerun the command to collect from the latest
+document. `phm fleet status`
 prints the human report; `--legacy` retains the previous operational status
 report without refreshing the coding snapshot.
 
 ## Manual readings and reset windows
 
-Edit the shared JSON locally to add observations. The CLI preserves the
-validated `readings` and `windows` arrays when it refreshes the report:
+Run `phm fleet status --json` once to create the snapshot, then edit its
+`readings` and `windows` arrays locally. Keep the existing `schema`,
+`generated_at` and other fields. The CLI preserves validated observations
+when it refreshes the report. For example, replace these arrays in the
+existing document:
 
 ```json
 {

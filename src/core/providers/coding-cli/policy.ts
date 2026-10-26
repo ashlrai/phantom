@@ -80,7 +80,7 @@ function seatFor(pool: SpendPool, account: CodingAccount | null, nowMs: number, 
     windows: [{
       id: engine === 'codex' ? 'codex_codex_secondary' : engine === 'grok' ? 'grok_unified_weekly' : 'seven_day',
       usedPercent: used,
-      resetsAt: pool.expiresAt,
+      resetsAt: account?.resetsAt ?? pool.expiresAt,
       resetDescription: null,
       limitReached: false,
     }],
@@ -123,15 +123,39 @@ export function chooseCodingSeat(input: {
   });
   const floor = floorOf(input.shape);
   const ranked = rankSpendPools(seeded.pools, { nowMs: input.nowMs, floor, meteredEnabled });
-  if (ranked.length === 0) return null;
-  const winnerGroup = ranked[0]!.billing === 'credit' && ranked[0]!.expiresAt ? 'credit-dated' : ranked[0]!.billing;
-  const group = ranked.filter((pool) => {
+  const poolInFlight: Record<string, number> = {};
+  const poolCaps: Record<string, number> = {};
+  for (const pool of ranked) {
+    const account = accountForPool(pool, accounts);
+    const backend = account?.backend ?? (pool.id === 'devin-acu' ? 'devin' : 'cloud');
+    const slot = account?.id ?? (backend === 'cloud' ? 'cloud-credits' : backend);
+    // The worker counts actual account slots, while routeSeat ranks pool ids.
+    poolInFlight[pool.id] = input.inFlight?.[slot] ?? 0;
+    poolCaps[pool.id] = backend === 'cloud' ? 1 : input.catalog.concurrency[backend] ?? 1;
+  }
+  const groups = new Map<string, SpendPool[]>();
+  for (const pool of ranked) {
     const kind = pool.billing === 'credit' && pool.expiresAt ? 'credit-dated' : pool.billing;
-    return kind === winnerGroup;
-  });
-  let chosen = group[0]!;
-  if (group.length > 1) {
-    const seats = group.flatMap((pool) => {
+    const group = groups.get(kind) ?? [];
+    group.push(pool);
+    groups.set(kind, group);
+  }
+  let chosen: SpendPool | null = null;
+  let seatRefused = false;
+  for (const group of groups.values()) {
+    const available = group.filter((pool) => poolInFlight[pool.id]! < poolCaps[pool.id]!);
+    // Credit and metered pools use their explicit balance/expiry admission.
+    // Every prepaid or local seat, including a sole candidate, must pass the
+    // same headroom policy; a router refusal must never become a fallback.
+    if (group[0]!.billing === 'credit' || group[0]!.billing === 'metered') {
+      // Credentials can expose a metered pool, but a rejected prepaid seat
+      // must not silently escalate to paid work without an explicit opt-in.
+      if (group[0]!.billing === 'metered' && seatRefused && input.meteredEnabled !== true) continue;
+      chosen = available[0] ?? null;
+      if (chosen) break;
+      continue;
+    }
+    const seats = available.flatMap((pool) => {
       const seat = seatFor(pool, accountForPool(pool, accounts), input.nowMs, meteredEnabled);
       return seat ? [seat] : [];
     });
@@ -149,13 +173,18 @@ export function chooseCodingSeat(input: {
           nowMs: input.nowMs,
           enforceMeteredOptIn: true,
           spendDown: true,
-          ...(input.inFlight ? { inFlight: input.inFlight } : {}),
+          inFlight: poolInFlight,
         },
       );
-      const match = group.find((pool) => pool.id === decision.seatId);
-      if (match) chosen = match;
+      const match = available.find((pool) => pool.id === decision.seatId);
+      if (match) {
+        chosen = match;
+        break;
+      }
     }
+    seatRefused = true;
   }
+  if (!chosen) return null;
   const account = accountForPool(chosen, accounts);
   const backend = account?.backend
     ?? (chosen.id === 'devin-acu' ? 'devin' : chosen.id === 'cloud-credits' ? 'cloud' : chosen.id.split(':')[0] ?? chosen.id);
@@ -207,7 +236,7 @@ export async function planLabelledWork(input: PlanInput & {
     if (!choice) continue;
     anyChoices[issue.number] = { backend: choice.backend, model: choice.model, accountId: choice.accountId, poolId: choice.poolId };
     usedToday[choice.poolId] = (usedToday[choice.poolId] ?? 0) + 1;
-    const slot = choice.accountId ?? choice.backend;
+    const slot = choice.accountId ?? (choice.backend === 'cloud' ? 'cloud-credits' : choice.backend);
     running[slot] = (running[slot] ?? 0) + 1;
   }
   return planWorker({ ...input, anyChoices, accounts });

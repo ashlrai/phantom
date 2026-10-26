@@ -53,6 +53,7 @@ function adapters(catalog: CodingCliCatalog): CodingCliAdapter[] {
         '--cd',
         cwd,
         '--json',
+        '--',
         goal,
       ],
     },
@@ -64,7 +65,7 @@ function adapters(catalog: CodingCliCatalog): CodingCliAdapter[] {
       versionArgs: ['--version'],
       statusArgs: ['auth', 'status'],
       verifyArgs: (model) => ['-p', PROBE_PROMPT, '--model', model, '--output-format', 'json'],
-      execArgs: (goal, cwd, model) => ['-p', goal, ...(model ? ['--model', model] : []), '--output-format', 'json', '--add-dir', cwd],
+      execArgs: (goal, cwd, model) => ['-p', ...(model ? ['--model', model] : []), '--output-format', 'json', '--add-dir', cwd, '--', goal],
     },
     {
       id: 'grok',
@@ -78,8 +79,7 @@ function adapters(catalog: CodingCliCatalog): CodingCliAdapter[] {
         ...(model ? ['--model', model] : []),
         '--cwd',
         cwd,
-        '--single',
-        goal,
+        `--single=${goal}`,
       ],
     },
     {

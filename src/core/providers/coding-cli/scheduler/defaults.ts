@@ -222,6 +222,16 @@ function fail(message: string): never {
   throw new Error(`router scheduler config: ${message}`);
 }
 
+/** Capture keys may only be sent to a credential-free HTTPS origin. */
+export function posthogOrigin(host: string): string {
+  let url: URL;
+  try { url = new URL(host); } catch { fail('posthog.host must be an HTTPS origin'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    fail('posthog.host must be an HTTPS origin');
+  }
+  return url.origin;
+}
+
 function numberIn(value: unknown, name: string, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) fail(`${name} is out of range`);
   return value;
@@ -371,6 +381,8 @@ export function parseSchedulerConfig(text: string, overrides?: SchedulerOverride
 }
 
 export function applyOverrides(config: SchedulerConfig, overrides?: SchedulerOverrides): SchedulerConfig {
+  const posthogHost = overrides?.posthog && 'host' in overrides.posthog ? overrides.posthog.host : config.posthog.host;
+  if (posthogHost !== null && posthogHost !== undefined) posthogOrigin(posthogHost);
   if (!overrides) return { ...config, postIssues: false };
   const pools = { ...config.pools };
   for (const id of SCHEDULER_POOL_IDS) {

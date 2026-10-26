@@ -8,6 +8,7 @@ import { dirname } from 'node:path';
 
 import type { SchedulerConfig } from './defaults.js';
 import { expectedValue, getArm } from './learn.js';
+import { roleEligible, roleOf } from './solve.js';
 import {
   SCHEDULER_POOL_IDS,
   armKey,
@@ -60,7 +61,11 @@ export function computeRegret(input: {
     for (const poolId of SCHEDULER_POOL_IDS) {
       for (const consumer of consumers(poolId)) {
         if (poolId === outcome.poolId && consumer === outcome.consumer) continue;
-        const value = expectedValue(getArm(input.bandit, armKey(outcome.jobType, poolId, consumer)), input.config);
+        if (!roleEligible(roleOf(outcome), { id: poolId, ...input.config.pools[poolId] }, consumer)) continue;
+        const arm = getArm(input.bandit, armKey(outcome.jobType, poolId, consumer));
+        // An untried prior is an exploration candidate, not observed regret.
+        if (arm.observations <= 0) continue;
+        const value = expectedValue(arm, input.config);
         if (best === null || value > best.value) best = { poolId, consumer, value };
       }
     }

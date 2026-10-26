@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { embeddedSchedulerConfig } from '../src/core/providers/coding-cli/scheduler/defaults.js';
 import { join } from 'node:path';
@@ -28,7 +28,7 @@ vi.mock('node:fs', async () => {
 });
 const NOW = Date.parse('2026-10-26T12:00:00Z');
 const dirs: string[] = [];
-function setup(input?: unknown) {
+function setup(input?: Record<string, unknown>) {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-snapshot-'));
   dirs.push(dir);
   const path = join(dir, 'fleet.json');
@@ -37,7 +37,13 @@ function setup(input?: unknown) {
     mode: 0o700
   });
   if (input !== undefined)
-    writeFileSync(path, JSON.stringify(input), {
+    writeFileSync(path, JSON.stringify({
+      schema: 'fleet.v1',
+      generated_at: new Date(NOW).toISOString(),
+      readings: [],
+      windows: [],
+      ...input
+    }), {
       mode: 0o600
     });
   return {
@@ -561,6 +567,8 @@ describe('fleet.v1 coding snapshot', () => {
       nowMs: NOW
     })).toBeNull();
     expect(substituted).toBe(true);
+    expect(() => writeCodingFleetSnapshot(snapshot, opts.path)).toThrow('refusing to overwrite');
+    expect(lstatSync(opts.path).isFIFO()).toBe(true);
   });
   it('preserves signed router decision values and rejects non-finite values', async () => {
     const opts = setup();
@@ -662,5 +670,128 @@ describe('fleet.v1 coding snapshot', () => {
       nowMs: NOW
     })).toEqual(s);
     chmodSync(opts.path, 0o600);
+  });
+  it('defaults to the private fleet directory under the runtime home', () => {
+    vi.stubEnv('PHANTOM_FLEET_PATH', undefined);
+    const configured = join(tmpdir(), 'configured-phantom-home');
+    vi.stubEnv('ASHLR_HOME', configured);
+    expect(codingFleetPath()).toBe(join(configured, 'fleet', 'fleet.json'));
+    vi.stubEnv('ASHLR_HOME', undefined);
+    expect(codingFleetPath()).toBe(join(homedir(), '.ashlr', 'fleet', 'fleet.json'));
+  });
+  it.each([
+    '{invalid manual edit',
+    JSON.stringify({ schema: 'fleet.v2', generated_at: new Date(NOW).toISOString(), readings: [], windows: [] }),
+    JSON.stringify({ schema: 'fleet.v1', readings: [], windows: [] }),
+    JSON.stringify({ schema: 'fleet.v1', generated_at: new Date(NOW).toISOString(), readings: {}, windows: [] }),
+    JSON.stringify({ schema: 'fleet.v1', generated_at: new Date(NOW).toISOString(), readings: [], windows: null }),
+  ])('preserves an invalid existing snapshot instead of treating it as empty (%s)', async (original) => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    writeFileSync(opts.path, original, { mode: 0o600 });
+    expect(() => writeCodingFleetSnapshot(snapshot, opts.path)).toThrow('refusing to overwrite');
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+  });
+  it('preserves a valid snapshot with unsafe edit permissions instead of discarding its readings', async () => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    writeCodingFleetSnapshot(snapshot, opts.path);
+    const original = readFileSync(opts.path, 'utf8');
+    chmodSync(opts.path, 0o660);
+    expect(() => writeCodingFleetSnapshot(snapshot, opts.path)).toThrow('refusing to overwrite');
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+    expect(lstatSync(opts.path).mode & 0o777).toBe(0o660);
+  });
+  it('refuses to replace a symlink even when it refers to a valid snapshot', async () => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    const other = join(opts.dir, 'manual.json');
+    writeCodingFleetSnapshot(snapshot, other);
+    const original = readFileSync(other, 'utf8');
+    symlinkSync(other, opts.path);
+    expect(() => writeCodingFleetSnapshot(snapshot, opts.path)).toThrow('refusing to overwrite');
+    expect(readlinkSync(opts.path)).toBe(other);
+    expect(readFileSync(other, 'utf8')).toBe(original);
+  });
+  it('refuses publication through a symlinked parent without changing the real snapshot', async () => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    writeCodingFleetSnapshot(snapshot, opts.path);
+    const original = readFileSync(opts.path, 'utf8');
+    const alias = join(opts.home, 'shared');
+    symlinkSync(opts.dir, alias, 'dir');
+    expect(() => writeCodingFleetSnapshot(snapshot, join(alias, 'fleet.json'))).toThrow('owned private directory');
+    expect(readlinkSync(alias)).toBe(opts.dir);
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+  });
+  it('preserves an edit rejected by the pinned read during publication', async () => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    writeCodingFleetSnapshot(snapshot, opts.path);
+    const invalidEdit = '{manual edit in progress';
+    let replaced = false;
+    readRace.beforeOpen = (path) => {
+      if (path !== opts.path || replaced) return;
+      replaced = true;
+      writeFileSync(opts.path, invalidEdit);
+    };
+    expect(() => writeCodingFleetSnapshot(snapshot, opts.path)).toThrow('refusing to overwrite');
+    expect(replaced).toBe(true);
+    expect(readFileSync(opts.path, 'utf8')).toBe(invalidEdit);
+  });
+  it('preserves a valid manual edit made while GitHub collection is pending', async () => {
+    const opts = setup();
+    const initial = await buildCodingFleetSnapshot(opts);
+    writeCodingFleetSnapshot(initial, opts.path);
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { resume = resolve; });
+    const collecting = buildCodingFleetSnapshot({ ...opts, fetchGithub: true, gh: async () => { await paused; return []; } });
+    const edited = JSON.parse(readFileSync(opts.path, 'utf8'));
+    edited.readings.push({ pool: 'codex-cmp', used_pct: 42, at: new Date(NOW).toISOString(), source: 'manual', age_seconds: 0 });
+    const original = JSON.stringify(edited);
+    writeFileSync(opts.path, original);
+    resume();
+    const stale = await collecting;
+    expect(stale.readings).toEqual([]);
+    expect(() => writeCodingFleetSnapshot(stale, opts.path)).toThrow('source changed');
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+  });
+  it('preserves a snapshot first created while collection from a missing source is pending', async () => {
+    const opts = setup();
+    const initial = await buildCodingFleetSnapshot(opts);
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { resume = resolve; });
+    const collecting = buildCodingFleetSnapshot({ ...opts, fetchGithub: true, gh: async () => { await paused; return []; } });
+    initial.readings.push({ pool: 'codex-cmp', used_pct: 42, at: new Date(NOW).toISOString(), source: 'manual', age_seconds: 0 });
+    writeCodingFleetSnapshot(initial, opts.path);
+    const original = readFileSync(opts.path, 'utf8');
+    resume();
+    const stale = await collecting;
+    expect(() => writeCodingFleetSnapshot(stale, opts.path)).toThrow('source changed');
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+  });
+  it('rejects a second stale publisher after an independent refresh succeeds', async () => {
+    const opts = setup();
+    const initial = await buildCodingFleetSnapshot(opts);
+    writeCodingFleetSnapshot(initial, opts.path);
+    const first = await buildCodingFleetSnapshot(opts);
+    const stale = await buildCodingFleetSnapshot(opts);
+    first.readings.push({ pool: 'codex-cmp', used_pct: 42, at: new Date(NOW).toISOString(), source: 'manual', age_seconds: 0 });
+    writeCodingFleetSnapshot(first, opts.path);
+    const original = readFileSync(opts.path, 'utf8');
+    expect(() => writeCodingFleetSnapshot(stale, opts.path)).toThrow('source changed');
+    expect(readFileSync(opts.path, 'utf8')).toBe(original);
+  });
+  it('supports repeated publication of the same built object without exposing source provenance', async () => {
+    const opts = setup();
+    const snapshot = await buildCodingFleetSnapshot(opts);
+    const keys = Object.keys(snapshot);
+    writeCodingFleetSnapshot(snapshot, opts.path);
+    snapshot.generated_at = new Date(NOW + 1000).toISOString();
+    writeCodingFleetSnapshot(snapshot, opts.path);
+    const stored = JSON.parse(readFileSync(opts.path, 'utf8'));
+    expect(stored.generated_at).toBe(snapshot.generated_at);
+    expect(Object.keys(snapshot)).toEqual(keys);
+    expect(Object.keys(stored)).toEqual(keys);
   });
 });

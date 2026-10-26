@@ -346,7 +346,7 @@ export async function cmdWorker(args: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.includes('--dry-run') || sub === 'plan' || sub === 'drain') {
+  if (sub === 'plan' || sub === 'drain' || (sub?.startsWith('-') && args.includes('--dry-run'))) {
     return cmdWorkerQueue(args);
   }
 

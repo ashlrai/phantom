@@ -1,6 +1,6 @@
 /** Versioned, read-only coding fleet projection. Unknown is null, never zero. */
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -123,6 +123,10 @@ export interface CodingFleetSnapshot {
     planner: State;
   };
 }
+const snapshotSources = new WeakMap<CodingFleetSnapshot, { path: string; digest: string | null }>();
+function sourceDigest(text: string | null): string | null {
+  return text === null ? null : createHash('sha256').update(text).digest('hex');
+}
 export interface CodingFleetOptions {
   path?: string;
   nowMs?: number;
@@ -134,7 +138,7 @@ export interface CodingFleetOptions {
   knownSecrets?: readonly string[];
 }
 export function codingFleetPath(): string {
-  return process.env['PHANTOM_FLEET_PATH'] ?? '/workspace/phantom-work/fleet.json';
+  return process.env['PHANTOM_FLEET_PATH'] ?? join(process.env['ASHLR_HOME'] ?? join(homedir(), '.ashlr'), 'fleet', 'fleet.json');
 }
 function row(v: unknown): Row {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Row : {};
@@ -491,8 +495,9 @@ async function github(gh: (args: string[]) => Promise<unknown>, deny: readonly s
 }
 export async function buildCodingFleetSnapshot(options: CodingFleetOptions = {}): Promise<CodingFleetSnapshot> {
   const now = options.nowMs ?? Date.now();
-  const file = options.path ?? codingFleetPath();
+  const file = resolve(options.path ?? codingFleetPath());
   const rawText = readText(file);
+  const digest = sourceDigest(rawText);
   const input = json(rawText);
   const config = options.schedulerConfig ?? loadSchedulerConfig();
   const deny = secrets([...(options.knownSecrets ?? []), ...(config.posthog.apiKey ? [config.posthog.apiKey] : [])]);
@@ -572,7 +577,7 @@ export async function buildCodingFleetSnapshot(options: CodingFleetOptions = {})
     });
   }
   const routerState: State = routerText !== null && !routerBad && outcomeText !== null && !outcomeBad ? 'known' : routerText !== null || outcomeText !== null ? 'partial' : 'unknown';
-  return sanitizeSnapshot({
+  const snapshot = sanitizeSnapshot({
     schema: 'fleet.v1',
     generated_at: new Date(now).toISOString(),
     readings: readingRows,
@@ -594,6 +599,10 @@ export async function buildCodingFleetSnapshot(options: CodingFleetOptions = {})
       planner: Object.keys(row(row(input.planner).series)).length || list(input.pools).map(row).some((p) => points(p.planner).length > 0) ? 'known' : 'unknown'
     }
   }, now, deny);
+  // Collection can await slow GitHub reads. Keep private source provenance off
+  // the public document so a later refresh cannot overwrite an intervening edit.
+  snapshotSources.set(snapshot, { path: file, digest });
+  return snapshot;
 }
 /** Positive projection protects remote readers even if the shared file was edited. */
 function sanitizeSnapshot(value: unknown, now: number, deny: readonly string[]): CodingFleetSnapshot {
@@ -719,9 +728,33 @@ export function writeCodingFleetSnapshot(snapshot: CodingFleetSnapshot, path = c
   const encoded = `${JSON.stringify(clean, null, 2)}\n`;
   if (Buffer.byteLength(encoded, 'utf8') > MAX_BYTES) throw new Error('fleet snapshot exceeds byte limit');
   verifyParent();
+  let existing = false;
+  try {
+    lstatSync(target);
+    existing = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let priorText: string | null = null;
+  if (existing) {
+    // A rejected read is not an empty source: replacing it would destroy the
+    // operator's hand-edited readings/windows after a typo or unsafe edit.
+    priorText = readText(target);
+    const prior = json(priorText);
+    if (prior.schema !== 'fleet.v1' || date(prior.generated_at) === null ||
+      !Array.isArray(prior.readings) || !Array.isArray(prior.windows)) {
+      throw new Error('refusing to overwrite an unreadable or invalid fleet snapshot');
+    }
+  }
+  const source = snapshotSources.get(snapshot);
+  if (source?.path === target && source.digest !== sourceDigest(priorText)) {
+    throw new Error('fleet snapshot source changed; refresh before publication');
+  }
+  verifyParent();
   writePrivateFileAtomically(join(parent, `.fleet-${randomUUID()}.tmp`), target,
     encoded, { anchorPath: parent, label: 'fleet snapshot' });
   verifyParent();
+  if (source?.path === target) source.digest = sourceDigest(encoded);
 }
 
 export function formatCodingFleetSnapshot(snapshot: CodingFleetSnapshot): string {

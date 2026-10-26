@@ -34,8 +34,9 @@ To disable the phone gateway, rename or remove `~/.ashlr/verse-remote.json`, the
 After pairing at `/verse/m/`, open `/fleet/` on the same remote origin. It shows
 the host's `fleet.v1` snapshot through authenticated, read-only `GET /api/fleet`.
 Run `phm fleet status --json` on the host to refresh it. Set
-`PHANTOM_FLEET_PATH` in both processes to a shared private writable path when
-the default `/workspace/phantom-work/fleet.json` is unavailable. The phone never
+`PHANTOM_FLEET_PATH` in both processes to use a different shared private writable
+path. The default is `$ASHLR_HOME/fleet/fleet.json`, with `ASHLR_HOME` falling
+back to `~/.ashlr`; both processes must use the same home. The phone never
 dispatches work or changes claims. See the
 [fleet schema and host coordination guide](https://github.com/ashlrai/phantom/blob/master/docs/router/fleet-v1.md)
 for manual readings, reset windows, TTLs and unknown-data rules.

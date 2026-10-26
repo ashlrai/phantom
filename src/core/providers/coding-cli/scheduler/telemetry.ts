@@ -5,6 +5,7 @@
  */
 
 import type { ScheduleResult } from './solve.js';
+import { posthogOrigin } from './defaults.js';
 import type { SchedulerPoolId } from './types.js';
 
 export const SCHEDULER_EVENTS = [
@@ -127,11 +128,12 @@ export function createPosthogSink(options: {
   apiKey: string;
   fetchImpl?: typeof fetch;
 }): (event: SchedulerEvent) => void {
-  const host = options.host.replace(/\/$/, '');
+  const host = posthogOrigin(options.host);
   const fetchImpl = options.fetchImpl ?? fetch;
   return (event) => {
     void fetchImpl(`${host}/capture/`, {
       method: 'POST',
+      redirect: 'error',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         api_key: options.apiKey,

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,3 +30,36 @@ it.runIf(process.platform !== 'win32')('default fleet status --json publishes fl
   expect(run(['claim', '--help'])).toContain('--lease');
   expect(existsSync(join(dir, 'fleet', 'coordination.jsonl'))).toBe(false);
 });
+
+it.each([
+  { args: ['setup', '--dry-run'], code: 1, text: 'worker setup is temporarily unavailable' },
+  { args: ['status', '--dry-run'], code: 0, text: 'ashlr worker status' },
+  { args: ['unknown', '--dry-run'], code: 1, text: 'unknown worker subcommand: unknown' },
+])('worker $args keeps its subcommand when --dry-run follows it', ({ args, code, text }) => {
+  const dir = mkdtempSync(join(tmpdir(), 'phantom-worker-cli-'));
+  dirs.push(dir);
+  const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', 'worker', ...args], {
+    cwd: process.cwd(),
+    env: { ...process.env, HOME: dir, USERPROFILE: dir, ASHLR_HOME: dir, NO_COLOR: '1' },
+    encoding: 'utf8', timeout: 30_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(code);
+  expect(result.stdout + result.stderr).toContain(text);
+  expect(result.stdout).not.toContain('spawned: no');
+  expect(existsSync(join(dir, 'config.toml'))).toBe(false);
+});
+
+it.each([['--dry-run', '--json'], ['plan', '--dry-run', '--json'], ['drain', '--dry-run', '--json']])(
+  'worker %j prints the read-only queue plan', (...args) => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-worker-plan-'));
+    dirs.push(dir);
+    const output = execFileSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', 'worker', ...args], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: dir, USERPROFILE: dir, ASHLR_HOME: dir, NO_COLOR: '1' },
+      encoding: 'utf8', timeout: 30_000,
+    });
+    expect(JSON.parse(output)).toEqual({ dryRun: true, meteredEnabled: false, steps: [] });
+    expect(existsSync(join(dir, 'config.toml'))).toBe(false);
+  },
+);

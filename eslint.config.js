@@ -201,6 +201,7 @@ export default tseslint.config(
         location: 'readonly',
         console: 'readonly',
         EventSource: 'readonly',
+        AbortSignal: 'readonly',
         fetch: 'readonly',
         URL: 'readonly',
         setTimeout: 'readonly',

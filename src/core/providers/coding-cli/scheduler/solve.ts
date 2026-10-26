@@ -191,7 +191,7 @@ function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-function roleOf(job: SchedulerJob): SchedulerRole {
+export function roleOf(job: Pick<SchedulerJob, 'jobType' | 'role'>): SchedulerRole {
   if (job.role) return job.role;
   switch (job.jobType) {
     case 'orchestration':
@@ -231,6 +231,11 @@ function allowed(role: SchedulerRole, minTier: TierFloor, pool: RuntimePool, con
   const row = prepared.config.pools[pool.id];
   if (row.requiresMeteredOptIn && prepared.meteredEnabled !== true) return false;
   if (row.requiresDevinGate && prepared.devinEnabled !== true) return false;
+  return roleEligible(role, pool, consumer);
+}
+
+/** Shared structural role eligibility for dispatch and posterior comparisons. */
+export function roleEligible(role: SchedulerRole, pool: Pick<RuntimePool, 'id' | 'tier' | 'billing'>, consumer: UltraConsumer | null): boolean {
   if (pool.id === 'grok-ultra-weekly') {
     if (consumer === null) return false;
   } else if (consumer !== null) return false;
@@ -321,14 +326,36 @@ function prepare(input: ScheduleInput): Prepared {
     ? applyOverrides(input.config, input.overrides)
     : applyOverrides(embeddedSchedulerConfig(), input.overrides);
   const host = input.host ?? { diskFreeGb: null, batteryPercent: null };
-  const built = buildRuntimePools({
+  let built = buildRuntimePools({
     config,
     events: input.events ?? [],
     nowMs: input.nowMs,
     ...(input.inFlight ? { inFlight: input.inFlight } : {}),
   });
-  const ultraReading = latestReading(input.manualReadings, 'grok-ultra-weekly');
-  const used = ultraReading?.used ?? built.ultra.usedFraction;
+  const windowMs = config.grokUltraWeekly.resetEveryDays * 86_400_000;
+  const configuredAt = Date.parse(config.grokUltraWeekly.usedFractionAsOf);
+  const configuredInWindow = Number.isFinite(configuredAt) && configuredAt >= built.ultra.resetAtMs - windowMs && configuredAt <= input.nowMs;
+  const ultraReading = latestReading(input.manualReadings?.filter((reading) =>
+    Number.isFinite(reading.used) && reading.used >= 0 && reading.used <= 1 &&
+    Number.isFinite(reading.readingAtMs) &&
+    reading.readingAtMs >= built.ultra.resetAtMs - windowMs && reading.readingAtMs <= input.nowMs &&
+    (!configuredInWindow || reading.readingAtMs >= configuredAt)
+  ), 'grok-ultra-weekly');
+  if (ultraReading) {
+    // A manual reading replaces the snapshot, not later usage. Reuse the
+    // projection's window/event filtering so quota and pacing see one balance.
+    built = buildRuntimePools({
+      config: { ...config, grokUltraWeekly: {
+        ...config.grokUltraWeekly,
+        usedFraction: ultraReading.used,
+        usedFractionAsOf: new Date(ultraReading.readingAtMs).toISOString(),
+      } },
+      events: input.events ?? [],
+      nowMs: input.nowMs,
+      ...(input.inFlight ? { inFlight: input.inFlight } : {}),
+    });
+  }
+  const used = built.ultra.usedFraction;
   const stamp: ReadingStamp = ultraReading
     ? {
       source: 'manual',
@@ -338,7 +365,6 @@ function prepare(input: ScheduleInput): Prepared {
       uncertainty: ultraReading.uncertainty,
     }
     : configStamp(config, input.nowMs);
-  const windowMs = config.grokUltraWeekly.resetEveryDays * 86_400_000;
   const shared = {
     poolId: 'grok-ultra-weekly',
     used,

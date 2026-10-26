@@ -127,9 +127,14 @@ export function seedCodingPools(input: PoolSeedInput): { pools: SpendPool[]; fig
       id,
       billing,
       balance: null,
-      expiresAt: account.resetsAt,
+      // A quota reset replenishes a seat; it is not a credit expiry.
+      expiresAt: null,
       usedToday: used[id] ?? 0,
-      softCapPerDay: UNKNOWN_BALANCE_SOFT_CAP_PER_DAY,
+      // The unknown-balance credit cap must not throttle prepaid seats or
+      // local models. Keep the sentinel finite so JSON figure rows retain it.
+      softCapPerDay: billing === 'subscription' || billing === 'local'
+        ? Number.MAX_SAFE_INTEGER
+        : UNKNOWN_BALANCE_SOFT_CAP_PER_DAY,
       tier: SUBSCRIPTION_TIER[account.backend] ?? 'workhorse',
       headroomPercent: account.usedPercent === null ? null : Math.max(0, 100 - account.usedPercent),
       cooledUntilMs: account.cooledUntilMs,
