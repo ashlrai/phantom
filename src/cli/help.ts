@@ -498,7 +498,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
-  { cmd: 'plugins init|list|info|enable|disable', desc: 'Scaffold + manage plugins (~/.ashlr/plugins/) — default-off, integrity-pinned, audited (see docs/PLUGINS.md).', topic: 'core' },
+  { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
   { cmd: 'help [<topic>] [--all]',       desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
   { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },

@@ -46,6 +46,7 @@
     "schema",
     "CHANGELOG.md",
     "docs/README.md",
+    "docs/CLI-AGENT-READINESS.md",
     "docs/PHANTOM-BRAND.md",
     "docs/COMPANIONS.md",
     "docs/QUICKSTART.md",

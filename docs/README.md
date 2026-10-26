@@ -57,6 +57,9 @@ describe features not present in an older registry or desktop release.
 
 ## For coding agents
 
+Command scores and the remaining agent gaps are in
+[CLI agent readiness](CLI-AGENT-READINESS.md).
+
 Start with the selected command registry from the binary you intend to use:
 
 ```sh
