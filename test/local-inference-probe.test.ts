@@ -134,3 +134,32 @@ describe('phm handshake', () => {
     }
   });
 });
+
+describe('probe body cap (stream, abort past 256 KiB)', () => {
+  it('a 300 MB-style endless reply is cancelled after just over the cap, never buffered', async () => {
+    let pulled = 0; let cancelled = false;
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) { pulled += chunk.byteLength; if (pulled > 300 * 1024 * 1024) c.close(); else c.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    });
+    const f: ProbeFetch = async () => new Response(stream, { status: 200 });
+    const p = await probeLocalInference(ollama(), { fetchImpl: f });
+    expect(p.status).toBe('bad-response');
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(256 * 1024 + 2 * chunk.byteLength);
+  });
+
+  it('a declared oversize content-length is refused without reading', async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled += 1; c.enqueue(new Uint8Array(1024)); } });
+    const f: ProbeFetch = async () => new Response(stream, { status: 200, headers: { 'content-length': String(300 * 1024 * 1024) } });
+    expect((await probeLocalInference(ollama(), { fetchImpl: f })).status).toBe('bad-response');
+    expect(pulled).toBeLessThanOrEqual(2);
+  });
+
+  it('a body under the cap still parses', async () => {
+    const r = fake(200, JSON.stringify({ models: [{ name: 'qwen3:8b' }] }));
+    expect((await probeLocalInference(ollama(), { fetchImpl: r.f })).status).toBe('reachable');
+  });
+});

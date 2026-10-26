@@ -20,6 +20,11 @@
  * (selectKnowledge); the rendered block never exceeds KNOWLEDGE_INJECT_CAP_BYTES of
  * UTF-8, and a note that does not fit whole is left out, never cut.
  *
+ * A note that cites where it was learned (KnowledgeNoteV1.evidence) shows
+ * the PRs and checks its text does not already name, and a note whose every
+ * cited PR was reverted after merging is withheld: what it was learned from
+ * was undone. The caller supplies the reverted set (improve/reverted.ts).
+ *
  * Veto deltas (vision/playbook.ts, section `strategy`, written by the
  * Leader's veto path) were stored and never read. They are read back here:
  * into the Leader's evidence always, and into a task prompt only when the
@@ -35,6 +40,7 @@ import { getEntries, type PlaybookEntry } from '../../vision/playbook.js';
 import { readApprovedKnowledgeSync, recordKnowledgeHits } from './store.js';
 import {
   KNOWLEDGE_INJECT_CAP_BYTES,
+  type KnowledgeEvidenceRef,
   type KnowledgeNoteV1,
   type KnowledgeScope,
   type KnowledgeTarget,
@@ -260,6 +266,61 @@ function scopeTag(scope: KnowledgeScope): string {
   return parts.join(' · ');
 }
 
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
+/** `owner/repo#n` with the repo lower-cased: the same key as improve/lesson-trial.ts prKey. */
+function citedKey(ref: KnowledgeEvidenceRef): string | null {
+  return ref.number === null ? null : `${ref.repository.toLowerCase()}#${ref.number}`;
+}
+
+/** The PRs a note cites, as prKey keys, deduplicated in citation order. Pure. */
+export function citedPrKeys(note: Pick<KnowledgeNoteV1, 'evidence'>): string[] {
+  return [...new Set((note.evidence ?? []).map(citedKey).filter((k): k is string => k !== null))];
+}
+
+/**
+ * Drop notes whose every cited PR was reverted after merging. A note citing no PR is kept, and so is one that
+ * still has a cited PR standing. `reverted` is read once, only when some note cites a PR; if it throws, nothing is
+ * withheld. Pure but for it.
+ */
+export function withholdReverted(notes: readonly KnowledgeNoteV1[], reverted: () => ReadonlySet<string>): KnowledgeNoteV1[] {
+  if (!notes.some((n) => citedPrKeys(n).length > 0)) return [...notes];
+  let keys: ReadonlySet<string>;
+  try {
+    keys = reverted();
+  } catch {
+    return [...notes]; // an unreadable ledger withholds nothing rather than every lesson
+  }
+  return notes.filter((n) => {
+    const cited = citedPrKeys(n);
+    return cited.length === 0 || !cited.every((k) => keys.has(k));
+  });
+}
+
+/** Most PRs and checks a rendered evidence tag names. */
+const EVIDENCE_TAG_MAX = 3;
+
+/**
+ * What the note cites that its text does not already say: ` (seen on owner/repo#n @abc1234; checks: X, Y)`,
+ * or '' when the text names it all (extracted lessons already cite their PR and checks). Pure.
+ */
+export function evidenceTag(note: Pick<KnowledgeNoteV1, 'text' | 'evidence'>): string {
+  const text = note.text.toLowerCase();
+  const prs = new Map<string, string>();
+  const checks = new Set<string>();
+  for (const ref of note.evidence ?? []) {
+    const key = citedKey(ref);
+    if (key && !prs.has(key) && !text.includes(key)) prs.set(key, `${ref.repository}#${ref.number}${ref.sha ? ` @${ref.sha.slice(0, 7)}` : ''}`);
+    if (ref.kind === 'ci' && ref.detail && !text.includes(ref.detail.toLowerCase())) checks.add(ref.detail);
+  }
+  const parts: string[] = [];
+  if (prs.size) parts.push(`seen on ${[...prs.values()].slice(0, EVIDENCE_TAG_MAX).join(', ')}`);
+  if (checks.size) parts.push(`checks: ${[...checks].slice(0, EVIDENCE_TAG_MAX).join(', ')}`);
+  return parts.length ? ` (${parts.join('; ')})` : '';
+}
+
 export interface RenderedKnowledge {
   /** '' when nothing matched. */
   text: string;
@@ -288,7 +349,7 @@ export function renderKnowledgeBlock(
   if (used > capBytes) return { text: '', noteIds: [], vetoes: 0, bytes: 0 };
   const noteIds: string[] = [];
   for (const note of notes) {
-    const line = `- [${scopeTag(note.scope)}] ${note.text.replace(/\s+/g, ' ').trim()}`;
+    const line = `- [${scopeTag(note.scope)}] ${note.text.replace(/\s+/g, ' ').trim()}${evidenceTag(note).replace(/\s+/g, ' ')}`;
     const cost = utf8(line) + 1;
     if (used + cost > capBytes) continue; // a shorter note further down may still fit
     lines.push(line);
@@ -327,6 +388,11 @@ export interface KnowledgeBlockOptions {
   capBytes?: number;
   /** Record hits (default true). Tests and previews pass false. */
   recordHits?: boolean;
+  /**
+   * PRs reverted after merging, as prKey keys (improve/reverted.ts revertedPrKeys). Notes whose every cited PR is in
+   * it are withheld. Called at most once, and only when some note cites a PR; absent, nothing is withheld.
+   */
+  revertedPrKeys?: () => ReadonlySet<string>;
   /** Injected for tests. */
   notes?: readonly KnowledgeNoteV1[];
   vetoes?: readonly Pick<PlaybookEntry, 'text'>[];
@@ -335,7 +401,8 @@ export interface KnowledgeBlockOptions {
 /** The knowledge block for one task ('' when nothing applies). Never throws. */
 export function knowledgeBlockFor(target: KnowledgeTarget, opts: KnowledgeBlockOptions = {}): RenderedKnowledge {
   try {
-    const notes = selectKnowledge(opts.notes ?? readApprovedKnowledgeSync(), target);
+    const approved = opts.notes ?? readApprovedKnowledgeSync();
+    const notes = selectKnowledge(opts.revertedPrKeys ? withholdReverted(approved, opts.revertedPrKeys) : approved, target);
     const vetoes = opts.fromLeader ? (opts.vetoes ?? readVetoLessonsSync()) : [];
     const rendered = renderKnowledgeBlock(notes, vetoes, opts.capBytes ?? KNOWLEDGE_INJECT_CAP_BYTES);
     if (rendered.noteIds.length > 0 && opts.recordHits !== false) void recordKnowledgeHits(rendered.noteIds);
