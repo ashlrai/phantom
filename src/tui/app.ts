@@ -22,8 +22,9 @@
  */
 
 import { buildSnapshot } from '../core/dashboard.js';
-import { renderFrame, type RenderState } from './render.js';
+import { renderFrame, renderFleetViewFrame, type RenderState } from './render.js';
 import type { AshlrConfig, DashboardSnapshot, TuiTab } from '../core/types.js';
+import { buildFleetView, type FleetView } from '../core/fleet/view.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -370,4 +371,119 @@ async function runInteractive(cfg: AshlrConfig): Promise<number> {
       finish(0);
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Fleet view TUI (RQ-FLEET-VIEW-V1): live fleet-view.v1 projection.
+// Same terminal lifecycle as runTui: alt-screen, raw keys, 2s refresh,
+// one-frame output for --once / non-TTY.
+// ---------------------------------------------------------------------------
+
+const FLEET_VIEW_DEFAULT_MS = 2000;
+const FLEET_VIEW_MIN_MS = 250;
+const FLEET_VIEW_MAX_MS = 30000;
+
+export interface FleetViewTuiOptions {
+  once?: boolean;
+  json?: boolean;
+  intervalMs?: number;
+  /** Injectable for tests; defaults to buildFleetView(). */
+  buildView?: () => FleetView;
+}
+
+/** Interval validator shared by the CLI dispatcher. */
+export function parseFleetViewInterval(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null;
+  const ms = Number(value);
+  if (ms < FLEET_VIEW_MIN_MS || ms > FLEET_VIEW_MAX_MS) return null;
+  return ms;
+}
+
+/**
+ * `phm fleet view`: one live frame over fleet-view.v1.
+ * --json prints the view document and exits (no TTY needed).
+ * --once (or non-TTY) renders one frame and exits.
+ * Interactive use enters the alt screen, refreshes on a 2s cadence,
+ * and quits on q / Ctrl-C / Esc.
+ */
+export async function runFleetViewTui(options: FleetViewTuiOptions): Promise<number> {
+  const build = options.buildView ?? buildFleetView;
+  const view = build();
+
+  if (options.json === true) {
+    process.stdout.write(JSON.stringify(view, null, 2) + '\n');
+    return 0;
+  }
+
+  const stdin = process.stdin as unknown as NodeJS.ReadStream & { isTTY?: boolean };
+  const interactive = Boolean(stdin.isTTY) && process.stdout.isTTY === true;
+
+  if (options.once === true || !interactive) {
+    process.stdout.write(renderFleetViewFrame(view, { cols: process.stdout.columns }));
+    return 0;
+  }
+
+  const intervalMs = options.intervalMs ?? FLEET_VIEW_DEFAULT_MS;
+  const { stdin: inStream, stdout: outStream } = process;
+  inStream.setRawMode?.(true);
+  inStream.resume();
+  inStream.setEncoding('utf8');
+  outStream.write(ALT_SCREEN_ENTER + CURSOR_HIDE + CLEAR_SCREEN);
+
+  let running = true;
+  let painting = false;
+  let current = view;
+
+  const paint = (): void => {
+    if (painting) return;
+    painting = true;
+    const frame = renderFleetViewFrame(current, { cols: outStream.columns });
+    outStream.write(CURSOR_HOME + CLEAR_SCREEN + frame);
+    painting = false;
+  };
+
+  const refresh = (): void => {
+    try { current = build(); } catch { /* keep last good view */ }
+  };
+
+  const timer = setInterval(() => {
+    if (!running) return;
+    refresh();
+    paint();
+  }, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+
+  const cleanup = (): void => {
+    if (!running) return;
+    running = false;
+    clearInterval(timer);
+    inStream.removeListener('data', onData);
+    try { inStream.setRawMode?.(false); } catch { /* already restored */ }
+    inStream.pause();
+    outStream.write(CURSOR_SHOW + ALT_SCREEN_LEAVE);
+  };
+
+  const onData = (key: string): void => {
+    if (key === '\u0003' || key === 'q' || key === '\u001b') {
+      cleanup();
+      return;
+    }
+    if (key === 'r') {
+      refresh();
+      paint();
+    }
+  };
+
+  inStream.on('data', onData);
+  process.once('SIGINT', () => { cleanup(); process.exit(0); });
+  process.once('SIGTERM', () => { cleanup(); process.exit(0); });
+
+  paint();
+  await new Promise<void>((resolve) => {
+    const tick = setInterval(() => {
+      if (!running) { clearInterval(tick); resolve(); }
+    }, 100);
+    if (typeof tick.unref === 'function') tick.unref();
+  });
+  return 0;
 }

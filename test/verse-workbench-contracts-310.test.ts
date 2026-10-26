@@ -164,6 +164,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   authority: 'handleAuthorityApi',
   overnight: 'handleOvernightApi',
   'fleet-live': 'handleFleetLiveApi',
+  // RQ-FLEET-VIEW-V1: the live fleet-view.v1 projection (GET only).
+  'fleet-view': 'handleFleetViewApi',
   leader: 'handleLeaderApi',
   learning: 'handleLearningApi',
   // 3.15: the private repo wiki.

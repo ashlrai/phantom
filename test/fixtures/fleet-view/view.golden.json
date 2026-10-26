@@ -1,0 +1,338 @@
+{
+  "schema": "fleet-view.v1",
+  "generatedAt": "2026-02-13T16:00:00.000Z",
+  "readOnly": true,
+  "pause": {
+    "state": "clear",
+    "reason": null
+  },
+  "host": {
+    "state": "measured",
+    "memoryTotalBytes": 68719476736,
+    "memoryUsedBytes": 51539607552,
+    "memoryUsedPct": 75,
+    "swapTotalBytes": 8589934592,
+    "swapUsedBytes": 2147483648
+  },
+  "queue": {
+    "state": "ok",
+    "depth": 1,
+    "running": 2,
+    "jobs": 6,
+    "byLane": [
+      {
+        "lane": "codex-cmp",
+        "queued": 0,
+        "running": 1
+      },
+      {
+        "lane": "grok",
+        "queued": 0,
+        "running": 1
+      },
+      {
+        "lane": "codex-secondary",
+        "queued": 1,
+        "running": 0
+      },
+      {
+        "lane": "claude",
+        "queued": 0,
+        "running": 0
+      },
+      {
+        "lane": "devin",
+        "queued": 0,
+        "running": 0
+      }
+    ]
+  },
+  "agents": [
+    {
+      "id": "RQ-FLEET-VIEW-V1",
+      "lane": "codex-cmp",
+      "account": "codex-cmp",
+      "tier": "frontier",
+      "repo": "ashlrai/phantom",
+      "title": "Fleet view TUI + remote + JSON",
+      "startedAt": "2026-02-13T14:10:00.000Z",
+      "elapsedSeconds": 6600,
+      "tokens": 845000
+    },
+    {
+      "id": "RQ-GRAPH-1-r3",
+      "lane": "grok",
+      "account": "grok-ultra-weekly",
+      "tier": "deep",
+      "repo": "ashlrai/lexicon",
+      "title": "Graph repair pass three",
+      "startedAt": "2026-02-13T15:02:00.000Z",
+      "elapsedSeconds": 3480,
+      "tokens": 60400
+    }
+  ],
+  "throughput": {
+    "completedJobs": 3,
+    "merged": 2,
+    "mergeRate": 0.6666666666666666,
+    "reverted": 0,
+    "knownTokens": 1274412,
+    "tokenSamples": 3,
+    "recentMerged": [
+      {
+        "pr": "ashlrai/phantom#938",
+        "lane": "codex-cmp",
+        "mergedAt": "2026-02-13T11:30:00.000Z",
+        "reverted": false,
+        "impact": 14
+      },
+      {
+        "pr": "ashlrai/phantom#939",
+        "lane": "claude",
+        "mergedAt": "2026-02-12T10:15:00.000Z",
+        "reverted": false,
+        "impact": 9
+      }
+    ]
+  },
+  "impact": {
+    "total": 23,
+    "samples": 2,
+    "perLane": [
+      {
+        "lane": "codex-cmp",
+        "merged": 1,
+        "impact": 14,
+        "impactPerToken": 0.000015484807192029305
+      },
+      {
+        "lane": "claude",
+        "merged": 1,
+        "impact": 9,
+        "impactPerToken": 0.000029585798816568047
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "lane": "codex-cmp",
+      "account": "codex-cmp",
+      "tier": "frontier",
+      "queued": 0,
+      "running": 1,
+      "tokens": 845000,
+      "agents": [
+        "RQ-FLEET-VIEW-V1"
+      ]
+    },
+    {
+      "lane": "grok",
+      "account": "grok-ultra-weekly",
+      "tier": "deep",
+      "queued": 0,
+      "running": 1,
+      "tokens": 60400,
+      "agents": [
+        "RQ-GRAPH-1-r3"
+      ]
+    },
+    {
+      "lane": "codex-secondary",
+      "account": "codex-personal",
+      "tier": "frontier",
+      "queued": 1,
+      "running": 0,
+      "tokens": 0,
+      "agents": []
+    },
+    {
+      "lane": "claude",
+      "account": "claude-max",
+      "tier": "deep",
+      "queued": 0,
+      "running": 0,
+      "tokens": 0,
+      "agents": []
+    },
+    {
+      "lane": "devin",
+      "account": "devin",
+      "tier": "frontier",
+      "queued": 0,
+      "running": 0,
+      "tokens": 0,
+      "agents": []
+    }
+  ],
+  "accounts": [
+    {
+      "id": "codex-cmp",
+      "lanes": [
+        "codex-cmp"
+      ],
+      "sharedWith": null,
+      "source": "manual",
+      "usedPct": 60,
+      "remainingPct": 40,
+      "credits": null,
+      "resetAt": "2026-02-20T00:00:00.000Z",
+      "windowStart": "2026-02-13T00:00:00.000Z",
+      "burnPctPerHour": 5,
+      "runwayHours": 7,
+      "projectedPct": 825,
+      "idealPct": 9.5,
+      "readingAt": "2026-02-13T15:00:00.000Z",
+      "ageSeconds": 3600
+    },
+    {
+      "id": "codex-personal",
+      "lanes": [
+        "codex-secondary"
+      ],
+      "sharedWith": null,
+      "source": "unknown",
+      "usedPct": null,
+      "remainingPct": null,
+      "credits": null,
+      "resetAt": null,
+      "windowStart": null,
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": null,
+      "readingAt": null,
+      "ageSeconds": null
+    },
+    {
+      "id": "claude-max",
+      "lanes": [
+        "claude"
+      ],
+      "sharedWith": null,
+      "source": "unknown",
+      "usedPct": null,
+      "remainingPct": null,
+      "credits": null,
+      "resetAt": null,
+      "windowStart": null,
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": null,
+      "readingAt": null,
+      "ageSeconds": null
+    },
+    {
+      "id": "devin",
+      "lanes": [
+        "devin"
+      ],
+      "sharedWith": null,
+      "source": "manual",
+      "usedPct": 25,
+      "remainingPct": 75,
+      "credits": null,
+      "resetAt": null,
+      "windowStart": null,
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": null,
+      "readingAt": "2026-02-13T15:45:00.000Z",
+      "ageSeconds": 900
+    },
+    {
+      "id": "grok-build",
+      "lanes": [],
+      "sharedWith": null,
+      "source": "unknown",
+      "usedPct": null,
+      "remainingPct": null,
+      "credits": null,
+      "resetAt": null,
+      "windowStart": null,
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": null,
+      "readingAt": null,
+      "ageSeconds": null
+    },
+    {
+      "id": "grok-ultra-weekly",
+      "lanes": [
+        "grok"
+      ],
+      "sharedWith": null,
+      "source": "manual",
+      "usedPct": 40,
+      "remainingPct": 60,
+      "credits": null,
+      "resetAt": "2026-02-16T00:00:00.000Z",
+      "windowStart": "2026-02-09T00:00:00.000Z",
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": 66.7,
+      "readingAt": "2026-02-13T15:30:00.000Z",
+      "ageSeconds": 1800
+    },
+    {
+      "id": "cursor",
+      "lanes": [],
+      "sharedWith": "grok-ultra-weekly",
+      "source": "unknown",
+      "usedPct": null,
+      "remainingPct": null,
+      "credits": null,
+      "resetAt": "2026-02-16T00:00:00.000Z",
+      "windowStart": "2026-02-09T00:00:00.000Z",
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": 66.7,
+      "readingAt": null,
+      "ageSeconds": null
+    },
+    {
+      "id": "omlx",
+      "lanes": [],
+      "sharedWith": null,
+      "source": "unknown",
+      "usedPct": null,
+      "remainingPct": null,
+      "credits": null,
+      "resetAt": null,
+      "windowStart": null,
+      "burnPctPerHour": null,
+      "runwayHours": null,
+      "projectedPct": null,
+      "idealPct": null,
+      "readingAt": null,
+      "ageSeconds": null
+    }
+  ],
+  "sources": {
+    "jobs": {
+      "state": "ok",
+      "detail": "jobs log read",
+      "bytes": 1382,
+      "sha256": "d0d047b4954dd4bb10a778b9a3493522dacf8ca66c1d551184cb747c842243f3",
+      "mtimeMs": null
+    },
+    "status": {
+      "state": "ok",
+      "detail": "status overlay applied",
+      "bytes": 257,
+      "sha256": "f132b3028110349ca534f0c3ad6dd801a2b5666f1d343e0dec1e6de37769c07d",
+      "mtimeMs": null,
+      "applied": 2,
+      "hashMatched": true
+    },
+    "resources": {
+      "kind": "manual",
+      "state": "ok",
+      "detail": "manual fleet.json readings applied"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "jobsSha256": "d0d047b4954dd4bb10a778b9a3493522dacf8ca66c1d551184cb747c842243f3",
+  "jobs": [
+    {
+      "id": "RQ-FLEET-VIEW-V1",
+      "tokens": 845000
+    },
+    {
+      "id": "RQ-GRAPH-1-r3",
+      "tokens": 60400
+    }
+  ]
+}

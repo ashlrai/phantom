@@ -30,7 +30,7 @@ import { budgetQuery } from '../../budget/budget-queries.js';
 import { BUDGET_MODE_OPTIONS, modeAboveCeiling } from '../../budget/budget-model.js';
 import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
-import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
+import { authorityQuery, fleetLiveQuery, fleetViewQuery } from '../../command/surface-data.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
@@ -38,7 +38,7 @@ import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fle
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, ErrorState, Meter, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './FleetScreen.module.css';
 
 export const FLEET_POLL_MS = 15_000;
@@ -107,6 +107,45 @@ function count(n: number | null | undefined): string {
   return typeof n === 'number' && Number.isFinite(n) ? String(n) : '—';
 }
 
+/** Seconds as the fleet view's own compact clock: 47m, 3h21m, 2d4h. */
+function fleetElapsed(sec: number | null): string {
+  if (sec === null || !Number.isFinite(sec) || sec < 0) return '-';
+  const s = Math.floor(sec);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d${h % 24}h` : `${d}d`;
+}
+
+/** An ISO instant as "in <clock>" for resets/runway, or '-' when unknown. */
+function fleetUntil(iso: string | null, now: number): string {
+  if (iso === null) return '-';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '-';
+  return t <= now ? 'now' : fleetElapsed((t - now) / 1000);
+}
+
+function fleetTokens(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '-';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k tok`;
+  return `${n} tok`;
+}
+
+/** The account row's detail line: every fragment null-gated (unknown stays unsaid). */
+function accountNote(a: { remainingPct: number | null; credits: number | null; resetAt: string | null; burnPctPerHour: number | null; runwayHours: number | null }, now: number): string {
+  const bits: string[] = [];
+  if (a.remainingPct !== null) bits.push(`${a.remainingPct}% left`);
+  if (a.credits !== null) bits.push(`${a.credits} credits`);
+  if (a.resetAt !== null) bits.push(`reset in ${fleetUntil(a.resetAt, now)}`);
+  if (a.burnPctPerHour !== null) bits.push(`burning ${a.burnPctPerHour}%/h`);
+  if (a.runwayHours !== null) bits.push(a.runwayHours <= 0 ? 'exhausted' : `runs out in ${fleetElapsed(a.runwayHours * 3600)}`);
+  return bits.join(' · ');
+}
+
 function modeLabel(mode: BudgetMode | null | undefined): string {
   return BUDGET_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? '—';
 }
@@ -116,6 +155,7 @@ export function refreshFleetScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
+    refetchQuery(fleetViewQuery.key, () => fleetViewQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
     refetchQuery(decisionsQuery.key, () => decisionsQuery.fetch(), true),
@@ -135,21 +175,24 @@ export function FleetScreen() {
   const { activity, permissions, reachability, navigate } = useMobile();
   const control = useQuery(verseControlQuery);
   const live = useQuery(fleetLiveQuery);
+  const fleetView = useQuery(fleetViewQuery);
   const authority = useQuery(authorityQuery);
   const budget = useQuery(budgetQuery);
   const decisions = useQuery(decisionsQuery);
   const refetchControl = useRefetch(verseControlQuery);
   const refetchLive = useRefetch(fleetLiveQuery);
+  const refetchView = useRefetch(fleetViewQuery);
   const refetchAuthority = useRefetch(authorityQuery);
   const refetchBudget = useRefetch(budgetQuery);
   const refetchDecisions = useRefetch(decisionsQuery);
   const poll = useCallback(() => {
     refetchControl();
     refetchLive();
+    refetchView();
     refetchAuthority();
     refetchBudget();
     refetchDecisions();
-  }, [refetchControl, refetchLive, refetchAuthority, refetchBudget, refetchDecisions]);
+  }, [refetchControl, refetchLive, refetchView, refetchAuthority, refetchBudget, refetchDecisions]);
   usePollWhileVisible(poll, FLEET_POLL_MS);
   const [reposOpen, setReposOpen] = useState(false);
 
@@ -253,6 +296,55 @@ export function FleetScreen() {
               />
             ))}
           </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const fv = fleetView.data?.value ?? null;
+  const fvNow = Date.now();
+  let fleetViewBody;
+  if (fleetView.status === 'loading' && !fleetView.data) fleetViewBody = <SkeletonList rows={2} label="Loading the fleet view" />;
+  else if (!fv) fleetViewBody = <p className={cx(ui.card, ui.muted)}>{fleetView.data?.reason ?? 'The fleet view has not answered yet.'}</p>;
+  else {
+    const mergeRate = fv.throughput.mergeRate === null ? '-' : `${Math.round(fv.throughput.mergeRate * 100)}%`;
+    fleetViewBody = (
+      <div className={ui.stack}>
+        <div className={styles.stats}>
+          <Stat label="Running" value={count(fv.queue.running)} />
+          <Stat label="Queue depth" value={count(fv.queue.depth)} />
+          <Stat label="Merged" value={count(fv.throughput.merged)} />
+          <Stat label="Merge rate" value={mergeRate} />
+        </div>
+        {fv.pause.state === 'engaged' ? (
+          <Banner tone="warning">The router queue is paused: running agents finish, nothing new starts.</Banner>
+        ) : null}
+        {fv.agents.length > 0 ? (
+          <div className={ui.group} aria-label="Running agents">
+            {fv.agents.map((a) => (
+              <Row
+                key={a.id}
+                title={a.id}
+                subtitle={`${a.lane} · ${a.account}${a.repo ? ` · ${a.repo}` : ''}`}
+                trailing={`${fleetElapsed(a.elapsedSeconds)} · ${fleetTokens(a.tokens)}`}
+              />
+            ))}
+          </div>
+        ) : null}
+        {fv.accounts.map((a) => (
+          <Meter
+            key={a.id}
+            label={a.id}
+            percent={a.usedPct}
+            note={accountNote(a, fvNow) || undefined}
+          />
+        ))}
+        {fv.impact.perLane.length > 0 ? (
+          <p className={ui.faint}>
+            {'Impact: '}
+            {fv.impact.perLane.slice(0, 4).map((l) => `${l.lane} ${l.impact === null ? '-' : l.impact}`).join(' · ')}
+            {fv.impact.total === null ? '' : ` · total ${fv.impact.total}`}
+          </p>
         ) : null}
       </div>
     );
@@ -381,6 +473,7 @@ export function FleetScreen() {
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
       <Section title="Right now" flat>{liveBody}</Section>
+      <Section title="Fleet view" flat>{fleetViewBody}</Section>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>
       <Section title="Recent decisions" flat>{decisionsBody}</Section>
