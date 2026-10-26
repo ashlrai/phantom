@@ -21,6 +21,7 @@ import { StatGrid, StatGridSkeleton } from './StatGrid.js';
 import { RunsPanel, RunsPanelSkeleton } from './RunsPanel.js';
 import { SwarmsPanel } from './SwarmsPanel.js';
 import { DaemonPanel, DaemonPanelSkeleton } from './DaemonPanel.js';
+import { QueueStationGraph } from './QueueStationGraph.js';
 import styles from './FleetDashboardView.module.css';
 
 export function FleetDashboardView() {
@@ -46,6 +47,8 @@ export function FleetDashboardView() {
       ) : snapshotQuery.data ? (
         <StatGrid snapshot={snapshotQuery.data} />
       ) : null}
+
+      <QueueStationGraph />
 
       <div className={styles.panels}>
         {snapshotQuery.status === 'loading' ? (
