@@ -2111,6 +2111,11 @@ export interface ApiMessageBilling {
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
   actualUsdMicros: string;
+  /**
+   * Present only when the request went through an explicitly configured
+   * gateway (`gateways.anthropic`). Host only: never the key, URL or path.
+   */
+  gateway?: { via: 'gateway'; host: string };
 }
 
 /** Lifecycle state of a single task in the run graph. */

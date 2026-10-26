@@ -1,0 +1,80 @@
+name: Companion Smoke
+
+# Runs scripts/companion-workflow-smoke.mjs --published against what users
+# install from npm and GitHub releases. It runs once a day and on
+# workflow_dispatch, and records the published companion versions it checked
+# (including Cortex, whose deployments have no version to watch).
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: companion-smoke
+  cancel-in-progress: false
+
+jobs:
+  published:
+    name: Published companion smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+      CORTEX_MCP_URL: https://cortex.ashlr.ai/api/mcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Read published companion versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          packages=$(node --input-type=module -e "const m = await import('./scripts/companion-workflow-smoke.mjs'); console.log(m.PUBLISHED_PACKAGES.map(p => p.name).join(' '))")
+          : > companion-versions.txt
+          for name in $packages; do
+            echo "$name@$(npm view "$name" version 2>/dev/null || echo unpublished)" >> companion-versions.txt
+          done
+          md=$(curl -fsS -H "authorization: Bearer $GH_TOKEN" https://api.github.com/repos/ashlrai/ashlr-md/releases/latest | node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.parse(s).tag_name))" || echo unknown)
+          echo "ashlr-md@$md" >> companion-versions.txt
+          sha256sum scripts/companion-workflow-smoke.mjs | cut -d' ' -f1 | sed 's/^/smoke@/' >> companion-versions.txt
+          cat companion-versions.txt
+          echo "key=companion-smoke-v1-$(sha256sum companion-versions.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+
+      - name: Set up Bun (Ashlr.AI Plugin router)
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install ripgrep (Ashlr.AI Plugin router)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: Build Phantom (the smoke reads Phantom's own Locus parsers from dist)
+        run: npm ci && npm run build
+
+      - name: Run the published smoke
+        run: |
+          set -uo pipefail
+          node scripts/companion-workflow-smoke.mjs --published --cortex-url "$CORTEX_MCP_URL" | tee smoke.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo "### Published companion smoke"
+            echo
+            echo '```'
+            cat companion-versions.txt
+            echo
+            cat smoke.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

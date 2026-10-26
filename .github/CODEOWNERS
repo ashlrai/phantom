@@ -138,6 +138,7 @@
 /desktop/src-tauri/src/main.rs @masonwyatt23
 /desktop/src-tauri/src/lib.rs @masonwyatt23
 /src/core/run/desktop-metadata-launch-trust.ts @masonwyatt23
+/src/core/run/gateway-target.ts @masonwyatt23
 /src/cli/desktop-update.ts @masonwyatt23
 /src/cli/desktop.ts @masonwyatt23
 /scripts/desktop-release-policy.mjs @masonwyatt23
@@ -315,6 +316,12 @@
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
+/test/gateway-anthropic-client.test.ts @masonwyatt23
+/test/gateway-audit-marker.test.ts @masonwyatt23
+/test/gateway-config-load.test.ts @masonwyatt23
+/test/gateway-grant-ledger.test.ts @masonwyatt23
+/test/gateway-openai-agents-client.test.ts @masonwyatt23
+/test/gateway-target.test.ts @masonwyatt23
 /test/goal-conductor-stale-lane.test.ts @masonwyatt23
 /test/goal-loop-roadmap-index.test.ts @masonwyatt23
 /test/goal-loop.result.test.ts @masonwyatt23
