@@ -328,3 +328,16 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 
 For more failure modes and their recovery, see
 [RELIABILITY.md](RELIABILITY.md#failure-modes--recovery).
+
+### CLI startup timing
+
+Set `PHM_STARTUP_TIMING=1` to emit JSON diagnostic records on stderr while
+keeping command output on stdout unchanged. For example:
+`PHM_STARTUP_TIMING=1 phm --version`.
+The `ready` record measures elapsed process time through static entry-point
+initialization (including Node bootstrap). The `import` records measure loading
+and evaluation of lazy command handlers and the deferred indexing, tidy,
+status, picker and editor modules; cached imports may take almost no time.
+These are elapsed import durations, including transitive dependencies, rather
+than exclusive CPU time per module. Diagnostics contain module labels and
+milliseconds, never command arguments or configuration values.

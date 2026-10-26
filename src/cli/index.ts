@@ -53,21 +53,17 @@
  * Exit codes: 0 success, 1 error/not-found, 2 bad usage.
  */
 
+import { timeImport, reportStartupReady } from './startup-timing.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
-import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
 import { PROBE_HELPER_FLAGS } from '../core/resources/probe-helper-invocation.js';
 import { CLAUDE_TOOL_WORKER_FLAG } from '../core/sandbox/claude-broker-tool-invocation.js';
 import { ANTHROPIC_PROXY_HOST_FLAG } from '../core/local-runtime/llama/proxy-invocation.js';
 import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
-import { planTidy, applyTidy } from '../core/tidy.js';
-import { openInEditor } from './open.js';
-import { pick } from './picker.js';
-import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
@@ -100,7 +96,7 @@ function lazyCmd(
   return async (): Promise<Cmd> => {
     if (cached === undefined) {
       try {
-        cached = pick((await importer()) as Record<string, unknown>);
+        cached = pick((await timeImport(label, importer)) as Record<string, unknown>);
       } catch {
         cached = null;
       }
@@ -833,7 +829,8 @@ function die(msg: string, code = 1): never {
 
 
 /** Ensure the index exists; auto-build if missing. Returns the index. */
-function requireIndex(cfg: AshlrConfig): AshlrIndex {
+async function requireIndex(cfg: AshlrConfig): Promise<AshlrIndex> {
+  const { loadIndex, buildIndex, writeIndex } = await timeImport('../core/index-engine.js', () => import('../core/index-engine.js'));
   let idx = loadIndex();
   if (!idx) {
     // Informational chatter goes to stderr so stdout stays clean for capture
@@ -992,7 +989,8 @@ function persistConfigSet(
 
 // ─── Command: index ───────────────────────────────────────────────────────────
 
-function cmdIndex(args: string[]): void {
+async function cmdIndex(args: string[]): Promise<void> {
+  const { loadIndex, buildIndex, writeIndex } = await timeImport('../core/index-engine.js', () => import('../core/index-engine.js'));
   const refresh = args.includes('--refresh');
   const cfg = loadConfig();
 
@@ -1047,13 +1045,15 @@ function cmdIndex(args: string[]): void {
 // ─── Command: go ─────────────────────────────────────────────────────────────
 
 async function cmdGo(args: string[]): Promise<void> {
+  const { pick } = await timeImport('./picker.js', () => import('./picker.js'));
+  const { openInEditor } = await timeImport('./open.js', () => import('./open.js'));
   const openFlag = args.includes('--open');
   const cdFlag   = args.includes('--cd');
   const queryArgs = args.filter(a => !a.startsWith('--'));
   const query = queryArgs.join(' ');
 
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   const candidates = filterItems(idx.items, query);
 
@@ -1151,8 +1151,9 @@ function printNoReposHelp(cfg: AshlrConfig): void {
 }
 
 async function cmdStatus(args: string[]): Promise<void> {
+  const { classifyRepos, printStatusJson } = await timeImport('./status.js', () => import('./status.js'));
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   if (args.includes('--json')) {
     await printStatusJson(cfg, idx, {
@@ -1439,10 +1440,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 
 // ─── Command: ls ─────────────────────────────────────────────────────────────
 
-function cmdLs(args: string[]): void {
+async function cmdLs(args: string[]): Promise<void> {
   const catFilter = args.filter(a => !a.startsWith('--'))[0] ?? null;
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   let items = idx.items;
   if (catFilter) {
@@ -1494,9 +1495,11 @@ function cmdLs(args: string[]): void {
 // ─── Command: open ────────────────────────────────────────────────────────────
 
 async function cmdOpen(args: string[]): Promise<void> {
+  const { pick } = await timeImport('./picker.js', () => import('./picker.js'));
+  const { openInEditor, planMarkdownOpen, ashlrMdInstallHint } = await timeImport('./open.js', () => import('./open.js'));
   const query = args.filter(a => !a.startsWith('--')).join(' ');
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   let chosen: IndexedItem | null = null;
 
@@ -1517,7 +1520,6 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
   const md = planMarkdownOpen(chosen.path, cfg);
   if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
   else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
@@ -1525,7 +1527,8 @@ async function cmdOpen(args: string[]): Promise<void> {
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
 
-function cmdTidy(args: string[]): void {
+async function cmdTidy(args: string[]): Promise<void> {
+  const { planTidy, applyTidy } = await timeImport('../core/tidy.js', () => import('../core/tidy.js'));
   const apply = args.includes('--apply');
   const json  = args.includes('--json');
   const cfg = loadConfig();
@@ -1874,7 +1877,7 @@ async function main(): Promise<void> {
   try {
     switch (cmd) {
       case 'index':
-        cmdIndex(rest);
+        await cmdIndex(rest);
         break;
 
       case 'go':
@@ -1886,7 +1889,7 @@ async function main(): Promise<void> {
         break;
 
       case 'ls':
-        cmdLs(rest);
+        await cmdLs(rest);
         break;
 
       case 'open':
@@ -1894,7 +1897,7 @@ async function main(): Promise<void> {
         break;
 
       case 'tidy':
-        cmdTidy(rest);
+        await cmdTidy(rest);
         break;
 
       case 'config':
@@ -2528,7 +2531,7 @@ async function main(): Promise<void> {
         let version = process.env.ASHLR_VERSION;
         if (!version) {
           try {
-            const { createRequire } = await import('node:module');
+            const { createRequire } = await timeImport('node:module', () => import('node:module'));
             const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
             version = pkg.version;
           } catch {
@@ -2544,7 +2547,7 @@ async function main(): Promise<void> {
         let version = process.env.ASHLR_VERSION;
         if (!version) {
           try {
-            const { createRequire } = await import('node:module');
+            const { createRequire } = await timeImport('node:module', () => import('node:module'));
             version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
           } catch {
             version = 'unknown';
@@ -2584,4 +2587,5 @@ async function main(): Promise<void> {
 }
 
 // Run — top-level await is fine in ESM with Node 22
+reportStartupReady();
 await main();
