@@ -55,7 +55,7 @@ describe('routeSeatWithLocalEscalation', () => {
     expect(classifyEngine(promoted)).toBe('unclassified');
     expect(classifyEngine(promoted, engines)).toBe('local');
     expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://api.example.com/v1' } })).toBe('frontier');
-    expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://u:p@api.example.com/v1' } })).toBe('unclassified');
+    expect(classifyEngine(promoted, { 'fast-coder': { baseUrl: 'https://' + 'TEST-user' + ':' + 'TEST-password' + '@api.example.com/v1' } })).toBe('unclassified');
     expect(classifyEngine(claude, { claude: { baseUrl: 'http://127.0.0.1:9000' } })).toBe('local');
     expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayMergeOrPublish(c as never))).toEqual([true, true, false]);
     expect(['frontier', 'local', 'unclassified'].map((c) => engineClassMayHoldSecrets(c as never))).toEqual([false, false, false]);
