@@ -40,7 +40,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
-  'benchmark',
+  'benchmark', 'metrics',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.
@@ -61,6 +61,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   benchmark: ['run', '--compare-reports', 'help'],
+  metrics: ['idle', '--help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
