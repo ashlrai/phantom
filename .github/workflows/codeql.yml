@@ -1,10 +1,14 @@
 name: CodeQL
 
-# Code scanning stays off pull_request and off push. The nightly minute is
-# 53 past 08:00 UTC so it does not share a minute with CI (41 7), companion
-# smoke (41 6), the dependency audit (17 9), or the ashlr-md CodeQL pilot (17 6).
+# This repository has no merge queue, so a merge_group-only workflow never
+# runs. Push to master is what runs the scan between the nightly cron and a
+# manual run. No pull_request trigger. The nightly minute is 53 past 08:00
+# UTC so it does not share a minute with CI (41 7), companion smoke (41 6),
+# the dependency audit (17 9), or the ashlr-md CodeQL pilot (17 6).
 on:
   merge_group:
+  push:
+    branches: [master]
   schedule:
     - cron: "53 8 * * *"
   workflow_dispatch:

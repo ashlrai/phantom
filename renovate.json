@@ -19,15 +19,9 @@
       "groupName": "non-major updates"
     },
     {
-      "description": "One pull request for major updates, excluding GitHub Actions",
-      "matchUpdateTypes": ["major"],
-      "excludeManagers": ["github-actions"],
-      "groupName": "major updates"
-    },
-    {
-      "description": "GitHub Actions updates, including digest and pin updates",
+      "description": "GitHub Actions non-major updates, including digest and pin updates",
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "github-actions"
     },
     {

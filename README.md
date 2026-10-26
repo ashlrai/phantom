@@ -13,7 +13,6 @@
 [Install](#install) · [See the workbench](#what-it-is) · [Benchmarks](#benchmarks-and-traces) · [Read the guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md) · [Explore the ecosystem](https://verse.ashlr.ai/ecosystem) · [Star Phantom on GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ashlrai/phantom/badge)](https://scorecard.dev/viewer/?uri=github.com/ashlrai/phantom)
 [![npm](https://img.shields.io/npm/v/@ashlr/phantom.svg?logo=npm&label=%40ashlr%2Fphantom&color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
 [![npm downloads](https://img.shields.io/npm/dm/@ashlr/phantom.svg?color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)

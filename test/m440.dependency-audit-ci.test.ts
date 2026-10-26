@@ -547,7 +547,10 @@ exit "\${TEST_OSV_RC:-0}"
     expect(renovate.vulnerabilityAlerts).toEqual({ enabled: true, automerge: false });
     expect(
       renovate.packageRules.flatMap((rule) => (rule.groupName ? [rule.groupName] : [])),
-    ).toEqual(['non-major updates', 'major updates', 'github-actions']);
+    ).toEqual(['non-major updates', 'github-actions']);
+    expect(
+      renovate.packageRules.filter((rule) => rule.groupName && rule.matchUpdateTypes?.includes('major')),
+    ).toEqual([]);
 
     // The root npm graph carries exactly four bounded version holds (see
     // docs/DEPENDENCY-SECURITY.md "Version holds"). Each is one exact name plus

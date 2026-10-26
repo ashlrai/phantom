@@ -1,11 +1,14 @@
 name: Coverage
 
-# Coverage collection and the Codecov upload run on merge_group only.
-# Push and pull_request do not start this workflow. The CI hermetic step
-# stays `npm run test:ci` on every event; this workflow calls Vitest
-# directly so coverage flags are not dropped by that wrapper.
+# This repository has no merge queue, so a merge_group-only workflow never
+# runs. Push to master collects coverage. pull_request does not start this
+# workflow. The CI hermetic step stays `npm run test:ci` on every event;
+# this workflow calls Vitest directly so coverage flags are not dropped by
+# that wrapper. Node is 22.22.3, the version ci.yml pins.
 on:
   merge_group:
+  push:
+    branches: [master]
 
 permissions:
   contents: read
@@ -77,7 +80,6 @@ jobs:
   upload:
     name: Upload coverage
     needs: test
-    if: github.event_name == 'merge_group' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
