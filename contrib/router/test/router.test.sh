@@ -538,6 +538,12 @@ fi
 if grep -q 'SAW_CREDENTIAL_DIR\|GH_TOKEN\|OPENAI_API_KEY\|XAI_API_KEY' "${TMPDIR:-/tmp}/npm-verify.txt"; then
   fail 'optional verify could see credential material'
 fi
+if [[ -d "$verify_home" ]]; then
+  fail 'verify temp HOME was left behind'
+fi
+if ! trap -p EXIT | grep -q cleanup; then
+  fail 'verify replaced the EXIT trap'
+fi
 
 cat > "$tmp/bin/omlx" <<'EOF'
 #!/usr/bin/env bash
@@ -609,6 +615,33 @@ if [[ -d "$lock2" ]]; then
   fail 'lock owner did not release it'
 fi
 
+empty=$ASHLR_ROUTER_HOME/locks/jobs/empty-pid
+rm -rf "$empty"
+mkdir -p "$empty"
+if ! router_lock_alive "$empty"; then
+  fail 'a fresh empty lock was treated as dead'
+fi
+if router_acquire_lock "$empty"; then
+  fail 'a fresh empty lock was stolen'
+fi
+if [[ -f "$empty/pid" ]]; then
+  fail 'a fresh empty lock gained a pid'
+fi
+touch -d '10 seconds ago' "$empty"
+if router_lock_alive "$empty"; then
+  fail 'a stale empty lock stayed alive'
+fi
+if ! router_acquire_lock "$empty"; then
+  fail 'a stale empty lock could not be replaced'
+fi
+if [[ ! -s "$empty/pid" ]]; then
+  fail 'replaced lock had no pid'
+fi
+router_release_lock "$empty"
+if [[ -d "$empty" ]]; then
+  fail 'replaced lock was not released'
+fi
+
 : > "$ASHLR_TEST_CODEX_LOG"
 touch "$ASHLR_ROUTER_HOME/PAUSE"
 gh_before=$(wc -l < "$ASHLR_TEST_GH_LOG")
@@ -636,6 +669,7 @@ EOF
 chmod +x "$tmp/bin/git"
 hash -r
 : > "$tmp/push.log"
+unset ROUTER_BASE_SHA
 
 deny=$tmp/deny-repo
 git init -q -b master "$deny"
@@ -713,6 +747,14 @@ case "$cmd" in
     printf 'unexpected pr %s\n' "$sub" >&2
     exit 1
     ;;
+  issue)
+    sub=${1:-}
+    if [[ "$sub" == "comment" ]]; then
+      exit 0
+    fi
+    printf 'unexpected issue %s\n' "$sub" >&2
+    exit 1
+    ;;
   *)
     printf 'unexpected gh %s\n' "$cmd" >&2
     exit 1
@@ -729,6 +771,86 @@ if ! grep -q 'https://github.com/tester/phantom.git' "$tmp/push.log"; then
 fi
 if grep -q 'origin' "$tmp/push.log"; then
   fail "push targeted origin: $(cat "$tmp/push.log")"
+fi
+
+model=$tmp/model-github
+git init -q -b master "$model"
+printf 'seed\n' > "$model/README.md"
+git -C "$model" add README.md
+git -C "$model" commit -q -m seed
+ROUTER_BASE_SHA=$(git -C "$model" rev-parse HEAD)
+mkdir -p "$model/.github/workflows"
+printf 'name: bad\n' > "$model/.github/workflows/ci.yml"
+git -C "$model" add .github/workflows/ci.yml
+git -C "$model" commit -q -m 'model adds workflow'
+model_head=$(git -C "$model" rev-parse HEAD)
+: > "$tmp/push.log"
+rm -f "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"
+if router_commit_and_push "$model" ashlrai/phantom router/codex/101 master codex subject 101 workhorse 0 ""; then
+  fail 'a model commit of .github was published'
+fi
+if [[ "$(git -C "$model" rev-parse HEAD)" != "$model_head" ]]; then
+  fail 'a model .github commit was rewritten'
+fi
+if [[ -s "$tmp/push.log" ]]; then
+  fail "a model .github commit was pushed: $(cat "$tmp/push.log")"
+fi
+if ! grep -q 'Denied paths: 1' "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"; then
+  fail "refusal count was $(cat "$ASHLR_ROUTER_HOME/tmp/refused-101.txt" 2>/dev/null)"
+fi
+if grep -q '\.github\|ci\.yml' "$ASHLR_ROUTER_HOME/tmp/refused-101.txt"; then
+  fail 'refusal comment named a path'
+fi
+
+owners=$tmp/owners-repo
+git init -q -b master "$owners"
+mkdir -p "$owners/src/kept"
+printf 'kept\n' > "$owners/src/kept/old.txt"
+printf '%s\n' '/src/kept/** @owner' > "$owners/CODEOWNERS"
+git -C "$owners" add CODEOWNERS src/kept/old.txt
+git -C "$owners" commit -q -m seed
+ROUTER_BASE_SHA=$(git -C "$owners" rev-parse HEAD)
+printf '\n' > "$owners/CODEOWNERS"
+printf 'x\n' > "$owners/src/kept/x.txt"
+git -C "$owners" add CODEOWNERS src/kept/x.txt
+git -C "$owners" commit -q -m 'model rewrites owners'
+owners_head=$(git -C "$owners" rev-parse HEAD)
+: > "$tmp/push.log"
+rm -f "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"
+if router_commit_and_push "$owners" ashlrai/phantom router/codex/102 master codex subject 102 workhorse 0 ""; then
+  fail 'a model CODEOWNERS commit was published'
+fi
+if [[ "$(git -C "$owners" rev-parse HEAD)" != "$owners_head" ]]; then
+  fail 'a model CODEOWNERS commit was rewritten'
+fi
+if [[ -s "$tmp/push.log" ]]; then
+  fail "a model CODEOWNERS commit was pushed: $(cat "$tmp/push.log")"
+fi
+if ! grep -q 'Denied paths: 2' "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"; then
+  fail "CODEOWNERS refusal count was $(cat "$ASHLR_ROUTER_HOME/tmp/refused-102.txt" 2>/dev/null)"
+fi
+if grep -q 'CODEOWNERS\|src/kept\|x\.txt' "$ASHLR_ROUTER_HOME/tmp/refused-102.txt"; then
+  fail 'refusal comment named a CODEOWNERS path'
+fi
+unset ROUTER_BASE_SHA
+
+cat > "$tmp/bin/claude" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$tmp/claude-update.log"
+printf '1.0.0\\n'
+exit 0
+EOF
+chmod +x "$tmp/bin/claude"
+: > "$tmp/claude-update.log"
+saved_fresh=${ROUTER_FRESHNESS_ENABLED:-0}
+ROUTER_FRESHNESS_ENABLED=1
+router_update_cli claude
+ROUTER_FRESHNESS_ENABLED=$saved_fresh
+if grep -q 'update' "$tmp/claude-update.log"; then
+  fail "claude update ran: $(cat "$tmp/claude-update.log")"
+fi
+if ! grep -q -- '--version' "$tmp/claude-update.log"; then
+  fail "claude version was not recorded: $(cat "$tmp/claude-update.log")"
 fi
 
 printf 'ok pools keepalive devin grok omlx\n'

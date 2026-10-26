@@ -71,32 +71,68 @@ router_self_pid() {
   exec sh -c 'echo "$PPID"'
 }
 
+router_lock_age() {
+  node -e 'const fs=require("fs"); const s=fs.statSync(process.argv[1]); process.stdout.write(String(Math.max(0, Math.floor(Date.now()/1000)-Math.floor(s.mtimeMs/1000))))' "$1"
+}
+
 router_lock_alive() {
   local dir=$1
-  local pid
+  local pid age
   [[ -d "$dir" ]] || return 1
   pid=$(cat "$dir/pid" 2>/dev/null || true)
-  [[ -n "$pid" ]] || return 1
+  if [[ -z "$pid" ]]; then
+    age=$(router_lock_age "$dir" 2>/dev/null || printf '999999')
+    [[ "$age" -lt "${ROUTER_LOCK_GRACE_S:-2}" ]]
+    return
+  fi
   kill -0 "$pid" 2>/dev/null
+}
+
+# The lock directory appears only after its pid file is inside it. mv of a
+# populated temp dir onto a missing name is an atomic rename. If the name
+# already exists, mv nests the temp dir and this rejects that result.
+router_publish_lock() {
+  local tmp=$1
+  local dir=$2
+  local pid=$3
+  local got nested
+  if [[ -e "$dir" ]]; then
+    return 1
+  fi
+  if ! mv "$tmp" "$dir" 2>/dev/null; then
+    return 1
+  fi
+  got=$(cat "$dir/pid" 2>/dev/null || true)
+  if [[ "$got" == "$pid" ]]; then
+    return 0
+  fi
+  nested=$(basename "$tmp")
+  rm -rf "${dir:?}/${nested:?}"
+  return 1
 }
 
 router_acquire_lock() {
   local dir=$1
-  local pid
+  local pid parent tmp
   pid=$(router_self_pid)
-  mkdir -p "$(dirname "$dir")"
-  if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$pid" > "$dir/pid"
+  parent=$(dirname "$dir")
+  mkdir -p "$parent"
+  tmp=$(mktemp -d "$parent/.locktmp.XXXXXX")
+  printf '%s\n' "$pid" > "$tmp/pid"
+  if router_publish_lock "$tmp" "$dir" "$pid"; then
     return 0
   fi
+  rm -rf "$tmp"
   if router_lock_alive "$dir"; then
     return 1
   fi
   rm -rf "$dir"
-  if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$pid" > "$dir/pid"
+  tmp=$(mktemp -d "$parent/.locktmp.XXXXXX")
+  printf '%s\n' "$pid" > "$tmp/pid"
+  if router_publish_lock "$tmp" "$dir" "$pid"; then
     return 0
   fi
+  rm -rf "$tmp"
   return 1
 }
 
@@ -246,12 +282,7 @@ router_account_reserved() {
 
 router_reserve_account() {
   local id=$1
-  local dir=$ROUTER_HOME/locks/reserve-codex-$id
-  if [[ -d "$dir" ]] && ! router_lock_alive "$dir"; then
-    rm -rf "$dir"
-  fi
-  mkdir "$dir"
-  printf '%s\n' "$(router_self_pid)" > "$dir/pid"
+  router_acquire_lock "$ROUTER_HOME/locks/reserve-codex-$id"
 }
 
 router_release_reserve() {
@@ -332,7 +363,7 @@ router_pick_codex_account() {
       continue
     fi
     if [[ "$live" == "live" ]]; then
-      router_reserve_account "$id"
+      router_reserve_account "$id" || continue
     fi
     printf '%s\t%s\n' "$id" "$home"
     return 0
@@ -1641,6 +1672,7 @@ router_run_job() {
     return 0
   fi
   router_prepare_worktree "$repo" "$cli" "$number"
+  ROUTER_BASE_SHA=$(git -C "$ROUTER_WT" rev-parse HEAD)
   node "$ROUTER_IO" write-meta --file "$lock_job/meta.json" --repo "$repo" --issue "$number" \
     --clone "$ROUTER_CLONE" --worktree "$ROUTER_WT" --cli "$cli" --account "$account"
   prompt=$ROUTER_HOME/tmp/prompt-${name}-${number}-${cli}.txt
@@ -1884,12 +1916,22 @@ router_refuse_paths() {
   local repo=$1
   local number=$2
   local denied=$3
-  local text
-  text=$(printf '%s' "$denied" | tr '\n' ' ' | cut -c 1-500)
+  local count
+  count=$(printf '%s\n' "$denied" | grep -c '[^[:space:]]' || true)
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
   router_log "refusing job; protected path"
-  printf 'ashlr-router refused this job before commit. Protected path: %s\nNothing was pushed.\n' \
-    "$text" > "$ROUTER_HOME/tmp/refused-$number.txt"
+  printf 'ashlr-router refused this job. Denied paths: %s. Nothing was pushed.\n' \
+    "$count" > "$ROUTER_HOME/tmp/refused-$number.txt"
   router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+}
+
+router_range_base() {
+  local wt=$1
+  if [[ -n "${ROUTER_BASE_SHA:-}" ]]; then
+    printf '%s\n' "$ROUTER_BASE_SHA"
+    return 0
+  fi
+  git -C "$wt" rev-parse HEAD
 }
 
 router_commit_and_push() {
@@ -1903,9 +1945,11 @@ router_commit_and_push() {
   local tier=$8
   local verify_rc=$9
   local warning=${10:-}
-  local denied path any login name url prbody rc_pr
+  local denied path any login name url prbody rc_pr base_sha made
   ROUTER_PR_URL=""
-  if ! denied=$(node "$ROUTER_IO" publish-check --worktree "$wt"); then
+  base_sha=$(router_range_base "$wt")
+  made=0
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
     router_refuse_paths "$repo" "$number" "$denied"
     git -C "$wt" reset -q || true
     return 1
@@ -1923,7 +1967,7 @@ router_commit_and_push() {
   if [[ "$any" -eq 0 ]]; then
     return 2
   fi
-  if ! denied=$(node "$ROUTER_IO" publish-check --worktree "$wt"); then
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
     router_refuse_paths "$repo" "$number" "$denied"
     git -C "$wt" reset -q || true
     return 1
@@ -1935,9 +1979,12 @@ router_commit_and_push() {
     router_log "commit failed for $repo#$number"
     return 1
   fi
-  if ! denied=$(node "$ROUTER_IO" commit-check --worktree "$wt"); then
+  made=1
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
     router_refuse_paths "$repo" "$number" "$denied"
-    git -C "$wt" reset -q --mixed HEAD~1 || true
+    if [[ "$made" -eq 1 ]]; then
+      git -C "$wt" reset -q --mixed HEAD~1 || true
+    fi
     return 1
   fi
   if ! login=$(router_fork_login); then

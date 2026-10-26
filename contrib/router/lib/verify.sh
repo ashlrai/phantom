@@ -37,21 +37,36 @@ router_verify_isolated() {
   npm_bin=$(command -v npm)
   path_allow="$(dirname "$node_bin"):$(dirname "$npm_bin"):/usr/bin:/bin"
   home=$(mktemp -d "${TMPDIR:-/tmp}/router-verify.XXXXXX")
-  scripts=$(node "$ROUTER_IO" package-scripts "$dir/package.json")
-  while IFS= read -r script; do
-    [[ -n "$script" ]] || continue
-    if [[ "$script" == "test" ]]; then
-      if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" test; then
-        rc=1
+  case "$home" in
+    "${TMPDIR:-/tmp}/router-verify."*) ;;
+    *) return 1 ;;
+  esac
+  # The EXIT trap stays inside this subshell so the caller's trap is unchanged.
+  (
+    trap 'rm -rf "$home"' EXIT
+    rc=0
+    scripts=$(node "$ROUTER_IO" package-scripts "$dir/package.json")
+    while IFS= read -r script; do
+      [[ -n "$script" ]] || continue
+      if [[ "$script" == "test" ]]; then
+        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" test; then
+          rc=1
+        fi
+      elif [[ "$script" == "lint" ]]; then
+        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" run lint; then
+          rc=1
+        fi
       fi
-    elif [[ "$script" == "lint" ]]; then
-      if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" run lint; then
-        rc=1
-      fi
-    fi
-  done <<EOF
+    done <<EOF
 $scripts
 EOF
-  rm -rf "$home"
+    printf '%s\n' "$rc" > "$home.rc"
+  )
+  rc=$(tr -d '\n' < "$home.rc" 2>/dev/null || printf '1')
+  rm -f "$home.rc"
+  if [[ -d "$home" ]]; then
+    rm -rf "$home"
+  fi
+  [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
   return "$rc"
 }

@@ -1271,13 +1271,25 @@ function changedPaths(wt) {
   return porcelainPaths(Buffer.from(status.stdout || '', 'utf8'));
 }
 
+function packageDiffText(wt, file, rev) {
+  const committed = gitCapture(wt, ['diff', rev, 'HEAD', '--', file]);
+  const work = gitCapture(wt, ['diff', rev, '--', file]);
+  let text = `${(committed && committed.stdout) || ''}\n${(work && work.stdout) || ''}`;
+  const tracked = gitCapture(wt, ['ls-files', '--error-unmatch', '--', file]);
+  const inRev = gitCapture(wt, ['cat-file', '-e', `${rev}:${file}`]);
+  if ((!tracked || tracked.status !== 0) && (!inRev || inRev.status !== 0)) {
+    const untracked = gitCapture(wt, ['diff', '--no-index', '--', '/dev/null', file]);
+    text += `\n${(untracked && untracked.stdout) || ''}`;
+  }
+  return text;
+}
+
 function packageAltersRelease(wt, file, rev) {
   const base = file.split('/').pop();
   if (base !== 'package.json') return false;
   let text = '';
   if (rev) {
-    const diff = gitCapture(wt, ['diff', rev, 'HEAD', '--', file]);
-    text = (diff && diff.stdout) || '';
+    text = packageDiffText(wt, file, rev);
   } else {
     const diff = gitCapture(wt, ['diff', 'HEAD', '--', file]);
     const cached = gitCapture(wt, ['diff', '--cached', '--', file]);
@@ -1329,6 +1341,50 @@ function diffTreePaths(wt, rev) {
 
 function deniedCommitPaths(wt) {
   return matchDenied(wt, diffTreePaths(wt, 'HEAD'), codeownerRegexesAt(wt, 'HEAD~1'), 'HEAD~1');
+}
+
+function statusPaths(wt, args) {
+  const shown = gitCapture(wt, args);
+  if (!shown || shown.status !== 0) return null;
+  const buf = Buffer.from(shown.stdout || '', 'utf8');
+  const paths = [];
+  let i = 0;
+  while (i < buf.length) {
+    const sEnd = buf.indexOf(0, i);
+    if (sEnd < 0) break;
+    const status = buf.slice(i, sEnd).toString('utf8');
+    i = sEnd + 1;
+    if (!status) break;
+    const p1 = buf.indexOf(0, i);
+    if (p1 < 0) break;
+    const first = buf.slice(i, p1).toString('utf8');
+    i = p1 + 1;
+    if (first) paths.push(first);
+    if (status[0] === 'R' || status[0] === 'C') {
+      const p2 = buf.indexOf(0, i);
+      if (p2 < 0) break;
+      const second = buf.slice(i, p2).toString('utf8');
+      i = p2 + 1;
+      if (second) paths.push(second);
+    }
+  }
+  return paths;
+}
+
+function deniedSince(wt, base) {
+  if (!/^[0-9a-f]{7,64}$/i.test(String(base || ''))) return ['<unreadable>'];
+  const committed = statusPaths(wt, ['diff', '--name-status', '-z', base, 'HEAD']);
+  const work = statusPaths(wt, ['diff', '--name-status', '-z', base]);
+  const dirty = changedPaths(wt);
+  if (committed == null || work == null || dirty == null) return ['<unreadable>'];
+  const seen = new Set();
+  const paths = [];
+  for (const file of committed.concat(work, dirty)) {
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    paths.push(file);
+  }
+  return matchDenied(wt, paths, codeownerRegexesAt(wt, base), base);
 }
 
 function branchAllowed(branch) {
@@ -1511,9 +1567,12 @@ function main() {
   if (command === 'freshness-due') {
     process.exit(freshnessDue(flags.last || '', flags.days || '7') ? 0 : 1);
   }
-  if (command === 'publish-check' || command === 'commit-check') {
+  if (command === 'publish-check' || command === 'commit-check' || command === 'range-check') {
     const wt = flags.worktree || flags._[0] || '';
-    const denied = command === 'commit-check' ? deniedCommitPaths(wt) : deniedPaths(wt);
+    let denied;
+    if (command === 'commit-check') denied = deniedCommitPaths(wt);
+    else if (command === 'range-check') denied = deniedSince(wt, flags.base || '');
+    else denied = deniedPaths(wt);
     if (denied.length) {
       process.stdout.write(`${denied.join('\n')}\n`);
       process.exit(1);
