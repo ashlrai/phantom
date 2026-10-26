@@ -180,6 +180,15 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
     minEffort: 2, apiModelId: DEFAULT_CODEX_MODEL_ID,
   },
+  // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
+  // Pricing is a routing estimate, not account admission or spending authority.
+  {
+    id: 'claude:claude-haiku-5-5', engine: 'claude', tier: 'small',
+    // Conservative >100k prompt rate; shorter prompts cost $0.10/$0.50.
+    costPerMTokIn: 0.5, costPerMTokOut: 2.5,
+    capabilities: ['fast', 'general', 'long-context'],
+    minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
+  },
   // -- Claude (subscription / token-billed via API) -------------------------
   {
     id: 'claude:opus',
