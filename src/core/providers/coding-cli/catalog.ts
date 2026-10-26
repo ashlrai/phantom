@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isBillingClass, type BillingClass } from '../../routing/billing-class.js';
+import { omlxBaseUrl } from './omlx.js';
 
 export const ACCOUNT_STATUSES = ['unverified', 'listed', 'rejected', 'accepted'] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
@@ -32,8 +33,13 @@ export interface BackendRecord {
   bin: string | null;
   enabledByDefault: boolean;
   meteredReason?: string;
+  /** Name only. The Devin key is never loaded from this field. */
   secretName?: string;
   installed?: boolean;
+  /** OpenAI-compatible base URL. oMLX accepts a loopback URL only. */
+  baseUrl?: string;
+  /** When set, this backend is used only if `fallbackFor` cannot serve. */
+  fallbackFor?: string;
 }
 
 export interface CodingCliCatalog {
@@ -119,6 +125,8 @@ export function parseCatalog(text: string): CodingCliCatalog {
       if (typeof row['installed'] !== 'boolean') fail(`backends.${id}.installed`);
       record.installed = row['installed'];
     }
+    if (row['baseUrl'] !== undefined) record.baseUrl = str(row['baseUrl'], `backends.${id}.baseUrl`);
+    if (row['fallbackFor'] !== undefined) record.fallbackFor = str(row['fallbackFor'], `backends.${id}.fallbackFor`);
     backends[id] = record;
   }
   const tiersRaw = root['tiers'];
@@ -179,12 +187,31 @@ export function usableModelName(candidate: TierCandidate | undefined): string | 
   return candidate.candidate;
 }
 
+/** oMLX first when its loopback URL is usable, then Ollama. */
+export function localBackendOrder(catalog: CodingCliCatalog): string[] {
+  const order: string[] = [];
+  const omlx = catalog.backends['omlx'];
+  if (omlx?.enabledByDefault && omlxBaseUrl(omlx)) order.push('omlx');
+  const ollama = catalog.backends['ollama'];
+  if (ollama && ollama.enabledByDefault) order.push('ollama');
+  return order;
+}
+
 /**
- * Largest installed local generator that fits in 60% of RAM. Embedding tags
- * are not coding models. A `listed` row still needs a probe before a live run.
+ * Largest installed local generator that fits in 60% of RAM, on the preferred
+ * local backend. Embedding tags are not coding models. oMLX wins when it has
+ * a fitting row. Ollama is the fallback. A `listed` row still needs a probe
+ * before a live run.
  */
 export function selectLocalCandidate(catalog: CodingCliCatalog, ramGb = catalog.machine.ramGb): TierCandidate | null {
   const budget = ramGb * 0.6;
-  const rows = catalog.tiers.local.filter((row) => row.task !== 'embed' && (row.sizeGb === undefined || row.sizeGb <= budget));
-  return rows.sort((a, b) => (b.sizeGb ?? 0) - (a.sizeGb ?? 0) || a.candidate.localeCompare(b.candidate))[0] ?? null;
+  const fitting = catalog.tiers.local.filter((row) => row.task !== 'embed' && (row.sizeGb === undefined || row.sizeGb <= budget));
+  const pick = (rows: readonly TierCandidate[]): TierCandidate | null => [...rows].sort(
+    (a, b) => (b.sizeGb ?? 0) - (a.sizeGb ?? 0) || a.candidate.localeCompare(b.candidate),
+  )[0] ?? null;
+  for (const backend of localBackendOrder(catalog)) {
+    const chosen = pick(fitting.filter((row) => row.backend === backend));
+    if (chosen) return chosen;
+  }
+  return null;
 }

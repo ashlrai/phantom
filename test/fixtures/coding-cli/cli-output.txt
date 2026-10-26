@@ -3,8 +3,11 @@
 
 codex version: codex 0.164.0
 claude version: 2.1.280 (Claude Code)
-grok models:
-You are using XAI_API_KEY
+grok models: You are using XAI_API_KEY
+grok subscription: You are signed in with a grok subscription
+grok both: You are signed in with a grok subscription. You are using XAI_API_KEY
+codex auth error: ERROR: authentication error: could not refresh token
+codex login error: ERROR: not logged in. please run codex login
 grok-build-0.1
 grok-4.20-0309-non-reasoning
 grok-4.20-0309-reasoning

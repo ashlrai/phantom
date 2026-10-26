@@ -16,7 +16,8 @@
     "grok": 1,
     "devin": 1,
     "cursor": 1,
-    "ollama": 1
+    "ollama": 1,
+    "omlx": 1
   },
   "backends": {
     "codex": { "billing": "subscription", "bin": "codex", "enabledByDefault": true },
@@ -24,7 +25,8 @@
     "grok": { "billing": "metered", "bin": "grok", "enabledByDefault": false, "meteredReason": "grok models reported You are using XAI_API_KEY" },
     "devin": { "billing": "metered", "bin": null, "enabledByDefault": false, "secretName": "DEVIN_API_KEY" },
     "cursor": { "billing": "subscription", "bin": "cursor-agent", "enabledByDefault": false },
-    "ollama": { "billing": "local", "bin": "ollama", "enabledByDefault": true },
+    "omlx": { "billing": "loopback", "bin": null, "enabledByDefault": true, "baseUrl": "http://127.0.0.1:8000/v1" },
+    "ollama": { "billing": "local", "bin": "ollama", "enabledByDefault": true, "fallbackFor": "omlx" },
     "lmstudio": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false },
     "mlx": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false }
   },

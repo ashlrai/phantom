@@ -6,12 +6,13 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdWorker } from '../src/cli/worker.js';
 import { evaluateMergeAuthority } from '../src/core/inbox/merge.js';
-import { adapterById, grokOutputIsMetered, interpretModelProbe } from '../src/core/providers/coding-cli/adapters.js';
-import { loadCatalog, selectLocalCandidate, usableModelName } from '../src/core/providers/coding-cli/catalog.js';
+import { adapterById, grokBillingFromStatus, grokOutputIsMetered, interpretModelProbe } from '../src/core/providers/coding-cli/adapters.js';
+import { loadCatalog, selectLocalCandidate, usableModelName, type CodingCliCatalog } from '../src/core/providers/coding-cli/catalog.js';
+import { omlxModelsUrl, probeOmlx } from '../src/core/providers/coding-cli/omlx.js';
 import { isSecretEnvName, scrubAdapterEnv } from '../src/core/providers/coding-cli/env.js';
 import { cooldownActive, parseCliCooldown } from '../src/core/providers/coding-cli/limits.js';
 import { probeAvailability, probeModel, type CliRunner } from '../src/core/providers/coding-cli/probe.js';
@@ -51,14 +52,74 @@ describe('coding CLI catalog from the Mac inventory', () => {
     expect(catalog.meteredEnabledByDefault).toBe(false);
     expect(catalog.backends.codex?.billing).toBe('subscription');
     expect(catalog.backends.ollama?.billing).toBe('local');
+    expect(catalog.backends.ollama?.fallbackFor).toBe('omlx');
+    expect(catalog.backends.omlx?.billing).toBe('loopback');
+    expect(omlxModelsUrl(catalog.backends.omlx?.baseUrl ?? '')).toBe('http://127.0.0.1:8000/v1/models');
   });
 
   it('picks the largest installed local generator that fits RAM', () => {
     const chosen = selectLocalCandidate(catalog, 128);
+    expect(chosen?.backend).toBe('ollama');
     expect(chosen?.candidate).toBe('qwen3.8:27b-ctx64k');
     expect(selectLocalCandidate(catalog, 30)?.candidate).toBe('gpt-oss:20b');
     expect(catalog.backends.lmstudio?.installed).toBe(false);
     expect(catalog.backends.mlx?.installed).toBe(false);
+  });
+
+  it('prefers a fitting oMLX model and falls back to Ollama', () => {
+    const omlxRow = { intent: 'local omlx', backend: 'omlx', candidate: 'local-small', accountStatus: 'listed' as const, sizeGb: 2, task: 'generate' as const };
+    const withOmlx: CodingCliCatalog = {
+      ...catalog,
+      tiers: { ...catalog.tiers, local: [omlxRow, ...catalog.tiers.local] },
+    };
+    expect(selectLocalCandidate(withOmlx, 128)?.backend).toBe('omlx');
+    expect(selectLocalCandidate(withOmlx, 128)?.candidate).toBe('local-small');
+    const remote: CodingCliCatalog = {
+      ...withOmlx,
+      backends: {
+        ...withOmlx.backends,
+        omlx: { billing: 'loopback', bin: null, enabledByDefault: true, baseUrl: 'http://10.1.2.3:8000/v1' },
+      },
+    };
+    expect(selectLocalCandidate(remote, 128)?.backend).toBe('ollama');
+    const tooBig: CodingCliCatalog = {
+      ...catalog,
+      tiers: {
+        ...catalog.tiers,
+        local: [{ ...omlxRow, sizeGb: 100 }, ...catalog.tiers.local],
+      },
+    };
+    expect(selectLocalCandidate(tooBig, 30)?.candidate).toBe('gpt-oss:20b');
+  });
+});
+
+describe('oMLX loopback', () => {
+  it('lists models on loopback and does not request a remote host', async () => {
+    const seen: { url: string; headers: Record<string, string> }[] = [];
+    const listed = await probeOmlx('http://127.0.0.1:8000/v1', async (url, init) => {
+      seen.push({ url, headers: init.headers });
+      return { status: 200, text: async () => JSON.stringify({ data: [{ id: 'local-small' }] }) };
+    });
+    expect(listed).toEqual({ ok: true, models: ['local-small'] });
+    expect(seen.map((call) => call.url)).toEqual(['http://127.0.0.1:8000/v1/models']);
+    expect(JSON.stringify(seen[0]?.headers).toLowerCase()).not.toContain('authorization');
+    let called = false;
+    const refused = await probeOmlx('http://10.1.2.3:8000/v1', async () => {
+      called = true;
+      return { status: 200, text: async () => '{}' };
+    });
+    expect(called).toBe(false);
+    expect(refused).toEqual({ ok: false, reason: 'remote-not-allowed' });
+    expect(omlxModelsUrl('http://example.com/v1')).toBeNull();
+  });
+});
+
+describe('grok billing', () => {
+  it('prefers a subscription login over the metered API key line', () => {
+    expect(grokBillingFromStatus(line('grok models:'))).toBe('metered');
+    expect(grokOutputIsMetered(line('grok models:'))).toBe(true);
+    expect(grokBillingFromStatus(line('grok subscription:'))).toBe('subscription');
+    expect(grokBillingFromStatus(line('grok both:'))).toBe('subscription');
   });
 });
 
@@ -231,7 +292,15 @@ describe('worker plan', () => {
   });
 
   it('does not log a Devin key', async () => {
-    const secret = 'super-secret-value-xyz';
+    const key = 'cog_ProcessEnvOnlyKey99';
+    const lookup = 'lookup-secret-key-should-not-leak';
+    const sourceEnvKey = 'source-env-key-should-not-leak';
+    vi.stubEnv('DEVIN_API_KEY', key);
+    const logs: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) => vi.spyOn(console, method).mockImplementation((...parts: unknown[]) => {
+      logs.push(parts.map((part) => String(part)).join(' '));
+    }));
+    let gets = 0;
     const step = {
       number: 9,
       title: 'Devin',
@@ -245,14 +314,31 @@ describe('worker plan', () => {
       worktree: '/tmp/issue-9',
       pullRequest: 'draft' as const,
     };
-    const result = await executeStep(step, { number: 9, title: 'Devin', body: '', labels: [] }, catalog, runner(() => {
+    const issue = { number: 9, title: 'Devin', body: 'draft a fix', labels: ['route:any'] };
+    const plan = planWorker({ catalog, issues: [issue], repo, nowMs: NOW });
+    const planText = formatPlan(plan);
+    const result = await executeStep(step, issue, catalog, runner(() => {
       throw new Error('runner must not be called');
-    }), {}, { get: (name) => (name === 'DEVIN_API_KEY' ? secret : null) });
-    expect(result.ok).toBe(false);
-    expect(result.detail).toMatch(/not logged|stubbed|key is present/i);
-    expect(result.detail).not.toContain(secret);
+    }), { DEVIN_API_KEY: sourceEnvKey }, { get: () => { gets += 1; return lookup; } });
+    const rendered = [planText, result.detail, result.commands.join('\n'), logs.join('\n'), JSON.stringify(result), JSON.stringify(plan)].join('\n');
+    expect(gets).toBe(0);
+    expect(result.detail).toMatch(/key is present and was not logged/);
     expect(result.commands).toEqual([]);
+    for (const secret of [key, lookup, sourceEnvKey]) expect(rendered).not.toContain(secret);
+    vi.unstubAllEnvs();
+    const absent = await executeStep(step, issue, catalog, runner(() => {
+      throw new Error('runner must not be called');
+    }), { DEVIN_API_KEY: sourceEnvKey }, { get: () => lookup });
+    expect(absent.detail).toMatch(/No key is configured/);
+    expect(absent.detail).not.toContain(lookup);
+    expect(absent.detail).not.toContain(sourceEnvKey);
+    for (const spy of spies) spy.mockRestore();
   });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 describe('fake codex binary', () => {

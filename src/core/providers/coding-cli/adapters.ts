@@ -112,6 +112,16 @@ function adapters(catalog: CodingCliCatalog): CodingCliAdapter[] {
       verifyArgs: null,
       execArgs: () => [],
     },
+    {
+      id: 'omlx',
+      billing: billing('omlx'),
+      bin: null,
+      capabilities: { editInWorkspace: false, headless: true },
+      versionArgs: [],
+      statusArgs: null,
+      verifyArgs: null,
+      execArgs: () => [],
+    },
   ];
 }
 
@@ -126,6 +136,18 @@ export function adapterById(catalog: CodingCliCatalog, id: string): CodingCliAda
 /** `grok models` text that names the API key billing mode. */
 export function grokOutputIsMetered(text: string): boolean {
   return /XAI_API_KEY/i.test(text);
+}
+
+const GROK_SUBSCRIPTION = /subscription|super\s*grok|signed in|logged in/i;
+
+/**
+ * A subscription line wins when both appear. The API-key line stays metered.
+ * Anything else is unknown and does not opt the backend in.
+ */
+export function grokBillingFromStatus(text: string): 'subscription' | 'metered' | 'unknown' {
+  if (GROK_SUBSCRIPTION.test(text) && !/not subscribed/i.test(text)) return 'subscription';
+  if (grokOutputIsMetered(text)) return 'metered';
+  return 'unknown';
 }
 
 const LOGGED_OUT = /not logged in|login expired|please run .*login|sign in/i;

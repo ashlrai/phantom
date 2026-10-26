@@ -10,6 +10,7 @@ import type { BillingClass } from '../../routing/billing-class.js';
 import { adapterById } from './adapters.js';
 import type { CodingCliCatalog } from './catalog.js';
 import { scrubAdapterEnv } from './env.js';
+import { omlxBaseUrl } from './omlx.js';
 import { cooldownActive, type CliCooldown } from './limits.js';
 import type { CliResult, CliRunner } from './probe.js';
 
@@ -207,8 +208,19 @@ function goalText(issue: IssueJob): string {
 }
 
 /**
+ * The Devin key is this process environment variable and nothing else.
+ * Catalog `secretName` and `SecretLookup.get` are not consulted.
+ */
+export function devinApiKeyFromProcess(): string | null {
+  const value = process.env['DEVIN_API_KEY'];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
  * Run one planned step. Draft PR only. The runner sees a scrubbed environment.
- * Devin consults the secret lookup and records only whether a key was present.
+ * Devin records only whether process.env.DEVIN_API_KEY is non-empty.
  */
 export async function executeStep(
   step: WorkerPlanStep,
@@ -230,9 +242,13 @@ export async function executeStep(
   const adapter = adapterById(catalog, step.backend);
   if (!adapter) return fail('adapter missing');
   if (step.backend === 'devin') {
-    const name = catalog.backends.devin?.secretName ?? 'DEVIN_API_KEY';
-    const present = secrets.get(name) !== null;
+    void secrets;
+    const present = devinApiKeyFromProcess() !== null;
     return fail(present ? 'Devin dispatch is stubbed. A key is present and was not logged.' : 'Devin dispatch is stubbed. No key is configured.');
+  }
+  if (step.backend === 'omlx') {
+    if (!omlxBaseUrl(catalog.backends['omlx'])) return fail('omlx accepts a loopback base URL only');
+    return fail('omlx execution is stubbed on this worker');
   }
   if (step.backend === 'cursor' || step.backend === 'ollama' || !adapter.bin || adapter.execArgs('', '', null).length === 0) {
     return fail(`${step.backend} execution is stubbed on this worker`);
