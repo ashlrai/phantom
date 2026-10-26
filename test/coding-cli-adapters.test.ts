@@ -279,7 +279,7 @@ process.exit(2);
 });
 
 describe('worker CLI dry-run', () => {
-  it('prints the plan and refuses drain', async () => {
+  it('prints the plan and assigns drain without spawning', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'coding-cli-issues-'));
     const issues = join(dir, 'issues.json');
     writeFileSync(issues, JSON.stringify([{ number: 3, title: 'Docs', body: '', labels: ['route:claude'] }]));
@@ -296,8 +296,10 @@ describe('worker CLI dry-run', () => {
       expect(logs.join('\n')).toContain('dry-run');
       expect(logs.join('\n')).toContain('claude');
       expect(logs.join('\n')).not.toContain('spawn');
-      expect(await cmdWorker(['drain', '--issues-file', issues, '--repo', dir])).toBe(2);
-      expect(errors.join('\n')).toMatch(/not wired/);
+      expect(await cmdWorker(['drain', '--issues-file', issues, '--repo', dir])).toBe(0);
+      expect(logs.join('\n')).toContain('spawned: no');
+      expect(logs.join('\n')).toContain('merged: no');
+      expect(errors.join('\n')).not.toMatch(/not wired/);
     } finally {
       spy.mockRestore();
       err.mockRestore();

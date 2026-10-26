@@ -17,7 +17,11 @@ import { readFileSync } from 'node:fs';
 
 import { loadConfig, saveConfig } from '../core/config.js';
 import { loadCatalog } from '../core/providers/coding-cli/catalog.js';
+import { devinCredentials } from '../core/providers/coding-cli/devin-gate.js';
 import { planLabelledWork } from '../core/providers/coding-cli/policy.js';
+import { runDrainTick } from '../core/providers/coding-cli/scheduler/drain.js';
+import { loadSchedulerConfig } from '../core/providers/coding-cli/scheduler/defaults.js';
+import { createPosthogSink, createTelemetry } from '../core/providers/coding-cli/scheduler/telemetry.js';
 import { formatPlan, parseIssues } from '../core/providers/coding-cli/worker-plan.js';
 import { noColorRequested } from './ui.js';
 import { setupWizard } from '../core/onboard.js';
@@ -232,7 +236,8 @@ const WORKER_USAGE = [
   '  ashlr worker status',
   '  ashlr worker --dry-run [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
   '  ashlr worker plan [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
-  '  ashlr worker drain --issues-file <json> --repo <path> [--enable-metered]',
+  '  ashlr worker drain --issues-file <json> [--decision-log <path>] [--enable-metered] [--json]',
+  '  drain assigns pools and spawns nothing. It does not open or merge a pull request.',
 ];
 
 function flagValue(args: readonly string[], name: string): string | undefined {
@@ -243,17 +248,63 @@ function flagValue(args: readonly string[], name: string): string | undefined {
   return value;
 }
 
+function formatSchedule(result: Awaited<ReturnType<typeof runDrainTick>>): string {
+  const lines = [`scheduler ${result.status} via ${result.solver}`, 'spawned: no', 'merged: no'];
+  for (const row of result.decisions) {
+    const target = row.poolId === null ? 'unassigned' : `${row.poolId}${row.consumer ? `:${row.consumer}` : ''}`;
+    lines.push(`${row.jobId} ${row.jobType} -> ${target}`);
+  }
+  lines.push(`grok-ultra-weekly estimate remaining ${result.ultra.remaining.toFixed(4)} reset ${new Date(result.ultra.resetAtMs).toISOString()} (${result.ultra.label})`);
+  return lines.join('\n');
+}
+
 /**
  * Print the queue plan. `--dry-run` and `plan` never spawn a CLI or open a PR.
- * `drain` is refused here until the policy pass lands: this slice plans only.
+ * `drain` solves the pool assignment and does not spawn or merge.
  */
 async function cmdWorkerQueue(args: string[]): Promise<number> {
   const execute = args[0] === 'drain' && !args.includes('--dry-run');
   const issuesPath = flagValue(args, '--issues-file');
   const repo = flagValue(args, '--repo') ?? process.cwd();
   if (execute) {
-    console.error('worker drain is not wired in this slice. Re-run with --dry-run to print the plan.');
-    return 2;
+    if (!issuesPath) {
+      console.error('worker drain needs --issues-file. Nothing was spawned.');
+      return 2;
+    }
+    let issues: ReturnType<typeof parseIssues>;
+    try {
+      issues = parseIssues(readFileSync(issuesPath, 'utf8'));
+    } catch (error) {
+      console.error(`worker: ${error instanceof Error ? error.message : String(error)}`);
+      return 2;
+    }
+    let catalog: ReturnType<typeof loadCatalog>;
+    try {
+      catalog = loadCatalog();
+    } catch (error) {
+      console.error(`worker: ${error instanceof Error ? error.message : String(error)}`);
+      return 2;
+    }
+    const config = loadSchedulerConfig();
+    const posthogOn = config.posthog.enabled && config.posthog.host !== null && config.posthog.apiKey !== null;
+    const telemetry = createTelemetry({
+      enabled: posthogOn,
+      ...(posthogOn && config.posthog.host && config.posthog.apiKey
+        ? { sink: createPosthogSink({ host: config.posthog.host, apiKey: config.posthog.apiKey }) }
+        : {}),
+    });
+    const result = await runDrainTick({
+      issues,
+      nowMs: Date.now(),
+      config,
+      meteredEnabled: args.includes('--enable-metered'),
+      devinEnabled: devinCredentials(process.env, catalog.backends['devin']?.orgId) !== null,
+      ...(flagValue(args, '--decision-log') ? { decisionLogPath: flagValue(args, '--decision-log') } : {}),
+      telemetry,
+    });
+    if (args.includes('--json')) console.log(JSON.stringify({ ...result, spawned: false, merged: false }));
+    else console.log(formatSchedule(result));
+    return 0;
   }
   let issues: ReturnType<typeof parseIssues> = [];
   if (issuesPath) {

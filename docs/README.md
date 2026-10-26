@@ -35,6 +35,7 @@ that every integration, provider or autonomous effect is active.
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Route work across logged-in coding CLIs by billing class | [Coding CLI adapters](CODING-CLI-ADAPTERS.md) |
+| Schedule coding pools with the optimizing router | [Coding-pool scheduler](router/SCHEDULER.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |

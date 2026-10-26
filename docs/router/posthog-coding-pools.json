@@ -1,0 +1,71 @@
+{
+  "name": "Phantom coding-pool scheduler",
+  "description": "Import these three insights into a PostHog dashboard. Events are emitted only when scheduler telemetry is enabled. Grok Ultra figures are estimates, not API readings.",
+  "events": [
+    {
+      "event": "phantom_pool_burndown",
+      "properties": [
+        "pool_id",
+        "remaining_fraction",
+        "used_fraction",
+        "unsplit_used_fraction",
+        "orchestrator_used",
+        "cloud_agent_used",
+        "reset_at",
+        "estimate",
+        "source",
+        "extra_usage_credits"
+      ]
+    },
+    {
+      "event": "phantom_grok_ultra_runway",
+      "properties": [
+        "remaining_fraction",
+        "hours_to_reset",
+        "runway_hours",
+        "orchestrator_used",
+        "cloud_agent_used",
+        "estimate",
+        "quota_readable_from_api"
+      ]
+    },
+    {
+      "event": "phantom_pool_value_per_dollar",
+      "properties": ["pool_id", "expected_value", "jobs", "monetary_cost", "value_per_dollar"]
+    }
+  ],
+  "insights": [
+    {
+      "name": "Grok Ultra burn-down",
+      "description": "Remaining weekly fraction against the configured reset. Labelled estimate.",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [{ "kind": "EventsNode", "event": "phantom_pool_burndown", "math": "avg", "math_property": "remaining_fraction" }],
+        "interval": "day",
+        "breakdownFilter": { "breakdowns": [{ "property": "pool_id", "type": "event" }] }
+      }
+    },
+    {
+      "name": "Grok Ultra runway",
+      "description": "Hours of paced runway until the weekly reset, split by orchestrator and cloud-agent sub-usage.",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [
+          { "kind": "EventsNode", "event": "phantom_grok_ultra_runway", "math": "avg", "math_property": "runway_hours" },
+          { "kind": "EventsNode", "event": "phantom_grok_ultra_runway", "math": "avg", "math_property": "hours_to_reset" }
+        ],
+        "interval": "day"
+      }
+    },
+    {
+      "name": "Value per dollar",
+      "description": "Net scheduler value divided by monetary cost. Null when the pool has no dollar cost.",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [{ "kind": "EventsNode", "event": "phantom_pool_value_per_dollar", "math": "avg", "math_property": "value_per_dollar" }],
+        "interval": "day",
+        "breakdownFilter": { "breakdowns": [{ "property": "pool_id", "type": "event" }] }
+      }
+    }
+  ]
+}
