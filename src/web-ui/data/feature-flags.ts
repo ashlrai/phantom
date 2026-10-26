@@ -5,6 +5,7 @@ export const FEATURE_FLAGS_STORAGE_KEY = 'ashlr.feature-flags.v1';
 let agentWorkspace: boolean | undefined;
 const listeners = new Set<() => void>();
 
+/** Read the allowlisted boolean; malformed or unavailable storage defaults off. */
 function readAgentWorkspace(): boolean {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY) ?? 'null');
@@ -17,12 +18,19 @@ function readAgentWorkspace(): boolean {
   }
 }
 
+/** Read the cached page-local choice, loading browser storage on first use. */
 export function getFeatureFlag(name: FeatureFlag): boolean {
   if (name !== 'agentWorkspace') return false;
   agentWorkspace ??= readAgentWorkspace();
   return agentWorkspace;
 }
 
+/**
+ * Update a presentation preference and notify this page's subscribers on change.
+ * Persistence is best effort: storage failure keeps the choice in memory until
+ * reload. Unknown flags and non-booleans are ignored; no native or server
+ * authority is requested. Other tabs observe the saved choice on their reload.
+ */
 export function setFeatureFlag(name: FeatureFlag, enabled: boolean): void {
   if (name !== 'agentWorkspace' || typeof enabled !== 'boolean') return;
   if (getFeatureFlag(name) === enabled) return;
@@ -36,6 +44,7 @@ export function setFeatureFlag(name: FeatureFlag, enabled: boolean): void {
   for (const listener of [...listeners]) listener();
 }
 
+/** Subscribe to page-local changes; call the returned function to unsubscribe. */
 export function subscribeFeatureFlags(listener: () => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
