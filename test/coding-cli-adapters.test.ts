@@ -249,7 +249,7 @@ describe('worker plan', () => {
       throw new Error('runner must not be called');
     }), {}, { get: (name) => (name === 'DEVIN_API_KEY' ? secret : null) });
     expect(result.ok).toBe(false);
-    expect(result.detail).toMatch(/not logged|stubbed|key is present/i);
+    expect(result.detail).toMatch(/disabled until DEVIN_API_KEY/);
     expect(result.detail).not.toContain(secret);
     expect(result.commands).toEqual([]);
   });

@@ -22,12 +22,16 @@
     "codex": { "billing": "subscription", "bin": "codex", "enabledByDefault": true },
     "claude": { "billing": "subscription", "bin": "claude", "enabledByDefault": true },
     "grok": { "billing": "metered", "bin": "grok", "enabledByDefault": false, "meteredReason": "grok models reported You are using XAI_API_KEY" },
-    "devin": { "billing": "metered", "bin": null, "enabledByDefault": false, "secretName": "DEVIN_API_KEY" },
+    "devin": { "billing": "metered", "bin": null, "enabledByDefault": false, "secretName": "DEVIN_API_KEY", "orgId": "org-c65eb6611a9c4a3697fa7e6630d101d6" },
     "cursor": { "billing": "subscription", "bin": "cursor-agent", "enabledByDefault": false },
     "ollama": { "billing": "local", "bin": "ollama", "enabledByDefault": true },
     "lmstudio": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false },
     "mlx": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false }
   },
+  "accounts": [
+    { "id": "codex-primary", "backend": "codex", "homeEnv": "CODEX_HOME", "requiresHome": false },
+    { "id": "codex-secondary", "backend": "codex", "homeEnv": "CODEX_HOME_ALT", "requiresHome": true }
+  ],
   "tiers": {
     "frontier": [
       { "intent": "Astra 6", "backend": "codex", "candidate": "gpt-6-astra", "accountStatus": "unverified" },
