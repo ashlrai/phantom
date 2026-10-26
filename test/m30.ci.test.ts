@@ -138,12 +138,12 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
+    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false', platformDeferred = 'false') => {
       const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
         result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
-        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred, PLATFORM_DEFERRED: platformDeferred } }, console: { log: () => {} },
       });
     };
     const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
@@ -161,6 +161,15 @@ describe('M30 CI workflow', () => {
     expect(execute('full', { ...complete, site: 'skipped', docs: 'success' })).toThrow();
     expect(execute('bogus', { ...site, site: 'skipped', docs: 'success' })).toThrow();
     expect(execute('full', { ...complete, site: 'skipped', docs: 'skipped' })).not.toThrow();
+    // No platform code changed: macOS and Windows legs may be skipped, never
+    // failed, and the Linux authority matrix still has to pass.
+    const linuxOnly = { ...site, ci: 'success', site: 'skipped', docs: 'skipped' };
+    expect(execute('full', linuxOnly, 'success', 'false', 'true')).not.toThrow();
+    expect(execute('full', linuxOnly)).toThrow();
+    expect(execute('full', { ...linuxOnly, ci: 'skipped' }, 'success', 'false', 'true')).toThrow();
+    for (const outcome of ['failure', 'cancelled']) {
+      expect(execute('full', { ...linuxOnly, ci: outcome }, 'success', 'false', 'true')).toThrow();
+    }
     for (const name of full) {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
         expect(execute('full', { ...complete, [name]: outcome, site: 'skipped', docs: 'skipped' }), `${name}: ${outcome}`).toThrow();
@@ -461,7 +470,10 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Job> };
     const ci = jobs.ci!;
     const shared = jobs['ci-shared-macos']!;
-    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}' });
+    expect(jobs.classify?.outputs).toEqual({
+      lane: '${{ steps.lane.outputs.lane }}',
+      platform: '${{ steps.platform.outputs.platform }}',
+    });
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
@@ -476,9 +488,11 @@ describe('M30 CI workflow', () => {
       expect(jobs[id]!.needs).toBe('classify');
       // Draft PRs skip only the Mac lanes. A push to master runs the Linux and
       // Windows portability matrix only; the nightly schedule runs the rest.
+      // macOS and Windows service legs also need platform code, ci:full or a nightly run.
       const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
       const push = id === 'ci' ? '' : " && github.event_name != 'push'";
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}`);
+      const platform = id === 'ci' ? '' : " && needs.classify.outputs.platform == 'true'";
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${platform}${draft}${push}`);
     }
     // The exhaustive Mac partition runs nightly, on reusable calls and on PRs
     // labelled ci:full-mac; unlabelled PRs and master pushes defer it.
