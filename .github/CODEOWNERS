@@ -420,6 +420,7 @@
 /test/local-escalation.test.ts @masonwyatt23
 /test/local-eval-comparison.test.ts @masonwyatt23
 /test/local-eval-heldout.test.ts @masonwyatt23
+/test/local-first-bandit.test.ts @masonwyatt23
 /test/local-leader-binding.test.ts @masonwyatt23
 /test/local-only-consumer-parity.test.ts @masonwyatt23
 /test/local-only-dispatch-paths.test.ts @masonwyatt23
