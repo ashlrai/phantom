@@ -73,7 +73,10 @@ jobs:
           const labels = JSON.parse(process.env.LABELS || '[]');
           if (labels.some((l) => ['ci:full-os', 'full-ci', 'ci:full-mac'].includes(l))) { out(true); process.exit(0); }
           const git = (...a) => execFileSync('git', a, { encoding: 'utf8' });
-          const files = git('diff', '--name-only', `${process.env.BASE_SHA}...${process.env.HEAD_SHA}`).split('\n').filter(Boolean);
+          // An unreadable diff runs the lanes (fail toward coverage).
+          let files;
+          try { files = git('diff', '--name-only', `${process.env.BASE_SHA}...${process.env.HEAD_SHA}`).split('\n').filter(Boolean); }
+          catch { console.log('::warning::diff unreadable; running platform lanes'); out(true); process.exit(0); }
           let owners = '';
           try { owners = git('show', `${process.env.BASE_SHA}:.github/CODEOWNERS`); } catch { out(true); process.exit(0); }
           const toRe = (pat) => {
