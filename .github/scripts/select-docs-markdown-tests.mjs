@@ -9,7 +9,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const MARKDOWN_READER = /\.md['"`]|['"`]docs\//;
-const REQUIRES_BUILT_DIST = /from\s+['"][^'"]*require-built-dist\.js['"]/;
+// Any static import of the helper, including a side-effect `import '...'`.
+const REQUIRES_BUILT_DIST = /(?:from|import)\s+['"][^'"]*require-built-dist\.js['"]/;
 
 export function isMarkdownReadingTest(source) {
   return MARKDOWN_READER.test(source);

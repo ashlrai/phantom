@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isMarkdownReadingTest,
+  requiresBuiltDist,
   selectDocsMarkdownTests,
 } from '../.github/scripts/select-docs-markdown-tests.mjs';
 
@@ -15,12 +16,18 @@ describe('docs lane Markdown test selection', () => {
     const sample = 'docs/README.md';
     expect(isMarkdownReadingTest(`readFileSync('${sample}')`)).toBe(true);
     expect(isMarkdownReadingTest('see README.md now')).toBe(false);
+    // Split so this file does not match the pattern and drop itself from the lane.
+    const helper = 'require-built-' + 'dist.js';
+    expect(requiresBuiltDist(`import './helpers/${helper}';`)).toBe(true);
+    expect(requiresBuiltDist(`import { x } from './helpers/${helper}';`)).toBe(true);
     const { selected, excluded } = selectDocsMarkdownTests(repoRoot);
+    // Intended drift guard: a new dist-backed Markdown reader must be added here.
     expect(excluded).toEqual([
       'test/m454.agent-skills-routing-challenge.test.ts',
       'test/m482.release-artifact-contract.test.ts',
     ]);
     expect(selected).toContain('test/docs-markdown-lane.test.ts');
+    expect(selected).toContain('test/m454.docs-canaries.test.ts');
     expect(selected).not.toContain('test/m454.agent-skills-routing-challenge.test.ts');
     expect(selected).not.toContain('test/m482.release-artifact-contract.test.ts');
     expect(selected).not.toContain('test/activation-readiness-package.test.ts');

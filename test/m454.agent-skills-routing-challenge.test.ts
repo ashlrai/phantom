@@ -553,17 +553,7 @@ describe('M454 pinned upstream routing challenge', () => {
       files?: string[];
       exports?: Record<string, unknown>;
     };
-    // Newly admitted operator guides remain documentation, not m454 fixture consumers.
-    for (const path of [
-      'docs/RESIDENT-RUNTIME.md', 'docs/AUTHORITY.md', 'docs/STANDING-AUTHORITY.md',
-      'docs/CLOUD.md', 'docs/LEADER.md', 'docs/DEVIN.md', 'docs/VERSE-CONTEXT.md',
-      'docs/VERSE-BROWSER.md', 'docs/JEV-INTEGRATION.md', 'docs/COMPANIONS.md',
-      'docs/PROACTIVE-COORDINATION.md', 'docs/PROACTIVE-COORDINATION-BACKLOG.md',
-      'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
-    ]) {
-      const source = readFileSync(join(REPO_ROOT, path), 'utf8');
-      for (const canary of consumerCanaries) expect(source).not.toContain(canary);
-    }
+    // Docs canary scan lives in m454.docs-canaries.test.ts so the docs lane runs it.
     // The exact published allowlist. It grew with the builtin preparation
     // verification helpers and reviewed shipped docs, each of which the release
     // inventory admits individually (m482); none is an m454 consumer, and the
