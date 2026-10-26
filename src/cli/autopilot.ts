@@ -66,10 +66,11 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   const { DEFAULT_LIMITS } = await import('../core/autopilot/diagnose.js');
   const maxPushes = val('--max-pushes') ? Number(val('--max-pushes')) : DEFAULT_LIMITS.maxPushes;
   if (!Number.isSafeInteger(maxPushes) || maxPushes < 0) { console.error('--max-pushes must be a whole number'); return 2; }
-  const interval = Math.max(15, Number(val('--interval') ?? 90)) * 1000;
+  const intervalSec = Number(val('--interval') ?? 90);
+  if (!Number.isFinite(intervalSec)) { console.error('--interval must be a number of seconds'); return 2; }
+  const interval = Math.max(15, intervalSec) * 1000;
   const json = args.includes('--json');
   const fixer = args.includes('--no-fixer') ? null : val('--fixer') ? splitCommand(val('--fixer')!) : [...DEFAULT_FIXER];
-  const guards = await liveGuards();
   const opts = {
     repo,
     number: ref.number,
@@ -79,7 +80,8 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
     verify: all('--verify').map(splitCommand).filter((v) => v.length),
     ownedPrefixes: [...DEFAULT_OWNED_PREFIXES, ...all('--prefix')],
     limits: { ...DEFAULT_LIMITS, maxPushes },
-    guards: () => guards,
+    // Read fresh on every call: tick re-checks KILL and pause right before each push.
+    guards: liveGuards,
   };
 
   let stop = false;
@@ -87,7 +89,6 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   const finished = new Set<number>();
   let failed = false;
   for (;;) {
-    Object.assign(guards, await liveGuards());
     let numbers = [ref.number];
     if (sweep) {
       try {

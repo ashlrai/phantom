@@ -185,7 +185,9 @@ async function stopNow(opts: TickOptions): Promise<string | null> {
 }
 
 /** Git with repository hooks and fsmonitor off: nothing the fixer planted in the tree runs. */
-export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.sshCommand=ssh'];
+export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.sshCommand=ssh',
+  // Fixed diff path prefixes and quoting: parseDiff and the tamper scans read `+++ b/<path>`.
+  '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/', '-c', 'core.quotePath=false'];
 
 /**
  * A digest of everything that changes what git runs or where it pushes: the
@@ -357,10 +359,18 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         const conflicted = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (!conflicted.length) return { result: 'error', detail: [`merge failed without conflicts: ${merged.stderr.trim().slice(0, 200)}`], newHead: null };
         if (!opts.fixer) { await git(wt, ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
+        // The commit takes the whole index, but only the conflicted files are the fixer's to change.
+        const stagedOutside = async () => {
+          const raw = await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--cached', '--raw', '--abbrev=40', pr.headSha]);
+          return raw.split('\n').filter((l) => l && !conflicted.includes(l.slice(l.indexOf('\t') + 1))).join('\n');
+        };
+        const outsideBefore = await stagedOutside();
         const fx = await runFixer(opts, wt, fixBrief(p, pr, { conflicted }), run);
         detail.push(fx);
         const changedGit = tampered();
         if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
+        if (await must(wt, ['rev-parse', 'HEAD']) !== pr.headSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD during the merge; nothing pushed'], newHead: null };
+        if (await stagedOutside() !== outsideBefore) return { result: 'refused', detail: [...detail, 'the fixer changed the index outside the conflicted files; nothing pushed'], newHead: null };
         const left = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         const markers = conflicted.filter((f) => { try { return /^(<{7}|>{7}|={7})( |$)/m.test(readFileSync(join(wt, f), 'utf8')); } catch { return false; } });
         if (markers.length) return { result: 'refused', detail: [...detail, `conflict markers remain in ${markers.join(', ')}`], newHead: null };

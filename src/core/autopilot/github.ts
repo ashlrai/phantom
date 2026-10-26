@@ -136,14 +136,23 @@ export async function readReviews(repo: string, pr: PrView, viewer: string, gh: 
     dropped.push(`review item ${String(id)} by ${login} (${str(association) || 'no association'}) ignored: not a repository member or collaborator`);
     return false;
   };
-  const comments = await api(gh, `repos/${assertRepo(repo)}/pulls/${pr.number}/comments?per_page=100`);
-  for (const c of (Array.isArray(comments) ? comments : []).map(obj)) {
+  // GitHub lists both oldest first, so the newest feedback is on the last pages.
+  const pages = async (path: string): Promise<Json[]> => {
+    const out: Json[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const raw = await api(gh, `${path}?per_page=100&page=${page}`);
+      const list = (Array.isArray(raw) ? raw : []).map(obj);
+      out.push(...list);
+      if (list.length < 100) break;
+    }
+    return out;
+  };
+  for (const c of await pages(`repos/${assertRepo(repo)}/pulls/${pr.number}/comments`)) {
     const author = str(obj(c['user'])['login']);
     if (str(c['commit_id']) !== pr.headSha || c['in_reply_to_id'] || !others(author, c['author_association'], c['id'])) continue;
     items.push({ id: Number(c['id']), kind: 'comment', author, body: scrubSecrets(str(c['body'])).slice(0, 4000), path: str(c['path']) || null, line: typeof c['line'] === 'number' ? c['line'] : null, createdAt: str(c['created_at']) });
   }
-  const reviews = await api(gh, `repos/${assertRepo(repo)}/pulls/${pr.number}/reviews?per_page=100`);
-  for (const r of (Array.isArray(reviews) ? reviews : []).map(obj)) {
+  for (const r of await pages(`repos/${assertRepo(repo)}/pulls/${pr.number}/reviews`)) {
     const author = str(obj(r['user'])['login']);
     if (r['state'] !== 'CHANGES_REQUESTED' || str(r['commit_id']) !== pr.headSha || !others(author, r['author_association'], r['id'])) continue;
     items.push({ id: Number(r['id']), kind: 'changes-requested', author, body: scrubSecrets(str(r['body'])).slice(0, 4000), path: null, line: null, createdAt: str(r['submitted_at']) });

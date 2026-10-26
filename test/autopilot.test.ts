@@ -268,6 +268,54 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
   });
 
+  /** A PR whose head and base both changed sum.js; GitHub reports it as conflicting. */
+  function conflicting(fixerBody: string) {
+    const f = fixture(fixerBody);
+    git(f.clone, 'checkout', '-q', '-b', 'side', f.head);
+    writeFileSync(join(f.clone, 'sum.js'), 'module.exports = (a, b) => b - a;\n');
+    git(f.clone, 'commit', '-qam', 'base change');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const base = git(f.clone, 'rev-parse', 'HEAD');
+    git(f.clone, 'checkout', '-q', '--detach', f.head);
+    writeFileSync(join(f.clone, 'sum.js'), 'module.exports = (a, b) => a * b;\n');
+    writeFileSync(join(f.clone, 'other.js'), 'module.exports = 1;\n');
+    git(f.clone, 'add', 'sum.js', 'other.js');
+    git(f.clone, 'commit', '-qm', 'head change');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:improve/sum');
+    const head = git(f.clone, 'rev-parse', 'HEAD');
+    const gh: Gh = async (args) => {
+      const path = args[args.length - 1]!;
+      if (path.endsWith('/pulls/7')) {
+        const pr = JSON.parse(await f.gh(args));
+        return JSON.stringify({ ...pr, head: { ...pr.head, sha: head }, base: { ref: 'main', sha: base }, mergeable: false, mergeable_state: 'dirty' });
+      }
+      return f.gh(args);
+    };
+    return { ...f, head, gh };
+  }
+
+  it('pushes a conflict resolution that touches only the conflicted files', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'merge-base', result: 'pushed' });
+  });
+
+  it('refuses a conflict resolution that also changes a staged file outside the conflicts', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js; echo 'module.exports = 2;' > other.js; git add other.js`);
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ plan: 'merge-base', result: 'refused', detail: expect.arrayContaining([expect.stringContaining('outside the conflicted files')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
+  });
+
+  it('still sees a skipped test when the operator uses mnemonic diff prefixes', async () => {
+    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js; printf "it.skip('adds', () => {});\\n" > sum.test.js`);
+    git(f.clone, 'config', 'diff.mnemonicPrefix', 'true');
+    const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('skips')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
+  });
+
   it('refuses a fix that fails verification or skips a test, and pushes nothing', async () => {
     const f = fixture(`echo 'module.exports = (a, b) => a * b;' > sum.js`);
     const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
