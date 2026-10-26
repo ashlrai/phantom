@@ -101,6 +101,7 @@
 /scripts/ship-local.mjs @masonwyatt23
 /scripts/local-app-transaction.mjs @masonwyatt23
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
+/scripts/canonical-npm-publisher.mjs @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
 **/*.entitlements @masonwyatt23
@@ -259,6 +260,7 @@
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
+/test/canonical-npm-publisher.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
 /test/cleanup-lock-identity.test.ts @masonwyatt23
 /test/cli-json-first-run.test.ts @masonwyatt23
@@ -800,6 +802,7 @@
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
+/test/release-publisher-provenance-pins.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23
 /test/reset-aware-scheduling.test.ts @masonwyatt23
