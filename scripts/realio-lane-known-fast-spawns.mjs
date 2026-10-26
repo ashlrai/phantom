@@ -17,6 +17,7 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/cycle-emit.test.ts', // 0.10s maximum on 2026-10-26 JSON report; three offline Node children, each bounded to 1s, isolated HOME.
   'test/m81.engine-readiness.test.ts', // 0.04s on 2026-10-10; one bounded loopback fixture and system curl probe
   'test/m396.automerge-canary-classifier.test.ts', // 2.8s
   'test/m49.fleet-status.test.ts', // 2.5s
