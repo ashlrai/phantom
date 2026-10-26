@@ -204,7 +204,7 @@ describe('hosted portability coverage', () => {
       fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
     ) as {
       jobs?: {
-        ci?: {
+        'ci-windows'?: {
           strategy?: {
             matrix?: {
               include?: Array<{ os?: string; test_args?: string }>;
@@ -213,7 +213,7 @@ describe('hosted portability coverage', () => {
         };
       };
     };
-    const jobs = workflow.jobs?.ci?.strategy?.matrix?.include ?? [];
+    const jobs = workflow.jobs?.['ci-windows']?.strategy?.matrix?.include ?? [];
     expect(jobs.some(job =>
       job.os === 'windows-latest' &&
       job.test_args?.split(/\s+/).includes('test/m18.editors.test.ts'),
