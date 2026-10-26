@@ -13,7 +13,11 @@
  *   4. optional shared-queue registration (cfg.fleet.sharedQueue)
  */
 
+import { readFileSync } from 'node:fs';
+
 import { loadConfig, saveConfig } from '../core/config.js';
+import { loadCatalog } from '../core/providers/coding-cli/catalog.js';
+import { formatPlan, parseIssues, planWorker } from '../core/providers/coding-cli/worker-plan.js';
 import { noColorRequested } from './ui.js';
 import { setupWizard } from '../core/onboard.js';
 import { enroll, listEnrolled } from '../core/sandbox/policy.js';
@@ -225,7 +229,58 @@ const WORKER_USAGE = [
   'usage:',
   '  ashlr worker setup ...  (temporarily unavailable; performs no setup mutation)',
   '  ashlr worker status',
+  '  ashlr worker --dry-run [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
+  '  ashlr worker plan [--issues-file <json>] [--repo <path>] [--enable-metered] [--json]',
+  '  ashlr worker drain --issues-file <json> --repo <path> [--enable-metered]',
 ];
+
+function flagValue(args: readonly string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) return undefined;
+  return value;
+}
+
+/**
+ * Print the queue plan. `--dry-run` and `plan` never spawn a CLI or open a PR.
+ * `drain` is refused here until the policy pass lands: this slice plans only.
+ */
+async function cmdWorkerQueue(args: string[]): Promise<number> {
+  const execute = args[0] === 'drain' && !args.includes('--dry-run');
+  const issuesPath = flagValue(args, '--issues-file');
+  const repo = flagValue(args, '--repo') ?? process.cwd();
+  if (execute) {
+    console.error('worker drain is not wired in this slice. Re-run with --dry-run to print the plan.');
+    return 2;
+  }
+  let issues: ReturnType<typeof parseIssues> = [];
+  if (issuesPath) {
+    try {
+      issues = parseIssues(readFileSync(issuesPath, 'utf8'));
+    } catch (error) {
+      console.error(`worker: ${error instanceof Error ? error.message : String(error)}`);
+      return 2;
+    }
+  }
+  let catalog: ReturnType<typeof loadCatalog>;
+  try {
+    catalog = loadCatalog();
+  } catch (error) {
+    console.error(`worker: ${error instanceof Error ? error.message : String(error)}`);
+    return 2;
+  }
+  const plan = planWorker({
+    catalog,
+    issues,
+    repo,
+    nowMs: Date.now(),
+    meteredEnabled: args.includes('--enable-metered'),
+  });
+  if (args.includes('--json')) console.log(JSON.stringify(plan));
+  else console.log(formatPlan(plan));
+  return 0;
+}
 
 export async function cmdWorker(args: string[]): Promise<number> {
   const sub = args[0];
@@ -236,6 +291,10 @@ export async function cmdWorker(args: string[]): Promise<number> {
   if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
     for (const line of WORKER_USAGE) console.log(line);
     return 0;
+  }
+
+  if (args.includes('--dry-run') || sub === 'plan' || sub === 'drain') {
+    return cmdWorkerQueue(args);
   }
 
   switch (sub) {

@@ -82,7 +82,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'recover-state', 'resolve-state', 'install', 'uninstall', 'service-status',
     'pause', 'resume', 'doctor',
   ],
-  worker: ['setup', 'status'],
+  worker: ['setup', 'status', 'plan', 'drain'],
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
