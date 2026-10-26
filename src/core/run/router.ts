@@ -37,7 +37,7 @@ import type { AshlrConfig, EscalationReason, RouteDecision, WorkItem } from '../
 import { getProviderRegistry } from '../providers.js';
 import { estCostUsd } from './budget.js';
 import {
-  KNOWN_MODELS,
+  routingModelEntries,
   pickModel,
   claude5ExcludeIds,
   CLAUDE5_CATALOG_IDS,
@@ -428,7 +428,7 @@ function learnedEntryForEngine(
   minShipRate: number,
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
-  const candidates = KNOWN_MODELS.filter((entry) =>
+  const candidates = routingModelEntries().filter((entry) =>
     !entry.historical && entry.engine === engine &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
@@ -444,7 +444,7 @@ export function modelForSelectedEngine(item: WorkItem, engine: EngineId, cfg: As
   }
   const configured = resolveSelectedEngineModel({ engine, configured: cfg.foundry?.models?.[engine] });
   if (configured) return { engine, model: configured,
-    catalogEntry: KNOWN_MODELS.find(entry => entry.engine === engine &&
+    catalogEntry: routingModelEntries().find(entry => entry.engine === engine &&
       (entry.id === `${engine}:${configured}` || entry.apiModelId === configured)) ?? null,
     reason: 'Explicit configured model for the selected engine.' };
   try {
@@ -462,7 +462,7 @@ export function modelForSelectedEngine(item: WorkItem, engine: EngineId, cfg: As
         reason: 'M323 qualified learned model for the selected engine.' };
     }
     const model = resolveSelectedEngineModel({ engine, spec: resolveEngineSpec(engine, cfg) });
-    return { engine, model, catalogEntry: model ? KNOWN_MODELS.find(entry => entry.engine === engine &&
+    return { engine, model, catalogEntry: model ? routingModelEntries().find(entry => entry.engine === engine &&
       (entry.id === `${engine}:${model}` || entry.apiModelId === model)) ?? null : null,
       reason: model ? 'Concrete default for the selected engine.' : 'Selected engine has no concrete model default.' };
   } catch {
@@ -660,7 +660,7 @@ function routeTaskUnenforced(
       if (cfgModel) {
         // Find catalog entry for the configured model
         const entry =
-          KNOWN_MODELS.find((m) => m.engine === engine && m.id.endsWith(':' + cfgModel)) ?? null;
+          routingModelEntries().find((m) => m.engine === engine && m.id.endsWith(':' + cfgModel)) ?? null;
         return {
           engine,
           model: cfgModel,
@@ -740,7 +740,7 @@ function routeTaskUnenforced(
         const cfgModel = cfg.foundry?.models?.[engine] ?? null;
         if (cfgModel) {
           const entry =
-            KNOWN_MODELS.find((m) => m.engine === engine && m.id.endsWith(':' + cfgModel)) ?? null;
+            routingModelEntries().find((m) => m.engine === engine && m.id.endsWith(':' + cfgModel)) ?? null;
           return { engine, model: cfgModel, catalogEntry: entry, reason: `${reason} (cfg override → ${cfgModel})` };
         }
         // M323: learned cost-aware pick first (flag-gated; null ⇒ static).
@@ -799,7 +799,7 @@ function routeTaskUnenforced(
       // Try haiku (cheapest Claude)
       const haiku = available('claude')
         ? (() => {
-            const entry = KNOWN_MODELS.find((m) => m.id === 'claude:haiku');
+            const entry = routingModelEntries().find((m) => m.id === 'claude:haiku');
             if (!entry) return null;
             return {
               engine: 'claude' as EngineId,
@@ -906,7 +906,7 @@ function routeTaskUnenforced(
         const costSonnetId = c5Excludes.has('claude:sonnet-5') ? 'claude:sonnet' : 'claude:sonnet-5';
         const sonnet = available('claude')
           ? (() => {
-              const entry = KNOWN_MODELS.find((m) => m.id === costSonnetId);
+              const entry = routingModelEntries().find((m) => m.id === costSonnetId);
               if (!entry) return null;
               return {
                 engine: 'claude' as EngineId,
@@ -933,7 +933,7 @@ function routeTaskUnenforced(
         const balSonnetId = c5Excludes.has('claude:sonnet-5') ? 'claude:sonnet' : 'claude:sonnet-5';
         const sonnet = available('claude')
           ? (() => {
-              const entry = KNOWN_MODELS.find((m) => m.id === balSonnetId);
+              const entry = routingModelEntries().find((m) => m.id === balSonnetId);
               if (!entry) return null;
               return {
                 engine: 'claude' as EngineId,

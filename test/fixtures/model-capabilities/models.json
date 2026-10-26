@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "id": "claude-opus-5-5", "type": "model", "line": "opus",
+      "max_input_tokens": 1000000, "max_tokens": 128000,
+      "capabilities": {
+        "thinking": { "supported": true, "types": {
+          "adaptive": { "supported": true }, "enabled": { "supported": false },
+          "disabled": { "supported": false }, "between_tools": { "supported": true }
+        } },
+        "server_tools": { "supported": true, "web_search": { "supported": true }, "code_execution": { "supported": false } }
+      },
+      "ignored_private_field": "must-not-be-cached"
+    }
+  ],
+  "has_more": false, "last_id": "claude-opus-5-5"
+}
