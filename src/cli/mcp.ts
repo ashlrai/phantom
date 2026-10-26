@@ -163,8 +163,6 @@ async function cmdMcpList(args: string[]): Promise<number> {
           tools: toolsReg,
           native: native.map(t => ({ name: t.name, safety: t.safety })),
         },
-        null,
-        2,
       ) + '\n',
     );
     return 0;
@@ -306,7 +304,7 @@ async function cmdMcpDoctor(args: string[]): Promise<number> {
   });
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(healths, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(healths) + '\n');
   } else {
     // Clear the "probing…" lines were written to stderr; now print table to stdout
     const nameW  = Math.max(8, ...healths.map(h => h.name.length));
@@ -880,7 +878,7 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
 }
 
 function writeEcosystemJson(payload: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(payload) + '\n');
 }
 
 /**
