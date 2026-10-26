@@ -11,6 +11,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [3.29.15] — Unreleased
 
+### Fixed
+- Local inference URLs and local Ollama defaults pin `localhost` to
+  `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
+  lookups refuse redirects instead of contacting another endpoint.
+
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
   value-free custody record with a fixed reason code, including when Phantom is
