@@ -802,6 +802,7 @@
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
+/test/release-path-policy-v2.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23
 /test/reset-aware-scheduling.test.ts @masonwyatt23
