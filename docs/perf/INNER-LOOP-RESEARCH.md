@@ -388,7 +388,7 @@ Proposed follow-up, one medium pull request in phantom, after this note:
 
 - A thin CLI handler and the logic in `src/core/`, named `ci-local`. The local mode runs the same planner as `scripts/gate.mjs`.
 - An `--impacted` mode is that local planner. It is feedback. It is not the merge command.
-- A stamp directory keyed by a hash of the changed file bytes, the lockfile, the tsconfig and vitest config, and the toolchain version. The hash compare measured here was 0.019 s for one file. A hit prints the previous green result and exits 0. A miss runs the real gate and writes the stamp only when that run exits 0. A red run is recorded as red so the next call does not report green.
+- A stamp directory keyed by a hash of every gate input: the sorted canonical changed-file paths and their bytes, the selected base ref and merge-base SHA, `scripts/gate.mjs`, `scripts/gate-smoke.json`, the lockfile, the tsconfig and vitest config, and the toolchain version. A change to any of these inputs produces a new key, so it invalidates the stamp. The hash compare measured here was 0.019 s for one file. A hit prints the previous green result and exits 0. A miss runs the real gate and writes the stamp only when that run exits 0. A red run is recorded as red so the next call does not report green.
 - CI jobs keep calling `npm run test:ci`, `npm run lint`, and `npm run build`. They do not read the stamp.
 - A second, smaller pull request can expose the same command as an MCP tool next to `ashlr_impact` in `src/core/mcp-native.ts`. Until that exists, an agent can run the CLI.
 
