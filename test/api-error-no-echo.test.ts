@@ -54,16 +54,18 @@ import { loadRun } from '../src/core/run/orchestrator.js';
 // the redaction path itself is exercised.
 // ---------------------------------------------------------------------------
 
-const WRONG_TOKEN_PROBE = 'probe-wrong-token-b7f2c9';
-const AUTH_PROBE = 'Bearer probe-authz-echo-k9m3';
-const COOKIE_PROBE = 'probe_cookie=pcv-echo-x4w7';
+// Every probe value embeds FAKE, and credential-shaped probes are assembled
+// at runtime, so no whole token literal ever sits in source.
+const WRONG_TOKEN_PROBE = ['probe', 'FAKE', 'wrong', 'token', 'b7f2c9'].join('-');
+const AUTH_PROBE = 'Bearer ' + 'probe-authz-FAKE-echo-k9m3';
+const COOKIE_PROBE = 'probe_cookie=pcv-FAKE-echo-x4w7';
 const READ_CLIENT_PROBE = 'e3f1'.repeat(16); // exactly 64 hex — the proof's real grammar
-const CUSTOM_HEADER_PROBE = 'probe-hdr-echo-z6y8';
-const UA_PROBE = 'probe-agent/9.9';
-const REFERER_PROBE = 'http://127.0.0.1/probe-referer-echo-q2w5';
-const QUERY_PROBE = 'probe-query-echo-r1t7';
-const SECRET_PROBE = 'sk-probeEchoToken0123456789abcdef';
-const PATH_PROBE = 'probe-path-echo-p3l8';
+const CUSTOM_HEADER_PROBE = 'probe-hdr-FAKE-echo-z6y8';
+const UA_PROBE = 'probe-agent/9.9-FAKE';
+const REFERER_PROBE = 'http://127.0.0.1/probe-FAKE-referer-echo-q2w5';
+const QUERY_PROBE = 'probe-query-FAKE-echo-r1t7';
+const SECRET_PROBE = ['sk', '-FAKE', '-probe', 'Echo', 'Token', '0123456789', 'abcdef'].join('');
+const PATH_PROBE = 'probe-path-FAKE-echo-p3l8';
 
 function probeHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
@@ -346,11 +348,11 @@ describe('unauthenticated boundary — denials echo nothing', () => {
   it('foreign Host → 403 that never quotes the supplied Host value', async () => {
     const h = await serve();
     const res = await httpRequest('GET', `${h.url}/api/snapshot`, {
-      Host: 'probe-host.evil.test',
+      Host: 'probe-host.FAKE.evil.test',
       ...probeHeaders(),
     });
     expect(res.statusCode).toBe(403);
-    expect(res.body).not.toContain('probe-host.evil.test');
+    expect(res.body).not.toContain('probe-host.FAKE.evil.test');
     expectNoEcho(res, [h.token, h.readToken]);
   });
 
@@ -366,12 +368,12 @@ describe('unauthenticated boundary — denials echo nothing', () => {
     const res = await httpRequest('POST', `${h.url}/api/session`, {
       Host: hostOf(h),
       'x-ashlr-token': h.readToken,
-      'x-ashlr-read-client': 'not-hex-probe',
+      'x-ashlr-read-client': 'not-hex-FAKE-probe',
       cookie: COOKIE_PROBE,
       authorization: AUTH_PROBE,
     });
     expect(res.statusCode).toBe(400);
-    expect(res.body).not.toContain('not-hex-probe');
+    expect(res.body).not.toContain('not-hex-FAKE-probe');
     expectNoEcho(res, [h.token, h.readToken]);
   });
 
