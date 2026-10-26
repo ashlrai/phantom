@@ -4,6 +4,13 @@ export interface ClaudeApiGrantBinding {
   workspaceDigest: string;
   credentialDigest: string;
   generation: string;
+  /**
+   * Destination this grant was issued for. Absent means first-party only.
+   * `gateway:<loopback-host>:<port>` admits only that loopback gateway, so an
+   * existing grant never authorizes a gateway and a gateway grant never
+   * authorizes a different host or port.
+   */
+  origin?: string;
 }
 export type ClaudeApiGrantExpiry =
   | { precision: 'date'; date: string; timezone: 'UTC'; instant: null }
