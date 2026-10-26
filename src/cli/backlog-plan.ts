@@ -1,17 +1,22 @@
 /** The bridge owns collection, queue application and scheduling. This command reads only. */
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { constants, type BigIntStats } from 'node:fs';
+import { lstat, open } from 'node:fs/promises';
 import { formatRqQueue, parseRqConfig, planRqBacklog, RQ_MAX_FILE_BYTES, rqDigest, rqQueueDiff, type RqConfig } from '../core/portfolio/rq-backlog.js';
 
 export const BACKLOG_PLAN_USAGE = 'phm backlog plan --config <config.json> --input <sources.json> --queue <router-queue.md> [--previous-queue <snapshot.md>]';
 
 async function readSnapshot(path: string): Promise<string> {
+  // Windows has no O_NOFOLLOW. Compare path and descriptor metadata as well,
+  // so symlinks and replacements fail closed even without that flag.
+  const before = await lstat(path, { bigint: true });
+  if (!before.isFile() || before.size > BigInt(RQ_MAX_FILE_BYTES)) throw new Error('Invalid snapshot file');
+  const sameFile = (stat: BigIntStats) => stat.isFile() && stat.dev === before.dev && stat.ino === before.ino &&
+    stat.size === before.size && stat.mtimeNs === before.mtimeNs && stat.ctimeNs === before.ctimeNs;
   // One bounded read through the same descriptor: size checks cannot be
   // defeated by replacing/growing a file between stat and readFile.
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > RQ_MAX_FILE_BYTES) throw new Error('Invalid snapshot file');
+    if (!sameFile(await file.stat({ bigint: true }))) throw new Error('Invalid snapshot file');
     const buffer = Buffer.alloc(RQ_MAX_FILE_BYTES + 1);
     let length = 0;
     while (length < buffer.length) {
@@ -20,6 +25,8 @@ async function readSnapshot(path: string): Promise<string> {
       length += bytesRead;
     }
     if (length > RQ_MAX_FILE_BYTES) throw new Error('Snapshot is too large');
+    if (BigInt(length) !== before.size || !sameFile(await file.stat({ bigint: true })) ||
+      !sameFile(await lstat(path, { bigint: true }))) throw new Error('Snapshot changed during read');
     // Preserve BOM bytes in decoded text: silently stripping them would make
     // the queue SHA differ from the actual file. JSON validation rejects BOMs.
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));

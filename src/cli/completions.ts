@@ -75,7 +75,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   telemetry: ['status', 'test'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
-  backlog: ['refresh'],
+  backlog: ['refresh', 'plan'],
   inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
