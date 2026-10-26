@@ -38,6 +38,13 @@ import type {
   ConsolidationResult,
   Playbook,
 } from '../core/types.js';
+import {
+  defaultBacklogPath,
+  defaultCiFailuresPath,
+  defaultLedgerPath,
+  defaultReviewCommentsPath,
+} from '../core/providers/coding-cli/ledger.js';
+import { mineBacklog, writeBacklog, MineInputError } from '../core/providers/coding-cli/mine.js';
 
 // ---------------------------------------------------------------------------
 // Lazy imports — genome core modules are built by other M7/M16 agents.
@@ -459,11 +466,62 @@ function parseLearnArgs(args: string[]): ParsedLearnArgs {
  *
  * Exit codes: 0 success, 1 module/I-O error, 2 bad usage.
  */
+function mineFlag(args: readonly string[], name: string): { value?: string; error?: string } {
+  const index = args.indexOf(name);
+  if (index < 0) return {};
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) return { error: `${name} requires a path` };
+  if (args.indexOf(name, index + 1) >= 0) return { error: `${name} may only be specified once` };
+  return { value };
+}
+
+/**
+ * `phm learn mine` writes candidate backlog items to a local JSON file.
+ * `--publish` is refused. This command creates no issues and no comments.
+ */
+function cmdLearnMine(args: string[]): number {
+  if (args.includes('--publish')) {
+    process.stderr.write('phm learn mine does not create issues or comments.\n');
+    return 2;
+  }
+  const ledger = mineFlag(args, '--ledger');
+  const ci = mineFlag(args, '--ci');
+  const reviews = mineFlag(args, '--reviews');
+  const out = mineFlag(args, '--out');
+  const known = new Set(['--ledger', '--ci', '--reviews', '--out']);
+  const unexpected = args.filter((arg, index) => {
+    if (known.has(arg)) return false;
+    const prev = args[index - 1];
+    return !(prev && known.has(prev));
+  });
+  const usage = ledger.error ?? ci.error ?? reviews.error ?? out.error
+    ?? (unexpected.length > 0 ? `unknown argument: ${unexpected[0]}` : undefined);
+  if (usage) {
+    process.stderr.write(`error: ${usage}\n`);
+    return 2;
+  }
+  const outPath = out.value ?? defaultBacklogPath();
+  try {
+    writeBacklog(outPath, mineBacklog({
+      ledgerPath: ledger.value ?? defaultLedgerPath(),
+      ciPath: ci.value ?? defaultCiFailuresPath(),
+      reviewsPath: reviews.value ?? defaultReviewCommentsPath(),
+    }));
+  } catch (error) {
+    const message = error instanceof MineInputError || error instanceof Error ? error.message : String(error);
+    process.stderr.write(`error: ${message}\n`);
+    return 2;
+  }
+  process.stdout.write(`${outPath}\n`);
+  return 0;
+}
+
 export async function cmdLearn(args: string[]): Promise<number> {
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printLearnHelp();
     return 0;
   }
+  if (args[0] === 'mine') return cmdLearnMine(args.slice(1));
 
   const parsed = parseLearnArgs(args);
 
@@ -1284,6 +1342,7 @@ function printLearnHelp(): void {
   out('  ' + bold('Usage:'));
   out('');
   out(`    phm learn ${cyan('"<text>"')} [options]`);
+  out(`    phm learn mine [--ledger <file>] [--ci <file>] [--reviews <file>] [--out <file>]`);
   out('');
   out('  ' + bold('Options:'));
   out('');
