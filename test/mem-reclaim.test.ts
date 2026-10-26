@@ -441,7 +441,7 @@ describe('loopbackHttpBase', () => {
     expect(loopbackHttpBase('http://127.999.0.1:11434')).toBeNull();
     expect(loopbackHttpBase('https://127.0.0.1:11434')).toBeNull();
     expect(loopbackHttpBase('http://0.0.0.0:11434')).toBeNull();
-    expect(loopbackHttpBase('http://user:pw@127.0.0.1:11434')).toBeNull();
+    expect(loopbackHttpBase('http://TEST-user:TEST-password@127.0.0.1:11434')).toBeNull();
     expect(loopbackHttpBase('http://127.0.0.1:11434/?x=1')).toBeNull();
     expect(loopbackHttpBase('http://192.168.1.1:11434')).toBeNull();
     expect(loopbackHttpBase('not a url')).toBeNull();
