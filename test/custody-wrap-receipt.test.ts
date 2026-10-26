@@ -41,6 +41,18 @@ describe('custody capture (pure)', () => {
     expect(cap.receiptWrapFromCustody([W(), U('worktree-namespace'), U('phantom-disabled')])).toEqual({ wrapped: false, reason: 'worktree-namespace' });
   });
 
+  it('keeps a late unwrapped spawn after the record cap, so the receipt cannot say wrapped', async () => {
+    const records = await cap.runWithCustodyCapture({ requireWrap: false }, async (c) => {
+      for (let i = 0; i < 70; i++) cap.noteSpawnCustody(W(`w${i}`));
+      cap.noteSpawnCustody(U('worktree-namespace', 'late'));
+      cap.noteSpawnCustody(U('phantom-disabled', 'later'));
+      return c.records;
+    });
+    expect(records).toHaveLength(64);
+    expect(records.filter((r) => !r.wrapped).map((r) => r.engine)).toEqual(['late']);
+    expect(cap.receiptWrapFromCustody(records)).toEqual({ wrapped: false, reason: 'worktree-namespace' });
+  });
+
   it('itemNeedsSecrets reads only the exact needs-secrets tag', () => {
     expect(cap.itemNeedsSecrets({ tags: ['needs-secrets'] })).toBe(true);
     expect(cap.itemNeedsSecrets({ tags: ['secrets', 'Needs-Secrets'] })).toBe(false);

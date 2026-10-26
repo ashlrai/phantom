@@ -35,10 +35,17 @@ export async function runWithCustodyCapture<T>(
   return store.run(capture, () => fn(capture));
 }
 
-/** Record one spawn's decision in the active scope, if any. Never throws. */
+/**
+ * Record one spawn's decision in the active scope, if any. Never throws.
+ * Records stay bounded at MAX_RECORDS, but the first unwrapped decision is
+ * always kept: once full, it replaces the last slot if no unwrapped record is
+ * held yet, so a late unwrapped spawn can never yield a "wrapped" receipt.
+ */
 export function noteSpawnCustody(record: PhantomCustodyRecord): void {
   const c = store.getStore();
-  if (c && c.records.length < MAX_RECORDS) c.records.push(record);
+  if (!c) return;
+  if (c.records.length < MAX_RECORDS) c.records.push(record);
+  else if (!record.wrapped && c.records.every((r) => r.wrapped)) c.records[MAX_RECORDS - 1] = record;
 }
 
 /** True when the active scope declares secrets are required (hold unwrapped spawns). */
