@@ -61,7 +61,7 @@ import { measureAutoMergeDiffScope } from '../foundry/automerge-diff-scope.js';
 import { loadBudgetPolicy, readCapacitySnapshot } from '../routing/budget-store.js';
 import { ensureDaemonCapacityPublisher, type PublisherStatus } from '../daemon/capacity-publisher.js';
 import { engineOfSeatId, type BudgetEngine } from '../routing/policy.js';
-import { routeSeat } from '../routing/router.js';
+import { routeSeatWithLocalEscalation } from '../routing/local-route.js';
 import { isSelfTargetProposal } from './self.js';
 import { fleetMirrorsRoot as u6FleetMirrorsRoot, mirrorNameForPath, mirrorSiblingPins, readMirrorState, type MirrorSiblingPinsRead } from './mirrors.js';
 import { listRepoHolds } from './quarantine.js';
@@ -414,7 +414,9 @@ function routeJudgeLanes(
     } catch {
       return { lanes: [], nextEligibleAt: null };
     }
-    const decision = routeSeat({ task: 'review', difficulty: 'medium', autonomous: true }, seats, budget, { nowMs });
+    // The merge-pass judge holds merge rights: frontier-only, never a local seat.
+    const decision = routeSeatWithLocalEscalation({ task: 'review', difficulty: 'medium', autonomous: true }, seats, budget, { nowMs },
+      { kind: 'review', holdsMergeRights: true, localAvailable: false });
     const admitted = new Set(decision.candidates.map((id) => laneForBudgetEngine(engineOfSeatId(id))).filter((lane): lane is FleetEngine => lane !== null));
     const nextEligibleAt = decision.exclusions
       .map((exclusion) => exclusion.nextEligibleAt)

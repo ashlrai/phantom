@@ -61,6 +61,7 @@
  * Every dependency is injectable (`LiveHooksDeps`) so the whole tick can be
  * exercised in a HOME-isolated test with no seat, no GitHub and no model.
  */
+import { parseLocalInferenceConfig } from '../run/local-inference.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -1932,6 +1933,9 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           // The λ weights used to reach only best-of-N (bonThreshold); the
           // seat ranking now reads them too (routing/router.ts seatScore).
           weights: routing,
+          // Hybrid local routing is opt-in (localInference.routing: 'hybrid');
+          // absent, routing is exactly master's.
+          ...hybridLocalEscalation(cfg, local),
           repoOf: (path) => repoOfPath.get(resolve(path)) ?? (() => {
             try {
               return deps.repoIdentity(path);
@@ -2891,4 +2895,15 @@ export function createStandingRun(input: CreateStandingRunInput): StandingRun {
       }
     },
   };
+}
+
+/** The dispatch router's hybrid local-escalation context, only when opted in. Never throws. */
+export function hybridLocalEscalation(cfg: AshlrConfig, local: Pick<LocalRuntimeReading, 'reachable'>): Pick<DispatchRouterContext, 'localEscalation'> {
+  try {
+    const parsed = parseLocalInferenceConfig((cfg as unknown as Record<string, unknown>)['localInference']);
+    if (!parsed.ok || !parsed.config || parsed.config.routing !== 'hybrid' || !parsed.config.loopback) return {};
+    return { localEscalation: { localAvailable: local.reachable === true, localModel: parsed.config.models.coder ?? null } };
+  } catch {
+    return {};
+  }
 }
