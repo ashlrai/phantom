@@ -116,6 +116,52 @@ stderr.
 For the desktop app and the first useful turn, follow the
 [Quickstart](QUICKSTART.md) and [desktop/README.md](../desktop/README.md).
 
+### Fleet snapshot source
+
+`phm top --json [--fleet <path>]` emits one read-only JSON object with
+`schemaVersion: "top.v1"`. It has no terminal renderer, watch loop, provider
+refresh, dispatch, or shared-ledger publication. The default input is
+`~/.ashlr/fleet/fleet.json`. Exit 0 means the fleet map was read, exit 1 means
+it was unavailable, and exit 2 means invalid arguments. Other unavailable
+sources are reported in `sources`; missing measurements are `null`.
+
+The fleet file uses explicit maps keyed by IDs:
+
+```json
+{
+  "pools": { "codex-cmp": { "engine": "codex", "seatId": "codex-cmp" } },
+  "agents": { "agent-1": { "poolId": "codex-cmp", "jobId": "RQ-1", "state": "running" } },
+  "jobs": { "RQ-1": { "poolId": "codex-cmp", "agentId": "agent-1", "state": "running" } }
+}
+```
+
+`seatId`, `jobId`, and `agentId` may be omitted or null. References must exist,
+remain in the same pool, and agree when both directions are provided. IDs and
+states are bounded identifiers; credentials, environment, commands, prompts,
+labels, account hints and arbitrary metadata are excluded. Malformed maps,
+files over 1 MiB and symlinks are unavailable. The closed output contract is
+[schema/top.v1.schema.json](../schema/top.v1.schema.json).
+
+Pool usage comes from its exact seat in the saved routing capacity snapshot.
+Freshness is `current`, `stale`, `unverified`, or `unknown`. The local
+subscription reader supplies `unverified` engine-wide history only for a
+single unbound pool; it has no observation timestamp and never supplies
+admission or pace. It is never copied across multiple account pools.
+
+`quota` counts dispatch telemetry in the configured rolling window from
+`quota.json`; its scope is **engine**, shared by all pools on that engine.
+It is not a reservation or remaining provider allowance. Without a configured
+window, count and limit are null. Future events are excluded and unreadable
+telemetry stays unknown. No quota policy or reservation state is changed.
+
+`paceToReset.headroomPercentPerHour` is the percentage points of available
+policy headroom divided by hours until a provenance-qualified reset. It is a
+required average rate, not measured consumption or dispatch permission.
+`admission` is the budget/reset assessment; quota and dispatch authority are
+separate. Pace is null for held/unknown admission, stale usage, missing or unqualified reset
+provenance, and expired periods. Missing budget configuration uses the standard
+in-memory defaults; unreadable saved policy withholds admission and pace.
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,

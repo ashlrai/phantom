@@ -1,0 +1,348 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schema/top.v1.schema.json",
+  "title": "Phantom top.v1 snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "observedAt",
+    "sources",
+    "pools",
+    "agents",
+    "jobs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "top.v1"
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fleet",
+        "capacity",
+        "quota",
+        "config",
+        "budget"
+      ],
+      "properties": {
+        "fleet": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "capacity": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "quota": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "config": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "budget": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        }
+      }
+    },
+    "pools": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/pool"
+      }
+    },
+    "agents": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/agent"
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/job"
+      }
+    }
+  },
+  "$defs": {
+    "pool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "seatId",
+        "usage",
+        "quota",
+        "reset",
+        "admission",
+        "headroomPercent",
+        "paceToReset"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "seatId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "scope",
+            "observedAt",
+            "usedPercent",
+            "freshness"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "capacity",
+                "subscription",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "enum": [
+                "seat",
+                "engine",
+                "unknown"
+              ]
+            },
+            "observedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "usedPercent": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 100
+            },
+            "freshness": {
+              "enum": [
+                "current",
+                "stale",
+                "unverified",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "quota": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scope",
+            "used",
+            "limit",
+            "window"
+          ],
+          "properties": {
+            "scope": {
+              "const": "engine"
+            },
+            "used": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "window": {
+              "enum": [
+                null,
+                "1m",
+                "5m",
+                "15m",
+                "1h",
+                "5h",
+                "1d",
+                "7d",
+                "30d"
+              ]
+            }
+          }
+        },
+        "reset": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "at"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "fixed-period",
+                "weekly-deadline",
+                "rolling-release",
+                "balance",
+                "unknown"
+              ]
+            },
+            "at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        },
+        "admission": {
+          "enum": [
+            "eligible",
+            "held",
+            "unknown"
+          ]
+        },
+        "headroomPercent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "paceToReset": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "secondsRemaining",
+                "headroomPercentPerHour"
+              ],
+              "properties": {
+                "secondsRemaining": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "headroomPercentPerHour": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "poolId",
+        "jobId",
+        "state"
+      ],
+      "properties": {
+        "poolId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "jobId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "poolId",
+        "agentId",
+        "state"
+      ],
+      "properties": {
+        "poolId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        },
+        "agentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$"
+        }
+      }
+    }
+  }
+}
