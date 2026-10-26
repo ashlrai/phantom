@@ -1,4 +1,5 @@
 import { AgentsReadError, metadataPage, sessionMetadata, turnMetadata, validResourceId } from './contracts.js';
+import { gatewayViaMarker, resolveGatewayTarget, type GatewayResolution, type GatewayViaMarker } from '../run/gateway-target.js';
 
 const ORIGIN = 'https://api.openai.com';
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -7,12 +8,37 @@ export interface AgentsReadClientOptions {
   /** Called only when an explicit read command executes. Never persisted or passed to a sandbox. */
   readApiKey: () => string | undefined;
   fetch?: typeof fetch;
+  /**
+   * Raw top-level `gateways` config value. Only an entry with
+   * `openaiAgents.enabled === true` that passes gateway-target.ts validation
+   * moves reads off the first-party origin. The environment (OPENAI_BASE_URL)
+   * is never read.
+   */
+  gateways?: unknown;
 }
 export interface ReadPageOptions { limit?: number; after?: string }
 
-/** Fixed-host GET-only client. One page per call; no automatic pagination or mutation methods. */
+/**
+ * GET-only client. One page per call; no automatic pagination or mutation
+ * methods. Fixed first-party origin unless config opts in to a validated
+ * gateway.
+ */
 export class AgentsReadClient {
-  constructor(private readonly options: AgentsReadClientOptions) {}
+  private readonly target: GatewayResolution;
+  constructor(private readonly options: AgentsReadClientOptions) {
+    this.target = resolveGatewayTarget('openaiAgents', options.gateways);
+  }
+  /** `via: gateway` with the host only when a gateway is configured; otherwise undefined. */
+  get via(): GatewayViaMarker | undefined {
+    return this.target.ok && this.target.target.kind === 'gateway' && this.target.target.loopback ? gatewayViaMarker(this.target.target) : undefined;
+  }
+  private base(): string {
+    if (!this.target.ok) throw new AgentsReadError('gateway-config-invalid');
+    const target = this.target.target;
+    // This slice is loopback only: the key never leaves the machine over the network.
+    if (target.kind === 'gateway' && !target.loopback) throw new AgentsReadError('gateway-config-invalid');
+    return target.kind === 'gateway' ? `${target.origin}${target.prefix}` : ORIGIN;
+  }
   private pageQuery(options: ReadPageOptions): URLSearchParams {
     const limit = options.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (options.after !== undefined && !validResourceId(options.after))) {
@@ -43,6 +69,8 @@ export class AgentsReadClient {
     return this.read(`${path}/turns?${query}`, value => metadataPage(value, Number(query.get('limit')), item => turnMetadata(item, sessionId)));
   }
   private async read<T>(path: string, project: (value: unknown) => T): Promise<T> {
+    // Resolve the target before the key is read, so a refused config never touches the credential.
+    const base = this.base();
     let key: string | undefined;
     try { key = this.options.readApiKey(); } catch { throw new AgentsReadError('missing-auth'); }
     if (!key || !key.trim()) throw new AgentsReadError('missing-auth');
@@ -54,7 +82,7 @@ export class AgentsReadClient {
       timer = setTimeout(() => { controller.abort(); void reader?.cancel().catch(() => {}); reject(new AgentsReadError('timeout')); }, TIMEOUT_MS);
     });
     const request = async (): Promise<T> => {
-      const response = await (this.options.fetch ?? globalThis.fetch)(`${ORIGIN}${path}`, {
+      const response = await (this.options.fetch ?? globalThis.fetch)(`${base}${path}`, {
         method: 'GET', redirect: 'error', signal: controller.signal,
         headers: { Authorization: `Bearer ${key}`, 'OpenAI-Beta': 'agents=v1', Accept: 'application/json' },
       });

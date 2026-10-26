@@ -275,3 +275,30 @@ export function gatewayRequestUrl(target: GatewayTarget, apiPath: string): strin
 export function gatewayViaMarker(target: GatewayTarget): GatewayViaMarker {
   return Object.freeze({ via: 'gateway' as const, host: target.host });
 }
+
+/**
+ * Audit summary suffix for a run of a governed client: ` via=gateway host=<host>`
+ * when config routes it through a valid gateway, '' for first-party. Host only,
+ * never the key, port, URL or path. A remote (non-loopback) target, which the
+ * clients refuse in this slice, gives ` gateway=refused reason=non-loopback`
+ * with no host. An opted-in but invalid config gives ` gateway=refused
+ * reason=<closed code>`; the client itself refuses before any contact.
+ */
+export function gatewayAuditSuffix(client: GatewayClientId, gateways: unknown): string {
+  const resolved = resolveGatewayTarget(client, gateways);
+  // Opted in but invalid: the clients refuse before contact; record the closed
+  // refusal code (value-free, never the input).
+  if (!resolved.ok) return ` gateway=refused reason=${resolved.reason}`;
+  if (resolved.target.kind !== 'gateway') return '';
+  // Security review nit: the marker requires loopback on its own, by the same
+  // exact host set the validator uses, not only the target's loopback flag.
+  // This slice is loopback only, so anything else is recorded as a refusal
+  // with no host, never a `via=gateway` line for a host that was not used.
+  if (!resolved.target.loopback || !isLoopbackGatewayHost(resolved.target.host)) return ' gateway=refused reason=non-loopback';
+  return ` via=gateway host=${resolved.target.host}`;
+}
+
+/** Exact loopback hosts a gateway may use (127.0.0.1 and [::1]); names such as `localhost` are refused by design. */
+export function isLoopbackGatewayHost(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host);
+}
