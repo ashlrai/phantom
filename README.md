@@ -17,6 +17,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/@ashlr/phantom.svg?color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.15-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Phantom ecosystem stars](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fstars.json&style=flat)](https://phm.dev/#eco-stats)
+[![Phantom ecosystem commits](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fcommits.json&style=flat)](https://phm.dev/#eco-stats)
+[![Phantom ecosystem repos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Frepos.json&style=flat)](https://github.com/ashlrai/phantom/blob/master/ecosystem/repos.json)
 
 ## Install
 
@@ -538,6 +541,20 @@ measuring changes, and do not add an eval gate to fleet dispatch.
 Review real project changes in the chat's Changes panel, alongside reported tool
 calls and source evidence. See the [harness guide](docs/AGENT-HARNESS-EVOLUTION.md#evidence-without-a-new-dispatch-gate)
 for offline and online boundaries, trace privacy and comparison details.
+
+## Run receipts
+
+Source only: these commands are on `master` but not in the published `@ashlr/phantom` 3.29.15, which answers `unknown fleet subcommand: receipt`.
+
+```sh
+phm fleet receipt status              # receipt key present or absent, receipt count, latest run and whether it verifies
+phm fleet receipt list                # run ids that have a receipt
+phm fleet receipt show <run-id>
+phm fleet receipt verify <run-id>     # exit 1 if the receipt does not verify
+phm fleet receipt timeline <run-id>   # the run and its later events; exit 1 if missing or not verified
+```
+
+Add `--json` for machine-readable output. `status` exits 1 when the latest receipt does not verify.
 
 ## Reference
 

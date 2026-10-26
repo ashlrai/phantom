@@ -488,6 +488,8 @@ export interface AshlrConfig {
   roots: string[];
   /** Preferred editor for deep links. */
   editor: 'cursor' | 'vscode';
+  /** Markdown opener. Default `ashlr-md` (when installed, else editor); `editor` opts out. */
+  markdownOpener?: 'ashlr-md' | 'editor';
   /** Days without modification before an item is considered stale/inactive. */
   staleDays: number;
   /** Map of category name -> absolute folder path (e.g. "dev-tools" -> ".../github/dev-tools"). */
@@ -2111,6 +2113,11 @@ export interface ApiMessageBilling {
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
   actualUsdMicros: string;
+  /**
+   * Present only when the request went through an explicitly configured
+   * gateway (`gateways.anthropic`). Host only: never the key, URL or path.
+   */
+  gateway?: { via: 'gateway'; host: string };
 }
 
 /** Lifecycle state of a single task in the run graph. */

@@ -100,6 +100,7 @@ export const REAL_IO_TEST_FILES = [
   'test/local-eval.test.ts', // spawns real `node` checkers against real temp fixtures to grade the graders
   'test/verse-seats.test.ts', // real loopback HTTP server standing in for Ollama
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
+  'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)
@@ -342,6 +343,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m245.self-improve-integration.test.ts', // real self-improve integration loop — 4.7s slowest test in the quiet baseline
   'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
   'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
+  'test/improve-observe.test.ts', // finds a revert in the log of a real temp git repo
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
   'test/m482.release-artifact-contract.test.ts', // real npm pack/install release artifact contract (68.1s single test — keeps its own 180s override below) — 68.1s slowest test in the quiet baseline

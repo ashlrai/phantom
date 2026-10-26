@@ -39,7 +39,9 @@ export type LedgerEvent =
   | { type: 'registered'; proposalId: string; title: string; proposalKind: string; source: ProposerSource; metric: MetricSpec; predictedDelta: number | null }
   | { type: 'pr'; proposalId: string; repository: string; number: number }
   | { type: 'measured'; proposalId: string; phase: MeasurementPhase; sha: string; value: number | null; reason: string | null }
-  | { type: 'promotion'; proposalId: string; headSha: string; decision: 'merge-queued' | 'refused'; reasons: string[] };
+  | { type: 'promotion'; proposalId: string; headSha: string; decision: 'merge-queued' | 'refused'; reasons: string[] }
+  /** What happened after the PR: it merged as `sha`, or `sha` on the default branch reverted it. */
+  | { type: 'observed'; proposalId: string; observation: 'merged' | 'reverted'; sha: string };
 export type LedgerRecord = LedgerEvent & { v: 1; at: string; prev: string; digest: string };
 
 export const MAX_LEDGER_BYTES = 8 * 1024 * 1024;
@@ -113,6 +115,10 @@ function validateEvent(e: LedgerEvent): LedgerEvent {
       if (typeof e.headSha !== 'string' || !SHA.test(e.headSha)) throw new Error('Invalid head SHA.');
       if (e.decision !== 'merge-queued' && e.decision !== 'refused') throw new Error('Invalid decision.');
       return { type: e.type, proposalId: e.proposalId, headSha: e.headSha, decision: e.decision, reasons: e.reasons.map((r) => String(r).slice(0, 300)).slice(0, 20) };
+    case 'observed':
+      if (e.observation !== 'merged' && e.observation !== 'reverted') throw new Error('Invalid observation.');
+      if (typeof e.sha !== 'string' || !SHA.test(e.sha)) throw new Error('Observations need an exact 40-hex commit.');
+      return { type: e.type, proposalId: e.proposalId, observation: e.observation, sha: e.sha };
     default: throw new Error('Unknown ledger event.');
   }
 }
@@ -173,6 +179,9 @@ export interface ProposalOutcome {
   status: OutcomeStatus;
   reasons: string[];
   promotion: { headSha: string; decision: 'merge-queued' | 'refused' } | null;
+  merged: { sha: string } | null;
+  /** A revert on the default branch overrides any measured gain: the change did not hold. */
+  reverted: { sha: string } | null;
 }
 
 /** Repeated measurements of one commit must agree exactly, otherwise the metric is not deterministic. */
@@ -213,10 +222,17 @@ export function scoreOutcomes(records: readonly LedgerRecord[]): ProposalOutcome
     }
     const pr = after.filter((r): r is LedgerRecord & { type: 'pr' } => r.type === 'pr').at(-1);
     const promo = after.filter((r): r is LedgerRecord & { type: 'promotion' } => r.type === 'promotion').at(-1);
+    const observed = after.filter((r): r is LedgerRecord & { type: 'observed' } => r.type === 'observed');
+    const merged = observed.filter((o) => o.observation === 'merged').at(-1);
+    // Only a revert that still stands counts: a later merge observation (a re-land) clears it.
+    const last = observed.at(-1);
+    const reverted = last?.observation === 'reverted' ? last : undefined;
+    if (reverted) { status = 'regressed'; reasons.push('reverted-after-merge'); }
     out.push({ proposalId, title: reg.title, proposalKind: reg.proposalKind, source: reg.source, metric: reg.metric,
       predictedDelta: reg.predictedDelta, pr: pr ? { repository: pr.repository, number: pr.number } : null,
       base, head, effect, relativeEffect, status, reasons,
-      promotion: promo ? { headSha: promo.headSha, decision: promo.decision } : null });
+      promotion: promo ? { headSha: promo.headSha, decision: promo.decision } : null,
+      merged: merged ? { sha: merged.sha } : null, reverted: reverted ? { sha: reverted.sha } : null });
   }
   return out;
 }
@@ -226,6 +242,8 @@ export function scoreOutcomes(records: readonly LedgerRecord[]): ProposalOutcome
 // ---------------------------------------------------------------------------
 
 export const MIN_GROUP_SAMPLES = 3;
+/** Normalize a free-form label (a backlog area) into a proposal kind. */
+export const kindOf = (label: string) => label.toLowerCase().replace(/[^a-z0-9:._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 64) || 'unlabelled';
 export const sourceKey = (s: ProposerSource) => s.kind === 'deterministic' ? 'deterministic' : `model:${s.engine}/${s.model}`;
 
 export interface SourceSummary {
@@ -278,12 +296,17 @@ export function kindLeverage(outcomes: readonly ProposalOutcome[]): Map<string, 
  * then kinds whose measured record is zero or negative. Stable otherwise.
  */
 export function rankByLeverage<T extends { kind?: string }>(proposals: readonly T[], outcomes: readonly ProposalOutcome[]): T[] {
-  const lev = kindLeverage(outcomes);
-  const tier = (p: T) => {
-    const v = p.kind ? lev.get(p.kind) ?? null : null;
+  return rankByKindLeverage(proposals, (p) => p.kind, kindLeverage(outcomes));
+}
+
+/** rankByLeverage for any item shape, given its kind and a precomputed leverage map. */
+export function rankByKindLeverage<T>(items: readonly T[], kind: (item: T) => string | undefined, lev: ReadonlyMap<string, number | null>): T[] {
+  const tier = (item: T) => {
+    const k = kind(item);
+    const v = k ? lev.get(k) ?? null : null;
     return v === null ? { t: 1, v: 0 } : v > 0 ? { t: 0, v } : { t: 2, v };
   };
-  return proposals.map((p, i) => ({ p, i, ...tier(p) }))
+  return items.map((item, i) => ({ item, i, ...tier(item) }))
     .sort((a, b) => a.t - b.t || b.v - a.v || a.i - b.i)
-    .map((x) => x.p);
+    .map((x) => x.item);
 }

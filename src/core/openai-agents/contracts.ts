@@ -20,7 +20,7 @@ export interface MetadataPage<T> {
   nextCursor: string | null;
 }
 export class AgentsReadError extends Error {
-  constructor(public readonly code: 'missing-auth' | 'invalid-argument' | 'invalid-response' | 'response-too-large' | 'timeout' | 'transport' | 'authentication' | 'permission' | 'not-found' | 'rate-limit' | 'provider-error') {
+  constructor(public readonly code: 'missing-auth' | 'invalid-argument' | 'invalid-response' | 'response-too-large' | 'timeout' | 'transport' | 'authentication' | 'permission' | 'not-found' | 'rate-limit' | 'provider-error' | 'gateway-config-invalid') {
     super(code);
     this.name = 'AgentsReadError';
   }

@@ -449,6 +449,134 @@ describe('M117 — runApiModelSandboxed full round-trip (mocked)', () => {
 
     vi.resetModules();
   });
+  it('P2: openai-compat refuses a non-loopback OPENAI_COMPAT_BASE_URL before building a client', async () => {
+    const fakeProposalId = `prop-${randomUUID().slice(0, 8)}`;
+    const capturedClientArgs: unknown[] = [];
+    const capturedTaskArgs: unknown[] = [];
+    const capturedEngineerContexts: unknown[] = [];
+    const capturedProposalArgs: unknown[] = [];
+    const capturedGateArgs: unknown[] = [];
+
+    vi.doMock('../src/core/sandbox/worktree.js', () => {
+    const double = {
+      createSandbox: (repo: string) => ({
+        id: 'sb-test',
+        worktreePath: tmpRepo,
+        sourceRepo: repo,
+        branch: 'ashlr-sandbox-test',
+      }),
+      borrowSandboxCleanupAuthority: () => ({ outwardFence: {} }),
+      removeSandbox: () => {},
+      removeSandboxWithBorrowedAuthority: () => {},
+      sandboxDiff: () => ({
+        files: 1,
+        patch: '--- a/hello.ts\n+++ b/hello.ts\n@@ -1 +1 @@\n-const x = 1;\n+const x = 2;\n',
+        insertions: 1,
+        deletions: 1,
+      }),
+    };
+    return {
+      ...double,
+      // Production calls the ASYNC creator: it waits for the process-wide
+      // worktree fence off the event loop, so concurrent agents queue instead
+      // of each freezing the loop. A double for this module must provide it.
+      createSandboxAsync: async (...args: Parameters<typeof double.createSandbox>) =>
+        double.createSandbox(...args),
+    };
+  });
+
+    vi.doMock('../src/core/run/provider-client.js', () => ({
+      buildOpenAICompatibleClient: (...args: unknown[]) => {
+        capturedClientArgs.push(...args);
+        return { id: 'openai-compat', model: args[2], supportsTools: true };
+      },
+    }));
+
+    vi.doMock('../src/core/run/agent-loop.js', () => ({
+      runTask: async (
+        task: { status: string; result?: string },
+        _client: unknown,
+        ctx: {
+          tools?: unknown[];
+          adaptivePrompts?: boolean;
+          reserveModelStep?: (promptTokenReservation: number) => {
+            maxOutputTokens: number;
+            finalize(summary: string, usage?: { tokensIn: number; tokensOut: number }): void;
+          } | undefined;
+        },
+      ) => {
+        capturedTaskArgs.push(ctx);
+        const reservation = ctx.reserveModelStep?.(500);
+        if (!reservation) throw new Error('expected api-model token reservation');
+        expect(reservation.maxOutputTokens).toBe(4_096);
+        reservation.finalize('changed hello.ts', { tokensIn: 11, tokensOut: 7 });
+        task.status = 'done';
+        task.result = 'Made the change.';
+        return task;
+      },
+    }));
+
+    vi.doMock('../src/core/mcp-native-engineer.js', () => ({
+      buildEngineerToolSpecs: (ctx: unknown) => {
+        capturedEngineerContexts.push(ctx);
+        return [
+          { name: 'read_file', fn: async () => 'content' },
+          { name: 'write_file', fn: async () => 'ok' },
+        ];
+      },
+    }));
+
+    vi.doMock('../src/core/seams/inbox.js', () => ({
+      selectInboxStore: () => durableInboxStore(fakeProposalId, capturedProposalArgs),
+    }));
+
+    vi.doMock('../src/core/knowledge/index.js', () => ({
+      scrubSecrets: (s: string) => s,
+    }));
+
+    vi.doMock('../src/core/foundry/provenance.js', () => ({
+      hashDiff: () => 'hash-abc',
+      signProvenance: () => 'sig-abc',
+    }));
+
+    vi.doMock('../src/core/run/completeness-gate.js', () => ({
+      runCompletenessGate: async (args: unknown) => {
+        capturedGateArgs.push(args);
+        return { pass: true };
+      },
+    }));
+
+    const { runApiModelSandboxed } = await import(
+      '../src/core/run/sandboxed-engine.js?bust=' + randomUUID()
+    ) as typeof import('../src/core/run/sandboxed-engine.js');
+
+    const cfg = {
+      models: { adaptivePrompts: true },
+      foundry: {
+        models: { 'local-coder': 'qwen2.5:72b-instruct-q4_K_M' },
+      },
+    } as never;
+
+    const prevUrl = process.env['OPENAI_COMPAT_BASE_URL'];
+    const prevKey = process.env['OPENAI_COMPAT_API_KEY'];
+    process.env['OPENAI_COMPAT_BASE_URL'] = 'https://remote-gpu.example.com/v1';
+    process.env['OPENAI_COMPAT_API_KEY'] = 'sk-test-not-sent';
+    try {
+      // Fails closed the same way as other pre-request refusals (rethrown, no client built).
+      const err = await runApiModelSandboxed('openai-compat' as never, 'increment x', cfg, { sourceRepo: tmpRepo, propose: true })
+        .then(() => null, (e: unknown) => e as Error);
+      expect(err?.message).toContain('remote-not-allowed');
+      expect(err?.message).not.toContain('remote-gpu.example.com');
+      expect(capturedClientArgs).toEqual([]);
+      expect(capturedTaskArgs).toEqual([]);
+      expect(capturedProposalArgs).toEqual([]);
+    } finally {
+      if (prevUrl === undefined) delete process.env['OPENAI_COMPAT_BASE_URL']; else process.env['OPENAI_COMPAT_BASE_URL'] = prevUrl;
+      if (prevKey === undefined) delete process.env['OPENAI_COMPAT_API_KEY']; else process.env['OPENAI_COMPAT_API_KEY'] = prevKey;
+    }
+    vi.resetModules();
+  });
+
 
   it('fails closed when a failed api-model producer capture dependency throws', async () => {
     const agentActions: Array<Record<string, unknown>> = [];
