@@ -303,6 +303,27 @@ describe('G1b — test tampering', () => {
     expect(detectTestTampering(diff).findings).toEqual([expect.objectContaining({ kind: 'test-file-deleted', path: 'test/old.test.ts' })]);
   });
 
+  const renameDiff = (from: string, to: string): string =>
+    `diff --git a/${from} b/${to}\nsimilarity index 100%\nrename from ${from}\nrename to ${to}\n`;
+
+  it.each([
+    ['test/widget.test.ts', 'docs/widget.md'],
+    ['test/widget.test.ts', 'test/widget.test.ts.bak'],
+    ['src/core/widget.spec.ts', 'src/core/widget.ts'],
+  ])('renaming %s to %s takes the test out of the suite', (from, to) => {
+    expect(detectTestTampering(renameDiff(from, to)).findings).toEqual([
+      expect.objectContaining({ kind: 'test-file-deleted', path: from }),
+    ]);
+  });
+
+  it.each([
+    ['test/widget.test.ts', 'test/ui/widget.test.ts'],
+    ['test/fixtures/a.json', 'test/fixtures/b.json'],
+    ['src/a.ts', 'src/b.ts'],
+  ])('renaming %s to %s keeps the suite intact', (from, to) => {
+    expect(detectTestTampering(renameDiff(from, to)).findings).toEqual([]);
+  });
+
   it('editing an existing snapshot is tampering; a new snapshot file is not', () => {
     const edited = testDiff('test/__snapshots__/view.test.ts.snap', '@@ -1,1 +1,1 @@\n-exports[`a`] = `1`;\n+exports[`a`] = `2`;\n');
     expect(detectTestTampering(edited).findings.map((f) => f.kind)).toEqual(['snapshot-edited']);

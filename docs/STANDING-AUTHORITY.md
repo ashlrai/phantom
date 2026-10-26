@@ -9,7 +9,7 @@ instant and needs nothing. Raising it past what you signed needs a new grant.
 This page specifies the grant, the ladder and the ledger. For the model,
 custody, Stop and Revoke, setup, and the **residual risks**, see
 [AUTHORITY.md](AUTHORITY.md). The code is `src/core/authority/`, the CLI is
-`ashlr authority`, and the Verse Command bar uses `/api/verse/authority`.
+`ashlr authority`, and the Phantom console Command bar uses `/api/verse/authority`.
 
 ## The pieces
 
@@ -155,7 +155,7 @@ with a computed specifier is listed so a reviewer sees it.
 
 `daemon/loop.ts` and `fleet/tick-hooks-live.ts` are deliberately **not**
 roots: they orchestrate calls into the modules above, but each pulls in the
-whole daemon, the Verse server and Universe (about 590 files), so as roots
+whole daemon, the Phantom server and Universe (about 590 files), so as roots
 they would pause the grant on nearly every deploy. They stay protected paths:
 the fleet can never change them.
 
@@ -194,18 +194,18 @@ ashlr authority surface [--installed]
 ashlr authority protect --print | --apply [--repo owner/name]
 ashlr authority github-app [--org <login>]
 ashlr authority rotate-provenance
-ashlr authority setup [--dry-run] [--source <ashlr-hub checkout>]
+ashlr authority setup [--dry-run]
 ```
 
 Stop arms KILL, aborts running agents (reporting `liveExecutionLeases`)
 and revokes armed host merges. Revoke does all of that too, then burns the
 grant sequence. The CLI waits for agents to drain (up to 30 s); `--no-wait`
-and the Verse route return at once. See AUTHORITY.md §3.
+and the Phantom console route return at once. See AUTHORITY.md §3.
 
 `GET /api/verse/authority` (status), `GET /api/verse/authority/draft`,
 `GET /api/verse/authority/ledger`, and `POST /api/verse/authority` with one
 of `switch`, `stop`, `clear-stop`, `revoke`, `grant`, `re-approve`. Every POST
-passes Verse's dispatch and mutation-token gates. A grant action names the
+passes the Phantom server's dispatch and mutation-token gates. A grant action names the
 digest of a draft the server served; the server signs exactly that draft.
 
 ## Phase 0: `ashlr authority setup`
@@ -216,8 +216,8 @@ never runs `sudo` and never touches launchd.
 1. Checks the custody helper; if it is missing, it tells you to run
    `sudo scripts/install-custody.sh` and stops.
 2. Creates the Secure Enclave key (Touch ID).
-3. Opens a PR in your ashlr-hub checkout (from a throwaway worktree — your
-   checkout is untouched) adding the key to `trust-roots.ts`, then waits for
+3. Opens a PR on the hub repository adding the key to `trust-roots.ts`,
+   written through the GitHub API (no checkout or local git), then waits for
    you to merge it, build, install the release and kickstart the daemon.
 4. Creates the `ashlr-fleet` GitHub App through the App Manifest flow (one
    browser page). The private key goes straight into custody; it is never

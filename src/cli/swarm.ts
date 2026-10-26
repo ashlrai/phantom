@@ -191,7 +191,9 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
 
   if (args[0] === 'approve') {
     const subId = args[1];
-    if (!subId) {
+    // approve resumes agent execution: take exactly one id, never a flag, and
+    // refuse anything after it rather than ignoring a mistyped option.
+    if (!subId || subId.startsWith('-') || args.length > 2) {
       return {
         subcommand: 'run',
         background: false,
@@ -219,7 +221,7 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
 
   if (args[0] === 'rollback') {
     const subId = args[1];
-    if (!subId) {
+    if (!subId || subId.startsWith('-')) {
       return {
         subcommand: 'run',
         background: false,
@@ -284,7 +286,8 @@ function parseSwarmArgs(args: string[]): ParsedSwarmArgs {
       background: false,
       dryRun: false,
       allowCloud: false,
-      json: false,
+      // `swarm show <id> --json` prints the record as JSON (cmdSwarmShow honours it).
+      json: args.slice(2).includes('--json'),
       noCapture: false,
       yes: false,
       force: false,
@@ -635,10 +638,11 @@ async function cmdSwarmShow(id: string, jsonMode: boolean): Promise<number> {
 
   if (!swarm) {
     const msg = `Swarm not found: ${id}`;
+    const next = 'List swarm ids with `phm swarms`.';
     if (jsonMode) {
-      process.stdout.write(JSON.stringify({ error: msg }) + '\n');
+      process.stdout.write(JSON.stringify({ ok: false, error: msg, next }) + '\n');
     } else {
-      process.stderr.write(red('error: ') + msg + '\n');
+      process.stderr.write(red('error: ') + msg + '\n       ' + next + '\n');
     }
     return 1;
   }
@@ -1192,8 +1196,9 @@ async function promptConfirm(question: string): Promise<boolean> {
  * - rollback is the ONLY potentially-destructive op; ALWAYS confirm-gated.
  */
 export async function cmdSwarm(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit. `--help`/`-h` anywhere prints usage and runs nothing:
+  // `swarm approve <id> --help` resumed the swarm's agents.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printSwarmHelp();
     return 0;
   }
@@ -1469,6 +1474,11 @@ export async function cmdSwarm(args: string[]): Promise<number> {
  * `ashlr swarms [--json]` — list all persisted swarms (newest first).
  */
 export async function cmdSwarms(args: string[]): Promise<number> {
+  // `swarms --help` / `-h` prints usage before the swarm store is read.
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSwarmHelp();
+    return 0;
+  }
   const jsonMode = args.includes('--json');
 
   let store: StoreMod;
@@ -1614,7 +1624,7 @@ function printSwarmHelp(): void {
   console.log(`    ashlr swarm "Refactor config parsing" --budget 40000 --parallel 2`);
   console.log('');
   console.log(`    ${gray('# Run from a spec artifact')}`)
-  console.log(`    ashlr swarm my-spec-id --project ~/Desktop/github/my-project`);
+  console.log(`    ashlr swarm my-spec-id --project ~/code/my-project`);
   console.log('');
   console.log(`    ${gray('# Launch in background and watch later')}`)
   console.log(`    ashlr swarm "Implement feature X" --background --budget 80000`);

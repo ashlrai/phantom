@@ -29,6 +29,8 @@ import {
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
+  ErrorCode,
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
@@ -38,8 +40,27 @@ import { withHeal, defaultHealPolicy } from './run/self-heal.js';
 import { listNativeTools, isNativeTool, callNativeTool } from './mcp-native.js';
 import { listFirmResources, listFirmResourceTemplates, readFirmResource } from './mcp-firm-resources.js';
 import { hasSecretLikeArgv, redactedCommand } from './mcp-argv-safety.js';
+import { createRequire } from 'node:module';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
+
+/**
+ * Phantom's package version for MCP serverInfo/clientInfo, so clients and
+ * agents see the real release instead of a placeholder. Same lookup as
+ * `phm --version` (ASHLR_VERSION covers the Bun SEA build).
+ */
+let cachedGatewayVersion: string | undefined;
+export function gatewayVersion(): string {
+  if (cachedGatewayVersion) return cachedGatewayVersion;
+  let version = process.env.ASHLR_VERSION;
+  if (!version) {
+    try {
+      version = (createRequire(import.meta.url)('../../package.json') as { version?: string }).version;
+    } catch { /* fall through */ }
+  }
+  cachedGatewayVersion = typeof version === 'string' && version.trim() ? version.trim() : '0.0.0-unknown';
+  return cachedGatewayVersion;
+}
 
 // ---------------------------------------------------------------------------
 // M105: Browser MCP probe + tool-call helpers
@@ -185,12 +206,54 @@ const MAX_DISCOVERY_BYTES = 4 * 1024 * 1024;
 const MAX_CURSOR_BYTES = 4_096;
 
 /**
+ * A tools/call for a name the gateway does not route is the caller's mistake,
+ * so it answers JSON-RPC -32602 (invalid params), not the SDK's default -32603
+ * (internal error). The message text is kept as is: the SDK sends `message` and
+ * `code` from the thrown error. Downstream failures (McpError, or any error
+ * without the `Unknown tool "` prefix) pass through unchanged.
+ */
+export function unknownToolAsInvalidParams<A extends unknown[], R>(handler: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    try {
+      return await handler(...args);
+    } catch (err) {
+      if (err instanceof Error && !(err instanceof McpError) && err.message.startsWith('Unknown tool "')) {
+        throw Object.assign(err, { code: ErrorCode.InvalidParams });
+      }
+      throw err;
+    }
+  };
+}
+
+/**
  * Env var set on every downstream child the gateway spawns. A downstream that
  * is itself an ashlr gateway can read this to refuse re-aggregation, providing
  * a second line of defense against the self-spawn fork bomb (the primary
  * defense is isSelfGateway() filtering at startGateway).
  */
 export const GATEWAY_ENV_MARKER = 'ASHLR_MCP_GATEWAY';
+
+/**
+ * The error text for a tools/call the gateway cannot route. Downstream tools
+ * are served as `<server>__<tool>`, but their own docs (and the agent) use the
+ * bare name, so a bare or differently spelled name names the routed tool(s)
+ * it most likely meant. Suggestions only; nothing is called on a guess.
+ */
+export function unknownToolMessage(requested: string, routed: Iterable<{ name: string; original: string }>): string {
+  const norm = (value: string): string => value.toLowerCase().replace(/-/g, '_');
+  const wanted = norm(requested);
+  const matches: string[] = [];
+  for (const { name, original } of routed) {
+    if (matches.length >= 3) break;
+    if (norm(original) === wanted || norm(name) === wanted) matches.push(name);
+  }
+  const hint = matches.length === 1
+    ? ` Did you mean "${matches[0]}"? Gateway tools from other servers are named <server>${NS}<tool>.`
+    : matches.length > 1
+      ? ` Did you mean one of ${matches.map((m) => `"${m}"`).join(', ')}? Gateway tools from other servers are named <server>${NS}<tool>.`
+      : '';
+  return `Unknown tool "${requested}".${hint} Run \`ashlr mcp list\` to see available tools.`;
+}
 
 // The MCP SDK deliberately spawns downstream servers with a NARROW env allowlist
 // (not the full process.env) so ambient secrets don't leak into third-party servers.
@@ -297,7 +360,7 @@ async function connectDownstream(spec: McpServerSpec, timeoutMs: number, cfg?: R
   });
 
   const client = new Client(
-    { name: 'ashlr-gateway', version: '0.1.0' },
+    { name: 'ashlr-gateway', version: gatewayVersion() },
     { capabilities: {} },
   );
 
@@ -549,7 +612,7 @@ export async function startGateway(
   };
 
   await Promise.all(downstreams.map((d) => refresh(d, true)));
-  const server = new Server({ name: 'ashlr', version: '0.1.0' }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
     if (closed) throw new Error('MCP gateway is closed');
@@ -594,13 +657,14 @@ export async function startGateway(
     } as { tools: { name: string; description?: string; inputSchema: object }[]; _meta: Record<string, unknown> };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
     assertUsable();
     const requested = request.params.name;
     if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
     const route = routes.get(requested);
     if (!route || route.downstream.client !== route.client) {
-      throw new Error(`Unknown tool "${requested}". Run \`ashlr mcp list\` to see available tools.`);
+      const live = [...routes].filter(([, r]) => r.downstream.client === r.client).map(([name, r]) => ({ name, original: r.original }));
+      throw new Error(unknownToolMessage(requested, live));
     }
     try {
       return await withDeadline(route.client.callTool({ name: route.original, arguments: request.params.arguments ?? {} }, undefined, { timeout: timeoutMs }), timeoutMs, `tools/call(${route.downstream.spec.name})`);
@@ -608,7 +672,7 @@ export async function startGateway(
       await drop(route.downstream, route.client);
       throw err; // never replay an effectful request, even after reconnection
     }
-  });
+  }));
 
   let closing: Promise<void> | undefined;
   const onSigint = (): void => onSignal('SIGINT');

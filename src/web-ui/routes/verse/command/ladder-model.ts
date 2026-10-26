@@ -24,6 +24,7 @@ import type {
   ShadowDecisionsV1,
 } from '../../../../core/verse/autonomy-ladder.js';
 import type { ChipTone } from './authority-model.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -282,7 +283,7 @@ export function grantExpiry(status: AuthorityStatusV1 | null, now: number): Gran
     text,
     tone,
     warn: left < GRANT_WARN_MS,
-    until: new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+    until: formatDateTime(new Date(at), 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
   };
 }
 

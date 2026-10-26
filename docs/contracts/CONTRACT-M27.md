@@ -192,7 +192,8 @@ review caught — do NOT repeat it.)
 
 - **Enforced by**: `health.ts#computeReport` defaults to `listEnrolled()`; an
   explicit `opts.repos` entry is `resolve()`'d, checked via `isEnrolled()`, and
-  THROWS `repo not enrolled for health review: <abs>` on a miss. `health.ts#cmdHealth`
+  THROWS `repo not enrolled for health review: <abs>` on a miss (the message then
+  names `ashlr enroll add <abs>`, or the active enrollment lens). `health.ts#cmdHealth`
   independently `resolve()`s a positional `<repo>` and calls `isEnrolled()`
   before any scan, returning exit 1 on a miss. Defense-in-depth at BOTH layers.
 - **Verifier proves**: with mocked `listEnrolled() → []`, `computeReport()`

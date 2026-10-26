@@ -35,6 +35,12 @@ import {
 } from './proposal-mutation-lock.js';
 import { assertMayMutate, listEnrolled } from '../sandbox/policy.js';
 import {
+  releaseTempWorktreeOwner,
+  releaseTmpScratchOwner,
+  writeTempWorktreeOwner,
+  writeTmpScratchOwner,
+} from './temp-worktree-reaper.js';
+import {
   acquireOutwardMutationFence,
   ownsOutwardMutationFence,
   releaseOutwardMutationFence,
@@ -92,7 +98,12 @@ function writeTmpFile(content: string): string {
   }
   const name = `patch-${randomBytes(6).toString('hex')}.diff`;
   const p = join(dir, name);
-  writeFileSync(p, content, 'utf8');
+  writeTmpScratchOwner(p);
+  // `git apply` rejects a patch whose last line has no newline ("corrupt patch
+  // at line N"), and captured sandbox diffs end without one (sandboxDiff trims
+  // git's output). Same fix as inbox/merge.ts (M292); the stored diff and its
+  // provenance hash stay untouched.
+  writeFileSync(p, content.endsWith('\n') ? content : `${content}\n`, 'utf8');
   return p;
 }
 
@@ -145,6 +156,14 @@ async function applyPatch(
     `wt-${randomBytes(6).toString('hex')}`,
   );
 
+  // Owner marker first, so a kill mid-apply leaves a worktree the daemon-start
+  // sweep can prove is dead and reclaim (inbox/temp-worktree-reaper.ts).
+  try {
+    writeTempWorktreeOwner(tmpWorktreeDir, repo);
+  } catch (err) {
+    return { ok: false, detail: `could not mark the temp worktree: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
   // Create the isolated worktree on the new branch.
   try {
     gitRun(repo, [
@@ -158,6 +177,7 @@ async function applyPatch(
   } catch (err) {
     // Clean up any partial worktree registration.
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpWorktreeDir);
     return {
       ok: false,
       detail: `git worktree add failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -202,12 +222,14 @@ async function applyPatch(
       } catch {
         // ignore cleanup errors
       }
+      releaseTmpScratchOwner(patchFile);
     }
 
     // Always remove the worktree (removes the tmpWorktreeDir checkout).
     // The branch itself remains in the repo — that's the desired output.
     gitTry(repo, ['worktree', 'remove', '--force', tmpWorktreeDir]);
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpWorktreeDir);
 
     // If apply/commit failed, also delete the scratch branch to leave no
     // dangling refs. The branch is in our namespace so this is safe.

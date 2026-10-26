@@ -204,7 +204,8 @@ function printVercelHelp(): void {
 export async function cmdVercel(args: string[]): Promise<number> {
   const sub = args[0];
 
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  // `vercel <verb> --help` / `-h` prints usage before any project lookup.
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     printVercelHelp();
     return 0;
   }

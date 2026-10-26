@@ -91,6 +91,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'desktop/src-tauri/src/main.rs',
   'desktop/src-tauri/src/lib.rs',
   'src/core/run/desktop-metadata-launch-trust.ts',
+  // Governed-client gateway target validation decides where a provider key may be sent (#880).
+  'src/core/run/gateway-target.ts',
   'src/cli/desktop-update.ts',
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
@@ -230,6 +232,8 @@ export const TIER1_TEST_STEMS: readonly string[] = Object.freeze([
   'engine-registry', 'native-profile', 'experiments', 'heldout', 'tasks-heldout',
   'pool-commissioning',
   'best-of-n', 'subscription-usage', 'leader-seat', 'reserve-breach',
+  // Governed-client gateway suites (#880): where a provider key may be sent.
+  'gateway-target', 'gateway-anthropic-client', 'gateway-openai-agents-client', 'gateway-audit-marker', 'gateway-config-load',
 ]);
 
 const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
@@ -461,6 +465,9 @@ export function isTier1ClosureRoot(path: string): boolean {
     !CLOSURE_EXCLUDE_REGEXES.some((re) => re.test(lower));
 }
 
+/** A file name the test runners collect (`*.test.ts`, `*.spec.mjs`, ...). */
+const RUNNABLE_TEST_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
 /** Test files: test dirs, `*.test.*` / `*.spec.*`, and snapshot files. */
 export function isTestPath(path: string): boolean {
   const normalized = normalizeRepoPath(path);
@@ -468,7 +475,7 @@ export function isTestPath(path: string): boolean {
   const lower = normalized.toLowerCase();
   if (/(^|\/)(?:test|tests|__tests__|spec|e2e)\//.test(lower)) return true;
   if (/(^|\/)__snapshots__\//.test(lower) || lower.endsWith('.snap')) return true;
-  return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(lower);
+  return RUNNABLE_TEST_RE.test(lower);
 }
 
 function basenameTokens(path: string): string[] {
@@ -882,6 +889,19 @@ export function detectTestTampering(diff: string): TamperScan {
 
     if (section.deleted) {
       findings.push({ kind: 'test-file-deleted', path, detail: `test file ${path} deleted` });
+      continue;
+    }
+    // A rename that takes a test out of the suite deletes it just as well, and
+    // a pure rename has no removed lines for the counts below to see.
+    if (section.oldPath !== null && section.newPath !== null && section.oldPath !== section.newPath &&
+      isTestPath(section.oldPath) &&
+      (!isTestPath(section.newPath) || (RUNNABLE_TEST_RE.test(section.oldPath.toLowerCase()) &&
+        !RUNNABLE_TEST_RE.test(section.newPath.toLowerCase())))) {
+      findings.push({
+        kind: 'test-file-deleted',
+        path: section.oldPath,
+        detail: `test file ${section.oldPath} renamed out of the test suite to ${section.newPath}`,
+      });
       continue;
     }
     for (const kind of TEST_CALL_KINDS) {

@@ -67,6 +67,17 @@ describe('applyDiff', () => {
     }
   });
 
+  it('applies a diff whose last line has no trailing newline', () => {
+    const dir = makeRepo({ 'hello.txt': 'hello world\n' });
+    try {
+      const diff = ['--- a/hello.txt', '+++ b/hello.txt', '@@ -1 +1 @@', '-hello world', '+hello patched'].join('\n');
+      expect(applyDiff(diff, dir)).toBe(true);
+      expect(fs.readFileSync(path.join(dir, 'hello.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('hello patched\n');
+    } finally {
+      rmDir(dir);
+    }
+  });
+
   it('applies a valid unified diff and creates the patched file', () => {
     const dir = makeRepo({ 'hello.txt': 'hello world\n' });
     try {

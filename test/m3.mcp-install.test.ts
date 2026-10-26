@@ -5,7 +5,7 @@
  * NEVER touches ~/.claude.json, ~/.claude/settings.json, ~/.mcp.json, etc.
  *
  * Verifies:
- *   - adds the "ashlr" gateway server to the target mcpServers config
+ *   - adds the gateway server ("ashlr-hub" for claude, "ashlr" for ashlrcode)
  *   - creates a .bak backup before writing
  *   - is idempotent (second install does not duplicate the entry)
  *   - never clobbers existing servers in the config
@@ -89,13 +89,13 @@ describe('cmdMcp install — fresh config with empty mcpServers', () => {
     expect(code).toBe(0);
   });
 
-  it('adds "ashlr" server to mcpServers', async () => {
+  it('adds "ashlr-hub" server to mcpServers (claude)', async () => {
     const p = tmpPath('adds-ashlr');
     writeConfig(p, { mcpServers: {} });
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
     expect(cfg.mcpServers).toBeDefined();
-    expect('ashlr' in (cfg.mcpServers ?? {})).toBe(true);
+    expect('ashlr-hub' in (cfg.mcpServers ?? {})).toBe(true);
   });
 
   it('added ashlr entry has command field', async () => {
@@ -103,7 +103,7 @@ describe('cmdMcp install — fresh config with empty mcpServers', () => {
     writeConfig(p, { mcpServers: {} });
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
-    const entry = (cfg.mcpServers ?? {})['ashlr'] as Record<string, unknown> | undefined;
+    const entry = (cfg.mcpServers ?? {})['ashlr-hub'] as Record<string, unknown> | undefined;
     expect(entry?.command).toBeDefined();
     expect(typeof entry?.command).toBe('string');
   });
@@ -113,7 +113,7 @@ describe('cmdMcp install — fresh config with empty mcpServers', () => {
     writeConfig(p, { mcpServers: {} });
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
-    const entry = (cfg.mcpServers ?? {})['ashlr'] as Record<string, unknown> | undefined;
+    const entry = (cfg.mcpServers ?? {})['ashlr-hub'] as Record<string, unknown> | undefined;
     expect(Array.isArray(entry?.args)).toBe(true);
   });
 
@@ -145,7 +145,7 @@ describe('cmdMcp install — config file with no mcpServers key', () => {
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
     expect(cfg.mcpServers).toBeDefined();
-    expect('ashlr' in (cfg.mcpServers ?? {})).toBe(true);
+    expect('ashlr-hub' in (cfg.mcpServers ?? {})).toBe(true);
   });
 
   it('preserves other top-level keys', async () => {
@@ -198,7 +198,7 @@ describe('cmdMcp install — never clobbers existing servers', () => {
     const keys = Object.keys(cfg.mcpServers ?? {});
     expect(keys).toContain('server-a');
     expect(keys).toContain('server-b');
-    expect(keys).toContain('ashlr');
+    expect(keys).toContain('ashlr-hub');
   });
 });
 
@@ -213,7 +213,7 @@ describe('cmdMcp install — idempotency', () => {
     await cmdMcp(['install', 'claude', '--config', p]);
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
-    const ashlrEntries = Object.keys(cfg.mcpServers ?? {}).filter(k => k === 'ashlr');
+    const ashlrEntries = Object.keys(cfg.mcpServers ?? {}).filter(k => k === 'ashlr-hub');
     expect(ashlrEntries).toHaveLength(1);
   });
 
@@ -256,7 +256,7 @@ describe('cmdMcp install — creates config if absent', () => {
     createdFiles.push(p);
     await cmdMcp(['install', 'claude', '--config', p]);
     const cfg = readConfigTyped(p);
-    expect('ashlr' in (cfg.mcpServers ?? {})).toBe(true);
+    expect('ashlr-hub' in (cfg.mcpServers ?? {})).toBe(true);
   });
 });
 

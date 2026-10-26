@@ -120,7 +120,8 @@ describe('ashlr init — exit-code propagation', () => {
   it('exits non-zero (1) in --json mode when resulting doctor has failures', () => {
     const { status, stdout } = runCliAssertLaunched(['init', '--json']);
     expect(status).toBe(1);
-    const result = JSON.parse(stdout) as { doctorSummary: { fail: number } };
+    const result = JSON.parse(stdout) as { ready: boolean; doctorSummary: { fail: number } };
     expect(result.doctorSummary.fail).toBeGreaterThan(0);
+    expect(result.ready).toBe(false);
   });
 });

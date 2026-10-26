@@ -172,7 +172,7 @@
  * its beforeTick hook (U5) only under a live standing policy; `ashlr mirror`
  * (src/cli/mirror.ts) is Mason's manual surface.
  */
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   accessSync,
@@ -263,6 +263,8 @@ const SLUG_SEPARATOR = '__';
 const BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*\.lock(?:\/|$))[A-Za-z0-9._/-]{1,200}(?<![./])$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const MAX_GIT_OUTPUT = 16 * 1024 * 1024;
+/** After the SIGKILL of a mirror git's process group: drop its pipes and settle. */
+const MIRROR_GIT_KILL_GRACE_MS = 2_000;
 
 // ---------------------------------------------------------------------------
 // Identity and paths
@@ -515,31 +517,84 @@ function runGit(
       resolveRun({ ok: false, stdout: '', stderr: boundedScrub((error as Error).message), code: null });
       return;
     }
-    execFile(
-      gitBin,
-      [...hardeningArgs(opts.allowLocalOrigin), ...args],
-      {
+    // Not execFile: its timeout and abort signal only the direct child, so a
+    // remote helper (git-remote-https) or any other grandchild outlived the
+    // stopped call as an orphan. Own process group on POSIX; the WHOLE group
+    // is killed, and a grace after the SIGKILL the pipes are dropped and the
+    // run settles even if something still holds them.
+    const useGroup = process.platform !== 'win32';
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(gitBin, [...hardeningArgs(opts.allowLocalOrigin), ...args], {
         ...(opts.cwd ? { cwd: opts.cwd } : {}),
         env: mirrorGitEnv(opts.token ?? null),
-        timeout: opts.timeoutMs,
-        killSignal: 'SIGKILL',
-        maxBuffer: MAX_GIT_OUTPUT,
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
-        encoding: 'utf8',
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      },
-      (error, stdout, stderr) => {
-        const code = error && typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === 'number'
-          ? (error as unknown as { code: number }).code
-          : error ? null : 0;
-        resolveRun({
-          ok: !error,
-          stdout: String(stdout ?? ''),
-          stderr: boundedScrub(String(stderr ?? '') || (error ? String(error.message ?? '') : '')),
-          code,
-        });
-      },
-    );
+        detached: useGroup,
+      });
+    } catch (error) {
+      resolveRun({ ok: false, stdout: '', stderr: boundedScrub((error as Error).message), code: null });
+      return;
+    }
+    const out: Buffer[] = [];
+    const errOut: Buffer[] = [];
+    let outBytes = 0;
+    let errBytes = 0;
+    let failure: string | null = null;
+    let settled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const killTree = (signal: NodeJS.Signals): void => {
+      if (useGroup && typeof child.pid === 'number' && child.pid > 0) {
+        try { process.kill(-child.pid, signal); return; } catch { /* group gone: fall back to the child */ }
+      }
+      try { child.kill(signal); } catch { /* already exited */ }
+    };
+    const onAbort = (): void => stop('cancelled');
+    const finish = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      for (const timer of timers) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
+      const stderr = Buffer.concat(errOut).toString('utf8');
+      const ok = failure === null && code === 0;
+      resolveRun({
+        ok,
+        stdout: Buffer.concat(out).toString('utf8'),
+        stderr: boundedScrub(failure ?? (stderr || (ok ? '' : `git exited ${String(code)}`))),
+        code: failure === null ? code : null,
+      });
+    };
+    function stop(reason: string): void {
+      if (failure !== null || settled) return;
+      failure = reason;
+      killTree('SIGKILL');
+      const grace = setTimeout(() => {
+        killTree('SIGKILL');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null);
+      }, MIRROR_GIT_KILL_GRACE_MS);
+      grace.unref();
+      timers.push(grace);
+    }
+    const keep = (sink: Buffer[], size: number, chunk: Buffer): number => {
+      if (size + chunk.length > MAX_GIT_OUTPUT) {
+        stop('git output exceeded the limit');
+        return size;
+      }
+      sink.push(chunk);
+      return size + chunk.length;
+    };
+    child.stdout?.on('data', (chunk: Buffer) => { outBytes = keep(out, outBytes, chunk); });
+    child.stderr?.on('data', (chunk: Buffer) => { errBytes = keep(errOut, errBytes, chunk); });
+    const deadline = setTimeout(() => stop(`git timed out after ${Math.round(opts.timeoutMs / 1000)}s`), Math.max(1, opts.timeoutMs));
+    timers.push(deadline);
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    child.once('error', (error) => {
+      failure ??= error.message;
+      finish(null);
+    });
+    child.once('close', (code) => finish(code));
   });
 }
 

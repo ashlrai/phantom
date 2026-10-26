@@ -5,7 +5,8 @@
  *
  *   land           `gh pr ready` (a draft) then
  *                  `gh pr merge --squash --match-head-commit <sha>` — refused
- *                  when G1 hits a protected path or GitHub says it cannot merge
+ *                  when G1 hits a protected path, G1b finds test tampering,
+ *                  or GitHub says it cannot merge
  *   close          `gh pr close --comment "<short>"` (3.15: plus Mason's
  *                  optional one-line reason, which also becomes the task's
  *                  stateReason so the retro sweep learns from it)
@@ -468,8 +469,8 @@ export async function readyCloudPr(task: Pick<CloudDeliveryTask, 'repo'>, prNumb
 
 /**
  * Land: squash-merge exactly `headSha`. Refused when G1 hits a protected path
- * (the owner lane: those are landed on GitHub after review) or GitHub cannot
- * merge it. The diff is re-read and re-judged here — a preview is advice, the
+ * or G1b finds test tampering (the owner lane: those are landed on GitHub
+ * after review) or GitHub cannot merge it. The diff is re-read and re-judged here — a preview is advice, the
  * refusal is made on the commit being merged.
  */
 export async function landCloudPr<T extends CloudDeliveryTask = CloudTaskV1>(taskId: string, headSha: string, deps: CloudPrActionDeps<T> = {}): Promise<CloudPrActionResult<T>> {

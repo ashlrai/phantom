@@ -343,7 +343,7 @@ describe('native-thread recovery', () => {
     const retry = calls[2]!;
     expect(retry.session.turnCount).toBe(0);
     expect(retry.session.nativeSessionId).not.toBe(originalNative);
-    expect(retry.text).toContain('# Continuing from an earlier Verse session');
+    expect(retry.text).toContain('# Continuing from an earlier Phantom session');
     expect(retry.text).toContain('build the parser');
     expect(retry.text.endsWith('now add tests')).toBe(true);
     const after = engine.getSession(s.id)!;
@@ -656,7 +656,23 @@ describe('process registry: identity-verified orphan reaping', () => {
     const report = registry.reapOrphans();
     expect(kills).toEqual([]);
     expect(report.skipped).toEqual([expect.objectContaining({ sessionId: 'sess-2', reason: expect.stringContaining('cannot verify') })]);
-    expect(registry.entries().map((e) => e.sessionId)).toEqual(['sess-1']);
+    // An unverifiable live group is kept for the next start; the gone group is dropped.
+    expect(registry.entries().map((e) => e.sessionId)).toEqual(['sess-1', 'sess-2']);
+  });
+
+  it('a transient ps failure does not forget a live orphan: the next start still verifies and reaps it', () => {
+    seed([entry()]);
+    const alive = new Set([-5001, 5001]);
+    const first = harness(null, alive);
+    expect(first.registry.reapOrphans().skipped).toEqual([expect.objectContaining({ reason: expect.stringContaining('cannot verify') })]);
+    expect(first.kills).toEqual([]);
+    const rows: ProcessRow[] = [
+      { pid: 5001, pgid: 5001, startedAt: SPAWNED_AT + 400, command: 'node /x/launcher.mjs -p' },
+    ];
+    const second = harness(rows, alive);
+    expect(second.registry.reapOrphans().reaped.map((r) => r.pgid)).toEqual([5001]);
+    expect(second.kills).toEqual([[-5001, 'SIGTERM']]);
+    expect(second.registry.entries()).toEqual([]);
   });
 
   it('add/remove only touch this server’s entries; the file is 0600 JSON; markers are basenames', () => {

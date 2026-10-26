@@ -457,4 +457,22 @@ describe('ashlr leader say / thread / answer / approve / directives', () => {
     expect(await runLeaderCli(['directives', 'list', '--all', '--json'])).toBe(0);
     expect(JSON.parse(io.out[io.out.length - 1]!).directives).toHaveLength(1);
   });
+
+  it('<verb> --help prints usage and never posts, answers, approves or records', async () => {
+    const io = capture();
+    for (const args of [
+      ['say', '--help'],
+      ['say', 'focus', 'on', 'billing', '-h'],
+      ['answer', 'lm-20260101000000-abcdef:0', '--help'],
+      ['approve', '--help'],
+      ['directives', 'add', '--help'],
+      ['directives', 'add', 'Revenue', 'over', 'polish', '-h'],
+      ['directives', 'retire', '--help'],
+    ]) {
+      expect(await runLeaderCli(args), args.join(' ')).toBe(0);
+    }
+    expect(io.out.join('\n')).toContain('Phantom Leader');
+    expect(listThread()).toEqual([]);
+    expect(listOperatorDirectives({ includeRetired: true })).toEqual([]);
+  });
 });

@@ -17,6 +17,7 @@
 
 import type { AshlrConfig } from '../core/types.js';
 import { makeColors, isTty } from './ui.js';
+import { rejectUnknownOptions } from './args.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -153,6 +154,15 @@ export async function cmdManager(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     printManagerHelp();
     return 0;
+  }
+
+  // Refuse unknown options before any work: a typo like `--apply-reject` used
+  // to run a full manager pass that records judgements and writes a report.
+  const bad = rejectUnknownOptions(args, { flags: ['--json', '--apply-rejects'], values: ['--window', '--limit'] });
+  if (bad) {
+    process.stderr.write(red('error: ') + bad.message + '\n');
+    process.stderr.write('usage: ashlr manager [--window 7d|30d|all] [--limit N] [--apply-rejects] [--json]\n');
+    return 2;
   }
 
   const jsonMode     = args.includes('--json');

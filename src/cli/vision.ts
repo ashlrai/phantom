@@ -2,7 +2,7 @@
  * M121: `ashlr vision` — Mason's touchpoint for the end-state spec + strategist.
  *
  * Subcommands:
- *   show [id]              Print the current EndStateSpec (default: ecosystem).
+ *   show [id] [--json]     Print the current EndStateSpec (default: ecosystem).
  *   review [--project P]   V3.10: alias of `ashlr leader tick --wait` (budget-gated Leader).
  *   preview                Compile the latest briefing into a read-only adoption plan.
  *   approve                adoptBriefing for the latest briefing → evolve spec + create goals.
@@ -15,33 +15,38 @@
 import { loadConfig } from '../core/config.js';
 import { loadSpec, applyEvolution } from '../core/vision/spec.js';
 import type { EndStateSpec, SpecPriority } from '../core/vision/spec.js';
+import { noColorRequested } from './ui.js';
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
+function paint(code: string, s: string): string {
+  return noColorRequested() ? s : `\x1b[${code}m${s}\x1b[0m`;
+}
+
 function bold(s: string): string {
-  return `\x1b[1m${s}\x1b[0m`;
+  return paint('1', s);
 }
 
 function dim(s: string): string {
-  return `\x1b[2m${s}\x1b[0m`;
+  return paint('2', s);
 }
 
 function cyan(s: string): string {
-  return `\x1b[36m${s}\x1b[0m`;
+  return paint('36', s);
 }
 
 function yellow(s: string): string {
-  return `\x1b[33m${s}\x1b[0m`;
+  return paint('33', s);
 }
 
 function green(s: string): string {
-  return `\x1b[32m${s}\x1b[0m`;
+  return paint('32', s);
 }
 
 function red(s: string): string {
-  return `\x1b[31m${s}\x1b[0m`;
+  return paint('31', s);
 }
 
 function visionHoldReason(reason: string): string {
@@ -98,11 +103,34 @@ function printSpec(spec: EndStateSpec): void {
 // ---------------------------------------------------------------------------
 
 async function cmdShow(args: string[]): Promise<number> {
-  const id = args[0] ?? 'ecosystem';
+  // `show [id] [--json]`: a flag is never a spec id (`show --json` used to
+  // look up a spec named "--json" and report it missing).
+  const json = args.includes('--json');
+  const operands: string[] = [];
+  for (const arg of args) {
+    if (arg === '--json') continue;
+    if (arg.startsWith('-')) {
+      console.error(`vision show: unknown option '${arg}'. Usage: phm vision show [id] [--json]`);
+      return 2;
+    }
+    operands.push(arg);
+  }
+  if (operands.length > 1) {
+    console.error(`vision show: takes at most one spec id (got ${operands.length}). Usage: phm vision show [id] [--json]`);
+    return 2;
+  }
+  const id = operands[0] ?? 'ecosystem';
   const spec = loadSpec(id);
   if (!spec) {
-    console.error(`vision: spec '${id}' not found. Use 'phm vision show' to see the ecosystem spec.`);
+    const error = `spec '${id}' not found`;
+    const next = "Use 'phm vision show' to see the ecosystem spec.";
+    if (json) console.log(JSON.stringify({ ok: false, error, next }));
+    else console.error(`vision: ${error}. ${next}`);
     return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify(spec, null, 2));
+    return 0;
   }
   printSpec(spec);
   return 0;
@@ -543,16 +571,21 @@ async function cmdSet(args: string[]): Promise<number> {
   let specId = 'ecosystem';
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--north-star' && args[i + 1]) {
-      northStar = args[i + 1];
-      i++;
-    } else if (args[i] === '--end-state' && args[i + 1]) {
-      endState = args[i + 1];
-      i++;
-    } else if (args[i] === '--id' && args[i + 1]) {
-      specId = args[i + 1]!;
-      i++;
+    const arg = args[i]!;
+    if (arg !== '--north-star' && arg !== '--end-state' && arg !== '--id') {
+      // Unknown flags and stray words are refused: a typo must not edit the spec.
+      console.error(`vision set: unknown argument '${arg}'. Run 'phm vision --help' for usage.`);
+      return 2;
     }
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`vision set: ${arg} needs a value.`);
+      return 2;
+    }
+    if (arg === '--north-star') northStar = value;
+    else if (arg === '--end-state') endState = value;
+    else specId = value;
+    i++;
   }
 
   if (!northStar && !endState) {
@@ -581,7 +614,7 @@ Usage: phm vision <subcommand> [options]
 Compatible alias: ashlr vision <subcommand> [options]
 
 Subcommands:
-  show [id]              Print the EndStateSpec (default: ecosystem).
+  show [id] [--json]     Print the EndStateSpec (default: ecosystem).
   review [--project P]   Run the Leader tick (alias of 'phm leader tick --wait'; budget-gated).
   preview                Read-only compile: exact targets, dedupe, caps, and skip reasons.
   shadow [--json]        Record an evidence snapshot and show one zero-effect reconcile suggestion.
@@ -610,9 +643,19 @@ Examples:
 export async function cmdVision(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
 
-  if (!sub || sub === '--help' || sub === 'help') {
+  // `vision <verb> --help` prints usage and never runs the verb: approve and
+  // reconcile create goals, and set edits the spec.
+  if (!sub || sub === '--help' || sub === '-h' || sub === 'help' ||
+      rest.includes('--help') || rest.includes('-h')) {
     cmdVisionHelp();
     return 0;
+  }
+
+  // approve, reconcile and preview take no arguments; refuse extras rather
+  // than silently ignoring a mistyped flag on a planning mutation.
+  if ((sub === 'approve' || sub === 'reconcile' || sub === 'preview') && rest.length > 0) {
+    console.error(`vision ${sub}: takes no arguments (got '${rest[0]}'). Run 'phm vision --help' for usage.`);
+    return 2;
   }
 
   switch (sub) {

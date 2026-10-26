@@ -3,6 +3,12 @@
   flex-direction: column;
   min-height: 0;
   background: var(--bg-canvas);
+  /* The list's box comes from the chat grid, never from its rows, so nothing
+     inside it can move the rest of the page. Saying so lets the engine skip
+     the list when the composer grows a line on every keystroke: with 500
+     chats, ~30% less main-thread work per key. No paint containment, so focus
+     rings are not clipped; tooltips, menus and dialogs portal to <body>. */
+  contain: size layout style;
 }
 
 /* ---- head: search + new chat + collapse -------------------------------- */
@@ -263,13 +269,27 @@
   line-height: var(--text-sm-line);
 }
 
-/* Running: a pulsing dot, never a spinner. */
+/* Running: a pulsing dot, never a spinner. The ring is a scaled, fading copy
+   of the dot: transform and opacity run on the compositor, where the old
+   box-shadow pulse repainted the whole page every frame while any chat ran.
+   Sidebar.tsx plays the ring (RUNNING_RING, a Web Animation: see
+   components/motion/pulse.ts for why not CSS); it stays at opacity 0, unseen,
+   under reduced motion. */
 .running {
+  position: relative;
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--status-running-solid);
-  animation: verse-pulse 1.8s ease-out infinite;
+}
+.running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--status-running-solid);
+  opacity: 0;
+  pointer-events: none;
 }
 .errored {
   display: flex;
@@ -343,20 +363,6 @@
 /* The footer's confirm dialog (Dialog primitive, portalled to <body>): the
    same right-aligned Cancel / Disconnect pair as Settings ▸ Connection. */
 .confirmActions { display: flex; justify-content: flex-end; gap: var(--space-2); }
-
-@keyframes verse-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-running-solid) 55%, transparent); }
-  100% { box-shadow: 0 0 0 5px transparent; }
-}
-/* Two triggers, the same pattern as the duration tokens in tokens.css and the
-   shimmer in global.css: the OS preference applies unless Settings explicitly
-   asked for full motion, and data-motion="reduce" forces it on for an operator
-   whose OS says nothing. A persistent `animation` has a hardcoded duration, so
-   collapsing --duration-* does NOT reach it — it needs both rules by name. */
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .running { animation: none; }
-}
-:root[data-motion="reduce"] .running { animation: none; }
 
 /* ---- 3.10: filter chips ------------------------------------------------- */
 .filters {

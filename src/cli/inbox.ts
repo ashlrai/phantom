@@ -504,14 +504,17 @@ async function cmdInboxShow(id: string, jsonMode: boolean, openMd: boolean): Pro
   }
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox show <id> [--open]');
+    const msg = 'Usage: ashlr inbox show <id> [--open] [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
   // Resolve by prefix (mirrors approve/reject)
   const p = resolveProposal(id);
   if (!p) {
-    console.error(col.red('error: ') + `Proposal not found: ${id}`);
+    // Same JSON refusal shape as approve / reject / automerge / submit.
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -530,6 +533,7 @@ async function cmdInboxShow(id: string, jsonMode: boolean, openMd: boolean): Pro
         console.log(col.cyan('  opened in ashlr-md: ') + result.path);
         return 0;
       }
+      process.stderr.write(col.dim(`  ashlr-md: ${result.detail} — showing in terminal`) + '\n');
       // rendered:false → fall through to terminal rendering below
     }
     // markdown module unavailable or viewer not installed → terminal fallback
@@ -625,9 +629,7 @@ async function cmdInboxSubmit(id: string, yes: boolean, jsonMode: boolean): Prom
   }
   const proposal = resolveProposal(id);
   if (!proposal) {
-    const msg = `Proposal not found: ${id}`;
-    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
-    else console.error(col.red('error: ') + msg);
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
   if (proposal.status !== 'pending' && proposal.status !== 'awaiting-host-merge') {
@@ -742,7 +744,9 @@ async function cmdInboxApprove(id: string, yes: boolean, jsonMode: boolean): Pro
   }
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox approve <id> [--yes]');
+    const msg = 'Usage: ashlr inbox approve <id> [--yes] [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
@@ -755,11 +759,7 @@ async function cmdInboxApprove(id: string, yes: boolean, jsonMode: boolean): Pro
   // Load proposal — resolve by prefix if needed
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -879,7 +879,9 @@ async function cmdInboxReject(id: string, jsonMode: boolean): Promise<number> {
   const col = makeColors(tty);
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox reject <id>');
+    const msg = 'Usage: ashlr inbox reject <id> [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
@@ -891,11 +893,7 @@ async function cmdInboxReject(id: string, jsonMode: boolean): Promise<number> {
 
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -942,7 +940,9 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
   const col = makeColors(tty);
 
   if (!id) {
-    console.error(col.red('error: ') + 'Usage: ashlr inbox automerge <id> [--json]');
+    const msg = 'Usage: ashlr inbox automerge <id> [--json]';
+    if (jsonMode) console.log(JSON.stringify({ ok: false, error: msg }));
+    else console.error(col.red('error: ') + msg);
     return 2;
   }
 
@@ -954,11 +954,7 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
 
   const p = resolveProposal(id);
   if (!p) {
-    if (jsonMode) {
-      console.log(JSON.stringify({ ok: false, error: `Proposal not found: ${id}` }));
-    } else {
-      console.error(col.red('error: ') + `Proposal not found: ${id}`);
-    }
+    reportProposalNotFound(id, jsonMode, col);
     return 1;
   }
 
@@ -1028,6 +1024,15 @@ async function cmdInboxAutoMerge(id: string, jsonMode: boolean): Promise<number>
 // ID resolution — accept full id or an unambiguous prefix
 // ---------------------------------------------------------------------------
 
+const PROPOSAL_NOT_FOUND_NEXT = 'List proposal ids with `phm inbox --status all`; an id prefix must match exactly one proposal.';
+
+/** One refusal for an unknown or ambiguous id across show/approve/submit/reject/automerge. */
+function reportProposalNotFound(id: string, jsonMode: boolean, col: ReturnType<typeof makeColors>): void {
+  const error = `Proposal not found: ${id}`;
+  if (jsonMode) console.log(JSON.stringify({ ok: false, error, next: PROPOSAL_NOT_FOUND_NEXT }));
+  else console.error(col.red('error: ') + error + '\n' + PROPOSAL_NOT_FOUND_NEXT);
+}
+
 function resolveProposal(idOrPrefix: string): Proposal | null {
   if (!_loadProposal || !_listProposals) return null;
 
@@ -1051,11 +1056,12 @@ function resolveProposal(idOrPrefix: string): Proposal | null {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-const INBOX_USAGE: Record<'list' | 'show' | 'approve' | 'reject' | 'automerge', string> = {
+const INBOX_USAGE: Record<'list' | 'show' | 'approve' | 'submit' | 'reject' | 'automerge', string> = {
   list: 'Usage: ashlr inbox [list] [--status <pending|approved|rejected|awaiting-host-merge|applied|failed|all>]\n' +
     '                    [--since <ISO|YYYY-MM-DD>] [--limit N] [--json]',
   show: 'Usage: ashlr inbox show <id> [--open] [--json]',
   approve: 'Usage: ashlr inbox approve <id> [--yes] [--json]',
+  submit: 'Usage: ashlr inbox submit <id> [--yes] [--json]',
   reject: 'Usage: ashlr inbox reject <id> [--json]',
   automerge: 'Usage: ashlr inbox automerge <id> [--json]',
 };
