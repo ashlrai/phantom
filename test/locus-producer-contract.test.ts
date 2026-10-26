@@ -5,7 +5,8 @@
  * release Phantom pins in companion-inventory.ts (see manifest.json for the source commit),
  * by scripts/capture-locus-contract-fixtures.mjs in a throwaway LOCUS_HOME with sample
  * bindings and no credentials. The published schemas are copied from that same commit,
- * and per-run values (timestamps, session ids, seals) are normalized to placeholders.
+ * and per-run strings and countdown sign classes are normalized. Binary/source
+ * correspondence is caller-supplied, not independently attested by these fixtures.
  * Hand-written fixtures in locus.probe.test.ts describe what Phantom expects; these describe
  * what Locus actually emits.
  */
@@ -33,6 +34,9 @@ interface Manifest {
   producer: string;
   version: string;
   sourceCommit: string;
+  binarySourceProvenance: string;
+  normalizedKeys: string[];
+  countdownNormalization: string;
   scenarios: Record<string, { capabilityExported: boolean; exits: Record<string, number> }>;
 }
 const manifest = JSON.parse(read('manifest.json')) as Manifest;
@@ -114,6 +118,9 @@ describe('locus producer contract fixtures', () => {
     expect(manifest.producer).toBe('locus');
     expect(manifest.version).toBe(locusRelease.version);
     expect(manifest.sourceCommit).toBe(locusRelease.sourceCommit);
+    expect(manifest.binarySourceProvenance).toBe('caller-supplied-not-attested');
+    expect(manifest.normalizedKeys).toContain('expires_in_secs');
+    expect(manifest.countdownNormalization).toContain('readiness/expired unchanged');
     expect(read('version.txt').trim()).toBe(`locus ${locusRelease.version}`);
     expect(read('help.txt')).toMatch(/^Usage:\s+locus(?:\s|$)/imu);
     expect(scenarios).toEqual(['fresh-home', 'pinned-capability-not-exported', 'pinned-capability-exported']);
