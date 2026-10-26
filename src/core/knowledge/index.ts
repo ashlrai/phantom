@@ -13,7 +13,7 @@
  *  5. NO SECRETS: skips .env* / *.pem / *.key / *.p12 files outright; scrubs
  *     secret-shaped tokens from chunk text before storing or embedding.
  *  6. INCREMENTAL: re-indexes only files whose mtime > last index timestamp.
- *     Indexing never throws — errors are swallowed per the index contract.
+ *     Indexing never throws; errors are swallowed per the index contract.
  *     Explicit agent-memory reads/writes throw on unsafe or failed storage.
  */
 
