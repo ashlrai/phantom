@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,7 +20,7 @@ afterEach(() => {
 
 function runFixture(
   source: string,
-  options: { hardMs?: number; idleMs?: number; heartbeatMs?: number; args?: string[] } = {},
+  options: { hardMs?: number; idleMs?: number; heartbeatMs?: number; args?: string[]; freeMiB?: number } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-wrapper-'));
   roots.push(root);
@@ -28,7 +28,20 @@ function runFixture(
   mkdirSync(dirname(vitest), { recursive: true });
   writeFileSync(vitest, source, 'utf8');
 
-  return spawnSync(process.execPath, [wrapper, ...(options.args ?? [])], {
+  const fixtureWrapper = join(root, 'scripts', 'test-ci.mjs');
+  mkdirSync(dirname(fixtureWrapper), { recursive: true });
+  // These inert CLIs measure watchdog/forwarding behavior, so give their
+  // synthetic host deterministic capacity instead of inheriting host pressure.
+  writeFileSync(fixtureWrapper, readFileSync(wrapper, 'utf8').replace(
+    'boundedVitestJob(process.env, process.argv.slice(2))',
+    `boundedVitestJob(process.env, process.argv.slice(2), ${(options.freeMiB ?? 65536) * 1048576}, 8)`,
+  ));
+  const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+  mkdirSync(dirname(policy), { recursive: true });
+  copyFileSync(resolve(here, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
+  copyFileSync(resolve(here, '..', 'scripts', 'vitest-progress-reporter.mjs'), join(root, 'scripts', 'vitest-progress-reporter.mjs'));
+
+  return spawnSync(process.execPath, [fixtureWrapper, ...(options.args ?? [])], {
     cwd: root,
     encoding: 'utf8',
     timeout: 5_000,
@@ -43,6 +56,36 @@ function runFixture(
 }
 
 describe('test-ci watchdog', () => {
+  it('serializes both inline projects under low memory despite larger CLI overrides', () => {
+    const result = runFixture(`
+      if (process.env.ASHLR_VITEST_UNIT_MAX_WORKERS !== '1') process.exit(8);
+      console.log(JSON.stringify(process.argv.slice(2)));
+    `, { freeMiB: 512, args: ['--max-workers=20', '--fileParallelism=true'] });
+    expect(result.status).toBe(0);
+    const argv = JSON.parse(result.stdout.trim()) as string[];
+    expect(argv).toContain('--maxWorkers=1');
+    expect(argv).toContain('--no-file-parallelism');
+    expect(argv).toContain('--pool=forks');
+    expect(argv).not.toContain('--fileParallelism=true');
+  });
+
+  it('applies the test heap cap and emits a class-labelled RSS receipt on failure', () => {
+    const result = runFixture(`
+      import { getHeapStatistics } from 'node:v8';
+      const heapMiB = getHeapStatistics().heap_size_limit / 1048576;
+      if (heapMiB < 1024 || heapMiB > 1152) process.exit(8);
+      console.log('heap-cap-ok'); process.exit(7);
+    `);
+    expect(result.status).toBe(7);
+    expect(result.stdout).toContain('heap-cap-ok');
+    const receipt = result.stderr.split('\n').find(line => line.startsWith('[job-memory] '));
+    expect(receipt).toBeDefined();
+    const record = JSON.parse(receipt!.slice('[job-memory] '.length));
+    expect(record.jobClass).toBe('test');
+    expect(record.peakRssKiB).toBeGreaterThan(0);
+    expect(record.pid).toEqual(expect.any(Number));
+  });
+
   it('forwards shard argv without globally disabling project worker budgets', () => {
     const result = runFixture(
       'console.log(JSON.stringify(process.argv.slice(2)));',
