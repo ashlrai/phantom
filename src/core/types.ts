@@ -6164,6 +6164,8 @@ export interface QualityMetrics {
   rejectRate: number;
   /** verifyResult.passed / proposals with verifyResult present */
   verifyPassRate: number;
+  /** Observed review-event share; null means the sources could not be read. */
+  crossReview?: import('./fleet/cross-review.js').CrossReviewShare | null;
   /** Average diff lines across proposals that have a diff. */
   avgDiffLines: number;
   /** Per-engine breakdown keyed by engineModel (or '(unknown)'). */
