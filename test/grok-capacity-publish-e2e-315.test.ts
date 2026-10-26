@@ -274,7 +274,11 @@ describe('(c) the daemon\'s publisher samples Grok itself once an idle Verse han
     // work correctly preserves its fence instead of proving safe hand-back.
     expect(await waitFor(() => grokRow(collector!)?.state === 'observed')).toBe(true);
     const ledgerRoot = accountsLedgerRoot(accountsRoot);
-    const pending = inspectResourceQuotaRefreshPending(ledgerRoot);
+    // The inspection fails closed ('unavailable') when the ledger directory
+    // changes mid-read, which the live collector can do right after a sample.
+    // Wait for a stable read instead of racing it.
+    let pending = inspectResourceQuotaRefreshPending(ledgerRoot);
+    expect(await waitFor(() => (pending = inspectResourceQuotaRefreshPending(ledgerRoot)).state !== 'unavailable')).toBe(true);
     expect(pending.state).toBe('pending');
     const activityPath = path.join(ledgerRoot, '.resource-quota-refresh-activity.json');
     if (pending.markerVersion === 1) {

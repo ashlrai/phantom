@@ -58,9 +58,12 @@ Exit codes: 0 prepared, repinned or already pinned (authentication not checked),
 supports separate native login/metadata; it does not enable a Grok
 task-generation adapter.
 `;
+const PREPARE_USAGE = 'usage: ashlr resources profile prepare --provider codex|claude|grok --directory NEW_ABS --executable ABS [--json]';
 class UsageError extends Error {}
 /** A repin failure whose message is fixed, path-free text saying whether the profile changed. */
 class RepinFailure extends Error {}
+/** A prepare failure whose core message is fixed text, at most naming the operator's executable real path. */
+class PrepareFailure extends Error {}
 class TemplateUpgradeFailure extends Error {}
 class IdentityUpgradeFailure extends Error {}
 const REPIN_UNAVAILABLE = 'Native profile repin unavailable; inspect the profile before retrying';
@@ -111,8 +114,10 @@ function parse(args: string[]): ProfileCommand {
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 async function prepare(options: Extract<ProfileCommand, { subcommand: 'prepare' }>): Promise<void> {
-  const { prepareResourceNativeProfile } = await import('../core/resources/native-profile.js');
-  const report = prepareResourceNativeProfile({ provider: options.provider, directory: options.directory, executable: options.executable });
+  const { prepareResourceNativeProfile, ResourceNativeProfilePrepareError } = await import('../core/resources/native-profile.js');
+  let report: ReturnType<typeof prepareResourceNativeProfile>;
+  try { report = prepareResourceNativeProfile({ provider: options.provider, directory: options.directory, executable: options.executable }); }
+  catch (error) { throw error instanceof ResourceNativeProfilePrepareError ? new PrepareFailure(error.message) : error; }
   console.log(options.json ? JSON.stringify(report, null, 2) : [
     `Native profile · ${report.provider} · prepared · authentication not checked`,
     `Directory: ${report.directory}`, `Command file: ${report.commandPath}`,
@@ -186,12 +191,15 @@ export async function cmdResourceProfile(args: string[]): Promise<number> {
     return 0;
   } catch (error) {
     // Repin failures carry fixed, path-free text that says whether the profile
-    // changed; anything else (and every prepare failure) stays generic.
-    const message = error instanceof UsageError || error instanceof RepinFailure || error instanceof TemplateUpgradeFailure || error instanceof IdentityUpgradeFailure ? error.message
+    // changed; prepare failures name the refused check (and, for an install
+    // symlink, its real path). Anything unexpected stays generic.
+    const message = error instanceof UsageError || error instanceof PrepareFailure || error instanceof RepinFailure || error instanceof TemplateUpgradeFailure || error instanceof IdentityUpgradeFailure ? error.message
       : subcommand === 'repin' ? REPIN_UNAVAILABLE : subcommand === 'upgrade-template' ? TEMPLATE_UPGRADE_UNAVAILABLE
         : subcommand === 'upgrade-identity' ? IDENTITY_UPGRADE_UNAVAILABLE
         : 'Native profile preparation unavailable; inspect the selected target for partial files';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message })); else console.error(message);
+    const usage = error instanceof UsageError && args[0] === 'prepare' ? PREPARE_USAGE : null;
+    if (args.includes('--json')) console.log(JSON.stringify(usage ? { error: message, usage } : { error: message }));
+    else console.error(usage ? `${message}\n${usage}` : message);
     return error instanceof UsageError ? 2 : 1;
   }
 }

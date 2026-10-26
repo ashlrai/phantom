@@ -95,6 +95,12 @@ describe('claims', () => {
     expect(readCloudBacklog([old], NOW).items.find((i) => i.id === FIRST)).toMatchObject({ claimedBy: null, lastState: state });
   });
 
+  it('a closed item whose session reported no-change stays retired', () => {
+    const t = { ...task(FIRST, 'closed', 30 * DAY), report: { status: 'no-change' as const, summary: 'Already fixed on master.', testsRun: [], risks: [] } };
+    expect(readCloudBacklog([t], NOW).items.find((i) => i.id === FIRST)).toMatchObject({ claimedBy: t.id, lastState: 'closed' });
+    expect(nextBacklogItem([t], 'ashlrai/ashlr-hub', NOW)?.id).toBe(SECOND);
+  });
+
   it('the NEWEST task decides', () => {
     const oldMerged = task(FIRST, 'merged', 10 * DAY, 20 * DAY);
     const newerFailed = task(FIRST, 'failed', 5 * DAY, 6 * DAY);
@@ -132,9 +138,11 @@ describe('user items', () => {
   });
 
   it('user items rank by priority after built-ins of the same priority, and repo-scoped items only match their repo', () => {
-    appendUserBacklogItems([item('u-p1', { priority: 1 }), item('u-other', { priority: 1, repo: 'ashlrai/other' })]);
+    // At the top built-in priority, whatever it currently is, so the test does not pin the backlog's contents.
+    const top = builtinOrdered[0]!.priority;
+    appendUserBacklogItems([item('u-p1', { priority: top }), item('u-other', { priority: top, repo: 'ashlrai/other' })]);
     const ids = readCloudBacklog([], NOW).items.map((i) => i.id);
-    const lastBuiltinP1 = Math.max(...builtinOrdered.filter((i) => i.priority === 1).map((i) => ids.indexOf(i.id)));
+    const lastBuiltinP1 = Math.max(...builtinOrdered.filter((i) => i.priority === top).map((i) => ids.indexOf(i.id)));
     expect(ids.indexOf('u-p1')).toBe(lastBuiltinP1 + 1);
     expect(nextBacklogItem([], 'ashlrai/other', NOW)?.id).toBe(FIRST);
     const claimAll = BUILTIN_IMPROVEMENT_BACKLOG.map((i) => task(i.id, 'running'));

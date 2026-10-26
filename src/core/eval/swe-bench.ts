@@ -183,7 +183,9 @@ export function applyDiff(diff: string, repoPath: string): boolean | 'traversal-
   // Write the diff to a temp file — avoids stdin-pipe issues on macOS BSD patch.
   const tmpPatch = path.join(repoPath, '.ashlr-bench.patch');
   try {
-    fs.writeFileSync(tmpPatch, diff, 'utf8');
+    // `git apply` refuses a patch whose last line has no newline ("corrupt
+    // patch"); engine and sandbox diffs often end without one.
+    fs.writeFileSync(tmpPatch, diff.endsWith('\n') ? diff : `${diff}\n`, 'utf8');
     // Ensure there is a git repo so `git apply` has a context.
     try {
       execFileSync('git', ['init', '-q'], { cwd: repoPath, stdio: 'pipe', timeout: 10_000 });

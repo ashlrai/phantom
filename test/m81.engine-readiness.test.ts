@@ -510,3 +510,14 @@ describe('fleetReadiness', () => {
     expect(claudeResult.fix!.length).toBeGreaterThan(0);
   });
 });
+
+describe('daemonTokenEnvHint', () => {
+  it('names the daemon env mechanism of each platform', async () => {
+    const { daemonTokenEnvHint } = await import('../src/core/fleet/engine-readiness.js');
+    expect(daemonTokenEnvHint('darwin')).toContain('launchctl setenv');
+    expect(daemonTokenEnvHint('linux')).toContain('systemctl --user set-environment');
+    expect(daemonTokenEnvHint('linux')).not.toContain('launchctl');
+    expect(daemonTokenEnvHint('win32')).toContain('setx');
+    expect(daemonTokenEnvHint('win32')).not.toContain('launchctl');
+  });
+});

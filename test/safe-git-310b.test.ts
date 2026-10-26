@@ -5,7 +5,7 @@
  * assert the markers never appear.
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -256,4 +256,38 @@ describe('ephemeral token headers', () => {
     expect(cmd.args).toEqual(expect.arrayContaining(['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', `--git-dir=${w.gitDir}`]));
     chmodSync(w.root, 0o700);
   });
+});
+
+describe('a killed call settles', () => {
+  // A command git starts (an alias here; a remote helper in production)
+  // forks a SIGTERM-ignoring grandchild that holds the inherited pipes.
+  // SIGKILL to git alone left them open, so 'close' never fired and the call
+  // hung until the grandchild exited on its own.
+  it.skipIf(process.platform === 'win32')('kills the whole process tree at the deadline and resolves', async () => {
+    const pidFile = join(w.root, 'grandchild.pid');
+    const script = join(w.root, 'hang.sh');
+    writeFileSync(script, [
+      '#!/bin/sh',
+      `( trap '' TERM; sh -c 'echo $PPID' > '${pidFile}'; exec sleep 30 ) &`,
+      'exec sleep 30',
+      '',
+    ].join('\n'));
+    git(w.mirror, 'config', 'alias.hang', `!sh '${script}'`);
+    const started = Date.now();
+    const r = await runSafeGit({ workTree: w.mirror, gitDir: w.common, layout: 'repo', args: ['hang'], timeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(r).toMatchObject({ ok: false, timedOut: true });
+    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(pid).toBeGreaterThan(0);
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 40 && alive(); i += 1) await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    expect(alive()).toBe(false);
+  }, 15_000);
 });

@@ -65,7 +65,7 @@ import { SourceList } from './chat/SourceList.js';
 import { useReasoningDisplay, type ReasoningDisplay } from './chat/reasoning-pref.js';
 import { ThinkingBlock } from './chat/ThinkingBlock.js';
 import { onTranscriptFind, onTranscriptJump, onTranscriptStep } from './chat/transcript-jump.js';
-import { anchorTurnKey, useTurnWindow } from './chat/turn-window.js';
+import { anchorTurnKey, useTurnWindow, type TurnWindow } from './chat/turn-window.js';
 import { TranscriptNav } from './chat/TranscriptNav.js';
 import { TurnAnnouncer } from './chat/TurnAnnouncer.js';
 import { toolAnchorId, type ToolFacts } from './chat/tool-semantics.js';
@@ -198,6 +198,35 @@ function explainedKeys(items: readonly TranscriptItem[]): Set<string> {
   return out;
 }
 
+interface TranscriptCaches {
+  scope: string | null;
+  tools: TurnCache;
+  segments: WeakMap<TranscriptSegment, SegmentModel>;
+}
+
+/** Chats whose derived turns outlive their transcript's unmount. */
+const KEPT_CHAT_CACHES = 8;
+const keptCaches = new Map<string, TranscriptCaches>();
+
+/**
+ * One chat's derivation caches, kept across mounts for the last few chats.
+ * Switching back to a chat used to rebuild every turn's model and re-read
+ * every tool call (a 300-turn chat: ~1.2 s at 4× CPU) although the store
+ * hands back the very same segments; now those segments hit at once.
+ */
+function transcriptCaches(scope: string | null): TranscriptCaches {
+  const fresh = (): TranscriptCaches => ({ scope, tools: createTurnCache(), segments: new WeakMap() });
+  if (scope === null) return fresh();
+  const kept = keptCaches.get(scope) ?? fresh();
+  keptCaches.delete(scope);
+  keptCaches.set(scope, kept);
+  for (const key of keptCaches.keys()) {
+    if (keptCaches.size <= KEPT_CHAT_CACHES) break;
+    keptCaches.delete(key);
+  }
+  return kept;
+}
+
 function deriveSegment(segment: TranscriptSegment, cache: TurnCache): SegmentModel {
   const model = buildTurns(groupTranscriptItems(segment.items), cache);
   return { turns: model.turns, facts: model.facts, errorAnchors: model.errorAnchors, explained: explainedKeys(segment.items) };
@@ -226,11 +255,7 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
   // A mounted transcript can switch chats/accounts whose native ids overlap.
   // Reset before deriving the new chat, not in an effect after its first paint.
   const cacheScope = sessionId ?? getVerseUiState().activeSessionId;
-  const scopedCaches = useMemo(() => ({
-    scope: cacheScope,
-    tools: createTurnCache(),
-    segments: new WeakMap<TranscriptSegment, SegmentModel>(),
-  }), [cacheScope]);
+  const scopedCaches = useMemo(() => transcriptCaches(cacheScope), [cacheScope]);
   const segments = useMemo<TranscriptSegment[]>(
     () => transcript.segments ?? [{ key: 'all', items: transcript.items }],
     [transcript],
@@ -273,14 +298,47 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
     () => searchTurns(turns, query, scopedCaches.tools),
     [turns, query, scopedCaches],
   );
-  const matchKeys = useMemo(() => new Set(matches.map((m) => m.turnKey)), [matches]);
+  // `matches` is a new array on every streamed token; the set (a prop of every
+  // turn block) changes only when which turns match does.
+  const matchSignature = matches.map((m) => m.turnKey).join('\n');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the signature IS the dependency
+  const matchKeys = useMemo(() => new Set(matches.map((m) => m.turnKey)), [matchSignature]);
+  // The turn list in blocks of TURN_BLOCK segments, each block a stable array
+  // while its segments are unchanged, so a streamed token re-renders only the
+  // block holding the live turn (TurnBlockList).
+  const blockCache = useRef<SegmentModel[][]>([]);
+  const blocks = useMemo(() => {
+    const out: SegmentModel[][] = [];
+    for (let start = 0; start < perSegment.length; start += TURN_BLOCK) {
+      const next = perSegment.slice(start, start + TURN_BLOCK);
+      const previous = blockCache.current[out.length];
+      out.push(previous && previous.length === next.length && previous.every((m, i) => m === next[i]) ? previous : next);
+    }
+    blockCache.current = out;
+    return out;
+  }, [perSegment]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = useCallback((behavior: 'instant' | 'smooth' = 'instant') => {
     const node = scroller.current;
     if (!node) return;
-    // jsdom has no Element.scrollTo; fall back to the property for tests.
-    if (typeof node.scrollTo === 'function') node.scrollTo({ top: node.scrollHeight, behavior });
-    else node.scrollTop = node.scrollHeight;
+    // jsdom has no Element.scrollTo (and no smooth scrolling); the property is enough there.
+    if (typeof node.scrollTo !== 'function') {
+      node.scrollTop = node.scrollHeight;
+      return;
+    }
+    // 'instant', not 'auto': `.transcript` is `scroll-behavior: smooth`, so an
+    // 'auto' jump animated. Opening a 300-turn chat then swept ~100k px from
+    // the top while the turn window rendered ~175 turns in full on the way
+    // down, and a streamed reply chased its own tail.
+    try {
+      node.scrollTo({ top: node.scrollHeight, behavior });
+    } catch {
+      // An engine without the 'instant' keyword rejects the dictionary: same jump, inline override.
+      const previous = node.style.scrollBehavior;
+      node.style.scrollBehavior = 'auto';
+      node.scrollTop = node.scrollHeight;
+      node.style.scrollBehavior = previous;
+    }
   }, []);
 
   function onScroll() {
@@ -586,14 +644,14 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
           </div>
         ) : null}
         <ol className={styles.list} onKeyDown={onListKeyDown}>
-          {perSegment.map((segment, s) => segment.turns.map((turn, t) => (!win.isFull(turn.key, turnOffsets[s]! + t, turn.status === 'running') ? (
-            <TurnPlaceholder key={turn.key} turnKey={turn.key} index={turnOffsets[s]! + t} height={win.heightOf(turn.key)} registerNode={registerTurn} />
-          ) : (
-            <TurnView key={turn.key} turn={turn} index={turnOffsets[s]! + t} facts={segment.facts} explained={segment.explained}
-              engine={engine} match={matchKeys.has(turn.key) ? (turn.key === activeMatchKey ? 'active' : 'true') : undefined}
-              reasoning={reasoning} onJumpTool={jumpToTool} onJumpAnchor={jumpToAnchor} registerNode={registerTurn}
+          {blocks.map((segmentsInBlock, b) => (
+            // Keyed by position, not content: a turn moving between blocks
+            // would remount (and lose what the operator expanded in it).
+            <TurnBlockList key={b} segments={segmentsInBlock} offsets={turnOffsets} first={b * TURN_BLOCK} win={win}
+              windowVersion={win.version} turnCount={turns.length} matchKeys={matchKeys} activeMatchKey={activeMatchKey}
+              engine={engine} reasoning={reasoning} onJumpTool={jumpToTool} onJumpAnchor={jumpToAnchor} registerNode={registerTurn}
               openFile={openFile} silentNote={silentNote} />
-          ))))}
+          ))}
           {/* The reasoning streaming right now — it becomes an ordinary
               thinking item the moment its persisted block lands. */}
           {liveThinking ? (
@@ -645,6 +703,51 @@ interface TurnViewProps {
   /** V3.15: what to say under a settled turn with no reasoning, for a seat that withholds it. */
   silentNote: string | null;
 }
+
+/** Segments per TurnBlockList. */
+const TURN_BLOCK = 32;
+
+interface TurnBlockListProps extends Pick<TurnViewProps, 'engine' | 'reasoning' | 'onJumpTool' | 'onJumpAnchor' | 'registerNode' | 'openFile' | 'silentNote'> {
+  /** This block's segments: the same array while none of them changed. */
+  segments: SegmentModel[];
+  /** Index in `offsets` of this block's first segment. */
+  first: number;
+  /** Each segment's first turn index (whole transcript). */
+  offsets: readonly number[];
+  /** Read for `isFull` / `heightOf` only; `windowVersion` and `turnCount` stand for it in the comparison. */
+  win: TurnWindow;
+  windowVersion: number;
+  turnCount: number;
+  matchKeys: ReadonlySet<string>;
+  activeMatchKey: string | null;
+}
+
+/**
+ * A run of turns that re-renders only when something it draws can have
+ * changed. Without it every streamed token rebuilt and compared an element
+ * for each of the chat's turns (300 in a long chat) just to re-render the
+ * live one; now it is the live turn's block plus a comparison per block.
+ * `offsets` is a new array per token but only the live block's entries can
+ * move, which this block's own first turn index stands for.
+ */
+const TurnBlockList = memo(function TurnBlockList({ segments, first, offsets, win, matchKeys, activeMatchKey, engine, reasoning,
+  onJumpTool, onJumpAnchor, registerNode, openFile, silentNote }: TurnBlockListProps) {
+  return segments.map((segment, s) => segment.turns.map((turn, t) => {
+    const index = offsets[first + s]! + t;
+    return !win.isFull(turn.key, index, turn.status === 'running') ? (
+      <TurnPlaceholder key={turn.key} turnKey={turn.key} index={index} height={win.heightOf(turn.key)} registerNode={registerNode} />
+    ) : (
+      <TurnView key={turn.key} turn={turn} index={index} facts={segment.facts} explained={segment.explained}
+        engine={engine} match={matchKeys.has(turn.key) ? (turn.key === activeMatchKey ? 'active' : 'true') : undefined}
+        reasoning={reasoning} onJumpTool={onJumpTool} onJumpAnchor={onJumpAnchor} registerNode={registerNode}
+        openFile={openFile} silentNote={silentNote} />
+    );
+  }));
+}, (a, b) => a.segments === b.segments && a.first === b.first && a.offsets[a.first] === b.offsets[b.first]
+  && a.windowVersion === b.windowVersion && a.turnCount === b.turnCount && a.matchKeys === b.matchKeys
+  && a.activeMatchKey === b.activeMatchKey && a.engine === b.engine && a.reasoning === b.reasoning
+  && a.onJumpTool === b.onJumpTool && a.onJumpAnchor === b.onJumpAnchor && a.registerNode === b.registerNode
+  && a.openFile === b.openFile && a.silentNote === b.silentNote);
 
 /**
  * A windowed-out turn (chat/turn-window.ts): its anchor id, its place in the

@@ -31,6 +31,7 @@ import { LEGACY_BRIEFING_KIND, type CommsMigrationSummary } from '../core/comms/
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -510,12 +511,38 @@ function printCommsHelp(): void {
   console.log('');
 }
 
+/**
+ * Options each comms verb reads. Anything else is refused before the verb runs:
+ * `cycle --dry-run` used to send for real and `digest --forc` dropped the flag.
+ * telegram-brand keeps its own strict parser.
+ */
+const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  status:           { allowed: {}, usage: 'usage: phm comms status' },
+  'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
+  cycle:            { allowed: {}, usage: 'usage: phm comms cycle' },
+  ask:              { allowed: { values: ['-o', '--option'] }, usage: 'usage: phm comms ask "<text>" -o <option> [-o <option> ...]' },
+  digest:           { allowed: { flags: ['--force'] }, usage: 'usage: phm comms digest [--force]' },
+  'ask-vision':     { allowed: {}, usage: 'usage: phm comms ask-vision' },
+  'ask-merges':     { allowed: {}, usage: 'usage: phm comms ask-merges' },
+  'setup-telegram': { allowed: {}, usage: 'usage: phm comms setup-telegram' },
+};
+
 export async function cmdComms(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
   }
   if (args[0] === 'telegram-brand') return cmdTelegramBrand(args.slice(1));
+  const verb = args[0] ?? 'status';
+  const spec = Object.hasOwn(COMMS_OPTIONS, verb) ? COMMS_OPTIONS[verb] : undefined;
+  if (spec) {
+    const bad = rejectUnknownOptions(args.slice(1), spec.allowed);
+    if (bad) {
+      console.error(bad.message);
+      console.error(spec.usage);
+      return 2;
+    }
+  }
   const { sub, text, options } = parseArgs(args);
 
   switch (sub) {

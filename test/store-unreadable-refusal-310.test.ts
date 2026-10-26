@@ -11,7 +11,7 @@
  *
  * HOME-isolated: every test relocates HOME to a fresh temp dir.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,6 +31,32 @@ import {
 } from '../src/core/routing/budget-store.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 
+// Observes (and can fail) fs.openSync. root bypasses DAC mode bits, so a 0o000
+// store still opens as uid 0; the hook raises the EACCES a user gets from the
+// kernel for that exact path, so the same unreadable-store branch runs for
+// every uid.
+const openHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    const target = String(args[0]);
+    if (openHook.denied.has(target)) {
+      openHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  return { ...actual, default: { ...actual, openSync }, openSync };
+});
+
 let home: string;
 let savedHome: string | undefined;
 
@@ -41,6 +67,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openHook.denied.clear();
+  openHook.hits.length = 0;
   process.env['HOME'] = savedHome;
   // Undo any chmod 000 so the temp tree can be removed.
   for (const dir of [path.join(home, '.ashlr', 'verse'), path.join(home, '.ashlr')]) {
@@ -54,8 +82,26 @@ afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-// root ignores file modes, so the EACCES cases only prove anything as a user.
-const canDenyRead = typeof process.getuid === 'function' && process.getuid() !== 0;
+// root ignores file modes, so as uid 0 the EACCES cases also inject the
+// kernel's denial for the exact file (see openHook) and assert it was hit.
+const RUNNING_AS_ROOT = process.getuid?.() === 0;
+
+/** Plant `file` with mode 0o000; as root, also deny every open of it. */
+function plantUnreadable(file: string, content: string): void {
+  plant(file, content, 0o000);
+  if (RUNNING_AS_ROOT) openHook.denied.add(file);
+}
+
+/** Make `file` readable again for the assertions that read it back. */
+function restoreReadable(file: string): void {
+  openHook.denied.delete(file);
+  fs.chmodSync(file, 0o600);
+}
+
+/** As root, prove the injected denial is what the store under test hit. */
+function expectOpenDenied(file: string): void {
+  if (RUNNING_AS_ROOT) expect(openHook.hits).toContain(file);
+}
 
 const T0 = Date.parse('2026-09-24T12:00:00.000Z');
 
@@ -138,15 +184,16 @@ describe('session-meta never writes defaults over an unreadable file', () => {
     }
   });
 
-  it.runIf(canDenyRead)('a file that cannot be opened (EACCES) is refused, left in place, and not archived', () => {
+  it('a file that cannot be opened (EACCES) is refused, left in place, and not archived', () => {
     const content = JSON.stringify({ version: 1, baselineAt: '2026-01-01T00:00:00.000Z', mindSeenAt: null, sessions: { a: { pinned: true } } });
-    plant(metaFile(), content, 0o000);
+    plantUnreadable(metaFile(), content);
     const store = createSessionMetaStore({ now: () => T0 });
     expect(store.get(chat('a')).pinned).toBe(false);
     const state = store.fileState();
     expect(state).toMatchObject({ state: 'unreadable', reason: 'could not be read', archivedTo: null });
     expect(() => store.update(chat('a'), { pinned: false })).toThrow(SessionMetaUnreadableError);
-    fs.chmodSync(metaFile(), 0o600);
+    restoreReadable(metaFile());
+    expectOpenDenied(metaFile());
     expect(fs.readFileSync(metaFile(), 'utf8')).toBe(content);
     expect(archivesIn(verseDir(), 'session-meta')).toHaveLength(0);
   });
@@ -246,11 +293,12 @@ describe('updateBudgetPolicy never writes defaults over an unreadable policy', (
     }
   });
 
-  it.runIf(canDenyRead)('an unopenable policy (EACCES) is refused and left in place with no copy', () => {
+  it('an unopenable policy (EACCES) is refused and left in place with no copy', () => {
     const content = JSON.stringify({ mode: 'all-in', seats: {}, updatedAt: now.toISOString() });
-    plant(budgetPolicyPath(), content, 0o000);
+    plantUnreadable(budgetPolicyPath(), content);
     expect(() => updateBudgetPolicy({ mode: 'reserve' }, { now })).toThrow(/could not be read/);
-    fs.chmodSync(budgetPolicyPath(), 0o600);
+    restoreReadable(budgetPolicyPath());
+    expectOpenDenied(budgetPolicyPath());
     expect(fs.readFileSync(budgetPolicyPath(), 'utf8')).toBe(content);
     expect(archivesIn(ashlrDir(), 'budget')).toHaveLength(0);
   });

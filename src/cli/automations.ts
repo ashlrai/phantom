@@ -4,7 +4,7 @@
  * `/task`s into work for a lane.
  *
  *   ashlr automations list [--json]
- *   ashlr automations templates
+ *   ashlr automations templates [--json]
  *   ashlr automations add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane fleet|cloud|devin|leader-review] [--enable]
  *   ashlr automations add --file <automation.json> [--enable]
  *   ashlr automations enable|disable|remove <id>
@@ -37,7 +37,7 @@ export const AUTOMATIONS_USAGE = [
   'Usage: ashlr automations <command>',
   '',
   '  list [--json]                         Automations with last fired, next run, queue, spend, success rate',
-  '  templates                             Starting points for `add --template`',
+  '  templates [--json]                    Starting points for `add --template`',
   '  add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane <lane>] [--enable]',
   '  add --file <automation.json> [--enable]',
   '  enable <id> | disable <id> | remove <id>',
@@ -62,6 +62,16 @@ interface Parsed {
 
 const VALUE_FLAGS = new Set(['--template', '--name', '--repos', '--lane', '--file', '--repo', '--text', '--title']);
 const BOOL_FLAGS = new Set(['--json', '--enable', '--dry-run']);
+
+/** `--help` / `-h` anywhere after the verb, outside a flag value. */
+function wantsHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (VALUE_FLAGS.has(arg)) { i += 1; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
 
 function parse(args: readonly string[]): Parsed {
   const positional: string[] = [];
@@ -132,7 +142,15 @@ async function cmdList(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
   return 0;
 }
 
-function cmdTemplates(deps: AutomationsCliDeps): number {
+function cmdTemplates(deps: AutomationsCliDeps, p: Parsed): number {
+  if (p.positional.length > 0) throw new UsageError('templates takes no arguments.');
+  const extra = [...p.flags.keys()].find((name) => name !== '--json');
+  if (extra) throw new UsageError(`templates takes only --json (got ${extra}).`);
+  if (p.flags.has('--json')) {
+    // Same shape as the templates field of GET /api/verse/automations.
+    deps.out(JSON.stringify({ templates: AUTOMATION_TEMPLATES }, null, 2));
+    return 0;
+  }
   for (const t of AUTOMATION_TEMPLATES) deps.out(`${t.id.padEnd(26)} ${t.name} — ${t.blurb}`);
   return 0;
 }
@@ -230,12 +248,19 @@ export async function runAutomationsCli(argv: string[], injected: Partial<Automa
     (sub ? deps.out : deps.err)(AUTOMATIONS_USAGE);
     return sub ? 0 : 2;
   }
+  // `automations <verb> --help` explains itself before any store is opened:
+  // `enable|disable|remove -h` used to look -h up as an automation and create
+  // the automations directory.
+  if (wantsHelp(rest)) {
+    deps.out(AUTOMATIONS_USAGE);
+    return 0;
+  }
   try {
     const p = parse(rest);
     switch (sub) {
       case 'list':
       case 'ls': return await cmdList(deps, p);
-      case 'templates': return cmdTemplates(deps);
+      case 'templates': return cmdTemplates(deps, p);
       case 'add': return await cmdAdd(deps, p);
       case 'enable': return await cmdSwitch(deps, p, 'enable');
       case 'disable': return await cmdSwitch(deps, p, 'disable');

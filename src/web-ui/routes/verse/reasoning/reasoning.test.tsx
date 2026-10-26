@@ -66,7 +66,7 @@ describe('buildChatSources', () => {
     expect(byKind).toMatchObject({ file: 2, doc: 1 });
   });
 
-  it('lists shared project memory Verse injected, first', () => {
+  it('lists shared project memory Phantom injected, first', () => {
     const injected = injectedSources({ memoryEnabled: true, projectPath: '/r' });
     const { entries } = buildChatSources(turnsOf(LOG), injected);
     expect(entries[0]!.citation.source).toMatchObject({ kind: 'memory', origin: 'engine' });

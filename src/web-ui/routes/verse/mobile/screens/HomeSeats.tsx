@@ -12,6 +12,7 @@ import { useCapacityClock } from '../../seat-subscription.js';
  */
 import { useQuery } from '../../../../data/hooks.js';
 import { cloudCreditsQuery } from '../../resources/resources-queries.js';
+import { usedPercentText } from '../../percent-text.js';
 import { seatSubscription } from '../../seat-subscription.js';
 import { useSeatsRefresh } from '../../useSeatsRefresh.js';
 import { verseBootstrapQuery } from '../../verse-bootstrap-query.js';
@@ -40,7 +41,7 @@ function SeatMeter({ seat }: { seat: VerseSeat }) {
     ? view.word
     : binding.limitReached
       ? 'limit reached'
-      : binding.usedPercent === null ? 'unknown' : `${Math.round(binding.usedPercent)}% used`;
+      : binding.usedPercent === null ? 'unknown' : `${usedPercentText(binding.usedPercent)} used`; // one percent rule: never a rounded "100%" or "0%"
   const noteParts = view.quotaCurrent === false ? [view.summary, view.credits] : [binding ? `${binding.label} window` : null, binding?.resetText ? `resets ${binding.resetText}` : null, view.credits].filter(Boolean);
   return (
     <Meter

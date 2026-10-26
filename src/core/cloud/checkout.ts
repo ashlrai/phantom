@@ -12,7 +12,7 @@
  * unpushed); a private checkout pinned to the requested base makes the
  * session start exactly where the task says.
  */
-import { lstatSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultGitRunner } from '../verse/git-ops.js';
@@ -179,4 +179,23 @@ export async function ensureCloudCheckout(repo: string, branch: string, deps: Cl
       return { ok: false, failure: 'checkout-failed', message: `Couldn't prepare a checkout of ${repo} at ${branch} for the cloud launch.` };
     }
   });
+}
+
+const MAX_MCP_JSON_BYTES = 64 * 1024;
+
+/**
+ * Server names declared in `<checkout>/.mcp.json`, or [] when the file is
+ * absent or unreadable; feeds companionToolsBlock (delivery-contract.ts).
+ */
+export function declaredMcpServers(checkoutPath: string): string[] {
+  const path = join(checkoutPath, '.mcp.json');
+  try {
+    if (!existsSync(path) || statSync(path).size > MAX_MCP_JSON_BYTES) return [];
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    const servers = (parsed as { mcpServers?: unknown } | null)?.mcpServers;
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return [];
+    return Object.keys(servers);
+  } catch {
+    return [];
+  }
 }

@@ -27,9 +27,11 @@ import { join } from 'node:path';
 
 import { scrubPrivateText } from '../../util/scrub.js';
 import {
+  KNOWLEDGE_EVIDENCE_MAX,
   KNOWLEDGE_NOTE_MAX_CHARS,
   RETRO_END_KINDS,
   TASK_KINDS,
+  type KnowledgeEvidenceRef,
   type KnowledgeNoteV1,
   type KnowledgeScope,
   type RetroV1,
@@ -114,6 +116,30 @@ export function isRetro(raw: unknown): raw is RetroV1 {
     && Array.isArray(raw['candidates']) && Array.isArray(raw['doDifferently']);
 }
 
+const EVIDENCE_REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+const EVIDENCE_SHA = /^[0-9a-f]{40}$/;
+
+/** Valid evidence refs only, deduplicated, at most KNOWLEDGE_EVIDENCE_MAX (newest kept); undefined when none. */
+export function normalizeEvidence(raw: unknown): KnowledgeEvidenceRef[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: KnowledgeEvidenceRef[] = [];
+  const seen = new Set<string>();
+  for (const r of raw) {
+    if (!isRecord(r) || (r['kind'] !== 'pr' && r['kind'] !== 'ci' && r['kind'] !== 'review')) continue;
+    if (typeof r['repository'] !== 'string' || !EVIDENCE_REPO.test(r['repository'])) continue;
+    const number = Number.isSafeInteger(r['number']) && (r['number'] as number) > 0 ? r['number'] as number : null;
+    const sha = typeof r['sha'] === 'string' && EVIDENCE_SHA.test(r['sha']) ? r['sha'] : null;
+    const detail = typeof r['detail'] === 'string' ? cleanText(r['detail'], 120) || null : null;
+    if (number === null && sha === null) continue;
+    const ref: KnowledgeEvidenceRef = { kind: r['kind'], repository: r['repository'], number, sha, detail };
+    const key = JSON.stringify(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out.length ? out.slice(-KNOWLEDGE_EVIDENCE_MAX) : undefined;
+}
+
 function isNote(raw: unknown): raw is KnowledgeNoteV1 {
   return isRecord(raw) && raw['v'] === 1 && typeof raw['id'] === 'string' && typeof raw['text'] === 'string'
     && (raw['status'] === 'pending' || raw['status'] === 'approved' || raw['status'] === 'rejected')
@@ -196,7 +222,10 @@ export async function saveRetro(retro: RetroV1): Promise<void> {
       : null,
     doDifferently: retro.doDifferently.map((d) => cleanText(d, 300)).filter(Boolean).slice(0, 5),
     betterPrompt: retro.betterPrompt ? cleanText(retro.betterPrompt, 1200) || null : null,
-    candidates: retro.candidates.map((c) => ({ ...c, text: cleanText(c.text, KNOWLEDGE_NOTE_MAX_CHARS) })).filter((c) => c.text).slice(0, 4),
+    candidates: retro.candidates.map((c) => {
+      const evidence = normalizeEvidence(c.evidence);
+      return { text: cleanText(c.text, KNOWLEDGE_NOTE_MAX_CHARS), scope: c.scope, ...(evidence ? { evidence } : {}) };
+    }).filter((c) => c.text).slice(0, 4),
   };
   await writePrivateJson(join(retrosDir(), `${safe.id}.json`), safe, retrosDir());
 }
@@ -239,7 +268,11 @@ interface KnowledgeFileV1 {
 
 function parseKnowledge(raw: unknown): KnowledgeNoteV1[] {
   if (!isRecord(raw) || raw['v'] !== 1 || !Array.isArray(raw['notes'])) return [];
-  return raw['notes'].filter(isNote).map((n) => ({ ...n, scope: normalizeScope(n.scope)! }));
+  return raw['notes'].filter(isNote).map((n) => {
+    const evidence = normalizeEvidence(n.evidence);
+    const { evidence: _drop, ...rest } = n;
+    return { ...rest, scope: normalizeScope(n.scope)!, ...(evidence ? { evidence } : {}) };
+  });
 }
 
 export async function readKnowledge(): Promise<KnowledgeNoteV1[]> {

@@ -440,7 +440,7 @@ export async function probeLocalRuntimeDefault(cfg: AshlrConfig, snapshot: Capac
         idleSlots: usable ? idle : null,
         observedAt: reading.checkedAt,
         contextPerSlot: usable ? context : null,
-        detail: usable ? `llama-server up with ${slots} slot(s) at ${context} ctx/slot`
+        detail: usable ? `llama-server up with ${countOf(slots, 'slot')} at ${context} ctx/slot`
           : reading.state === 'up' ? 'llama-server slot activity or per-slot context is unverified'
             : `llama-server ${reading.state}`,
       };
@@ -498,14 +498,14 @@ export async function probeOperatorPresence(nowMs: number, opts: { home?: string
       if (kind !== 'turn' || typeof e['pid'] !== 'number') continue;
       try {
         process.kill(e['pid'] as number, 0);
-        return { present: true, reason: 'A Verse chat turn is running.', evidenceAt: new Date(nowMs).toISOString() };
+        return { present: true, reason: 'A Phantom chat turn is running.', evidenceAt: new Date(nowMs).toISOString() };
       } catch {
         // That turn's process is gone.
       }
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      return { present: null, reason: 'The Verse turn registry could not be read.', evidenceAt: null };
+      return { present: null, reason: 'The Phantom turn registry could not be read.', evidenceAt: null };
     }
   }
   // 2. A fresh Claude Code transcript.
@@ -556,7 +556,7 @@ export async function probeOperatorPresence(nowMs: number, opts: { home?: string
   }
   return {
     present: false,
-    reason: 'No live Verse turn and no Claude Code activity in the last 15 minutes.',
+    reason: 'No live Phantom turn and no Claude Code activity in the last 15 minutes.',
     evidenceAt: newest > 0 ? new Date(newest).toISOString() : null,
   };
 }

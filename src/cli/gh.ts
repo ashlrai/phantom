@@ -209,7 +209,22 @@ async function cmdGhCi(args: string[]): Promise<number> {
 // Subcommand: gh pr create (EXPLICIT MUTATION — confirm-gated)
 // ---------------------------------------------------------------------------
 
+const PR_CREATE_VALUE_FLAGS = new Set(['--title', '--body', '--base', '--head']);
+const PR_CREATE_SWITCHES = new Set(['--draft', '--yes', '--json']);
+
 async function cmdGhPrCreate(args: string[]): Promise<number> {
+  // Refuse unknown flags and stray words before anything else: with --yes a
+  // typo like `--dry-run` must not fall through to creating a real PR.
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (PR_CREATE_VALUE_FLAGS.has(arg)) { i++; continue; }
+    if (!PR_CREATE_SWITCHES.has(arg)) {
+      process.stderr.write(red('error: ') + `unknown argument for \`ashlr gh pr create\`: ${bold(arg)}\n`);
+      process.stderr.write(dim('Run `ashlr gh help` for usage.\n'));
+      return 2;
+    }
+  }
+
   // Parse flags
   const titleIdx = args.indexOf('--title');
   const bodyIdx  = args.indexOf('--body');
@@ -345,6 +360,13 @@ export async function cmdGh(args: string[]): Promise<number> {
   const sub = args[0];
 
   if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+    printGhHelp();
+    return 0;
+  }
+
+  // `gh <verb> --help` prints usage and never runs the verb: `pr create
+  // --yes --help` created a real PR, and the read verbs called GitHub.
+  if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
     printGhHelp();
     return 0;
   }

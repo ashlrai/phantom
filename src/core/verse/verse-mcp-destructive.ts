@@ -236,6 +236,16 @@ function destructiveInSegment(argv: string[], pipedFrom: boolean, previous: stri
     case 'crontab':
       if (hasShortFlag(args, 'r')) out.push({ rule: 'rm-recursive', reason: 'It deletes the crontab (crontab -r).' });
       break;
+    case 'gh': {
+      // Merging is the owner's call or Auto-merge's gated one, never a seat's shell command:
+      // a prompt-injected "just merge it" must reach a person.
+      const merge = (args[0] === 'pr' && args[1] === 'merge')
+        || (args[0] === 'api' && args.some((a) => /(^|\/)pulls\/\d+\/merge$|(^|\/)merges$|\/auto-merge$/.test(a.replace(/^https:\/\/api\.github\.com/, ''))))
+        || (args[0] === 'api' && args.some((a) => /enablePullRequestAutoMerge|mergePullRequest/.test(a)));
+      if (merge) out.push({ rule: 'gh-merge', reason: 'It merges a pull request (or turns on auto-merge) on GitHub.' });
+      if (args[0] === 'pr' && args[1] === 'review' && hasFlag(args, '--approve', '-a')) out.push({ rule: 'gh-merge', reason: 'It approves a pull request on GitHub.' });
+      break;
+    }
     default:
       if (/^mkfs(\.|$)/.test(program)) out.push({ rule: 'mkfs', reason: 'It formats a filesystem.' });
       break;

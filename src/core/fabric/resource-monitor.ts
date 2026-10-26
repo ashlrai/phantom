@@ -51,6 +51,11 @@ import {
   type ClaudeRateLimitEvent,
 } from './claude-rate-limit-event.js';
 
+/** "1 slot" / "4 slots" — kept local so no new module joins the Tier-1 import closure. */
+function slotCount(n: number): string {
+  return `${n} slot${n === 1 ? '' : 's'}`;
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -1288,7 +1293,7 @@ async function senseLlamaServerState(
         costPerMTokenOut: 0,
         p50LatencyMs: null,
         snapshotAt: now,
-        reason: `llama-server up with ${slots} slot(s); occupancy not reported`,
+        reason: `llama-server up with ${slotCount(slots)}; occupancy not reported`,
       };
     }
     const usedPct = Math.min(100, Math.round((busy / slots) * 100));

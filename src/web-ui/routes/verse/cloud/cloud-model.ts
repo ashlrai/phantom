@@ -138,7 +138,10 @@ export function gateText(gate: { ok: boolean; reason: string | null }, fallback:
   return gate.reason ? safeCloudProse(gate.reason) : fallback;
 }
 
-export const SEAT_NOT_READY = "The Claude seat isn't set up on this Mac.";
+// Mirrors the server's SEAT_NOT_READY_REASON (src/core/cloud/launcher.ts) so a null
+// reason reads the same as a server-sent one; platform-neutral because the seat can be
+// missing on any OS.
+export const SEAT_NOT_READY = "The Claude seat isn't set up on this computer.";
 
 export function seatText(seat: CloudSeatStatus): string | null {
   if (seat.ready) return null;

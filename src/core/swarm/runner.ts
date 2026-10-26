@@ -80,7 +80,7 @@ import {
   beginExecutionAuthority,
   finishExecutionAuthority,
 } from '../util/execution-lease.js';
-import { assertMayMutate, killSwitchOn } from '../sandbox/policy.js';
+import { assertMayMutate, canonicalEnrollmentPath, isEnrolled, killSwitchOn } from '../sandbox/policy.js';
 import {
   applyLocusPreMutateGate,
   formatPreMutateBlockers,
@@ -89,11 +89,12 @@ import {
   runWithLocusSessionIfConfigured,
 } from '../integrations/locus.js';
 import {
-  acquireOutwardMutationFence,
+  acquireOutwardMutationFenceAsync,
   ownsOutwardMutationFence,
   releaseOutwardMutationFence,
   type OutwardMutationFence,
 } from '../sandbox/mutation-fence.js';
+import { registerExecutionLease, type ExecutionLease } from '../sandbox/execution-leases.js';
 
 // ---------------------------------------------------------------------------
 // M17: lazy-load sign / gate / rollback helpers. Each import is best-effort:
@@ -229,6 +230,15 @@ type RemoveSandboxWithBorrowedAuthorityFn = (
   sb: Sandbox,
   authority: BorrowedSandboxCleanupAuthority | null,
 ) => SandboxCleanupResult | void;
+type OwnSandboxRemovalRight = import('../sandbox/worktree.js').OwnSandboxRemovalRight;
+type MintOwnSandboxRemovalRightFn = (
+  fence: OutwardMutationFence | null | undefined,
+  sb: Sandbox,
+) => OwnSandboxRemovalRight | null;
+type RemoveSandboxAsyncFn = (
+  sb: Sandbox,
+  opts?: { fenceWaitMs?: number; signal?: AbortSignal; ownRemovalRight?: OwnSandboxRemovalRight | null },
+) => Promise<SandboxCleanupResult>;
 type AuditFn         = (entry: Omit<import('../types.js').AuditEntry, 'ts'>) => void;
 // M24: lazy proposal sink — when opts.propose is set the captured sandbox diff
 // is recorded as a PENDING inbox proposal (applied LATER only by a human).
@@ -248,11 +258,22 @@ let _sandboxDiff:    SandboxDiffFn    | null = null;
 let _removeSandbox:  RemoveSandboxFn  | null = null;
 let _borrowSandboxCleanupAuthority: BorrowSandboxCleanupAuthorityFn | null = null;
 let _removeSandboxWithBorrowedAuthority: RemoveSandboxWithBorrowedAuthorityFn | null = null;
+let _mintOwnSandboxRemovalRight: MintOwnSandboxRemovalRightFn | null = null;
+let _removeSandboxAsync: RemoveSandboxAsyncFn | null = null;
 let _audit:          AuditFn          | null = null;
 let _createProposal: CreateProposalFn | null = null;
 let _loadProposal:   LoadProposalFn   | null = null;
 let _setProposalStatus: SetProposalStatusFn | null = null;
 let _m21Loaded = false;
+
+function optionalModuleFunction<T>(mod: object, name: string): T | null {
+  try {
+    const value = (mod as Record<string, unknown>)[name];
+    return typeof value === 'function' ? value as T : null;
+  } catch {
+    return null;
+  }
+}
 
 async function loadM21(): Promise<void> {
   if (_m21Loaded) return;
@@ -274,6 +295,12 @@ async function loadM21(): Promise<void> {
     _removeSandbox = wt.removeSandbox;
     _borrowSandboxCleanupAuthority = wt.borrowSandboxCleanupAuthority ?? null;
     _removeSandboxWithBorrowedAuthority = wt.removeSandboxWithBorrowedAuthority ?? null;
+    // Newer exports, read one at a time: a test double of worktree.js may
+    // predate them, and a module mock THROWS on access to an export its
+    // factory did not define. Absent = the run falls back to the
+    // KILL-refused synchronous removal (orphan sweep reclaims the rest).
+    _mintOwnSandboxRemovalRight = optionalModuleFunction<MintOwnSandboxRemovalRightFn>(wt, 'mintOwnSandboxRemovalRight');
+    _removeSandboxAsync = optionalModuleFunction<RemoveSandboxAsyncFn>(wt, 'removeSandboxAsync');
   } catch {
     // worktree.ts not built yet — sandbox mode degrades to no-op (default behavior)
   }
@@ -320,6 +347,16 @@ function resolveParallel(value: unknown): number {
 const BACKGROUND_HANDOFF_WAIT_MS = 5 * 60 * 1_000;
 const BACKGROUND_HANDOFF_ACK_MS = 15_000;
 const BACKGROUND_HANDOFF_PROTOCOL = 'ashlr-background-handoff-v1';
+/**
+ * Strict-swarm outward authority waits (V3.10 U6 for the builtin swarm). The
+ * fence is held only for short sections now, so a long wait means a queue of
+ * short holders, not a stuck one; every wait is asynchronous.
+ */
+const SWARM_ADMIT_FENCE_WAIT_MS = 60_000;
+/** Re-taking the fence to file + clean up after inference (losing it discards finished work). */
+const SWARM_REACQUIRE_FENCE_WAIT_MS = 120_000;
+/** Best-effort removal of the run's own sandbox when filing authority was refused. */
+const SWARM_CLEANUP_FENCE_WAIT_MS = 15_000;
 const DEFAULT_MAX_TOKENS = 200_000;
 const DEFAULT_MAX_STEPS = 200;
 
@@ -533,6 +570,79 @@ function persist(run: SwarmRun): ReturnType<typeof saveSwarm> {
 }
 
 // ---------------------------------------------------------------------------
+// Strict-swarm execution lease (V3.10 U6 — SPEC-310B §3 "Mutation fence")
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical repo key for the swarm's execution lease, so an unenroll through
+ * the physical path and a run started through a symlink agree. The lexical
+ * path is the fallback (and covers test doubles of policy.js without the
+ * resolver).
+ */
+function swarmLeaseRepoKey(project: string): string {
+  try {
+    const canonical = canonicalEnrollmentPath(project);
+    if (typeof canonical === 'string' && canonical.length > 0) return canonical;
+  } catch { /* fall through to the lexical path */ }
+  return path.resolve(project);
+}
+
+/**
+ * Cross-process stop probe: KILL armed or the repo unenrolled. Kill and
+ * unenroll abort leases in THIS process synchronously; this probe is how a
+ * swarm learns of a Stop issued from another process. Errors read as "no
+ * stop": the fenced re-check before any outward effect is the real gate.
+ */
+function swarmLeaseStopProbe(project: string): () => string | null {
+  return () => {
+    try {
+      if (killSwitchOn() === true) return 'kill switch armed';
+    } catch { /* see above */ }
+    try {
+      if (isEnrolled(project) === false) return 'repo unenrolled';
+    } catch { /* see above */ }
+    return null;
+  };
+}
+
+/**
+ * Wait (asynchronously) until the outward fence is free, without keeping it.
+ * The synchronous sandbox creator that follows spins for the fence; nothing
+ * awaits between the two, so no in-process holder can slip in between.
+ */
+async function awaitOutwardFenceFree(signal?: AbortSignal): Promise<void> {
+  const probe = await acquireOutwardMutationFenceAsync(
+    SWARM_ADMIT_FENCE_WAIT_MS,
+    signal ? { signal } : undefined,
+  );
+  releaseOutwardMutationFence(probe);
+}
+
+/**
+ * Why a task was cancelled. In a strict swarm `opts.signal` is the execution
+ * lease's signal, which also fires on kill and unenroll, so "cancelled" alone
+ * would misattribute a Stop to the owner.
+ */
+function taskCancelMessage(opts: SwarmOptions, enforceKillState: boolean): string {
+  if (enforceKillState && killSwitchOn()) return 'Cancelled because the autonomy kill switch is ON.';
+  const reason = leaseRevocationReason(opts.signal);
+  if (enforceKillState && reason !== null) {
+    return `Cancelled because outward mutation authority was revoked (${reason}).`;
+  }
+  return 'Cancelled by the swarm owner.';
+}
+
+/** The non-owner reason an execution-lease signal was aborted with, or null. */
+function leaseRevocationReason(signal: AbortSignal | undefined): string | null {
+  if (signal?.aborted !== true) return null;
+  const reason: unknown = signal.reason;
+  const message = reason instanceof Error ? reason.message : '';
+  const match = /^execution lease aborted: (.+)$/.exec(message);
+  if (!match || match[1] === 'cancelled') return null;
+  return match[1]!;
+}
+
+// ---------------------------------------------------------------------------
 // Single-task execution
 // ---------------------------------------------------------------------------
 
@@ -571,9 +681,7 @@ async function executeTask(
 
   if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
     taskRun.status = 'cancelled';
-    taskRun.error = outcomeCancelled(opts)
-      ? 'Cancelled by the swarm owner.'
-      : 'Cancelled because the autonomy kill switch is ON.';
+    taskRun.error = taskCancelMessage(opts, enforceKillState);
     persist(run);
     return 'continue';
   }
@@ -755,7 +863,7 @@ async function executeTask(
     taskRun.result = taskResult.result;
     taskRun.usage = taskResult.usage;
     if (taskRun.status === 'cancelled') {
-      taskRun.error = 'Cancelled by the swarm owner.';
+      taskRun.error = taskCancelMessage(opts, enforceKillState);
     } else if (taskResult.status !== 'done') {
       taskRun.error = `Task ended with status: ${taskResult.status}`;
     }
@@ -763,7 +871,7 @@ async function executeTask(
     if (isGoalConductorQuotaRefusal(err)) throw err;
     if (outcomeCancelled(opts)) {
       taskRun.status = 'cancelled';
-      taskRun.error = 'Cancelled by the swarm owner.';
+      taskRun.error = taskCancelMessage(opts, enforceKillState);
     } else {
       taskRun.status = 'failed';
       taskRun.error = err instanceof Error ? err.message : String(err);
@@ -1190,6 +1298,12 @@ function captureSandboxAndCleanup(
   persistOutcome = true,
   cleanupAuthority: BorrowedSandboxCleanupAuthority | null = null,
   enforceKillState = false,
+  /**
+   * The caller removes the sandbox itself, after this returns (a strict swarm
+   * whose filing authority was refused removes its own worktree under a
+   * freshly acquired fence instead).
+   */
+  deferRemoval = false,
   selectedOutcomeAdmission?: () => boolean,
 ): RunProposalOutcome {
   // Capture diff (read-only; never mutates source tree).
@@ -1455,7 +1569,9 @@ function captureSandboxAndCleanup(
   }
 
   // Always remove sandbox (worktree + scratch branch). Never touches source tree.
-  if (cleanupAuthority !== null && _removeSandboxWithBorrowedAuthority !== null) {
+  if (deferRemoval) {
+    // The caller owns removal (see the parameter).
+  } else if (cleanupAuthority !== null && _removeSandboxWithBorrowedAuthority !== null) {
     try {
       const cleanup = _removeSandboxWithBorrowedAuthority(sb, cleanupAuthority);
       if (cleanup && cleanup.status !== 'complete') {
@@ -1694,8 +1810,17 @@ async function runSwarmInternal(
   let activeSandbox: Sandbox | null = null;
   // The cwd that tasks should run in. null = use run.project (unchanged behavior).
   let sandboxCwd: string | null = null;
+  // Strict swarms (V3.10 U6): the machine-wide outward fence is held ONLY
+  // for short sections — the admission gate and the filing/cleanup at the
+  // end — never across planning or task inference. Between them the run is
+  // bounded by a SHARED execution lease, registered under the fence right
+  // after the policy gate, which kill / unenroll abort and drain before they
+  // report quiescence.
   let mutationFence: OutwardMutationFence | null = null;
-  let cleanupAuthority: BorrowedSandboxCleanupAuthority | null = null;
+  let executionLease: ExecutionLease | null = null;
+  // Minted under the admission fence with KILL off: lets this run remove its
+  // OWN scratch worktree after a Stop (worktree.ts mintOwnSandboxRemovalRight).
+  let ownRemovalRight: OwnSandboxRemovalRight | null = null;
 
   // M24 STRICT SANDBOX: when the caller demands a mandatory sandbox
   // (opts.requireSandbox, ALWAYS set by the autonomous daemon), the sandbox is
@@ -1949,23 +2074,148 @@ async function runSwarmInternal(
   };
 
   let enforceKillState = false;
-  const finalizeSandbox = (propose: boolean): void => {
+  // Options handed to planning and task inference. For a strict swarm the
+  // signal becomes the execution lease's, which fires on the owner's abort
+  // AND on kill / unenroll, so a Stop interrupts in-flight inference.
+  let inferenceOpts: typeof opts = opts;
+
+  /** Why the strict lifecycle lost authority mid-run (KILL, unenroll), or null. */
+  const lifecycleRevocation = (): string | null => {
+    if (!enforceKillState) return null;
+    if (killSwitchOn()) return 'kill switch armed';
+    return leaseRevocationReason(executionLease?.signal);
+  };
+  /** Stop checkpoint: owner cancel, or (strict) KILL / a revoked lease. */
+  const stopRequested = (): boolean => outcomeCancelled(opts) || lifecycleRevocation() !== null;
+  /** The run.result for a stop at `when` ("during planning", "before phase build", ...). */
+  const stopResult = (when: string): string => {
+    if (outcomeCancelled(opts)) return `Swarm cancelled ${when}.`;
+    if (enforceKillState && killSwitchOn()) return `Swarm paused by the autonomy kill switch ${when}.`;
+    return `Swarm stopped ${when}: outward mutation authority revoked (${lifecycleRevocation() ?? 'unknown'}).`;
+  };
+
+  /**
+   * Remove this run's own sandbox when filing authority was refused: under a
+   * fresh fence, and under KILL only with the removal right minted at
+   * admission. Never throws; a refusal leaves the worktree for the sweep.
+   */
+  const removeOwnSandboxWithItsOwnFence = async (sandbox: Sandbox): Promise<void> => {
+    try {
+      if (_removeSandboxAsync !== null) {
+        const cleanup = await _removeSandboxAsync(sandbox, {
+          fenceWaitMs: SWARM_CLEANUP_FENCE_WAIT_MS,
+          ownRemovalRight,
+        });
+        emitLog(sink, cleanup.status === 'complete'
+          ? `[M21] Sandbox ${sandbox.id} removed`
+          : `[M21] Sandbox cleanup ${cleanup.status}; left for the orphan sweep`);
+      } else if (_removeSandbox !== null) {
+        // Takes its own fence and refuses under KILL.
+        _removeSandbox(sandbox);
+      }
+    } catch (err) {
+      emitLog(sink, `[M21] Sandbox removal failed (manual cleanup may be needed): ${
+        err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const finalizeSandbox = async (propose: boolean): Promise<void> => {
     if (activeSandbox === null) return;
     const sandbox = activeSandbox;
     activeSandbox = null;
     sandboxCwd = null;
-    captureSandboxAndCleanup(
-      sandbox,
-      run,
-      sink,
-      propose && !(enforceKillState && killSwitchOn()),
-      cfg,
-      causal,
-      !opts.dryRun,
-      cleanupAuthority,
-      enforceKillState,
-      ...(opts.selectedOutcomeAdmission ? [opts.selectedOutcomeAdmission] : []),
-    );
+    if (!enforceKillState) {
+      // Manual / optional sandboxes: historical behavior (removeSandbox
+      // takes its own short fence).
+      captureSandboxAndCleanup(
+        sandbox,
+        run,
+        sink,
+        propose,
+        cfg,
+        causal,
+        !opts.dryRun,
+        null,
+        false,
+        false,
+        ...(opts.selectedOutcomeAdmission ? [opts.selectedOutcomeAdmission] : []),
+      );
+      return;
+    }
+
+    // STRICT: re-take outward authority for filing + cleanup. Fresh fence,
+    // then the same gate admission passed (KILL, enrollment, a cleanup
+    // authority minted under THIS fence), and the lease must not have been
+    // revoked meanwhile. A revocation the lease OBSERVED (in-process abort or
+    // the cross-process probe) stays revoked even if KILL was cleared again;
+    // one armed and cleared inside a single probe interval is not observed.
+    // The lease signal passed to the fence acquire below is what refuses an
+    // owner cancel (lifecycleRevocation ignores 'cancelled'): an aborted
+    // signal makes the acquire return null. Do not drop it.
+    let fence: OutwardMutationFence | null = null;
+    let cleanupAuthority: BorrowedSandboxCleanupAuthority | null = null;
+    if (lifecycleRevocation() === null) {
+      fence = await acquireOutwardMutationFenceAsync(
+        SWARM_REACQUIRE_FENCE_WAIT_MS,
+        executionLease ? { signal: executionLease.signal } : undefined,
+      );
+      if (ownsOutwardMutationFence(fence) && lifecycleRevocation() === null && project !== null) {
+        try {
+          assertMayMutate(project);
+          cleanupAuthority = _borrowSandboxCleanupAuthority?.(fence) ?? null;
+        } catch {
+          cleanupAuthority = null;
+        }
+      }
+      if (cleanupAuthority === null || _removeSandboxWithBorrowedAuthority === null) {
+        releaseOutwardMutationFence(fence);
+        fence = null;
+        cleanupAuthority = null;
+      }
+    }
+
+    if (cleanupAuthority !== null) {
+      try {
+        captureSandboxAndCleanup(
+          sandbox,
+          run,
+          sink,
+          propose && !killSwitchOn(),
+          cfg,
+          causal,
+          !opts.dryRun,
+          cleanupAuthority,
+          true,
+          false,
+          ...(opts.selectedOutcomeAdmission ? [opts.selectedOutcomeAdmission] : []),
+        );
+      } finally {
+        releaseOutwardMutationFence(fence);
+      }
+      return;
+    }
+
+    // Authority refused: record the (read-only) diff outcome, file NOTHING,
+    // then remove the run's own worktree under its own fresh fence.
+    emitLog(sink, `[M21] outward mutation authority unavailable for filing (${
+      lifecycleRevocation() ?? 'fence or policy gate refused'}) — filing nothing`);
+    try {
+      captureSandboxAndCleanup(
+        sandbox,
+        run,
+        sink,
+        false,
+        cfg,
+        causal,
+        !opts.dryRun,
+        null,
+        true,
+        true,
+        ...(opts.selectedOutcomeAdmission ? [opts.selectedOutcomeAdmission] : []),
+      );
+    } finally {
+      await removeOwnSandboxWithItsOwnFence(sandbox);
+    }
   };
 
   const createRunSandbox = (): string | null => {
@@ -2010,15 +2260,26 @@ async function runSwarmInternal(
   };
 
   try {
-    // Strict autonomous planning is part of the same retained lifecycle as
-    // execution. Sandbox creation owns its own short fence, so it must finish
-    // before this retained fence is acquired; otherwise creation would recurse
-    // on the process-wide authority lock.
+    // Strict autonomous planning is part of the same lifecycle as execution.
+    // Sandbox creation owns its own short fence, so it must finish before the
+    // admission fence is acquired; otherwise creation would recurse on the
+    // process-wide authority lock.
     if (requireSandbox && !opts.dryRun) {
+      // The synchronous creator spins for the fence; wait for it to be free
+      // off the event loop first, so an in-process holder (another agent
+      // mid-await) can finish instead of being starved by the spin.
+      await awaitOutwardFenceFree(opts.signal);
       const sandboxFailure = createRunSandbox();
       if (sandboxFailure) return abortNoSandbox(sandboxFailure);
 
-      mutationFence = acquireOutwardMutationFence();
+      // ADMISSION: fence → policy gate (KILL, enrollment) → cleanup authority
+      // (proves the gate under THIS fence) → register the shared execution
+      // lease. Kill arms KILL before it waits for the fence, so once this
+      // gate passes under the fence the lease is visible to its drain.
+      mutationFence = await acquireOutwardMutationFenceAsync(
+        SWARM_ADMIT_FENCE_WAIT_MS,
+        opts.signal ? { signal: opts.signal } : undefined,
+      );
       let authorityReady = ownsOutwardMutationFence(mutationFence) && !killSwitchOn();
       if (authorityReady && project !== null) {
         try {
@@ -2027,11 +2288,24 @@ async function runSwarmInternal(
           authorityReady = false;
         }
       }
-      cleanupAuthority = authorityReady
+      const admissionAuthority = authorityReady
         ? _borrowSandboxCleanupAuthority?.(mutationFence) ?? null
         : null;
-      if (!authorityReady || cleanupAuthority === null ||
-        _removeSandboxWithBorrowedAuthority === null) {
+      if (admissionAuthority !== null && _removeSandboxWithBorrowedAuthority !== null &&
+        project !== null && activeSandbox !== null) {
+        const registration = registerExecutionLease(mutationFence, {
+          runId: run.id,
+          repoKey: swarmLeaseRepoKey(project),
+          engine: 'builtin-swarm',
+          ...(opts.signal ? { parentSignal: opts.signal } : {}),
+          shouldAbort: swarmLeaseStopProbe(project),
+        });
+        if (registration.ok) {
+          executionLease = registration.lease;
+          ownRemovalRight = _mintOwnSandboxRemovalRight?.(mutationFence, activeSandbox) ?? null;
+        }
+      }
+      if (executionLease === null) {
         releaseOutwardMutationFence(mutationFence);
         mutationFence = null;
         activeSandbox = null;
@@ -2043,6 +2317,13 @@ async function runSwarmInternal(
         );
       }
       enforceKillState = true;
+      // RELEASE ACROSS INFERENCE: planning and task inference write only
+      // inside this run's sandbox worktree (and its own run record). The
+      // admission authority dies with the fence by design; filing and
+      // cleanup re-take both in finalizeSandbox().
+      releaseOutwardMutationFence(mutationFence);
+      mutationFence = null;
+      inferenceOpts = { ...opts, signal: executionLease.signal };
     }
 
   // -------------------------------------------------------------------------
@@ -2062,7 +2343,7 @@ async function runSwarmInternal(
       const plan = await planSwarm(
         { goal: input.goal, specBody },
         cfg,
-        opts.signal,
+        inferenceOpts.signal,
         opts.providerQuota,
         opts.providerQuota ? run.budget.maxTokens : undefined,
         ...(opts.selectedOutcomeAdmission ? [opts.selectedOutcomeAdmission] : []),
@@ -2078,11 +2359,9 @@ async function runSwarmInternal(
           run.tasks.push({ id: t.id, phase: t.phase, status: 'pending' });
         }
       }
-      if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
+      if (stopRequested()) {
         run.status = 'aborted';
-        run.result = outcomeCancelled(opts)
-          ? 'Swarm cancelled during planning.'
-          : 'Swarm paused by the autonomy kill switch during planning.';
+        run.result = stopResult('during planning');
         maybePersist(run);
         emitLog(sink, run.result);
         await fireEmitSwarm(run, cfg);
@@ -2091,11 +2370,9 @@ async function runSwarmInternal(
       maybePersist(run);
       emitLog(sink, `Plan ready: ${plan.tasks.length} task(s) across phases`);
     } catch (err) {
-      if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
+      if (stopRequested()) {
         run.status = 'aborted';
-        run.result = outcomeCancelled(opts)
-          ? 'Swarm cancelled during planning.'
-          : 'Swarm paused by the autonomy kill switch during planning.';
+        run.result = stopResult('during planning');
         maybePersist(run);
         emitLog(sink, run.result);
         await fireEmitSwarm(run, cfg);
@@ -2108,18 +2385,16 @@ async function runSwarmInternal(
       maybePersist(run);
       emitLog(sink, run.result);
       // M21: clean up sandbox even on planning failure (no diff to capture yet).
-      finalizeSandbox(opts.propose === true);
+      await finalizeSandbox(opts.propose === true);
       await fireEmitSwarm(run, cfg);
       if (!opts.noCapture) fireCaptureFromSwarm(run, cfg);
       return run;
     }
   }
 
-  if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
+  if (stopRequested()) {
     run.status = 'aborted';
-    run.result = outcomeCancelled(opts)
-      ? 'Swarm cancelled after planning.'
-      : 'Swarm paused by the autonomy kill switch after planning.';
+    run.result = stopResult('after planning');
     maybePersist(run);
     emitLog(sink, run.result);
     await fireEmitSwarm(run, cfg);
@@ -2163,15 +2438,13 @@ async function runSwarmInternal(
 
   try {
     for (const phase of PHASE_ORDER) {
-      if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
+      if (stopRequested()) {
         run.status = 'aborted';
-        run.result = outcomeCancelled(opts)
-          ? `Swarm cancelled before phase ${phase}.`
-          : `Swarm paused by the autonomy kill switch before phase ${phase}.`;
+        run.result = stopResult(`before phase ${phase}`);
         persist(run);
         emitLog(sink, run.result);
         if (activeSandbox !== null) {
-          finalizeSandbox(false);
+          await finalizeSandbox(false);
         }
         await fireEmitSwarm(run, cfg);
         return run;
@@ -2184,7 +2457,7 @@ async function runSwarmInternal(
         persist(run);
         emitLog(sink, run.result);
         // M21: capture diff of work done so far, then remove sandbox.
-        finalizeSandbox(opts.propose === true);
+        await finalizeSandbox(opts.propose === true);
         await fireEmitSwarm(run, cfg);
         if (!opts.noCapture) fireCaptureFromSwarm(run, cfg);
         return run;
@@ -2194,22 +2467,20 @@ async function runSwarmInternal(
         phase,
         run,
         cfg,
-        opts,
+        inferenceOpts,
         sink,
         parallel,
         sandboxCwd,
         enforceKillState,
       );
 
-      if (outcomeCancelled(opts) || (enforceKillState && killSwitchOn())) {
+      if (stopRequested()) {
         run.status = 'aborted';
-        run.result = outcomeCancelled(opts)
-          ? `Swarm cancelled during phase ${phase}.`
-          : `Swarm paused by the autonomy kill switch during phase ${phase}.`;
+        run.result = stopResult(`during phase ${phase}`);
         persist(run);
         emitLog(sink, run.result);
         if (activeSandbox !== null) {
-          finalizeSandbox(false);
+          await finalizeSandbox(false);
         }
         await fireEmitSwarm(run, cfg);
         return run;
@@ -2220,7 +2491,7 @@ async function runSwarmInternal(
         // Stop cleanly — do NOT proceed to the next phase.
         emitLog(sink, `Swarm ${run.id} paused at phase "${phase}" — awaiting human approval.`);
         // M21: capture diff of partial work, then remove sandbox.
-        finalizeSandbox(opts.propose === true);
+        await finalizeSandbox(opts.propose === true);
         await fireEmitSwarm(run, cfg);
         if (!opts.noCapture) fireCaptureFromSwarm(run, cfg);
         return run;
@@ -2233,7 +2504,7 @@ async function runSwarmInternal(
         persist(run);
         emitLog(sink, run.result);
         // M21: capture diff of partial work, then remove sandbox.
-        finalizeSandbox(opts.propose === true);
+        await finalizeSandbox(opts.propose === true);
         await fireEmitSwarm(run, cfg);
         if (!opts.noCapture) fireCaptureFromSwarm(run, cfg);
         return run;
@@ -2248,7 +2519,7 @@ async function runSwarmInternal(
     persist(run);
     emitLog(sink, run.result);
     // M21: capture diff of any partial work, then remove sandbox.
-    finalizeSandbox(opts.propose === true);
+    await finalizeSandbox(opts.propose === true);
     await fireEmitSwarm(run, cfg);
     if (!opts.noCapture) fireCaptureFromSwarm(run, cfg);
     return run;
@@ -2288,7 +2559,7 @@ async function runSwarmInternal(
   persist(run);
 
   // M21: capture full sandbox diff proposal, then remove sandbox.
-  finalizeSandbox(opts.propose === true);
+  await finalizeSandbox(opts.propose === true);
 
   emitLog(sink, `Swarm ${run.id} finished with status: ${run.status}`);
 
@@ -2301,11 +2572,14 @@ async function runSwarmInternal(
   return run;
   } finally {
     try {
-      finalizeSandbox(false);
+      await finalizeSandbox(false);
     } finally {
       releaseOutwardMutationFence(mutationFence);
       mutationFence = null;
-      cleanupAuthority = null;
+      // Last: kill / unenroll drain waits for exactly this. Every effect of
+      // the run (terminal record, filing, cleanup) precedes it.
+      executionLease?.release();
+      executionLease = null;
     }
   }
 }

@@ -202,3 +202,18 @@ describe('ecosystem docs inventory', () => {
     }
   });
 });
+
+describe('ecosystem map links', () => {
+  it('points every README anchor at a heading that exists', () => {
+    const readme = readFileSync(join(process.cwd(), 'README.md'), 'utf8');
+    const slugs = new Set(
+      readme
+        .split('\n')
+        .filter((line) => /^#{1,6} /.test(line))
+        .map((line) => line.replace(/^#+ /, '').trim().toLowerCase().replace(/[^\w\- ]/g, '').replace(/ /g, '-')),
+    );
+    const anchors = [...readMap().matchAll(/\(\.\.\/README\.md#([^)]+)\)/g)].map((match) => match[1]);
+    expect(anchors.length).toBeGreaterThan(0);
+    for (const anchor of anchors) expect(slugs, `#${anchor}`).toContain(anchor);
+  });
+});

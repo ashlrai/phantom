@@ -44,7 +44,6 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/m27.conventions.test.ts', // 0.4s
   'test/m24.state.test.ts', // 0.4s
   'test/m414.local-store-lock-unknown-owner.test.ts', // 0.3s
-  'test/m31.gateway-native.test.ts', // 0.3s
   'test/m410.policy-opposing-race.test.ts', // 0.3s
   'test/m382.enrollment-cutoff-snapshot.test.ts', // 0.3s
   'test/m2.doctor-exit-code.test.ts', // 0.3s

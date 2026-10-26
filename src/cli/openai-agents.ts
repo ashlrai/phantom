@@ -1,5 +1,6 @@
 import { AgentsReadClient } from '../core/openai-agents/client.js';
 import { AgentsReadError, validResourceId } from '../core/openai-agents/contracts.js';
+import { loadConfigReadOnly, type AshlrConfigWithGateways } from '../core/config.js';
 
 const HELP = `ashlr openai-agents — read-only managed OpenAI Agents API inventory
 
@@ -30,6 +31,7 @@ const ERROR_GUIDANCE: Record<AgentsReadError['code'], string> = {
   'not-found': 'The requested API resource is unavailable for this project.',
   'rate-limit': 'The API refused the read due to a rate limit. Retry later.',
   'provider-error': 'The API read failed. Provider response text was withheld.',
+  'gateway-config-invalid': 'The gateways.openaiAgents config entry is invalid, so no read was attempted. Fix it or set enabled to false.',
 };
 
 /** Help/invalid arguments never read credentials or invoke transport. */
@@ -60,11 +62,15 @@ export async function runOpenaiAgentsCli(args: string[], deps?: AgentsCliDeps): 
     sessionId = arg;
   }
   if (command !== 'sessions' && !sessionId) return rejectUsage();
-  const client = deps?.client ?? new AgentsReadClient({ readApiKey: () => process.env.OPENAI_API_KEY });
+  const client = deps?.client ?? new AgentsReadClient({
+    readApiKey: () => process.env.OPENAI_API_KEY,
+    gateways: (loadConfigReadOnly() as AshlrConfigWithGateways).gateways,
+  });
+  const via = client instanceof AgentsReadClient ? client.via : undefined;
   try {
     const result = command === 'sessions' ? await client.listSessions(page)
       : command === 'inspect' ? await client.inspectSession(sessionId!) : await client.listTurns(sessionId!, page);
-    out(JSON.stringify({ readOnly: true, executionQualified: false, result }, null, json ? undefined : 2));
+    out(JSON.stringify({ readOnly: true, executionQualified: false, ...(via ? { gateway: via } : {}), result }, null, json ? undefined : 2));
     return 0;
   } catch (error) {
     const code = error instanceof AgentsReadError ? error.code : 'transport';

@@ -39,6 +39,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -120,12 +121,15 @@ export function blastRadiusEnabled(cfg: BlastRadiusConfig | undefined): boolean 
 // Ecosystem root resolution
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ECOSYSTEM_ROOT = '/Users/masonwyatt/Desktop/github/dev-tools';
+/** Last-resort ecosystem root, resolved against the current home at call time. */
+function defaultEcosystemRoot(): string {
+  return join(homedir(), 'Desktop', 'github', 'dev-tools');
+}
 
 /**
  * Resolve the directory that contains all the sibling repos. Prefers an
  * explicit cfg override, else the parent of the changed repo (when given as an
- * absolute path), else the well-known dev-tools default.
+ * absolute path), else ~/Desktop/github/dev-tools.
  */
 function resolveEcosystemRoot(input: BlastRadiusInput, cfg?: BlastRadiusConfig): string {
   if (cfg?.ecosystemRoot && existsSync(cfg.ecosystemRoot)) return resolve(cfg.ecosystemRoot);
@@ -133,7 +137,7 @@ function resolveEcosystemRoot(input: BlastRadiusInput, cfg?: BlastRadiusConfig):
   if (input.repo && input.repo.startsWith('/') && existsSync(input.repo)) {
     return dirname(resolve(input.repo));
   }
-  return DEFAULT_ECOSYSTEM_ROOT;
+  return defaultEcosystemRoot();
 }
 
 // ---------------------------------------------------------------------------

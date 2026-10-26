@@ -51,6 +51,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it). recordJudgeTrace names its file from the trace ts, so a case
+ * that later derives the same day itself must not straddle 00:00 UTC. Timers
+ * stay real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -631,6 +640,7 @@ describe('m141 judge-trace — free-form privacy boundary', () => {
 
 describe('m141 judge-trace — linkOutcome (today file)', () => {
   it('linkOutcomeResult refuses every merged write without appending a patch', async () => {
+    freezeDate();
     const { judgeTracesDir, linkOutcomeResult, readJudgeTraces, recordJudgeTrace } =
       await import('../src/core/fleet/judge-trace.js');
     const id = pid();
@@ -663,6 +673,7 @@ describe('m141 judge-trace — linkOutcome (today file)', () => {
   });
 
   it('linkOutcome refuses old and release merged labels without appending a patch', async () => {
+    freezeDate();
     const { judgeTracesDir, linkOutcome, readJudgeTraces, recordJudgeTrace } =
       await import('../src/core/fleet/judge-trace.js');
     const id = pid();
@@ -763,6 +774,7 @@ describe('m141 judge-trace — linkOutcome (today file)', () => {
   });
 
   it('links append-only, materializes one trace, and applies the latest outcome', async () => {
+    freezeDate();
     const { judgeTracesDir, recordJudgeTrace, readJudgeTraces, linkOutcomeResult } =
       await import('../src/core/fleet/judge-trace.js');
     const id = pid();
@@ -821,6 +833,7 @@ describe('m141 judge-trace — linkOutcome (today file)', () => {
   });
 
   it('does not append an adverse outcome label when the trace source is degraded', async () => {
+    freezeDate();
     const { judgeTracesDir, recordJudgeTrace, linkOutcomeResult } = await import('../src/core/fleet/judge-trace.js');
     const id = pid();
     recordJudgeTrace({

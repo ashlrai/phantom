@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import * as path from 'node:path';
 import * as url from 'node:url';
 
-import { probeServer, isSelfGateway, GATEWAY_ENV_MARKER } from '../src/core/mcp-gateway.js';
+import { probeServer, isSelfGateway, GATEWAY_ENV_MARKER, unknownToolMessage } from '../src/core/mcp-gateway.js';
 import type { McpServerSpec } from '../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -270,4 +270,36 @@ describe('probeServer — McpServerHealth shape invariants', () => {
       expect(health.toolCount).toBe(0);
     }
   }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
+// unknownToolMessage — bare downstream names point at the routed tool
+// ---------------------------------------------------------------------------
+
+describe('unknownToolMessage', () => {
+  const routed = [
+    { name: 'phantom-secrets__phantom_status', original: 'phantom_status' },
+    { name: 'locus__locus_whoami', original: 'locus_whoami' },
+    { name: 'alpha__status', original: 'status' },
+    { name: 'beta__status', original: 'status' },
+  ];
+
+  it('names the namespaced tool when an agent calls the bare downstream name', () => {
+    const message = unknownToolMessage('locus_whoami', routed);
+    expect(message).toContain('Unknown tool "locus_whoami".');
+    expect(message).toContain('Did you mean "locus__locus_whoami"?');
+    expect(message).toContain('ashlr mcp list');
+  });
+
+  it('matches a server prefix spelled with _ for - and any case', () => {
+    expect(unknownToolMessage('Phantom_Secrets__phantom_status', routed)).toContain('Did you mean "phantom-secrets__phantom_status"?');
+  });
+
+  it('lists every server that serves the bare name', () => {
+    expect(unknownToolMessage('status', routed)).toContain('Did you mean one of "alpha__status", "beta__status"?');
+  });
+
+  it('keeps the plain message when nothing matches', () => {
+    expect(unknownToolMessage('nope', routed)).toBe('Unknown tool "nope". Run `ashlr mcp list` to see available tools.');
+  });
 });
