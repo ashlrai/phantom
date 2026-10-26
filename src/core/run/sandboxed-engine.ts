@@ -52,7 +52,7 @@ import { randomUUID } from 'node:crypto';
 import { accessSync, constants, statSync, mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 
 // M154: repo-map + localization pre-pass (flag-gated, zero-dep)
 import { buildRepoMap, renderRepoMap } from './repo-map.js';
@@ -141,6 +141,7 @@ import {
 import { autonomousVendorIdentityCurrent, autonomousDevinIdentityCurrent, captureAutonomousVendorIdentityCheck } from '../sandbox/autonomous-env.js';
 import { recordSandboxEvidenceUnknown } from '../authority/rollout.js';
 import { audit as auditConfinement } from '../sandbox/audit.js';
+import { gatewayAuditSuffix } from './gateway-target.js';
 import {
   assertMayMutate,
   canonicalEnrollmentPath,
@@ -204,6 +205,7 @@ import { assertSafeExecutionIdentity } from '../fleet/attempt-identity.js';
 import { runCancelRequested } from '../fleet/run-cancel.js';
 import { classifyDiff, isTrivialProposal } from '../../planning/triviality.js';
 import { isDiffDedupResult } from '../inbox/store.js';
+import { resolveOpenAICompatTarget } from './local-inference.js';
 
 export interface SandboxedEngineResult {
   /** Delegated RunState (status/usage/engineModel/engineTier). */
@@ -1145,6 +1147,7 @@ function prepareFleetMcpConfig(
               ASHLR_MCP_HOST: 'ashlr-fleet-engine',
               ASHLR_HOOK_MODE: 'nudge',
               ASHLR_SESSION_LOG: '0',
+              ...fleetPluginProjectEnv(worktreePath),
             },
           },
         } : {}),
@@ -1195,6 +1198,16 @@ function prepareFleetMcpConfig(
   }
 }
 
+/**
+ * ashlr-mcp runs its router from the plugin's package directory and refuses
+ * every path outside it unless the project is named. Name the run's own
+ * worktree (nothing wider) so the agent's ashlr__ tools can read the tree it
+ * is editing. A path holding the list delimiter cannot be named; leave it out.
+ */
+function fleetPluginProjectEnv(worktreePath: string): { ASHLR_ALLOW_PROJECT_PATHS?: string } {
+  return isAbsolute(worktreePath) && !worktreePath.includes(delimiter) ? { ASHLR_ALLOW_PROJECT_PATHS: worktreePath } : {};
+}
+
 /** Compatibility path-only entry point for callers that consume the Claude sidecar. */
 export function writeMcpConfigIfAvailable(worktreePath: string, searchPath?: string): string | null {
   return prepareFleetMcpConfig(worktreePath, searchPath)?.path ?? null;
@@ -1213,6 +1226,8 @@ export function fleetEfficiencyMcpArgs(engine: string, config: { path: string; c
     '-c', `${key}.env.ASHLR_MCP_HOST="ashlr-fleet-engine"`,
     '-c', `${key}.env.ASHLR_HOOK_MODE="nudge"`,
     '-c', `${key}.env.ASHLR_SESSION_LOG="0"`,
+    ...Object.entries(fleetPluginProjectEnv(dirname(config.path)))
+      .flatMap(([name, value]) => ['-c', `${key}.env.${name}=${JSON.stringify(value)}`]),
   ];
 }
 
@@ -2617,7 +2632,7 @@ export async function runEngineSandboxed(
       action: 'confinement.run',
       repo: sb.worktreePath,
       sandboxId: sb.id,
-      summary: `engine=${engine} mode=${confinementProfile.mode ?? 'off'} platform=${process.platform} launched=${launcher !== null} networkEgress=${confinementProfile.networkEgress ?? false}${autonomousRun ? ' autonomous=true' : ''}`,
+      summary: `engine=${engine} mode=${confinementProfile.mode ?? 'off'} platform=${process.platform} launched=${launcher !== null} networkEgress=${confinementProfile.networkEgress ?? false}${autonomousRun ? ' autonomous=true' : ''}${engine === 'claude-api' ? gatewayAuditSuffix('anthropic', (cfg as { gateways?: unknown }).gateways) : ''}`,
       result: 'ok',
     });
 
@@ -3984,7 +3999,7 @@ export async function runApiModelSandboxed(
       shadowBinding.maxOutputTokens > 8_192
     )) throw new Error('invalid immutable local shadow transport binding');
     const baseUrlEnv = spec.api.baseUrlEnv;
-    const baseUrl = shadowBinding?.baseUrl ??
+    const rawBaseUrl = shadowBinding?.baseUrl ??
       ((baseUrlEnv && process.env[baseUrlEnv]?.trim()) ||
         spec.api.defaultBaseUrl ||
         'http://localhost:11434/v1');
@@ -3993,7 +4008,32 @@ export async function runApiModelSandboxed(
     // The VALUE is never logged or returned.
     // The API credit client resolves its exact credential only AFTER reserving
     // durable exposure. Ordinary OpenAI-compatible engines keep their path.
-    const apiKey = isClaudeApi ? '' : (spec.api.envKey && resolveProviderKey(spec.api.envKey, cfg)?.trim()) || '';
+    const rawApiKey = isClaudeApi ? '' : (spec.api.envKey && resolveProviderKey(spec.api.envKey, cfg)?.trim()) || '';
+    // Local inference loopback gate (P2): openai-compat used to accept any
+    // OPENAI_COMPAT_BASE_URL. Now loopback only unless the persisted config
+    // sets localInference.allowRemote (https only, warned). Placeholders and
+    // OAuth-shaped tokens are never sent; ollama/omlx get no key.
+    let baseUrl = rawBaseUrl;
+    let apiKey = rawApiKey;
+    if (((engine as string) === 'openai-compat' || baseUrlEnv === 'OPENAI_COMPAT_BASE_URL') && !shadowBinding) {
+      const target = resolveOpenAICompatTarget({
+        envBaseUrl: baseUrlEnv ? process.env[baseUrlEnv] : undefined,
+        localInference: (cfg as unknown as Record<string, unknown>)['localInference'],
+        defaultBaseUrl: spec.api.defaultBaseUrl || 'http://localhost:8000/v1',
+        apiKey: rawApiKey,
+      });
+      if (!target.ok) {
+        throw new Error(`openai-compat endpoint refused (${target.reason}); local inference is loopback-only unless localInference.allowRemote is true`);
+      }
+      if (target.warning) {
+        emitSinkEvent(streamSink, { kind: 'log', taskId: 't1', text: `[ashlr] warning: openai-compat is using a non-loopback endpoint (${target.host}) via localInference.allowRemote` });
+      }
+      if (target.keyDropped) {
+        emitSinkEvent(streamSink, { kind: 'log', taskId: 't1', text: '[ashlr] openai-compat: not sending a placeholder or OAuth-shaped key to the local endpoint' });
+      }
+      baseUrl = target.baseUrl;
+      apiKey = target.apiKey;
+    }
 
     // qwen2.5:72b confirms tool_calls — treat all local-coder models as tool-capable.
     const supportsTools = true;

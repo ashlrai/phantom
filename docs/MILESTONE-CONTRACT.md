@@ -42,8 +42,11 @@ Milestones in **dependency order**, one markdown link per line. Two accepted for
 
 Order is verbatim = execution order. The runner executes sequentially; later
 milestones may depend on earlier outputs. **No parallelism.** Parsed by
-`parseRoadmap(dir, roadmapFile?)` → `RoadmapIndex`. Default index filenames tried
-when none is given: `roadmap.md`, `ROADMAP.md`, `README.md`.
+`parseRoadmap(dir, roadmapFile?)` → `RoadmapIndex`. Default index filenames tried,
+in order, when none is given: `roadmap.md`, `ROADMAP.md`. `README.md` is not
+tried, because its `.md` links are usually docs rather than milestones; pass
+`--roadmap README.md` to use it. A missing index is an error that names the
+files looked for.
 
 ### Milestone file
 Per-milestone markdown with **atomic steps** and an **acceptance gate**:

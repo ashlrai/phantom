@@ -1,4 +1,7 @@
 import { devinCliBindingCurrent, peekDevinCliExecutionBinding, peekDevinCliIdentityBinding } from '../devin/cli-admission.js';
+import { emitReceiptForDispatchEvent } from '../receipt/receipt-dispatch.js';
+import { installReceiptLaterHooks } from '../receipt/receipt-later-hooks.js';
+import { registerLedgerAppendObserver } from '../authority/ledger.js';
 import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
 /**
  * loop.ts — The M24 daemon operator.
@@ -400,6 +403,7 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { withApprovedKnowledge, knowledgeBlockFor } from '../learn/retro/inject.js';
+import { revertedPrKeys } from '../improve/reverted.js';
 import { recordKnowledgeHits } from '../learn/retro/store.js';
 import { withFleetPlaybook, prepareFleetPlaybook, type PreparedFleetPlaybook } from '../playbooks/lanes.js';
 import { recordPlaybookUse } from '../playbooks/store.js';
@@ -3940,6 +3944,8 @@ export async function tick(
   opts: TickOptions,
 ): Promise<DaemonTick> {
   const now = new Date().toISOString();
+  // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
+  try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
   const activationAccepted =
     !opts.dryRun && isDaemonActivationCapability(opts.activationCapability);
   if (!opts.dryRun && !activationAccepted) {
@@ -4890,12 +4896,19 @@ export async function tick(
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
   };
+  // Lessons whose every cited PR was reverted are withheld; the reverted set is read at most once a minute.
+  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
+  const revertedKeys = (): ReadonlySet<string> => {
+    const now = Date.now();
+    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
+    return revertedCache.keys;
+  };
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
     return withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview, revertedPrKeys: revertedKeys });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -4910,7 +4923,7 @@ export async function tick(
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const playbook = prepareFleetPlaybook(harnessGoal, item);
     const knowledge = knowledgeBlockFor({ repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: false });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: false, revertedPrKeys: revertedKeys });
     return { basisDigest: context.next.basisDigest,
       prompt: knowledge.text ? `${playbook.prompt}\n\n${knowledge.text}` : playbook.prompt,
       playbookUse: playbook.use, knowledgeNoteIds: knowledge.noteIds };
@@ -8819,6 +8832,14 @@ export async function tick(
         console.warn('[ashlr] daemon:tick failed-attempt witness persistence unavailable', witnessWrite.failureReasons);
       }
     }
+    // receipt.v1 at run close (opt-in ASHLR_RUN_RECEIPTS=1); only for events the ledger recorded.
+    if (canonicalProductionRecorded) {
+      const receipt = emitReceiptForDispatchEvent(event);
+      if (!receipt.ok && receipt.reason !== 'disabled' && receipt.reason !== 'not-applicable') {
+        // Value-free: only the fixed reason code, never the event or repo.
+        console.warn('[ashlr] daemon:tick run receipt not written', receipt.reason);
+      }
+    }
     const failedRepairItem = generatedRepairItemsById.get(event.itemId);
     const failedRepairReservation = generatedRepairReservations.get(event.itemId)?.record;
     if (
@@ -10000,6 +10021,38 @@ async function runDaemonInEnrollmentScope(
       }
     } catch (err) {
       console.warn('[ashlr] daemon: temp worktree sweep failed:', (err as Error)?.message ?? err);
+    }
+    // Private scratch (verify-confine-*, fleet-git-*, patch-*.diff) a killed
+    // run left in ~/.ashlr/tmp: same owner rules, nothing else references it.
+    try {
+      const reaper = await import('../inbox/temp-worktree-reaper.js');
+      const scratch = reaper.sweepLeakedTmpScratch();
+      if (scratch.reaped.length > 0 || scratch.failed.length > 0) {
+        audit({
+          action: 'daemon:start',
+          repo: null,
+          sandboxId: null,
+          summary: `tmp scratch sweep reaped=${scratch.reaped.length} kept=${scratch.kept.length} failed=${scratch.failed.length}`,
+          result: scratch.failed.length === 0 ? 'ok' : 'error',
+        });
+      }
+    } catch {
+      // Best-effort: never blocks daemon start.
+    }
+    // A git process killed mid-update leaves packed-refs.lock / a ref .lock
+    // that fails every later ref update in that repo. Git records no owner, so
+    // the daemon only reports old ones (read-only); `phm doctor` repeats it.
+    try {
+      const { readGitLockHealth } = await import('../readiness.js');
+      const { describeStaleGitLocks } = await import('../sandbox/stale-git-locks.js');
+      const { locks } = readGitLockHealth();
+      if (locks.length > 0) {
+        const summary = describeStaleGitLocks(locks);
+        console.warn(`[ashlr] daemon: ${summary}; remove only if no git process is running there`);
+        audit({ action: 'daemon:start', repo: locks[0]!.repo, sandboxId: null, summary, result: 'error' });
+      }
+    } catch {
+      // Best-effort report: never blocks daemon start.
     }
   }
 

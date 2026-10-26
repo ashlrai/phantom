@@ -44,7 +44,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ---------------------------------------------------------------------------
 
 const mockGetProviderRegistry = vi.fn();
-vi.mock('../src/core/providers.js', () => ({
+vi.mock('../src/core/providers.js', async (importOriginal) => ({
+  // Keep the pure helpers (localOllamaBase) real; only the registry is faked.
+  ...(await importOriginal<typeof import('../src/core/providers.js')>()),
   getProviderRegistry: (...args: unknown[]) => mockGetProviderRegistry(...args),
 }));
 

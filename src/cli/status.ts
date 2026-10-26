@@ -6,7 +6,7 @@
  * classification here, so both report the same dirty / off-sync / stale /
  * clean buckets. The JSON path prints exactly one object on stdout with no
  * ANSI codes and no prose. Every best-effort section (tools, MCP, activity,
- * memory, GitHub, Vercel, identity, resources) is `null` when unavailable,
+ * memory, GitHub, Vercel, identity, resources, custody) is `null` when unavailable,
  * mirroring the human output, which silently omits it.
  */
 
@@ -107,6 +107,12 @@ export interface StatusJson {
   vercel: { latestState: string | null; url: string | null } | null;
   identity: { user: string; tier: string | null; team: string | null } | null;
   resources: Array<{ backend: string; availability: string; usedPct: number | null }> | null;
+  /** Receipt.v1 and custody ledger counts; null when nothing was ever recorded. */
+  custody: import('./status-custody.js').CustodyStatus | null;
+  /** Local inference probe (loopback GET /models); null when not configured or it could not run. */
+  localInference: import('../core/run/local-inference-probe.js').LocalInferenceProbe | null;
+  /** Strict phantom preflight; null unless ASHLR_PHANTOM_PREFLIGHT=1 and phantom is configured. */
+  phantomPreflight: import('./status-preflight.js').PreflightStatus | null;
 }
 
 function toRow(item: IndexedItem): StatusRepoRow {
@@ -201,6 +207,22 @@ export async function gatherStatus(
     return id.loggedIn && id.user ? { user: id.user, tier: id.tier, team: id.team } : null;
   });
 
+  const custody = await attempt(async () => {
+    const { gatherCustodyStatus } = await import('./status-custody.js');
+    return gatherCustodyStatus();
+  });
+
+  const localInference = await attempt(async () => {
+    const { probeLocalInference } = await import('../core/run/local-inference-probe.js');
+    const p = await probeLocalInference((cfg as unknown as Record<string, unknown>)['localInference']);
+    return p.status === 'not-configured' ? null : p;
+  });
+
+  const phantomPreflight = await attempt(async () => {
+    const { gatherPreflightStatus } = await import('./status-preflight.js');
+    return gatherPreflightStatus({ cwd });
+  });
+
   const resources = await attempt(async () => {
     const { getResourceSnapshot } = await import('../core/fabric/resource-monitor.js');
     const snap = await getResourceSnapshot(cfg);
@@ -231,6 +253,9 @@ export async function gatherStatus(
     vercel,
     identity,
     resources,
+    custody,
+    localInference,
+    phantomPreflight,
   };
 }
 

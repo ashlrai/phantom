@@ -132,6 +132,9 @@ const USAGE =
   '            SINGLE sandboxed proposal-only frontier-engine run (same path as\n' +
   '            the daemon\'s non-builtin dispatch). Requires --project.\n' +
   '            Ideal for concrete tasks that need no Design→Implement→Test split.\n' +
+  '  --project <repo>  The enrolled repo the goal advances against. Required\n' +
+  '            unless --plan-only (enroll one with `phm enroll add <repo>`).\n' +
+  '  --plan-only  Create and plan the goal without advancing a milestone.\n' +
   '  --json          Emit one bounded machine-readable direct-run result.';
 
 // ---------------------------------------------------------------------------
@@ -535,6 +538,9 @@ export async function cmdGoal(args: string[]): Promise<number> {
 
   if (parsed.usageError) {
     if (parsed.json) {
+      // stdout stays the bounded JSON result; the reason goes to stderr so a
+      // caller is not left with a bare `invalid-arguments` and no explanation.
+      process.stderr.write('error: ' + parsed.usageError + '\n');
       console.log(JSON.stringify(directJsonResult({
         ok: false,
         terminalStage: 'usage',
@@ -561,8 +567,12 @@ export async function cmdGoal(args: string[]): Promise<number> {
       })));
       return 2;
     }
-    console.log(parsed.help ? USAGE : col.red('error: ') + 'an objective is required\n\n' + USAGE);
-    return parsed.help ? 0 : 2;
+    if (parsed.help) {
+      console.log(USAGE);
+      return 0;
+    }
+    process.stderr.write(col.red('error: ') + 'an objective is required\n\n' + USAGE + '\n');
+    return 2;
   }
 
   // --direct: single sandboxed run, verbatim objective, no milestone planning.
@@ -602,6 +612,18 @@ export async function cmdGoal(args: string[]): Promise<number> {
     );
   }
 
+  // Advancing needs an enrolled project. Without one the goal would be created
+  // and planned and then fail at `advance`, so refuse before writing anything.
+  if (!parsed.project && !parsed.planOnly) {
+    process.stderr.write(
+      col.red('error: ') + 'phm goal advances a milestone, which needs --project <enrolled-repo>.\n' +
+        '         Nothing was created.\n' +
+        '         Run it against a repo:  phm goal "<objective>" --project <repo>  (enroll first: phm enroll add <repo>)\n' +
+        '         Or only plan it:        phm goal "<objective>" --plan-only\n',
+    );
+    return 2;
+  }
+
   // Reuse the proven, gated `ashlr goals` flow. cmdGoals routes advance through
   // core advanceGoal (sandboxed + proposal-only + enrollment/kill gated).
   const { cmdGoals } = await import('./goals.js');
@@ -631,7 +653,14 @@ export async function cmdGoal(args: string[]): Promise<number> {
   if (planRc !== 0) return planRc;
 
   if (parsed.planOnly) {
-    console.log(col.dim('  planned only — run `ashlr goal` again or `ashlr goals advance ' + goal.id + '` to proceed.'));
+    if (goal.project) {
+      console.log(col.dim('  planned only — run `phm goals advance ' + goal.id + '` to proceed.'));
+    } else {
+      console.log(col.dim(
+        '  planned only — this goal has no project, so it cannot be advanced.\n' +
+          '  To run it, start a goal bound to an enrolled repo: `phm goal "<objective>" --project <repo>`.',
+      ));
+    }
     return 0;
   }
 

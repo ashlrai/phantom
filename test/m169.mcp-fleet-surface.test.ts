@@ -210,8 +210,8 @@ describe('ashlr_north_star', () => {
     const r = await callNativeTool('ashlr_north_star', {});
     expect(r.isError).toBeUndefined();
     const payload = resultJson(r) as Record<string, unknown>;
-    expect(payload['leverageScore']).toBe(0);
-    expect(payload['trend']).toBe('flat');
+    expect(payload['leverageScore']).toBeNull();
+    expect(payload['trend']).toBe('unknown');
     expect(payload['_unavailable']).toBe(true);
     expect((payload['summary'] as string)).toContain('unavailable');
   });

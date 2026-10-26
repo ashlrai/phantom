@@ -43,7 +43,7 @@ describe('CLI: phm status --json', () => {
     expect(data.dirty).toEqual([]);
     // A fresh HOME with no code folders gets no roots (not two missing ones).
     expect(data.roots).toEqual([]);
-    for (const key of ['tools', 'mcpServers', 'activity7d', 'memory', 'github', 'vercel', 'identity', 'resources']) {
+    for (const key of ['tools', 'mcpServers', 'activity7d', 'memory', 'github', 'vercel', 'identity', 'resources', 'custody', 'localInference', 'phantomPreflight']) {
       expect(data).toHaveProperty(key);
     }
   });

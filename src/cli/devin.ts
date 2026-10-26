@@ -35,6 +35,7 @@ import type {
 import type { DevinConnectResult, DevinMessageResult } from '../core/devin/service.js';
 import { localWhen, readOriginRepo } from './cloud.js';
 import { isTty } from './ui.js';
+import { rejectUnknownOptions } from './args.js';
 
 const USAGE = `ashlr devin — Devin (Cognition) sessions that deliver PRs through the standing gates
 
@@ -133,8 +134,8 @@ async function defaultDeps(): Promise<DevinCliDeps> {
  * The same technique as `ashlr authority` (cli/authority.ts realReadSecret),
  * kept separate so the Devin lane adds nothing to the authority CLI.
  */
-export async function readHiddenLine(prompt: string): Promise<string> {
-  if (!process.stdin.isTTY || !isTty()) throw new Error('the Devin key can only be entered in an interactive terminal');
+export async function readHiddenLine(prompt: string, what = 'the Devin key'): Promise<string> {
+  if (!process.stdin.isTTY || !isTty()) throw new Error(`${what} can only be entered in an interactive terminal`);
   process.stdout.write(prompt);
   const stdin = process.stdin;
   stdin.setRawMode(true);
@@ -412,7 +413,19 @@ async function cmdRefresh(deps: DevinCliDeps, args: string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `message` reads no options. A dash token before a `--` separator is a typo
+ * that used to be glued into the text and sent to the session.
+ */
+function unknownMessageOption(args: string[]): string | null {
+  return rejectUnknownOptions(args, {})?.token ?? null;
+}
+
 async function cmdMessage(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const unknown = unknownMessageOption(args);
+  if (unknown) throw new UsageError(`Unknown option ${unknown}.`);
+  const separator = args.indexOf('--');
+  if (separator !== -1) args.splice(separator, 1);
   const id = args.shift();
   const text = args.join(' ').trim();
   if (!id || !text) throw new UsageError('Say which task and what to tell it: ashlr devin message <task-id> "<text>".');
@@ -520,6 +533,14 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   if (wantsHelp(args)) {
     print(USAGE);
     return 0;
+  }
+  // Before the dependencies load: a refused message must not touch any state.
+  if (sub === 'message') {
+    const unknown = unknownMessageOption(args);
+    if (unknown) {
+      printErr(`Unknown option ${unknown}.\n\n${USAGE}`);
+      return 2;
+    }
   }
   const deps: DevinCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
   try {

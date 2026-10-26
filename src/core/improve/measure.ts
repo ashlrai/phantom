@@ -1,8 +1,10 @@
 /**
  * Measure a proposal's declared metric at one exact commit, in a private
  * detached worktree. The metric command is repository code (like CI) and runs
- * without credentials from this process's environment. Any failure yields an
- * unknown measurement with a reason; it never yields a number.
+ * without credentials from this process's environment. Under a standing grant
+ * it also runs inside the verification sandbox, as every other execution of
+ * agent-written code does. Any failure yields an unknown measurement with a
+ * reason; it never yields a number.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -52,11 +54,28 @@ export function parseMetricOutput(stdout: string, metric: string): number {
 
 export interface Measurement { sha: string; value: number | null; reason: string | null }
 
-export function measureAt(repoDir: string, sha: string, metric: MetricSpec, exec: MeasureExec = realExec): Measurement {
+/** The metric command run inside a sandbox opened on the measured worktree. Rejects on a non-zero exit. */
+export interface MetricSandbox { run: (argv: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<string>; close: () => void }
+/**
+ * Opens the sandbox for one measured worktree. Resolves null when no standing
+ * grant is live (legacy: the command runs as before). Throws when a grant is
+ * live but no sandbox can be built; the measurement is then unknown and the
+ * command never runs unconfined.
+ */
+export type MetricConfinement = (worktree: string) => Promise<MetricSandbox | null>;
+
+export async function measureAt(
+  repoDir: string,
+  sha: string,
+  metric: MetricSpec,
+  exec: MeasureExec = realExec,
+  confine?: MetricConfinement,
+): Promise<Measurement> {
   if (!/^[0-9a-f]{40}$/.test(sha)) return { sha, value: null, reason: 'not an exact 40-hex commit' };
   const container = mkdtempSync(join(realpathSync(tmpdir()), 'phm-measure-'));
   const wt = join(container, 'checkout');
   let added = false;
+  let sandbox: MetricSandbox | null = null;
   try {
     // Hooks off: with core.hooksPath pointing into the tree (husky), checkout would run the measured commit's hook with our credentials.
     exec('git', [...GIT, 'worktree', 'add', '--detach', wt, sha], repoDir);
@@ -66,20 +85,51 @@ export function measureAt(repoDir: string, sha: string, metric: MetricSpec, exec
     const home = join(container, 'home');
     mkdirSync(home, { mode: 0o700 });
     const env = metricEnv(process.env, home);
+    if (metric.runner.kind === 'node' && !existsSync(join(wt, metric.runner.path))) {
+      return { sha, value: null, reason: `metric script ${metric.runner.path} is missing at this commit` };
+    }
+    // Opened before the install: a live grant with no sandbox refuses before anything runs.
+    sandbox = confine ? await confine(wt) : null;
+    const run = (cmd: string, args: string[]): Promise<string> | string =>
+      sandbox ? sandbox.run([cmd, ...args], wt, env) : exec(cmd, args, wt, env);
     let stdout: string;
     if (metric.runner.kind === 'npm') {
+      // The install runs no package scripts (--ignore-scripts) and needs the registry, which the sandbox denies.
       if (existsSync(join(wt, 'package-lock.json'))) exec('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], wt, env);
-      stdout = exec('npm', ['run', '--silent', metric.runner.script], wt, env);
+      stdout = await run('npm', ['run', '--silent', metric.runner.script]);
     } else {
-      if (!existsSync(join(wt, metric.runner.path))) return { sha, value: null, reason: `metric script ${metric.runner.path} is missing at this commit` };
-      stdout = exec(process.execPath, [metric.runner.path], wt, env);
+      stdout = await run(process.execPath, [metric.runner.path]);
     }
     return { sha, value: parseMetricOutput(stdout, metric.name), reason: null };
   } catch (err) {
     return { sha, value: null, reason: (err instanceof Error ? err.message : String(err)).split('\n')[0]!.slice(0, 300) };
   } finally {
+    try { sandbox?.close(); } catch { /* its private dir is removed with ~/.ashlr/tmp */ }
     try { if (added) exec('git', [...GIT, 'worktree', 'remove', '--force', wt], repoDir); } catch { /* pruned below */ }
     try { exec('git', [...GIT, 'worktree', 'prune'], repoDir); } catch { /* best effort */ }
     rmSync(container, { recursive: true, force: true }); // Private mkdtemp directory owned by this call.
   }
 }
+
+/**
+ * The standing-grant sandbox verification uses (inbox/merge.ts
+ * openStandingVerificationConfinement): writes only to the worktree and a
+ * private run dir, no network egress, HOME jailed, Phantom's authority state
+ * unreadable. The measured head is agent-written code; under a standing grant
+ * nobody reviewed it before the gate runs it.
+ */
+export const standingMetricConfinement: MetricConfinement = async (worktree) => {
+  const { openStandingVerificationConfinement } = await import('../inbox/merge.js');
+  const confined = await openStandingVerificationConfinement(worktree);
+  if (!confined) return null;
+  return {
+    close: confined.close,
+    run: async (argv, cwd, env) => {
+      const res = await confined.runSubprocess(argv, { cwd, env, timeoutMs: MEASURE_TIMEOUT_MS, maxOutputChars: 1024 * 1024 });
+      if (res.error) throw new Error(res.error);
+      if (res.timedOut) throw new Error('metric timed out');
+      if (res.exitCode !== 0) throw new Error(`metric exited ${res.exitCode}: ${res.stderr.trim().split('\n')[0] ?? ''}`);
+      return res.stdout;
+    },
+  };
+};

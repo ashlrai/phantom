@@ -138,6 +138,7 @@
 /desktop/src-tauri/src/main.rs @masonwyatt23
 /desktop/src-tauri/src/lib.rs @masonwyatt23
 /src/core/run/desktop-metadata-launch-trust.ts @masonwyatt23
+/src/core/run/gateway-target.ts @masonwyatt23
 /src/cli/desktop-update.ts @masonwyatt23
 /src/cli/desktop.ts @masonwyatt23
 /scripts/desktop-release-policy.mjs @masonwyatt23
@@ -250,14 +251,19 @@
 /test/authority-standing-grant-310b.test.ts @masonwyatt23
 /test/authority-surface-310b.test.ts @masonwyatt23
 /test/authority-tier1-closure-310b.test.ts @masonwyatt23
+/test/automerge-canary-host-cancellation.test.ts @masonwyatt23
+/test/automerge-canary-ladder.test.ts @masonwyatt23
+/test/automerge-canary-shadow-report.test.ts @masonwyatt23
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
+/test/cleanup-lock-identity.test.ts @masonwyatt23
 /test/cli-json-first-run.test.ts @masonwyatt23
 /test/cli-mirror-args.test.ts @masonwyatt23
+/test/cloud-api-scheduler.test.ts @masonwyatt23
 /test/cloud-budget.test.ts @masonwyatt23
 /test/cloud-intake-313.test.ts @masonwyatt23
 /test/cloud-timeline.test.ts @masonwyatt23
@@ -268,6 +274,9 @@
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
+/test/custody-ledger.test.ts @masonwyatt23
+/test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
+/test/custody-unwrapped-fleet.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -293,6 +302,7 @@
 /test/devin-lane-315.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
+/test/engines-custody-record.test.ts @masonwyatt23
 /test/engines-judges-310b.test.ts @masonwyatt23
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
@@ -306,7 +316,14 @@
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
+/test/gateway-anthropic-client.test.ts @masonwyatt23
+/test/gateway-audit-marker.test.ts @masonwyatt23
+/test/gateway-config-load.test.ts @masonwyatt23
+/test/gateway-grant-ledger.test.ts @masonwyatt23
+/test/gateway-openai-agents-client.test.ts @masonwyatt23
+/test/gateway-target.test.ts @masonwyatt23
 /test/goal-conductor-stale-lane.test.ts @masonwyatt23
+/test/goal-loop-roadmap-index.test.ts @masonwyatt23
 /test/goal-loop.result.test.ts @masonwyatt23
 /test/goal-loop.runner.test.ts @masonwyatt23
 /test/goal-preferences.test.ts @masonwyatt23
@@ -767,6 +784,7 @@
 /test/outcome-task-context.test.ts @masonwyatt23
 /test/outcomes-api.test.ts @masonwyatt23
 /test/overnight-api-310b.test.ts @masonwyatt23
+/test/phantom-custody.test.ts @masonwyatt23
 /test/playbooks-315.test.ts @masonwyatt23
 /test/post-merge-credit-import-cycle.test.ts @masonwyatt23
 /test/post-merge-credit-release.test.ts @masonwyatt23
@@ -780,6 +798,8 @@
 /test/projection-authority-architecture-contract.test.ts @masonwyatt23
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
+/test/receipt-key.test.ts @masonwyatt23
+/test/receipt-later-hooks.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
@@ -845,9 +865,11 @@
 /test/sandbox-kernel-evidence-310.test.ts @masonwyatt23
 /test/sandbox-reservation-recovery.test.ts @masonwyatt23
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23
+/test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
+/test/status-custody.test.ts @masonwyatt23
 /test/store-unreadable-refusal-310.test.ts @masonwyatt23
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
@@ -860,6 +882,7 @@
 /test/tick-hooks-defaults-310b.test.ts @masonwyatt23
 /test/tick-hooks-live-310b.test.ts @masonwyatt23
 /test/tick-hooks-loop-310b.test.ts @masonwyatt23
+/test/tmp-scratch-sweep.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-acceptance.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-runner.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-store.test.ts @masonwyatt23

@@ -5,9 +5,15 @@ on:
     branches: [master]
   pull_request:
     branches: ["**"]
+    # ready_for_review starts the Mac lanes that a draft PR defers.
+    types: [opened, synchronize, reopened, ready_for_review]
   # A merge queue reruns the full lane on the queued merge commit.
   merge_group:
   workflow_call:
+  # Push to master skips the macOS and Windows service lanes; this nightly run
+  # on master runs the full matrix, Mac exhaustive included.
+  schedule:
+    - cron: "41 7 * * *"
 
 permissions:
   contents: read
@@ -76,6 +82,46 @@ jobs:
         run: node --test .github/tests/ci-site-lane.test.mjs
       - name: Smoke-test ecosystem markup, data, and controls
         run: npm run test:ci -- test/site-ecosystem-smoke.test.ts
+
+  docs:
+    # Docs-only PRs (every changed path is Markdown outside code and test trees,
+    # or under docs/) cannot change runtime behaviour, so they skip the Ubuntu,
+    # Windows and Mac matrix. They still run the documentation checks and every
+    # Markdown-reading test that does not need a built dist/. Tests that import
+    # test/helpers/require-built-dist.js need npm run build, so the selector
+    # leaves them for the full lane, which builds first. The Merge Gate still reports.
+    name: Docs PR (docs-only)
+    needs: classify
+    if: needs.classify.outputs.lane == 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test fail-closed lane classification
+        run: node --test .github/tests/ci-site-lane.test.mjs
+      - name: Check documentation (docs lane)
+        run: npm run check:docs
+      - name: Run tests that read Markdown
+        run: |
+          mapfile -t files < <(node .github/scripts/select-docs-markdown-tests.mjs)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no Markdown-reading tests found" >&2; exit 1; fi
+          npm run test:ci -- "${files[@]}"
 
   ci:
     needs: classify
@@ -409,7 +455,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -453,7 +499,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
@@ -527,7 +573,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -542,6 +588,9 @@ jobs:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
       ASHLR_TEST_CI_TIMEOUT_MS: '5400000'
+      # The isolated suites mostly wait on real child processes. Two run at a
+      # time, longest first, each in its own home with one worker.
+      ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -599,7 +648,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
     runs-on: macos-latest
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
@@ -781,7 +830,7 @@ jobs:
           fi
 
       - name: Save native compilation cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'
+        if: success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: desktop/src-tauri/target/debug/
@@ -789,7 +838,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     env:
@@ -833,7 +882,7 @@ jobs:
     # matrix job must settle before this job can report a result. A skipped or
     # failed selected lane is a failure, including when classification failed.
     name: Merge Gate
-    needs: [classify, site, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    needs: [classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -844,6 +893,8 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          EVENT_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           GATE_NEEDS: ${{ toJSON(needs) }}
           MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
@@ -856,10 +907,18 @@ jobs:
             if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi
           fi
           export MAC_SUPERSEDED
+          # A draft PR skips its Mac lanes until ready_for_review. Defer them only
+          # while the PR is a draft right now, so a re-run of a draft-era run after
+          # it was marked ready cannot pass without them. A failed read fails closed.
+          MAC_DRAFT_DEFERRED=false
+          if [ "$EVENT_NAME" = pull_request ] && [ "$EVENT_DRAFT" = true ]; then
+            MAC_DRAFT_DEFERRED=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .draft) || MAC_DRAFT_DEFERRED=false
+          fi
+          export MAC_DRAFT_DEFERRED
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const expected = ['classify', 'site', ...full];
+          const expected = ['classify', 'site', 'docs', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -867,18 +926,24 @@ jobs:
           const outcome = (name) => jobs[name]?.result;
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
-          if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'site' ? ['site'] : full;
-          const excluded = lane === 'site' ? full : ['site'];
+          if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
+          const selected = lane === 'full' ? full : [lane];
+          const excluded = ['site', 'docs', ...full].filter((name) => !selected.includes(name));
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
-          const deferred = process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
+          // A push to master defers the macOS and Windows service lanes to the
+          // nightly scheduled run; they must be skipped, never failed.
+          const deferred = process.env.EVENT_NAME === 'push'
+            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']
+            : process.env.MAC_DRAFT_DEFERRED === 'true'
+            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation']
+            : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
           // A later master push's run replaced this Mac lane while it waited and
           // covers this commit's code; the cancelled check still marks this
           // commit's own Mac evidence incomplete.
           const superseded = process.env.MAC_SUPERSEDED === 'true'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'] : [];
           for (const name of selected) {
-            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to post-merge`); continue; }
+            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred ${process.env.EVENT_NAME === 'push' ? 'to the nightly run' : process.env.MAC_DRAFT_DEFERRED === 'true' ? 'while the PR is a draft' : 'to post-merge'}`); continue; }
             if (superseded.includes(name) && outcome(name) === 'cancelled') { console.log(`${name} superseded by a later master push`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }

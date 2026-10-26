@@ -280,7 +280,7 @@ const loadPulseCmd = lazyCmd(
 
 const loadPulseTestCmd = lazyCmd(
   () => import('./pulse.js' as unknown as string),
-  (m) => ((_args: string[]) => (m.cmdPulseTest as () => Promise<number>)()) as Cmd,
+  (m) => m.cmdPulseTest as Cmd,
   'pulse-test command requires src/cli/pulse.ts (M91 module not yet built).',
 );
 
@@ -1398,6 +1398,30 @@ async function cmdStatus(args: string[]): Promise<void> {
     // silently omit — never break status
   }
 
+  // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
+  try {
+    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
+    const custody = gatherCustodyStatus();
+    if (custody) {
+      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
+  // Phantom strict preflight: only when the spawn gate is on (value-free)
+  try {
+    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
+    const pre = gatherPreflightStatus();
+    if (pre) {
+      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
   try {
     const resourcesMod = await import('./resources.js' as unknown as string) as {
@@ -2170,6 +2194,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'receipt': {
+        // `phm receipt ...` is the same as `phm fleet receipt ...`.
+        const { cmdFleetReceipt } = await import('./receipt.js');
+        process.exitCode = await cmdFleetReceipt(rest);
+        break;
+      }
+
       case 'recovery': {
         const cmdRecovery = await loadRecoveryCmd();
         process.exitCode = await cmdRecovery(rest);
@@ -2507,6 +2538,22 @@ async function main(): Promise<void> {
           }
         }
         console.log(version);
+        break;
+      }
+
+      case '--ashlr-handshake': {
+        // Companion handshake v1: one JSON object, no network, exit 0.
+        let version = process.env.ASHLR_VERSION;
+        if (!version) {
+          try {
+            const { createRequire } = await import('node:module');
+            version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+          } catch {
+            version = 'unknown';
+          }
+        }
+        const { buildPhmHandshake } = await import('./handshake.js');
+        console.log(JSON.stringify(buildPhmHandshake(version)));
         break;
       }
 

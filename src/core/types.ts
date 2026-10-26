@@ -2035,11 +2035,11 @@ export interface ToolInfo {
   id: string;
   /** Display name for the tool. */
   name: string;
-  /** Whether the tool was found on PATH. */
+  /** Whether the tool was found (on PATH, as an app bundle, or in Claude Code's plugin cache). */
   installed: boolean;
   /** Reported version string, or null if unknown/not installed. */
   version: string | null;
-  /** Resolved executable path, or null if not installed. */
+  /** Resolved executable, app bundle or cached plugin directory, or null if not installed. */
   path: string | null;
 }
 
@@ -2111,6 +2111,11 @@ export interface ApiMessageBilling {
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
   actualUsdMicros: string;
+  /**
+   * Present only when the request went through an explicitly configured
+   * gateway (`gateways.anthropic`). Host only: never the key, URL or path.
+   */
+  gateway?: { via: 'gateway'; host: string };
 }
 
 /** Lifecycle state of a single task in the run graph. */

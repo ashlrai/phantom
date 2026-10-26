@@ -23,7 +23,9 @@ engine rotated from `foundry.allowedBackends`, drawn from the polyglot backend
 roster (local models · Hermes · Claude · Codex · NVIDIA NIM · Kimi/Moonshot ·
 …) by capability and trust tier. **Nothing is applied to the working tree or
 `main`**: the run files a PENDING proposal. `--plan-only` stops after planning
-and advances nothing (it cannot be combined with `--direct`).
+and advances nothing (it cannot be combined with `--direct`). Advancing needs
+`--project <enrolled-repo>`: without it and without `--plan-only`, `ashlr goal`
+refuses before creating anything.
 
 After it completes, summarize the proposal that was filed and remind the user to
 review it with `ashlr inbox`. The kill-switch (`~/.ashlr/KILL`) halts everything.
