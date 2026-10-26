@@ -26,6 +26,7 @@ import type { Stats } from 'node:fs';
 import type { AshlrConfig, TidyRule } from './types.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from './fleet/local-store-lock.js';
 import { validateGatewayBaseUrl } from './run/gateway-target.js';
+import { localInferenceConfigProblems, parseLocalInferenceConfig } from './run/local-inference.js';
 
 // ---------------------------------------------------------------------------
 // Path constants (exported, resolved immediately)
@@ -773,6 +774,7 @@ function readConfigOrDefaults(configPath: string): AshlrConfig {
 
   warnUnknownFoundryKeys(parsed as Record<string, unknown>, configPath);
   warnInvalidGateways(parsed as Record<string, unknown>, configPath);
+  warnInvalidLocalInference(parsed as Record<string, unknown>, configPath);
 
   // Deep-merge the user's persisted config over the defaults so newly-added
   // fields always have a value even on older config files.
@@ -811,6 +813,12 @@ function readConfigStrict(configPath: string): AshlrConfig {
   if (gatewayProblems.length) {
     throw new Error(
       `[ashlr] Refusing autonomous activation: config at ${configPath} has an invalid gateways block: ${gatewayProblems.join('; ')}.`,
+    );
+  }
+  const localInferenceProblems = localInferenceConfigProblems((parsed as Record<string, unknown>)['localInference']);
+  if (localInferenceProblems.length) {
+    throw new Error(
+      `[ashlr] Refusing autonomous activation: config at ${configPath} has an invalid localInference block: ${localInferenceProblems.join('; ')}.`,
     );
   }
 
@@ -1217,6 +1225,21 @@ export function gatewaysConfigProblems(value: unknown): string[] {
     }
   }
   return problems;
+}
+
+function warnInvalidLocalInference(parsed: Record<string, unknown>, configPath: string): void {
+  const problems = localInferenceConfigProblems(parsed['localInference']);
+  if (problems.length) {
+    console.warn(
+      `[ashlr] Warning: ${configPath} has an invalid localInference block (${problems.join('; ')}). ` +
+        'openai-compat refuses to run until it is fixed.',
+    );
+    return;
+  }
+  const r = parseLocalInferenceConfig(parsed['localInference']);
+  if (r.ok && r.config?.warning) {
+    console.warn(`[ashlr] Warning: ${configPath} localInference uses a non-loopback endpoint (allowRemote: true). Prompts leave this machine.`);
+  }
 }
 
 function warnInvalidGateways(parsed: Record<string, unknown>, configPath: string): void {

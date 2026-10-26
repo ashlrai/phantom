@@ -205,6 +205,7 @@ import { assertSafeExecutionIdentity } from '../fleet/attempt-identity.js';
 import { runCancelRequested } from '../fleet/run-cancel.js';
 import { classifyDiff, isTrivialProposal } from '../../planning/triviality.js';
 import { isDiffDedupResult } from '../inbox/store.js';
+import { resolveOpenAICompatTarget } from './local-inference.js';
 
 export interface SandboxedEngineResult {
   /** Delegated RunState (status/usage/engineModel/engineTier). */
@@ -3998,7 +3999,7 @@ export async function runApiModelSandboxed(
       shadowBinding.maxOutputTokens > 8_192
     )) throw new Error('invalid immutable local shadow transport binding');
     const baseUrlEnv = spec.api.baseUrlEnv;
-    const baseUrl = shadowBinding?.baseUrl ??
+    const rawBaseUrl = shadowBinding?.baseUrl ??
       ((baseUrlEnv && process.env[baseUrlEnv]?.trim()) ||
         spec.api.defaultBaseUrl ||
         'http://localhost:11434/v1');
@@ -4007,7 +4008,32 @@ export async function runApiModelSandboxed(
     // The VALUE is never logged or returned.
     // The API credit client resolves its exact credential only AFTER reserving
     // durable exposure. Ordinary OpenAI-compatible engines keep their path.
-    const apiKey = isClaudeApi ? '' : (spec.api.envKey && resolveProviderKey(spec.api.envKey, cfg)?.trim()) || '';
+    const rawApiKey = isClaudeApi ? '' : (spec.api.envKey && resolveProviderKey(spec.api.envKey, cfg)?.trim()) || '';
+    // Local inference loopback gate (P2): openai-compat used to accept any
+    // OPENAI_COMPAT_BASE_URL. Now loopback only unless the persisted config
+    // sets localInference.allowRemote (https only, warned). Placeholders and
+    // OAuth-shaped tokens are never sent; ollama/omlx get no key.
+    let baseUrl = rawBaseUrl;
+    let apiKey = rawApiKey;
+    if (((engine as string) === 'openai-compat' || baseUrlEnv === 'OPENAI_COMPAT_BASE_URL') && !shadowBinding) {
+      const target = resolveOpenAICompatTarget({
+        envBaseUrl: baseUrlEnv ? process.env[baseUrlEnv] : undefined,
+        localInference: (cfg as unknown as Record<string, unknown>)['localInference'],
+        defaultBaseUrl: spec.api.defaultBaseUrl || 'http://localhost:8000/v1',
+        apiKey: rawApiKey,
+      });
+      if (!target.ok) {
+        throw new Error(`openai-compat endpoint refused (${target.reason}); local inference is loopback-only unless localInference.allowRemote is true`);
+      }
+      if (target.warning) {
+        emitSinkEvent(streamSink, { kind: 'log', taskId: 't1', text: `[ashlr] warning: openai-compat is using a non-loopback endpoint (${target.host}) via localInference.allowRemote` });
+      }
+      if (target.keyDropped) {
+        emitSinkEvent(streamSink, { kind: 'log', taskId: 't1', text: '[ashlr] openai-compat: not sending a placeholder or OAuth-shaped key to the local endpoint' });
+      }
+      baseUrl = target.baseUrl;
+      apiKey = target.apiKey;
+    }
 
     // qwen2.5:72b confirms tool_calls — treat all local-coder models as tool-capable.
     const supportsTools = true;
