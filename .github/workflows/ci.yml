@@ -83,6 +83,44 @@ jobs:
       - name: Smoke-test ecosystem markup, data, and controls
         run: npm run test:ci -- test/site-ecosystem-smoke.test.ts
 
+  docs:
+    # Docs-only PRs (every changed path is Markdown outside code and test trees,
+    # or under docs/) cannot change runtime behaviour, so they skip the Ubuntu,
+    # Windows and Mac matrix. They still run the documentation checks and every
+    # test that reads a Markdown file, and the Merge Gate still reports.
+    name: Docs PR (docs-only)
+    needs: classify
+    if: needs.classify.outputs.lane == 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test fail-closed lane classification
+        run: node --test .github/tests/ci-site-lane.test.mjs
+      - name: Check documentation (docs lane)
+        run: npm run check:docs
+      - name: Run tests that read Markdown
+        run: |
+          mapfile -t files < <(grep -lE "\.md['\"\`]|['\"\`]docs/" test/*.test.ts)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no Markdown-reading tests found" >&2; exit 1; fi
+          npm run test:ci -- "${files[@]}"
+
   ci:
     needs: classify
     if: needs.classify.outputs.lane == 'full'
@@ -842,7 +880,7 @@ jobs:
     # matrix job must settle before this job can report a result. A skipped or
     # failed selected lane is a failure, including when classification failed.
     name: Merge Gate
-    needs: [classify, site, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    needs: [classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -878,7 +916,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const expected = ['classify', 'site', ...full];
+          const expected = ['classify', 'site', 'docs', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -886,9 +924,9 @@ jobs:
           const outcome = (name) => jobs[name]?.result;
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
-          if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'site' ? ['site'] : full;
-          const excluded = lane === 'site' ? full : ['site'];
+          if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
+          const selected = lane === 'full' ? full : [lane];
+          const excluded = ['site', 'docs', ...full].filter((name) => !selected.includes(name));
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
           // A push to master defers the macOS and Windows service lanes to the
           // nightly scheduled run; they must be skipped, never failed.
