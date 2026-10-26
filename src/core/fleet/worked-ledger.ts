@@ -17,6 +17,7 @@
  *
  * No new runtime deps; node builtins only.
  */
+import { reconcileBanditOutcomes } from './bandit-feedback.js';
 
 import {
   closeSync,
@@ -1131,6 +1132,7 @@ export function sweepJudgedProposals(
   ) => void = recordOutcome,
 ): number {
   let recorded = 0;
+  void reconcileBanditOutcomes();
   try {
     // Build stable-sig index of backlog items for O(n) fallback lookup.
     const sigIndex = new Map<string, WorkItem>();

@@ -12,6 +12,26 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Local-first bandit lane behind the new opt-in key `localFirstBandit.enabled`
+  (default off). When on, an item the P4 policy already sends local may move to
+  a frontier seat if local scores worse on merged PRs per dollar and per hour
+  (Thompson sampling or epsilon greedy, seeded and replayable). Evidence is the
+  routing ledger joined with `~/.ashlr/routing/merge-outcomes.json`. Cold start,
+  P4 escalations, merge, credential and publish roles, and unknown engine ids
+  are never routed local by the bandit.
+- Hybrid local/frontier routing is live in fleet dispatch behind the new opt-in
+  key `localInference.routing: "hybrid"` (default `"off"`). Dispatch builds the
+  router's engine map from config; unknown engine ids are unclassified and get
+  no merge, credential or publish work. `phm status --json` gains a `routing`
+  block (tier, engine and lane reason per dispatched item) and `phm doctor` a
+  `routing` row that warns, never fails.
+
+### Changed
+- Local inference endpoints written as `localhost` now dial `127.0.0.1`
+  directly (no name resolution). The Ollama model-manager probe no longer
+  follows redirects. `phm doctor` reports an installed Locus whose agent report
+  fails, and a failed local provider probe, as warnings unless
+  `LOCUS_ENFORCE=enforce`.
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
   value-free custody record with a fixed reason code, including when Phantom is
   off (`phantom-disabled`). `phm status` and `status --json` break unwrapped

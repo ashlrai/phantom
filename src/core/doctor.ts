@@ -4,6 +4,7 @@
  * `runDoctor` probes all configured integrations and returns a typed
  * DoctorReport. It NEVER throws — a failed probe becomes a 'fail' DoctorCheck.
  */
+import { banditStatus } from './fleet/bandit-feedback.js';
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -15,6 +16,9 @@ import { getPhantomStatus } from './phantom.js';
 import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
+import { parseLocalInferenceConfig } from './run/local-inference.js';
+import { classifyEngine } from './routing/local-route.js';
+import { routingEnginesFromConfig } from './routing/routing-engines.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -550,6 +554,37 @@ export async function checkLocalInference(
   }
 }
 
+export function checkBandit(cfg: AshlrConfig): DoctorCheck {
+  try {
+    const status = banditStatus(cfg);
+    return check('bandit', 'Local-first bandit', status.reason === 'cold-start-p4' ? 'warn' : 'pass',
+      `${status.reason}; local ${status.stats.local.pulls} pulls/${status.stats.local.merges} merges; frontier ${status.stats.frontier.pulls} pulls/${status.stats.frontier.merges} merges`);
+  } catch {
+    return check('bandit', 'Local-first bandit', 'warn', 'learning evidence unavailable');
+  }
+}
+
+/**
+ * Hybrid routing row. Never fails: local inference is optional, so a missing
+ * or invalid block, or a missing local model, only warns. Warns when a
+ * configured engine is unclassified (it gets no merge, credential or publish work).
+ */
+export function checkRouting(cfg: AshlrConfig): DoctorCheck {
+  const title = 'Routing (local/frontier)';
+  const raw = (cfg as unknown as Record<string, unknown>)['localInference'];
+  if (raw === undefined) return check('routing', title, 'pass', 'frontier only (localInference absent)');
+  const parsed = parseLocalInferenceConfig(raw);
+  if (!parsed.ok || !parsed.config) return check('routing', title, 'warn', 'localInference invalid; routing stays frontier only', 'Fix localInference in ~/.ashlr/config.json');
+  const li = parsed.config;
+  if (li.routing !== 'hybrid') return check('routing', title, 'pass', 'frontier only (localInference.routing is off)');
+  if (!li.loopback) return check('routing', title, 'warn', 'hybrid requested but endpoint is not loopback; local lane disabled');
+  if (!li.models.coder) return check('routing', title, 'warn', 'hybrid on but no coder model configured; local lane idle', 'Set localInference.models.coder');
+  const engines = Object.keys((cfg as { engines?: Record<string, unknown> }).engines ?? {});
+  const unclassified = engines.filter((id) => classifyEngine({ engine: id } as never, routingEnginesFromConfig(cfg)) === 'unclassified');
+  if (unclassified.length) return check('routing', title, 'warn', `hybrid on; ${unclassified.length} configured engine(s) unclassified (no merge/credential/publish): ${unclassified.join(', ')}`, 'Give each custom engine an api.defaultBaseUrl');
+  return check('routing', title, 'pass', `hybrid on: coding loops may run on ${li.provider} (${li.models.coder}); merge and publish gated by outcome`);
+}
+
 /**
  * Phantom strict preflight (`phantom agent doctor --json --strict`), the same
  * gate fleet spawns use with ASHLR_PHANTOM_PREFLIGHT=1. Metadata-only by
@@ -628,7 +663,7 @@ export function checkLocus(): DoctorCheck {
       return check(
         'locus',
         'Locus identity plane',
-        'fail',
+        resolveLocusEnforceMode() === 'enforce' ? 'fail' : 'warn',
         probe.error ?? 'locus agent report failed',
         'locus agent setup --apply --client all',
       );
@@ -1449,6 +1484,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(await checkPlugins(cfg));
   checks.push(await checkLocalInference(cfg));
+  checks.push(checkRouting(cfg));
+  checks.push(checkBandit(cfg));
 
   // --- Async: provider registry ---
   try {
@@ -1524,7 +1561,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
       check(
         'provider:registry',
         'Local provider registry',
-        'fail',
+        'warn',
         `Could not probe providers: ${String(err)}`,
         'Check network access and restart LM Studio / Ollama',
       ),

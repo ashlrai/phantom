@@ -9,6 +9,7 @@
  * memory, GitHub, Vercel, identity, resources, custody) is `null` when unavailable,
  * mirroring the human output, which silently omits it.
  */
+import { banditStatus, type BanditStatus } from '../core/fleet/bandit-feedback.js';
 
 import { existsSync } from 'node:fs';
 import type {
@@ -79,6 +80,7 @@ export interface StatusRepoRow {
 
 export interface StatusJson {
   schemaVersion: 1;
+  bandit: BanditStatus;
   summary: {
     tracked: number;
     clean: number;
@@ -111,6 +113,8 @@ export interface StatusJson {
   custody: import('./status-custody.js').CustodyStatus | null;
   /** Local inference probe (loopback GET /models); null when not configured or it could not run. */
   localInference: import('../core/run/local-inference-probe.js').LocalInferenceProbe | null;
+  /** Per-run routing accounting: tier, engine and lane reason per dispatched item. */
+  routing: import('../core/routing/routing-ledger.js').RoutingLedger | null;
   /** Strict phantom preflight; null unless ASHLR_PHANTOM_PREFLIGHT=1 and phantom is configured. */
   phantomPreflight: import('./status-preflight.js').PreflightStatus | null;
 }
@@ -218,6 +222,11 @@ export async function gatherStatus(
     return p.status === 'not-configured' ? null : p;
   });
 
+  const routing = await attempt(async () => {
+    const { readRoutingLedger } = await import('../core/routing/routing-ledger.js');
+    return readRoutingLedger();
+  });
+
   const phantomPreflight = await attempt(async () => {
     const { gatherPreflightStatus } = await import('./status-preflight.js');
     return gatherPreflightStatus({ cwd });
@@ -233,6 +242,7 @@ export async function gatherStatus(
 
   return {
     schemaVersion: 1,
+    bandit: banditStatus(cfg),
     summary: {
       tracked: b.repos.length,
       clean: b.clean.length,
@@ -255,6 +265,7 @@ export async function gatherStatus(
     resources,
     custody,
     localInference,
+    routing,
     phantomPreflight,
   };
 }
