@@ -89,6 +89,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt',
+    'claim', 'release', 'handoff', 'board', 'post', 'inbox', 'assign',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],

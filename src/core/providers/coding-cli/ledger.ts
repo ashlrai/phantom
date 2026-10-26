@@ -10,6 +10,9 @@ import type { PoolBilling } from '../../resources/pool-spend.js';
 
 export interface SpendDecision {
   ts: string;
+  /** Optional explicit PR identity; costs are never joined by title or task text. */
+  repo?: string;
+  pr?: number;
   poolId: string;
   billing: PoolBilling;
   balanceKnown: boolean;
@@ -56,8 +59,14 @@ export function parseSpendDecision(line: string): SpendDecision | null {
   if (row['model'] !== null && typeof row['model'] !== 'string') return null;
   if (row['quota'] !== null && !finite(row['quota'])) return null;
   if (row['cost'] !== null && !finite(row['cost'])) return null;
+  const repo = row['repo'];
+  const pr = row['pr'];
+  if ((repo !== undefined || pr !== undefined) &&
+    (typeof repo !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(repo) ||
+      typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1)) return null;
   return {
     ts: row['ts'],
+    ...(typeof repo === 'string' && typeof pr === 'number' ? { repo, pr } : {}),
     poolId: row['poolId'],
     billing,
     balanceKnown: row['balanceKnown'],

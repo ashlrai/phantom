@@ -1,6 +1,6 @@
 {
   "name": "Phantom coding-pool scheduler",
-  "description": "Import these three insights into a PostHog dashboard. Events are emitted only when scheduler telemetry is enabled. Grok Ultra figures are estimates, not API readings.",
+  "description": "Import these insights into a PostHog dashboard. Scheduler and fleet events are opt-in. Fleet observations label manual versus estimated readings; projections remain estimates, not API readings. Dollar value stays null without price evidence.",
   "events": [
     {
       "event": "phantom_pool_burndown",
@@ -14,7 +14,11 @@
         "reset_at",
         "estimate",
         "source",
-        "extra_usage_credits"
+        "extra_usage_credits",
+        "projected_pct",
+        "ideal_pct",
+        "age_seconds",
+        "shared_consumer"
       ]
     },
     {
@@ -35,6 +39,16 @@
     }
   ],
   "insights": [
+    {
+      "name": "Fleet landing at reset",
+      "description": "Linear projection from manual observations, split by pool. Missing rates or reset metadata stay unknown; Cursor is a shared consumer, not additive capacity.",
+      "query": {
+        "kind": "TrendsQuery",
+        "series": [{ "kind": "EventsNode", "event": "phantom_pool_burndown", "math": "avg", "math_property": "projected_pct" }],
+        "interval": "day",
+        "breakdownFilter": { "breakdowns": [{ "property": "pool_id", "type": "event" }] }
+      }
+    },
     {
       "name": "Grok Ultra burn-down",
       "description": "Remaining weekly fraction against the configured reset. Labelled estimate.",
