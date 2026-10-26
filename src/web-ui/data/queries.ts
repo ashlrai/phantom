@@ -28,6 +28,7 @@ import type {
   ModelStatsReadResult,
 } from './api-types.js';
 import type { SourceQuality } from './api-types.js';
+import { parseQueueStats, type QueueStatsView } from './queue-stats/model.js';
 
 export interface QueryDef<T> {
   key: string;
@@ -117,6 +118,24 @@ export const fleetStatusQuery: QueryDef<FleetStatus> = {
   key: 'fleet',
   fetch: (signal) => apiGet<FleetStatus>('/api/fleet', signal),
 };
+
+/**
+ * GET /api/queue/stats?window=<seconds> — same estimateQueueStats payload
+ * `phm queue stats --json` prints (schemaVersion 1, per-station/pool windows;
+ * core/web/api.ts). Fails closed: a malformed payload throws, landing the
+ * query in 'error' — the graph never renders unvalidated numbers. Has no SSE
+ * event of its own; the graph polls it (see QueueStationGraph).
+ */
+export function queueStatsQuery(windowSec = 3600): QueryDef<QueueStatsView> {
+  return {
+    key: `queue-stats-${windowSec}`,
+    fetch: async (signal) => {
+      const parsed = parseQueueStats(await apiGet<unknown>(`/api/queue/stats?window=${windowSec}`, signal), windowSec * 1000);
+      if (!parsed.ok) throw new Error(`queue stats rejected: ${parsed.error}`);
+      return parsed.value;
+    },
+  };
+}
 
 export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
   key: 'fleet-activity',
