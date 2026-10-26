@@ -91,6 +91,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'desktop/src-tauri/src/main.rs',
   'desktop/src-tauri/src/lib.rs',
   'src/core/run/desktop-metadata-launch-trust.ts',
+  // Governed-client gateway target validation decides where a provider key may be sent (#880).
+  'src/core/run/gateway-target.ts',
   'src/cli/desktop-update.ts',
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
@@ -220,6 +222,8 @@ export const TIER1_TEST_STEMS: readonly string[] = Object.freeze([
   'engine-registry', 'native-profile', 'experiments', 'heldout', 'tasks-heldout',
   'pool-commissioning',
   'best-of-n', 'subscription-usage', 'leader-seat', 'reserve-breach',
+  // Governed-client gateway suites (#880): where a provider key may be sent.
+  'gateway-target', 'gateway-anthropic-client', 'gateway-openai-agents-client', 'gateway-audit-marker', 'gateway-config-load',
 ]);
 
 const ALL_REPO_RULES: readonly ProtectedPathRule[] = [

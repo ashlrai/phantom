@@ -44,6 +44,27 @@ function base(status: LocalInferenceProbeStatus, provider: LocalInferenceProvide
   return { status, provider, loopback, reachable: false, httpStatus: null, modelCount: 0, models: [], rolesPresent: {} };
 }
 
+/**
+ * Stream the body and stop as soon as it passes `max` bytes, so a huge or
+ * endless reply never buffers past the cap. Null when over the cap or unreadable.
+ */
+export async function readCappedBody(res: Response, max: number, controller?: AbortController): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); controller?.abort(); return null; }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); controller?.abort(); return null; }
+    chunks.push(value);
+  }
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); } catch { return null; }
+}
+
 /** Pure. Model ids from an OpenAI `{data:[{id}]}` or Ollama `{models:[{name}]}` body. */
 export function modelIdsFromBody(body: unknown): string[] | null {
   if (!body || typeof body !== 'object') return null;
@@ -89,8 +110,8 @@ export async function probeLocalInference(
     out.reachable = true;
     out.httpStatus = res.status;
     if (!res.ok) return out;
-    const text = await res.text();
-    if (text.length > MAX_BODY_BYTES) return out;
+    const text = await readCappedBody(res, MAX_BODY_BYTES, controller);
+    if (text === null) return out;
     let body: unknown;
     try { body = JSON.parse(text); } catch { return out; }
     const ids = modelIdsFromBody(body);
