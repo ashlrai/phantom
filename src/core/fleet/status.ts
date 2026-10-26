@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, resolve } from 'node:path';
+import { readFleetMemory, type FleetMemoryPaths, type FleetMemoryStatus } from './memory-state.js';
 import { readBuildIdentity, type BuildIdentity } from '../build-identity.js';
 import type {
   AshlrConfig,
@@ -1511,6 +1512,10 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** Additive fleet.v1 contract marker; absent in legacy snapshots. */
+  schema?: 'fleet.v1';
+  /** Local memory admission observations; absent in legacy snapshots. */
+  memory?: FleetMemoryStatus;
   /** ISO timestamp this snapshot was generated. */
   generatedAt: string;
   /** Canonical build-produced identity. Optional for legacy serialized snapshots. */
@@ -2529,7 +2534,10 @@ function laneQueueSourceQuality(
   };
 }
 
-export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
+export async function buildFleetStatus(
+  cfg: AshlrConfig,
+  options: { memoryPaths?: FleetMemoryPaths } = {},
+): Promise<FleetStatus> {
   const generatedAt = new Date().toISOString();
   let dispatchLearningEvents: DispatchProductionEvent[] | undefined;
   let initialDispatchRead: ReturnType<typeof readDispatchProductionYieldDetailed> | undefined;
@@ -3265,6 +3273,8 @@ export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
   }
 
   const status: FleetStatus = {
+    schema: 'fleet.v1',
+    memory: await readFleetMemory(options.memoryPaths),
     generatedAt,
     buildIdentity: readBuildIdentity(),
     daemon,
