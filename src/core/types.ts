@@ -2572,6 +2572,20 @@ export interface BudgetAlert {
   message: string;
 }
 
+/** Job outcomes for one execution lane within the rollup window. */
+export interface JobLaneRollup {
+  lane: string;
+  jobs: number;
+  prs: number;
+  merged: number;
+  /** Merged PRs divided by distinct PRs, or null with no PRs. */
+  mergeRate: number | null;
+  /** Mean completed job duration in milliseconds, or null without valid timings. */
+  wallTimePerJobMs: number | null;
+  /** Distinct PRs divided by the full reporting window in hours. */
+  prsPerHour: number;
+}
+
 /** The full observability roll-up for a window. */
 export interface ActivityRollup {
   /** Window label (e.g. '1d' | '7d' | '30d'). */
@@ -2593,6 +2607,8 @@ export interface ActivityRollup {
   byDay: DailyUsage[];
   /** Per-model breakdown, sorted by cost/tokens. */
   byModel: ModelUsage[];
+  /** Job outcome metrics from local jobs.jsonl, including the Devin lane. */
+  byLane?: JobLaneRollup[];
   /** Budget evaluation for the window. */
   budget: BudgetAlert;
 }
