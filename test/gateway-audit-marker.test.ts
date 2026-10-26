@@ -23,8 +23,31 @@ describe('gateway audit marker', () => {
     expect(gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl: 'http://[::1]:4555' } })).toBe(' via=gateway host=[::1]');
   });
 
-  it('an invalid config adds nothing and never echoes input (the client refuses before contact)', () => {
-    expect(gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl: 'https://SECRETUSER:SECRETPW@gw.example.com' } })).toBe('');
+  it('an invalid config records a closed refusal code and never echoes input (the client refuses before contact)', () => {
+    const out = gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl: 'https://SECRETUSER:SECRETPW@gw.example.com' } });
+    expect(out).toBe(' gateway=refused reason=userinfo-not-allowed');
+    expect(out).not.toContain('SECRET');
+    expect(out).not.toContain('gw.example.com');
+  });
+
+  it('only loopback gets the gateway marker; non-loopback, IPv6 non-loopback, localhost and lookalikes are refused', () => {
+    const at = (baseUrl: string, allowedHosts?: string[]) => gatewayAuditSuffix('anthropic', { anthropic: { enabled: true, baseUrl, ...(allowedHosts ? { allowedHosts } : {}) } });
+    expect(at('http://127.0.0.1:4555')).toBe(' via=gateway host=127.0.0.1');
+    expect(at('http://[::1]:4555')).toBe(' via=gateway host=[::1]');
+    const refused = [
+      at('https://gw.example.com', ['gw.example.com:443']),
+      at('https://127.0.0.1.evil.com', ['127.0.0.1.evil.com:443']),
+      at('https://[2001:db8::1]', ['[2001:db8::1]:443']),
+      at('http://[2001:db8::1]:4555'),
+      at('http://localhost:4555'),
+      at('http://127.0.0.2:4555'),
+    ];
+    for (const r of refused) {
+      expect(r).toMatch(/^ gateway=refused reason=[a-z-]+$/);
+      expect(r).not.toContain('via=gateway');
+      expect(r).not.toContain('host=');
+    }
+    expect(refused[1]).toBe(' gateway=refused reason=non-loopback');
   });
 
   it('a remote https gateway records a value-free refusal, never via=gateway or the host', () => {
