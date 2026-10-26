@@ -23,12 +23,12 @@ router_exec_clean() {
   cmd=(env -i "PATH=${PATH:-}" "HOME=${HOME}" "USER=${user}" "LANG=${lang}" "TERM=${term}" "TMPDIR=${tmp}")
   while [[ $# -gt 0 && "$1" == *=* ]]; do
     case "$1" in
-      OLLAMA_HOST=*)
-        host=${1#OLLAMA_HOST=}
+      OLLAMA_HOST=*|OMLX_HOST=*)
+        host=${1#*=}
         case "$host" in
           127.0.0.1|127.0.0.1:*|localhost|localhost:*) cmd+=("$1") ;;
           *)
-            printf 'refusing non-loopback OLLAMA_HOST\n' >&2
+            printf 'refusing non-loopback model host\n' >&2
             return 1
             ;;
         esac
@@ -38,19 +38,19 @@ router_exec_clean() {
         cmd+=("$1")
         shift
         ;;
-      CODEX_HOME=*)
-        # CODEX_HOME selects an account directory. It is not a token or a key.
-        codex_home=${1#CODEX_HOME=}
+      CODEX_HOME=*|CODEX_HOME_ALT=*)
+        # These select account directories. They are not tokens or keys.
+        codex_home=${1#*=}
         case "$codex_home" in
           *$'\n'*|*$'\r'*)
-            printf 'refusing CODEX_HOME\n' >&2
+            printf 'refusing Codex home\n' >&2
             return 1
             ;;
           /*)
             cmd+=("$1")
             ;;
           *)
-            printf 'refusing relative CODEX_HOME\n' >&2
+            printf 'refusing relative Codex home\n' >&2
             return 1
             ;;
         esac

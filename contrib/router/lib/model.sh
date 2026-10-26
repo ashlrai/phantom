@@ -63,15 +63,15 @@ router_tier_model() {
     frontier:codex) printf '%s\n' "${ROUTER_TIER_FRONTIER_CODEX:-}" ;;
     frontier:claude) printf '%s\n' "${ROUTER_TIER_FRONTIER_CLAUDE:-}" ;;
     frontier:grok) printf '%s\n' "${ROUTER_TIER_FRONTIER_GROK:-}" ;;
-    frontier:ollama) printf '%s\n' "${ROUTER_TIER_FRONTIER_OLLAMA:-}" ;;
+    frontier:omlx) printf '%s\n' "${ROUTER_TIER_FRONTIER_OMLX:-}" ;;
     workhorse:codex) printf '%s\n' "${ROUTER_TIER_WORKHORSE_CODEX:-}" ;;
     workhorse:claude) printf '%s\n' "${ROUTER_TIER_WORKHORSE_CLAUDE:-}" ;;
     workhorse:grok) printf '%s\n' "${ROUTER_TIER_WORKHORSE_GROK:-}" ;;
-    workhorse:ollama) printf '%s\n' "${ROUTER_TIER_WORKHORSE_OLLAMA:-}" ;;
+    workhorse:omlx) printf '%s\n' "${ROUTER_TIER_WORKHORSE_OMLX:-}" ;;
     cheap:codex) printf '%s\n' "${ROUTER_TIER_CHEAP_CODEX:-}" ;;
     cheap:claude) printf '%s\n' "${ROUTER_TIER_CHEAP_CLAUDE:-}" ;;
     cheap:grok) printf '%s\n' "${ROUTER_TIER_CHEAP_GROK:-}" ;;
-    cheap:ollama) printf '%s\n' "${ROUTER_TIER_CHEAP_OLLAMA:-}" ;;
+    cheap:omlx) printf '%s\n' "${ROUTER_TIER_CHEAP_OMLX:-}" ;;
     *) printf '\n' ;;
   esac
 }

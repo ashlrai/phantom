@@ -39,7 +39,7 @@ router_pick_from_scores() {
 }
 
 # First configured local model that is already installed. Never selects a
-# missing model, because some Ollama builds would download it.
+# missing model, so oMLX is not asked to download one.
 router_pick_local_model() {
   local installed=$1
   local want have

@@ -14,7 +14,7 @@ router_route_from_labels() {
   for item in $labels; do
     case "$item" in
       route:claimed) claimed=1 ;;
-      route:codex|route:claude|route:grok) route=${item#route:} ;;
+      route:codex|route:claude|route:grok|route:devin) route=${item#route:} ;;
       route:any)
         if [[ -z "$route" ]]; then
           route=any

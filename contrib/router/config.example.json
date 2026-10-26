@@ -19,18 +19,23 @@
   "codex": {
     "accounts": [
       {
-        "id": "durable",
-        "home": "~/.codex-2",
-        "durability": "durable",
-        "primary": true
+        "id": "work",
+        "home": "~/.codex",
+        "role": "work",
+        "order": 1,
+        "spend": "hard"
       },
       {
-        "id": "fragile",
-        "home": "~/.codex",
-        "durability": "fragile",
-        "primary": false
+        "id": "personal",
+        "home": "~/.codex-2",
+        "role": "personal",
+        "order": 2,
+        "spend": "overflow"
       }
     ]
+  },
+  "devin": {
+    "org_id": ""
   },
   "pools": [],
   "ledger_issue_repo": "ashlrai/phantom",
@@ -46,9 +51,10 @@
   },
   "local": {
     "enabled": false,
-    "bin": "ollama",
-    "host": "127.0.0.1:11434",
-    "models": ["qwen3.8:27b-ctx64k", "gpt-oss:20b"],
+    "backend": "omlx",
+    "bin": "omlx",
+    "host": "127.0.0.1:8000",
+    "models": ["mlx-community/Qwen3-8B-4bit"],
     "allow_pull": false
   },
   "tiers": {
@@ -56,19 +62,19 @@
       "codex": "gpt-6-astra",
       "claude": "fable",
       "grok": "grok-4.7",
-      "ollama": ""
+      "omlx": ""
     },
     "workhorse": {
       "codex": "gpt-6-sol",
       "claude": "opus",
       "grok": "grok-4.5",
-      "ollama": ""
+      "omlx": ""
     },
     "cheap": {
       "codex": "gpt-6-luna",
       "claude": "sonnet",
       "grok": "grok-4.3",
-      "ollama": "qwen3.8:27b-ctx64k"
+      "omlx": "mlx-community/Qwen3-8B-4bit"
     }
   },
   "cli": {
@@ -137,13 +143,13 @@
         "{worktree}"
       ]
     },
-    "ollama": {
-      "bin": "ollama",
-      "model_flag": "run",
+    "omlx": {
+      "bin": "omlx",
+      "model_flag": "--model",
       "version_args": ["--version"],
-      "list_args": ["list"],
+      "list_args": [],
       "update": [],
-      "args": ["run", "{model_value}"]
+      "args": ["serve"]
     }
   }
 }

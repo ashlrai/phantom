@@ -26,6 +26,8 @@
     <string>__HOME__</string>
     <key>PATH</key>
     <string>__PATH__</string>
+    <key>DEVIN_ORG_ID</key>
+    <string>__DEVIN_ORG_ID__</string>
   </dict>
 </dict>
 </plist>

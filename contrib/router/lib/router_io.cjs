@@ -116,22 +116,24 @@ function emitConfig(cfg) {
   set('ROUTER_CODEX_PROBE', cfg.freshness && cfg.freshness.codex_probe === false ? '0' : '1');
   set('ROUTER_GROK_ENABLED', cfg.grok && cfg.grok.enabled ? '1' : '0');
   set('ROUTER_GROK_METERED', cfg.grok && cfg.grok.metered === false ? '0' : '1');
+  set('ROUTER_DEVIN_ORG', (cfg.devin && cfg.devin.org_id) || '');
   set('ROUTER_LOCAL_ENABLED', cfg.local && cfg.local.enabled ? '1' : '0');
-  set('ROUTER_LOCAL_HOST', (cfg.local && cfg.local.host) || '127.0.0.1:11434');
+  set('ROUTER_LOCAL_BACKEND', (cfg.local && cfg.local.backend) || 'omlx');
+  set('ROUTER_LOCAL_HOST', (cfg.local && cfg.local.host) || '127.0.0.1:8000');
   set('ROUTER_LOCAL_MODELS', ((cfg.local && cfg.local.models) || []).join(','));
-  set('ROUTER_LOCAL_ALLOW_PULL', cfg.local && cfg.local.allow_pull ? '1' : '0');
+  set('ROUTER_LOCAL_ALLOW_PULL', '0');
   set('ROUTER_LEDGER_REPO', cfg.ledger_issue_repo || 'ashlrai/phantom');
   set('ROUTER_LEDGER_TITLE', cfg.ledger_issue_title || 'router-ledger');
   set('ROUTER_PHANTOM_ROUTE', cfg.phantom_route === false ? '0' : '1');
   const tiers = cfg.tiers || {};
   for (const tier of ['frontier', 'workhorse', 'cheap']) {
     const row = tiers[tier] || {};
-    for (const cli of ['codex', 'claude', 'grok', 'ollama']) {
+    for (const cli of ['codex', 'claude', 'grok', 'omlx']) {
       set(`ROUTER_TIER_${tier.toUpperCase()}_${cli.toUpperCase()}`, row[cli] || '');
     }
   }
   const cli = cfg.cli || {};
-  for (const name of ['codex', 'claude', 'grok', 'ollama']) {
+  for (const name of ['codex', 'claude', 'grok', 'omlx']) {
     const row = cli[name] || {};
     set(`ROUTER_BIN_${name.toUpperCase()}`, row.bin || name);
   }
@@ -262,13 +264,14 @@ function issuesToLines(text) {
 
 function validateRoute(text) {
   const data = JSON.parse(text);
-  const allowed = ['codex', 'claude', 'grok', 'ollama'];
-  if (allowed.indexOf(data.cli) === -1) return '';
+  let cli = data.cli === 'ollama' ? 'omlx' : data.cli;
+  const allowed = ['codex', 'claude', 'grok', 'omlx', 'devin'];
+  if (allowed.indexOf(cli) === -1) return '';
   const model = data.model || '';
   const tier = data.tier || '';
   if (tier && ['frontier', 'workhorse', 'cheap'].indexOf(tier) === -1) return '';
-  if (model && !/^[A-Za-z0-9._:-]+$/.test(model)) return '';
-  return `${data.cli}\t${model}\t${tier}`;
+  if (model && !/^[A-Za-z0-9._:/-]+$/.test(model)) return '';
+  return `${cli}\t${model}\t${tier}`;
 }
 
 function mergeObjects(base, patch) {
@@ -480,33 +483,50 @@ function cooled(until) {
 
 const POOL_ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 
-function codexRole(row, dir) {
-  let durability = row.durability === 'fragile' || row.durability === 'durable' ? row.durability : '';
+function codexAccountRole(row, dir) {
   const codex2 = dir.endsWith(`${path.sep}.codex-2`);
   const codex1 = !codex2 && dir.endsWith(`${path.sep}.codex`);
-  if (!durability) durability = codex1 ? 'fragile' : 'durable';
-  const primary = row.primary === true || (row.primary !== false && durability === 'durable' && codex2);
-  return { durability, primary };
+  let id = String(row.id || '');
+  if (id === 'fragile') id = 'work';
+  if (id === 'durable') id = 'personal';
+  let role = row.role === 'work' || row.role === 'personal' ? row.role : '';
+  if (!role && (id === 'work' || codex1)) role = 'work';
+  if (!role && (id === 'personal' || codex2)) role = 'personal';
+  if (!role) role = 'personal';
+  if (role === 'work') id = id === 'personal' ? 'work' : (id || 'work');
+  if (!id) id = role;
+  let order = Number(row.order);
+  if (!Number.isFinite(order)) order = role === 'work' ? 1 : 2;
+  const spend = role === 'work' ? 'hard' : 'overflow';
+  return { id, role, order, spend, primary: role === 'work' };
 }
 
 function codexAccounts(cfg, home) {
   const configured = cfg.codex && Array.isArray(cfg.codex.accounts) ? cfg.codex.accounts : [];
   const rows = configured.length ? configured : [
-    { id: 'durable', home: '~/.codex-2', durability: 'durable', primary: true },
-    { id: 'fragile', home: '~/.codex', durability: 'fragile', primary: false },
+    { id: 'work', home: '~/.codex', role: 'work', order: 1, spend: 'hard' },
+    { id: 'personal', home: '~/.codex-2', role: 'personal', order: 2, spend: 'overflow' },
   ];
   const out = [];
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
-    const id = String(row.id || '');
     let dir = String(row.home || '');
-    if (!POOL_ID.test(id) || !dir) continue;
+    if (!dir) continue;
     if (dir === '~') dir = home;
     else if (dir.startsWith('~/')) dir = path.join(home, dir.slice(2));
     if (!path.isAbsolute(dir)) continue;
-    const role = codexRole(row, dir);
-    out.push({ id, home: dir, durability: role.durability, primary: role.primary });
+    const role = codexAccountRole(row, dir);
+    if (!POOL_ID.test(role.id)) continue;
+    out.push({
+      id: role.id,
+      home: dir,
+      role: role.role,
+      order: role.order,
+      spend: role.spend,
+      primary: role.primary,
+    });
   }
+  out.sort((a, b) => a.order - b.order || String(a.id).localeCompare(String(b.id)));
   return out;
 }
 
@@ -542,6 +562,7 @@ function accountHeadroom(ledgerText, nowIso, cooldownJson, accountCsv) {
 
 function billingName(kind, billing) {
   if (billing === 'metered') return 'metered';
+  if (billing === 'acu') return 'acu';
   if (kind === 'gifted-cloud' || kind === 'purchased-usage') return 'expiring-credit';
   if (kind === 'subscription-allowance') return 'subscription';
   return '';
@@ -552,7 +573,7 @@ function mirrorPool(row, nowIso) {
   const billing = billingName(row.kind, row.billing);
   if (!billing) return null;
   const provider = String(row.provider || '');
-  if (['codex', 'claude', 'grok'].indexOf(provider) === -1) return null;
+  if (['codex', 'claude', 'grok', 'devin'].indexOf(provider) === -1) return null;
   const accountId = String(row.accountId || '');
   const poolId = String(row.poolId || '');
   if (!POOL_ID.test(accountId) || !POOL_ID.test(poolId)) return null;
@@ -567,6 +588,13 @@ function mirrorPool(row, nowIso) {
     unit = 'USD';
     surface = null;
     source = { kind: 'native-metadata', adapter: 'grok-usage' };
+  } else if (billing === 'acu') {
+    if (kind) return null;
+    if (provider !== 'devin') return null;
+    kind = null;
+    unit = 'ACU';
+    surface = null;
+    source = { kind: 'native-metadata', adapter: 'devin-acu' };
   } else if (kind === 'gifted-cloud' || kind === 'purchased-usage') {
     if (provider !== 'claude' || (row.unit && row.unit !== 'USD')) return null;
     if (row.expiryKind === 'rolling-release') return null;
@@ -618,6 +646,11 @@ function mirrorPool(row, nowIso) {
     primary: row.primary === true,
     dead: row.dead === true,
     deadReason: row.dead === true ? String(row.deadReason || 'auth').slice(0, 80) : '',
+    role: row.role === 'work' || row.role === 'personal' ? row.role : '',
+    order: Number.isFinite(Number(row.order)) ? Number(row.order) : 0,
+    spend: row.spend === 'hard' || row.spend === 'overflow' ? row.spend : '',
+    canLaunch: row.canLaunch === true,
+    subscriptionLogin: row.subscriptionLogin === true,
     mirror: true,
   };
 }
@@ -633,9 +666,15 @@ function usablePool(row, nowMs) {
     return Number.isFinite(amount) && amount > 0;
   }
   if (row.billing === 'subscription') {
+    if (row.provider === 'grok' && row.subscriptionLogin !== true) return false;
     if (row.amount != null && row.amount !== '' && Number(row.amount) >= 100) return false;
     if (row.quotaRemaining != null && Number(row.quotaRemaining) <= 0) return false;
     return true;
+  }
+  if (row.billing === 'acu') {
+    if (row.canLaunch !== true) return false;
+    const remaining = Number(row.quotaRemaining);
+    return Number.isFinite(remaining) && remaining > 0;
   }
   return row.billing === 'metered';
 }
@@ -670,8 +709,15 @@ function sortPools(rows, nowMs) {
 }
 
 function budgetScore(cli, pools, headroomScore, nowMs) {
-  const base = headroomScore < 0 ? 0 : headroomScore;
-  let rank = cli === 'grok' ? 2 : 1;
+  if (headroomScore < 0) return headroomScore;
+  const base = headroomScore;
+  const usable = (provider, billing) => pools.some((row) => (
+    row && row.provider === provider && (!billing || row.billing === billing) && usablePool(row, nowMs)
+  ));
+  if (cli === 'codex') return 4000000 + base;
+  if (cli === 'devin') return usable('devin', 'acu') ? 3000000 + Math.min(base, 999999) : base;
+  if (cli === 'grok') return usable('grok', 'subscription') ? 2000000 + base : base;
+  let rank = 1;
   let soonest = Number.POSITIVE_INFINITY;
   for (const row of pools) {
     if (!row || row.provider !== cli || !usablePool(row, nowMs)) continue;
@@ -690,7 +736,6 @@ function budgetScore(cli, pools, headroomScore, nowMs) {
       : 99999999;
     return 500000000 - seconds;
   }
-  if (rank === 2) return base;
   return 1000000 + base;
 }
 
@@ -735,6 +780,8 @@ function rememberObserved(base, prev) {
   base.quotaRemaining = prev.quotaRemaining;
   base.dead = prev.dead === true;
   base.deadReason = prev.dead === true ? String(prev.deadReason || 'auth') : '';
+  base.canLaunch = prev.canLaunch === true;
+  base.subscriptionLogin = prev.subscriptionLogin === true;
   if (base.expiryKind === 'unknown') base.expiresAt = null;
   return base;
 }
@@ -758,14 +805,52 @@ function ensurePools(state, cfg, nowIso) {
         expiresAt: null,
         expiryKind: 'unknown',
         billing: 'subscription',
-        durability: account.durability,
+        durability: '',
         primary: account.primary,
+        role: account.role,
+        order: account.order,
+        spend: account.spend,
         dead: false,
         deadReason: '',
         source: { kind: 'native-metadata', adapter: 'codex-rate-limits' },
       },
     });
   }
+  incoming.push({
+    keepObserved: true,
+    row: {
+      poolId: 'devin-acu',
+      kind: null,
+      accountId: 'devin',
+      provider: 'devin',
+      billing: 'acu',
+      amount: null,
+      total: null,
+      unit: 'ACU',
+      expiresAt: null,
+      expiryKind: 'unknown',
+      canLaunch: false,
+      quotaRemaining: null,
+    },
+  });
+  incoming.push({
+    keepObserved: true,
+    row: {
+      poolId: 'grok-subscription',
+      kind: 'subscription-allowance',
+      accountId: 'grok',
+      provider: 'grok',
+      billing: 'subscription',
+      amount: null,
+      total: null,
+      unit: 'percent',
+      surface: 'subscription',
+      expiresAt: null,
+      expiryKind: 'unknown',
+      subscriptionLogin: false,
+      source: { kind: 'native-metadata', adapter: 'grok-usage' },
+    },
+  });
   if (!cfg.grok || cfg.grok.metered !== false) {
     incoming.push({
       keepObserved: true,
@@ -847,14 +932,166 @@ function classifyCodexLogin(text, code) {
 }
 
 function billingForCli(pools, cli, nowMs) {
-  if (cli === 'ollama') return 'local';
+  if (cli === 'ollama' || cli === 'omlx') return 'local';
+  if (cli === 'devin') return 'acu';
   let billing = cli === 'grok' ? 'metered' : 'subscription';
+  let sawMetered = false;
   for (const row of pools) {
     if (!row || row.provider !== cli || !usablePool(row, nowMs)) continue;
     if (row.billing === 'expiring-credit') return 'expiring-credit';
-    if (row.billing === 'metered') billing = 'metered';
+    if (row.billing === 'acu') return 'acu';
+    if (row.billing === 'subscription') billing = 'subscription';
+    if (row.billing === 'metered') sawMetered = true;
   }
+  if (billing === 'subscription') return 'subscription';
+  if (sawMetered) return 'metered';
   return billing;
+}
+
+const GROK_PLANS = /SuperGrok(?:\s+(?:Heavy|Pro|Plus|Lite))?|SuperGrok(?:Pro|Plus|Lite)|GrokPro|XPremiumPlus|XPremium|XBasic/;
+
+function classifyGrokAuth(text) {
+  const body = String(text);
+  const mentionsKey = /XAI_API_KEY/i.test(body);
+  if (mentionsKey && /using|set the|alternatively|environment variable|api key/i.test(body)) return 'metered';
+  if (/not signed in|not logged in|login --device-code|please log in/i.test(body) && !GROK_PLANS.test(body)) return 'out';
+  if (GROK_PLANS.test(body) && !mentionsKey) return 'subscription';
+  if (/logged in|signed in/i.test(body) && !mentionsKey && !/not signed in|not logged/i.test(body)) return 'subscription';
+  if (mentionsKey) return 'metered';
+  return 'unknown';
+}
+
+const DEVIN_ORG = /^org-[A-Za-z0-9_-]{1,120}$/;
+
+function devinView(text, expectedOrg) {
+  let data;
+  try { data = JSON.parse(text); } catch (_err) { return 'skip\tbad-json'; }
+  const status = data && data.status && typeof data.status === 'object' ? data.status : {};
+  const budget = data && data.budget && typeof data.budget === 'object' ? data.budget : {};
+  if (!DEVIN_ORG.test(String(expectedOrg || ''))) return 'skip\torg';
+  if (status.orgId !== expectedOrg) return 'skip\torg';
+  if (status.state !== 'ready' || status.connected !== true) return 'skip\tnot-ready';
+  const gate = budget.canLaunch && typeof budget.canLaunch === 'object' ? budget.canLaunch : {};
+  const remaining = Number(budget.acuRemaining);
+  if (gate.ok !== true || !Number.isFinite(remaining) || remaining <= 0) return 'skip\tno-acu';
+  return `ok\t${remaining}\t1`;
+}
+
+function safeHttps(value) {
+  return typeof value === 'string' && /^https:\/\/[^\s]+$/.test(value) ? value : '';
+}
+
+function devinLaunchView(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (_err) { return 'fail'; }
+  if (!data || data.ok !== true || !data.task || typeof data.task !== 'object') return 'fail';
+  const pr = data.task.pr && typeof data.task.pr === 'object' ? safeHttps(data.task.pr.url) : '';
+  return `ok\t${pr}\t${safeHttps(data.task.sessionUrl)}`;
+}
+
+function recordGrokAuth(state, kind, nowIso) {
+  const allowed = ['subscription', 'metered', 'out', 'unknown', 'missing'];
+  const auth = allowed.indexOf(kind) === -1 ? 'unknown' : kind;
+  for (const row of state.pools || []) {
+    if (!row || row.poolId !== 'grok-subscription') continue;
+    row.subscriptionLogin = auth === 'subscription';
+    row.capturedAt = nowIso;
+  }
+  state.models = state.models || {};
+  state.models.grok = Object.assign({}, state.models.grok || {}, {
+    auth,
+    metered: auth !== 'subscription',
+    checked_at: nowIso,
+  });
+  return state;
+}
+
+function recordDevin(state, remaining, canLaunch, nowIso) {
+  const quota = remaining === '' || remaining == null ? null : Number(remaining);
+  for (const row of state.pools || []) {
+    if (!row || row.poolId !== 'devin-acu') continue;
+    row.canLaunch = canLaunch === true || canLaunch === '1';
+    row.quotaRemaining = Number.isFinite(quota) ? quota : null;
+    row.amount = Number.isFinite(quota) ? String(quota) : null;
+    row.capturedAt = nowIso;
+  }
+  state.models = state.models || {};
+  state.models.devin = Object.assign({}, state.models.devin || {}, {
+    can_launch: canLaunch === true || canLaunch === '1',
+    acu_remaining: Number.isFinite(quota) ? quota : null,
+    checked_at: nowIso,
+  });
+  return state;
+}
+
+function diskAllows(freeKb, sizeBytes, floorGb) {
+  const free = Number(freeKb) * 1024;
+  const size = Number(sizeBytes);
+  const floor = Number(floorGb) * 1024 * 1024 * 1024;
+  if (!Number.isFinite(free) || !Number.isFinite(size) || size < 0 || !Number.isFinite(floor)) return false;
+  return free - size >= floor;
+}
+
+function hfSizeBytes(data) {
+  if (!data || typeof data !== 'object') return null;
+  const direct = ['size', 'usedStorage', 'total_size', 'totalSize'];
+  for (const key of direct) {
+    const value = Number(data[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  if (data.safetensors && Number.isFinite(Number(data.safetensors.total)) && Number(data.safetensors.total) > 0) {
+    return Number(data.safetensors.total);
+  }
+  if (Array.isArray(data.siblings)) {
+    let sum = 0;
+    for (const row of data.siblings) {
+      const value = row && Number(row.size);
+      if (Number.isFinite(value) && value > 0) sum += value;
+    }
+    if (sum > 0) return sum;
+  }
+  if (data.model && data.model !== data) return hfSizeBytes(data.model);
+  return null;
+}
+
+function omlxNames(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (_err) { return []; }
+  const rows = Array.isArray(data.data) ? data.data : (Array.isArray(data.models) ? data.models : []);
+  const out = [];
+  for (const row of rows) {
+    const id = typeof row === 'string' ? row : (row && (row.id || row.name));
+    if (typeof id === 'string' && id && out.indexOf(id) === -1) out.push(id);
+  }
+  return out;
+}
+
+function omlxComplete(host, model, prompt) {
+  if (!loopbackOk(host)) die('refusing non-loopback omlx host');
+  if (!model) die('omlx requires a model');
+  const url = `http://${host}/v1/chat/completions`;
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  }).then(async (res) => {
+    const text = await res.text();
+    if (!res.ok) {
+      process.stderr.write(`omlx http ${res.status}\n`);
+      process.exit(1);
+    }
+    try {
+      const data = JSON.parse(text);
+      const content = data && data.choices && data.choices[0] && data.choices[0].message
+        && data.choices[0].message.content;
+      process.stdout.write(content == null ? '' : String(content));
+    } catch (_err) {
+      process.stdout.write(text);
+    }
+  });
 }
 
 function leaseExpired(heartbeat, nowMs, timeoutS, pidAlive) {
@@ -1181,6 +1418,57 @@ function main() {
     const state = readState(flags._[0]);
     state.pools_fingerprint = flags.value || '';
     writeState(flags._[0], state);
+    return;
+  }
+  if (command === 'grok-auth') {
+    process.stdout.write(classifyGrokAuth(readStdin()) + '\n');
+    return;
+  }
+  if (command === 'devin-org') {
+    process.exit(DEVIN_ORG.test(String(flags.value || flags._[0] || '')) ? 0 : 1);
+  }
+  if (command === 'devin-view') {
+    process.stdout.write(devinView(readStdin(), flags.org || '') + '\n');
+    return;
+  }
+  if (command === 'devin-launch') {
+    process.stdout.write(devinLaunchView(readStdin()) + '\n');
+    return;
+  }
+  if (command === 'record-grok-auth') {
+    const nowIso = flags.now || isoFromMs(Date.now());
+    const state = recordGrokAuth(readState(flags.state), flags.class || flags.kind || '', nowIso);
+    writeState(flags.state, state);
+    return;
+  }
+  if (command === 'record-devin') {
+    const nowIso = flags.now || isoFromMs(Date.now());
+    const state = recordDevin(
+      readState(flags.state),
+      flags.remaining == null ? '' : flags.remaining,
+      flags.launch || '0',
+      nowIso,
+    );
+    writeState(flags.state, state);
+    return;
+  }
+  if (command === 'disk-allows') {
+    process.exit(diskAllows(flags['free-kb'] || '0', flags['size-bytes'] || '0', flags['floor-gb'] || '20') ? 0 : 1);
+  }
+  if (command === 'model-size') {
+    let data;
+    try { data = JSON.parse(readStdin()); } catch (_err) { process.exit(1); }
+    const size = hfSizeBytes(data);
+    if (!Number.isFinite(size)) process.exit(1);
+    process.stdout.write(String(size) + '\n');
+    return;
+  }
+  if (command === 'omlx-names') {
+    process.stdout.write(omlxNames(readStdin()).join('\n') + '\n');
+    return;
+  }
+  if (command === 'omlx-complete') {
+    omlxComplete(flags.host || '', flags.model || '', readStdin()).catch((err) => die(err.message));
     return;
   }
   die(`unknown command ${command || ''}`);

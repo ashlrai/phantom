@@ -129,18 +129,7 @@ router_active_jobs() {
 
 router_cli_busy() {
   local cli=$1
-  local id home
-  if [[ "$cli" != "codex" ]]; then
-    router_lock_alive "$ROUTER_HOME/locks/cli-$cli"
-    return $?
-  fi
-  while IFS=$'\t' read -r id home; do
-    [[ -n "$id" ]] || continue
-    if ! router_lock_alive "$ROUTER_HOME/locks/cli-codex-$id"; then
-      return 1
-    fi
-  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
-  return 0
+  router_lock_alive "$ROUTER_HOME/locks/cli-$cli"
 }
 
 router_account_dead() {
@@ -161,7 +150,7 @@ router_codex_login_ok() {
     return 1
   fi
   set +e
-  out=$(router_exec_clean "CODEX_HOME=${home}" -- "$bin" login status 2>&1)
+  out=$(router_exec_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- "$bin" login status 2>&1)
   rc=$?
   set -e
   kind=$(printf '%s\n' "$out" | node "$ROUTER_IO" codex-login --code "$rc" | tr -d '\n')
@@ -260,13 +249,11 @@ router_account_score() {
   printf '1000\n'
 }
 
-# Prints id<TAB>home for the logged-in Codex account with the most headroom.
+# Prints id<TAB>home for the first living Codex account. Work is listed first
+# and is spent even when the personal home has more headroom.
 router_pick_codex_account() {
   local live=$1
-  local id home score best_id best_home best_score any_login
-  best_score=-1
-  best_id=""
-  best_home=""
+  local id home score any_login
   any_login=0
   while IFS=$'\t' read -r id home; do
     [[ -n "$id" ]] || continue
@@ -293,24 +280,18 @@ router_pick_codex_account() {
     if [[ "$score" -lt 0 ]]; then
       continue
     fi
-    if [[ "$score" -gt "$best_score" ]]; then
-      best_score=$score
-      best_id=$id
-      best_home=$home
+    if [[ "$live" == "live" ]]; then
+      router_reserve_account "$id"
     fi
+    printf '%s\t%s\n' "$id" "$home"
+    return 0
   done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
-  if [[ -z "$best_id" ]]; then
-    if [[ "$any_login" -eq 0 ]]; then
-      printf 'login-needed\n'
-    else
-      printf 'accounts-busy\n'
-    fi
-    return 1
+  if [[ "$any_login" -eq 0 ]]; then
+    printf 'login-needed\n'
+  else
+    printf 'accounts-busy\n'
   fi
-  if [[ "$live" == "live" ]]; then
-    router_reserve_account "$best_id"
-  fi
-  printf '%s\t%s\n' "$best_id" "$best_home"
+  return 1
 }
 
 router_codex_block_reason() {
@@ -409,6 +390,9 @@ router_job_cleanup() {
   if [[ -n "${ROUTER_JOB_LOCK:-}" ]]; then
     router_stop_heartbeat "$ROUTER_JOB_LOCK"
     router_release_lock "$ROUTER_JOB_LOCK"
+  fi
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]]; then
+    router_release_lock "$ROUTER_LOCK_ACCOUNT"
   fi
   if [[ -n "${ROUTER_LOCK_CLI:-}" ]]; then
     router_release_lock "$ROUTER_LOCK_CLI"
@@ -519,7 +503,7 @@ router_bin() {
     codex) printf '%s\n' "$ROUTER_BIN_CODEX" ;;
     claude) printf '%s\n' "$ROUTER_BIN_CLAUDE" ;;
     grok) printf '%s\n' "$ROUTER_BIN_GROK" ;;
-    ollama) printf '%s\n' "$ROUTER_BIN_OLLAMA" ;;
+    omlx) printf '%s\n' "$ROUTER_BIN_OMLX" ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
@@ -714,45 +698,42 @@ router_claude_ok() {
   [[ "$avail" == "true" ]]
 }
 
-router_probe_grok_list() {
-  local now payload out names
-  now=$(node "$ROUTER_IO" now | tr -d '\n')
-  if [[ "$ROUTER_GROK_ENABLED" != "1" ]]; then
-    payload=$(AT="$now" node -e '
-      process.stdout.write(JSON.stringify({ models: { grok: {
-        enabled: false, metered: true, listed: [], listed_known: false,
-        reason: "disabled", checked_at: process.env.AT
-      }}}));
-    ')
-    printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
-    router_log "grok disabled (metered per token); not probed"
-    return 0
-  fi
-  local bin
+# Classifies the installed grok CLI. The command output is not logged.
+# A SuperGrok plan name, with no XAI_API_KEY line, is a subscription login.
+# Text that says the CLI is using XAI_API_KEY is metered. Only the class word
+# is written to the log.
+router_classify_grok() {
+  local bin out class now
   bin=$(router_bin grok)
-  names=""
+  class=missing
+  out=""
   if command -v "$bin" >/dev/null 2>&1; then
     set +e
     out=$(router_exec_clean "$bin" models 2>&1)
     set -e
-    names=$(printf '%s\n' "$out" | node "$ROUTER_IO" ollama-names | awk 'NF{printf "%s%s", sep, $0; sep=","}')
+    class=$(printf '%s\n' "$out" | node "$ROUTER_IO" grok-auth | tr -d '\n')
   fi
-  payload=$(NAMES="$names" AT="$now" node -e '
-    const listed = (process.env.NAMES || "").split(",").filter(Boolean);
-    process.stdout.write(JSON.stringify({ models: { grok: {
-      enabled: true, metered: true, listed, listed_known: listed.length > 0,
-      reason: "metered", checked_at: process.env.AT
-    }}}));
-  ')
-  printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  unset out
+  case "$class" in
+    subscription|metered|out|unknown|missing) ;;
+    *) class=unknown ;;
+  esac
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  node "$ROUTER_IO" record-grok-auth --state "$ROUTER_STATE" --class "$class" --now "$now"
+  router_log "grok auth ${class}"
 }
 
-router_probe_ollama_list() {
+router_probe_grok_list() {
+  router_classify_grok
+}
+
+router_probe_omlx_list() {
   local now payload out names
   now=$(node "$ROUTER_IO" now | tr -d '\n')
   if [[ "$ROUTER_LOCAL_ENABLED" != "1" ]]; then
     payload=$(AT="$now" node -e '
-      process.stdout.write(JSON.stringify({ models: { ollama: {
+      process.stdout.write(JSON.stringify({ models: { omlx: {
         enabled: false, listed: [], listed_known: false, checked_at: process.env.AT
       }}}));
     ')
@@ -760,21 +741,22 @@ router_probe_ollama_list() {
     return 0
   fi
   if ! node "$ROUTER_IO" loopback-ok "$ROUTER_LOCAL_HOST"; then
-    router_log "refusing non-loopback ollama host $ROUTER_LOCAL_HOST"
+    router_log "refusing non-loopback omlx host"
     return 0
   fi
   set +e
-  out=$(router_exec_clean "OLLAMA_HOST=${ROUTER_LOCAL_HOST}" -- ollama list 2>&1)
+  out=$(curl -fsS --max-time 10 "http://${ROUTER_LOCAL_HOST}/v1/models" 2>/dev/null)
   set -e
-  names=$(printf '%s\n' "$out" | node "$ROUTER_IO" ollama-names | awk 'NF{printf "%s%s", sep, $0; sep=","}')
+  names=$(printf '%s\n' "$out" | node "$ROUTER_IO" omlx-names | awk 'NF{printf "%s%s", sep, $0; sep=","}')
+  unset out
   payload=$(NAMES="$names" AT="$now" node -e '
     const listed = (process.env.NAMES || "").split(",").filter(Boolean);
-    process.stdout.write(JSON.stringify({ models: { ollama: {
+    process.stdout.write(JSON.stringify({ models: { omlx: {
       enabled: true, listed, listed_known: true, checked_at: process.env.AT
     }}}));
   ')
   printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
-  router_log "ollama models: ${names:-none}"
+  router_log "omlx models: ${names:-none}"
 }
 
 router_codex_home() {
@@ -787,6 +769,15 @@ router_codex_home() {
     fi
   done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
   return 1
+}
+
+router_codex_alt_home() {
+  local alt
+  alt=$(router_codex_home personal 2>/dev/null | tr -d '\n' || true)
+  if [[ -z "$alt" ]]; then
+    alt="${HOME}/.codex-2"
+  fi
+  printf '%s' "$alt"
 }
 
 router_probe_codex() {
@@ -835,7 +826,7 @@ router_probe_codex() {
     node "$ROUTER_IO" probe-argv --config "$ROUTER_CONFIG" --model "$model" > "$argv_file"
     router_read_nul < "$argv_file"
     set +e
-    out=$(router_exec_clean "CODEX_HOME=${probe_home}" -- node "$ROUTER_IO" run-timeout 90 -- "${ROUTER_ARGV[@]}" 2>&1)
+    out=$(router_exec_clean "CODEX_HOME=${probe_home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- node "$ROUTER_IO" run-timeout 90 -- "${ROUTER_ARGV[@]}" 2>&1)
     rc=$?
     set -e
     if [[ "$rc" -eq 0 ]] && ! printf '%s' "$out" | node "$ROUTER_IO" rejects-model; then
@@ -896,7 +887,8 @@ router_probe_all() {
   fi
   router_probe_claude || router_log "claude probe failed; jobs are not blocked"
   router_probe_grok_list || router_log "grok probe failed; jobs are not blocked"
-  router_probe_ollama_list || router_log "ollama probe failed; jobs are not blocked"
+  router_probe_omlx_list || router_log "omlx probe failed; jobs are not blocked"
+  router_probe_devin || router_log "devin probe failed; jobs are not blocked"
   router_probe_codex || router_log "codex probe failed; jobs are not blocked"
   now=$(node "$ROUTER_IO" now | tr -d '\n')
   printf '{"freshness":{"last_check":"%s"}}\n' "$now" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
@@ -927,8 +919,14 @@ router_cli_block_reason() {
   local installed
   case "$cli" in
     grok)
-      if [[ "$ROUTER_GROK_ENABLED" != "1" ]]; then
-        printf 'grok-disabled\n'
+      if [[ "$(router_state_get models.grok.auth | tr -d '\n')" != "subscription" ]]; then
+        printf 'grok-metered\n'
+        return 0
+      fi
+      ;;
+    devin)
+      if [[ "$(router_state_get models.devin.can_launch | tr -d '\n')" != "true" ]]; then
+        printf 'devin-unavailable\n'
         return 0
       fi
       ;;
@@ -938,7 +936,7 @@ router_cli_block_reason() {
         return 0
       fi
       ;;
-    ollama)
+    omlx)
       if [[ "$tier" != "cheap" ]]; then
         printf 'local-not-cheap\n'
         return 0
@@ -947,7 +945,7 @@ router_cli_block_reason() {
         printf 'local-disabled\n'
         return 0
       fi
-      installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.ollama.listed | tr -d '\n')
+      installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.omlx.listed | tr -d '\n')
       if ! router_pick_local_model "$installed" >/dev/null; then
         printf 'local-model-missing\n'
         return 0
@@ -969,9 +967,8 @@ router_cli_block_reason() {
   printf 'ok\n'
 }
 
-router_best_codex_score() {
-  local id home score best
-  best=-1
+router_preferred_codex_score() {
+  local id home score
   while IFS=$'\t' read -r id home; do
     [[ -n "$id" ]] || continue
     router_account_dead "$id" && continue
@@ -981,11 +978,10 @@ router_best_codex_score() {
     router_account_reserved "$id" && continue
     score=$(router_account_score "$id")
     [[ "$score" =~ ^[0-9]+$ ]] || continue
-    if [[ "$score" -gt "$best" ]]; then
-      best=$score
-    fi
+    printf '%s\n' "$score"
+    return 0
   done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
-  printf '%s\n' "$best"
+  printf '%s\n' "-1"
 }
 
 router_headroom_text() {
@@ -993,12 +989,12 @@ router_headroom_text() {
   now=$(node "$ROUTER_IO" now | tr -d '\n')
   cool=$(node "$ROUTER_IO" cooldowns-json "$ROUTER_STATE")
   node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
-  raw=$(node "$ROUTER_IO" headroom "$ROUTER_HOME/ledger.jsonl" --now "$now" --cooldowns "$cool" --clis "codex,claude,grok,ollama")
-  best=$(router_best_codex_score)
+  raw=$(node "$ROUTER_IO" headroom "$ROUTER_HOME/ledger.jsonl" --now "$now" --cooldowns "$cool" --clis "codex,claude,devin,grok,omlx")
+  best=$(router_preferred_codex_score)
   adjusted=""
   while IFS=$'\t' read -r cli score; do
     [[ -n "$cli" ]] || continue
-    if [[ "$cli" == "codex" && "$best" =~ ^-?[0-9]+$ && "$best" -ge 0 ]]; then
+    if [[ "$cli" == "codex" && "$best" =~ ^-?[0-9]+$ ]]; then
       score=$best
     fi
     adjusted="${adjusted}${cli}"$'\t'"${score}"$'\n'
@@ -1042,8 +1038,8 @@ router_model_for() {
   local requested=$2
   local tier=$3
   local installed chosen configured listed bad known
-  if [[ "$cli" == "ollama" ]]; then
-    installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.ollama.listed | tr -d '\n')
+  if [[ "$cli" == "omlx" ]]; then
+    installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.omlx.listed | tr -d '\n')
     if [[ -n "$requested" ]] && router_model_is_local "$requested"; then
       case ",${installed}," in
         *",${requested},"*)
@@ -1051,7 +1047,7 @@ router_model_for() {
           return 0
           ;;
       esac
-      printf '-\tollama model %s is not installed\n' "$requested"
+      printf '-\tomlx model %s is not installed\n' "$requested"
       return 0
     fi
     chosen=$(router_pick_local_model "$installed" || true)
@@ -1160,7 +1156,7 @@ router_collect_issues() {
   local IFS=','
   for repo in $ROUTER_REPOS; do
     full="$ROUTER_ORG/$repo"
-    for label in route:codex route:claude route:grok route:any; do
+    for label in route:codex route:claude route:grok route:devin route:any; do
       out=$ROUTER_HOME/tmp/list-$$-$repo-$label
       if gh issue list --repo "$full" --state open --label "$label" --limit 30 \
         --json number,title,body,labels >"$out" 2>>"$ROUTER_HOME/logs/gh.err"; then
@@ -1252,13 +1248,13 @@ router_invoke_cli() {
   local err=$6
   local argv_file prompt_text rc arg
   local -a args
-  if [[ "$cli" == "ollama" ]]; then
+  if [[ "$cli" == "omlx" ]]; then
     if ! node "$ROUTER_IO" loopback-ok "$ROUTER_LOCAL_HOST"; then
-      printf 'refusing non-loopback ollama host\n' > "$err"
+      printf 'refusing non-loopback omlx host\n' > "$err"
       return 1
     fi
     if [[ -z "$model" || "$model" == "-" ]]; then
-      printf 'refusing ollama without an installed model\n' > "$err"
+      printf 'refusing omlx without an installed model\n' > "$err"
       return 1
     fi
   fi
@@ -1279,14 +1275,15 @@ router_invoke_cli() {
   done
   mkdir -p "$(dirname "$out")"
   set +e
-  if [[ "$cli" == "ollama" ]]; then
+  if [[ "$cli" == "omlx" ]]; then
     prompt_text=$(cat "$prompt")
-    router_exec_clean "OLLAMA_HOST=${ROUTER_LOCAL_HOST}" -- \
-      node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- "${args[@]}" "$prompt_text" \
+    printf '%s' "$prompt_text" | router_exec_clean \
+      node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- \
+      node "$ROUTER_IO" omlx-complete --host "$ROUTER_LOCAL_HOST" --model "$model" \
       >"$out" 2>"$err"
     rc=$?
   elif [[ "$cli" == "codex" && -n "${ROUTER_CODEX_HOME_RUN:-}" ]]; then
-    router_exec_clean "CODEX_HOME=${ROUTER_CODEX_HOME_RUN}" -- \
+    router_exec_clean "CODEX_HOME=${ROUTER_CODEX_HOME_RUN}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- \
       node "$ROUTER_IO" run-timeout "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
       <"$prompt" >"$out" 2>"$err"
     rc=$?
@@ -1302,9 +1299,9 @@ router_invoke_cli() {
 router_failover_codex() {
   local current picked id home
   current=${ROUTER_ACCOUNT:-}
-  if [[ -n "${ROUTER_LOCK_CLI:-}" ]]; then
-    router_release_lock "$ROUTER_LOCK_CLI"
-    ROUTER_LOCK_CLI=""
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]]; then
+    router_release_lock "$ROUTER_LOCK_ACCOUNT"
+    ROUTER_LOCK_ACCOUNT=""
   fi
   if [[ -n "$current" ]]; then
     router_release_reserve "$current"
@@ -1326,19 +1323,19 @@ router_failover_codex() {
   router_release_reserve "$id"
   ROUTER_ACCOUNT=$id
   ROUTER_CODEX_HOME_RUN=$home
-  ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-codex-$id
+  ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$id
   router_log "failover to codex account $id"
   return 0
 }
 
-router_apply_ollama_diff() {
+router_apply_local_diff() {
   local wt=$1
   local combined=$2
   local diff_file
-  diff_file=$ROUTER_HOME/tmp/ollama-$$.diff
+  diff_file=$ROUTER_HOME/tmp/omlx-$$.diff
   node "$ROUTER_IO" extract-diff < "$combined" > "$diff_file"
   if [[ ! -s "$diff_file" ]]; then
-    router_log "ollama produced no unified diff"
+    router_log "omlx produced no unified diff"
     return 1
   fi
   git -C "$wt" apply --check "$diff_file"
@@ -1410,6 +1407,112 @@ router_open_pr_url() {
   printf '%s\n' "$url"
 }
 
+router_devin_org() {
+  local org
+  org=${DEVIN_ORG_ID:-${ROUTER_DEVIN_ORG:-}}
+  printf '%s' "$org" | tr -d '\n\r'
+}
+
+router_probe_devin() {
+  local org out view remaining launch now
+  org=$(router_devin_org)
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  remaining=""
+  launch=0
+  if ! node "$ROUTER_IO" devin-org --value "$org"; then
+    router_log "devin skipped; DEVIN_ORG_ID is unset or invalid"
+  elif ! command -v ashlr >/dev/null 2>&1; then
+    router_log "devin skipped; ashlr is not installed"
+  else
+    set +e
+    out=$(ashlr devin status --json 2>/dev/null)
+    set -e
+    view=$(printf '%s' "$out" | node "$ROUTER_IO" devin-view --org "$org" | tr -d '\r')
+    unset out
+    case "$view" in
+      ok$'\t'*)
+        remaining=$(printf '%s' "$view" | awk -F '\t' '{ print $2 }')
+        launch=1
+        router_log "devin ready"
+        ;;
+      *)
+        router_log "devin unavailable"
+        ;;
+    esac
+  fi
+  node "$ROUTER_IO" record-devin --state "$ROUTER_STATE" --remaining "$remaining" \
+    --launch "$launch" --now "$now"
+}
+
+router_run_devin_job() {
+  local repo=$1
+  local number=$2
+  local title=$6
+  local body_file=$7
+  local name lock_job prompt out parsed pr_url session now_iso pools_file rc
+  name=${repo#*/}
+  lock_job=$ROUTER_HOME/locks/jobs/${repo//\//-}-$number
+  ROUTER_ACCOUNT=""
+  ROUTER_JOB_LOCK=$lock_job
+  ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-devin
+  ROUTER_LOCK_ACCOUNT=""
+  trap router_job_cleanup RETURN
+  if ! router_acquire_lock "$ROUTER_LOCK_CLI"; then
+    router_log "cli devin is busy; leaving the claim on $repo#$number"
+    return 0
+  fi
+  if ! router_acquire_lock "$lock_job"; then
+    router_log "job lock busy for $repo#$number"
+    return 0
+  fi
+  router_start_heartbeat "$lock_job"
+  node "$ROUTER_IO" write-meta --file "$lock_job/meta.json" --repo "$repo" --issue "$number" \
+    --clone "" --worktree "" --cli devin --account ""
+  prompt=$ROUTER_HOME/tmp/prompt-${name}-${number}-devin.txt
+  router_write_prompt "$prompt" "$repo" "$number" "$title" "$body_file"
+  set +e
+  out=$(ashlr devin launch "$(cat "$prompt")" --repo "$repo" --title "$title" --json 2>/dev/null)
+  rc=$?
+  set -e
+  parsed=$(printf '%s' "$out" | node "$ROUTER_IO" devin-launch | tr -d '\r')
+  unset out
+  pr_url=""
+  session=""
+  if [[ "$rc" -eq 0 && "$parsed" == ok$'\t'* ]]; then
+    pr_url=$(printf '%s' "$parsed" | awk -F '\t' '{ print $2 }')
+    session=$(printf '%s' "$parsed" | awk -F '\t' '{ print $3 }')
+    rc=0
+  else
+    rc=1
+    pr_url=""
+    session=""
+  fi
+  now_iso=$(node "$ROUTER_IO" now | tr -d '\n')
+  pools_file=$ROUTER_HOME/tmp/pools-${name}-${number}-devin.json
+  node "$ROUTER_IO" pools-json "$ROUTER_STATE" > "$pools_file"
+  if [[ "$rc" -eq 0 ]]; then
+    printf 'ashlr-router launched Devin for this issue. Devin delivers its own draft pull request.\n' \
+      > "$ROUTER_HOME/tmp/devin-$number.txt"
+    if [[ -n "$session" ]]; then
+      printf 'Session: %s\n' "$session" >> "$ROUTER_HOME/tmp/devin-$number.txt"
+    fi
+  else
+    printf 'ashlr-router could not launch Devin. The claim stays.\n' \
+      > "$ROUTER_HOME/tmp/devin-$number.txt"
+  fi
+  router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/devin-$number.txt" || true
+  router_append_job "$ROUTER_HOME/ledger.jsonl" \
+    --ts "$now_iso" --event job --repo "$repo" --issue "$number" --cli devin \
+    --model "" --tier workhorse --attempt 1 --duration-s 0 --exit "$rc" \
+    --verify-exit "" --pr-url "$pr_url" --usage "" --rate-limit "" --reset "" \
+    --remaining "" --metered 0 --warning "$session" --account "" --billing acu \
+    --pools-file "$pools_file"
+  if [[ -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+    router_mirror_line "$(tail -n 1 "$ROUTER_HOME/ledger.jsonl")" || true
+  fi
+}
+
 router_run_job() {
   local repo=$1
   local number=$2
@@ -1425,6 +1528,10 @@ router_run_job() {
   local no_changes push_failed pr_url subject prbody attempt_log existing key
   local timeout_until next_cli model_recorded now_iso duration next_tier
   local failover_used tier_retried retry_attempt rc_pr billing pools_file cool_key picked_live
+  if [[ "$cli" == "devin" ]]; then
+    router_run_devin_job "$@"
+    return $?
+  fi
   held=$cli
   failover_used=0
   tier_retried=0
@@ -1450,13 +1557,19 @@ router_run_job() {
       ROUTER_ACCOUNT=$account
     fi
     ROUTER_CODEX_HOME_RUN=$(router_codex_home "$account" | tr -d '\n')
-    ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-codex-$account
+    ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-codex
+    ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$account
   else
     ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-$cli
+    ROUTER_LOCK_ACCOUNT=""
   fi
   trap router_job_cleanup RETURN
   if ! router_acquire_lock "$ROUTER_LOCK_CLI"; then
     router_log "cli $held is busy; leaving the claim on $repo#$number"
+    return 0
+  fi
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]] && ! router_acquire_lock "$ROUTER_LOCK_ACCOUNT"; then
+    router_log "codex account $account is busy; leaving the claim on $repo#$number"
     return 0
   fi
   router_release_reserve "$account"
@@ -1498,7 +1611,7 @@ EOF
     out=$ROUTER_HOME/logs/job-${cli}-${number}-a${attempt}.out
     err=$ROUTER_HOME/logs/job-${cli}-${number}-a${attempt}.err
     started=$(date +%s)
-    if [[ "$cli" == "ollama" && ( -z "$resolved" || "$resolved" == "-" ) ]]; then
+    if [[ "$cli" == "omlx" && ( -z "$resolved" || "$resolved" == "-" ) ]]; then
       rc=1
       printf '%s\n' "$warn_line" > "$err"
     else
@@ -1532,8 +1645,8 @@ EOF
     else
       rate=""
     fi
-    if [[ "$cli" == "ollama" && "$rc" -eq 0 ]]; then
-      if ! router_apply_ollama_diff "$ROUTER_WT" "$combined"; then
+    if [[ "$cli" == "omlx" && "$rc" -eq 0 ]]; then
+      if ! router_apply_local_diff "$ROUTER_WT" "$combined"; then
         rc=1
       fi
     fi
@@ -1623,9 +1736,9 @@ EOF
     tier_retried=1
     cur_tier=$next_tier
     cur_request=""
-    if [[ "$cli" == "ollama" ]]; then
+    if [[ "$cli" == "omlx" ]]; then
       next_cli=$(router_pick_any "$cur_tier" live || true)
-      if [[ -z "$next_cli" || "$next_cli" == "ollama" ]]; then
+      if [[ -z "$next_cli" || "$next_cli" == "omlx" ]]; then
         router_log "no cloud CLI available for the higher tier"
         break
       fi
@@ -1637,6 +1750,23 @@ EOF
         router_log "retry CLI $held is busy"
         ROUTER_LOCK_CLI=""
         break
+      fi
+      if [[ "$cli" == "codex" ]]; then
+        if ! picked_live=$(router_pick_codex_account live); then
+          router_log "no living codex account for the higher tier"
+          break
+        fi
+        account=${picked_live%%$'\t'*}
+        account=$(printf '%s' "$account" | tr -d '\n')
+        ROUTER_ACCOUNT=$account
+        ROUTER_CODEX_HOME_RUN=$(router_codex_home "$account" | tr -d '\n')
+        ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$account
+        if ! router_acquire_lock "$ROUTER_LOCK_ACCOUNT"; then
+          router_release_reserve "$account"
+          router_log "codex account $account is busy"
+          break
+        fi
+        router_release_reserve "$account"
       fi
     fi
     attempt=$((attempt + 1))
@@ -1741,11 +1871,13 @@ router_print_plan() {
   router_read_nul < <(node "$ROUTER_IO" argv --config "$ROUTER_CONFIG" --cli "$cli" \
     --model "$model" --worktree "$ROUTER_HOME/worktrees/example" \
     --last "$ROUTER_HOME/tmp/last" --prompt "$ROUTER_HOME/tmp/prompt")
-  if [[ "$cli" == "ollama" ]]; then
-    router_format_clean "OLLAMA_HOST=${ROUTER_LOCAL_HOST}" "${ROUTER_ARGV[@]}"
+  if [[ "$cli" == "omlx" ]]; then
+    printf 'omlx chat http://%s/v1/chat/completions model=%s\n' "$ROUTER_LOCAL_HOST" "$model"
+  elif [[ "$cli" == "devin" ]]; then
+    printf 'ashlr devin launch --repo %s --title <title> --json\n' "$repo"
   elif [[ "$cli" == "codex" && -n "$account" ]]; then
     home=$(router_codex_home "$account" | tr -d '\n')
-    router_format_clean "CODEX_HOME=${home}" "${ROUTER_ARGV[@]}"
+    router_format_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" "${ROUTER_ARGV[@]}"
   else
     router_format_clean "${ROUTER_ARGV[@]}"
   fi
@@ -1942,6 +2074,8 @@ cmd_run() {
     return 0
   fi
   router_weekly || router_log "freshness failed; jobs are not blocked"
+  router_classify_grok || router_log "grok auth check failed; jobs are not blocked"
+  router_probe_devin || router_log "devin check failed; jobs are not blocked"
   gate=$(router_check_gates live)
   if [[ "$gate" != "ok" ]]; then
     router_log "skip $gate"
@@ -2024,6 +2158,35 @@ cmd_status() {
   fi
 }
 
+cmd_keepalive() {
+  local home alt bin out rc
+  router_init
+  router_ensure_state
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  home="${HOME}/.codex"
+  alt=$(router_codex_alt_home)
+  bin=$(router_bin codex)
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    router_log "keepalive failure"
+    return 0
+  fi
+  set +e
+  out=$(router_exec_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=${alt}" -- \
+    "$bin" exec --sandbox read-only --skip-git-repo-check --ephemeral "Reply with ok" 2>&1)
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    unset out
+    router_log "keepalive success"
+    return 0
+  fi
+  if printf '%s\n' "$out" | node "$ROUTER_IO" auth-failed; then
+    router_mark_account_dead work auth
+  fi
+  unset out
+  router_log "keepalive failure"
+}
+
 cmd_probe() {
   local mode=record
   router_init
@@ -2035,7 +2198,7 @@ cmd_probe() {
 
 cmd_help() {
   cat <<'EOF'
-usage: ashlr-router <run|dry-run|status|probe> [options]
+usage: ashlr-router <run|dry-run|status|probe|keepalive> [options]
 
   run              claim queued issues and open draft PRs
   run --dry-run    print the plan and do not claim or run a CLI
@@ -2045,8 +2208,9 @@ usage: ashlr-router <run|dry-run|status|probe> [options]
   probe --update   also run weekly updaters when freshness is enabled
   probe --record-only
                    record versions and models, do not update CLIs
+  keepalive        one read-only Codex call under ~/.codex
 
-A file named PAUSE in the router home skips a real run.
+A file named PAUSE in the router home skips a real run. The queue has no quiet hours.
 EOF
 }
 
@@ -2057,6 +2221,7 @@ main() {
     dry-run) cmd_dry ;;
     status) cmd_status ;;
     probe) shift || true; cmd_probe "${1:-}" ;;
+    keepalive) cmd_keepalive ;;
     help|-h|--help) cmd_help ;;
     *)
       cmd_help >&2
