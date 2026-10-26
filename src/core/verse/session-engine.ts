@@ -2389,6 +2389,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         // Never an unhandled rejection: a throw here is logged, and a turn that
         // could not start is not left busy forever.
         if (gating.get(id) === gate) gating.delete(id);
+        if (turnStatuses.get(id)?.turnId === turnId) turnStatuses.delete(id);
         log('error', `session ${id}: turn could not start after its checkpoint (${err instanceof Error ? err.name : 'error'})`);
       });
       return;
@@ -2747,37 +2748,44 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     session.lastError = null;
     save(session);
 
-    // V3.10 attachments: the operator's text is logged exactly as typed; the
-    // CLI gets the same text with this chat's attachment tokens resolved to
-    // absolute paths, plus the ONE directory they live in (never granted when
-    // the message names no attachment). A recovery re-sends the resolved text.
-    const resolved = resolveAttachmentRefs(text, attachments.dirFor(id));
-    resolved.text = expandHomeMentions(resolved.text, verseSessionRoots(session));
-    const extras: VerseTurnExtras = { attachmentDirs: resolved.dirs, attachmentImages: resolved.files.filter(isImageAttachment) };
-    const turnSeatLaunch: VerseSeatLaunch = resolved.files.length > 0 ? { ...launch, ...extras } : launch;
-    const adapter = adapterFor(session.engine);
-    const cliText = playbook && !adapter.resolvesPlaybooks?.(session, launch)
-      ? appendPlaybookBlock(resolved.text, playbook.block)
-      : resolved.text;
-
-    let turnLaunch: VerseTurnLaunch;
+    // A throw before the turn starts must not leave the chat busy forever:
+    // clear this turn's status so the next send can recover it.
     try {
-      turnLaunch = adapter.buildLaunch(session, cliText, turnSeatLaunch);
+      // V3.10 attachments: the operator's text is logged exactly as typed; the
+      // CLI gets the same text with this chat's attachment tokens resolved to
+      // absolute paths, plus the ONE directory they live in (never granted when
+      // the message names no attachment). A recovery re-sends the resolved text.
+      const resolved = resolveAttachmentRefs(text, attachments.dirFor(id));
+      resolved.text = expandHomeMentions(resolved.text, verseSessionRoots(session));
+      const extras: VerseTurnExtras = { attachmentDirs: resolved.dirs, attachmentImages: resolved.files.filter(isImageAttachment) };
+      const turnSeatLaunch: VerseSeatLaunch = resolved.files.length > 0 ? { ...launch, ...extras } : launch;
+      const adapter = adapterFor(session.engine);
+      const cliText = playbook && !adapter.resolvesPlaybooks?.(session, launch)
+        ? appendPlaybookBlock(resolved.text, playbook.block)
+        : resolved.text;
+
+      let turnLaunch: VerseTurnLaunch;
+      try {
+        turnLaunch = adapter.buildLaunch(session, cliText, turnSeatLaunch);
+      } catch (err) {
+        const message = redact(err instanceof Error ? err.message : String(err), redactionsFor(launch, null));
+        emit(id, { type: 'error', turnId, message });
+        emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: session.nativeSessionId, durationMs: 0 });
+        session.status = 'error';
+        session.lastError = message;
+        save(session);
+        afterTurn(id, turnId, 'failed', 0);
+        return { turnId, session: cloneSession(session) };
+      }
+      startTurn(session, turnId, turnSeatLaunch, turnLaunch, redactionsFor(turnSeatLaunch, turnLaunch), {
+        text: cliText,
+        userSeq: userMessage.seq,
+        isRecovery: false,
+      });
     } catch (err) {
-      const message = redact(err instanceof Error ? err.message : String(err), redactionsFor(launch, null));
-      emit(id, { type: 'error', turnId, message });
-      emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: session.nativeSessionId, durationMs: 0 });
-      session.status = 'error';
-      session.lastError = message;
-      save(session);
-      afterTurn(id, turnId, 'failed', 0);
-      return { turnId, session: cloneSession(session) };
+      if (turnStatuses.get(id)?.turnId === turnId) turnStatuses.delete(id);
+      throw err;
     }
-    startTurn(session, turnId, turnSeatLaunch, turnLaunch, redactionsFor(turnSeatLaunch, turnLaunch), {
-      text: cliText,
-      userSeq: userMessage.seq,
-      isRecovery: false,
-    });
     return { turnId, session: cloneSession(store.get(id) ?? session) };
   }
 

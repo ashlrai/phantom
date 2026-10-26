@@ -278,6 +278,23 @@ describe('chat turn assistant status integration', () => {
     expect(statuses(engine.getEvents(id)).map(event => event.phase)).toEqual(['acknowledgement', 'result']);
   });
 
+  it('does not leave the chat busy when a turn throws before it starts', async () => {
+    let armed = false;
+    const failing = makeEngine({
+      adapterFor: engineName => {
+        if (armed) { armed = false; throw new Error('adapter unavailable'); }
+        return adapterFor(engineName);
+      },
+    });
+    const chat = failing.createSession({ seatId: SEAT.id, projectPath: project }, launch).id;
+    armed = true;
+    expect(() => failing.sendTurn(chat, 'First try')).toThrow('adapter unavailable');
+    expect(children).toHaveLength(0);
+    expect(() => failing.sendTurn(chat, 'Second try')).not.toThrow();
+    expect(children).toHaveLength(1);
+    await children[0]!.finish(0, [answer('Done.')]);
+  });
+
   it('does not recreate a chat deleted by a result subscriber during early launch failure', () => {
     vi.spyOn(adapterFor('claude'), 'buildLaunch').mockImplementationOnce(() => { throw new Error('launch unavailable'); });
     engine.subscribe(id, 0, event => {
