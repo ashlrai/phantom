@@ -18,6 +18,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  resolveNpmCliLaunch,
+  runTrustedNpmCli,
+} from './helpers/built-release-inventory.js';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
+
 // These cases run REAL `npm pack` + `npm install` into temp dirs, so their
 // runtime is bound by actual package-manager and filesystem work and exceeds
 // 30s whenever the machine is loaded.
@@ -29,10 +35,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // inside the run. A test-harness timeout firing first only hides whether that
 // control passed; it never makes it pass.
 vi.setConfig({ testTimeout: 180_000, hookTimeout: 180_000 });
-import {
-  resolveNpmCliLaunch,
-  runTrustedNpmCli,
-} from '../scripts/build-release-dependency-inventory.mjs';
+requireBuiltDist();
 import {
   buildRuntimeReleaseDependencyInventory,
   observeInstalledRuntimeDependencies,
