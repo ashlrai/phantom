@@ -40,6 +40,7 @@ that every integration, provider or autonomous effect is active.
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
+| Record Grok Ultra points and inspect burn and projected runway | [Grok Ultra runway](GROK-ULTRA-RUNWAY.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
