@@ -3,7 +3,7 @@ import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { EscalationInput } from '../src/core/routing/local-escalation.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { routeSeat } from '../src/core/routing/router.js';
-import { isLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
+import { isKnownRemoteSeat, isLocalSeat, routeSeatWithLocalEscalation, type LocalRouteContext } from '../src/core/routing/local-route.js';
 
 const NOW = Date.parse('2026-10-25T20:00:00Z');
 const at = new Date(NOW - 60_000).toISOString();
@@ -74,6 +74,39 @@ describe('routeSeatWithLocalEscalation', () => {
         expect(route(input, ctx, [promoted]).seatId).toBeNull();
       }
     }
+  });
+
+  it('fails closed with no ctx.engines: an unknown-id seat is refused merge and credential work', () => {
+    expect(isKnownRemoteSeat(promoted)).toBe(false);
+    for (const input of AUTHORITY) {
+      for (const ctx of [on, { localInference: undefined }]) {
+        const d = route(input, ctx, [claude, promoted]);
+        expect(d.seatId).toBe('claude');
+        expect(d.candidates).not.toContain('fast');
+        expect(route(input, ctx, [promoted]).seatId).toBeNull();
+      }
+    }
+  });
+
+  it('refuses an unknown id listed with a loopback endpoint, including [::1] and localhost', () => {
+    for (const baseUrl of ['http://127.0.0.1:8080/v1', 'http://[::1]:11434/v1', 'http://localhost:1234/v1']) {
+      const eng = { 'fast-coder': { baseUrl } };
+      expect(isLocalSeat(promoted, eng)).toBe(true);
+      expect(isKnownRemoteSeat(promoted, eng)).toBe(false);
+      expect(route({ ...base, mergesToMain: true }, { ...on, engines: eng }, [promoted]).seatId).toBeNull();
+    }
+  });
+
+  it('allows a known hosted id and a listed public https endpoint for authority work', () => {
+    expect(isKnownRemoteSeat(claude)).toBe(true);
+    expect(route({ ...base, needsCredentials: true }, { localInference: undefined }, [claude]).seatId).toBe('claude');
+    const eng = { 'fast-coder': { baseUrl: 'https://api.example.com/v1' } };
+    expect(isKnownRemoteSeat(promoted, eng)).toBe(true);
+    // Interactive request: the budget policy has no autonomous seat entry for the custom 'fast' seat.
+    const d = routeSeatWithLocalEscalation({ ...req, autonomous: false } as never, [promoted], budget, opts, { ...base, mergesToMain: true }, { ...on, engines: eng });
+    expect(d.seatId).toBe('fast');
+    // A hosted id re-pointed at loopback is local again.
+    expect(isKnownRemoteSeat(claude, { claude: { baseUrl: 'http://127.0.0.1:9000' } })).toBe(false);
   });
 
   it('the local lane is loopback-only: an allowRemote endpoint escalates to frontier', () => {
