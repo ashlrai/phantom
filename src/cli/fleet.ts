@@ -25,6 +25,7 @@
  * command owns its separate metadata-only controller store; status remains read-only.
  */
 
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -94,6 +95,7 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.buildIdentity) {
     const version = s.buildIdentity.packageVersion ?? 'unknown';
     const revision = s.buildIdentity.revision?.slice(0, 12) ?? 'unknown';
