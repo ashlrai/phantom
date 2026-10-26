@@ -36,6 +36,7 @@ const CONTROL = {
 function mockFetch() {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
+    if (url === '/api/verse/agents') return new Response(JSON.stringify({ cards: [] }), { status: 200 });
     if (url.startsWith('/api/snapshot')) {
       return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
     }
@@ -59,6 +60,9 @@ describe('FleetDashboardView', () => {
     render(<FleetDashboardView />);
 
     await waitFor(() => expect(screen.getByText('ship the thing')).toBeInTheDocument());
+
+    expect(screen.getByRole('heading', { name: 'Control room' })).toBeInTheDocument();
+    await screen.findByText('No live agents.');
 
     // StatGrid
     expect(screen.getByText('12')).toBeInTheDocument(); // repos.total
