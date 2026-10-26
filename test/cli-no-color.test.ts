@@ -2,17 +2,20 @@
  * NO_COLOR (https://no-color.org): when set to a non-empty value, CLI output
  * carries no ANSI escapes, even from commands that color regardless of TTY.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeColors, noColorRequested } from '../src/cli/ui.js';
+import { ansi, C, makeColors, noColorRequested } from '../src/cli/ui.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const homes: string[] = [];
-afterEach(() => { for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
+});
 
 function runCli(args: string[], extraEnv: NodeJS.ProcessEnv) {
   const home = mkdtempSync(join(tmpdir(), 'phantom-no-color-')); homes.push(home);
@@ -41,12 +44,31 @@ describe('noColorRequested / makeColors', () => {
 });
 
 describe('CLI honors NO_COLOR', () => {
+  it('the raw ansi palette reads NO_COLOR each time a line is built', () => {
+    vi.stubEnv('NO_COLOR', '');
+    expect(`${ansi.red}x${ansi.reset}`).toBe(`${C.red}x${C.reset}`);
+    vi.stubEnv('NO_COLOR', '1');
+    expect(`${ansi.red}x${ansi.reset}`).toBe('x');
+    expect(Object.keys(ansi)).toEqual(Object.keys(C));
+  });
+
   it('config list prints no ANSI with NO_COLOR=1', () => {
     const result = runCli(['config', 'list'], { NO_COLOR: '1' });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ashlr config');
     expect(result.stdout).not.toContain('\u001b');
   });
+
+  it('models and pulse usage errors (raw palette lines) print no ANSI with NO_COLOR=1', () => {
+    for (const cmd of ['models', 'pulse']) {
+      const plain = runCli([cmd, '--bogus'], { NO_COLOR: '1' });
+      expect(plain.status).toBe(2);
+      expect(plain.stderr).toContain('error: unknown flag: --bogus');
+      expect(plain.stderr).not.toContain('\x1b[');
+      const colored = runCli([cmd, '--bogus'], {});
+      expect(colored.stderr).toContain(`${C.red}error:${C.reset}`);
+    }
+  }, 60_000);
 
   it('an unknown command reports on stderr without ANSI with NO_COLOR=1, and with color otherwise', () => {
     const plain = runCli(['definitely-not-a-command'], { NO_COLOR: '1' });

@@ -21,7 +21,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
-  'update', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
+  'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
@@ -49,6 +49,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'wiki',
   // 3.15 versioned playbooks.
   'playbook',
+  // receipt.v1: `receipt` is the same as `fleet receipt`.
+  'receipt',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -59,7 +61,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  config: ['get', 'set', 'path'],
+  config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
@@ -68,7 +70,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
-  wire: ['claude', 'codex', 'cursor', 'all'],
+  wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
   telemetry: ['status', 'test'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
@@ -83,7 +85,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   worker: ['setup', 'status'],
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
-    'automerge-canary', 'evidence', 'scorecard', 'oversight',
+    'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
@@ -118,7 +120,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   leader: ['show', 'run', 'tick', 'veto', 'oversight-plist', 'say', 'thread', 'answer', 'approve', 'directives', 'help'],
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
-  cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'help'],
+  cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).

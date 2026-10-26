@@ -247,13 +247,13 @@ export function computerOutcomeMessage(outcome: Extract<ComputerOutcome, { ok: f
     case 'operator-took-over':
       // Native also pauses when the Verse window is hidden or reloads (the relay's home is gone).
       if (/hidden/i.test(outcome.message)) {
-        return 'Desktop control is paused because the Verse window is hidden. Ask the operator to bring Verse back and press Resume, then take a fresh screenshot.';
+        return 'Desktop control is paused because the Phantom window is hidden. Ask the operator to bring Phantom back and press Resume, then take a fresh screenshot.';
       }
-      return 'Operator took over: the operator is using the mouse or keyboard, so desktop control is paused. Wait for them to hand it back with Resume in Verse, then take a fresh screenshot.';
+      return 'Operator took over: the operator is using the mouse or keyboard, so desktop control is paused. Wait for them to hand it back with Resume in Phantom, then take a fresh screenshot.';
     case 'stopped':
       return `Desktop control was stopped: ${outcome.message} Ask the operator before requesting access again.`;
     case 'no-permission':
-      return `${outcome.message} Verse has shown the operator how to grant it; ask them to finish (Screen Recording needs Ashlr to relaunch), then try again.`;
+      return `${outcome.message} Phantom has shown the operator how to grant it; ask them to finish (Screen Recording needs Ashlr to relaunch), then try again.`;
     default:
       return outcome.message;
   }
@@ -516,7 +516,7 @@ export function createComputerTools(deps: ComputerToolDeps = DEFAULT_COMPUTER_TO
         return ok(text([
           `${lines.length} running app${lines.length === 1 ? '' : 's'}:`,
           call.untrusted(lines.join('\n') || '(none)', 'Running apps'),
-          'Browsers are read only (use the Verse Browser pane for the web); terminals and editors are click only.',
+          'Browsers are read only (use the Phantom Browser pane for the web); terminals and editors are click only.',
         ].join('\n')));
       },
     },
@@ -525,7 +525,7 @@ export function createComputerTools(deps: ComputerToolDeps = DEFAULT_COMPUTER_TO
       name: 'computer_request_access',
       scope,
       desktopOnly,
-      description: 'Ask the operator to let this chat control specific apps (by bundle id or name). The operator approves each app in a Verse sheet. Browsers can only be granted read only, terminals and editors click only; password managers, the keychain, System Settings privacy panes and Ashlr itself never.',
+      description: 'Ask the operator to let this chat control specific apps (by bundle id or name). The operator approves each app in a Phantom sheet. Browsers can only be granted read only, terminals and editors click only; password managers, the keychain, System Settings privacy panes and Ashlr itself never.',
       annotations: annotations('Request app access', 'nav'),
       inputSchema: {
         type: 'object',

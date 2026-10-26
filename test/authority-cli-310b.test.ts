@@ -110,6 +110,17 @@ function harness(opts: { confirm?: boolean; gh?: (args: readonly string[]) => Gh
 }
 
 describe('basic commands', () => {
+  it('stop --json writes only the JSON result to stdout, on both the drain and --no-wait paths', async () => {
+    for (const args of [['stop', '--json'], ['stop', '--json', '--no-wait']]) {
+      const h = harness();
+      expect(await runAuthorityCli(args, h.deps)).toBe(0);
+      expect(killSwitchOn()).toBe(true);
+      expect(JSON.parse(h.out.join('\n'))).toMatchObject({ armed: true });
+      expect(h.err.some((line) => line.startsWith('Stopped.'))).toBe(true);
+      expect(await runAuthorityCli(['clear-stop'], harness().deps)).toBe(0);
+    }
+  });
+
   it.each([
     ['stop', '--help'], ['stop', '-h'], ['revoke', '--help'],
     ['switch', 'autonomous', '--help'], ['grant', '--yes', '--help'],

@@ -41,7 +41,7 @@ Two runtimes, each doing what it is good at:
 
 | Runtime | Port | Role |
 |---|---|---|
-| Ollama | 11434 | model discovery (`/api/tags`, `/api/ps`), embeddings (`bge-m3`), single interactive Verse chats |
+| Ollama | 11434 | model discovery (`/api/tags`, `/api/ps`), embeddings (`bge-m3`), single interactive Phantom chats |
 | llama-server | 8080 | the parallel agent fleet — many concurrent coding agents |
 
 Both resident is ~58 GB of 128 GB, which leaves room for KV cache and the rest of the machine.
@@ -110,6 +110,9 @@ through `createSandboxAsync`, which waits off the event loop. The synchronous
 `acquireOutwardMutationFence` spins on `Atomics.wait`: raising its timeout does not make a waiter
 more likely to win (the holder is in the same process and holds across awaits), it just freezes the
 hang watchdog, the queue-lease renewer, the shutdown handler and the control plane for the duration.
+Only the registration (`git worktree add --no-checkout` and its validation) runs under the fence
+and the repo lease; the checkout, the post-create writer and the second validation run after both
+are released, under a creation execution lease that kill and unenroll drain.
 
 Measured after the change, four concurrent agents on four real repos:
 
@@ -159,7 +162,7 @@ launched from the binary the record names. Without that, the job we installed ou
 
 ## The Claude-CLI-to-llama-server gap (measured, unresolved)
 
-The interactive path is not blocked by the mutation fence — Verse sessions take no fence, no sandbox
+The interactive path is not blocked by the mutation fence — Phantom console sessions take no fence, no sandbox
 and no global lock, only a per-session busy guard. Many concurrent chats are architecturally fine.
 
 llama-server does serve the Anthropic Messages API at `/v1/messages`, so pointing the Claude CLI at
@@ -237,7 +240,7 @@ function from `resolveLlamaServerBaseUrl(cfg)`, which still answers for the Open
 points straight at llama-server.
 
 One scope limit worth knowing before you rely on it: the listener lives in the process that called
-`start`. A long-lived host (the Verse control API's web server) keeps it up; a one-shot
+`start`. A long-lived host (the Phantom control API's web server) keeps it up; a one-shot
 `ashlr local-runtime start` exits and takes it with it, while llama-server itself, being detached,
 stays up either way.
 

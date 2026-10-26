@@ -306,6 +306,11 @@ function reportStep(task: TimelineDeliveryTask, words: TimelineLaneWords): Step 
   if (report.testsRun.length > 0) parts.push(`Tests it says it ran: ${clip(report.testsRun.slice(0, 8).join('; '), 300)}.`);
   else parts.push('It names no tests.');
   if (report.risks.length > 0) parts.push(`Risks it names: ${clip(report.risks.slice(0, 5).join('; '), 300)}.`);
+  if (report.toolsUsed) {
+    parts.push(report.toolsUsed.length > 0
+      ? `Companion tools it says it called: ${clip(report.toolsUsed.slice(0, 8).join(', '), 200)}.`
+      : 'It says it called no companion tools.');
+  }
   return step('report', {
     at: null,
     title: `Session reports “${report.status}” (unverified)`,
@@ -414,8 +419,8 @@ function checksStep(task: TimelineDeliveryTask, merge: MergeRecordSource): Step 
     at: null,
     title: 'No check run recorded',
     detail: claimed > 0
-      ? `Verse recorded no check run for this PR. The ${claimed} ${claimed === 1 ? 'test' : 'tests'} in the session report are its own claim.`
-      : 'Verse recorded no check run for this PR.',
+      ? `Phantom recorded no check run for this PR. The ${claimed} ${claimed === 1 ? 'test' : 'tests'} in the session report are its own claim.`
+      : 'Phantom recorded no check run for this PR.',
     source: merge.state === 'unknown' ? 'fleet merge record (unreadable)' : 'fleet merge record',
     verified: 'unknown',
     reached: task.pr !== null,

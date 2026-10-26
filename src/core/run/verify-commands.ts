@@ -28,6 +28,7 @@ import { existsSync, lstatSync, mkdtempSync, realpathSync, rmSync, statSync } fr
 import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { processGroupHasOnlyZombies } from '../util/process-group-liveness.js';
 import type { AshlrConfig } from '../types.js';
 import { renderToolText } from '../mcp-native.js';
 import { currentStandingPolicy } from '../authority/effective-config.js';
@@ -840,7 +841,9 @@ export function runVerifyCommand(
  * invocation also fails closed because Node cannot prove complete tree ownership.
  * Opt-in settlement receipts retain the original PGID for signal-zero absence
  * checks only, never for signaling after leader exit. ESRCH proves that group
- * absent; a present (possibly recycled) group or any other error is unconfirmed.
+ * absent, as does a Linux /proc view in which every remaining member is an
+ * unreaped zombie (see processGroupHasOnlyZombies); a present (possibly
+ * recycled) group or any other error is unconfirmed.
  * This is not a complete process-tree receipt: escaped descendants are excluded.
  */
 export async function runVerifySubprocessAsync(
@@ -1105,8 +1108,14 @@ export async function runVerifySubprocessAsync(
       if (opts.requireProcessGroupExit) {
         if (originalPgid !== null && !normalCloseExpired) {
           // This check cannot kill a recycled group and never restores authority
-          // for a later signal. Only kernel-reported absence grants settlement.
-          try { processKill(-originalPgid, 0); groupPresent = true; }
+          // for a later signal. Only kernel-reported absence, or a /proc view in
+          // which every remaining member has exited (unreaped zombies), grants
+          // settlement. Injected kill doubles keep kernel-only semantics.
+          try {
+            processKill(-originalPgid, 0);
+            if (!opts._processKill && processGroupHasOnlyZombies(originalPgid, platform)) receipt = 'group-exit-confirmed';
+            else groupPresent = true;
+          }
           catch (err) {
             if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ESRCH') {
               receipt = 'group-exit-confirmed';
@@ -1201,6 +1210,8 @@ export async function runVerifySubprocessAsync(
       }
       try {
         processKill(-ownedPgid, 0);
+        // Every remaining member exited but is unreaped (slow or absent init).
+        if (!opts._processKill && processGroupHasOnlyZombies(ownedPgid, platform)) { ownedPgid = null; return 'absent'; }
         return 'present';
       } catch (err) {
         return processSignalError(err, 'process-group exit probe');

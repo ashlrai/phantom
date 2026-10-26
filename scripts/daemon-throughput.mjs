@@ -26,6 +26,11 @@
  * Usage:
  *   node scripts/daemon-throughput.mjs [--n 5,10,20] [--files 300] [--think-ms 0] [--json]
  *   ASHLR_MAX_SANDBOXES=32 node scripts/daemon-throughput.mjs --n 20
+ *   ASHLR_SANDBOX_TIMING=1 node scripts/daemon-throughput.mjs --n 1   (adds per-step sandbox
+ *     creation timing: fence wait/hold and each REGISTER / POPULATE step, from worktree.ts)
+ *
+ * `repoLeaseHoldCreate` is how long the creation repo lease was held; `sandboxCreate` is the
+ * whole createSandboxAsync call (it releases the lease after REGISTER).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -71,6 +76,7 @@ function setup() {
     PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR ?? tmpdir(),
     GIT_CONFIG_GLOBAL: gitCfg, GIT_CONFIG_NOSYSTEM: '1',
     ...(process.env.ASHLR_MAX_SANDBOXES ? { ASHLR_MAX_SANDBOXES: process.env.ASHLR_MAX_SANDBOXES } : {}),
+    ...(process.env.ASHLR_SANDBOX_TIMING ? { ASHLR_SANDBOX_TIMING: process.env.ASHLR_SANDBOX_TIMING } : {}),
   };
   for (let i = 0; i < fileCount; i++) {
     writeFileSync(join(repo, 'src', `f${i}.ts`), `export const v${i} = ${i};\n`.repeat(40));
@@ -93,7 +99,10 @@ function runAgent(ctx, idx, n) {
     child.stderr.on('data', (d) => { err += d; });
     child.on('close', (code) => {
       const line = out.trim().split('\n').pop() ?? '';
-      try { done(JSON.parse(line)); } catch { done({ idx, ok: false, failure: `exit ${code}: ${err.trim().slice(-200)}`, phases: {} }); }
+      const sandboxTiming = err.split('\n').filter((l) => l.startsWith('ashlr-sandbox-timing ')).map((l) => {
+        try { return JSON.parse(l.slice('ashlr-sandbox-timing '.length)); } catch { return null; }
+      }).filter(Boolean);
+      try { done({ ...JSON.parse(line), sandboxTiming }); } catch { done({ idx, ok: false, failure: `exit ${code}: ${err.trim().slice(-200)}`, phases: {} }); }
     });
   });
 }
@@ -114,6 +123,12 @@ async function measure(n) {
       const v = results.map((r) => r.phases?.[p]).filter((x) => typeof x === 'number');
       return [p, { p50: pct(v, 50), p95: pct(v, 95), max: Math.max(...v) }];
     }));
+    const timings = results.flatMap((r) => r.sandboxTiming ?? []);
+    const timingNames = [...new Set(timings.flatMap((t) => ['fenceWaitMs', 'fenceHoldMs', ...Object.keys(t.parts ?? {}).map((k) => `step.${k}`)]))];
+    const sandboxTiming = Object.fromEntries(timingNames.map((name) => {
+      const v = timings.map((t) => (name.startsWith('step.') ? t.parts?.[name.slice(5)] : t[name])).filter((x) => typeof x === 'number');
+      return [name, { p50: pct(v, 50), p95: pct(v, 95), max: Math.max(...v) }];
+    }));
     const totals = results.map((r) => r.totalMs).filter((x) => typeof x === 'number');
     const sandboxes = join(ctx.home, '.ashlr', 'sandboxes');
     const leftoverHomes = existsSync(sandboxes) ? readdirSync(sandboxes).filter((e) => !e.startsWith('.') && statSync(join(sandboxes, e)).isDirectory()).length : 0;
@@ -124,7 +139,7 @@ async function measure(n) {
     return {
       n, ok: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, failures, wallMs,
       agentMs: { p50: pct(totals, 50), p95: pct(totals, 95), max: Math.max(...totals) },
-      phases, leftover: { sandboxHomes: leftoverHomes, worktrees, branches, sandboxesDiskKb: duKb(sandboxes) },
+      phases, sandboxTiming, leftover: { sandboxHomes: leftoverHomes, worktrees, branches, sandboxesDiskKb: duKb(sandboxes) },
       proposals, peakRssMb: Math.round(Math.max(...results.map((r) => r.maxRssKb ?? 0)) / 1024),
     };
   } finally {
@@ -142,6 +157,7 @@ if (asJson) {
     console.log(`\nN=${r.n}: ok ${r.ok}/${r.n}, wall ${r.wallMs}ms, agent p50/p95 ${f(r.agentMs.p50)}/${f(r.agentMs.p95)}ms, peak RSS ${r.peakRssMb}MB, proposals ${r.proposals}`);
     console.log(`  leftover: ${r.leftover.sandboxHomes} sandbox homes, ${r.leftover.worktrees} worktrees, ${r.leftover.branches} branches, ${r.leftover.sandboxesDiskKb}KB`);
     for (const [k, v] of Object.entries(r.failures)) console.log(`  FAIL x${v}: ${k}`);
+    for (const [k, v] of Object.entries(r.sandboxTiming ?? {})) console.log(`  sandbox ${k.padEnd(32)} p50 ${String(f(v.p50)).padStart(6)}  p95 ${String(f(v.p95)).padStart(6)}  max ${String(f(v.max)).padStart(6)} ms`);
     for (const [k, v] of Object.entries(r.phases)) console.log(`  ${k.padEnd(20)} p50 ${String(f(v.p50)).padStart(6)}  p95 ${String(f(v.p95)).padStart(6)}  max ${String(f(v.max)).padStart(6)} ms`);
   }
 }

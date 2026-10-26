@@ -2,6 +2,8 @@
 
 # Phantom
 
+**Give agents the work. Keep the evidence.**
+
 **The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**
 
 **Work with agents. Let agents work for you. One open-source workbench for your accounts, local models, chats and engineering fleet.**
@@ -536,6 +538,20 @@ measuring changes, and do not add an eval gate to fleet dispatch.
 Review real project changes in the chat's Changes panel, alongside reported tool
 calls and source evidence. See the [harness guide](docs/AGENT-HARNESS-EVOLUTION.md#evidence-without-a-new-dispatch-gate)
 for offline and online boundaries, trace privacy and comparison details.
+
+## Run receipts
+
+Source only: these commands are on `master` but not in the published `@ashlr/phantom` 3.29.15, which answers `unknown fleet subcommand: receipt`.
+
+```sh
+phm fleet receipt status              # receipt key present or absent, receipt count, latest run and whether it verifies
+phm fleet receipt list                # run ids that have a receipt
+phm fleet receipt show <run-id>
+phm fleet receipt verify <run-id>     # exit 1 if the receipt does not verify
+phm fleet receipt timeline <run-id>   # the run and its later events; exit 1 if missing or not verified
+```
+
+Add `--json` for machine-readable output. `status` exits 1 when the latest receipt does not verify.
 
 ## Reference
 

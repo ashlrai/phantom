@@ -15,6 +15,7 @@
  */
 
 import { makeColors } from './ui.js';
+import type { SimpleConductorResult } from '../core/simple-conductor.js';
 
 const USAGE =
   'Usage: ashlr loop [--watch] [--dry-run]\n' +
@@ -144,33 +145,62 @@ export async function cmdLoop(args: string[]): Promise<number> {
   // An explicit --goal is a distinct signed protocol and must never be routed
   // into the legacy simple-conductor dispatch path by repository configuration.
   if (!explicitGoalId && cfg.foundry?.simpleConductor === true) {
-    const { runSimpleConductor } = await import('../core/simple-conductor.js');
-    const sc = await runSimpleConductor(cfg, { once, dryRun, allowCloud });
+    const { runSimpleConductor, runSimpleConductorWatch, resolveSimpleConductorIntervalMs } =
+      await import('../core/simple-conductor.js');
+    const report = (sc: SimpleConductorResult): number => {
+      console.log('');
+      if (sc.activationRefused) {
+        console.error(
+          col.red('  live conductor refused') +
+          col.dim(' — M461 authorizes only one-item proposal daemon runs.'),
+        );
+        return 1;
+      } else if (sc.killSwitchTripped) {
+        console.log(col.yellow('  kill-switch on — no work dispatched (rm ~/.ashlr/KILL to resume)'));
+      } else if (dryRun) {
+        const deferredNote = sc.deferred?.length ? ` · ${sc.deferred.length} would defer (no engine capacity)` : '';
+        console.log(col.dim(`  dry-run · ${sc.tasksAttempted} task(s) would dispatch${deferredNote}`));
+      } else {
+        const parts: string[] = [];
+        if (sc.tasksAttempted) parts.push(`${sc.tasksAttempted} dispatched`);
+        if (sc.proposalsFiled) parts.push(`${sc.proposalsFiled} proposal(s) filed`);
+        if (sc.merged) parts.push(`${sc.merged} merged`);
+        if (sc.errors.length) parts.push(`${sc.errors.length} error(s)`);
+        if (sc.deferred?.length) {
+          const resets = sc.deferred.map((d) => d.earliestResetAt).filter((r): r is string => !!r).sort();
+          parts.push(
+            `${sc.deferred.length} deferred (no engine capacity${resets[0] ? `; earliest reset ${resets[0]}` : ''})`,
+          );
+        }
+        console.log(
+          parts.length
+            ? col.green('  ✓ ') + col.dim(parts.join(' · ') + ' — review proposals in `ashlr inbox`.')
+            : col.dim('  nothing to dispatch this cycle (tasks done or all in-flight).'),
+        );
+      }
+      return 0;
+    };
 
-    console.log('');
-    if (sc.activationRefused) {
-      console.error(
-        col.red('  live conductor refused') +
-        col.dim(' — M461 authorizes only one-item proposal daemon runs.'),
-      );
-      return 1;
-    } else if (sc.killSwitchTripped) {
-      console.log(col.yellow('  kill-switch on — no work dispatched (rm ~/.ashlr/KILL to resume)'));
-    } else if (dryRun) {
-      console.log(col.dim(`  dry-run · ${sc.tasksAttempted} task(s) would dispatch`));
-    } else {
-      const parts: string[] = [];
-      if (sc.tasksAttempted) parts.push(`${sc.tasksAttempted} dispatched`);
-      if (sc.proposalsFiled) parts.push(`${sc.proposalsFiled} proposal(s) filed`);
-      if (sc.merged) parts.push(`${sc.merged} merged`);
-      if (sc.errors.length) parts.push(`${sc.errors.length} error(s)`);
-      console.log(
-        parts.length
-          ? col.green('  ✓ ') + col.dim(parts.join(' · ') + ' — review proposals in `ashlr inbox`.')
-          : col.dim('  nothing to dispatch this cycle (tasks done or all in-flight).'),
-      );
-    }
-    return 0;
+    if (once) return report(await runSimpleConductor(cfg, { once, dryRun, allowCloud }));
+
+    // --watch: tick on the daemon interval; when every engine is out of
+    // capacity, park until the earliest known reset (bounded) instead.
+    const intervalMs = resolveSimpleConductorIntervalMs(cfg);
+    const last = await runSimpleConductorWatch(cfg, {
+      dryRun,
+      allowCloud,
+      onTick: (sc, nextWaitMs) => {
+        report(sc);
+        if (nextWaitMs === null) return;
+        const minutes = Math.max(1, Math.round(nextWaitMs / 60_000));
+        console.log(col.dim(
+          nextWaitMs > intervalMs
+            ? `  no engine capacity — next tick in ~${minutes}m (waiting for the earliest reset)`
+            : `  next tick in ~${minutes}m (Ctrl-C to stop)`,
+        ));
+      },
+    });
+    return last.activationRefused ? 1 : 0;
   }
 
   // Run the goal-aware conductor. Goals are advanced first; backlog daemon is

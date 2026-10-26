@@ -549,6 +549,8 @@ async function cmdMcpInstall(args: string[]): Promise<number> {
  *     that is a different layer from the MCP server key.
  *   - Locus write path uses `locusServerSpec()` so env (LOCUS_HOME, LOCUS_CLIENT,
  *     LOCUS_NOTIFY) is always present — not command-only.
+ *   - Lexicon and Stack ship Node/Bun launchers for MCP, which the
+ *     native-executable rule refuses, so they are deliberately absent.
  */
 interface EcosystemServer {
   name: string;         // Key used in mcpServers map
@@ -583,6 +585,15 @@ const ECOSYSTEM_SERVERS: EcosystemServer[] = [
     command: 'locus-mcp',
     args: [],
     label: 'Locus (identity plane)',
+  },
+  {
+    // Optional Markdown viewer: a native Rust stdio server, so the native-only
+    // launcher rule admits it. Not in REQUIRED_SERVERS; `mcp doctor` stays green without it.
+    name: 'ashlr-md',
+    probe: 'mdopener-mcp',
+    command: 'mdopener-mcp',
+    args: [],
+    label: 'Ashlr MD (mdopener-mcp)',
   },
 ];
 
@@ -717,34 +728,71 @@ export function mergeEcosystemServers(
   return added;
 }
 
+/**
+ * Why a PATH candidate was not registered, and what to do. Phantom Secrets and
+ * Locus ship as native binaries, so only a native executable is the reviewed
+ * product: a bootstrap launcher downloads or installs code on first run, and a
+ * Node script is not the release binary. Neither is ever run or registered.
+ */
+function ecosystemRefusalDetail(
+  srv: EcosystemServer,
+  candidates: string[],
+  kind: 'ambiguous' | 'script' | 'bootstrap' | 'unknown',
+): string {
+  if (kind === 'ambiguous') {
+    return `${candidates.length} different ${srv.probe} executables on PATH (${candidates.join(', ')}); ashlr will not guess. Leave exactly one native binary on PATH, then re-run \`ashlr mcp ecosystem\`.`;
+  }
+  const what = kind === 'bootstrap'
+    ? 'is a bootstrap launcher that downloads or installs code on first run, so it is never executed or registered'
+    : kind === 'script'
+      ? `is a Node script, not the native ${srv.probe} binary; only native executables are registered`
+      : 'is not a recognized native executable; only native executables are registered';
+  return `${candidates[0]!} ${what}. Install the native ${srv.probe} binary, make it the only ${srv.probe} on PATH, then re-run \`ashlr mcp ecosystem\`.`;
+}
+
 async function cmdMcpEcosystem(args: string[]): Promise<number> {
   const writeMode = args.includes('--write');
+  const json = args.includes('--json');
   const settingsPath = ashlrSettingsPath();
 
-  console.log('');
-  console.log(bold('  ashlr mcp ecosystem') + gray('  — unified MCP surface (M66)'));
-  console.log('');
+  if (!json) {
+    console.log('');
+    console.log(bold('  ashlr mcp ecosystem') + gray('  — unified MCP surface (M66)'));
+    console.log('');
+  }
 
   // Detect which ecosystem servers are available in PATH.
   const detected: Array<EcosystemServer & { resolvedBin: string }> = [];
   const missing: EcosystemServer[] = [];
-  const refused: Array<{ server: EcosystemServer; reason: 'ambiguous' | 'unsupported-launcher' }> = [];
+  const refused: Array<{ server: EcosystemServer; reason: 'ambiguous' | 'unsupported-launcher'; detail: string }> = [];
   const directories = (process.env['PATH'] ?? '').split(delimiter).filter(isAbsolute);
 
   for (const srv of ECOSYSTEM_SERVERS) {
     const candidates = companionExecutableCandidates(srv.probe, directories);
     if (candidates.length === 0) missing.push(srv);
-    else if (candidates.length > 1) refused.push({ server: srv, reason: 'ambiguous' });
-    else if (companionExecutableKind(candidates[0]!) !== 'native') {
-      refused.push({ server: srv, reason: 'unsupported-launcher' });
-    } else detected.push({ ...srv, resolvedBin: candidates[0]! });
+    else if (candidates.length > 1) {
+      refused.push({ server: srv, reason: 'ambiguous', detail: ecosystemRefusalDetail(srv, candidates, 'ambiguous') });
+    } else {
+      const kind = companionExecutableKind(candidates[0]!);
+      if (kind !== 'native') {
+        refused.push({ server: srv, reason: 'unsupported-launcher', detail: ecosystemRefusalDetail(srv, candidates, kind) });
+      } else detected.push({ ...srv, resolvedBin: candidates[0]! });
+    }
   }
 
   // Load current settings to check registration state.
   let currentSettings: AshlrSettingsShape;
   try { currentSettings = loadAshlrSettings(settingsPath); }
-  catch { console.log(red('  ' + SETTINGS_REFUSAL)); return 1; }
+  catch {
+    if (json) writeEcosystemJson({ ok: false, error: SETTINGS_REFUSAL, settingsPath });
+    else console.log(red('  ' + SETTINGS_REFUSAL));
+    return 1;
+  }
   const currentServers = currentSettings.mcpServers ?? {};
+
+  if (json) {
+    return ecosystemJson({ writeMode, settingsPath, detected, missing, refused, currentServers });
+  }
 
   // Print detected servers.
   if (detected.length === 0) {
@@ -778,8 +826,8 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
 
   if (refused.length > 0) {
     console.log(bold('  Not selected (skipped):'));
-    for (const { server, reason } of refused) {
-      console.log('    ' + dim(server.label) + gray(` — ${reason}; choose one installed native executable through PATH.`));
+    for (const { server, reason, detail } of refused) {
+      console.log('    ' + dim(server.label) + gray(` — ${reason}: ${detail}`));
     }
     console.log('');
   }
@@ -831,6 +879,64 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
   return 0;
 }
 
+function writeEcosystemJson(payload: Record<string, unknown>): void {
+  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+}
+
+/**
+ * `ashlr mcp ecosystem --json [--write]`: the same detection + registration
+ * facts as the human view, as exactly one JSON object on stdout.
+ */
+function ecosystemJson(input: {
+  writeMode: boolean;
+  settingsPath: string;
+  detected: Array<EcosystemServer & { resolvedBin: string }>;
+  missing: EcosystemServer[];
+  refused: Array<{ server: EcosystemServer; reason: 'ambiguous' | 'unsupported-launcher' }>;
+  currentServers: NonNullable<AshlrSettingsShape['mcpServers']>;
+}): number {
+  const { writeMode, settingsPath, detected, missing, refused, currentServers } = input;
+  const base = {
+    settingsPath,
+    write: writeMode,
+    available: detected.map((srv) => ({
+      name: srv.name,
+      label: srv.label,
+      probe: srv.probe,
+      command: srv.resolvedBin,
+      args: srv.args,
+      registered: Boolean(currentServers[srv.name]),
+    })),
+    missing: missing.map((srv) => ({ name: srv.name, label: srv.label, probe: srv.probe })),
+    refused: refused.map(({ server, reason }) => ({
+      name: server.name,
+      label: server.label,
+      probe: server.probe,
+      reason,
+    })),
+  };
+  if (!writeMode || detected.length === 0) {
+    writeEcosystemJson({ ok: true, ...base, added: [] });
+    return 0;
+  }
+  try {
+    const added = mergeEcosystemServers(
+      detected.map(s => ({ name: s.name, command: s.resolvedBin, args: s.args })),
+      settingsPath,
+    );
+    writeEcosystemJson({ ok: true, ...base, added });
+    return 0;
+  } catch (error) {
+    writeEcosystemJson({
+      ok: false,
+      ...base,
+      error: error instanceof Error && error.message === SETTINGS_REFUSAL
+        ? SETTINGS_REFUSAL : 'MCP registration failed; inspect the settings file before retrying.',
+    });
+    return 1;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
@@ -848,8 +954,8 @@ function printHelp(): void {
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
     ['install <target> --config <path>', 'Install to a specific config path (use in tests to avoid real configs).'],
-    ['ecosystem',                        'Detect installed ecosystem MCP servers + show registration status.'],
-    ['ecosystem --write',                'Register detected servers into ~/.ashlr/settings.json (idempotent).'],
+    ['ecosystem [--json]',               'Detect installed ecosystem MCP servers + show registration status.'],
+    ['ecosystem --write [--json]',       'Register detected servers into ~/.ashlr/settings.json (idempotent).'],
   ];
 
   const cmdW = Math.max(...cmds.map(([c]) => c.length));

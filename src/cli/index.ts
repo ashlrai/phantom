@@ -55,6 +55,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -68,6 +69,7 @@ import { openInEditor } from './open.js';
 import { pick } from './picker.js';
 import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
+import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
@@ -278,7 +280,7 @@ const loadPulseCmd = lazyCmd(
 
 const loadPulseTestCmd = lazyCmd(
   () => import('./pulse.js' as unknown as string),
-  (m) => ((_args: string[]) => (m.cmdPulseTest as () => Promise<number>)()) as Cmd,
+  (m) => m.cmdPulseTest as Cmd,
   'pulse-test command requires src/cli/pulse.ts (M91 module not yet built).',
 );
 
@@ -1116,7 +1118,7 @@ function printItemSummary(item: IndexedItem): void {
 function printNoReposHelp(cfg: AshlrConfig): void {
   console.log(yellow('  No git repos are being tracked yet.'));
   console.log('');
-  console.log(`  ashlr scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
+  console.log(`  phm scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
   console.log('');
   if (cfg.roots.length === 0) {
     console.log(`    ${red('✗')} ${dim('(no roots configured)')}`);
@@ -1129,19 +1131,22 @@ function printNoReposHelp(cfg: AshlrConfig): void {
     }
   }
   console.log('');
-  console.log(`  ${bold('Fix it')} ${dim('— point ashlr at the folder that holds your repos')}`);
+  console.log(`  ${bold('Fix it')} ${dim('— point phm at the folder that holds your repos')}`);
   console.log(`  ${dim('(repos must be direct children, e.g.')} ${cyan('<root>/my-app/.git')}${dim('):')}`);
   console.log('');
   console.log(`    ${cyan('1.')} Set your roots:`);
-  console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'[""C:/Users/you/code""]\'')}`);
-  console.log(`       ${dim('macOS / Linux:')}`);
-  console.log(`       ${cyan('ashlr config set roots --json \'["/Users/you/code"]\'')}`);
+  // Only this platform's quoting: a Linux user should not have to skip past PowerShell.
+  if (process.platform === 'win32') {
+    console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
+    console.log(`       ${cyan('phm config set roots --json \'[""C:/Users/you/code""]\'')}`);
+  } else {
+    console.log(`       ${cyan(`phm config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
+  }
   console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
   console.log('');
-  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('ashlr index --refresh')}`);
+  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('phm index --refresh')}`);
   console.log('');
-  console.log(`  ${dim('Then re-run')} ${cyan('ashlr status')}${dim('.')}`);
+  console.log(`  ${dim('Then re-run')} ${cyan('phm status')}${dim('.')}`);
   console.log('');
 }
 
@@ -1391,6 +1396,30 @@ async function cmdStatus(args: string[]): Promise<void> {
     }
   } catch {
     // silently omit — never break status
+  }
+
+  // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
+  try {
+    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
+    const custody = gatherCustodyStatus();
+    if (custody) {
+      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
+  }
+
+  // Phantom strict preflight: only when the spawn gate is on (value-free)
+  try {
+    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
+    const pre = gatherPreflightStatus();
+    if (pre) {
+      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+      console.log('');
+    }
+  } catch {
+    // silently omit; never break status
   }
 
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
@@ -2014,7 +2043,9 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
-      case 'update': {
+      // People try `phm upgrade` first; it used to be an unknown command.
+      case 'update':
+      case 'upgrade': {
         const cmdUpdate = await loadUpdateCmd();
         process.exitCode = await cmdUpdate(rest);
         break;
@@ -2154,6 +2185,13 @@ async function main(): Promise<void> {
         // plus `pause`/`resume` (kill-switch only).
         const cmdFleet = await loadFleetCmd();
         process.exitCode = await cmdFleet(rest);
+        break;
+      }
+
+      case 'receipt': {
+        // `phm receipt ...` is the same as `phm fleet receipt ...`.
+        const { cmdFleetReceipt } = await import('./receipt.js');
+        process.exitCode = await cmdFleetReceipt(rest);
         break;
       }
 
@@ -2389,6 +2427,12 @@ async function main(): Promise<void> {
       case 'authority': {
         // V3.10: standing authority — Touch ID grants, the autonomy switch,
         // Stop, revoke, the ledger, rulesets and the guided Phase-0 setup.
+        const offMac = authoritySetupPlatformRefusal(rest);
+        if (offMac) {
+          for (const line of offMac) console.error(`  ${line}`);
+          process.exitCode = 1;
+          break;
+        }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
         break;
@@ -2488,6 +2532,22 @@ async function main(): Promise<void> {
           }
         }
         console.log(version);
+        break;
+      }
+
+      case '--ashlr-handshake': {
+        // Companion handshake v1: one JSON object, no network, exit 0.
+        let version = process.env.ASHLR_VERSION;
+        if (!version) {
+          try {
+            const { createRequire } = await import('node:module');
+            version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+          } catch {
+            version = 'unknown';
+          }
+        }
+        const { buildPhmHandshake } = await import('./handshake.js');
+        console.log(JSON.stringify(buildPhmHandshake(version)));
         break;
       }
 

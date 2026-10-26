@@ -30,13 +30,49 @@
  *   - createSandbox throws when kill switch is on even with allowAnyRepo
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { Sandbox } from '../src/core/types.js';
+import type { SemanticPrivateStorageHarness } from './helpers/semantic-private-storage.js';
+
+const privateStorageMocks = vi.hoisted(() => ({
+  harness: undefined as SemanticPrivateStorageHarness | undefined,
+}));
+
+// Sandbox create/remove runs the production private-storage assurance adapter
+// end to end (policy.ts state files, mutation-fence.ts leases), but on Windows
+// its PowerShell DACL process is answered by the semantic harness (M408's
+// pattern, as in M409/M415) instead of a cold powershell.exe per path: those
+// launches, several per case, were this suite's Windows cost. The adapter
+// request is still built, authenticated and validated against the real
+// on-disk path facts; POSIX keeps the untouched production path.
+vi.mock('../src/core/util/private-storage.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/util/private-storage.js')>();
+  const { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } =
+    await import('./helpers/semantic-private-storage.js');
+  privateStorageMocks.harness ??= createSemanticPrivateStorageHarness({
+    systemRoot: trustedWindowsSystemRootForTest(),
+  });
+  return {
+    ...actual,
+    assurePrivateStoragePath: (
+      ...args: Parameters<typeof actual.assurePrivateStoragePath>
+    ) => {
+      const options = args[3];
+      if (process.platform !== 'win32' || options?.runner !== undefined) {
+        return actual.assurePrivateStoragePath(...args);
+      }
+      return actual.assurePrivateStoragePath(args[0], args[1], args[2], {
+        ...options,
+        runner: privateStorageMocks.harness!.runner,
+      });
+    },
+  };
+});
 
 // Windows CI can spend several seconds in each real git worktree subprocess.
 // Covered by the real-io lane's 60s default now — see scripts/realio-lane-membership.mjs.
@@ -97,8 +133,7 @@ async function policy(): Promise<typeof import('../src/core/sandbox/policy.js')>
  * Returns the absolute path of the repo root.
  * NEVER touches the real portfolio.
  */
-function makeTmpRepo(label = 'repo'): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ashlr-m21-${label}-`));
+function initTmpRepo(dir: string): void {
   execFileSync('git', ['init'], { cwd: dir, stdio: 'pipe' });
   execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, stdio: 'pipe' });
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'pipe' });
@@ -106,6 +141,26 @@ function makeTmpRepo(label = 'repo'): string {
   fs.writeFileSync(path.join(dir, 'main.ts'), 'export const hello = "world";\n');
   execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'pipe' });
   execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, stdio: 'pipe' });
+}
+
+// Every case starts from the same one-commit repo and none depends on a unique
+// commit SHA or timestamp (two repos initialized within one second already
+// share a SHA), so the five git spawns run once and each case gets a private
+// byte-for-byte copy instead of a fresh `git init`.
+let templateRepo: string;
+
+beforeAll(() => {
+  templateRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m21-template-'));
+  initTmpRepo(templateRepo);
+});
+
+afterAll(() => {
+  fs.rmSync(templateRepo, { recursive: true, force: true });
+});
+
+function makeTmpRepo(label = 'repo'): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ashlr-m21-${label}-`));
+  fs.cpSync(templateRepo, dir, { recursive: true });
   return dir;
 }
 

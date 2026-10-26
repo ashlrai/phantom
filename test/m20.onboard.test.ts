@@ -269,6 +269,10 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
     expect(modelsStep).toBeDefined();
     // When no models found: should be 'manual' (user must pull explicitly)
     expect(modelsStep!.status).toBe('manual');
+    // No runtime installed: a bare pull command would be a dead end, so lead with the install.
+    expect(modelsStep!.detail).toContain('Install Ollama');
+    expect(result.nextSteps.some((line) => line.startsWith('For local runs, install Ollama'))).toBe(true);
+    expect(result.nextSteps.some((line) => line.startsWith('Pull a local model'))).toBe(false);
   });
 
   it('CRITICAL — NO_AUTO_DOWNLOAD: onboard never invokes execFile/spawn with "pull"', async () => {
