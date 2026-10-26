@@ -2,98 +2,122 @@
  * data/queue-stats/schema.ts: the `queue.stats.v1` contract.
  *
  * RQ-QUEUE-3 (`phm queue stats --json`) emits exactly this shape; the desktop
- * station graph (RQ-QUEUE-5) parses it. Kept dependency free so the CLI side
- * can import it without pulling React.
+ * station graph (RQ-QUEUE-5) parses it. Dependency free so the CLI side can
+ * import it without React.
+ *
+ * Aligned with CI Efficiency's interim estimator `queue_now.v1`
+ * (ci-efficiency/queue/queue-now.json, controller-design.md). Shared fields
+ * keep queue_now names verbatim: generated_utc, window_h, stations keyed by
+ * station id, and per station status, lambda_per_h, mu_per_h, c, rho, L, W_h,
+ * WIP, little_err_pct. Fields added by v1: queue_growth_per_h (tie break),
+ * pools, little. Fields of queue_now NOT carried: repos, bottleneck (derived
+ * here), and the free-text note / c_source (never rendered; may hold
+ * anything).
  */
 
 export const QUEUE_STATS_SCHEMA = 'queue.stats.v1' as const;
 
-/** Station order from RQ-QUEUE-1/2 (planned through released, fix-main last). */
+/** The 11 stations in flow order (controller-design.md line 5); fix_main is the side station. */
 export const QUEUE_STATIONS = [
-  'planned',
-  'ready',
+  'router_queued',
   'claimed',
-  'pr_ci',
-  'merge_queue',
-  'merged',
+  'builder_run',
   'publish',
-  'released',
+  'pr_open_rework',
+  'pr_ci',
+  'review',
+  'merge_group',
+  'release',
+  'live',
   'fix_main',
 ] as const;
 export type QueueStation = (typeof QUEUE_STATIONS)[number];
 
 export const STATION_LABELS: Record<QueueStation, string> = {
-  planned: 'planned',
-  ready: 'READY',
+  router_queued: 'router queued',
   claimed: 'claimed',
-  pr_ci: 'PR CI',
-  merge_queue: 'merge queue',
-  merged: 'merged',
+  builder_run: 'builder run',
   publish: 'publish',
-  released: 'released',
+  pr_open_rework: 'PR open/rework',
+  pr_ci: 'PR CI',
+  review: 'review',
+  merge_group: 'merge group',
+  release: 'release',
+  live: 'live',
   fix_main: 'fix-main',
 };
 
-export interface QueueStatsMetrics {
-  /** Arrivals per hour over the window. */
-  lambda: number;
-  /** Service completions per hour over the window. */
-  mu: number;
-  /** Utilization lambda/mu; may exceed 1 when overloaded. */
-  rho: number;
-  queueLength: number;
-  /** Mean wait in seconds. */
-  waitSec: number;
-  wip: number;
-  /** Queue length change per hour (positive = growing). Used for tie breaks. */
-  queueGrowthPerHour: number;
+export const STATION_STATUSES = ['ok', 'partial', 'no data'] as const;
+export type StationStatus = (typeof STATION_STATUSES)[number];
+
+/** Per station or pool metrics. Null or absent means "not measured yet". */
+export interface QueueMetrics {
+  status: StationStatus;
+  lambda_per_h: number | null;
+  mu_per_h: number | null;
+  /** Servers; null when unknown or infinite-server. */
+  c: number | null;
+  /** lambda / (c * mu); null when c is unknown (rho n/a). */
+  rho: number | null;
+  /** Time-average number in station (queue length). */
+  L: number | null;
+  /** Mean sojourn in hours. */
+  W_h: number | null;
+  WIP: number | null;
+  little_err_pct: number | null;
+  /** Change in L per hour (positive = growing). */
+  queue_growth_per_h: number | null;
 }
 
-export interface QueueStationStats extends QueueStatsMetrics {
-  station: QueueStation;
-}
-
-export interface QueuePoolStats extends QueueStatsMetrics {
+export interface QueuePoolStats extends QueueMetrics {
   pool: string;
 }
 
 export interface QueueStatsV1 {
   schema: typeof QUEUE_STATS_SCHEMA;
-  generatedAt: string;
-  windowSec: number;
-  stations: QueueStationStats[];
+  generated_utc: string;
+  window_h: number;
+  stations: Partial<Record<QueueStation, QueueMetrics>>;
   pools: QueuePoolStats[];
-  /** Little's law check: |L - lambda*W| / L over 20% sets drift. */
+  /** Little's law check: drift when any station's little_err_pct > 20; ratio = max err / 100. */
   little: { drift: boolean; ratio: number };
 }
 
 export type ParseResult = { ok: true; value: QueueStatsV1 } | { ok: false; error: string };
 
-const METRIC_KEYS = ['lambda', 'mu', 'rho', 'queueLength', 'waitSec', 'wip', 'queueGrowthPerHour'] as const;
-const NON_NEGATIVE = new Set(['lambda', 'mu', 'rho', 'queueLength', 'waitSec', 'wip']);
+const NUM_KEYS = ['lambda_per_h', 'mu_per_h', 'c', 'rho', 'L', 'W_h', 'WIP', 'little_err_pct', 'queue_growth_per_h'] as const;
+const SIGNED = new Set<string>(['queue_growth_per_h']);
+export const LITTLE_DRIFT_PCT = 20;
 /** Pool ids are short slugs; anything else (tokens, URLs, paths) is rejected. */
 const POOL_ID = /^[a-z0-9][a-z0-9._-]{0,47}$/;
-/** Shapes that look like credentials even when slug-shaped. */
 const SECRET_LIKE = /(sk-|ghp_|gho_|ghs_|github_pat_|xox[abp]-|phc_|bearer|token|secret|password|apikey|api_key)/i;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function readMetrics(raw: Record<string, unknown>, where: string): QueueStatsMetrics | string {
-  const out: Partial<QueueStatsMetrics> = {};
-  for (const key of METRIC_KEYS) {
-    const v = raw[key];
-    if (typeof v !== 'number' || !Number.isFinite(v)) return `${where}.${key} must be a finite number`;
-    if (NON_NEGATIVE.has(key) && v < 0) return `${where}.${key} must be >= 0`;
-    out[key] = v;
-  }
-  return out as QueueStatsMetrics;
-}
-
-/** True when a pool id may be shown; secret-shaped ids are never rendered. */
 export function isSafePoolId(id: string): boolean {
   return POOL_ID.test(id) && !SECRET_LIKE.test(id);
+}
+
+function readMetrics(raw: Record<string, unknown>, where: string): QueueMetrics | string {
+  const out: Record<string, unknown> = {};
+  for (const key of NUM_KEYS) {
+    const v = raw[key];
+    if (v === undefined || v === null) {
+      out[key] = null;
+      continue;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) return `${where}.${key} must be a finite number or null`;
+    if (!SIGNED.has(key) && v < 0) return `${where}.${key} must be >= 0`;
+    out[key] = v;
+  }
+  const status = raw.status ?? 'ok';
+  if (typeof status !== 'string' || !(STATION_STATUSES as readonly string[]).includes(status)) {
+    return `${where}.status must be one of ${STATION_STATUSES.join(', ')}`;
+  }
+  out.status = status;
+  return out as unknown as QueueMetrics;
 }
 
 /**
@@ -103,30 +127,24 @@ export function isSafePoolId(id: string): boolean {
 export function parseQueueStats(input: unknown): ParseResult {
   if (!isRecord(input)) return { ok: false, error: 'payload must be an object' };
   if (input.schema !== QUEUE_STATS_SCHEMA) return { ok: false, error: `schema must be ${QUEUE_STATS_SCHEMA}` };
-  const generatedAt = input.generatedAt;
-  if (typeof generatedAt !== 'string' || Number.isNaN(Date.parse(generatedAt))) {
-    return { ok: false, error: 'generatedAt must be an ISO timestamp' };
+  const generated_utc = input.generated_utc;
+  if (typeof generated_utc !== 'string' || Number.isNaN(Date.parse(generated_utc))) {
+    return { ok: false, error: 'generated_utc must be an ISO timestamp' };
   }
-  const windowSec = input.windowSec;
-  if (typeof windowSec !== 'number' || !Number.isFinite(windowSec) || windowSec <= 0) {
-    return { ok: false, error: 'windowSec must be > 0' };
+  const window_h = input.window_h;
+  if (typeof window_h !== 'number' || !Number.isFinite(window_h) || window_h <= 0) {
+    return { ok: false, error: 'window_h must be > 0' };
   }
-  if (!Array.isArray(input.stations)) return { ok: false, error: 'stations must be an array' };
+  if (!isRecord(input.stations)) return { ok: false, error: 'stations must be an object keyed by station id' };
   if (!Array.isArray(input.pools)) return { ok: false, error: 'pools must be an array' };
 
-  const stations: QueueStationStats[] = [];
-  const seen = new Set<string>();
-  for (const [i, raw] of input.stations.entries()) {
-    if (!isRecord(raw)) return { ok: false, error: `stations[${i}] must be an object` };
-    const station = raw.station;
-    if (typeof station !== 'string' || !(QUEUE_STATIONS as readonly string[]).includes(station)) {
-      return { ok: false, error: `stations[${i}].station is not a known station` };
-    }
-    if (seen.has(station)) return { ok: false, error: `stations[${i}].station is duplicated` };
-    seen.add(station);
-    const m = readMetrics(raw, `stations[${i}]`);
+  const stations: Partial<Record<QueueStation, QueueMetrics>> = {};
+  for (const [id, raw] of Object.entries(input.stations)) {
+    if (!(QUEUE_STATIONS as readonly string[]).includes(id)) return { ok: false, error: `stations.${id} is not a known station` };
+    if (!isRecord(raw)) return { ok: false, error: `stations.${id} must be an object` };
+    const m = readMetrics(raw, `stations.${id}`);
     if (typeof m === 'string') return { ok: false, error: m };
-    stations.push({ station: station as QueueStation, ...m });
+    stations[id as QueueStation] = m;
   }
 
   const pools: QueuePoolStats[] = [];
@@ -144,49 +162,54 @@ export function parseQueueStats(input: unknown): ParseResult {
     return { ok: false, error: 'little must be { drift: boolean, ratio: number }' };
   }
 
-  stations.sort((a, b) => QUEUE_STATIONS.indexOf(a.station) - QUEUE_STATIONS.indexOf(b.station));
   return {
     ok: true,
-    value: { schema: QUEUE_STATS_SCHEMA, generatedAt, windowSec, stations, pools, little: { drift: little.drift, ratio: little.ratio } },
+    value: { schema: QUEUE_STATS_SCHEMA, generated_utc, window_h, stations, pools, little: { drift: little.drift, ratio: little.ratio } },
   };
 }
 
 /**
- * Rho bands. Green below 0.7 (queue wait stays near service time), amber from
- * 0.7 to below 0.9 (M/M/1 wait is 2.3x to 9x service time), red at 0.9 and
- * above (wait grows without bound as rho nears 1).
+ * Rho bands, aligned with the controller's HOT/COLD hysteresis
+ * (controller-design.md: HOT at rho >= 0.85, COLD at rho <= 0.70).
+ * green < 0.70, amber 0.70 to < 0.85, red >= 0.85 (or non-finite);
+ * unknown when rho is null (c not known, or no data).
  */
 export const RHO_AMBER = 0.7;
-export const RHO_RED = 0.9;
-export type RhoBand = 'green' | 'amber' | 'red';
+export const RHO_RED = 0.85;
+export type RhoBand = 'green' | 'amber' | 'red' | 'unknown';
 
-export function rhoBand(rho: number): RhoBand {
+export function rhoBand(rho: number | null): RhoBand {
+  if (rho === null) return 'unknown';
   if (!Number.isFinite(rho) || rho >= RHO_RED) return 'red';
   if (rho >= RHO_AMBER) return 'amber';
   return 'green';
 }
 
-export const RHO_COLORS: Record<RhoBand, string> = { green: '#2e9e5b', amber: '#d99a1e', red: '#d64545' };
+export const RHO_COLORS: Record<RhoBand, string> = { green: '#2e9e5b', amber: '#d99a1e', red: '#d64545', unknown: '#7a7f87' };
 
 /**
- * Bottleneck: highest rho; ties broken by fastest-growing queue, then by
- * station order (earliest wins) so the choice is deterministic. Null when
- * there are no stations or every station is idle (rho 0, no queue).
+ * Bottleneck: highest rho over stations with a known rho; ties broken by the
+ * fastest-growing queue (queue_growth_per_h), then larger L, then flow order.
+ * Null when no station has rho > 0.
  */
-export function selectBottleneck(stations: readonly QueueStationStats[]): QueueStation | null {
-  let best: QueueStationStats | null = null;
-  for (const s of stations) {
-    if (s.rho <= 0 && s.queueLength <= 0) continue;
-    if (
-      !best ||
-      s.rho > best.rho ||
-      (s.rho === best.rho && s.queueGrowthPerHour > best.queueGrowthPerHour) ||
-      (s.rho === best.rho &&
-        s.queueGrowthPerHour === best.queueGrowthPerHour &&
-        QUEUE_STATIONS.indexOf(s.station) < QUEUE_STATIONS.indexOf(best.station))
-    ) {
-      best = s;
+export function selectBottleneck(stations: Partial<Record<QueueStation, QueueMetrics>>): QueueStation | null {
+  let best: QueueStation | null = null;
+  let bm: QueueMetrics | null = null;
+  for (const id of QUEUE_STATIONS) {
+    const m = stations[id];
+    if (!m || m.rho === null || m.rho <= 0) continue;
+    if (!bm || m.rho > bm.rho!) {
+      best = id;
+      bm = m;
+      continue;
+    }
+    if (m.rho !== bm.rho) continue;
+    const g = m.queue_growth_per_h ?? 0;
+    const bg = bm.queue_growth_per_h ?? 0;
+    if (g > bg || (g === bg && (m.L ?? 0) > (bm.L ?? 0))) {
+      best = id;
+      bm = m;
     }
   }
-  return best ? best.station : null;
+  return best;
 }

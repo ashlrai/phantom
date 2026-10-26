@@ -1,58 +1,75 @@
 /** Fixture payloads for `queue.stats.v1` (normal, overloaded, empty). */
-import type { QueueStation } from './schema.js';
+import type { QueueMetrics, QueueStation } from './schema.js';
 
-function st(station: QueueStation, lambda: number, mu: number, queueLength: number, queueGrowthPerHour = 0) {
-  const rho = mu > 0 ? Math.round((lambda / mu) * 100) / 100 : 0;
-  const waitSec = lambda > 0 ? Math.round((queueLength / lambda) * 3600) : 0;
-  return { station, lambda, mu, rho, queueLength, waitSec, wip: queueLength + Math.min(1, lambda), queueGrowthPerHour };
+function st(lambda: number, c: number, mu: number, L: number, queue_growth_per_h = 0): QueueMetrics {
+  const rho = Math.round((lambda / (c * mu)) * 100) / 100;
+  return {
+    status: 'ok',
+    lambda_per_h: lambda,
+    mu_per_h: mu,
+    c,
+    rho,
+    L,
+    W_h: lambda > 0 ? Math.round((L / lambda) * 100) / 100 : 0,
+    WIP: Math.ceil(L),
+    little_err_pct: 3,
+    queue_growth_per_h,
+  };
 }
+const NA: QueueMetrics = {
+  status: 'ok', lambda_per_h: 10, mu_per_h: 0.03, c: null, rho: null, L: 40, W_h: 4, WIP: 40, little_err_pct: 5, queue_growth_per_h: 0,
+};
 
 export const QUEUE_STATS_NORMAL = {
   schema: 'queue.stats.v1',
-  generatedAt: '2026-10-26T07:00:00.000Z',
-  windowSec: 3600,
-  stations: [
-    st('planned', 6, 12, 2),
-    st('ready', 6, 10, 3),
-    st('claimed', 5, 9, 2),
-    st('pr_ci', 5, 6, 4, 0.5),
-    st('merge_queue', 4, 8, 1),
-    st('merged', 4, 20, 0),
-    st('publish', 1, 4, 0),
-    st('released', 1, 10, 0),
-    st('fix_main', 0.5, 2, 0),
-  ],
+  generated_utc: '2026-10-26T07:00:00.000Z',
+  window_h: 1,
+  stations: {
+    router_queued: st(6, 1, 12, 1),
+    claimed: st(6, 1, 10, 2),
+    builder_run: st(5, 10, 1, 5),
+    publish: st(1, 1, 4, 0),
+    pr_open_rework: NA,
+    pr_ci: st(30, 4, 9.5, 4, 0.5),
+    review: st(4, 2, 5, 1),
+    merge_group: st(4, 5, 2, 1),
+    release: st(1, 1, 10, 0),
+    live: st(1, 1, 20, 0),
+    fix_main: st(0.5, 1, 2, 0),
+  } satisfies Record<QueueStation, QueueMetrics>,
   pools: [
-    { pool: 'codex-cmp', lambda: 3, mu: 5, rho: 0.6, queueLength: 2, waitSec: 2400, wip: 3, queueGrowthPerHour: 0 },
-    { pool: 'local', lambda: 2, mu: 4, rho: 0.5, queueLength: 1, waitSec: 1800, wip: 2, queueGrowthPerHour: 0 },
+    { pool: 'codex-cmp', ...st(3, 1, 5, 2) },
+    { pool: 'local', ...st(2, 1, 4, 1) },
   ],
-  little: { drift: false, ratio: 0.06 },
-} as const;
+  little: { drift: false, ratio: 0.05 },
+};
 
 export const QUEUE_STATS_OVERLOADED = {
   schema: 'queue.stats.v1',
-  generatedAt: '2026-10-26T07:00:00.000Z',
-  windowSec: 3600,
-  stations: [
-    st('planned', 14, 20, 3),
-    st('ready', 14, 15, 9, 2),
-    st('claimed', 12, 13, 6, 1),
-    st('pr_ci', 12, 10, 18, 6),
-    st('merge_queue', 10, 10, 11, 3),
-    st('merged', 8, 20, 0),
-    st('publish', 2, 3, 1),
-    st('released', 2, 10, 0),
-    st('fix_main', 3, 3, 4, 3),
-  ],
-  pools: [{ pool: 'codex-cmp', lambda: 9, mu: 8, rho: 1.13, queueLength: 12, waitSec: 4800, wip: 13, queueGrowthPerHour: 4 }],
+  generated_utc: '2026-10-26T07:00:00.000Z',
+  window_h: 1,
+  stations: {
+    router_queued: st(14, 1, 20, 3),
+    claimed: st(14, 1, 15, 9, 2),
+    builder_run: st(12, 10, 1.3, 6, 1),
+    publish: st(2, 1, 3, 1),
+    pr_open_rework: NA,
+    pr_ci: st(40, 4, 8, 18, 6),
+    review: st(10, 2, 5, 11, 3),
+    merge_group: st(8, 5, 2, 4, 1),
+    release: st(2, 1, 10, 0),
+    live: st(2, 1, 20, 0),
+    fix_main: st(3, 1, 3, 4, 3),
+  } satisfies Record<QueueStation, QueueMetrics>,
+  pools: [{ pool: 'codex-cmp', ...st(9, 1, 8, 12, 4) }],
   little: { drift: true, ratio: 0.31 },
-} as const;
+};
 
 export const QUEUE_STATS_EMPTY = {
   schema: 'queue.stats.v1',
-  generatedAt: '2026-10-26T07:00:00.000Z',
-  windowSec: 3600,
-  stations: [],
+  generated_utc: '2026-10-26T07:00:00.000Z',
+  window_h: 1,
+  stations: {},
   pools: [],
   little: { drift: false, ratio: 0 },
-} as const;
+};
