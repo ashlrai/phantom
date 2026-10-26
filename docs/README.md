@@ -4,6 +4,8 @@
 
 # Phantom documentation
 
+Mac queue supervisor: [Drive and host bridge integration](DRIVE.md).
+
 Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
 kernel includes the Universe experiment runtime and compatible command interfaces.
 The published canonical package is `@ashlr/phantom`; existing `@ashlr/hub` SDK

@@ -505,6 +505,12 @@ const loadDaemonCmd = lazyCmd(
   'daemon command requires src/cli/daemon.ts (M24 module not yet built).',
 );
 
+const loadDriveCmd = lazyCmd(
+  () => import('./drive.js'),
+  (m) => m.cmdDrive as Cmd,
+  'drive command requires src/cli/drive.ts.',
+);
+
 // ─── M25 command loaders ────────────────────────────────────────────
 
 const loadAskCmd = lazyCmd(
@@ -2174,6 +2180,11 @@ async function main(): Promise<void> {
       case 'daemon': {
         const cmdDaemon = await loadDaemonCmd();
         process.exitCode = await cmdDaemon(rest);
+        break;
+      }
+
+      case 'drive': {
+        process.exitCode = await (await loadDriveCmd())(rest);
         break;
       }
 
