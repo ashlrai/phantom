@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Read-only Phantom coding fleet: pool runway, current work, and pull requests.">
+  <title>Coding fleet · Phantom</title>
+  <link rel="stylesheet" href="/fleet/fleet.css">
+  <script src="/fleet/fleet.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to fleet</a>
+  <header class="masthead">
+    <a class="brand" href="/verse/m/" aria-label="Phantom mobile home"><span class="brand-mark" aria-hidden="true">◈</span> Phantom</a>
+    <span class="read-only">Read-only</span>
+  </header>
+  <main id="main">
+    <div class="page-heading"><div><h1>Coding fleet</h1><p>Capacity to reset. Work in motion.</p></div><a class="home-link" href="/verse/m/">Open remote</a></div>
+    <div id="connection" class="connection" role="status" aria-live="polite">Loading the shared fleet snapshot…</div>
+    <div id="auth" class="notice" hidden><h2>Sign in to continue</h2><p>Your remote session has expired. Sign in through Phantom remote, then return to the fleet.</p><a href="/verse/m/">Sign in to remote</a></div>
+    <section aria-labelledby="capacity-title" class="capacity-section">
+      <div class="section-heading"><h2 id="capacity-title">Pool runway</h2><span id="snapshot-time">Snapshot unknown</span></div>
+      <p class="section-note">Solid lines are recorded usage. Dotted lines show the ideal pace and projected landing. Missing evidence stays unknown.</p>
+      <div class="legend" aria-label="Chart legend"><span><i class="actual-key"></i>Recorded</span><span><i class="ideal-key"></i>Ideal pace</span><span><i class="projection-key"></i>Projected</span></div>
+      <div id="pools" class="pool-list"><p class="empty">Waiting for pool evidence.</p></div>
+    </section>
+    <section aria-labelledby="work-title"><div class="section-heading"><h2 id="work-title">Current work</h2><span>Claims expire automatically</span></div><div id="agents" class="work-list"><p class="empty">Current work unknown.</p></div></section>
+    <section aria-labelledby="repos-title"><div class="section-heading"><h2 id="repos-title">Pull requests</h2><span>Open and recently merged</span></div><div id="repos" class="repo-list"><p class="empty">Repository evidence unknown.</p></div></section>
+    <section aria-labelledby="router-title"><div class="section-heading"><h2 id="router-title">Router decisions</h2><span id="regret-summary">Regret unknown</span></div><div id="router" class="route-list"><p class="empty">Router evidence unknown.</p></div></section>
+    <section aria-labelledby="board-title"><div class="section-heading"><h2 id="board-title">Coordination board</h2><span>Host-only proposals</span></div><div id="board" class="board-list"><p class="empty">Coordination evidence unknown.</p></div></section>
+  </main>
+  <footer>Phantom remote <span aria-hidden="true">/</span> Refreshes every 30 seconds <span aria-hidden="true">/</span> Assignments propose work; they do not start agents.</footer>
+  <noscript><p class="notice">Enable JavaScript to read the fleet snapshot. No data is available without a snapshot refresh.</p></noscript>
+</body>
+</html>

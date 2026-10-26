@@ -29,6 +29,17 @@ The gateway is **off by default**. For full-time desktop and phone use, the inst
 
 To disable the phone gateway, rename or remove `~/.ashlr/verse-remote.json`, then quit and reopen Phantom. Confirm the gateway port has closed; the desktop Phantom window should still work. A sidecar crash restart also re-reads the file, so a removed config stays disabled. Keep the file private while it is renamed or stored as a backup. For a one-off CLI test instead of the desktop app, quit Phantom first and run `ashlr verse --remote-config /absolute/path/to/private-config.json`; stop that process before reopening Phantom, since both default to main port 7777.
 
+## Coding fleet dashboard
+
+After pairing at `/verse/m/`, open `/fleet/` on the same remote origin. It shows
+the host's `fleet.v1` snapshot through authenticated, read-only `GET /api/fleet`.
+Run `phm fleet status --json` on the host to refresh it. Set
+`PHANTOM_FLEET_PATH` in both processes to a shared private writable path when
+the default `/workspace/phantom-work/fleet.json` is unavailable. The phone never
+dispatches work or changes claims. See the
+[fleet schema and host coordination guide](https://github.com/ashlrai/phantom/blob/master/docs/router/fleet-v1.md)
+for manual readings, reset windows, TTLs and unknown-data rules.
+
 ## Mac availability and limits
 
 The Mac must be awake and online, and the installed Phantom app must remain running, for live reads and actions. Use AC power and verify the app restarts after login if that is part of the intended daily setup. A separate `ashlr verse` LaunchAgent on port 7777 conflicts with the desktop-owned server and must be disabled for this mode. Supervise `cloudflared` separately after Access is active; on this Mac it uses the `ai.ashlr.verse-cloudflared` user LaunchAgent. A `caffeinate -i -s` process can prevent idle system sleep on AC, but battery behavior and a closed lid still require a real acceptance check. The existing Phantom daemon's `keepAwake` setting does not supervise the desktop app or phone gateway.
