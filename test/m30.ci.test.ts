@@ -127,7 +127,7 @@ describe('M30 CI workflow', () => {
   it('publishes one fail-closed Merge Gate result for exactly the selected lane', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
-    const full = ['ci', 'ci-portability', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+    const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(['classify', 'site', 'docs', ...full]);
     expect(gate.if).toBe('${{ always() }}');
@@ -168,7 +168,7 @@ describe('M30 CI workflow', () => {
     expect(execute('full', linuxOnly)).toThrow();
     expect(execute('full', { ...linuxOnly, ci: 'skipped' }, 'success', 'false', 'true')).toThrow();
     for (const outcome of ['failure', 'cancelled']) {
-      expect(execute('full', { ...linuxOnly, 'ci-portability': outcome }, 'success', 'false', 'true')).toThrow();
+      expect(execute('full', { ...linuxOnly, ci: outcome }, 'success', 'false', 'true')).toThrow();
     }
     for (const name of full) {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
@@ -484,13 +484,13 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci-shared-macos', 'native-macos-broker-foundation']) {
       expect(jobs[id]!['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'ci-portability', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+    for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       // Draft PRs skip only the Mac lanes. A push to master runs the Linux and
       // Windows portability matrix only; the nightly schedule runs the rest.
-      // macOS and Windows legs also need platform code, ci:full or a nightly run.
-      const draft = ['ci', 'ci-portability', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
-      const push = ['ci', 'ci-portability'].includes(id) ? '' : " && github.event_name != 'push'";
+      // macOS and Windows service legs also need platform code, ci:full or a nightly run.
+      const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
+      const push = id === 'ci' ? '' : " && github.event_name != 'push'";
       const platform = id === 'ci' ? '' : " && needs.classify.outputs.platform == 'true'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${platform}${draft}${push}`);
     }
@@ -503,12 +503,8 @@ describe('M30 CI workflow', () => {
     expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '41 7 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
-    expect(ci.strategy!.matrix.include).toHaveLength(3);
-    expect(ci.strategy!.matrix.include!.every((row) => row.os === 'ubuntu-latest')).toBe(true);
-    const portability = jobs['ci-portability']!;
-    expect(portability.strategy!.matrix.include).toHaveLength(4);
-    expect(portability.strategy!.matrix.include!.every((row) => row.os === 'windows-latest')).toBe(true);
-    expect(portability.env).toEqual(ci.env);
+    expect(ci.strategy!.matrix.include).toHaveLength(7);
+    expect(ci.strategy!.matrix.include!.every((row) => row.os !== 'macos-latest')).toBe(true);
     expect(shared.strategy!.matrix.include).toHaveLength(1);
     expect(shared.strategy!.matrix.include![0]).toMatchObject({
       os: 'macos-latest', label: 'macos, shared queue authority',
