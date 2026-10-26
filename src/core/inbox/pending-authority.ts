@@ -1,15 +1,66 @@
-import type { AshlrConfig, Proposal, RunActionCounts, RunEventSummary } from '../types.js';
+import { createHash } from 'node:crypto';
+import type { ApprovalRequest, AshlrConfig, Proposal, RunActionCounts, RunEventSummary } from '../types.js';
 import { pendingProposalIsStaleForProductionVelocity } from '../fabric/production-velocity-pending.js';
 import {
   hashDiff,
   verifyPendingProposalAuthorityV1,
   verifyProvenance,
 } from '../foundry/provenance.js';
-import { canonicalizeProposalDiff } from '../util/scrub.js';
+import { canonicalizeProposalDiff, scrubSecrets } from '../util/scrub.js';
 import { canonicalFilesystemPathIdentity } from '../sandbox/policy.js';
 import { runEventSummary as boundedRunEventSummary } from '../learning/causal.js';
 
 type PendingAuthorityConfig = Pick<AshlrConfig, 'foundry'> | undefined;
+
+const APPROVAL_ACTIONS: Record<Proposal['kind'], string> = {
+  patch: 'Apply patch', pr: 'Open pull request', deploy: 'Deploy', note: 'Record note',
+  'desktop-action': 'Perform desktop action', 'browser-action': 'Perform browser task',
+};
+const MAX_APPROVAL_PREVIEW = 32_768;
+
+export function isApprovalRequestRevision(value: unknown): value is string {
+  return typeof value === 'string' && /^approval-v1:[a-f0-9]{16}(?:\.[a-f0-9]{16}){3}$/.test(value);
+}
+
+/** A review projection, never a replacement for signed autonomous authority. */
+export function approvalRequestForProposal(proposal: Proposal): ApprovalRequest | null {
+  try {
+    if (!Object.hasOwn(APPROVAL_ACTIONS, proposal.kind) ||
+      typeof proposal.title !== 'string' || typeof proposal.summary !== 'string' ||
+      (proposal.diff !== undefined && typeof proposal.diff !== 'string') ||
+      (proposal.repo !== null && typeof proposal.repo !== 'string')) return null;
+    const actionText = proposal.action === undefined ? undefined : canonicalComparable(proposal.action);
+    if (proposal.action !== undefined && actionText === undefined) return null;
+    // An action's complete instructions must fit the review; unlike a diff,
+    // there is no separate full-action viewer to resolve a clipped payload.
+    if (actionText !== undefined && actionText.length > MAX_APPROVAL_PREVIEW) return null;
+    const diff = canonicalizeProposalDiff(proposal.diff ?? '');
+    const details = actionText === undefined ? undefined : scrubSecrets(actionText);
+    // Bind the entire operation, not just the clipped display. Raw payloads
+    // are hashed locally and never copied into the card or audit trail.
+    const review = canonicalComparable({
+      id: proposal.id, createdAt: proposal.createdAt, kind: proposal.kind,
+      title: proposal.title, summary: proposal.summary, repo: proposal.repo,
+      sandboxId: proposal.sandboxId ?? null, action: proposal.action ?? null,
+      diff: proposal.diff ?? null, diffHash: proposal.diffHash ?? null,
+      isPartial: proposal.isPartial === true,
+    });
+    if (review === undefined) return null;
+    return {
+      schemaVersion: 1, proposalId: proposal.id,
+      // Segment the public content digest so the normal secret scrubber can
+      // stay unchanged: a bare 64-hex value is deliberately treated as a key.
+      revision: `approval-v1:${createHash('sha256').update(review).digest('hex').match(/.{16}/g)!.join('.')}`,
+      action: { kind: proposal.kind, description: APPROVAL_ACTIONS[proposal.kind],
+        ...(details === undefined ? {} : { details }) },
+      scope: { repo: proposal.repo === null ? null : scrubSecrets(proposal.repo),
+        ...(proposal.sandboxId ? { sandboxId: scrubSecrets(proposal.sandboxId) } : {}) },
+      diffPreview: { text: diff.slice(0, MAX_APPROVAL_PREVIEW), truncated: diff.length > MAX_APPROVAL_PREVIEW },
+    };
+  } catch {
+    return null;
+  }
+}
 
 export interface AuthoritativePendingProposalExpectation {
   id?: string;
