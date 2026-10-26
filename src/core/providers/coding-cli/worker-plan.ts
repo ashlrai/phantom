@@ -5,13 +5,15 @@
  * produce-only.
  */
 
+import { DevinClient, type DevinFetch } from '../../devin/client.js';
 import { roleAllowed, type DispatchRole } from '../../routing/backend-roles.js';
 import type { BillingClass } from '../../routing/billing-class.js';
 import { adapterById } from './adapters.js';
 import type { CodingCliCatalog } from './catalog.js';
-import { scrubAdapterEnv } from './env.js';
+import { accountEnv, bestAccount, failoverAccount, type CodingAccount } from './accounts.js';
+import { devinCredentials } from './devin-gate.js';
+import { cooldownActive, parseCliCooldown, type CliCooldown } from './limits.js';
 import { omlxBaseUrl } from './omlx.js';
-import { cooldownActive, type CliCooldown } from './limits.js';
 import type { CliResult, CliRunner } from './probe.js';
 
 export const ROUTE_LABELS = ['route:codex', 'route:claude', 'route:grok', 'route:any'] as const;
@@ -34,6 +36,8 @@ export interface WorkerPlanStep {
   billing: BillingClass | null;
   model: string | null;
   role: DispatchRole | null;
+  accountId: string | null;
+  poolId: string | null;
   worktree: string | null;
   pullRequest: 'draft' | null;
 }
@@ -54,6 +58,11 @@ export interface PlanInput {
   cooldowns?: readonly CliCooldown[];
   /** Accepted model names, keyed by backend. Unlisted names stay off the argv. */
   acceptedModels?: Readonly<Record<string, string>>;
+  /** Precomputed route:any picks. Absent keeps the reserved skip. */
+  anyChoices?: Readonly<Record<number, { backend: string; model: string | null; accountId?: string | null; poolId?: string | null }>>;
+  accounts?: readonly CodingAccount[];
+  /** Process env for Devin's key and org id. The key is not copied into a plan. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const ROUTE_BACKEND: Readonly<Record<Exclude<RouteLabel, 'route:any'>, string>> = {
@@ -79,6 +88,8 @@ function skip(issue: IssueJob, reason: string, route: RouteLabel | null = null):
     billing: null,
     model: null,
     role: null,
+    accountId: null,
+    poolId: null,
     worktree: null,
     pullRequest: null,
   };
@@ -102,18 +113,61 @@ export function planWorker(input: PlanInput): WorkerPlan {
       steps.push(skip(issue, 'more than one route label'));
       continue;
     }
+    let backend: string;
+    let model: string | null;
+    let accountId: string | null = null;
+    let poolId: string | null = null;
+    let routed = false;
     if (route === 'route:any') {
-      steps.push(skip(issue, 'route:any waits for the seat-router policy pass', route));
+      if (!input.anyChoices) {
+        steps.push(skip(issue, 'route:any waits for the seat-router policy pass', route));
+        continue;
+      }
+      const choice = input.anyChoices[issue.number];
+      if (!choice) {
+        steps.push(skip(issue, 'seat router found no spendable pool', route));
+        continue;
+      }
+      backend = choice.backend;
+      model = choice.model;
+      accountId = choice.accountId ?? null;
+      poolId = choice.poolId ?? null;
+      routed = true;
+    } else {
+      backend = ROUTE_BACKEND[route];
+      model = input.acceptedModels?.[backend] ?? null;
+    }
+    if (backend === 'cloud') {
+      if ((inFlight['cloud-credits'] ?? 0) >= 1) {
+        steps.push(skip(issue, 'cloud credit pool is at its daily soft cap', route));
+        continue;
+      }
+      inFlight['cloud-credits'] = (inFlight['cloud-credits'] ?? 0) + 1;
+      steps.push({
+        number: issue.number,
+        title: issue.title,
+        action: 'run',
+        reason: 'seat router, cloud credit pool. phm cloud remains the launcher',
+        route,
+        backend,
+        billing: null,
+        model: null,
+        role: 'produce',
+        accountId: null,
+        poolId: poolId ?? 'cloud-credits',
+        worktree: `${input.repo}/.phantom-worktrees/issue-${issue.number}`,
+        pullRequest: 'draft',
+      });
       continue;
     }
-    const backend = ROUTE_BACKEND[route];
     const record = input.catalog.backends[backend];
     const adapter = adapterById(input.catalog, backend);
     if (!record || !adapter) {
       steps.push(skip(issue, `no adapter for ${backend}`, route));
       continue;
     }
-    if (record.billing === 'metered' && !meteredEnabled) {
+    const devinOn = backend === 'devin' && devinCredentials(input.env ?? {}, input.catalog.backends['devin']?.orgId) !== null;
+    if (record.billing === 'metered' && !meteredEnabled && !devinOn) {
       steps.push(skip(issue, 'metered backend is disabled until explicitly enabled', route));
       continue;
     }
@@ -122,27 +176,39 @@ export function planWorker(input: PlanInput): WorkerPlan {
       continue;
     }
     const cap = input.catalog.concurrency[backend] ?? 1;
-    if ((inFlight[backend] ?? 0) >= cap) {
+    if (input.accounts && !accountId) {
+      const room = input.accounts.filter((account) => account.backend === backend && (inFlight[account.id] ?? 0) < cap);
+      const account = bestAccount(room, backend, input.nowMs);
+      if (!account) {
+        steps.push(skip(issue, 'no account has headroom', route));
+        continue;
+      }
+      accountId = account.id;
+    }
+    const slot = accountId ?? backend;
+    if ((inFlight[slot] ?? 0) >= cap) {
       steps.push(skip(issue, `concurrency cap ${cap} is full`, route));
       continue;
     }
-    const cooled = (input.cooldowns ?? []).find((row) => row.backend === backend) ?? null;
+    const cooled = (input.cooldowns ?? []).find((row) => row.backend === backend || row.backend === accountId) ?? null;
     if (cooldownActive(cooled, input.nowMs)) {
       steps.push(skip(issue, cooled?.reason ?? 'backend is in cooldown', route));
       continue;
     }
-    const model = input.acceptedModels?.[backend] ?? null;
-    inFlight[backend] = (inFlight[backend] ?? 0) + 1;
+    inFlight[slot] = (inFlight[slot] ?? 0) + 1;
+    const modelNote = model ? 'account-verified model' : 'CLI default model (no named model is account-verified)';
     steps.push({
       number: issue.number,
       title: issue.title,
       action: 'run',
-      reason: model ? 'pinned route, account-verified model' : 'pinned route, CLI default model (no named model is account-verified)',
+      reason: routed ? `seat router, ${modelNote}` : `pinned route, ${modelNote}`,
       route,
       backend,
       billing: record.billing,
       model,
       role: 'produce',
+      accountId,
+      poolId,
       worktree: `${input.repo}/.phantom-worktrees/issue-${issue.number}`,
       pullRequest: 'draft',
     });
@@ -182,6 +248,8 @@ export function formatPlan(plan: WorkerPlan): string {
     if (step.backend) lines.push(`  backend: ${step.backend}`);
     if (step.billing) lines.push(`  billing: ${step.billing}`);
     if (step.role) lines.push(`  role: ${step.role}`);
+    if (step.accountId) lines.push(`  account: ${step.accountId}`);
+    if (step.poolId) lines.push(`  pool: ${step.poolId}`);
     if (step.model) lines.push(`  model: ${step.model}`);
     if (step.worktree) lines.push(`  worktree: ${step.worktree}`);
     if (step.pullRequest) lines.push(`  pr: ${step.pullRequest}`);
@@ -207,6 +275,13 @@ function goalText(issue: IssueJob): string {
   return body ? `${issue.title}\n\n${body}` : issue.title;
 }
 
+export interface ExecuteOptions {
+  accounts?: readonly CodingAccount[];
+  nowMs?: number;
+  /** Injected transport. Absent means this call does not contact Devin. */
+  devinFetch?: DevinFetch;
+}
+
 /**
  * The Devin key is this process environment variable and nothing else.
  * Catalog `secretName` and `SecretLookup.get` are not consulted.
@@ -219,8 +294,9 @@ export function devinApiKeyFromProcess(): string | null {
 }
 
 /**
- * Run one planned step. Draft PR only. The runner sees a scrubbed environment.
- * Devin records only whether process.env.DEVIN_API_KEY is non-empty.
+ * Run one planned step. Draft PR only. The runner sees a scrubbed environment
+ * with the selected account home. Devin reads process.env.DEVIN_API_KEY and
+ * posts one session. The key is not a command or a detail string.
  */
 export async function executeStep(
   step: WorkerPlanStep,
@@ -229,7 +305,9 @@ export async function executeStep(
   runner: CliRunner,
   sourceEnv: NodeJS.ProcessEnv,
   secrets: SecretLookup,
+  options: ExecuteOptions = {},
 ): Promise<ExecuteResult> {
+  void secrets;
   const commands: string[] = [];
   const fail = (detail: string): ExecuteResult => ({ number: step.number, ok: false, detail, commands });
   if (step.action !== 'run' || !step.backend || !step.worktree || step.role !== 'produce') {
@@ -241,32 +319,66 @@ export async function executeStep(
   if (step.pullRequest !== 'draft') return fail('worker opens draft PRs only');
   const adapter = adapterById(catalog, step.backend);
   if (!adapter) return fail('adapter missing');
-  if (step.backend === 'devin') {
-    void secrets;
-    const present = devinApiKeyFromProcess() !== null;
-    return fail(present ? 'Devin dispatch is stubbed. A key is present and was not logged.' : 'Devin dispatch is stubbed. No key is configured.');
-  }
-  if (step.backend === 'omlx') {
-    if (!omlxBaseUrl(catalog.backends['omlx'])) return fail('omlx accepts a loopback base URL only');
-    return fail('omlx execution is stubbed on this worker');
+  if (step.backend === 'devin') return runDevin(step, issue, catalog, sourceEnv, options, commands, fail);
+  if (step.backend === 'omlx' || step.backend === 'ollama') {
+    if (step.backend === 'omlx' && !omlxBaseUrl(catalog.backends['omlx'])) return fail('omlx accepts a loopback base URL only');
+    return fail(`${step.backend} execution is stubbed on this worker`);
   }
   if (step.backend === 'cursor' || step.backend === 'ollama' || !adapter.bin || adapter.execArgs('', '', null).length === 0) {
     return fail(`${step.backend} execution is stubbed on this worker`);
   }
-  const env = scrubAdapterEnv(sourceEnv);
+  const accounts = options.accounts ?? [];
+  let account = accounts.find((row) => row.id === step.accountId) ?? null;
+  let env = accountEnv(sourceEnv, account);
   const branch = `phantom/issue-${step.number}`;
   const worktreeArgs = ['worktree', 'add', '-b', branch, step.worktree, 'HEAD'];
   commands.push(`git ${worktreeArgs.join(' ')}`);
   const worktree: CliResult = await runner.run('git', worktreeArgs, env);
   if (worktree.code !== 0) return fail('git worktree add failed');
   const execArgs = adapter.execArgs(goalText(issue), step.worktree, step.model);
-  commands.push(`${adapter.bin} ${execArgs.map((arg) => (arg.includes(' ') ? '<goal>' : arg)).join(' ')}`);
-  const run = await runner.run(adapter.bin, execArgs, env);
-  if (run.code !== 0) return fail('adapter exec failed');
+  const render = (bin: string, args: readonly string[]): string => `${bin} ${args.map((arg) => (arg.includes(' ') ? '<goal>' : arg)).join(' ')}`;
+  commands.push(render(adapter.bin, execArgs));
+  let run = await runner.run(adapter.bin, execArgs, env);
+  if (run.code !== 0) {
+    const nowMs = options.nowMs ?? Date.now();
+    const limited = parseCliCooldown(step.backend, `${run.stdout}\n${run.stderr}`, nowMs);
+    const next = limited && account ? failoverAccount(accounts, step.backend, account.id, nowMs) : null;
+    if (!next) return fail('adapter exec failed');
+    account = next;
+    env = accountEnv(sourceEnv, account);
+    commands.push(render(adapter.bin, execArgs));
+    run = await runner.run(adapter.bin, execArgs, env);
+    if (run.code !== 0) return fail('adapter exec failed');
+  }
   const prArgs = ['pr', 'create', '--draft', '--title', issue.title, '--body', issue.body || issue.title];
   commands.push(`gh ${prArgs.join(' ')}`);
   if (prArgs.includes('merge') || !prArgs.includes('--draft')) return fail('PR command was not draft-only');
   const pr = await runner.run('gh', prArgs, env);
   if (pr.code !== 0) return fail('draft PR create failed');
   return { number: step.number, ok: true, detail: 'draft PR requested', commands };
+}
+
+async function runDevin(
+  step: WorkerPlanStep,
+  issue: IssueJob,
+  catalog: CodingCliCatalog,
+  sourceEnv: NodeJS.ProcessEnv,
+  options: ExecuteOptions,
+  commands: string[],
+  fail: (detail: string) => ExecuteResult,
+): Promise<ExecuteResult> {
+  const creds = devinCredentials(sourceEnv, catalog.backends['devin']?.orgId);
+  if (!creds) return fail('Devin adapter is disabled until DEVIN_API_KEY and an org id are both present.');
+  if (!options.devinFetch) return fail(`Devin is enabled for ${creds.orgId}. Pass a transport to create the session.`);
+  commands.push(`POST /v3/organizations/${creds.orgId}/sessions`);
+  try {
+    const client = new DevinClient({ apiKey: creds.apiKey, fetch: options.devinFetch, retries: 0, sleep: async () => undefined });
+    const session = await client.createSession(creds.orgId, { prompt: goalText(issue), title: issue.title });
+    const detail = `Devin session ${session.sessionId}`;
+    if (detail.includes(creds.apiKey)) return fail('Devin session was created, and the detail was withheld.');
+    return { number: step.number, ok: true, detail, commands };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Devin session create failed';
+    return fail(message.includes(creds.apiKey) ? 'Devin session create failed' : message);
+  }
 }
