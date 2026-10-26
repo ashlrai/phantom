@@ -12,7 +12,7 @@ describe('work intent navigation', () => {
   });
 
   it('does not imply an intent or permission change for shared tools', () => {
-    for (const section of ['apps', 'usage', 'wiki', 'playbooks', 'automations', 'settings'] as const) {
+    for (const section of ['apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops', 'settings'] as const) {
       expect(workModeForSection(section)).toBeNull();
     }
   });
