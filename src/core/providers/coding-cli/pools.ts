@@ -127,7 +127,8 @@ export function seedCodingPools(input: PoolSeedInput): { pools: SpendPool[]; fig
       id,
       billing,
       balance: null,
-      expiresAt: account.resetsAt,
+      // A quota window reset refills an account; it does not expire its funds.
+      expiresAt: null,
       usedToday: used[id] ?? 0,
       softCapPerDay: UNKNOWN_BALANCE_SOFT_CAP_PER_DAY,
       tier: SUBSCRIPTION_TIER[account.backend] ?? 'workhorse',

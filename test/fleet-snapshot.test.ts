@@ -1,15 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
 import { embeddedSchedulerConfig } from '../src/core/providers/coding-cli/scheduler/defaults.js';
 import { join } from 'node:path';
 import { buildCodingFleetSnapshot, codingFleetPath, FLEET_POOL_IDS, formatCodingFleetSnapshot, readCodingFleetSnapshot, writeCodingFleetSnapshot, } from '../src/core/fleet/coding-snapshot.js';
 import { appendSpendDecision, parseSpendDecision, type SpendDecision } from '../src/core/providers/coding-cli/ledger.js';
 import { claimFleetWork } from '../src/core/fleet/coordination.js';
 const readRace = vi.hoisted(() => ({
-  foreignParent: null as string | null,
-  beforeOpen: null as null | ((path: unknown) => void)
+  foreignParent: null as string | null
 }));
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -19,10 +17,6 @@ vi.mock('node:fs', async () => {
       const stat = actual.lstatSync(...args);
       if (args[0] === readRace.foreignParent && typeof stat.uid === 'number') stat.uid += 1;
       return stat;
-    },
-    openSync: (...args: Parameters<typeof actual.openSync>) => {
-      readRace.beforeOpen?.(args[0]);
-      return actual.openSync(...args);
     },
   };
 });
@@ -71,7 +65,6 @@ function spend(overrides: Partial<SpendDecision> = {}): SpendDecision {
   };
 }
 afterEach(() => {
-  readRace.beforeOpen = null;
   readRace.foreignParent = null;
   vi.unstubAllEnvs();
   for (const dir of dirs.splice(0))
@@ -536,23 +529,6 @@ describe('fleet.v1 coding snapshot', () => {
     expect(readCodingFleetSnapshot(opts.path, {
       nowMs: NOW + 2000
     })).toBeNull();
-  });
-  it('rejects a FIFO substituted between lstat and open without blocking', async () => {
-    const opts = setup();
-    const snapshot = await buildCodingFleetSnapshot(opts);
-    writeCodingFleetSnapshot(snapshot, opts.path);
-    let substituted = false;
-    readRace.beforeOpen = (path) => {
-      if (path !== opts.path || substituted)
-        return;
-      substituted = true;
-      rmSync(opts.path);
-      execFileSync('/usr/bin/mkfifo', [opts.path]);
-    };
-    expect(readCodingFleetSnapshot(opts.path, {
-      nowMs: NOW
-    })).toBeNull();
-    expect(substituted).toBe(true);
   });
   it('preserves signed router decision values and rejects non-finite values', async () => {
     const opts = setup();

@@ -197,8 +197,8 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
 | `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
-| `phm fleet status [--json]` | Collect coding-pool evidence and atomically refresh the shared local `fleet.v1` snapshot; [fleet guide](https://github.com/ashlrai/phantom/blob/master/docs/router/fleet-v1.md) |
-| `phm fleet status --legacy\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only operational snapshot, direction report, engine readiness and quality metrics |
+| `phm fleet status --coding [--json]` | Collect coding-pool evidence and atomically refresh the shared local `fleet.v1` snapshot; [fleet guide](https://github.com/ashlrai/phantom/blob/master/docs/router/fleet-v1.md) |
+| `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only operational snapshot, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |

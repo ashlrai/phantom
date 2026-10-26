@@ -1,6 +1,6 @@
 /** Fleet telemetry contains measurements only. Task, repo and person text never leaves the host. */
 import type { CodingFleetSnapshot } from './coding-snapshot.js';
-import { createPosthogSink, type SchedulerEvent } from '../providers/coding-cli/scheduler/telemetry.js';
+import { createPosthogSink, posthogCaptureUrl, type SchedulerEvent } from '../providers/coding-cli/scheduler/telemetry.js';
 import type { SchedulerConfig } from '../providers/coding-cli/scheduler/defaults.js';
 
 export function fleetTelemetryEvents(snapshot: CodingFleetSnapshot): SchedulerEvent[] {
@@ -35,10 +35,7 @@ export function emitFleetTelemetry(snapshot: CodingFleetSnapshot, config: Schedu
   let target = sink;
   if (!target) {
     if (!config.host || !config.apiKey) return 0;
-    try {
-      const url = new URL(config.host);
-      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') return 0;
-    } catch { return 0; }
+    if (posthogCaptureUrl(config.host) === null) return 0;
     target = createPosthogSink({ host: config.host, apiKey: config.apiKey });
   }
   const events = fleetTelemetryEvents(snapshot);

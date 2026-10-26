@@ -517,6 +517,31 @@ describe('decision log, telemetry, and drain', () => {
     expect(result.assignments[0]?.poolId).toBe('codex-primary');
     expect(result.decisions[0]?.grantsMergeAuthority).toBe(false);
   });
+
+  it.each([
+    'http://us.i.posthog.com', 'not a URL', 'https://user:password@us.i.posthog.com',
+    'https://us.i.posthog.com/path', 'https://us.i.posthog.com/?query=1',
+    'https://us.i.posthog.com/#fragment', 'file:///capture/',
+  ])('never transmits telemetry credentials to an unsafe origin: %s', host => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    createPosthogSink({ host, apiKey: 'test-capture-key', fetchImpl })({
+      event: 'phantom_pool_burndown', timestamp: new Date(NOW).toISOString(),
+      distinctId: 'test', properties: {},
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('forbids redirects from an approved telemetry origin and handles transport failure', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error('redirect refused'));
+    createPosthogSink({ host: 'https://us.i.posthog.com/', apiKey: 'test-capture-key', fetchImpl })({
+      event: 'phantom_pool_burndown', timestamp: new Date(NOW).toISOString(),
+      distinctId: 'test', properties: {},
+    });
+    await Promise.resolve();
+    expect(fetchImpl).toHaveBeenCalledWith('https://us.i.posthog.com/capture/', expect.objectContaining({
+      method: 'POST', redirect: 'error',
+    }));
+  });
 });
 
 describe('phm router regret', () => {

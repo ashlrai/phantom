@@ -173,6 +173,79 @@ describe('accounts and route:any', () => {
     expect(second.steps[0]?.poolId).toBe('codex:codex-primary');
     expect(second.steps[0]?.role).toBe('produce');
   });
+
+  it('spreads assignments across equal-headroom accounts with known balances', async () => {
+    const plan = await planLabelledWork({
+      catalog,
+      issues: [1, 2].map((number) => ({ number, title: 'Refactor the parser', body: '', labels: ['route:any'] })),
+      repo: '/work/phantom',
+      nowMs: NOW,
+      usedToday: { 'cloud-credits': UNKNOWN_BALANCE_SOFT_CAP_PER_DAY },
+      balances: {
+        'codex:codex-primary': { balance: 10 },
+        'codex:codex-secondary': { balance: 10 },
+      },
+      readings: {
+        'codex-primary': { usedPercent: 20, resetsAt: '2026-10-30T00:00:00.000Z' },
+        'codex-secondary': { usedPercent: 20, resetsAt: '2026-10-30T00:00:00.000Z' },
+      },
+      env: { CODEX_HOME_ALT: '/tmp/codex-alt' },
+      classify: async () => jobShapeHeuristic('Refactor the parser'),
+    });
+    expect(plan.steps.map((step) => ({ action: step.action, accountId: step.accountId, poolId: step.poolId }))).toEqual([
+      { action: 'run', accountId: 'codex-primary', poolId: 'codex:codex-primary' },
+      { action: 'run', accountId: 'codex-secondary', poolId: 'codex:codex-secondary' },
+    ]);
+  });
+
+  it('counts existing account load when selecting a route:any pool', async () => {
+    const inFlight = { 'codex-primary': 1 };
+    const plan = await planLabelledWork({
+      catalog,
+      issues: [{ number: 1, title: 'Refactor the parser', body: '', labels: ['route:any'] }],
+      repo: '/work/phantom',
+      nowMs: NOW,
+      inFlight,
+      usedToday: { 'cloud-credits': UNKNOWN_BALANCE_SOFT_CAP_PER_DAY },
+      balances: {
+        'codex:codex-primary': { balance: 10 },
+        'codex:codex-secondary': { balance: 10 },
+      },
+      readings: {
+        'codex-primary': { usedPercent: 20, resetsAt: '2026-10-30T00:00:00.000Z' },
+        'codex-secondary': { usedPercent: 20, resetsAt: '2026-10-30T00:00:00.000Z' },
+      },
+      env: { CODEX_HOME_ALT: '/tmp/codex-alt' },
+      classify: async () => jobShapeHeuristic('Refactor the parser'),
+    });
+    expect(plan.steps[0]).toMatchObject({ action: 'run', accountId: 'codex-secondary', poolId: 'codex:codex-secondary' });
+    expect(inFlight).toEqual({ 'codex-primary': 1 });
+  });
+
+  it('keeps a subscription spendable after its quota reset without bypassing real expiry or cooldown', () => {
+    const accounts = resolveAccounts(catalog, {}, {
+      'codex-primary': { usedPercent: 20, resetsAt: '2026-10-26T01:00:00.000Z' },
+    }).filter((account) => account.backend === 'codex');
+    const input = {
+      catalog,
+      accounts,
+      nowMs: NOW,
+      shape: jobShapeHeuristic('Refactor the parser'),
+      usedToday: { 'cloud-credits': UNKNOWN_BALANCE_SOFT_CAP_PER_DAY },
+    };
+    const seeded = seedCodingPools(input);
+    expect(seeded.pools.find((row) => row.id === 'codex:codex-primary')?.expiresAt).toBeNull();
+    expect(seeded.figures.find((row) => row.id === 'codex:codex-primary')?.expiresAt).toBeNull();
+    expect(chooseCodingSeat(input)).toMatchObject({ accountId: 'codex-primary', poolId: 'codex:codex-primary' });
+    expect(chooseCodingSeat({
+      ...input,
+      balances: { 'codex:codex-primary': { expiresAt: '2026-10-26T01:00:00.000Z' } },
+    })).toBeNull();
+    expect(chooseCodingSeat({
+      ...input,
+      accounts: accounts.map((account) => ({ ...account, cooledUntilMs: NOW + 60_000 })),
+    })).toBeNull();
+  });
 });
 
 describe('job shape and escalation', () => {

@@ -1,12 +1,14 @@
 # Coding fleet and phone dashboard
 
-Run `phm fleet status --json` on the host to collect a `fleet.v1` snapshot and
+Run `phm fleet status --coding --json` on the host to collect a `fleet.v1` snapshot and
 write the same JSON atomically to `/workspace/phantom-work/fleet.json`. Set
 `PHANTOM_FLEET_PATH` in both the host CLI and remote gateway environment to use
 a different private, writable path. Files are owner-only (`0600`); the parent
-directory must be private. A failed write exits nonzero. `phm fleet status`
-prints the human report; `--legacy` retains the previous operational status
-report without refreshing the coding snapshot.
+directory must be private. A failed write exits nonzero. `phm fleet status --coding`
+prints the human report. Without `--coding`, `phm fleet status [--json]`
+retains the read-only operational status and activation-readiness report.
+`--legacy` is an explicit alias for that default; it cannot be combined with
+`--coding`.
 
 ## Manual readings and reset windows
 

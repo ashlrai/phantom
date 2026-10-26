@@ -113,6 +113,15 @@ export function emitSchedule(telemetry: SchedulerTelemetry, result: ScheduleResu
   return events;
 }
 
+/** Return a capture endpoint only for an HTTPS origin without embedded credentials. */
+export function posthogCaptureUrl(host: string): string | null {
+  try {
+    const url = new URL(host);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') return null;
+    return new URL('/capture/', url).href;
+  } catch { return null; }
+}
+
 /**
  * PostHog capture. Host must be an https PostHog origin. The API key is sent
  * as the capture body field and is not copied into properties.
@@ -122,10 +131,13 @@ export function createPosthogSink(options: {
   apiKey: string;
   fetchImpl?: typeof fetch;
 }): (event: SchedulerEvent) => void {
-  const host = options.host.replace(/\/$/, '');
+  const endpoint = posthogCaptureUrl(options.host);
+  if (endpoint === null) return () => undefined;
   const fetchImpl = options.fetchImpl ?? fetch;
   return (event) => {
-    void fetchImpl(`${host}/capture/`, {
+    void fetchImpl(endpoint, {
+      // A configured origin cannot redirect the capture body (and key) elsewhere.
+      redirect: 'error',
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

@@ -9,6 +9,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { EMBEDDED_CATALOG } from './catalog-defaults.js';
+
 import { isBillingClass, type BillingClass } from '../../routing/billing-class.js';
 
 export const ACCOUNT_STATUSES = ['unverified', 'listed', 'rejected', 'accepted'] as const;
@@ -204,8 +206,17 @@ export function parseCatalog(text: string): CodingCliCatalog {
   };
 }
 
-export function loadCatalog(path = DEFAULT_CATALOG): CodingCliCatalog {
-  return parseCatalog(readFileSync(path, 'utf8'));
+export function loadCatalog(path?: string): CodingCliCatalog {
+  try {
+    return parseCatalog(readFileSync(path ?? DEFAULT_CATALOG, 'utf8'));
+  } catch (error) {
+    // npm ships dist, not the operator's config directory. Only a missing
+    // default uses the compiled inventory; explicit paths and bad files fail.
+    if (path === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return parseCatalog(JSON.stringify(EMBEDDED_CATALOG));
+    }
+    throw error;
+  }
 }
 
 /** Named flags require `accepted`. Everything else stays off the argv. */

@@ -2,9 +2,9 @@
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
  * Subcommands:
- *   fleet status [--json]
+ *   fleet status --coding [--json]
  *       Collect coding-pool evidence and atomically publish fleet.v1 locally.
- *   fleet status --legacy [--json]
+ *   fleet status [--json] (or --legacy)
  *       Print the READ-ONLY operational snapshot: daemon liveness +
  *       today's spend, per-backend recent dispatches + quota, queue size,
  *       proposal counts (pending / frontier-pending / applied), recent
@@ -2307,7 +2307,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
-  status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
+  status:         { allowed: { flags: ['--json', '--legacy', '--coding'] }, usage: 'ashlr fleet status [--json] [--legacy | --coding]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2361,7 +2361,13 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   switch (sub) {
     case 'status':
-      return rest.includes('--legacy') ? cmdFleetLegacyStatus(rest.includes('--json')) : cmdFleetStatus(rest.includes('--json'));
+      if (rest.includes('--legacy') && rest.includes('--coding')) {
+        process.stderr.write('error: fleet status: --legacy and --coding are mutually exclusive\n');
+        return 2;
+      }
+      // Preserve the established activation-readiness JSON contract. Snapshot
+      // publication is explicit because it also writes local fleet evidence.
+      return rest.includes('--coding') ? cmdFleetStatus(rest.includes('--json')) : cmdFleetLegacyStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
     case 'direction':
@@ -2407,7 +2413,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
-  console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# refresh fleet.v1 and its shared snapshot; --legacy reads the prior report')}`);
+  console.log(`    ashlr fleet status [--json] [--legacy | --coding] ${cyan('# read operational status; --coding refreshes fleet.v1')}`);
   console.log('    ashlr fleet claim|release|handoff|board|post|inbox|assign --help');
   console.log(`                          ${cyan('# host-only claims and messages; assign proposes and never spawns')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);

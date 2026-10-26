@@ -80,7 +80,7 @@ function seatFor(pool: SpendPool, account: CodingAccount | null, nowMs: number, 
     windows: [{
       id: engine === 'codex' ? 'codex_codex_secondary' : engine === 'grok' ? 'grok_unified_weekly' : 'seven_day',
       usedPercent: used,
-      resetsAt: pool.expiresAt,
+      resetsAt: account?.resetsAt ?? pool.expiresAt,
       resetDescription: null,
       limitReached: false,
     }],
@@ -187,6 +187,12 @@ export async function planLabelledWork(input: PlanInput & {
     };
   }
   const running = { ...(input.inFlight ?? {}) };
+  // The worker enforces caps by account id; the seat router ranks by pool id.
+  // Keep both views without counting the same observation twice.
+  for (const account of accounts) {
+    const poolId = `${account.backend}:${account.id}`;
+    running[poolId] = Math.max(running[poolId] ?? 0, running[account.id] ?? 0);
+  }
   const usedToday: Record<string, number> = { ...(input.usedToday ?? {}) };
   const classify = input.classify ?? classifyJob;
   for (const issue of input.issues) {
@@ -207,8 +213,7 @@ export async function planLabelledWork(input: PlanInput & {
     if (!choice) continue;
     anyChoices[issue.number] = { backend: choice.backend, model: choice.model, accountId: choice.accountId, poolId: choice.poolId };
     usedToday[choice.poolId] = (usedToday[choice.poolId] ?? 0) + 1;
-    const slot = choice.accountId ?? choice.backend;
-    running[slot] = (running[slot] ?? 0) + 1;
+    running[choice.poolId] = (running[choice.poolId] ?? 0) + 1;
   }
   return planWorker({ ...input, anyChoices, accounts });
 }

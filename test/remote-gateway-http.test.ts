@@ -9,6 +9,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createRemoteAccessVerifier } from '../src/core/web/remote-access.js';
 import { createRemoteDeviceStore, type RemoteDevice } from '../src/core/web/remote-device-store.js';
 import { startRemoteReadGateway } from '../src/core/web/remote-gateway.js';
+import { registerFleetIntegrationTests } from './helpers/fleet-integration.js';
 
 const ORIGIN = 'https://phone.example.com';
 const SUBJECT = '7335d417-61da-459d-899c-0a01c76a2f94';
@@ -254,3 +255,6 @@ describe('dormant remote read gateway HTTP boundary', () => {
     } finally { await f.gateway.close(); }
   });
 });
+
+// This existing serialized real-I/O suite owns fleet process and FIFO coverage.
+registerFleetIntegrationTests();
