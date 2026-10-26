@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  builtDistModules,
   isMarkdownReadingTest,
   requiresBuiltDist,
   selectDocsMarkdownTests,
@@ -20,6 +21,10 @@ describe('docs lane Markdown test selection', () => {
     const helper = 'require-built-' + 'dist.js';
     expect(requiresBuiltDist(`import './helpers/${helper}';`)).toBe(true);
     expect(requiresBuiltDist(`import { x } from './helpers/${helper}';`)).toBe(true);
+    expect(requiresBuiltDist(`await import('./helpers/${helper}');`)).toBe(true);
+    expect(requiresBuiltDist(`import { y } from './helpers/other.js';`)).toBe(false);
+    const viaHelper = `import { y } from './helpers/${'built-release-' + 'inventory'}.js';`;
+    expect(requiresBuiltDist(viaHelper, builtDistModules(repoRoot))).toBe(true);
     const { selected, excluded } = selectDocsMarkdownTests(repoRoot);
     // Intended drift guard: a new dist-backed Markdown reader must be added here.
     expect(excluded).toEqual([
