@@ -10,7 +10,7 @@ its work are distinct steps.
 The primary CLI is `phm`; `ashlr` remains compatible. Current source uses
 `@ashlr/phantom` in `ashlrai/phantom`. Find the current qualified release at
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
-This source tree targets version 3.29.13; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.29.15; check canonical release availability and exact matching assets before installation.
 The verified 3.25.3 compatibility release remains `@ashlr/hub`.
 Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 [the product naming guide](PHANTOM-BRAND.md).
@@ -109,6 +109,10 @@ workbench, but keep their own billing and limits. In **Resources**, check both
 chat and fleet readiness. Signed out, missing usage, exhausted quota, reserved
 capacity or missing authority can hold work; connection alone is not readiness.
 See [Automatic work](AUTOMATIC-OUTCOMES.md) for resource boundaries and recovery.
+
+To give Claude Code, Codex or Cursor the tools of Phantom Secrets, Locus and
+Ashlr MD through one MCP connection, see
+[One connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
 
 ### Make your first useful turn
 

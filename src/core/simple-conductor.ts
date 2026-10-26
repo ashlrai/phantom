@@ -19,6 +19,9 @@
  *  - All merge safety (judge/gate/completeness/verification) is UNCHANGED —
  *    runAutoMergePass handles it; nothing is bypassed here.
  *  - Every claimed engine call consumes an attempt and cycle slot, including throws.
+ *  - Resource-aware dispatch (M300) picks the engine BEFORE the claim; when
+ *    every candidate is exhausted/unreachable the task is deferred unclaimed
+ *    (no attempt, no sandbox) and reported in result.deferred.
  *  - never-throws per task (catch -> durable failure settlement -> continue).
  *  - Flag off (cfg.foundry.simpleConductor !== true) ⇒ this module is never
  *    imported; loop.ts uses the old runConductor (byte-identical).
@@ -33,9 +36,15 @@
  */
 
 import type { AshlrConfig, EngineId, Proposal } from './types.js';
+import type {
+  BackendAvailability,
+  BackendResourceState,
+  ResourceSnapshot,
+} from './fabric/resource-monitor.js';
 import type { SandboxedEngineResult } from './run/sandboxed-engine.js';
 import type { AuthoritativePendingProposalExpectation } from './inbox/pending-authority.js';
 import { isSafeExecutionIdentity } from './fleet/attempt-identity.js';
+import { buildTaskBrief } from './teams/context.js';
 import {
   LocusMintError,
   LocusSessionConfigError,
@@ -66,6 +75,28 @@ export interface SimpleConductorResult {
   killSwitchTripped: boolean;
   activationRefused?: boolean;
   taskStoreUnavailable?: boolean;
+  /**
+   * M300: tasks left queued this tick because no candidate engine (the task's
+   * engine plus engineFallbackOrder) had usable capacity. A deferred task is
+   * not claimed: attempts, lease and retryAfter are unchanged, and it is not
+   * counted in tasksAttempted or errors. Absent when nothing was deferred.
+   */
+  deferred?: SimpleConductorDeferral[];
+}
+
+/** M300: one task the resource-aware dispatcher declined to run this tick. */
+export interface SimpleConductorDeferral {
+  taskId: string;
+  /** The engine the task asked for (before any fallback). */
+  engine: EngineId;
+  /** Human-readable reason naming each candidate engine and its availability. */
+  reason: string;
+  /**
+   * ISO time of the earliest known reset among the candidate engines, when the
+   * resource snapshot carries one. A candidate with no known reset may reopen
+   * sooner, so this is a hint for scheduling the next tick, not a promise.
+   */
+  earliestResetAt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +168,107 @@ function retryAfterForFailure(attempts: number, alwaysCool = false): string | un
   if (!alwaysCool && attempts < FAILURE_COOLDOWN_AFTER_ATTEMPTS) return undefined;
   const exponent = Math.max(0, Math.min(8, attempts - FAILURE_COOLDOWN_AFTER_ATTEMPTS));
   return new Date(Date.now() + CAPTURE_RECONCILIATION_DELAY_MS * 2 ** exponent).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// M300: resource-aware engine planning
+// ---------------------------------------------------------------------------
+
+/** M300: outcome of planEngineDispatch. */
+export type EnginePlan =
+  | { kind: 'dispatch'; engine: EngineId; note?: string }
+  | { kind: 'defer'; reason: string; earliestResetAt?: string };
+
+/**
+ * Hard-unavailable states: a dispatch would fail (rate limit or dead local
+ * runtime), burning an attempt and a sandbox. Per BackendAvailability,
+ * 'exhausted' is >= 100% of cap or a recent 429, and 'unreachable' is a failed
+ * health check.
+ */
+const HARD_UNAVAILABLE = new Set<BackendAvailability>(['exhausted', 'unreachable']);
+/**
+ * Soft-unavailable: 'throttled' means the backend still accepts work but is
+ * deliberately held back at protectPct to keep headroom. Any open backend is
+ * preferred; when none exists a throttled one is still used, because the call
+ * succeeds and stalling the whole queue at protectPct would be worse.
+ */
+const SOFT_UNAVAILABLE = new Set<BackendAvailability>(['throttled']);
+
+/**
+ * M300: choose the engine for one task from a resource snapshot. Pure; never
+ * throws.
+ *  1. The requested engine when it is not exhausted, throttled or unreachable
+ *     (open, near, unknown, or absent from the snapshot: fail open).
+ *  2. The first fallback in that same usable state.
+ *  3. The requested engine, then the first fallback, that is only throttled.
+ *  4. Otherwise defer: every candidate is exhausted or unreachable. The plan
+ *     carries the earliest known future reset among the candidates.
+ */
+export function planEngineDispatch(
+  requestedEngine: EngineId,
+  fallbackOrder: readonly string[],
+  snapshot: Pick<ResourceSnapshot, 'backends'>,
+  nowMs = Date.now(),
+): EnginePlan {
+  const stateOf = (engine: string): BackendResourceState | undefined =>
+    snapshot.backends.find((b) => b.backend === engine);
+  const availabilityOf = (engine: string): BackendAvailability =>
+    stateOf(engine)?.availability ?? 'unknown';
+  const usable = (engine: string): boolean => {
+    const avail = availabilityOf(engine);
+    return !HARD_UNAVAILABLE.has(avail) && !SOFT_UNAVAILABLE.has(avail);
+  };
+
+  if (usable(requestedEngine)) return { kind: 'dispatch', engine: requestedEngine };
+
+  const candidates: string[] = [requestedEngine];
+  for (const candidate of fallbackOrder) {
+    if (!candidates.includes(candidate)) candidates.push(candidate);
+  }
+  const requestedAvail = availabilityOf(requestedEngine);
+
+  for (const candidate of candidates.slice(1)) {
+    if (usable(candidate)) {
+      return {
+        kind: 'dispatch',
+        engine: candidate as EngineId,
+        note: `${requestedEngine} ${requestedAvail}; ${candidate} ${availabilityOf(candidate)}`,
+      };
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (SOFT_UNAVAILABLE.has(availabilityOf(candidate))) {
+      return {
+        kind: 'dispatch',
+        engine: candidate as EngineId,
+        note: candidate === requestedEngine
+          ? `${requestedEngine} throttled; no open fallback`
+          : `${requestedEngine} ${requestedAvail}; no open fallback; ${candidate} throttled`,
+      };
+    }
+  }
+
+  let earliestMs: number | null = null;
+  for (const candidate of candidates) {
+    const state = stateOf(candidate);
+    if (!state) continue;
+    const known = [
+      state.backoffUntilMs,
+      typeof state.resetsAt === 'number' ? state.resetsAt * 1000 : null,
+    ].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (known.length === 0) continue;
+    const reopensMs = Math.max(...known);
+    if (reopensMs <= nowMs) continue;
+    if (earliestMs === null || reopensMs < earliestMs) earliestMs = reopensMs;
+  }
+
+  return {
+    kind: 'defer',
+    reason: 'resource-pause: no candidate engine has capacity (' +
+      candidates.map((c) => `${c} ${availabilityOf(c)}`).join(', ') + ')',
+    ...(earliestMs !== null ? { earliestResetAt: new Date(earliestMs).toISOString() } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,40 +349,21 @@ export async function runSimpleConductor(
   /**
    * M300: Resolve effective engine, rerouting away from unavailable backends.
    * Flag-gated: cfg.foundry.resourceAwareDispatch !== false (default ON).
-   * Never throws.
+   * Never throws. See planEngineDispatch for the tiering rules.
    */
-  function resolveEffectiveEngine(requestedEngine: EngineId): EngineId {
+  function resolveEffectiveEngine(requestedEngine: EngineId): EnginePlan {
     try {
       const resourceAware = (cfg.foundry as Record<string, unknown> | undefined)?.['resourceAwareDispatch'] !== false;
-      if (!resourceAware || !resourceSnap) return requestedEngine;
-
-      const getAvailability = (engine: string): string => {
-        const state = resourceSnap!.backends.find((b) => b.backend === engine);
-        return state?.availability ?? 'unknown';
-      };
-
-      const unavailable = new Set(['exhausted', 'throttled', 'unreachable']);
-      const avail = getAvailability(requestedEngine);
-      if (!unavailable.has(avail)) return requestedEngine;
-
-      // Primary engine is exhausted — try fallback order.
+      if (!resourceAware || !resourceSnap) return { kind: 'dispatch', engine: requestedEngine };
       const fallbackOrder = ((cfg.foundry as Record<string, unknown> | undefined)?.['engineFallbackOrder'] as string[] | undefined)
         ?? ['codex', 'kimi', 'nim', 'local-coder'];
-
-      for (const candidate of fallbackOrder) {
-        if (candidate === requestedEngine) continue;
-        const candidateAvail = getAvailability(candidate);
-        if (!unavailable.has(candidateAvail)) {
-          console.log(`[simple-conductor] reroute: ${requestedEngine} ${avail} → ${candidate} (availability: ${candidateAvail})`);
-          return candidate as EngineId;
-        }
+      const plan = planEngineDispatch(requestedEngine, fallbackOrder, resourceSnap);
+      if (plan.kind === 'dispatch' && plan.note) {
+        console.log(`[simple-conductor] reroute: ${requestedEngine} → ${plan.engine} (${plan.note})`);
       }
-
-      // All fallbacks exhausted — use original engine as last resort (degrades, never freezes).
-      console.log(`[simple-conductor] reroute: all fallbacks exhausted, using original engine ${requestedEngine}`);
-      return requestedEngine;
+      return plan;
     } catch {
-      return requestedEngine;
+      return { kind: 'dispatch', engine: requestedEngine };
     }
   }
 
@@ -340,6 +453,25 @@ export async function runSimpleConductor(
       }
     }
 
+    // M300: decide the engine before any claim. When every candidate engine is
+    // hard-unavailable (exhausted/unreachable), defer: the task stays queued
+    // with its attempts, lease and retry window untouched, and no sandbox runs.
+    const requestedEngine = (task.engine ?? 'claude') as EngineId;
+    const enginePlan = resolveEffectiveEngine(requestedEngine);
+    if (enginePlan.kind === 'defer') {
+      (result.deferred ??= []).push({
+        taskId: task.id,
+        engine: requestedEngine,
+        reason: enginePlan.reason,
+        ...(enginePlan.earliestResetAt ? { earliestResetAt: enginePlan.earliestResetAt } : {}),
+      });
+      console.log(
+        `[simple-conductor] ${opts.dryRun ? 'dry-run: would defer' : 'defer'} task ${task.id}: ${enginePlan.reason}` +
+        (enginePlan.earliestResetAt ? ` (earliest known reset ${enginePlan.earliestResetAt})` : ''),
+      );
+      continue;
+    }
+
     if (opts.dryRun) {
       // Dry-run: record intent only — no dispatch, no write.
       result.tasksAttempted++;
@@ -379,8 +511,8 @@ export async function runSimpleConductor(
     // Default (unset binding + LOCUS_ENFORCE off) is a no-op pass-through.
     // LocusSessionConfigError / LocusMintError → result.errors (never throw).
     try {
-      // M300: resolve effective engine — reroutes away from exhausted backends.
-      const engineId: EngineId = resolveEffectiveEngine((task.engine ?? 'claude') as EngineId);
+      // M300: engine resolved before the claim (reroutes away from exhausted backends).
+      const engineId: EngineId = enginePlan.engine;
       // M298: append a standing full-suite directive so the agent cannot finish
       // without running the complete test suite + typecheck and confirming zero
       // NEW failures. This closed a regression window where the agent ran only
@@ -390,7 +522,7 @@ export async function runSimpleConductor(
         'AND typecheck (`npx tsc --noEmit`). Confirm there are ZERO new failures ' +
         '(pre-existing failures that were already failing before your change are exempt). ' +
         'Do NOT mark the task complete or file a proposal until both commands pass cleanly.';
-      const instruction = task.instruction + fullSuiteDirective;
+      const instruction = task.instruction + buildTaskBrief({ repo: task.repo, title: task.instruction, cfg }) + fullSuiteDirective;
 
       // M300: route to the correct runner — cli-agents (claude/codex) via runEngineSandboxed,
       // api-models (nim/kimi/local-coder) via runApiModelSandboxed.
@@ -498,4 +630,153 @@ export async function runSimpleConductor(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Watch mode (reset-aware idle)
+// ---------------------------------------------------------------------------
+
+/** Default `--watch` cadence; matches the daemon's default tick interval. */
+export const SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS = 5 * 60_000;
+/**
+ * Longest a reset-aware idle may park. Bounded so new tasks and config changes
+ * are still picked up while every engine waits for its window to reopen.
+ */
+export const SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS = 15 * 60_000;
+/** How often a parked watch loop re-reads the kill switch. */
+const WATCH_KILL_SWITCH_POLL_MS = 250;
+
+/** The watch cadence: cfg.daemon.intervalMs when it is a positive finite number. */
+export function resolveSimpleConductorIntervalMs(cfg: AshlrConfig): number {
+  const configured = cfg.daemon?.intervalMs;
+  return typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+    ? configured
+    : SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS;
+}
+
+/**
+ * How long a watch loop waits before its next tick. Pure; never throws.
+ *
+ * When the tick dispatched nothing, some tasks were deferred for lack of engine
+ * capacity and the earliest known reset among them is in the future, the loop
+ * waits for that reset instead of ticking again on its interval. The wait is
+ * never shorter than `intervalMs` and never longer than
+ * SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS (unless the interval itself is longer).
+ * Every other outcome waits exactly `intervalMs`.
+ */
+export function simpleConductorNextWaitMs(
+  result: Pick<SimpleConductorResult, 'tasksAttempted' | 'deferred'>,
+  intervalMs: number,
+  nowMs: number,
+): number {
+  const interval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : SIMPLE_CONDUCTOR_DEFAULT_INTERVAL_MS;
+  if (result.tasksAttempted > 0 || !result.deferred?.length) return interval;
+  let earliestMs: number | null = null;
+  for (const deferral of result.deferred) {
+    if (!deferral.earliestResetAt) continue;
+    const resetMs = Date.parse(deferral.earliestResetAt);
+    if (!Number.isFinite(resetMs)) continue;
+    if (earliestMs === null || resetMs < earliestMs) earliestMs = resetMs;
+  }
+  if (earliestMs === null || earliestMs <= nowMs) return interval;
+  return Math.max(interval, Math.min(earliestMs - nowMs, SIMPLE_CONDUCTOR_MAX_RESET_WAIT_MS));
+}
+
+/** Options for runSimpleConductorWatch. The fields after onTick are test seams. */
+export interface SimpleConductorWatchOptions {
+  dryRun: boolean;
+  allowCloud: boolean;
+  /** Aborting stops the loop: an in-flight tick finishes, a park ends at once. */
+  signal?: AbortSignal;
+  /** Called after every tick; `nextWaitMs` is null when the loop is stopping. */
+  onTick?: (result: SimpleConductorResult, nextWaitMs: number | null) => void;
+  runTick?: (
+    cfg: AshlrConfig,
+    opts: { once: boolean; dryRun: boolean; allowCloud: boolean },
+  ) => Promise<SimpleConductorResult>;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<boolean>;
+  now?: () => number;
+  killSwitchOn?: () => boolean;
+  /** Install SIGINT/SIGTERM handlers that stop the loop (default true). */
+  handleSignals?: boolean;
+}
+
+/** Abortable sleep: resolves true when the time elapsed, false when aborted. */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolveSleep) => {
+    if (signal.aborted) {
+      resolveSleep(false);
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolveSleep(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolveSleep(true);
+    }, Math.max(0, ms));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * `ashlr loop --watch` for the simple conductor: tick, park, tick again until
+ * the kill switch, SIGINT/SIGTERM or the abort signal stops it, or a tick is
+ * refused (activation refused or kill switch on). The park between ticks is
+ * reset-aware (see simpleConductorNextWaitMs) and interruptible: the kill
+ * switch is polled while parked and any stop request ends the park at once.
+ * Returns the last tick's result. It adds no dispatch path of its own; every
+ * tick is a plain runSimpleConductor call with all of its gates.
+ */
+export async function runSimpleConductorWatch(
+  cfg: AshlrConfig,
+  opts: SimpleConductorWatchOptions,
+): Promise<SimpleConductorResult> {
+  const runTick = opts.runTick ?? runSimpleConductor;
+  const sleep = opts.sleep ?? abortableSleep;
+  const now = opts.now ?? Date.now;
+  const killSwitch = opts.killSwitchOn ?? (await import('./sandbox/policy.js')).killSwitchOn;
+  const intervalMs = resolveSimpleConductorIntervalMs(cfg);
+  const tickOpts = { once: false, dryRun: opts.dryRun, allowCloud: opts.allowCloud };
+
+  const stop = new AbortController();
+  const requestStop = (): void => {
+    if (!stop.signal.aborted) stop.abort();
+  };
+  if (opts.signal?.aborted) requestStop();
+  opts.signal?.addEventListener('abort', requestStop, { once: true });
+  const handleSignals = opts.handleSignals !== false;
+  if (handleSignals) {
+    // once: a second Ctrl-C falls through to the default handler and exits.
+    process.once('SIGINT', requestStop);
+    process.once('SIGTERM', requestStop);
+  }
+  const killPoll = setInterval(() => {
+    try {
+      if (killSwitch()) requestStop();
+    } catch {
+      // the next tick re-checks the kill switch itself
+    }
+  }, WATCH_KILL_SWITCH_POLL_MS);
+  (killPoll as { unref?: () => void }).unref?.();
+
+  try {
+    let last = await runTick(cfg, tickOpts);
+    while (!last.activationRefused && !last.killSwitchTripped && !stop.signal.aborted) {
+      const waitMs = simpleConductorNextWaitMs(last, intervalMs, now());
+      opts.onTick?.(last, waitMs);
+      if (!(await sleep(waitMs, stop.signal))) return last;
+      last = await runTick(cfg, tickOpts);
+    }
+    opts.onTick?.(last, null);
+    return last;
+  } finally {
+    clearInterval(killPoll);
+    opts.signal?.removeEventListener('abort', requestStop);
+    if (handleSignals) {
+      process.removeListener('SIGINT', requestStop);
+      process.removeListener('SIGTERM', requestStop);
+    }
+  }
 }

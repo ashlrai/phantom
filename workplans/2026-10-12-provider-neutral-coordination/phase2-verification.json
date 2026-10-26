@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "kind": "local-verification-summary",
+  "observedAt": "2026-10-12T20:58:49.771471+00:00",
+  "worktree": "/Users/masonwyatt/Documents/Codex/2026-10-12/task/phantom-coordination",
+  "branch": "codex/provider-neutral-companions-20261012",
+  "baseRevision": "ea5f9ac2e6f66b8cece71b91fd9f663c513599f7",
+  "sourceParentRevision": "18ed964d9910edb134121fa25a1f5f12e4db36a3",
+  "sourceUncommittedAtVerification": true,
+  "sourceFileHashes": {
+    ".github/CODEOWNERS": "3a4b913541542e5a4b5a8af79401a3786377d413218045cde34818c957c1076d",
+    "docs/PROACTIVE-COORDINATION-BACKLOG.md": "4bfda286be9a0f8813f5ba28f68f9fd602d768d4fb4d9b3daa3406c9cac889fb",
+    "docs/PROACTIVE-COORDINATION.md": "c42dd7eda1efac139f2aeeb174fd1c60c7b8c958cbb42bed196953ecbb2f5942",
+    "docs/VERSE.md": "a09eaca9cee99db3b62f35203476e1bc838514262f07194e0b926a42e9d83a45",
+    "package.json": "226139c154db43361c47b7a2ab69e8a4364cc2131d95659e0a5e8439868def3c",
+    "src/core/daemon/runtime-release-dependency-inventory.ts": "9c0c93bb666031f49980f2f5051f40af48709cedc9bb6abfbacc150d99f90d6a",
+    "src/core/proactive/coordination-store.ts": "dbc7e4a7cba07cd4660a66fe578edd146fc0c7ce9a373c11e13bdd52b1188a67",
+    "src/core/proactive/coordination-wire.ts": "bfd4532b91f8f47201d998893f30183de4628f5f0e3a9213967788e0323e1af4",
+    "src/core/proactive/coordination.ts": "859b164d75dc85b85baff5d8cf758e0dfdcc617f0f2a5c15588a77865fb92bf0",
+    "src/core/proactive/release-readiness-types.ts": "3b61fda839d4842cb83c152c1f2df56acf8fa8b1e69153211ea69110bca8be07",
+    "src/core/proactive/release-readiness.ts": "5b0887406bb57e6a8090c59748c042673d7cca2fd5a7618a0173507f1c14c22e",
+    "src/core/proactive/replay-watermark.ts": "1ee6c34b7ee35243d2f113ab1c3c3a57dfe1f70f923702ffa7848bf62d0aab6d",
+    "src/core/proactive/resource-evidence-types.ts": "74e6382e60054d39862f50d341230b04a4b8daef296b5593f144af308b449229",
+    "src/core/proactive/resource-evidence.ts": "1b74abce1f5de64f9f4bad96da2447283e04f133f86f009259af087e206d09df",
+    "src/core/proactive/routing-lab-store.ts": "3879e7cae691059ba514aa018f7bf54d0cf3fcf9d386b14ceef347f2cd9e92b0",
+    "src/core/proactive/routing-lab-types.ts": "695493ccaa82bd000cb768081a5454dac4678b6cd3d7a916561b3c35c834105c",
+    "src/core/proactive/routing-lab.ts": "52d0a30f43f30e7fd7e2936cb2025134b0404596422afae9217122ab00214ff5",
+    "src/core/verse/proactive-agents-api.ts": "2b34dfc632eb9a5a8ec6f0a4491d6dc7514d7e78e17aab50befa93ddd6f0ba07",
+    "src/core/verse/proactive-planning-api.ts": "2c0b9b13b2499139a3db3956d7b3553da4d79b6821b442460ae80a7d05adbf1c",
+    "src/web-ui/routes/verse/proactive/PlanningLab.module.css": "0f3a38c0c6eb36686e812f316d107c8d4e02016763a2f1dfc86cfc8afbb3e9df",
+    "src/web-ui/routes/verse/proactive/PlanningLab.test.tsx": "83247fa272381560f088bf890afd9868453c03f4b11714134351f18dd9e2e0df",
+    "src/web-ui/routes/verse/proactive/PlanningLab.tsx": "6d3bb34a59c14bfacd7b827c7f2702ed96b00fa479ffce75d80c43b342cfd2eb",
+    "src/web-ui/routes/verse/proactive/ProactiveAgents.tsx": "7bea101aa721a40121de744b3a0e582698470050283576f3a68369ffa0dc5b62",
+    "src/web-ui/routes/verse/proactive/planning-queries.ts": "c73f58b10607a2cc3a7e099baf614a1bb07f35751837ae7e190a504d232f17a6",
+    "test/config/realio-lane-membership.mjs": "29e2e50217784df10fc00c3ee8268198e51ee7c7b822c97ebe2e7b4b3e87ba23",
+    "test/proactive-coordination.test.ts": "8a275c42b4eef14bdd0575346b245741add5d9f588b399f5a7acb6a8a67f5179",
+    "test/proactive-planning-api.test.ts": "e34a20c88a4271d2f58a76791c2b1f848081181dbe011ccec66d235bc957f05b",
+    "test/proactive-release-readiness.test.ts": "71181fe2c02c38138dd463301d71a3b861f6c30da500b6dd4d68376c2c94ee35",
+    "test/proactive-replay-watermark.test.ts": "3de448d76f9e15322a3bcdf3a442b797a9111d13745b2f9e173413f9715d21f0",
+    "test/proactive-resource-evidence.test.ts": "c029d8a049b9f42cd2687836d40d6e47252cc67f99645a8f2449dd0ab97030a5",
+    "test/proactive-routing-lab.test.ts": "ac0915b94e70ad96bb81523185199cf47b97d66397c0598656e92e5c403dc315"
+  },
+  "tests": {
+    "targetedUnit": {
+      "files": 6,
+      "passed": 122
+    },
+    "targetedRealIo": {
+      "files": 6,
+      "passed": 85
+    },
+    "targetedWeb": {
+      "files": 3,
+      "passed": 92
+    },
+    "targetedTotalPassed": 299,
+    "releaseSourceContracts": {
+      "files": 14,
+      "passed": 221,
+      "skipped": 1
+    },
+    "releasePackagingContracts": {
+      "files": 8,
+      "passed": 380
+    },
+    "peerReview": {
+      "focusedPassed": 57,
+      "adversarialAssertionsPassed": 12,
+      "noRemainingScopedFinding": true
+    }
+  },
+  "checks": {
+    "fullBuild": "passed",
+    "coreTypes": "passed via full build",
+    "webTypes": "passed",
+    "scopedEslint": "passed;25 changed source/test files",
+    "documentation": "passed;zero external requests",
+    "realIoMembership": "passed;481 real-io files;existing soft warnings",
+    "verseSyncIo": "passed",
+    "whitespace": "passed",
+    "independentDurabilityReview": "passed; ledger/staging/watermark loss, replay and unsent cancellation"
+  },
+  "firstPaint": {
+    "chatKb": 353.9,
+    "chatBudgetKb": 354,
+    "mobileKb": 249.4,
+    "mobileBudgetKb": 250
+  },
+  "buildIdentity": {
+    "schemaVersion": 1,
+    "packageVersion": "3.29.13",
+    "revision": "18ed964d9910edb134121fa25a1f5f12e4db36a3",
+    "dirty": true,
+    "provenance": "git"
+  },
+  "releaseDependencyInventorySha256": "f6850f76c3122ffad0bd3e90395e154aa3963e00f96d7ef9d88a0b1b57f0dd68",
+  "boundaries": {
+    "providerContact": false,
+    "liveAccountReads": false,
+    "paidCalls": false,
+    "liveServiceChanges": false,
+    "installedAppChanges": false,
+    "publishing": false,
+    "pushes": false,
+    "merging": false,
+    "deployment": false,
+    "executionAuthorized": false,
+    "releaseAuthorized": false
+  },
+  "durability": {
+    "independentWatermarkBeforeLedger": true,
+    "validPrefixLossHeld": true,
+    "orphanReservationsHeld": true,
+    "reconcileReplayBeforeHost": true,
+    "cancelBeforeIntentPreservesNotContacted": true,
+    "wholeCustodyDeletionByOsOwnerProtected": false
+  },
+  "notes": [
+    "The source file hashes identify the checked content; this summary is not a signed release attestation.",
+    "The packaging security fixture passed outside the sandbox; the sandbox strips its synthetic setuid bit. No test/gate was weakened.",
+    "Default resource API projects saved declarations only; qualified public snapshot cache wiring remains absent.",
+    "Purchase/grant receipts, product/account scope, exclusions and balances are separate; all funding examples are synthetic.",
+    "Offline fixtures do not use TypeSafe or prove model latency, efficiency or quality.",
+    "Release owner will integrate both reviewed commits into one final 3.29.14 head with concurrent execution/UI/Devin repairs; no separate push or publication.",
+    "Personal-agent transport, client ownership, scoped sharing, real results/cancellation, live accounting and target commissioning remain unqualified.",
+    "Evero is the user-confirmed Phantom website organization; CMP connector access does not authorize its unrelated projects."
+  ]
+}

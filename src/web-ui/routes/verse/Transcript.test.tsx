@@ -700,3 +700,25 @@ describe('actual manager messages', () => {
     expect(managerReplyText(block + block)).toBe(block + block);
   });
 });
+
+describe('Transcript — following the bottom', () => {
+  it("jumps to the newest turn with behavior 'instant', never the stylesheet's smooth scroll", () => {
+    // `.transcript` is `scroll-behavior: smooth`: an animated jump on open swept
+    // a long chat from the top and rendered every turn it passed.
+    const calls: ScrollToOptions[] = [];
+    const scrollTo = vi.fn(function (this: Element, options?: ScrollToOptions | number) {
+      if (typeof options === 'object') calls.push(options);
+    });
+    Object.defineProperty(Element.prototype, 'scrollTo', { value: scrollTo, configurable: true, writable: true });
+    try {
+      render(<Transcript transcript={buildTranscript([
+        ev(1, 'user-message', { turnId: 't1', text: 'hello' }),
+        ev(2, 'assistant-message', { turnId: 't1', text: 'hi' }),
+      ])} loaded loadError={null} />);
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.every((c) => c.behavior === 'instant')).toBe(true);
+    } finally {
+      delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
+    }
+  });
+});

@@ -16,6 +16,7 @@ import { evictAll } from '../../../data/cache.js';
 // Verified shapes from docs/VERSE-TELEMETRY-V2.md: Claude's three windows with
 // its per-model week binding at 100%, two Codex accounts (one of them at a
 // fully used week with a spendable balance), and Grok signed out.
+// Synthetic unexpired layout controls; original60s expiry is tested separately.
 const ACCOUNTS = {
   sampledAt: '2026-09-20T10:00:00.000Z',
   refreshing: false,
@@ -28,6 +29,7 @@ const ACCOUNTS = {
       authentication: 'signed-in',
       planType: 'max',
       observedAt: '2026-09-20T10:00:00.000Z',
+      expiresAt: '2033-01-01T00:00:00.000Z',
       windows: [
         { id: 'five_hour', usedPercent: 47, resetsAt: null, nativeReport: { source: 'claude-usage', resetDescription: 'resets Sep 20 at 2:30am (America/New_York)' } },
         { id: 'seven_day', usedPercent: 58, resetsAt: null, nativeReport: { source: 'claude-usage', resetDescription: 'resets Sep 25 at 7pm (America/New_York)' } },
@@ -41,6 +43,8 @@ const ACCOUNTS = {
       state: 'observed',
       authentication: 'signed-in',
       planType: 'pro',
+      observedAt: '2026-09-20T10:00:00.000Z',
+      expiresAt: '2033-01-01T00:00:00.000Z',
       windows: [{ id: 'codex', usedPercent: 100, resetsAt: '2026-09-25T23:06:56.000Z' }],
       credits: { hasCredits: true, unlimited: false, balance: '2048.4196250000', spendControlReached: false },
     },
@@ -51,6 +55,8 @@ const ACCOUNTS = {
       state: 'observed',
       authentication: 'signed-in',
       planType: 'plus',
+      observedAt: '2026-09-20T10:00:00.000Z',
+      expiresAt: '2033-01-01T00:00:00.000Z',
       windows: [{ id: 'codex', usedPercent: 31, resetsAt: '2026-09-25T23:06:56.000Z' }],
       credits: { hasCredits: false, unlimited: false, balance: '0' },
     },
@@ -206,6 +212,9 @@ function card(name: string): HTMLElement {
   return screen.getByLabelText(`${name} usage`);
 }
 
+beforeEach(() => vi.spyOn(Date,'now').mockReturnValue(Date.parse('2026-09-20T12:00:00.000Z')));
+afterEach(() => vi.restoreAllMocks());
+
 describe('UsageSection — accounts', () => {
   beforeEach(() => {
     evictAll();
@@ -236,7 +245,7 @@ describe('UsageSection — accounts', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('does NOT read a fully used Codex week with credits as blocked', async () => {
+  it('shows available Codex credits after weekly exhaustion without implying dispatch authorization', async () => {
     render(<UsageSection />);
     await waitFor(() => expect(card('Personal Codex')).toBeInTheDocument());
 
@@ -246,7 +255,8 @@ describe('UsageSection — accounts', () => {
     expect(within(codex).getByText('2,000')).toBeInTheDocument();
     expect(within(codex).getByText('pro plan')).toBeInTheDocument();
     expect(within(codex).getByText(/provider reports credits available/)).toBeInTheDocument();
-    expect(within(codex).getByText(/automatic credit spending is not enabled/)).toBeInTheDocument();
+    expect(within(codex).getByText(/automatic dispatch requires separate spending authorization/)).toBeInTheDocument();
+    expect(within(codex).queryByText(/automatic credit spending is not enabled/)).not.toBeInTheDocument();
   });
 
   it('renders Grok as an actionable signed-out state, not a zero meter', async () => {

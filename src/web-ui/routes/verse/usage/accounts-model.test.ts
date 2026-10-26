@@ -10,6 +10,7 @@ import type { Account, AccountWindow, LocalModelsSnapshot } from './usage-contra
 import { sanitizeCommand } from './usage-contract.js';
 import {
   accountVerdict,
+  accountCreditDetail,
   bindingWindow,
   buildAccountCard,
   buildAccountCards,
@@ -39,7 +40,8 @@ function account(over: Partial<Account> & { id: string; provider: Account['provi
     authentication: 'signed-in',
     health: null,
     planType: null,
-    observedAt: null,
+    observedAt: '2020-01-01T00:00:00.000Z',
+    expiresAt: '2033-01-01T00:00:00.000Z',
     windows: [],
     binding: null,
     credits: null,
@@ -196,6 +198,17 @@ describe('toWindowView — the sentinel 100 is a flag, not a measurement', () =>
     const view = toWindowView(source, Date.parse('2026-10-09T12:00:00.000Z'));
     expect(view).toMatchObject({ id: source.id, label: 'Shared consumer · weekly', usedPct: source.usedPercent, resetsAt: source.resetsAt });
     expect(source).toEqual(before);
+  });
+});
+
+describe('credit detail preserves billing uncertainty', () => {
+  it('does not attest disabled credit billing from an unreached spending limit', () => {
+    const credits = { hasCredits: true, unlimited: false, balance: '123.45', balanceValue: 123.45, spendControlReached: false };
+    expect(accountCreditDetail(credits, false)).toBe('The provider reports credits available. Separate from subscription usage; automatic dispatch requires separate spending authorization.');
+    expect(accountCreditDetail(credits, false)).not.toMatch(/spending is not enabled|credits disabled|subscription.only/i);
+    expect(accountCreditDetail(credits, true)).toContain('current access and spendability are unconfirmed');
+    expect(accountCreditDetail({ ...credits, spendControlReached: null }, false)).toContain('control is unconfirmed');
+    expect(accountCreditDetail({ ...credits, spendControlReached: true }, false)).toContain('spending held');
   });
 });
 

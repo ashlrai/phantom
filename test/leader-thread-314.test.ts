@@ -164,6 +164,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   setLeaderThreadDepsForTest(null);
   home.teardown();
 });
@@ -324,7 +325,14 @@ describe('replies', () => {
     expect(r!.text).not.toContain('sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789');
   });
 
-  function seedCalls(calls: number, now = new Date()): void {
+  /** Seed today's model-call count. Freezes Date at the real current instant
+   * first (afterEach restores it) so the seeded local day is the day the
+   * leader re-derives when it counts the next call, even across midnight.
+   * Timers stay real. */
+  function seedCalls(calls: number): void {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
+    const now = new Date();
     const index = { v: 1, updatedAt: new Date().toISOString(), delivery: {}, memosPosted: [], modelCalls: {} as Record<string, number> };
     index.modelCalls[`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`] = calls;
     postLeaderMessage({ channel: 'system', kind: 'update', text: 'seed' });

@@ -52,6 +52,12 @@ export function anchorTurnKey(turns: readonly TurnBlock[], anchorId: string): st
 
 export interface TurnWindow {
   enabled: boolean;
+  /**
+   * Bumped whenever `isFull` or `heightOf` may answer differently for the
+   * same turn count (a turn came near, left, was pinned or unpinned), so a
+   * memoized list of turns knows to re-ask.
+   */
+  version: number;
   /** Whether a turn renders in full. */
   isFull(key: string, index: number, running: boolean): boolean;
   /** The height a placeholder holds for this turn. */
@@ -64,7 +70,7 @@ export interface TurnWindow {
 
 export function useTurnWindow(scroller: RefObject<HTMLElement | null>, turnCount: number): TurnWindow {
   const enabled = turnCount >= WINDOW_MIN_TURNS && typeof IntersectionObserver === 'function';
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   const near = useRef(new Set<string>());
   const pinned = useRef(new Set<string>());
   /** Pinned turns the operator has actually had in view — only those unpin when they leave. */
@@ -126,6 +132,7 @@ export function useTurnWindow(scroller: RefObject<HTMLElement | null>, turnCount
 
   return {
     enabled,
+    version,
     isFull: (key, index, running) => !enabled || running || index >= turnCount - WINDOW_TAIL
       || near.current.has(key) || pinned.current.has(key),
     heightOf: (key) => heights.current.get(key) ?? PLACEHOLDER_ESTIMATE_PX,

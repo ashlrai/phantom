@@ -15,6 +15,8 @@ import {
   OPUS_55_REASON,
   UNKNOWN_WINDOW_SEAT,
   UNREAD_SEAT,
+  capacity,
+  seatWindow,
 } from './seat-fixtures.test-support.js';
 import { decodeSeatChoice, defaultSeatChoice, encodeSeatChoice, SeatSelector, seatBlockedNote, seatOptionTitle } from './SeatSelector.js';
 import { healthReport } from './health/health.test-support.js';
@@ -72,7 +74,7 @@ describe('SeatSelector', () => {
     // "capacity at the point of choice" block below for why.
     const opus = screen.getByRole('option', { name: /^Claude Max — Opus 5\b/ }) as HTMLOptionElement;
     expect(opus).not.toBeDisabled();
-    expect(opus.textContent).toContain('usable · 12% of 5h window used');
+    expect(opus.textContent).not.toContain('usable · 12% of 5h window used'); // Legacy native windows have no expiry witness.
     expect(select.value).toBe(encodeSeatChoice({ seatId: 'claude-main', model: 'claude-opus-5' }));
   });
 
@@ -103,10 +105,12 @@ describe('SeatSelector', () => {
  * choice, and the exhaustion surfaced only when the turn failed.
  */
 describe('SeatSelector — capacity at the point of choice', () => {
-  const seatWith = (windows: Array<{ id: string; usedPercent: number | null; resetsAt: string | null }>) => ({
-    ...CLAUDE_SEAT,
-    health: { ...CLAUDE_SEAT.health, state: 'unknown' as const, summary: null, windows },
-  });
+  const seatWith = (windows: Array<{ id: string; usedPercent: number | null; resetsAt: string | null }>) => {
+    const source = windows.map(w => seatWindow({...w, limitReached: w.usedPercent === 100, measured: w.usedPercent !== 100}));
+    const binding = source.reduce<(typeof source)[number] | null>((top,w) => top === null || (w.usedPercent ?? 0) > (top.usedPercent ?? 0) ? w : top,null);
+    return {...CLAUDE_SEAT, health:{...CLAUDE_SEAT.health,state:'unknown' as const,summary:null,windows},
+      capacity:capacity({windows:source,binding,usability:binding?.limitReached?'tight':(binding?.usedPercent??0)>=90?'tight':'ready'})};
+  };
 
   it('shows the binding window on a seat whose health is unknown', () => {
     render(
@@ -158,6 +162,7 @@ describe('SeatSelector — capacity at the point of choice', () => {
  */
 describe('SeatSelector — plan and binding window from the capacity record', () => {
   it('reads plan, binding window and credits off the capacity record', () => {
+    vi.spyOn(Date,'now').mockReturnValue(Date.parse('2026-09-20T20:00:00.000Z'));
     render(<SeatSelector seats={[CODEX_CREDITS_SEAT]} value={null} onChange={() => {}} />);
     const option = screen.getByRole('option', { name: /Personal Codex/ }) as HTMLOptionElement;
     expect(option.textContent).toContain('pro · tight · primary window limit reached · credits available');

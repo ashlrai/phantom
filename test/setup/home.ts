@@ -96,6 +96,26 @@ if (!workerHome || process.env[workerPidKey] !== String(process.pid)) {
 process.env.HOME = workerHome;
 process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
+scrubAmbientGitEnv(process.env);
+
+/**
+ * Git reads configuration and repository location from the environment as well
+ * as from HOME, so relocating HOME alone does not isolate fixture repositories.
+ * A sandbox that injects `url.https://github.com/.insteadOf=git@github.com:`
+ * through GIT_CONFIG_COUNT rewrites every fixture's SSH remote, and a suite run
+ * from a git hook inherits GIT_DIR/GIT_INDEX_FILE pointing at the developer's
+ * real repository. Tests that need these set them explicitly on their own child
+ * environment. GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM stay as given: platform
+ * system config (Git for Windows' autocrlf and TLS backend) is part of the host.
+ */
+export function scrubAmbientGitEnv(env: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS|GLOBAL)$/i.test(key)
+      || /^GIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX)$/i.test(key)) {
+      delete env[key];
+    }
+  }
+}
 
 const realHome = process.env[realHomeKey];
 

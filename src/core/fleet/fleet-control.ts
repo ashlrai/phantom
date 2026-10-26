@@ -93,14 +93,14 @@ async function defaultService(): Promise<{ service: FleetDaemonServiceState; pli
     const svc = await import('../daemon/service.js');
     const { daemonServiceInstallOptions } = await import('../daemon/service-config.js');
     const { loadConfigReadOnly } = await import('../config.js');
-    const { plistBudgetUsd } = await import('../authority/resident.js');
+    const { plistBudgetUsd, plistKeepAwake } = await import('../authority/resident.js');
     const status = svc.serviceStatusCached();
     service = status.running ? 'running'
       : status.registrationState === 'absent' ? 'absent'
         : status.runtimeState === 'ready' ? 'loaded'
           : status.runtimeState === 'stopped' || status.runtimeState === 'disabled' ? 'not-loaded'
             : 'unknown';
-    // Drift by BUDGET, not byte-for-byte: this process may be the desktop's
+    // Drift by service settings, not byte-for-byte: this process may be the desktop's
     // single-file sidecar, whose own executable path would make every plist
     // look different from what `resident start` (the npm CLI) writes. The
     // budget is the documented trap (docs/RESIDENT-RUNTIME.md "Plist budget").
@@ -116,7 +116,9 @@ async function defaultService(): Promise<{ service: FleetDaemonServiceState; pli
     else if (installed === '') plist = 'unknown';
     else {
       const got = plistBudgetUsd(installed);
-      plist = got === null ? 'unknown' : got === (opts.budget ?? null) ? 'current' : 'drifted';
+      const awake = plistKeepAwake(installed);
+      plist = got === null || awake === null ? 'unknown'
+        : got === (opts.budget ?? null) && awake === (opts.keepAwake === true) ? 'current' : 'drifted';
     }
   } catch {
     // unknown stays unknown

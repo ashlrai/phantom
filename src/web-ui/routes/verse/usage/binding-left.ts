@@ -12,7 +12,8 @@ import type { CapacityRow } from './capacity-strip-model.js';
  * most-used measured one; a flagged limit is 0. The rail's batteries and
  * Command's seat strip both read this, so the two never disagree on headroom.
  */
-export function bindingLeftPercent(row: Pick<CapacityRow, 'windows'>): number | null {
+export function bindingLeftPercent(row: Pick<CapacityRow, 'windows' | 'quotaCurrent'>): number | null {
+  if (row.quotaCurrent === false) return null;
   const measured = row.windows.filter((w) => w.usedPercent !== null || w.limitReached);
   if (measured.length === 0) return null;
   const binding = measured.find((w) => w.binding) ?? measured.reduce((a, b) => ((b.usedPercent ?? 100) > (a.usedPercent ?? 100) ? b : a));

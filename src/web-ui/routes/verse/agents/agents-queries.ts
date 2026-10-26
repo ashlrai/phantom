@@ -21,7 +21,7 @@ import { VERSE_AGENTS_PATH } from '../../../../core/verse/agents/types.js';
 import type { VerseGitPr } from '../../../../core/verse/workbench-types.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { invalidate } from '../../../data/cache.js';
-import { apiGet, apiPost } from '../../../data/client.js';
+import { ApiError, DispatchDisabledError, apiGet, apiPost } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { createVerseSession, invalidateVerseLists, VerseMutationLockedError, VERSE_ACTIVITY_KEY } from '../verse-queries.js';
 
@@ -125,37 +125,97 @@ export interface SpawnResult {
   archivedForCap: string[];
 }
 
-/**
- * Make one agent. A workspace whose chat could not be created is discarded
- * again (nothing is left behind); a chat that was created but could not be
- * bound keeps the chat (it is a normal chat) and reports the error.
- */
-export async function spawnAgent(input: SpawnInput): Promise<SpawnResult> {
-  const options = {
-    planFirst: input.planFirst,
-    spendCapUsd: input.spendCapUsd,
-    autoFix: input.autoFix,
-    autoMerge: input.autoMerge,
-  };
-  if (input.isolate) {
-    const made = await post<AgentWorkspaceCreateResponse>(`${VERSE_AGENTS_PATH}/workspaces`, { root: input.root, title: input.title, ...options });
-    const path = made.agent.workspace?.path;
-    if (!path) throw new Error('The workspace was not created.');
-    let sessionId: string;
-    try {
-      const session = await createVerseSession({ projectPath: path, seatId: input.seatId, model: input.model, title: input.title });
-      sessionId = session.id;
-    } catch (err) {
-      await post(at(made.agent.id, 'discard'), {}).catch(() => undefined);
-      throw err;
-    }
-    const bound = await post<{ agent: AgentRecord; held: boolean }>(at(made.agent.id, 'bind'), { sessionId, ...(input.prompt.trim() ? { prompt: input.prompt } : {}) });
-    invalidateVerseLists();
-    return { agent: bound.agent, sessionId, held: bound.held, config: made.config, archivedForCap: made.archivedForCap };
+export type SpawnStage = 'workspace' | 'session' | 'adopt' | 'bind';
+
+/** Unknown outcomes are never eligible for replay; known artifacts stay inspectable. */
+export class SpawnFailure extends Error {
+  constructor(
+    public readonly outcome: 'failed' | 'uncertain',
+    public readonly stage: SpawnStage,
+    cause: unknown,
+    public readonly agentId?: string,
+    public readonly sessionId?: string,
+  ) {
+    super(cause instanceof Error ? cause.message : 'The launch could not be completed.', { cause });
+    this.name = 'SpawnFailure';
   }
-  const session = await createVerseSession({ projectPath: input.root, seatId: input.seatId, model: input.model, title: input.title });
-  const adopted = await post<{ agent: AgentRecord }>(`${VERSE_AGENTS_PATH}/chat`, { sessionId: session.id, title: input.title, ...options });
-  const bound = await post<{ agent: AgentRecord; held: boolean }>(at(adopted.agent.id, 'bind'), { sessionId: session.id, ...(input.prompt.trim() ? { prompt: input.prompt } : {}) });
-  invalidateVerseLists();
-  return { agent: bound.agent, sessionId: session.id, held: bound.held, config: null, archivedForCap: [] };
+}
+
+export interface SpawnAttempt {
+  input: SpawnInput;
+  outcome: 'started' | 'failed' | 'uncertain';
+  result?: SpawnResult;
+  error?: SpawnFailure;
+}
+
+function refusedBeforeCreation(error: unknown, stage: SpawnStage): boolean {
+  if (error instanceof VerseMutationLockedError || error instanceof DispatchDisabledError) return true;
+  if (!(error instanceof ApiError)) return false;
+  if (error.status === 401) return true; // mutation gate precedes route side effects
+  // Source-verified pre-create refusals only. A workspace's generic 4xx can
+  // follow cap archival/git effects; bind can persist/start work before failing.
+  if (stage === 'workspace') return error.status === 409 && error.code === 'AGENT_WORKSPACE_BUSY';
+  return stage === 'session' && ((error.status === 400 && error.code === 'VERSE_INVALID') ||
+    (error.status === 409 && error.code === 'VERSE_SEAT_NOT_READY'));
+}
+
+/** A lost response may follow creation. Keep the workspace until the outcome is known. */
+export async function spawnAgent(input: SpawnInput): Promise<SpawnResult> {
+  const options = { planFirst: input.planFirst, spendCapUsd: input.spendCapUsd, autoFix: input.autoFix, autoMerge: input.autoMerge };
+  let stage: SpawnStage = input.isolate ? 'workspace' : 'session';
+  let agentId: string | undefined;
+  let sessionId: string | undefined;
+  let made: AgentWorkspaceCreateResponse | undefined;
+  try {
+    let path = input.root;
+    if (input.isolate) {
+      made = await post<AgentWorkspaceCreateResponse>(`${VERSE_AGENTS_PATH}/workspaces`, { root: input.root, title: input.title, ...options });
+      agentId = typeof made?.agent?.id === 'string' ? made.agent.id : undefined;
+      const workspacePath = made?.agent?.workspace?.path;
+      if (!agentId || !workspacePath) throw new Error('The server did not confirm the workspace.');
+      path = workspacePath;
+    }
+    stage = 'session';
+    const session = await createVerseSession({ projectPath: path, seatId: input.seatId, model: input.model, title: input.title });
+    sessionId = typeof session?.id === 'string' ? session.id : undefined;
+    if (!sessionId) throw new Error('The server did not confirm the chat.');
+    if (!input.isolate) {
+      stage = 'adopt';
+      const adopted = await post<{ agent: AgentRecord }>(`${VERSE_AGENTS_PATH}/chat`, { sessionId, title: input.title, ...options });
+      agentId = typeof adopted?.agent?.id === 'string' ? adopted.agent.id : undefined;
+      if (!agentId) throw new Error('The server did not confirm the agent.');
+    }
+    stage = 'bind';
+    const bound = await post<{ agent: AgentRecord; held: boolean }>(at(agentId!, 'bind'), { sessionId, ...(input.prompt.trim() ? { prompt: input.prompt } : {}) });
+    if (bound?.agent?.id !== agentId || typeof bound.held !== 'boolean') throw new Error('The server did not confirm the launch.');
+    invalidateVerseLists();
+    return { agent: bound.agent, sessionId, held: bound.held, config: made?.config ?? null, archivedForCap: made?.archivedForCap ?? [] };
+  } catch (cause) {
+    let failed = (stage === 'workspace' || stage === 'session') && refusedBeforeCreation(cause, stage);
+    if (failed && agentId) {
+      // Only a positively refused session is safe to clean up. A lost response
+      // could have created a chat that now depends on this workspace.
+      try {
+        const cleanup = await post<{ ok: boolean }>(at(agentId, 'discard'), {});
+        failed = cleanup?.ok === true;
+      } catch { failed = false; }
+    }
+    invalidate(AGENTS_KEY);
+    invalidateVerseLists();
+    throw new SpawnFailure(failed ? 'failed' : 'uncertain', stage, cause, agentId, sessionId);
+  }
+}
+
+/** Keep the original input/result pairing; workspace admission is sequential. */
+export async function spawnAgentAttempts(inputs: readonly SpawnInput[], onProgress?: (attempts: SpawnAttempt[]) => void): Promise<SpawnAttempt[]> {
+  const attempts: SpawnAttempt[] = [];
+  for (const input of inputs) {
+    try { attempts.push({ input, outcome: 'started', result: await spawnAgent(input) }); }
+    catch (cause) {
+      const error = cause instanceof SpawnFailure ? cause : new SpawnFailure('uncertain', 'workspace', cause);
+      attempts.push({ input, outcome: error.outcome, error });
+    }
+    onProgress?.([...attempts]);
+  }
+  return attempts;
 }

@@ -134,6 +134,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -354,6 +355,11 @@ describe('buildRollup — byDay', () => {
   });
 
   it('single event produces a single day bucket', () => {
+    // The event is stamped now and the expectation re-derives today: freeze
+    // Date at the real current instant (afterEach restores it) so a run
+    // crossing local midnight observes one day. Timers stay real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
     mockCollect.mockReturnValue([
       makeEvent({ tokensIn: 42, tokensOut: 21 }),
     ]);

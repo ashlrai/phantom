@@ -142,7 +142,7 @@ describe('PreviewPane — launcher', () => {
 });
 
 describe('PreviewPane — dev servers', () => {
-  it('opens a running server in a sandboxed frame that can never navigate Verse', async () => {
+  it('opens a running server in a sandboxed frame that can never navigate Phantom', async () => {
     const user = userEvent.setup();
     const h = harness();
     renderPane(h);
@@ -212,7 +212,7 @@ describe('PreviewPane — address bar', () => {
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
   });
 
-  it('never frames anything else: external pages are "Open in browser ↗", Verse itself is refused', async () => {
+  it('never frames anything else: external pages are "Open in browser ↗", Phantom itself is refused', async () => {
     const user = userEvent.setup();
     const h = harness();
     renderPane(h);

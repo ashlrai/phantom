@@ -397,15 +397,24 @@ describe('shared mode: publishUsage upserts (no stale duplicate entries)', () =>
 // ===========================================================================
 
 describe('unwritable path: falls back to local decision, never throws', () => {
+  // The shared path sits beneath a REGULAR FILE, so every mkdir/open under it
+  // fails with ENOTDIR for any uid. (An absolute path such as /nonexistent-...
+  // is only uncreatable for a normal user: root creates it in /, the ledger
+  // then works, and a reading published by one case governs the next.)
+  function unwritableSharedPath(): string {
+    const blocker = path.join(tmpDir, 'not-a-directory');
+    fs.writeFileSync(blocker, 'regular file, not a directory\n');
+    return path.join(blocker, 'shared');
+  }
+
   it('subscriptionAllows does not throw when shared path is unwritable', () => {
-    const badCfg = sharedCfg('/nonexistent-path-that-cannot-be-created-m114', 'machine-X');
+    const badCfg = sharedCfg(unwritableSharedPath(), 'machine-X');
     mockRateLimitsReturn = makeRateLimits(40);
     expect(() => subscriptionAllows('codex', { maxPercent: 80, cfg: badCfg })).not.toThrow();
   });
 
-  // win32: chmod-based unwritable-dir setup has no effect on Windows.
-  it.skipIf(process.platform === 'win32')('subscriptionAllows falls back to local decision when shared path is unwritable', () => {
-    const badCfg = sharedCfg('/nonexistent-path-that-cannot-be-created-m114', 'machine-X');
+  it('subscriptionAllows falls back to local decision when shared path is unwritable', () => {
+    const badCfg = sharedCfg(unwritableSharedPath(), 'machine-X');
     // Local reads 95% → should block even without shared store.
     mockRateLimitsReturn = makeRateLimits(95);
     const result = subscriptionAllows('codex', { maxPercent: 80, cfg: badCfg });
@@ -414,14 +423,14 @@ describe('unwritable path: falls back to local decision, never throws', () => {
   });
 
   it('subscriptionAllows allows when local is under cap and shared unwritable', () => {
-    const badCfg = sharedCfg('/nonexistent-path-that-cannot-be-created-m114', 'machine-X');
+    const badCfg = sharedCfg(unwritableSharedPath(), 'machine-X');
     mockRateLimitsReturn = makeRateLimits(10);
     const result = subscriptionAllows('codex', { maxPercent: 80, cfg: badCfg });
     expect(result.allowed).toBe(true);
   });
 
   it('subscriptionUsage does not throw when shared path is unwritable', () => {
-    const badCfg = sharedCfg('/nonexistent-path-that-cannot-be-created-m114', 'machine-X');
+    const badCfg = sharedCfg(unwritableSharedPath(), 'machine-X');
     mockRateLimitsReturn = makeRateLimits(50);
     expect(() => subscriptionUsage('codex', { cfg: badCfg })).not.toThrow();
   });

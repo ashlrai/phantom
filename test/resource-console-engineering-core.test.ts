@@ -358,9 +358,28 @@ describe('owned console engineering evidence', () => {
     try {
       owner.launch({ enrollmentId: 'engineering', expectedEnrollmentDigest: owner.catalog()[0]!.enrollmentDigest });
       await Promise.resolve(); await Promise.resolve();
-      writeFileSync(join(f.options.root, 'pool-state.json'), 'invalid fixture state', { mode: 0o600 });
+      const before = f.supervisor.snapshot();
+      const consolePath = join(f.options.root, 'resource-console-state.json');
+      const consoleBefore = readFileSync(consolePath);
+      const poolPath = join(f.options.root, 'pool-state.json');
+      writeFileSync(poolPath, 'invalid fixture state', { mode: 0o600 });
+      const invalidPool = readFileSync(poolPath);
+      // Force the idle peer to observe the same unreadable evidence through its
+      // guarded API; a scheduled pump may otherwise race the cleanup assertion.
+      expect(() => f.supervisor.setPaused(true)).toThrow('Resource commissioning custody unavailable');
+      expect(f.supervisor.snapshot()).toMatchObject({ paused: before.paused, jobs: before.jobs,
+        error: 'supervisor-commissioning-custody-unavailable' });
+      expect(readFileSync(consolePath)).toEqual(consoleBefore);
+      expect(readFileSync(poolPath)).toEqual(invalidPool);
       await expect(owner.close()).rejects.toThrow('Shared resource pool termination evidence unavailable');
-    } finally { await owner.close().catch(() => {}); await f.supervisor.close(); }
+    } finally {
+      // Both owners have observed invalid termination evidence. Their cached
+      // shutdown promises must keep that refusal, including repeated cleanup.
+      await expect(owner.close()).rejects.toThrow('Shared resource pool termination evidence unavailable');
+      const closing = f.supervisor.close();
+      expect(f.supervisor.close()).toBe(closing);
+      await expect(closing).rejects.toThrow('Resource supervisor closed with unresolved evidence');
+    }
   });
   it('awaits the captured peer drain once before fencing a real reserved receipt', async () => {
     const f = await ownerFixture();

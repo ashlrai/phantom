@@ -56,7 +56,7 @@ import { tick } from '../src/core/daemon/loop.js';
 import { armDaemonSpendGuard, daemonStatePath, loadDaemonState, saveDaemonState } from '../src/core/daemon/state.js';
 import { readAudit } from '../src/core/sandbox/audit.js';
 import { makeFixture, makeCfg, todoSeedFiles } from './helpers/h1-fixture.js';
-import { seedMidTickSpend, today } from './helpers/h2-faults.js';
+import { freezeDateForTest, seedMidTickSpend, today } from './helpers/h2-faults.js';
 import { makeSpendingSwarmStub } from './helpers/h3-stress.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { H1Fixture, DisposableRepo } from './helpers/h1-fixture.js';
@@ -269,6 +269,7 @@ describe('H3 BUDGET-CAP-HOLDS — tick never overspends the daily cap under load
     mockRunSwarm.mockImplementation(
       makeSpendingSwarmStub({ costUsd: 0.05, repo: repo.dir, propose: true }),
     );
+    freezeDateForTest();
     saveDaemonState({
       running: false,
       pid: null,

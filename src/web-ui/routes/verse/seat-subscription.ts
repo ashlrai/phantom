@@ -1,3 +1,5 @@
+export { ACCOUNT_CLOCK_MS, useCapacityClock } from './usage/use-capacity-clock.js';
+import { currentQuotaReading } from '../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/seat-subscription.ts — "what subscription is behind this seat,
  * and how much of it is left", projected ONCE for every chat surface that
@@ -58,6 +60,7 @@ import { formatNativeCreditUnits, nativeCreditBalanceTitle } from './resources/c
 import {
   SEAT_CAPACITY_WORD,
   seatCapacity,
+  nativeQuotaCurrent,
   seatUnavailableReason,
   seatWindowLabel,
   type SeatCapacityClass,
@@ -78,6 +81,8 @@ type SeatCapacityWindow = SeatCapacityRecord['windows'][number];
 
 /** One quota window, in the shape every chat surface renders. */
 export interface SeatWindowView {
+  /** False keeps original values as recorded context, never a current meter. */
+  current?: boolean;
   id: string;
   /** Human label, derived from the provider's id. */
   label: string;
@@ -144,6 +149,8 @@ export interface SeatSubscriptionView {
   observedAt: string | null;
   /** True when the seat carried owner S's `capacity` record. */
   extended: boolean;
+  quotaCurrent?: boolean;
+  quotaExpiresAt?: string | null;
 }
 
 /**
@@ -260,8 +267,8 @@ function localView(seat: VerseSeat): SeatSubscriptionView {
 
 /** The V1 path: no `capacity` record, so the V1 rule decides, unchanged. */
 function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
-  const legacy = seatCapacity(seat);
-  const windows = seat.health.windows.map((w) => legacyWindowView(w, now));
+  const legacy = seatCapacity(seat, now);
+  const windows = seat.health.windows.map((w) => ({...legacyWindowView(w, now), current: nativeQuotaCurrent(seat, now)}));
   const flagged = windows.find((w) => w.limitReached) ?? null;
   const measured = windows.filter((w) => w.usedPercent !== null);
   const worst = measured.length === 0
@@ -284,6 +291,8 @@ function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
     evidenceSource: null,
     observedAt: seat.health.observedAt,
     extended: false,
+    quotaCurrent: nativeQuotaCurrent(seat, now),
+    quotaExpiresAt: null,
   };
 }
 
@@ -298,23 +307,23 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
   const capacity = seat.capacity;
   if (capacity === undefined) return fallbackView(seat, now);
 
-  const windows = capacity.windows.map((w) => toWindowView(seat.engine, w, now));
+  const quotaCurrent = nativeQuotaCurrent(seat, now);
+  const windows = capacity.windows.map((w) => ({...toWindowView(seat.engine, w, now), current: quotaCurrent}));
   // Resolve the server's CHOICE of binding window back to this seat's own
   // view of it, so the two can never disagree about a reset or a label.
   const served = capacity.binding;
   const binding = served === null
     ? null
-    : (windows.find((w) => w.id === served.id) ?? toWindowView(seat.engine, served, now));
+    : (windows.find((w) => w.id === served.id) ?? {...toWindowView(seat.engine, served, now), current: quotaCurrent});
   const others = binding === null ? windows : windows.filter((w) => w.id !== binding.id);
   const lastReading = seat.health.state === 'degraded' && capacity.usability === 'unknown';
   // A failed latest check leaves the old meter visible for context only.
   // Failed checks and expired native credit readings never imply current availability.
-  const credits = seat.engine !== 'codex' || lastReading || capacity.creditsExpiresAt === undefined ||
-    (capacity.creditsExpiresAt === null || !Number.isFinite(Date.parse(capacity.creditsExpiresAt)) || Date.parse(capacity.creditsExpiresAt) <= now)
+  const credits = seat.engine !== 'codex' || lastReading || !currentQuotaReading(capacity.observedAt, capacity.creditsExpiresAt, now)
     ? { phrase: null, title: null, reading: null } : creditsPhrase(capacity.credits);
 
   const unavailable = seatUnavailableReason(seat);
-  const cls: SeatCapacityClass = unavailable !== null ? 'blocked' : USABILITY_CLASS[capacity.usability];
+  const cls: SeatCapacityClass = unavailable !== null ? 'blocked' : !quotaCurrent ? 'unread' : USABILITY_CLASS[capacity.usability];
 
   let summary: string;
   // Signed out is checked FIRST, before the generic unavailable reason: owner
@@ -341,6 +350,7 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
     // The one percent rule: "99%", never a rounded "100%" beside a "99%" bar.
     summary = `${percentText(binding.usedPercent)} of ${binding.label} used`;
   }
+  if (!quotaCurrent && unavailable === null && capacity.usability !== 'signed-out') summary = 'Last known usage · current usage unconfirmed';
   if (lastReading) summary = binding === null
     ? 'No current capacity reading; current access unconfirmed'
     : `Last verified reading: ${summary}; current access unconfirmed`;
@@ -363,6 +373,8 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
     evidenceSource: capacity.evidenceSource,
     observedAt: capacity.observedAt ?? seat.health.observedAt,
     extended: true,
+    quotaCurrent,
+    quotaExpiresAt: capacity.quotaExpiresAt ?? null,
   };
 }
 

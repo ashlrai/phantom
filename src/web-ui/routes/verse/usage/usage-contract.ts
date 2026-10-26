@@ -93,6 +93,7 @@ const WIRE_ACCOUNT_KEYS = {
   health: 'health',
   planType: 'planType',
   observedAt: 'observedAt',
+  expiresAt: 'expiresAt',
   windows: 'windows',
   binding: 'binding',
   credits: 'credits',
@@ -280,6 +281,8 @@ export interface Account {
   health: string | null;
   planType: string | null;
   observedAt: string | null;
+  /** Original native reading expiry; absent legacy evidence is unconfirmed. */
+  expiresAt?: string | null;
   windows: AccountWindow[];
   /**
    * The server's computed binding window (highest used percent). Kept as its
@@ -567,6 +570,7 @@ function projectAccount(raw: unknown): Account | null {
     health: str(r, 'health'),
     planType: str(r, 'planType') ?? str(r, 'plan_type'),
     observedAt: str(r, 'observedAt'),
+    expiresAt: str(r, 'expiresAt'),
     windows,
     binding: projectWindow(r['binding']),
     credits: projectCredits(r['credits']),

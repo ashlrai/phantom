@@ -62,6 +62,7 @@ function harness(opts: {
   defaultBranch?: string | null;
   runDelayMs?: number;
   allowedRepos?: string[];
+  doneCheck?: CloudServiceDeps['doneCheck'];
 } = {}): Harness {
   const events: string[] = [];
   const prompts: string[] = [];
@@ -69,6 +70,7 @@ function harness(opts: {
   let runs = 0;
   const deps: CloudServiceDeps = {
     now: () => NOW,
+    doneCheck: opts.doneCheck ?? (async () => 'open'),
     tracker: {
       gh: async (args) => {
         events.push(`gh ${args[0]} ${args[1]}`);
@@ -156,6 +158,41 @@ describe('launchCloudTask — success', () => {
   });
 });
 
+describe('launchCloudTask — lessons trial', () => {
+  const NOTE = 'Run the tracker suite with --pool=forks before pushing.';
+  async function approveNote(): Promise<string> {
+    const { updateKnowledge, noteIdFor } = await import('../src/core/learn/retro/store.js');
+    const scope = { repo: REQ.repo, pathGlobs: [], taskKinds: [] };
+    const id = noteIdFor(NOTE, scope);
+    await updateKnowledge((notes) => ({ notes: [...notes, { v: 1 as const, id, text: NOTE, scope, status: 'approved' as const, retroId: null, source: 'mason' as const,
+      createdAt: '2026-10-01T00:00:00.000Z', decidedAt: '2026-10-01T00:00:00.000Z', edited: false, hits: 0, lastHitAt: null, seen: 0, agentsMdTaskId: null }], result: undefined }));
+    return id;
+  }
+
+  it('the served arm gets the lessons and records the notes that applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'served' });
+    expect(h.prompts[0]).toContain(NOTE);
+    expect(res.task!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'served', noteIds: [id] });
+  });
+
+  it('the holdout arm runs without them but still records which notes applied', async () => {
+    const id = await approveNote();
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(h.prompts[0]).not.toContain(NOTE);
+    expect(readCloudTask(res.task!.id)!.lessons).toEqual({ arm: 'holdout', noteIds: [id] });
+  });
+
+  it('a launch no note applies to is not in the trial', async () => {
+    const h = harness();
+    const res = await launchCloudTask(REQ, { ...h.deps, lessonArm: () => 'holdout' });
+    expect(readCloudTask(res.task!.id)).not.toHaveProperty('lessons');
+  });
+});
+
 describe('launchCloudTask — playbooks (3.15)', () => {
   it('no playbook: the task has no playbookRef and the prompt is exactly task text + contract', async () => {
     const h = harness();
@@ -206,7 +243,7 @@ describe('launchCloudTask — gates come before persisting and launching', () =>
   it('refuses when the seat is not set up (seat-unavailable), persisting nothing', async () => {
     const h = harness({ seat: null });
     const res = await launchCloudTask({ ...REQ, baseBranch: 'master' }, h.deps);
-    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this Mac.", failure: 'seat-unavailable' });
+    expect(res).toEqual({ ok: false, task: null, error: "The Claude seat isn't set up on this computer.", failure: 'seat-unavailable' });
     expect(listCloudTasks()).toEqual([]);
     expect(h.events).toEqual([]);
   });
@@ -305,17 +342,41 @@ describe('runSelfImprove', () => {
     expect(res.skipped).toEqual([]);
   });
 
+  // Enough lowest-priority user items behind the built-ins that a cap, not the backlog's length, ends the batch.
+  const padBacklog = () => appendUserBacklogItems(Array.from({ length: 5 }, (_, i) => (
+    { id: `pad-${i}`, title: `Padding item ${i}`, prompt: 'Do it.', area: 'x', priority: 3 as const })));
+  const backlogOrder = () => [...firstBuiltin.map((i) => i.id), ...Array.from({ length: 5 }, (_, i) => `pad-${i}`)];
+
+  it('skips items already satisfied on the default branch without spending a launch', async () => {
+    updateCloudBudget({ maxConcurrent: 10 });
+    // Two priority-1 user items right after the built-in priority-1 items: the first already holds on master.
+    appendUserBacklogItems([
+      { id: 'done-1', title: 'Already fixed', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/fixed.ts' } },
+      { id: 'open-1', title: 'Still open', prompt: 'Do it.', area: 'x', priority: 1, doneWhen: { path: 'src/missing.ts' } },
+    ]);
+    const checked: string[] = [];
+    const p1 = firstBuiltin.filter((it) => it.priority === 1).map((it) => it.id);
+    const res = await runSelfImprove({ auto: false, count: p1.length + 1 }, selfHarness({
+      doneCheck: async (item, repo) => { checked.push(`${item.id}@${repo}`); return item.id === 'done-1' ? 'satisfied' : 'open'; },
+    }).deps);
+    expect(res.launched.map((t) => t.backlogItemId)).toEqual([...p1, 'open-1']);
+    expect(res.skipped).toEqual([{ itemId: 'done-1', reason: 'Already satisfied on the default branch.' }]);
+    expect(checked).toEqual(['done-1@ashlrai/phantom', 'open-1@ashlrai/phantom']);
+  });
+
   it('the operator path still stops at the concurrency cap', async () => {
+    padBacklog();
     const res = await runSelfImprove({ auto: false, count: 5 }, selfHarness().deps);
     expect(res.launched).toHaveLength(4);
-    expect(res.skipped).toEqual([{ itemId: firstBuiltin[4]!.id, reason: '4 of 4 cloud sessions are already running.' }]);
+    expect(res.skipped).toEqual([{ itemId: backlogOrder()[4]!, reason: '4 of 4 cloud sessions are already running.' }]);
   });
 
   it('auto: stops at the daily self-improvement cap', async () => {
     updateCloudBudget({ selfImprove: { maxPerDay: 2 } });
+    padBacklog();
     const res = await runSelfImprove({ auto: true, count: 4 }, selfHarness().deps);
     expect(res.launched).toHaveLength(2);
-    expect(res.skipped).toEqual([{ itemId: firstBuiltin[2]!.id, reason: '2 of 2 self-improvement launches used today.' }]);
+    expect(res.skipped).toEqual([{ itemId: backlogOrder()[2]!, reason: '2 of 2 self-improvement launches used today.' }]);
   });
 
   it('stops the batch at the first failed launch instead of burning through the backlog', async () => {
@@ -328,7 +389,7 @@ describe('runSelfImprove', () => {
 
   it('targets budget.selfImprove.repo and honours repo-scoped user items', async () => {
     updateCloudBudget({ selfImprove: { repo: 'ashlrai/other' } });
-    appendUserBacklogItems([{ id: 'other-1', title: 'Other repo item', prompt: 'Do it.', area: 'x', priority: 1, repo: 'ashlrai/other' }]);
+    appendUserBacklogItems([{ id: 'other-1', title: 'Other repo item', prompt: 'Do it.', area: 'x', priority: 3, repo: 'ashlrai/other' }]);
     const h = selfHarness();
     // Launches from the other repo's checkout; the self-improvement harness asserts the canonical folder, so relax it here.
     h.deps.launcher!.run = async () => ({ output: SUCCESS('session_o'), code: 0, timedOut: false });
@@ -356,7 +417,7 @@ describe('runSelfImprove', () => {
 
 describe('cloudOverview and cloudSeatStatus', () => {
   it('seat: not ready without command.json, ready once it parses to an argv array — without running anything', () => {
-    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this Mac." });
+    expect(cloudSeatStatus()).toEqual({ id: 'claude-a', ready: false, reason: "The Claude seat isn't set up on this computer." });
     const file = cloudSeatCommandPath();
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, '"node launcher.mjs"', { mode: 0o600 });

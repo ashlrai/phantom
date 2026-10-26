@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { CLAUDE_SEAT } from '../context/context-fixtures.test-support.js';
+import { CLAUDE_SEAT, CODEX_SEAT } from '../context/context-fixtures.test-support.js';
 import { NewAgentDialog } from './NewAgentDialog.js';
-import type { SpawnInput } from './agents-queries.js';
+import type { SpawnAttempt, SpawnInput } from './agents-queries.js';
 
 vi.mock('./agents-queries.js', () => ({
   fetchWorkspaceConfig: vi.fn().mockResolvedValue({
@@ -62,4 +62,18 @@ describe('focused agent creation', () => {
     expect(new Set(inputs?.map((input) => input.seatId)).size).toBe(8);
     expect(inputs?.every((input) => input.isolate && !input.planFirst && !input.autoMerge)).toBe(true);
   });
+});
+
+
+it('identifies each result by seat even when all input titles are identical', async () => {
+  const input: SpawnInput = { root: '/repo', title: 'Same title', prompt: 'Do task', seatId: CLAUDE_SEAT.id, model: 'claude-model',
+    isolate: true, planFirst: false, spendCapUsd: null, autoFix: false, autoMerge: false };
+  const attempts: SpawnAttempt[] = [{ input, outcome: 'started' }, { input: { ...input, seatId: CODEX_SEAT.id, model: 'codex-model' }, outcome: 'uncertain' }];
+  render(<NewAgentDialog open multi projects={[]} seats={[CLAUDE_SEAT, CODEX_SEAT]} initialRoot={null} busy={false}
+    error={null} attempts={attempts} onClose={vi.fn()} onSpawn={vi.fn()} />);
+  const rows = within(screen.getByRole('list', { name: 'Launch results' })).getAllByRole('listitem');
+  expect(rows[0]).toHaveTextContent('Claude Max · claude-model');
+  expect(rows[0]).toHaveTextContent('Started');
+  expect(rows[1]).toHaveTextContent('Personal Codex · codex-model');
+  expect(rows[1]).toHaveTextContent('Outcome uncertain');
 });

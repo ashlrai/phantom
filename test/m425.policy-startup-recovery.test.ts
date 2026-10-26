@@ -3,18 +3,20 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   recoverEnrollmentRegistry,
   type EnrollmentRegistryReadiness,
 } from '../src/core/sandbox/policy.js';
 import { assurePrivateStoragePath } from '../src/core/util/private-storage.js';
+import { bundlePolicyModuleForChildren, type PolicyChildBundle } from './helpers/policy-child-bundle.js';
 
-const policyModuleUrl = new URL('../src/core/sandbox/policy.ts', import.meta.url).href;
 const readinessChildTimeoutMs = 30_000;
 const readinessTestTimeoutMs = (readinessChildTimeoutMs * 2) + 5_000;
 const children = new Set<ChildProcess>();
+let policyBundle: PolicyChildBundle;
+let policyModuleUrl: string;
 let home: string;
 let previousHome: string | undefined;
 let previousUserProfile: string | undefined;
@@ -119,7 +121,7 @@ function runReadiness(unknownPid?: number): EnrollmentRegistryReadiness {
     const result = recoverEnrollmentRegistry({ waitMs: 1000 });
     process.stdout.write(JSON.stringify(result));
   `;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source], {
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -143,6 +145,15 @@ function runReadiness(unknownPid?: number): EnrollmentRegistryReadiness {
   expect(child.status, child.stderr).toBe(0);
   return JSON.parse(child.stdout) as EnrollmentRegistryReadiness;
 }
+
+beforeAll(async () => {
+  policyBundle = await bundlePolicyModuleForChildren();
+  policyModuleUrl = policyBundle.moduleUrl;
+});
+
+afterAll(() => {
+  policyBundle?.dispose();
+});
 
 beforeEach(() => {
   previousHome = process.env.HOME;

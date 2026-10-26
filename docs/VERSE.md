@@ -115,16 +115,17 @@ integration.
 
 ### Proactive agent profiles
 
-Saved proactive profiles describe personal Dots, Grok Bots, Muse agents or other
-persistent agents. They keep provider/account/agent identity separate from the
+Saved proactive profiles support arbitrary provider identifiers and multiple
+accounts and agents per provider, including Dots, Grok Bots and Muse agents.
+They keep provider/account/agent identity separate from the
 editable name, avatar, responsibilities, computer and connected-service metadata.
 The profile is **configured**; saving it does not establish a working connection.
 Operation readiness shows what has been qualified, with no fabricated run result.
 Meta Model API remains a separate executable resource.
 
-The enabled field saves an intended planning preference. Current planners do not
-consume these profiles; it does not enable dispatch, change a provider account or
-authorize spending. A funding reference points to the
+Declared capabilities, priority, concurrency and project preferences feed the
+local assignment preview. They are unverified metadata; enabled does not enable
+dispatch, change a provider account or authorize spending. A funding reference points to the
 same account; it supplies no balance, expiry or eligibility. Keep credentials and
 inbox contents out of profile metadata.
 
@@ -135,6 +136,22 @@ Updates and deletes require the current `expectedVersion`; stale writes return
 `phm_proactive_agents_list`, `phm_proactive_agents_create`,
 `phm_proactive_agents_update` and `phm_proactive_agents_delete` use the same store.
 The list tool pages summaries; the API returns complete saved metadata.
+
+**Local coordination** records scoped goals, criteria, planning limits and an
+exact recipient. Phantom prepares a local brief without importing account data.
+Assignments have durable ownership and replay receipts. Handoff and cancellation
+are local intents; reports and digest-bound operator reviews are explicitly manual.
+Pending notices are acknowledged in one local feed. Lease expiry does not prove
+a remote agent stopped, and no route contacts a provider. See
+[the coordination contract](PROACTIVE-COORDINATION.md) and
+[the remaining-work backlog](PROACTIVE-COORDINATION-BACKLOG.md).
+
+The local **Planning lab** shows declared or injected cached resource evidence,
+durable deterministic shadow evaluations, synthetic routing benchmarks and
+inspectable preference proposals. Usage, credits, costs and entitlement remain
+distinct; missing measurements stay unknown. Release readiness has no default
+commissioned target. Every lab result retains false execution/release authority;
+no collector, model call, provider contact or release action is started.
 
 Personal-agent transport still needs separate qualification. Dot plugin events
 require a provisioned authenticated plugin and event subscription; a Grok Bot
@@ -1047,8 +1064,16 @@ the like) also get a category from it; the codes themselves never change.
 Lessons** you approve, edit then approve, or reject each note; a rejected note
 is never suggested again. Approved notes are added, only where their scope
 matches and within a 16 KiB cap that drops whole notes, to fleet goals, cloud
-briefs and the Leader's evidence. When nothing matches, the prompt is exactly
-what it was before. **Propose for AGENTS.md** files an ordinary fleet task that
+briefs and the Leader's evidence. When more than 8 notes match a task, a task
+prompt gets at most 8, and only notes that are about the task: a path or
+task-kind scope that matched, or words in common with the task text, rarer
+words counting more. A note scoped to paths also reaches a brief written
+before its files are known when its words are about the task. The Leader's
+evidence still carries every approved note. A note that cites the PRs and
+checks it was learned from shows the ones its text does not already name, and
+a note whose every cited PR was reverted after merging stays out of fleet goals
+and cloud briefs. When nothing matches, the prompt
+is exactly what it was before. **Propose for AGENTS.md** files an ordinary fleet task that
 goes through every gate; it never writes to a repository directly. The Leader's
 veto lessons are read back into its evidence and into tasks the Leader started.
 

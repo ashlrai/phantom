@@ -80,7 +80,7 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
   it('refuses existing profile targets with exact byte preservation and no launch', async () => {
     const f = fixture(); const prepared = await f.prepare(); expect(prepared.code).toBe(0); const before = tree(f.directory);
     const second = await f.prepare(); expect(second.code).toBe(1);
-    expect(JSON.parse(second.stdout)).toEqual({ error: 'Native profile preparation unavailable; inspect the selected target for partial files' });
+    expect(JSON.parse(second.stdout)).toEqual({ error: 'Native profile directory must be new and its private parent unchanged' });
     expect(second.stdout).not.toContain(f.base); expect(tree(f.directory)).toEqual(before); expect(f.events()).toEqual([]);
   });
   it('prepares two fresh Codex profiles with distinct empty stores, without asserting independent subscriptions', async () => {
@@ -92,7 +92,8 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
   });
   it('rejects unsupported providers before creating storage or running the executable', async () => {
     const f = fixture(); const before = tree(f.base); const result = await f.prepare(f.directory, 'unsupported-provider');
-    expect(result.code).toBe(2); expect(JSON.parse(result.stdout)).toEqual({ error: 'Expected codex, claude or grok provider' });
+    expect(result.code).toBe(2); expect(JSON.parse(result.stdout)).toEqual({ error: 'Expected codex, claude or grok provider',
+      usage: 'usage: ashlr resources profile prepare --provider codex|claude|grok --directory NEW_ABS --executable ABS [--json]' });
     expect(existsSync(f.directory)).toBe(false); expect(f.events()).toEqual([]); expect(tree(f.base)).toEqual(before);
   });
   it('prepares an isolated Grok login locator and forwards help without enabling task execution', async () => {
@@ -113,7 +114,8 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
   it('rejects install symlinks before creating profile storage', async () => {
     const f = fixture(); const link = join(f.base, 'install-link'); symlinkSync(f.executable, link);
     const executableBefore = readFileSync(f.executable); const result = await f.prepare(f.directory, 'codex', link);
-    expect(result.code).toBe(1); expect(result.stdout).not.toContain(f.base); expect(existsSync(f.directory)).toBe(false);
+    expect(result.code).toBe(1); expect(JSON.parse(result.stdout).error).toBe(`Invalid native profile executable: it is a symlink; pass its real path: ${f.executable}`);
+    expect(existsSync(f.directory)).toBe(false);
     expect(lstatSync(link).isSymbolicLink()).toBe(true); expect(readFileSync(f.executable)).toEqual(executableBefore); expect(f.events()).toEqual([]);
   });
 });

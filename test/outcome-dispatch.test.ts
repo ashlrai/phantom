@@ -170,5 +170,24 @@ describe('actual resident outcome dispatch bridge', () => {
     expect(f.store.read().records.filter(record => record.commandId === 'dispatch-claim-run-parent')).toHaveLength(1);
     expect(f.dispatch().begin()).toBe(false); // Replay does not launch another run.
   });
-
+  it('settles a worker attempt whose daemon died mid-run, but only under the exclusive daemon owner', async () => {
+    const f = fixture();
+    // The previous daemon process recorded the claim, then was killed (SIGKILL, OOM, reboot)
+    // before finishWithRetry: no in-process dispatch remains to join a terminal.
+    expect(f.coordinator.claimRunReady({ commandId: 'dispatch-claim-crashed', expectedRevision: f.store.read().state!.revision },
+      f.node().id, f.item.repo, 'crashed-run', { stillAuthorized: () => true, executionRepoAllowed: (a, b) => a === b }).ok).toBe(true);
+    // A non-owner (ad hoc tick, other process) can never prove the child is gone.
+    expect(reconcileOutcomeCompletions(f.context())).toBe(0);
+    expect(reconcileOutcomeCompletions(f.context(), { exclusiveOwner: () => false })).toBe(0);
+    expect(f.node().attempts[0]!.state).toBe('running');
+    // The restarted singleton daemon owns every live attempt; this one is not among them.
+    expect(reconcileOutcomeCompletions(f.context(), { exclusiveOwner: () => true })).toBe(1);
+    expect(f.node().attempts[0]).toMatchObject({ state: 'aborted', terminalRunId: 'crashed-run', proposalId: null });
+    expect(f.node().completion).toBeNull(); expect(f.coordinator.project().complete).toBe(false);
+    // A live attempt of the owning daemon is never settled out from under it.
+    const g = fixture(); const live = g.dispatch(); expect(live.begin()).toBe(true);
+    expect(reconcileOutcomeCompletions(g.context(), { exclusiveOwner: () => true })).toBe(0);
+    expect(g.node().attempts[0]!.state).toBe('running');
+    expect(await live.finishWithRetry(undefined, true)).toBe(true); expect(g.node().attempts[0]!.state).toBe('aborted');
+  });
 });

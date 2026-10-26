@@ -48,6 +48,8 @@ import {
   type StandingEvaluation,
 } from './effective-config.js';
 import { runningPackageRoot } from './surface.js';
+import { NON_OPERATOR_ENV_MARKERS } from './operator-context-markers.js';
+export { NON_OPERATOR_ENV_MARKERS } from './operator-context-markers.js';
 
 /** The one command that installs or restarts the resident service. */
 export const RESIDENT_START_COMMAND = 'ashlr authority resident start';
@@ -175,15 +177,6 @@ export function observeResidentAdmission(opts: { nowMs?: number } = {}): { admis
  * the markers agent harnesses set on the shells they drive (Claude Code sets
  * CLAUDECODE and AI_AGENT; Codex sets CODEX_SANDBOX*).
  */
-export const NON_OPERATOR_ENV_MARKERS: readonly string[] = Object.freeze([
-  'ASHLR_IN_DAEMON',
-  'ASHLR_IN_SWARM',
-  'CLAUDECODE',
-  'AI_AGENT',
-  'CODEX_SANDBOX',
-  'CODEX_SANDBOX_NETWORK_DISABLED',
-]);
-
 export interface OperatorContext {
   stdinTTY: boolean;
   stdoutTTY: boolean;
@@ -427,4 +420,17 @@ export function plistBudgetUsd(content: string | null): number | null {
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
+}
+
+/** PURE: the installed launchd argv's awake request. Unknown plist shapes stay unknown. */
+export function plistKeepAwake(content: string | null): boolean | null {
+  if (!content) return null;
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/u.exec(content)?.[1];
+  if (!array) return null;
+  const argv = [...array.matchAll(/<string>([^<]*)<\/string>/gu)].map((match) => match[1]);
+  if (argv[0] === 'caffeinate') {
+    return argv.length >= 7 && argv[1] === '-i' && argv[2] === '-s' &&
+      argv[5] === 'daemon' && argv[6] === 'start' ? true : null;
+  }
+  return argv.length >= 4 && argv[2] === 'daemon' && argv[3] === 'start' ? false : null;
 }

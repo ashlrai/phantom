@@ -129,9 +129,22 @@ describe('NewChatDialog — capacity at the point of choice', () => {
   });
 
   it('names the credits that outlive a spent window', () => {
-    render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[CODEX_CREDITS_SEAT]} onCreate={() => {}} />);
+    const now = Date.now();
+    const window = { ...CODEX_CREDITS_SEAT.capacity!.windows[0]!, resetsAt: new Date(now + 3_600_000).toISOString() };
+    const seat = { ...CODEX_CREDITS_SEAT, capacity: { ...CODEX_CREDITS_SEAT.capacity!, windows: [window], binding: window,
+      observedAt: new Date(now).toISOString(), quotaExpiresAt: new Date(now + 60_000).toISOString(),
+      creditsExpiresAt: new Date(now + 60_000).toISOString() } };
+    render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[seat]} onCreate={() => {}} />);
     expect(screen.getByText('limit reached')).toBeInTheDocument();
     expect(screen.getByText('2,000 credits available')).toHaveAttribute('title', 'Provider balance: 2,000 credits.');
+  });
+
+  it('does not treat measured windows without original quota expiry as current', () => {
+    const seat = { ...CLAUDE_TIGHT_SEAT, capacity: { ...CLAUDE_TIGHT_SEAT.capacity!, quotaExpiresAt: undefined } };
+    render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[seat]} onCreate={() => {}} />);
+    expect(screen.getAllByRole('img', { name: /last reading; current usage and resets unconfirmed/ })).toHaveLength(3);
+    expect(screen.queryByText('Usable now')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^0%$/)).not.toBeInTheDocument();
   });
 
   it('draws no meter for a seat nothing was read from', () => {

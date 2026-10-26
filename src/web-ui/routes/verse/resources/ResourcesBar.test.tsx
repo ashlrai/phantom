@@ -58,6 +58,7 @@ describe('saved Grok Bot resource metadata', () => {
     id, version: 1, identity: { provider: 'grok-bot', accountId, agentId: id }, displayName: id,
     responsibility: '', avatar: { color: '#6554ff', variant: 'classic' }, computer: { kind: 'unknown', label: '', providerComputerId: null },
     services: [], fundingReference: null, enabled, connection: 'configured', lastRun: null,
+    capabilityIds: [], capabilityVerification: 'declared-unverified', preferences: { priority: 50, maxConcurrent: 1, projectBindingIds: [] },
     createdAt: new Date(NOW).toISOString(), updatedAt: new Date(NOW).toISOString(),
     operations: { dispatch: { state: 'unverified', verifiedAt: null, note: 'No qualified connection.' },
       status: { state: 'unsupported', verifiedAt: null, note: '' }, cancel: { state: 'unsupported', verifiedAt: null, note: '' },
@@ -75,6 +76,18 @@ describe('saved Grok Bot resource metadata', () => {
   afterEach(() => { cleanup(); evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals();
     vi.mocked(useQuery).mockReturnValue({ data: undefined } as never); localStorage.removeItem(RESOURCES_STORAGE_KEY); reloadResourcesUiForTest(); });
   const ids = (container: HTMLElement) => [...container.querySelectorAll('[data-resource-id]')].map(row => row.getAttribute('data-resource-id'));
+
+  it('groups saved Bot locators as declared references while leaving distinct provider account identities unknown', async () => {
+    const view = render(<ResourcesBar expanded />);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by provider' }));
+    await screen.findByText('Declared account reference · saved-account-a');
+    const provider = view.container.querySelector('[data-provider-group="grok-bot"]')!;
+    expect(provider).not.toHaveAttribute('open');
+    expect(provider.querySelector('summary')).toHaveTextContent('0 current readings · 0 stale readings · 3 unconfirmed resources · 2 configured/declared references');
+    expect(within(provider as HTMLElement).getByText('Declared account reference · saved-account-b')).toBeInTheDocument();
+    expect(provider.textContent).not.toMatch(/2 accounts|3 accounts|verified accounts|ready/i);
+    expect(screen.getByText(/Distinct provider account identities and total account coverage are unknown/)).toBeInTheDocument();
+  });
 
   it('keeps each declared Bot identity unknown beside the unchanged native Build meter and opens its management surface', () => {
     const native = barRows(buildCapacityRows([grokSeat()], { now: NOW }), { healthRead: false, now: NOW })[0]!;
@@ -203,7 +216,9 @@ function row(over: Partial<CapacityRow>): CapacityRow {
     cls: 'usable', word: 'usable', summary: '28% of weekly window used',
     connection: null,
     windows: [win({ usedPercent: 28 })], credits: null, reserve: null, notes: [], localCount: 0,
-    checkedAt: new Date(NOW - 60_000).toISOString(), resetAt: null, signedOut: false,
+    checkedAt: new Date(NOW - 60_000).toISOString(), usageObservedAt: new Date(NOW - 60_000).toISOString(), connectionCheckedAt: null, resetAt: null, signedOut: false,
+    quotaExpiresAt: new Date(NOW + 60_000).toISOString(),
+    creditObservedAt: new Date(NOW - 60_000).toISOString(), creditsExpiresAt: new Date(NOW + 60_000).toISOString(),
     ...over,
   } as CapacityRow;
 }
@@ -215,7 +230,8 @@ describe('barRows', () => {
     expect(grok!.leftPercent).toBe(72);
     expect(grok!.value).toBe('72% left');
     expect(grok!.detail[0]).toBe('Weekly window: 28% used · resets Sat 8:43 AM');
-    expect(grok!.detail.at(-1)).toBe('checked 1m ago');
+    expect(grok!.detail).toContain(`Usage observed ${new Date(NOW - 60_000).toLocaleString()}`);
+    expect(grok!.detail).not.toContain('checked 1m ago');
   });
 
   it('says "resets" once when the accounts model already worded the reset', () => {
@@ -237,10 +253,33 @@ describe('barRows', () => {
     const unavailable = row({ seatId: 'claude', cls: 'blocked', windows: [], summary: 'Probe failed.' });
     const projected = barRows([signedOut, unavailable], { healthRead: true, now: NOW });
     expect(projected.map((r) => r.leftPercent)).toEqual([null, null]);
-    expect(projected.map((r) => r.value)).toEqual(['signed out', 'unavailable']);
+    expect(projected.map((r) => r.value)).toEqual(['signed out', 'no usage']);
     expect(projected[1]!.detail).toContain('Usage is not reported by this resource.');
   });
 
+  it('keeps a fresh connection diagnosis independent of missing usage', () => {
+    const result = barRows([row({ windows: [], cls: 'blocked', usageObservedAt: null,
+      connectionCheckedAt: new Date(NOW - 60_000).toISOString(),
+      connection: { connection: 'binary-skew', word: 'CLI mismatch', tone: 'warning', reasons: ['Fixture CLI check'], fixKind: 'repin', fixCommand: null } })],
+    { healthRead: true, now: NOW })[0]!;
+    expect(result).toMatchObject({ value: 'no usage', level: 'unknown', leftPercent: null });
+    expect(result.detail).toContain('Connection: CLI mismatch');
+    expect(result.detail).toContain(`Connection checked ${new Date(NOW - 60_000).toLocaleString()}`);
+    expect(result.summary).toContain('No current usage reading');
+  });
+  it('never projects a reset forecast or usability from stale quota without a connection check', () => {
+    const resetAt = new Date(NOW + 60_000).toISOString();
+    const result = barRows([row({ engine: 'codex', cls: 'blocked', connection: null,
+      connectionCheckedAt: null, usageObservedAt: new Date(NOW - 3_600_000).toISOString(), resetAt,
+      windows: [win({ usedPercent: null, limitReached: true, resetsAt: resetAt, resetText: 'resets later' })],
+      credits: '7 native credits available', creditBalance: '7', creditState: 'available' })],
+    { healthRead: true, now: NOW })[0]!;
+    expect(result.display?.usage.state).toBe('retained');
+    expect(`${result.summary} ${result.detail.join(' ')}`).not.toMatch(/Usable now|running low|Usable again/i);
+    expect(result.detail.some(line => line.includes('recorded reset later'))).toBe(true);
+    expect(result.detail).toContain('7 native credits available');
+    expect(result).toMatchObject({ value: 'limit reached · last', level: 'unknown' });
+  });
   it('keeps order as unknown accounts finish checking', () => {
     const local = row({ seatId: 'local', kind: 'local', engine: 'local', cls: 'unread', windows: [] });
     const initial = [local, row({ cls: 'unread', windows: [] })];
@@ -507,7 +546,7 @@ describe('Devin tracked exposure in the bar', () => {
 
 describe('Codex credits are independent of the quota battery', () => {
   it('shows native credits and estimated value when the window is spent without filling the battery', () => {
-    const account = row({ engine: 'codex', plan: 'pro', cls: 'tight', credits: '2,000 credits available',
+    const account = row({ engine: 'codex', plan: 'pro', cls: 'tight', creditState: 'available', credits: '2,000 credits available',
       creditBalance: '2048.4196250000', connection: { connection: 'exhausted' } as CapacityRow['connection'],
       windows: [win({ usedPercent: 100, limitReached: true })] });
     const result = barRows([account], { healthRead: true, now: NOW })[0]!;
@@ -522,7 +561,7 @@ describe('Codex credits are independent of the quota battery', () => {
     expect(result.detail.some((line) => line.includes('autonomous credit spending is not admitted'))).toBe(true);
   });
   it('reports a vendor spend-control hold separately from its remaining balance', () => {
-    const result = barRows([row({ engine: 'codex', credits: '12 credits available', creditSpendControlReached: true,
+    const result = barRows([row({ engine: 'codex', creditState: 'held', credits: '12 credits available', creditSpendControlReached: true,
       windows: [win({ usedPercent: 100 })] })], { healthRead: true, now: NOW })[0]!;
     expect(result.value).toBe('100% used'); expect(result.creditHeld).toBe(true);
     expect(result.creditLabel).toBe('12 credits available'); expect(result.summary).toContain('Credits held');
@@ -537,7 +576,7 @@ describe('Codex credits are independent of the quota battery', () => {
     }
   });
   it('keeps unsupported plan balances in provider units without inventing a dollar rate', () => {
-    const result = barRows([row({ engine: 'codex', plan: 'enterprise', creditBalance: '12', credits: '12 credits available' })], { healthRead: true, now: NOW })[0]!;
+    const result = barRows([row({ engine: 'codex', plan: 'enterprise', creditState: 'available', creditBalance: '12', credits: '12 credits available' })], { healthRead: true, now: NOW })[0]!;
     expect(result.value).toBe('28% used');
     expect(result.creditLabel).toBe('12 credits available');
     expect(result.summary).not.toContain('estimated credit value');
@@ -546,17 +585,21 @@ describe('Codex credits are independent of the quota battery', () => {
 
   it('retains unknown quota independently of known credits and unknown credits independently of known quota', () => {
     const projected = barRows([
-      row({ seatId: 'codex-a', engine: 'codex', windows: [], credits: '12 credits available', plan: 'pro', creditBalance: '12' }),
+      row({ seatId: 'codex-a', engine: 'codex', windows: [], creditState: 'available', credits: '12 credits available', plan: 'pro', creditBalance: '12' }),
       row({ seatId: 'codex-b', engine: 'codex', windows: [win({ usedPercent: 0 })], credits: null, creditState: 'unknown' }),
     ], { healthRead: true, now: NOW });
     expect(projected[0]).toMatchObject({ value: 'no usage', leftPercent: null, level: 'unknown', creditLabel: 'Credits ≈$0.48' });
-    expect(projected[1]).toMatchObject({ value: '0% used', leftPercent: 100, creditLabel: 'Credits not reported' });
+    expect(projected[1]).toMatchObject({ value: '0% used', leftPercent: 100, creditLabel: 'Credits unconfirmed' });
+    expect(projected[1]!.display!.credit.current).toBe(false);
+    expect(projected[1]!.display!.usage.current).toBe(true);
+    expect(projected[1]!.exactCreditBalance).toBeUndefined();
+    expect(projected[1]!.detail.join(' ')).not.toContain('Estimated credit value');
   });
 
   it('never invents measured percentages from limit flags or an exhausted connection', () => {
     const projected = barRows([
-      row({ engine: 'codex', windows: [win({ usedPercent: null, limitReached: true })] }),
-      row({ engine: 'codex', windows: [win({ usedPercent: 33, limitReached: true })] }),
+      row({ seatId: 'current-limit-unmeasured', engine: 'codex', windows: [win({ usedPercent: null, limitReached: true })] }),
+      row({ seatId: 'current-limit-measured', engine: 'codex', windows: [win({ usedPercent: 33, limitReached: true })] }),
       row({ engine: 'codex', windows: [], connection: { connection: 'exhausted' } as CapacityRow['connection'] }),
     ], { healthRead: true, now: NOW });
     expect(projected[0]).toMatchObject({ value: 'limit reached', leftPercent: 0, level: 'out' });
@@ -579,7 +622,7 @@ describe('Codex credits are independent of the quota battery', () => {
   });
 
   it('keeps historical quota explicit and current credits independent of quota history', () => {
-    const projected = barRows([row({ engine: 'codex', windows: [], credits: '12 credits available', creditBalance: '12',
+    const projected = barRows([row({ engine: 'codex', windows: [], creditState: 'available', credits: '12 credits available', creditBalance: '12',
       historicalUsage: { source: 'native-account-checked-history', identitySource: 'native-account-checked',
         observedAt: new Date(NOW - 120_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(),
         windows: [{ id: 'primary', usedPercent: 78, resetsAt: null }] },

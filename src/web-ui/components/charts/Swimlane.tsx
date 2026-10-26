@@ -34,6 +34,7 @@ import { useChartMotion } from './motion.js';
 import { useTextScale } from './useTextScale.js';
 import plot from './plot.module.css';
 import styles from './Swimlane.module.css';
+import { formatDateTime } from '../format/locale-format.js';
 
 export interface SwimlaneItem {
   id: string;
@@ -118,7 +119,7 @@ function defaultFormatTime(ms: number): string {
   const d = new Date(ms);
   return Number.isNaN(d.getTime())
     ? ''
-    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    : formatDateTime(d, 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 /** Short axis labels: long windows get dates, short ones get clock times — full timestamps collide. */
@@ -128,8 +129,8 @@ export function spanTickFormatter(from: number, to: number): (ms: number) => str
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return '';
     return long
-      ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      ? formatDateTime(d, 'en-US', { month: 'short', day: 'numeric' })
+      : formatDateTime(d, 'en-US', { hour: 'numeric', minute: '2-digit' });
   };
 }
 
@@ -236,7 +237,7 @@ export function Swimlane({
     return `${lane.label}${engine}: ${lane.items.length} run${lane.items.length === 1 ? '' : 's'}${parts.length ? ` (${parts.join(', ')})` : ''}`;
   }
 
-  const summary = ariaLabel ?? `${title}: ${itemCount} runs across ${lanes.length} lanes from ${formatTime(from)} to ${formatTime(to)}.`;
+  const summary = ariaLabel ?? `${title}: ${itemCount} run${itemCount === 1 ? '' : 's'} across ${lanes.length} lane${lanes.length === 1 ? '' : 's'} from ${formatTime(from)} to ${formatTime(to)}.`;
 
   const columns: TableColumn<FlatItem>[] = [
     { key: 'lane', label: 'Lane', render: (r) => r.lane },

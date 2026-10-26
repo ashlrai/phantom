@@ -264,7 +264,7 @@ describe('workspace.json', () => {
 
 describe('Auto-merge verdict', () => {
   const pr: VerseGitPr = { number: 7, title: 't', url: 'https://github.com/o/r/pull/7', state: 'open', checks: 'passing', mergeable: true, headSha: 'a'.repeat(40), baseRef: 'main', headRef: 'verse/x' };
-  const base: MergeVerdictInput = { autoMerge: true, killOn: false, pr, branch: 'verse/x', files: ['src/a.ts'], selfRepo: false, selfRepoMode: null, protectedHit: null, requiredChecks: ['CI'], checks: [{ name: 'CI', state: 'passing', url: null }] };
+  const base: MergeVerdictInput = { autoMerge: true, killOn: false, paused: false, diffRefusal: null, pr, branch: 'verse/x', files: ['src/a.ts'], selfRepo: false, selfRepoMode: null, protectedHit: null, requiredChecks: ['CI'], checks: [{ name: 'CI', state: 'passing', url: null }] };
 
   it('allows only a green, mergeable, unprotected PR — in words either way', () => {
     expect(autoMergeVerdict(base)).toMatchObject({ allowed: true });

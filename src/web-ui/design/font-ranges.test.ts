@@ -162,7 +162,7 @@ describe('full font faces claim only what they can draw', () => {
     for (const ch of 'ĀŁжΩ↩↺↻') expect(covers(plex, ch.codePointAt(0)!), ch).toBe(true);
   });
 
-  it('no Verse UI source draws a character only the 230 KB full Plex face has', () => {
+  it('no Phantom UI source draws a character only the 230 KB full Plex face has', () => {
     // With the ranges above, the only characters that still fetch the full
     // face are the ones it really has (↩ ↺ ↻, Latin Extended, Greek, …).
     // UI symbols are drawn as SVG instead (verse-icons ReturnKeyIcon,

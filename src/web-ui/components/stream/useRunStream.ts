@@ -22,7 +22,7 @@ import { useQuery, useRefetch } from '../../data/hooks.js';
 import { runDetailQuery } from '../../data/queries.js';
 import { ApiError } from '../../data/client.js';
 import type { RunState } from '../../data/api-types.js';
-import { useRunStreamEvents, type RunStreamChunk, type RunStreamOutputChunk } from './useRunStreamEvents.js';
+import { useRunStreamEvents, type RunStreamChunk, type RunStreamOutputChunk, type RunStreamDoneEvent } from './useRunStreamEvents.js';
 
 /** Client poll cadence. The server's own disk-poll floor (SSE_POLL_MS,
  * src/core/web/api.ts:138) is ~1.5s — polling faster than that cannot
@@ -38,7 +38,7 @@ export const RUN_STREAM_POLL_MS = 2000;
  * Mirrored server-side by run-stream.ts's RUN_STALL_AFTER_MS. */
 const STALL_AFTER_MS = RUN_STREAM_POLL_MS * 4;
 
-export type RunStreamPhase = 'connecting' | 'live' | 'stalled' | 'done' | 'not-found' | 'error';
+export type RunStreamPhase = 'connecting' | 'draining' | 'reconnecting' | 'live' | 'stalled' | 'done' | 'not-found' | 'error';
 export type RunStreamTransport = 'sse' | 'polling';
 
 export interface RunStreamState {
@@ -64,6 +64,10 @@ export interface RunStreamState {
   outputChunks: RunStreamOutputChunk[];
   /** Age (ms) of the server's most recent stall notice, when SSE-driven. */
   stallAgeMs: number | null;
+  /** Capture availability is independent of the run's persisted outcome. */
+  outputGap: { reason: string } | null;
+  /** Valid terminal outcome pushed by the server; structured data may lag a refetch. */
+  completion: RunStreamDoneEvent | null;
 }
 
 function fingerprintOf(run: RunState | undefined): string | null {
@@ -83,13 +87,11 @@ export function useRunStream(runId: string): RunStreamState {
   const isTerminal = query.data ? query.data.status !== 'running' : false;
   const is404 = query.error instanceof ApiError && query.error.status === 404;
 
-  // Attempt SSE for every non-terminal, non-404 run. Once the SSE hook
-  // settles on 'unavailable' (older server, or EventSource unsupported) this
-  // permanently falls back to polling for the life of this mount — it never
-  // fights a route that plainly isn't there.
-  const sseEnabled = !isTerminal && !is404;
-  const events = useRunStreamEvents(runId, sseEnabled);
-  const transport: RunStreamTransport = events.status === 'open' ? 'sse' : 'polling';
+  // A terminal RunState can appear before its bounded output replay drains.
+  // Keep the connection for run-done, and replay captures on terminal mounts.
+  const events = useRunStreamEvents(runId, !is404);
+  const transport: RunStreamTransport =
+    ['open', 'reconnecting', 'complete'].includes(events.status) ? 'sse' : 'polling';
 
   const fingerprint = fingerprintOf(query.data);
 
@@ -141,7 +143,11 @@ export function useRunStream(runId: string): RunStreamState {
   } else if (!query.data) {
     phase = 'connecting';
   } else if (query.data.status !== 'running') {
+    phase = events.status === 'connecting' || events.status === 'open' || events.status === 'reconnecting' ? 'draining' : 'done';
+  } else if (events.runDone !== null) {
     phase = 'done';
+  } else if (events.status === 'reconnecting') {
+    phase = 'reconnecting';
   } else if (transport === 'sse') {
     phase = sseStallFresh ? 'stalled' : 'live';
   } else if (lastChangedAt !== null && Date.now() - lastChangedAt > STALL_AFTER_MS) {
@@ -164,5 +170,7 @@ export function useRunStream(runId: string): RunStreamState {
     chunks: events.chunks,
     outputChunks: events.outputChunks,
     stallAgeMs: sseStallFresh ? events.stall!.ageMs : null,
+    outputGap: events.gap,
+    completion: events.runDone,
   };
 }

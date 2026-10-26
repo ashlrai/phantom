@@ -5,7 +5,7 @@
   "description": "Read-only machine-readable mirror of the Ashlr dev-tools ecosystem map.",
   "source": {
     "method": "local sibling-directory inventory under dev-tools plus curated role labels from docs/ECOSYSTEM-MAP.md",
-    "includedRepoCount": 21,
+    "includedRepoCount": 23,
     "excluded": [
       {
         "directory": "binshield-internal-backup",
@@ -16,7 +16,7 @@
   "coverage": {
     "standaloneDetailedProfiles": 12,
     "compositionOnlyProfiles": 1,
-    "inventoryOnlyProfiles": 8
+    "inventoryOnlyProfiles": 10
   },
   "repositories": [
     {
@@ -232,6 +232,33 @@
       "strategicTier": "supporting"
     },
     {
+      "id": "lexicon",
+      "directory": "lexicon",
+      "displayName": "lexicon",
+      "role": "agent vocabulary / glossary MCP",
+      "category": "product surface",
+      "profileState": "inventory-only",
+      "provides": [
+        "Lexicon MCP server",
+        "npm package"
+      ],
+      "strategicTier": "core-fleet"
+    },
+    {
+      "id": "locus",
+      "directory": "locus",
+      "displayName": "locus",
+      "role": "local context hub / MCP",
+      "category": "product surface",
+      "profileState": "inventory-only",
+      "provides": [
+        "Locus CLI",
+        "Locus MCP server",
+        "hub"
+      ],
+      "strategicTier": "core-fleet"
+    },
+    {
       "id": "morphkit",
       "directory": "morphkit",
       "displayName": "morphkit",
@@ -386,7 +413,9 @@
       "stack",
       "ashlr-pulse",
       "ashlrcode",
-      "ashlr-workbench"
+      "ashlr-workbench",
+      "lexicon",
+      "locus"
     ],
     "externalCoreCandidates": [
       {
@@ -430,7 +459,9 @@
           "stack",
           "ashlr-pulse",
           "ashlrcode",
-          "ashlr-workbench"
+          "ashlr-workbench",
+          "lexicon",
+          "locus"
         ],
         "externalRepoIds": [],
         "directive": "Hub can coordinate proposal-only work across these repos when they are locally enrolled; keep human approval gates intact."

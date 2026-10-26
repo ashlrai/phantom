@@ -121,22 +121,34 @@
 .small { min-height: var(--control-h-sm); padding: 0 var(--space-2); font-size: var(--text-xs-size); }
 
 /* The quiet running marker: a pulsing dot, never a spinner (DESIGN-V2 §4). */
+/* The ring is a scaled, fading copy of the dot so it animates on the
+   compositor (same as the sidebar's running dot); a box-shadow pulse repaints every frame. */
 .pending {
+  position: relative;
   flex: none;
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
   background: var(--status-running-solid);
+}
+.pending::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--status-running-solid);
+  opacity: 0;
+  pointer-events: none;
   animation: context-pulse 1.8s ease-out infinite;
 }
 @keyframes context-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-running-solid) 55%, transparent); }
-  100% { box-shadow: 0 0 0 5px transparent; }
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(2.667); opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .pending { animation: none; }
+  :root:not([data-motion="full"]) .pending::after { animation: none; }
 }
-:root[data-motion="reduce"] .pending { animation: none; }
+:root[data-motion="reduce"] .pending::after { animation: none; }
 
 /* ======================================================================
    Handoff dialog

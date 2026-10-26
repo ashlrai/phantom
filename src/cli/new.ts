@@ -235,10 +235,11 @@ function detectTool(name: string): string | null {
   }
 }
 
-function runStackRecipe(dir: string, recipe: string): { ok: boolean; detail: string } {
+function runStackRecipe(dir: string, recipe: string): { ok: boolean; detail: string; notInstalled?: boolean } {
   const stackBin = detectTool('stack');
   if (!stackBin) {
-    return { ok: false, detail: 'stack not installed — skipping recipe provisioning' };
+    // scaffoldProject already warned that stack is not installed.
+    return { ok: false, detail: 'stack not installed — skipping recipe provisioning', notInstalled: true };
   }
   try {
     // execFileSync bypasses the shell entirely — `recipe` is passed as a
@@ -562,7 +563,9 @@ export async function cmdNew(args: string[]): Promise<number> {
       process.stderr.write(dim(`Running stack recipe "${parsed.stackRecipe}"…\n`));
     }
     const stackResult = runStackRecipe(result.dir, parsed.stackRecipe);
-    if (!stackResult.ok) {
+    if (stackResult.notInstalled) {
+      // Already in result.warnings from scaffoldProject; don't repeat it.
+    } else if (!stackResult.ok) {
       stackWarnings.push(stackResult.detail);
     } else if (!parsed.json) {
       process.stderr.write(green('stack: ') + stackResult.detail + '\n');
@@ -578,15 +581,8 @@ export async function cmdNew(args: string[]): Promise<number> {
   if (parsed.json) {
     process.stdout.write(JSON.stringify(finalResult, null, 2) + '\n');
   } else {
+    // printSuccess lists finalResult.warnings, stack warnings included.
     printSuccess(finalResult, parsed.name, parsed.templateId);
-
-    // Surface stack warnings after the summary
-    for (const w of stackWarnings) {
-      console.log(`  ${yellow('warn:')} ${w}`);
-    }
-    if (stackWarnings.length > 0) {
-      console.log('');
-    }
   }
 
   return 0;

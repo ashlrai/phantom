@@ -871,7 +871,7 @@ describe('probeOperatorPresence', () => {
   it('sees a live Verse turn', async () => {
     mkdirSync(join(home, '.ashlr', 'verse'), { recursive: true });
     writeFileSync(join(home, '.ashlr', 'verse', 'running.json'), JSON.stringify({ v: 1, entries: [{ kind: 'turn', pid: process.pid }] }));
-    expect(await probeOperatorPresence(Date.now(), { home })).toMatchObject({ present: true, reason: 'A Verse chat turn is running.' });
+    expect(await probeOperatorPresence(Date.now(), { home })).toMatchObject({ present: true, reason: 'A Phantom chat turn is running.' });
   });
 
   it('sees a Claude Code transcript under 15 minutes old, deep in a project', async () => {

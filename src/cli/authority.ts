@@ -15,7 +15,7 @@
  *   protect --print|--apply [--repo owner/name …]        GitHub rulesets (addendum §4)
  *   github-app [--org <login>] [--yes]    GitHub App manifest flow; the key goes straight to custody
  *   rotate-provenance [--yes]             replace the provenance HMAC key agents could read
- *   setup [--dry-run [--json]] [--yes] [--source <ashlr-hub checkout>]   the guided Phase-0 command
+ *   setup [--dry-run [--json]] [--yes]   the guided Phase-0 command
  *   resident start|stop|status [--json]   the resident daemon service under the grant (docs/RESIDENT-RUNTIME.md)
  *
  * LOWERING never asks anything. Everything that raises authority or touches
@@ -26,14 +26,14 @@
  */
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { CUSTODY_HELPER_PATH } from '../core/authority/custody-client.js';
-import { HUB_REPOSITORY_IDENTITY, isHubRepositoryLabel } from '../core/authority/repository-binding.js';
+import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
 import type { ResidentAdmission, ResidentPlistState } from '../core/authority/resident.js';
 import type { RepoEnforcement } from '../core/fleet/fleet-types.js';
@@ -90,6 +90,8 @@ export interface ResidentServiceObservation {
   plistPath: string | null;
   installedBudgetUsd: number | null;
   expectedBudgetUsd: number | null;
+  installedKeepAwake?: boolean | null;
+  expectedKeepAwake?: boolean | null;
   /** Why the expected plist could not be computed (config unreadable…); null when it could. */
   problem: string | null;
 }
@@ -247,7 +249,7 @@ function readServiceFile(path: string): string | null | undefined {
 const realResidentDeps: ResidentCliDeps = {
   admission: async () => (await import('../core/authority/resident.js')).observeResidentAdmission().admission,
   observe: async () => {
-    const { residentPlistState, plistBudgetUsd } = await import('../core/authority/resident.js');
+    const { residentPlistState, plistBudgetUsd, plistKeepAwake } = await import('../core/authority/resident.js');
     const { generateServiceDefinition } = await import('../core/daemon/service.js');
     let state: DaemonServiceState;
     try {
@@ -264,6 +266,8 @@ const realResidentDeps: ResidentCliDeps = {
       plistPath: def.filePath,
       installedBudgetUsd: plistBudgetUsd(installed ?? null),
       expectedBudgetUsd: prepared.ok ? prepared.budgetUsd : null,
+      installedKeepAwake: plistKeepAwake(installed ?? null),
+      expectedKeepAwake: prepared.ok ? prepared.opts.keepAwake === true : null,
       problem: prepared.ok ? null : prepared.problem,
     };
   },
@@ -339,6 +343,8 @@ interface Parsed {
   values: Map<string, string[]>;
 }
 
+// `--source` is still accepted (and ignored) so older setup invocations parse:
+// the trust-root PR no longer uses a local checkout.
 const VALUE_FLAGS = new Set(['--reason', '--payload', '--switch', '--limit', '--kind', '--repo', '--org', '--source', '--max-files', '--max-lines', '--repo-max-merges-per-day']);
 
 function parseArgs(args: readonly string[]): Parsed | string {
@@ -390,7 +396,7 @@ Compatible alias: ashlr authority <command>
   protect --print|--apply [--repo o/n]   GitHub rulesets for the grant's server-enforced repos
   github-app [--org <login>] [--yes]     Create the ashlr-fleet GitHub App (key stored in custody)
   rotate-provenance [--yes]              Replace the provenance HMAC key
-  setup [--dry-run [--json]] [--yes] [--source <checkout>]
+  setup [--dry-run [--json]] [--yes]
                                          Guided Phase 0: custody, trust root, App, token, canary, rulesets, first grant, daemon
   resident start                         Install / restart the resident daemon under the active grant (you confirm here)
   resident stop                          Boot the resident daemon out and remove its plist (Stop is separate)
@@ -570,9 +576,12 @@ async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> 
     deps.err(`Stop could not be armed: ${result.reason}`);
     return 1;
   }
-  deps.out(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
-  for (const line of drainSummary(result)) deps.out(line);
-  if (parsed.flags.has('--json')) deps.out(JSON.stringify(result, null, 2));
+  // With --json, stdout carries only the JSON; the prose goes to stderr.
+  const json = parsed.flags.has('--json');
+  const say = json ? deps.err : deps.out;
+  say(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
+  for (const line of drainSummary(result)) say(line);
+  if (json) deps.out(JSON.stringify(result, null, 2));
   return 0;
 }
 
@@ -2154,7 +2163,7 @@ async function runSetup(parsed: Parsed, deps: AuthorityCliDeps, opts: SetupRunOp
             // A dry run looks too, through `gh api` reads only (the
             // Verse checklist is this path): an open PR, a merged key or a
             // pushed branch is reported instead of "add this root yourself".
-            pr = (dryRun ? await probeTrustRootReadOnly(deps, root) : null) ?? await openTrustRootPr(parsed, deps, root, ask, !dryRun);
+            pr = (dryRun ? await probeTrustRootReadOnly(deps, root) : null) ?? await openTrustRootPr(deps, root, ask, !dryRun);
           } catch (error) {
             pr = { status: 'failed', detail: failure(error) };
           }
@@ -2454,7 +2463,11 @@ async function residentSetupRow(deps: AuthorityCliDeps, service: DaemonServiceSt
     const budget = observed.installedBudgetUsd !== observed.expectedBudgetUsd
       ? ` (installed budget $${observed.installedBudgetUsd ?? '?'}/day, config says $${observed.expectedBudgetUsd ?? '?'}/day)`
       : '';
-    return { status: 'waiting-on-you', detail: `the running service's plist differs from config${budget} — run ${start} to regenerate and restart it` };
+    const awake = observed.installedKeepAwake !== undefined && observed.expectedKeepAwake !== undefined &&
+      observed.installedKeepAwake !== observed.expectedKeepAwake
+      ? ` (installed awake ${observed.installedKeepAwake === null ? 'unknown' : observed.installedKeepAwake ? 'on' : 'off'}, config says ${observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'})`
+      : '';
+    return { status: 'waiting-on-you', detail: `the running service's plist differs from config${budget}${awake} — run ${start} to regenerate and restart it` };
   }
   if (observed.plist !== 'current') {
     return { status: 'waiting-on-you', detail: `the running service's plist could not be matched (${observed.plist}) — run ${start} to regenerate it` };
@@ -2496,6 +2509,7 @@ async function cmdResidentStatus(parsed: Parsed, deps: AuthorityCliDeps): Promis
   deps.out(`Service: ai.ashlr.daemon ${observed.state}${observed.plistPath ? ` (${observed.plistPath.replace(homedir(), '~')})` : ''}`);
   const budget = `installed $${observed.installedBudgetUsd ?? '—'}/day, config $${observed.expectedBudgetUsd ?? '?'}/day`;
   deps.out(`Plist: ${observed.plist}${observed.plist === 'drifted' ? ' — `ashlr authority resident start` regenerates it' : ''} (budget: ${budget})`);
+  deps.out(`Awake on AC: installed ${observed.installedKeepAwake === undefined || observed.installedKeepAwake === null ? 'unknown' : observed.installedKeepAwake ? 'on' : 'off'}, config ${observed.expectedKeepAwake === undefined || observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'}; lid closure and explicit sleep still follow macOS policy.`);
   if (observed.problem) deps.out(`  ${observed.problem}`);
   return 0;
 }
@@ -2536,6 +2550,7 @@ async function cmdResidentStart(parsed: Parsed, deps: AuthorityCliDeps): Promise
   deps.out(`  release   ${admission.revision ?? '?'} (${admission.packageRoot?.replace(homedir(), '~') ?? '?'})`);
   deps.out(`  service   ai.ashlr.daemon → ${observed.plistPath?.replace(homedir(), '~') ?? '?'} (${observed.state}, plist ${observed.plist})`);
   deps.out(`  budget    $${observed.expectedBudgetUsd ?? '?'}/day from config daemon.dailyBudgetUsd${observed.installedBudgetUsd !== null && observed.installedBudgetUsd !== observed.expectedBudgetUsd ? ` (installed: $${observed.installedBudgetUsd})` : ''}`);
+  deps.out(`  awake     ${observed.expectedKeepAwake === undefined || observed.expectedKeepAwake === null ? 'unknown' : observed.expectedKeepAwake ? 'on' : 'off'} on AC from config daemon.keepAwake${observed.installedKeepAwake !== undefined && observed.installedKeepAwake !== null && observed.installedKeepAwake !== observed.expectedKeepAwake ? ` (installed: ${observed.installedKeepAwake ? 'on' : 'off'})` : ''}; closing the lid can still sleep the Mac`);
   deps.out('  launchd   enable + bootstrap (RunAtLoad); every tick re-verifies the grant, Stop and the switch');
   const native = (await deps.resident.confirmedNatively?.()) === true;
   if (native) {
@@ -2625,27 +2640,55 @@ async function probeTrustRootReadOnly(deps: AuthorityCliDeps, root: StandingGran
 }
 
 /**
- * Open Mason's trust-root PR from a throwaway worktree (his checkout is never
- * touched). Resumable: a rerun finds the PR it already opened, or the key
- * already merged on the base branch, instead of failing on the leftover branch.
+ * Open Mason's trust-root PR through the GitHub API alone: the branch and its
+ * one commit are written with `gh api`, so no local checkout, worktree or git
+ * process is involved. A local git run in a checkout would run whatever that
+ * repository's config and hooks name (hooks on commit and push, a filter
+ * driver that rewrites trust-roots.ts as it is staged, `core.sshCommand` on
+ * push), and those are writable by anything that can reach `.git`. The commit
+ * GitHub records is exactly the bytes rendered here. Resumable: a rerun finds
+ * the PR it already opened, the key already merged on the base branch, or the
+ * branch an earlier run created, and finishes from there.
  */
 async function openTrustRootPr(
-  parsed: Parsed,
   deps: AuthorityCliDeps,
   root: StandingGrantTrustRoot,
   ask: (q: string) => Promise<boolean>,
   probe: boolean,
 ): Promise<{ status: StepStatus; detail: string; link?: string }> {
-  const source = one(parsed, '--source') ?? (await findSelfCheckout());
-  if (!source) return { status: 'waiting-on-you', detail: 'pass --source <your Phantom checkout> so setup can open the trust-root PR' };
   const branch = `authority/trust-root-${root.keyId}`;
-  const base = async (): Promise<string> => {
-    const result = await deps.run('gh', ['repo', 'view', HUB_REPO, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']);
-    return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : 'master';
-  };
+  const refPath = (name: string): string => name.split('/').map(encodeURIComponent).join('/');
+  const filePath = 'src/core/authority/trust-roots.ts';
   const prLink = (text: string): string | undefined => /https:\/\/github\.com\/\S+\/pull\/\d+/u.exec(text)?.[0];
+  const read = async (path: string): Promise<unknown> => {
+    const result = await deps.run('gh', ['api', path]);
+    if (result.status !== 0) return null;
+    try {
+      return JSON.parse(result.stdout || 'null') as unknown;
+    } catch {
+      return null;
+    }
+  };
+  const write = async (method: 'POST' | 'PUT', path: string, body: Record<string, string>): Promise<void> => {
+    const result = await deps.run('gh', ['api', '--method', method, path, '--input', '-'], { input: JSON.stringify(body) });
+    if (result.status !== 0) throw new Error(`gh api ${method} ${path.split('?')[0]} failed: ${result.stderr.trim().slice(0, 200)}`);
+  };
+  const readFileAt = async (ref: string): Promise<{ text: string; sha: string } | null> => {
+    const file = await read(`repos/${HUB_REPO}/contents/${filePath}?ref=${encodeURIComponent(ref)}`) as
+      { content?: unknown; encoding?: unknown; sha?: unknown } | null;
+    if (!file || file.encoding !== 'base64' || typeof file.content !== 'string' || typeof file.sha !== 'string') return null;
+    return { text: Buffer.from(file.content, 'base64').toString('utf8'), sha: file.sha };
+  };
+  const branchHead = async (name: string): Promise<string | null> => {
+    const ref = await read(`repos/${HUB_REPO}/git/ref/heads/${refPath(name)}`) as { ref?: unknown; object?: { sha?: unknown } } | null;
+    return ref?.ref === `refs/heads/${name}` && typeof ref.object?.sha === 'string' ? ref.object.sha : null;
+  };
+  const base = async (): Promise<string> => {
+    const repo = await read(`repos/${HUB_REPO}`) as { default_branch?: unknown } | null;
+    return typeof repo?.default_branch === 'string' && /^[A-Za-z0-9._/-]{1,100}$/u.test(repo.default_branch) ? repo.default_branch : 'master';
+  };
+  const listed = `keyId: '${root.keyId}'`;
   let baseBranch: string | null = null;
-  let pushedAlready = false;
   if (probe) {
     // Read-only probes (a dry run never makes them).
     const open = await deps.run('gh', ['pr', 'list', '--repo', HUB_REPO, '--head', branch, '--state', 'open', '--json', 'url', '--jq', '.[0].url // ""']);
@@ -2654,70 +2697,37 @@ async function openTrustRootPr(
       return { status: 'waiting-on-you', detail: `${url} is already open — review and merge it yourself`, ...(prLink(url) ? { link: prLink(url)! } : {}) };
     }
     baseBranch = await base();
-    const fetched = await deps.run('git', ['-C', source, 'fetch', 'origin', baseBranch]);
-    const onBase = fetched.status === 0
-      ? await deps.run('git', ['-C', source, 'show', `origin/${baseBranch}:src/core/authority/trust-roots.ts`])
-      : null;
-    if (onBase?.status === 0 && onBase.stdout.includes(`keyId: '${root.keyId}'`)) {
+    if ((await readFileAt(baseBranch))?.text.includes(listed)) {
       return { status: 'waiting-on-you', detail: `${root.keyId} is already on ${baseBranch}, but this release was built before it` };
     }
-    // An earlier run pushed the branch but `gh pr create` failed: open the PR from it.
-    const remote = await deps.run('git', ['-C', source, 'ls-remote', '--exit-code', '--heads', 'origin', branch]);
-    pushedAlready = remote.status === 0 && remote.stdout.trim() !== '';
   }
-  if (!(await ask(`Open a PR in ${source.replace(homedir(), '~')} adding key ${root.keyId} to trust-roots.ts?`))) {
+  if (!(await ask(`Open a PR on ${HUB_REPO} adding key ${root.keyId} to trust-roots.ts?`))) {
     return { status: 'waiting-on-you', detail: `add this root yourself: ${JSON.stringify({ keyId: root.keyId, alg: 'ES256' })}` };
   }
   baseBranch ??= await base();
-  const createPr = async (cwd?: string): Promise<{ status: StepStatus; detail: string; link?: string }> => {
-    const pr = await deps.run('gh', ['pr', 'create', '--repo', HUB_REPO, '--base', baseBranch!, '--head', branch,
-      '--title', `authority: trust custody key ${root.keyId}`,
-      '--body', `Adds the Secure Enclave custody key \`${root.keyId}\` to STANDING_GRANT_TRUST_ROOTS (opened by \`ashlr authority setup\`). Tier-1 path: review it yourself.`], cwd ? { cwd } : {});
-    if (pr.status !== 0) return { status: 'failed', detail: `pushed ${branch}, but the PR could not be opened: ${pr.stderr.trim().slice(0, 200)}` };
-    const url = pr.stdout.trim();
-    return { status: 'waiting-on-you', detail: `opened ${url} — review and merge it yourself`, ...(prLink(url) ? { link: prLink(url)! } : {}) };
-  };
-  if (pushedAlready) return createPr();
-  const worktree = mkdtempSync(join(tmpdir(), 'ashlr-trust-root-'));
-  rmSync(worktree, { recursive: true, force: true });
-  const step = async (bin: 'git' | 'gh', args: readonly string[], cwd?: string): Promise<void> => {
-    const result = await deps.run(bin, args, cwd ? { cwd } : {});
-    if (result.status !== 0) throw new Error(`${bin} ${args[0] === '-C' ? args[2] : args[0]} failed: ${result.stderr.trim().slice(0, 200)}`);
-  };
-  let worktreeAdded = false;
-  try {
-    await step('git', ['-C', source, 'fetch', 'origin', baseBranch]);
-    // -B: a local branch left by an earlier run that stopped before the PR
-    // (push or `gh pr create` failed) is reset instead of blocking every rerun.
-    await step('git', ['-C', source, 'worktree', 'add', '-B', branch, worktree, `origin/${baseBranch}`]);
-    worktreeAdded = true;
-    const file = join(worktree, 'src', 'core', 'authority', 'trust-roots.ts');
-    const updated = renderTrustRootsWithKey(readFileSync(file, 'utf8'), root);
+  // A branch an earlier run created is finished, not recreated: it may
+  // already carry the commit (only `gh pr create` failed) or not yet.
+  if (await branchHead(branch) === null) {
+    const baseHead = await branchHead(baseBranch);
+    if (!baseHead) throw new Error(`could not read ${baseBranch} on ${HUB_REPO}`);
+    await write('POST', `repos/${HUB_REPO}/git/refs`, { ref: `refs/heads/${branch}`, sha: baseHead });
+  }
+  const current = await readFileAt(branch);
+  if (!current) throw new Error(`could not read ${filePath} on ${branch}`);
+  if (!current.text.includes(listed)) {
+    const updated = renderTrustRootsWithKey(current.text, root);
     if (!updated) return { status: 'failed', detail: `trust-roots.ts on ${baseBranch} already lists a different root — add the key by hand` };
-    writeFileSync(file, updated);
-    await step('git', ['add', 'src/core/authority/trust-roots.ts'], worktree);
-    await step('git', ['commit', '-m', `authority: trust custody key ${root.keyId}`], worktree);
-    await step('git', ['push', '-u', 'origin', branch], worktree);
-    return await createPr(worktree);
-  } finally {
-    await deps.run('git', ['-C', source, 'worktree', 'remove', '--force', worktree]);
-    // The pushed branch lives on origin; the local copy only blocks a rerun.
-    if (worktreeAdded) await deps.run('git', ['-C', source, 'branch', '-D', branch]);
+    await write('PUT', `repos/${HUB_REPO}/contents/${filePath}`, {
+      message: `authority: trust custody key ${root.keyId}`,
+      content: Buffer.from(updated, 'utf8').toString('base64'),
+      sha: current.sha,
+      branch,
+    });
   }
-}
-
-/** The enrolled self checkout, under either reviewed repository label (a hint, not authority). */
-async function findSelfCheckout(): Promise<string | null> {
-  try {
-    const { readEnrollmentRegistry } = await import('../core/sandbox/policy.js');
-    const { repoIdentityOfPath } = await import('../core/fleet/repo-identity.js');
-    const registry = readEnrollmentRegistry();
-    if (registry.state !== 'ready') return null;
-    return registry.repos.find((path) => {
-      const name = repoIdentityOfPath(path);
-      return name !== null && isHubRepositoryLabel(name);
-    }) ?? null;
-  } catch {
-    return null;
-  }
+  const pr = await deps.run('gh', ['pr', 'create', '--repo', HUB_REPO, '--base', baseBranch, '--head', branch,
+    '--title', `authority: trust custody key ${root.keyId}`,
+    '--body', `Adds the Secure Enclave custody key \`${root.keyId}\` to STANDING_GRANT_TRUST_ROOTS (opened by \`ashlr authority setup\`). Tier-1 path: review it yourself.`]);
+  if (pr.status !== 0) return { status: 'failed', detail: `pushed ${branch}, but the PR could not be opened: ${pr.stderr.trim().slice(0, 200)}` };
+  const url = pr.stdout.trim();
+  return { status: 'waiting-on-you', detail: `opened ${url} — review and merge it yourself`, ...(prLink(url) ? { link: prLink(url)! } : {}) };
 }

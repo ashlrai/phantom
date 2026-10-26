@@ -44,13 +44,28 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
+  'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
+  'test/proactive-coordination.test.ts', // immutable ledger/watermark fsync, prefix-loss detection and ownership recovery
+  'test/proactive-coordination-api.test.ts', // scoped private packets/profiles plus immutable replay journals
+  'test/proactive-planning-api.test.ts', // durable offline receipts, exact request recovery and scoped packet loss
+  'test/proactive-routing-lab.test.ts', // immutable intent/settlement and independent replay custody with truncation faults
+  'test/proactive-replay-watermark.test.ts', // real private watermark fsync, orphan stages, file links and bounded custody
   'test/candidate-version-sync.test.ts', // real bounded CLI subprocesses; the subprocess case retains its original 5s deadline
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
+  'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
+  'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
+  'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
+  'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
+  'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
+  'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
+  'test/cli-unknown-option.test.ts', // fresh Node/tsx CLI subprocesses per verb, each with its own temp HOME and failing tool shims on PATH
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
+  'test/usage-api-body-stall.test.ts', // actual loopback HTTP server that sends headers and then stalls the body
+  'test/simple-conductor-lease-clear.test.ts', // private HOME task stores plus real live/exited child processes as lease owners
   'test/claude-api-grant.test.ts', // real child processes and private-store financial reservation races
   'test/m54.self-eval.test.ts', // real temporary Git repositories for source-bound legacy/canonical self-target discovery
   'test/authority-claude-native-adapter.test.ts', // real inert native profile, bounded stdin, metadata and separately jailed tools
@@ -85,6 +100,7 @@ export const REAL_IO_TEST_FILES = [
   'test/local-eval.test.ts', // spawns real `node` checkers against real temp fixtures to grade the graders
   'test/verse-seats.test.ts', // real loopback HTTP server standing in for Ollama
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
+  'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)
@@ -92,6 +108,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-session-handoff.test.ts', // real temp git repos for the handoff note's `git diff --stat`
   'test/verse-control-api.test.ts', // real web server bind + real enrollment/audit/kill-switch state in a tmp HOME
   'test/verse-daemon-pause.test.ts', // real web server bind + real git repos, pause/kill sentinels and audit in a tmp HOME
+  'test/verse-git-runner-hung-child.test.ts', // real temp git repo whose pre-commit hook forks a pipe-holding grandchild
   'test/universe-control-execution.test.ts', // private signed effect and interrupted settlement records
   'test/universe-firm-resource-control-handler.test.ts', // enrolled graph dispatch to real inert transports
   'test/universe-firm-cli-integration.test.ts', // real CLI processes with test-owned provenance
@@ -115,6 +132,10 @@ export const REAL_IO_TEST_FILES = [
   'test/m442.runtime-release-launch-revalidation.test.ts', // large dependency fixtures, permissions and recursive cleanup
   'test/m444.external-skill-audit.test.ts', // large real audit trees and recursive cleanup
   'test/m466.host-merge-revocation-protocol.test.ts', // 4097-file store bounds and competing subprocess CAS
+  'test/resource-pool-commissioning-independent.test.ts', // witnessed metadata, custody loss and crash recovery
+  'test/resource-pool-commissioning-apply.test.ts',
+  'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
+  'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
   'test/resource-native-profile.test.ts', // exclusive profile preparation and inert native execve
   'test/resource-claude-account-status.test.ts', // native auth status with inert private process fixtures
   'test/resource-claude-account-usage.test.ts', // private scratch and bounded native usage mocks
@@ -177,11 +198,13 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-worker-process.test.ts', // real bounded stdin and process ownership
   'test/resource-worker.test.ts', // native worker fixtures and numeric-loopback model transport
   'test/resource-pool-runtime.test.ts', // durable admission, concurrent tasks, and replay
+  'test/resource-pool-ledger-read-race.test.ts', // real atomic ledger commits, read races and custody refusal
   'test/resource-admission-preflight.test.ts', // read-only admission parity against private persisted ledgers
   'test/resource-performance-runtime.test.ts', // monotonic measurements in the private task ledger
   'test/resource-review-benchmark.test.ts', // fixed calibration through real ledger and loopback transport
   'test/resource-pool-cli.test.ts', // explicit private manifests and CLI output files
   'test/resource-codex-account-probe.test.ts', // native metadata protocol and owned subprocess cleanup
+  'test/role-completion.test.ts', // Mac cases launch a fixture app-server, the metadata helper and a sandboxed exec child (~2.9 s on Mac CI)
   'test/codex-selected-producer.test.ts', // real pinned inert Codex processes, private login copies and captured Git edits
   'test/resource-probe-cli.test.ts', // private commissioning reports and signal ownership
   'test/resource-quota-console.test.ts', // actual foreground collector, HTTP and subprocess lifecycle
@@ -285,6 +308,7 @@ export const REAL_IO_TEST_FILES = [
   'test/universe-file-operations-runner.test.ts', // frozen snapshot admission with private Git fixtures
   'test/universe-campaign-integration.test.ts', // native multi-generation ownership, feedback and durable resource limits
   'test/universe-portfolio-integration.test.ts', // native cross-Universe dependency ordering and concurrent campaign settlement
+  'test/cli-help-no-side-effects.test.ts', // ~750 real CLI subprocesses (every command/verb x --help/-h) in private sandboxes; one bounded beforeAll
   'test/universe-portfolio-resource-integration.test.ts', // shared resource ledger and confined cross-Universe dependency execution
   'test/universe-resource-quota-integration.test.ts', // inert native metadata capture before confined Universe generation
   'test/universe-capacity-wait-integration.test.ts', // parallel inert campaigns sharing collector and worker capacity
@@ -317,6 +341,9 @@ export const REAL_IO_TEST_FILES = [
   'test/npm-cli-launch.test.ts', // spawns the real npm CLI — 3.5s slowest test in the quiet baseline
   'test/m310.queued-autonomy-work.test.ts', // real queued autonomy work over real fs — 9.6s slowest test in the quiet baseline
   'test/m245.self-improve-integration.test.ts', // real self-improve integration loop — 4.7s slowest test in the quiet baseline
+  'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
+  'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
+  'test/improve-observe.test.ts', // finds a revert in the log of a real temp git repo
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
   'test/m482.release-artifact-contract.test.ts', // real npm pack/install release artifact contract (68.1s single test — keeps its own 180s override below) — 68.1s slowest test in the quiet baseline
@@ -344,6 +371,10 @@ export const REAL_IO_TEST_FILES = [
   'test/m23.gate.test.ts', // real git worktree/merge/apply subprocess work — 3.1s slowest test in the quiet baseline
   'test/m42.engineer-tools.test.ts', // real git worktree/merge/apply subprocess work — 7.1s slowest test in the quiet baseline
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
+  'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
+  'test/stale-git-locks.test.ts', // real git repos and worktrees, real doctor run
+  'test/tmp-scratch-sweep.test.ts', // real git worktrees, dead-pid child processes
+  'test/daemon-start-temp-worktree-sweep.test.ts', // real git worktrees, dead-pid child processes and a real runDaemon start
   'test/m48.automerge-pass.test.ts', // real git worktree/merge/apply subprocess work — 5.2s slowest test in the quiet baseline
   'test/m56.branch-apply.test.ts', // real git worktree/merge/apply subprocess work — 3.2s slowest test in the quiet baseline
   'test/m85.fleet-continuity.test.ts', // real git worktree/merge/apply subprocess work — 5.3s slowest test in the quiet baseline
@@ -366,6 +397,8 @@ export const REAL_IO_TEST_FILES = [
   'test/m412.sandbox-pre-effect-recovery.test.ts', // real fs lock/sandbox lifecycle work — 3.3s slowest test in the quiet baseline
   'test/m417.sandbox-cleanup-quiescence.test.ts', // real fs lock/sandbox lifecycle work — 4.8s slowest test in the quiet baseline
   'test/m426.sandbox-reservation-identity.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
+  'test/sandbox-create-two-phase.test.ts', // real git through a PATH shim: slow and failing checkouts, KILL armed during populate
+  'test/sandbox-git-supervisor.test.ts', // real Node supervisors + git PATH shim: cwd-pin refusal, runner death, rollback drain
   'test/m463.claimed-batch-admission.test.ts', // real fs lock/sandbox lifecycle work — 7.4s slowest test in the quiet baseline
   'test/m490.daemon-state-recovery-cli.test.ts', // real fs lock/sandbox lifecycle work — 3.6s slowest test in the quiet baseline
 
@@ -459,6 +492,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cloud-timeline-api.test.ts', // 3.13: real loopback http server bind for GET /api/verse/cloud/tasks/<id>/timeline under a relocated HOME
   'test/routing-capacity-history.test.ts', // 3.10.1: real loopback http server + real authenticated web server bind for /api/verse/budget/history under a relocated HOME; real mkfifo + a tsx child with a deadline for the FIFO guard; multi-MiB compaction fixtures
   'test/setup/home-isolation-guard.test.ts', // spawns a nested real `vitest run` to prove the guard fails a leaking fixture
+  'test/setup/git-env.test.ts', // spawns real git to prove a worker's child git sees no environment-injected config
   // Track A/C — Verse server surfaces.
   'test/verse-activity-310.test.ts', // real web server bind for /api/verse/activity + a 300-chat warm-read latency bound
   'test/verse-apps-310.test.ts', // real web server bind for /api/verse/apps
@@ -473,6 +507,7 @@ export const REAL_IO_TEST_FILES = [
   'test/standing-merge-pass-310b.test.ts', // real git rebase/squash through FakeGithub — guard cannot see it
   'test/verse-sources-api.test.ts', // 3.15: real loopback http server bind for POST /api/verse/sources/open
   'test/verse-agents-workspace-316.test.ts', // 3.16: real git worktrees, snapshot refs, archive/restore under a temp HOME
+  'test/verse-automerge-redteam.test.ts', // real git origin + clone: diffs exact commits and proves tracked hooks never run
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes
@@ -487,6 +522,7 @@ export const REAL_IO_TEST_FILES = [
   'test/execution-leases-310b.test.ts', // cross-process lease cases via real tsx children (test/helpers/throughput-310b.ts)
   'test/throughput-310b.test.ts', // real tsx children + h1 temp repos; only the model is faked
   'test/mirrors-310b.test.ts', // real mirror clones/fetches in h1 temp repos via the throughput helper
+  'test/mirror-git-bounded.test.ts', // real fake-git child forking a SIGTERM-ignoring grandchild; POSIX process-group kill
   'test/safe-git-310b.test.ts', // real `git init` mirrors to prove hooks/fsmonitor are forced off
   'test/confine-autonomous-darwin-310b.test.ts', // real sandbox-exec children + a real net server as an egress target
   'test/engines-judges-310b.test.ts', // execs the grok-cli launcher (fake pinned binary in a seat fixture) exactly as the fleet would, to inspect env scrubbing
@@ -570,4 +606,5 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-terminal-shell-integration-315.test.ts', // spawns real /bin/zsh and /bin/bash on the generated shell-integration scripts
   'test/verse-terminal-mux-315.test.ts', // binds a real loopback HTTP server for the multiplexed stream, history, settings and assist routes
   'test/verse-terminal-agents-routes-315.test.ts', // binds a real loopback HTTP server and runs the generated agent hook script (/bin/sh + curl) against it
+  'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
 ];

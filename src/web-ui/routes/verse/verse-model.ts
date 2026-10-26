@@ -1,3 +1,4 @@
+import { currentQuotaReading } from '../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/verse-model.ts — small pure helpers shared by the Verse
  * components (labels, grouping, health → tone). No React, no I/O.
@@ -307,10 +308,16 @@ export function seatWindowLabel(id: string): string {
  * with a spendable credit balance, so refusing the choice would be a stronger
  * claim than the data supports.
  */
-export function seatCapacity(seat: VerseSeat): SeatCapacityNote {
+export function nativeQuotaCurrent(seat: VerseSeat, now: number = Date.now()): boolean {
+  return !['codex', 'claude', 'grok'].includes(seat.engine) ||
+    currentQuotaReading(seat.capacity?.observedAt, seat.capacity?.quotaExpiresAt, now, (seat.capacity?.windows ?? []).map(window => window.resetsAt));
+}
+
+export function seatCapacity(seat: VerseSeat, now: number = Date.now()): SeatCapacityNote {
   const reason = seatUnavailableReason(seat);
   if (reason !== null) return { cls: 'blocked', usedPercent: null, text: reason };
 
+  if (!nativeQuotaCurrent(seat, now)) return { cls: 'unread', usedPercent: null, text: 'Last known usage · current usage unconfirmed' };
   const measured = seat.health.windows.filter(
     (w): w is { id: string; usedPercent: number; resetsAt: string | null } =>
       typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent),

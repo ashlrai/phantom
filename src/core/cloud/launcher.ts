@@ -36,7 +36,10 @@ export interface CloudLaunchDeps {
   trustFolder?: (cwd: string) => void;
 }
 
-export const SEAT_NOT_READY_REASON = "The Claude seat isn't set up on this Mac.";
+// Platform-neutral on purpose: `phm cloud launch` and the cloud overview print this
+// on Linux and Windows too, where "on this Mac" was simply wrong. The web fallbacks
+// (cloud-model.ts SEAT_NOT_READY, CloudCredits.tsx) must stay word-for-word in step.
+export const SEAT_NOT_READY_REASON = "The Claude seat isn't set up on this computer.";
 
 const MAX_COMMAND_BYTES = 16 * 1024;
 const MAX_ARGV = 32;

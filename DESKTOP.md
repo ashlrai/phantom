@@ -1,26 +1,28 @@
 # Desktop App
 
 The `desktop/` directory contains a Tauri v2 desktop application that wraps
-**Ashlr Verse** — the operator console served at `/verse/` — in a native
-window with a tray icon.
+**Phantom** (formerly Ashlr Verse) — the operator console served at `/verse/` —
+in a native window with a tray icon.
 
 See `desktop/README.md` for full setup, build, and open-item details, and
-`docs/VERSE.md` for what Verse is and how to use it.
+`docs/VERSE.md` for what the console is and how to use it.
 
-## The Verse window
+## The Phantom window
 
 - On launch the app spawns the bundled `ashlr` sidecar as
   `ashlr verse --port 7777 --no-open --json` (dispatch enabled, no browser tab).
 - It reads the one-line JSON startup record from the sidecar's stdout, takes
   `readToken` and `token`, and never forwards or logs that line.
-- It then creates the main window (title "Ashlr Verse", 1280×820, min
-  960×640) at `http://127.0.0.1:7777/verse/` with a webview initialization
+- It then creates the main window (title "Phantom", 1280×820, min
+  900×620) at `http://127.0.0.1:7777/verse/` with a webview initialization
   script that sets `window.__ASHLR_TOKENS__ = { readToken, token }` on that
   origin only. The SessionGate consumes the global, so there is no token paste.
 - Fallbacks: if the bundled CLI predates `verse`, the app retries once with
-  `ashlr serve --port 7777 --allow-dispatch --json`; if no record arrives within
-  30 s it opens the window without tokens and the SessionGate asks for one.
-- Closing the window hides it to the tray; **Quit Ashlr** kills the sidecar.
+  `ashlr serve --port 7777 --allow-dispatch --json`. If no record arrives within
+  30 s but the server is listening, it opens the window without tokens and the
+  SessionGate asks for one; if nothing is listening, the launch window reports
+  the timeout.
+- Closing the window hides it to the tray; **Quit Phantom** kills the sidecar.
 - The webview only ever loads `http://127.0.0.1:7777`; the CSP and the
   init-script origin check both pin it there.
 
@@ -31,28 +33,28 @@ Chat seats can drive apps on this Mac through the `computer_*` tools
 `desktop/src-tauri/src/computer.rs`). What keeps it safe:
 
 - **Per-app grants, per chat, memory only.** The agent calls
-  `computer_request_access`; you tick apps in a Verse sheet. Browsers can only be
-  granted *read only* (the Verse Browser pane is how agents use the web),
+  `computer_request_access`; you tick apps in a Phantom sheet. Browsers can only be
+  granted *read only* (the Phantom Browser pane is how agents use the web),
   terminals and editors *click only*, everything else *full*. Password managers,
   Keychain Access / Passwords, macOS authentication prompts, the custody
-  helper, System Settings' Privacy & Security panes and Ashlr itself are never
+  helper, System Settings' Privacy & Security panes and Phantom itself are never
   available. Grants end with the chat, a restart, or **KILL**.
 - **Visible control.** While an agent acts, an always-on-top orange border and
   an "Agent controlling <app> — Esc to stop" pill sit on every screen (never in
   a screenshot). **Esc** is KILL: every grant of every chat is revoked.
 - **Instant takeover.** Touch the mouse or keyboard and the agent pauses; its
-  calls answer "Operator took over" until you press **Resume** in Verse.
+  calls answer "Operator took over" until you press **Resume** in Phantom.
 - **Confirmation.** Acting on a control labelled delete / send / pay / publish
   / confirm / buy (and kin), or any action after the turn read another app's
   or a web page's content, waits for [Allow once] [Allow for chat] [Deny].
   Password fields are never typed into.
-- **The Verse window must be open.** The relay runs through it; closed Verse →
+- **The Phantom window must be open.** The relay runs through it; closed Phantom →
   the tools fail at once.
 
-**One-time setup.** macOS needs two grants for Ashlr: *Screen Recording*
+**One-time setup.** macOS needs two grants for Phantom: *Screen Recording*
 (System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording) and
-*Accessibility*. Verse's onboarding sheet deep-links to both. Screen Recording
-only takes effect after Ashlr **quits and relaunches**, and macOS re-asks about
+*Accessibility*. Phantom's onboarding sheet deep-links to both. Screen Recording
+only takes effect after Phantom **quits and relaunches**, and macOS re-asks about
 it roughly monthly. Grants stick across rebuilds only because `ship:local`
 signs every build with the stable "Ashlr Local" identity
 (`docs/RELEASING-LOCALLY.md`).
@@ -60,9 +62,11 @@ signs every build with the stable "Ashlr Local" identity
 macOS build (from the repo root): `npm run build:binary` →
 `node desktop/scripts/prepare-sidecar.mjs` → `cd desktop && npm run icons`
 (once) → `npm run build:debug` or `npm run build`. The `.app` lands in
-`desktop/src-tauri/target/{debug,release}/bundle/macos/Ashlr.app`.
+`desktop/src-tauri/target/{debug,release}/bundle/macos/Phantom.app`.
 
-The public macOS arm64 DMG contains a locally signed app. The DMG is unsigned;
+Current releases provide the signed `Phantom_<version>_aarch64.app.tar.gz`
+archive and paired `latest.json`, rather than a DMG. The historical 3.27.0
+public macOS arm64 DMG contains a locally signed app. The DMG is unsigned;
 neither the app nor the DMG is Apple Developer ID notarized.
 See [desktop installation](desktop/README.md#install) for the release download.
 The npm/CLI quickstart also serves the web dashboard on macOS, Linux and Windows.

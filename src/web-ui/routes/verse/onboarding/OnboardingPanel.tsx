@@ -15,6 +15,7 @@ import { Panel, SettingRow } from '../sections/SettingRow.js';
 import { relativePhrase } from '../context/context-model.js';
 import { replayOnboarding } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
+import { FirstResultGuide } from './FirstResultGuide.js';
 import styles from './onboarding.module.css';
 
 /**
@@ -44,6 +45,7 @@ export function OnboardingPanel() {
           {open ? 'Showing' : 'Replay'}
         </Button>
       </SettingRow>
+      <FirstResultGuide />
       <details className={styles.guide}>
         <summary>How Phantom works</summary>
         <dl>

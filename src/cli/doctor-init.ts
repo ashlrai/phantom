@@ -99,7 +99,37 @@ function printDoctorReport(report: DoctorReport): void {
  *   --fix    Apply safe automated fixes for fixable checks, then re-run doctor.
  *            With --json, emits FixAction[] instead of DoctorReport.
  */
+const DOCTOR_USAGE = [
+  'Usage: phm doctor [--json] [--fix]',
+  '',
+  'One-glance health check: config, Phantom, providers, ecosystem.',
+  'Exits 1 when any check fails; warnings (optional pieces) exit 0.',
+  '',
+  '  --json   Print the report as JSON',
+  '  --fix    Apply the safe, local repairs doctor knows how to make',
+].join('\n');
+
+const INIT_USAGE = [
+  'Usage: phm init [--yes] [--wire] [--json]',
+  '',
+  'Idempotent onboarding: writes ~/.ashlr/config.json if missing, detects',
+  'Phantom and local models, then runs doctor. Exits 1 when doctor fails.',
+  '',
+  '  --yes    Accept all defaults (implied when stdin is not a TTY)',
+  '  --wire   Register the Phantom MCP server in detected editors',
+  '  --json   Print the onboarding result as JSON',
+].join('\n');
+
+function wantsHelp(args: string[]): boolean {
+  return args.includes('--help') || args.includes('-h');
+}
+
 export async function cmdDoctor(args: string[]): Promise<number> {
+  // Answer --help before loadConfig(), which creates config on a fresh HOME.
+  if (wantsHelp(args)) {
+    console.log(DOCTOR_USAGE);
+    return 0;
+  }
   const jsonMode = args.includes('--json');
   const fixMode  = args.includes('--fix');
 
@@ -190,6 +220,11 @@ export async function cmdDoctor(args: string[]): Promise<number> {
  *   --json   Emit OnboardResult as JSON (with doctorSummary for compat).
  */
 export async function cmdInit(args: string[]): Promise<number> {
+  // init writes config, symlinks and editor files, so --help must not run it.
+  if (wantsHelp(args)) {
+    console.log(INIT_USAGE);
+    return 0;
+  }
   const jsonMode = args.includes('--json');
   const wireMode = args.includes('--wire');
   const yesMode  = args.includes('--yes') || !process.stdin.isTTY;
@@ -219,6 +254,8 @@ export async function cmdInit(args: string[]): Promise<number> {
     const report = await runDoctor(cfg);
     const output = {
       ...result,
+      // `ready` must agree with the exit code: a failing doctor check is not ready.
+      ready: result.ready && report.summary.fail === 0,
       doctorSummary: report.summary,
     };
     process.stdout.write(JSON.stringify(output, null, 2) + '\n');

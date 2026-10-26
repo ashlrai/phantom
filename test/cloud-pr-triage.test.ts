@@ -182,6 +182,14 @@ describe('GitHub checks and the verdict', () => {
       .toBe('Its diff could not be checked for protected paths.');
   });
 
+  it('Land is refused for test tampering, not only shown as a chip', () => {
+    const tampered = cloudPrDiffChecks({ repo: 'ashlrai/other', diff: diffOf({ 'test/thing.test.ts': ["it.only('x', () => {});"] }), selfRepo: false, report: DONE, policy: null });
+    expect(landRefusal(github(), tampered, 'master')).toBe('It skips, deletes or weakens tests; land it on GitHub after review.');
+    const noTamperCheck = cloudPrDiffChecks({ repo: 'r/r', diff: small, selfRepo: false, report: DONE, policy: null }).filter((c) => c.id !== 'tamper');
+    expect(landRefusal(github(), noTamperCheck, 'master')).toBe('Its diff could not be checked for test tampering.');
+    expect(preview({ diff: diffOf({ 'test/thing.test.ts': ["it.only('x', () => {});"] }) }).landable.ok).toBe(false);
+  });
+
   it('rolls GitHub checks up fail-closed', () => {
     expect(rollupChecks([])).toBe('none');
     expect(rollupChecks(null)).toBe('none');

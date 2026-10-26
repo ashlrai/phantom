@@ -22,7 +22,8 @@ import { Button } from '../../../components/primitives/Button.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { Input } from '../../../components/primitives/Input.js';
 import { Select } from '../../../components/primitives/Select.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { readFailureReason } from '../../../data/client.js';
+import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { describeContextError, useTokenGate } from '../context/use-token-gate.js';
 import { openPaneInChat } from '../dock/dock-store.js';
 import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
@@ -53,7 +54,8 @@ import {
   agentsBoardQuery,
   bulkAgents,
   resolveAgentCard,
-  spawnAgent,
+  spawnAgentAttempts,
+  type SpawnAttempt,
   type BulkAction,
   type SpawnInput,
 } from './agents-queries.js';
@@ -80,6 +82,7 @@ function useNow(intervalMs: number, active: boolean): number {
 export function AgentsBoard() {
   const read = useQuery(agentsBoardQuery);
   const refetch = useRefetch(agentsBoardQuery);
+  const refresh = useRefresh(agentsBoardQuery);
   usePollWhileVisible(refetch, AGENTS_POLL_MS);
   const boot = useQuery(verseBootstrapQuery);
   const visible = useSectionVisible();
@@ -91,6 +94,8 @@ export function AgentsBoard() {
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ open: boolean; multi: boolean }>({ open: false, multi: false });
   const [spawning, setSpawning] = useState(false);
+  const spawnInFlight = useRef(false);
+  const [spawnAttempts, setSpawnAttempts] = useState<SpawnAttempt[]>([]);
   const [spawnError, setSpawnError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -100,6 +105,9 @@ export function AgentsBoard() {
   // The clock ticks every second for the elapsed labels; the Done cut-off only needs minutes.
   const minute = Math.floor(now / 60_000);
   const cards = useMemo(() => filterCards(allCards, filter, minute * 60_000), [allCards, filter, minute]);
+  const olderDoneCount = useMemo(() => filter.doneWithinMs === null ? 0
+    : filterCards(allCards, { ...filter, doneWithinMs: null }, minute * 60_000).length - cards.length,
+  [allCards, filter, minute, cards.length]);
   const columns = useMemo(() => groupByColumn(cards), [cards]);
   const repos = useMemo(() => reposOf(allCards), [allCards]);
   const cursor: BoardCursor | null = cursorId ? locate(columns, cursorId) : null;
@@ -111,15 +119,18 @@ export function AgentsBoard() {
     if (!focus) return;
     if (isAgentsFocusLive(focus)) {
       if (focus.kind === 'new' || focus.kind === 'new-multi') {
-        setSpawnError(null);
-        setDialog({ open: true, multi: focus.kind === 'new-multi' });
+        if (!spawnInFlight.current) {
+          if (!spawnAttempts.some(attempt => attempt.outcome !== 'started')) setSpawnAttempts([]);
+          setSpawnError(null);
+          setDialog({ open: true, multi: focus.kind === 'new-multi' });
+        }
       } else if (focus.cardId) {
         setCursorId(focus.cardId);
         setDetailsId(focus.cardId);
       }
     }
     takeAgentsFocus(focus.seq);
-  }, [focus]);
+  }, [focus, spawnAttempts]);
 
   const act = useCallback(async (key: string, why: string, run: () => Promise<string | null>) => {
     setBusy(key);
@@ -150,42 +161,39 @@ export function AgentsBoard() {
     });
   };
 
-  const spawn = (inputs: SpawnInput[]) => {
+  const openNewAgent = (multi: boolean) => {
+    if (spawnInFlight.current) return;
+    if (!spawnAttempts.some(attempt => attempt.outcome !== 'started')) setSpawnAttempts([]);
+    setSpawnError(null);
+    setDialog({ open: true, multi });
+  };
+
+  const spawn = (inputs: SpawnInput[], retained: SpawnAttempt[] = []) => {
+    if (spawnInFlight.current || inputs.length === 0) return;
+    spawnInFlight.current = true;
     setSpawning(true);
     setSpawnError(null);
-    void gate.run(inputs.length > 1 ? `Start ${inputs.length} agents` : 'Start an agent', async () => {
-      const errors: string[] = [];
-      let first: string | null = null;
-      let archived = 0;
-      // One at a time: each makes a worktree under the repo lock anyway.
-      for (const input of inputs) {
-        try {
-          const res = await spawnAgent(input);
-          first ??= res.agent.id;
-          archived += res.archivedForCap.length;
-        } catch (err) {
-          errors.push(`${input.title}: ${describeContextError(err)}`);
-        }
-      }
-      return { first, errors, archived, total: inputs.length };
-    }).then((out) => {
-      setSpawning(false);
-      if (!out) return;
+    const combine = (next: SpawnAttempt[]) => retained.length === 0 ? next : retained.map(previous =>
+      next.find(attempt => attempt.input === previous.input) ?? previous);
+    void gate.run(inputs.length > 1 ? `Start ${inputs.length} agents` : 'Start an agent', () =>
+      spawnAgentAttempts(inputs, progress => setSpawnAttempts(combine(progress))),
+    ).then((next) => {
+      if (!next) return;
+      const attempts = combine(next);
+      setSpawnAttempts(attempts);
       refetch();
-      if (out.errors.length === out.total) {
-        setSpawnError(out.errors.join(' '));
-        return;
-      }
-      setDialog({ open: false, multi: false });
-      if (out.first) setCursorId(out.first);
-      const started = out.total - out.errors.length;
+      const started = attempts.filter(attempt => attempt.outcome === 'started');
+      const held = started.filter(attempt => attempt.result?.held).length;
+      const archived = started.reduce((count, attempt) => count + (attempt.result?.archivedForCap.length ?? 0), 0);
+      if (started[0]?.result) setCursorId(started[0].result.agent.id);
+      if (started.length === attempts.length) setDialog({ open: false, multi: false });
       setNotice({
-        tone: out.errors.length ? 'danger' : 'neutral',
-        text: `Started ${started} agent${started === 1 ? '' : 's'}.${out.archived ? ` Archived ${out.archived} idle workspace${out.archived === 1 ? '' : 's'} to stay under the cap (restorable).` : ''}${out.errors.length ? ` ${out.errors.join(' ')}` : ''}`,
+        tone: started.length === attempts.length ? 'neutral' : 'danger',
+        text: `Created ${started.length} agent${started.length === 1 ? '' : 's'}.${held ? ` ${held} first prompt${held === 1 ? ' is' : 's are'} held for setup.` : ''}${archived ? ` Archived ${archived} idle workspaces to stay under the cap (restorable).` : ''}${attempts.some(attempt => attempt.outcome === 'uncertain') ? ' Some launch outcomes need review before starting another agent.' : ''}`,
       });
-    }, (err: unknown) => {
+    }, (err: unknown) => setSpawnError(describeContextError(err))).finally(() => {
+      spawnInFlight.current = false;
       setSpawning(false);
-      setSpawnError(describeContextError(err));
     });
   };
 
@@ -281,17 +289,35 @@ export function AgentsBoard() {
             <option value="">All repos</option>
             {repos.map((r) => <option key={r} value={r}>{r}</option>)}
           </Select>
+          <Select aria-label="Done history" size="sm" value={filter.doneWithinMs === null ? 'all' : 'recent'}
+            onChange={(e) => setFilter((f) => ({ ...f, doneWithinMs: e.target.value === 'all' ? null : DEFAULT_FILTER.doneWithinMs }))}>
+            <option value="recent">Done: last 3 days</option>
+            <option value="all">Done: all saved</option>
+          </Select>
           <Input aria-label="Filter cards" size="sm" placeholder="Filter" value={filter.query} onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))} />
           <Button size="sm" variant="ghost" onClick={() => runBulk('read', markReadTargets(cards), 'Mark all read')} busy={busy === 'bulk:read'} title="Needs you is never cleared by this">
             Mark all read
           </Button>
-          <Button size="sm" variant="subtle" onClick={() => setDialog({ open: true, multi: true })} title="⇧⌘N">Same task on N seats</Button>
-          <Button size="sm" variant="primary" onClick={() => setDialog({ open: true, multi: false })} title="⌘N">New agent</Button>
+          <Button size="sm" variant="subtle" onClick={() => openNewAgent(true)} title="⇧⌘N">Same task on N seats</Button>
+          <Button size="sm" variant="primary" onClick={() => openNewAgent(false)} title="⌘N">New agent</Button>
         </div>
       </header>
 
+      {olderDoneCount > 0 ? <div className={styles.banner} role="status">
+        {olderDoneCount} older Done {olderDoneCount === 1 ? 'card is' : 'cards are'} hidden by the time filter.{' '}
+        <Button size="sm" variant="ghost" onClick={() => setFilter((f) => ({ ...f, doneWithinMs: null }))}>Show older work</Button>
+      </div> : null}
       {notice ? <p className={styles.banner} data-tone={notice.tone} role="status">{notice.text}</p> : null}
-      {read.error && !read.data ? <p className={styles.banner} data-tone="danger" role="alert">{describeContextError(read.error)}</p> : null}
+      {spawnAttempts.some(attempt => attempt.outcome !== 'started') && !dialog.open ? <div className={styles.banner} data-tone="danger" role="status">
+        Launch results still need review.{' '}
+        <Button size="sm" variant="subtle" onClick={() => setDialog({ open: true, multi: spawnAttempts.length > 1 })}>View launch results</Button>{' '}
+        <Button size="sm" variant="ghost" onClick={() => { setSpawnAttempts([]); setNotice(null); }}>Dismiss launch results</Button>
+      </div> : null}
+      {read.error ? <div className={styles.banner} data-tone="danger" role="alert">
+        {read.data ? 'Cached board — the latest refresh failed. ' : 'The board could not be read. '}{readFailureReason(read.error)}
+        {read.data && read.updatedAt !== null ? <> Last successful read: <time dateTime={new Date(read.updatedAt).toISOString()}>{new Date(read.updatedAt).toLocaleString()}</time>.</> : null}
+        {' '}<Button size="sm" variant="subtle" onClick={refresh} busy={read.status === 'refreshing' || read.status === 'loading'}>Retry board read</Button>
+      </div> : null}
 
       {selectedIds.length > 0 ? (
         <div className={styles.bulkBar} role="toolbar" aria-label="Selected cards">
@@ -310,7 +336,7 @@ export function AgentsBoard() {
           <EmptyState
             title="No agents yet"
             body="Start one with ⌘N: it gets its own worktree and branch, runs the repo’s setup, and shows up here while it works."
-            action={<Button variant="primary" size="sm" onClick={() => setDialog({ open: true, multi: false })}>New agent</Button>}
+            action={<Button variant="primary" size="sm" onClick={() => openNewAgent(false)}>New agent</Button>}
           />
         ) : (
           <div className={styles.board} ref={boardRef} onKeyDown={onKey} aria-label="Agent board" aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space x e r s">
@@ -364,7 +390,12 @@ export function AgentsBoard() {
         initialRoot={null}
         busy={spawning}
         error={spawnError}
-        onClose={() => { if (!spawning) setDialog({ open: false, multi: false }); }}
+        attempts={spawnAttempts}
+        onRetry={() => spawn(spawnAttempts.filter(attempt => attempt.outcome === 'failed').map(attempt => attempt.input), spawnAttempts)}
+        onInspect={openVerseSession}
+        onInspectAgent={(id) => { setCursorId(id); setDetailsId(id); setDialog({ open: false, multi: false }); refresh(); }}
+        onAcknowledge={() => { setSpawnAttempts([]); setSpawnError(null); setNotice(null); setDialog({ open: false, multi: false }); }}
+        onClose={() => { if (!spawnInFlight.current) setDialog({ open: false, multi: false }); }}
         onSpawn={spawn}
       />
       <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token ashlr verse printed" />

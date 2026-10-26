@@ -20,6 +20,7 @@ export function daemonServiceInstallOptions(
     budget: typeof daemon.dailyBudgetUsd === 'number' ? daemon.dailyBudgetUsd : DEFAULT_SERVICE_BUDGET_USD,
     intervalMs: typeof daemon.intervalMs === 'number' ? daemon.intervalMs : DEFAULT_SERVICE_INTERVAL_MS,
     parallel: typeof daemon.parallel === 'number' ? daemon.parallel : DEFAULT_SERVICE_PARALLEL,
+    keepAwake: daemon.keepAwake === true,
     ...extras,
   };
 }

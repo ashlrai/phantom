@@ -32,11 +32,11 @@
  * GET /api/run/:id (src/web-ui/components/stream/useRunStream.ts), this route
  * also provides push delivery, a tighter server-side tail interval
  * (RUN_TAIL_POLL_MS, 500ms vs. the client's previous 2000ms / the general SSE
- * route's 1500ms), monotonic resumable sequence ids, and server-computed stall
+ * route's 1500ms), resumable event-family cursors, and server-computed stall
  * detection.
  *
  * EVENT PROTOCOL
- *   id: <seq>                 present on every resumable event (see below)
+ *   id: <opaque cursor>       present on every resumable event (see below)
  *   event: step-started       a RunTask left 'pending' — {taskId, index, goal}
  *   event: step-output-chunk  a RunStep appended     — {taskId, kind, index, ts, text}
  *   event: step-done          same RunStep, again     — {taskId, kind, index, ts, usage}
@@ -55,18 +55,16 @@
  *                              source hasn't grown in >= RUN_STALL_AFTER_MS — {ageMs}
  *
  * SEQUENCE / RESUME
- * Sequence ids are computed deterministically from array position, in two
- * fixed, non-overlapping ranges, so a reconnect with `Last-Event-ID` can be
- * served correctly just by re-deriving the same numbers from the current
- * on-disk state and skipping anything <= that id — no per-connection replay
- * log needs to be kept:
- *   [0, STEP_SEQ_BASE)           one id per started task, by tasks[] index
- *   [STEP_SEQ_BASE, +Infinity)   two ids per RunStep (chunk, done), by
- *                                 steps[] index — pinned to a fixed base so a
- *                                 later-appended task can never shift ids
- *                                 already sent for earlier steps
- *   run-done reuses the next free id in the step range once steps stop
- *   growing (status is terminal by construction at that point).
+ * SSE ids are opaque versioned vectors: v1:<task-prefix>:<step-seq>:<output-seq>.
+ * Each family advances independently, so a later task start survives both
+ * prior step completion and output delivery. Task-prefix records only the
+ * contiguous delivered tasks[] prefix; out-of-order starts may replay on a
+ * reconnect, preserving every lifecycle event without a persisted event log.
+ * Legacy numeric step/output cursors resume their own family and replay the
+ * others; legacy task indexes conservatively replay all starts.
+ * run-done follows drained durable EOF. stream-gap explicitly declares corrupt,
+ * incomplete, or unreadable captured output; the route is observability, not
+ * a completeness receipt for the engine transcript.
  *
  * SECURITY
  *  - Read-only. No path traversal: `id` is validated against RUN_ID_RE
@@ -96,9 +94,9 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
-import type { RunState, RunTask } from '../types.js';
+import type { RunState } from '../types.js';
 import { loadRun } from '../run/orchestrator.js';
-import { gcRunStreams, readRunStreamChunk, type RunStreamReadIdentity } from '../run/streaming.js';
+import { gcRunStreams, MAX_STREAM_FILE_BYTES, readRunStreamChunkResult, type RunStreamReadIdentity } from '../run/streaming.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { registerSse, deregisterSse, sseConnectionCapReached, sendJson } from './api.js';
 
@@ -172,62 +170,40 @@ function runDoneSeq(stepCount: number): number {
   return STEP_SEQ_BASE + stepCount * 2;
 }
 
-type Sender = (seq: number, event: string, data: unknown) => void;
+interface EventFrame {
+  seq: number;
+  event: string;
+  data: unknown;
+}
 
-/**
- * Emit every event whose deterministic seq is > lastSeq, given the CURRENT
- * on-disk RunState. Returns the highest seq actually emitted (or lastSeq
- * unchanged if nothing new was found this tick).
- */
-function emitNewEvents(run: RunState, lastSeq: number, send: Sender): number {
-  let maxSeq = lastSeq;
+interface ResumeCursor {
+  task: number;
+  step: number;
+  output: number;
+}
 
-  run.tasks.forEach((task: RunTask, i: number) => {
-    if (task.status === 'pending') return;
-    const seq = taskStartedSeq(i);
-    if (seq <= lastSeq) return;
-    send(seq, 'step-started', { taskId: task.id, index: i, goal: task.goal });
-    if (seq > maxSeq) maxSeq = seq;
-  });
-
-  run.steps.forEach((step, j) => {
-    const chunkSeq = stepChunkSeq(j);
-    if (chunkSeq > lastSeq) {
-      send(chunkSeq, 'step-output-chunk', {
-        taskId: step.taskId,
-        kind: step.kind,
-        index: j,
-        ts: step.ts,
-        text: step.summary,
-      });
-      if (chunkSeq > maxSeq) maxSeq = chunkSeq;
-    }
-    const doneSeq = stepDoneSeq(j);
-    if (doneSeq > lastSeq) {
-      send(doneSeq, 'step-done', {
-        taskId: step.taskId,
-        kind: step.kind,
-        index: j,
-        ts: step.ts,
-        usage: step.usage ?? null,
-      });
-      if (doneSeq > maxSeq) maxSeq = doneSeq;
-    }
-  });
-
-  if (run.status !== 'running') {
-    const seq = runDoneSeq(run.steps.length);
-    if (seq > lastSeq) {
-      send(seq, 'run-done', {
-        status: run.status,
-        result: run.result ?? null,
-        terminationReason: run.terminationReason ?? null,
-      });
-      if (seq > maxSeq) maxSeq = seq;
-    }
+/** Tasks can start out of array order. Only a contiguous delivered prefix is
+ * resumable; later starts may replay after reconnect, but can never hide an
+ * earlier pending task. The connection-local set suppresses live duplicates. */
+function* newRunEvents(run: RunState, cursor: ResumeCursor, starts: Set<number>): Generator<EventFrame> {
+  for (const [i, task] of run.tasks.entries()) {
+    if (task.status === 'pending' || i <= cursor.task || starts.has(i)) continue;
+    yield { seq: taskStartedSeq(i), event: 'step-started', data: { taskId: task.id, index: i, goal: task.goal } };
   }
-
-  return maxSeq;
+  for (const [j, step] of run.steps.entries()) {
+    if (stepChunkSeq(j) > cursor.step) yield {
+      seq: stepChunkSeq(j), event: 'step-output-chunk',
+      data: { taskId: step.taskId, kind: step.kind, index: j, ts: step.ts, text: step.summary },
+    };
+    if (stepDoneSeq(j) > cursor.step) yield {
+      seq: stepDoneSeq(j), event: 'step-done',
+      data: { taskId: step.taskId, kind: step.kind, index: j, ts: step.ts, usage: step.usage ?? null },
+    };
+  }
+  if (run.status !== 'running' && runDoneSeq(run.steps.length) > cursor.step) yield {
+    seq: runDoneSeq(run.steps.length), event: 'run-done',
+    data: { status: run.status, result: run.result ?? null, terminationReason: run.terminationReason ?? null },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,8 +219,8 @@ function outputChunkSeq(lineIndex: number): number {
 
 /**
  * Per-connection tail cursor. `offset` is "bytes of the stream file already
- * read off disk" (monotonic, always advances to the file's current size on
- * each read); `partial` holds a trailing line read but not yet terminated by
+ * read off disk" (monotonic, advances by one bounded chunk per read).
+ * `partial` holds a trailing line read but not yet terminated by
  * '\n' at the time it was read, carried into the next call. Neither field is
  * derivable from `lastSeq` alone (a JSONL line's byte length isn't fixed),
  * so — unlike the deterministic array-index math above — this cursor lives
@@ -274,59 +250,39 @@ interface StoredStreamChunkLike {
   text?: unknown;
 }
 
-/**
- * Emit every output-chunk whose deterministic seq (OUTPUT_SEQ_BASE + its
- * line index within the file) is > lastSeq. Reads only the byte range past
- * `cursor.offset` — never the whole file on a steady-state tick — and
- * advances `cursor` in place. Missing file (no engine output yet, or a
- * builtin-only run with nothing text-bearing) is a silent no-op, not an
- * error: the stream file is best-effort observability, never load-bearing.
- */
-function emitNewOutputChunks(
-  runId: string,
-  cursor: OutputTailCursor,
-  lastSeq: number,
-  send: Sender,
-): number {
-  let maxSeq = lastSeq;
-  const chunk = readRunStreamChunk(runId, cursor.offset, cursor.identity);
-  if (!chunk || chunk.bytes.length === 0) {
-    if (chunk) cursor.identity = chunk.identity;
-    return maxSeq;
-  }
-  cursor.offset = chunk.nextOffset;
-  cursor.identity = chunk.identity;
+/** A historical writer may put a whole event in one record. Preserve those
+ * records while independently bounding decoder carry by the durable file cap. */
+const MAX_OUTPUT_RECORD_CHARS = MAX_STREAM_FILE_BYTES;
 
+function* newOutputChunks(
+  runId: string, cursor: OutputTailCursor, lastSeq: number,
+): Generator<EventFrame, { eof: boolean; grew: boolean; gap?: string }> {
+  const result = readRunStreamChunkResult(runId, cursor.offset, cursor.identity);
+  const chunk = result.chunk;
+  if (!chunk) return { eof: true, grew: false, gap: result.reason === 'stream-missing' && !cursor.identity ? undefined : result.reason };
+  cursor.identity = chunk.identity;
+  if (chunk.bytes.length === 0) return { eof: chunk.eof, grew: false };
+  cursor.offset = chunk.nextOffset;
   const text = cursor.partial + cursor.decoder.write(chunk.bytes);
   const lines = text.split('\n');
-  // The last split element has no trailing '\n' in this pass — either it's
-  // '' (the read ended exactly on a newline) or a genuinely incomplete line
-  // (fileSink's write raced this read). Carry it forward either way.
   cursor.partial = lines.pop() ?? '';
-
+  if (cursor.partial.length > MAX_OUTPUT_RECORD_CHARS) throw new Error('output record exceeds replay bound');
   for (const line of lines) {
-    const lineIndex = cursor.lineIndex;
-    cursor.lineIndex += 1;
-    if (line.length === 0) continue;
-    let parsed: StoredStreamChunkLike | null = null;
-    try {
-      parsed = JSON.parse(line) as StoredStreamChunkLike;
-    } catch {
-      parsed = null; // Corrupt/partial line (e.g. truncated by a crash mid-write); skip.
-    }
-    if (!parsed || typeof parsed.text !== 'string' || typeof parsed.kind !== 'string') continue;
-    const seq = outputChunkSeq(lineIndex);
+    const seq = outputChunkSeq(cursor.lineIndex++);
     if (seq <= lastSeq) continue;
-    send(seq, 'output-chunk', {
+    if (line.length > MAX_OUTPUT_RECORD_CHARS) throw new Error('output record exceeds replay bound');
+    let parsed: StoredStreamChunkLike | null = null;
+    try { parsed = JSON.parse(line) as StoredStreamChunkLike; } catch { /* declared gap below */ }
+    if (!parsed || typeof parsed.text !== 'string' || typeof parsed.kind !== 'string') {
+      yield { seq, event: 'stream-gap', data: { reason: 'invalid-output-record' } };
+      continue;
+    }
+    yield { seq, event: 'output-chunk', data: {
       taskId: typeof parsed.taskId === 'string' ? parsed.taskId : null,
-      kind: parsed.kind,
-      ts: typeof parsed.ts === 'string' ? parsed.ts : new Date().toISOString(),
-      text: parsed.text,
-    });
-    if (seq > maxSeq) maxSeq = seq;
+      kind: parsed.kind, ts: typeof parsed.ts === 'string' ? parsed.ts : new Date().toISOString(), text: parsed.text,
+    } };
   }
-
-  return maxSeq;
+  return { eof: chunk.eof, grew: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,11 +324,25 @@ function singleHeader(req: IncomingMessage, name: string): string {
   return raw ?? '';
 }
 
-function parseLastEventId(req: IncomingMessage): number {
+function parseLastEventId(req: IncomingMessage): ResumeCursor {
   const raw = singleHeader(req, 'last-event-id');
-  if (!raw) return -1;
+  const empty = { task: -1, step: -1, output: -1 };
+  const fields = /^v1:(-?\d+):(-?\d+):(-?\d+)$/.exec(raw);
+  if (fields) {
+    const [task, step, output] = fields.slice(1).map(Number);
+    if ([task, step, output].every((n) => Number.isSafeInteger(n) && n! >= -1) &&
+      task! < STEP_SEQ_BASE && step! < OUTPUT_SEQ_BASE) return { task: task!, step: step!, output: output! };
+    return empty;
+  }
+  // Legacy scalar ids identify only one family. Replay the others rather
+  // than treating their smaller ids as already delivered.
   const n = Number(raw);
-  return Number.isSafeInteger(n) && n >= -1 ? n : -1;
+  if (!raw || !Number.isSafeInteger(n) || n < -1) return empty;
+  if (n >= OUTPUT_SEQ_BASE) empty.output = n;
+  else if (n >= STEP_SEQ_BASE) empty.step = n;
+  // A legacy task index cannot prove lower pending indexes were delivered.
+  // Conservatively replay task starts when migrating that scalar cursor.
+  return empty;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,127 +389,119 @@ export function handleRunEventsSse(
     'X-Content-Type-Options': 'nosniff',
   });
 
-  try {
-    res.write(': connected\n\n');
-  } catch {
-    return; // Socket already gone.
-  }
-
-  function send(seq: number, event: string, data: unknown): void {
-    try {
-      const line = `id: ${seq}\nevent: ${event}\ndata: ${JSON.stringify(sanitizePublicJson(data))}\n\n`;
-      res.write(line);
-    } catch {
-      // Socket closed; cleanup fires on 'close'/'error'.
-    }
-  }
-
-  function sendStall(ageMs: number): void {
-    try {
-      const line = `event: stall\ndata: ${JSON.stringify(sanitizePublicJson({ ageMs }))}\n\n`;
-      res.write(line);
-    } catch {
-      // Socket closed; cleanup fires on 'close'/'error'.
-    }
-  }
-
-  // v333: TWO independent thresholds, not one shared `lastSeq`. Step/task/
-  // run-done seqs live in [0, STEP_SEQ_BASE + a few) and output-chunk seqs
-  // live in [OUTPUT_SEQ_BASE, +Infinity) — numerically disjoint, but
-  // GROWING AT DIFFERENT TIMES. A single shared threshold breaks the moment
-  // an output-chunk seq (huge) gets folded into the same variable a later
-  // step-seq (always small) is compared against — every future step/
-  // run-done event would then look "already sent" and never emit again.
-  // Each family is gated ONLY by its own threshold.
-  //
-  // The incoming Last-Event-ID header is a single number (SSE only tracks
-  // "the last id: value seen", not one per stream), so on reconnect we can
-  // only confidently seed the ONE threshold whose range that id actually
-  // falls in; the other starts at -1 (full replay for that family). This
-  // means a reconnect immediately after an output-chunk frame replays step/
-  // run-done history (and vice versa) — a bounded, harmless duplicate
-  // delivery, not a silent permanent drop.
-  const rawLastEventId = parseLastEventId(req);
-  let lastStepSeq = rawLastEventId < OUTPUT_SEQ_BASE ? rawLastEventId : -1;
-  let lastOutputSeq = rawLastEventId >= OUTPUT_SEQ_BASE ? rawLastEventId : -1;
+  const cursor = parseLastEventId(req);
+  const starts = new Set<number>();
   const outputCursor = createOutputTailCursor();
   let lastProgress = progressOf(initial);
   let lastGrowthAt = Date.now();
   let stallLastEmitAt: number | null = null;
   let ended = false;
-  // Assigned only after the initial replay because finish() must also be safe
-  // during that replay, before either handle exists.
-  // eslint-disable-next-line prefer-const
-  let intervalId: ReturnType<typeof setInterval> | undefined;
-  // eslint-disable-next-line prefer-const
-  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
-  // eslint-disable-next-line prefer-const
-  let sseId: string | undefined;
+  let busy = false;
+  let waitingForDrain: (() => void) | undefined;
 
   const finish = (): void => {
     if (ended) return;
     ended = true;
-    if (intervalId !== undefined) clearInterval(intervalId);
-    if (expiryTimer !== undefined) clearTimeout(expiryTimer);
-    if (sseId !== undefined) deregisterSse(sseId);
-    try {
-      res.end();
-    } catch {
-      // Already ended.
-    }
+    clearInterval(intervalId);
+    clearTimeout(expiryTimer);
+    deregisterSse(sseId);
+    waitingForDrain?.();
+    req.off('close', finish);
+    req.off('error', finish);
+    res.off('close', finish);
+    res.off('error', finish);
+    try { res.end(); } catch { /* Already ended. */ }
   };
 
-  const tick = (): void => {
+  /** write(false) accepted the frame: advance its cursor once, then wait.
+   * No queued replay frames accumulate while a client is applying pressure. */
+  const write = async (line: string): Promise<void> => {
     if (ended) return;
-    const fresh = loadRun(id);
-    if (!fresh) return; // Transient unreadable state; try again next tick.
-
-    // Output chunks BEFORE step/task events: if this tick is also the one
-    // where the run transitions to a terminal status, emitNewEvents below
-    // sends run-done and finish() ends the connection immediately after —
-    // any engine output written just before completion must be flushed
-    // first or it is lost.
-    lastOutputSeq = emitNewOutputChunks(id, outputCursor, lastOutputSeq, send);
-    lastStepSeq = emitNewEvents(fresh, lastStepSeq, send);
-
-    const progress = progressOf(fresh);
-    if (!progressEqual(progress, lastProgress)) {
-      lastProgress = progress;
-      lastGrowthAt = Date.now();
-      stallLastEmitAt = null;
-    } else if (fresh.status === 'running') {
-      const ageMs = Date.now() - lastGrowthAt;
-      if (
-        ageMs >= RUN_STALL_AFTER_MS
-        && (stallLastEmitAt === null || Date.now() - stallLastEmitAt >= RUN_STALL_REPEAT_MS)
-      ) {
-        sendStall(ageMs);
-        stallLastEmitAt = Date.now();
-      }
-    }
-
-    if (fresh.status !== 'running') {
-      finish();
-    }
+    if (res.write(line) || ended) return;
+    await new Promise<void>((resolve) => {
+      const drained = (): void => {
+        res.off('drain', drained);
+        waitingForDrain = undefined;
+        resolve();
+      };
+      waitingForDrain = drained;
+      res.once('drain', drained);
+    });
   };
 
-  // Replay everything from each threshold (the full history if this is a
-  // fresh connection, i.e. Last-Event-ID absent) immediately. Output chunks
-  // first, same ordering reasoning as tick() above.
-  lastOutputSeq = emitNewOutputChunks(id, outputCursor, lastOutputSeq, send);
-  lastStepSeq = emitNewEvents(initial, lastStepSeq, send);
+  const send = async ({ seq, event, data }: EventFrame): Promise<void> => {
+    if (ended) return;
+    if (event === 'step-started') {
+      starts.add(seq);
+      while (starts.delete(cursor.task + 1)) cursor.task++;
+    } else if (seq >= OUTPUT_SEQ_BASE) cursor.output = seq;
+    else cursor.step = seq;
+    await write(`id: v1:${cursor.task}:${cursor.step}:${cursor.output}\nevent: ${event}\ndata: ${JSON.stringify(sanitizePublicJson(data))}\n\n`);
+  };
 
-  if (initial.status !== 'running') {
-    // Already finished by the time this connected — history (and run-done,
-    // via emitNewEvents above) is sent; close cleanly, no polling needed.
-    finish();
-    return;
-  }
-
-  intervalId = setInterval(tick, RUN_TAIL_POLL_MS);
-  sseId = registerSse(finish, readSession.id);
-  expiryTimer = setTimeout(finish, Math.max(0, readSession.expiresAt - Date.now()));
+  const tick = async (): Promise<void> => {
+    if (ended || busy) return;
+    busy = true;
+    try {
+      const fresh = loadRun(id);
+      if (!fresh) return;
+      let grew = false;
+      // Each read/allocation is bounded; yielding between reads prevents a
+      // full 8MiB replay from monopolizing the server's event loop.
+      while (!ended) {
+        const chunks = newOutputChunks(id, outputCursor, cursor.output);
+        let next = chunks.next();
+        while (!next.done && !ended) {
+          await send(next.value);
+          next = chunks.next();
+        }
+        if (ended || !next.done) return;
+        grew ||= next.value.grew;
+        if (next.value.gap) await write(`event: stream-gap\ndata: ${JSON.stringify({ reason: next.value.gap })}\n\n`);
+        if (next.value.eof) break;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      if (ended) return;
+      if (fresh.status !== 'running' && (outputCursor.partial || outputCursor.decoder.end())) {
+        await write('event: stream-gap\ndata: {"reason":"incomplete-output-record"}\n\n');
+        outputCursor.partial = '';
+      }
+      for (const frame of newRunEvents(fresh, cursor, starts)) {
+        if (ended) return;
+        await send(frame);
+      }
+      const progress = progressOf(fresh);
+      if (grew || !progressEqual(progress, lastProgress)) {
+        lastProgress = progress;
+        lastGrowthAt = Date.now();
+        stallLastEmitAt = null;
+      } else if (fresh.status === 'running') {
+        const now = Date.now();
+        const ageMs = now - lastGrowthAt;
+        if (ageMs >= RUN_STALL_AFTER_MS && (stallLastEmitAt === null || now - stallLastEmitAt >= RUN_STALL_REPEAT_MS)) {
+          await write(`event: stall\ndata: ${JSON.stringify({ ageMs })}\n\n`);
+          stallLastEmitAt = now;
+        }
+      }
+      if (fresh.status !== 'running') finish();
+    } catch {
+      // A replay failure is visible; never claim that missing output drained.
+      if (!ended) {
+        try { await write('event: stream-gap\ndata: {"reason":"replay-failed"}\n\n'); } catch { /* Socket failed. */ }
+      }
+      finish();
+    } finally { busy = false; }
+  };
 
   req.on('close', finish);
   req.on('error', finish);
+  res.on('close', finish);
+  res.on('error', finish);
+  const sseId = registerSse(finish, readSession.id);
+  const expiryTimer = setTimeout(finish, Math.max(0, readSession.expiresAt - Date.now()));
+  const intervalId = setInterval(() => { void tick(); }, RUN_TAIL_POLL_MS);
+  // The comment is smaller than the socket's normal high-water mark; replay
+  // itself always checks the write return value and waits for drain.
+  try { res.write(': connected\n\n'); } catch { finish(); return; }
+  void tick();
 }

@@ -25,7 +25,7 @@ export interface FixAction {
 }
 
 export interface OnboardStep {
-  name: string;      // 'config' | 'models' | 'editors' | 'symlink' | 'genome' | 'phantom' | 'doctor'
+  name: string;      // 'config' | 'models' | 'editors' | 'symlink' | 'genome' | 'index' | 'phantom' | 'doctor'
   status: 'ok' | 'wired' | 'detected' | 'skipped' | 'manual';
   detail: string;    // metadata only, never secrets
 }
@@ -85,6 +85,11 @@ Steps (in display order):
    (mirror `fixDoctor`'s `local-bin` fix); never modify shell profiles.
 5. **genome** — seed an EMPTY genome dir if absent (mkdir-only; reuse the
    genome store dir helper from `core/genome/store.js`). status `'ok'`.
+5b. **index** — when `~/.ashlr/index.json` is ABSENT and `cfg.roots` is
+   non-empty, build and write it (`buildIndex(cfg)` + `writeIndex()`, the same
+   local rebuild as `fixDoctor`'s `index` fix) → status `'ok'` with the repo
+   count. An existing index is left untouched (`'ok'`); no roots → `'skipped'`
+   with the `phm config set roots` command.
 6. **phantom** — phantom status report only (reuse `core/phantom.js`); never
    touches secrets. status `'detected'` or `'ok'`.
 7. **doctor** — run `runDoctor(cfg)` and fold the roll-up into the final
@@ -96,7 +101,7 @@ blocks running). `nextSteps` always ends with a crisp
 
 **MUST NOT:** auto-download models, modify secrets, modify shell profiles, or
 perform any outward/network mutation. Mutations limited to: ensure config,
-mkdir genome dir, create local-bin symlink, and (only with `opts.wire`)
+mkdir genome dir, write a missing index, create local-bin symlink, and (only with `opts.wire`)
 backup-first editor MCP registration.
 
 ---
@@ -121,8 +126,9 @@ SAFE-FIXABLE set (maps to existing DoctorCheck ids):
 - **`index`** — rebuild a stale/missing index via `buildIndex(cfg)` +
   `writeIndex(...)` (reuse `core/index-engine.js`). Rebuild is non-destructive
   (regenerates derived data only).
-- **`local-bin`** — create the `ashlr` → `~/.local/bin` symlink when missing and
-  the source resolves. Never modify shell profiles (PATH stays manual → if the
+- **`local-bin`** — create the `phm` and `ashlr` → `~/.local/bin` symlinks (the
+  two names `install.sh` links) for whichever is missing, when the source
+  resolves; an existing name or a broken symlink is never overwritten. Never modify shell profiles (PATH stays manual → if the
   check is "not on PATH", emit a `manual: true` action with guidance).
 - **`genome-memory`** — create the genome dir when missing (mkdir-only; reuse
   `core/genome/store.js` dir helper). Never seeds/edits entries.

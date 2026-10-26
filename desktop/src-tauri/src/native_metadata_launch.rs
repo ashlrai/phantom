@@ -16,11 +16,27 @@ use std::{
 };
 
 pub const FLAG: &str = "--_phantom-native-metadata-launch";
-// Test-process fork windows must not inherit another fixture's held flock.
-// Readers keep broker fixtures concurrent; only pre_exec spawn crosses the
-// exclusive window, ending when exec closes its inherited CLOEXEC descriptors.
+// Test-process spawn windows must not inherit another fixture's held flock.
+// Every spawn copies the parent's descriptor table, close-on-exec entries
+// included, and drops those only at exec: fork/pre_exec does, and so does
+// macOS posix_spawn (fork1 with CLONEPROC_SPAWN runs fdt_fork without the
+// exec filter). A fixture that releases its lease inside that window keeps
+// the flock alive in the child, so its own next acquire is busy. Readers keep
+// broker fixtures concurrent; every spawn these tests reach goes through
+// `spawn_outside_fixture_leases`, which holds the exclusive side until
+// `spawn` returns, after the child's exec.
 #[cfg(test)]
 pub(crate) static TEST_FORK_LEASE_BARRIER: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+pub(crate) fn spawn_outside_fixture_leases(
+    command: &mut Command,
+) -> std::io::Result<std::process::Child> {
+    #[cfg(test)]
+    let _spawn = TEST_FORK_LEASE_BARRIER
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    command.spawn()
+}
 
 pub const TICKET_ENV: &str = "PHANTOM_NATIVE_METADATA_TICKET";
 pub const SELF_CHECK_FLAG: &str = "--_phantom-desktop-metadata-self-check";
@@ -313,17 +329,18 @@ fn write(p: &Path, bytes: &[u8]) -> Result<()> {
 }
 // Only fixed metadata programs. Bounded wait; no raw argv/env or output is exported.
 fn metadata(bin: &str, args: &[String]) -> Result<String> {
-    let mut child = Command::new(bin)
-        .args(args)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C")
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
+    let mut child = spawn_outside_fixture_leases(
+        Command::new(bin)
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )
+    .map_err(|_| ())?;
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match child.try_wait().map_err(|_| ())? {
@@ -765,18 +782,19 @@ thread_local! { static ACCEPTANCE_CHILD: std::cell::Cell<Option<u32>> = const { 
 // malformed output cannot turn a pipe into a deadline-extending wait.
 fn bounded_acceptance_command(bin: &Path, args: &[&str], budget: Duration) -> Result<Vec<u8>> {
     use std::os::unix::io::AsRawFd;
-    let mut child = Command::new(bin)
-        .args(args)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C")
-        .env("LC_ALL", "C")
-        .current_dir("/")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
+    let mut child = spawn_outside_fixture_leases(
+        Command::new(bin)
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C")
+            .env("LC_ALL", "C")
+            .current_dir("/")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )
+    .map_err(|_| ())?;
     // Test-only direct spawn witness; no callback or diagnostic port exists in
     // production, and cancellation tests need not wait for child script output.
     #[cfg(test)]
@@ -1085,6 +1103,15 @@ mod tests {
     fn child(root: &Path, t: &Ticket) -> (std::process::Child, std::os::unix::net::UnixStream) {
         use std::os::unix::{io::AsRawFd, process::CommandExt};
         let (parent, child) = std::os::unix::net::UnixStream::pair().unwrap();
+        // Arm the hang guard while the pair is still connected. A refusing
+        // child can exit before spawn() returns; once both peers are gone,
+        // macOS rejects SO_RCVTIMEO on the shut socket with EINVAL. The guard
+        // only bounds a wedged child: every refusal still reads as EOF. The
+        // child hashes the whole unoptimized test image before its notice, so
+        // the bound is liveness, not a latency budget for shared runners.
+        parent
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
         let fd = child.as_raw_fd();
         let mut command = Command::new(std::env::current_exe().unwrap());
         let selected = format!(
@@ -1111,14 +1138,8 @@ mod tests {
                 Ok(())
             });
         }
-        let spawned = {
-            let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
-            command.spawn().unwrap()
-        };
+        let spawned = spawn_outside_fixture_leases(&mut command).unwrap();
         drop(child);
-        parent
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
         (spawned, parent)
     }
     fn ready(control: &mut std::os::unix::net::UnixStream) -> String {
@@ -1199,10 +1220,7 @@ mod tests {
                 Ok(())
             });
         }
-        let spawned = {
-            let _fork = TEST_FORK_LEASE_BARRIER.write().unwrap();
-            command.spawn().unwrap()
-        };
+        let spawned = spawn_outside_fixture_leases(&mut command).unwrap();
         let child_pid = spawned.id();
         let output = spawned.wait_with_output().unwrap();
         assert!(!output.status.success());
@@ -1460,15 +1478,16 @@ mod tests {
                 }
             }
         }
-        let owner = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", &selected, "--nocapture"])
-            .env("PHANTOM_INERT_HANDOFF", &handoff)
-            .env("PHANTOM_INERT_OWNER_DEATH_BEFORE_NOTICE", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let owner = spawn_outside_fixture_leases(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &selected, "--nocapture"])
+                .env("PHANTOM_INERT_HANDOFF", &handoff)
+                .env("PHANTOM_INERT_OWNER_DEATH_BEFORE_NOTICE", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .unwrap();
         let mut processes = OwnedProcesses {
             owner,
             handoff: handoff.clone(),

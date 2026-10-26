@@ -77,6 +77,7 @@ import {
   setOnboardingStep,
 } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
+import { FirstResultGuide } from './FirstResultGuide.js';
 import styles from './onboarding.module.css';
 
 // The setup checklist is its own chunk (shared with the "Autonomy is off" state).
@@ -351,6 +352,7 @@ function StopsStep() {
 function FinishStep() {
   return (
     <StepBody>
+      <FirstResultGuide />
       <p className={styles.lead}>
         Settings <kbd className={styles.kbd}>⌘,</kbd> carries theme, accent hue, density, display font, corner radius
         and reduced motion. Every change applies as you make it — there is no save button.

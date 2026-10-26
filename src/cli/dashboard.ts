@@ -226,6 +226,11 @@ export async function openBrowser(url: string): Promise<void> {
     stdio: 'ignore',
     shell: process.platform === 'win32',
   });
+  // A missing opener fails asynchronously; an unhandled 'error' would crash.
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
   child.unref();
 }
 
