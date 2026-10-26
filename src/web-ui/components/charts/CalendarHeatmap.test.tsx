@@ -47,6 +47,14 @@ describe('CalendarHeatmap', () => {
 
   it('summarises totals, busiest day and missing days', () => {
     render(<CalendarHeatmap title="Runs" width={800} days={days(7)} unit="runs" />);
-    expect(screen.getByRole('img').getAttribute('aria-label')).toBe('Runs: 7 days, 8 runs in total, busiest Jan 9 with 4, 1 days without data.');
+    expect(screen.getByRole('img').getAttribute('aria-label')).toBe('Runs: 7 days, 8 runs in total, busiest Jan 9 with 4, 1 day without data.');
+  });
+
+  it('pluralises the day counts in the summary', () => {
+    const one = render(<CalendarHeatmap title="Runs" width={800} days={days(1, '2026-01-05', () => 2)} unit="runs" />);
+    expect(one.getByRole('img').getAttribute('aria-label')).toBe('Runs: 1 day, 2 runs in total, busiest Jan 5 with 2.');
+    one.unmount();
+    render(<CalendarHeatmap title="Runs" width={800} days={days(14)} unit="runs" />);
+    expect(screen.getByRole('img').getAttribute('aria-label')).toMatch(/^Runs: 14 days, .*, 2 days without data\.$/);
   });
 });

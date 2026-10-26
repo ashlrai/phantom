@@ -16,8 +16,14 @@
  *              from its text) must be listed.
  *
  * Most specific notes first (repo + path + kind), then most used, then
- * newest; the rendered block never exceeds KNOWLEDGE_INJECT_CAP_BYTES of
+ * newest; past KNOWLEDGE_INJECT_MAX_NOTES matches, only notes about the task
+ * (selectKnowledge); the rendered block never exceeds KNOWLEDGE_INJECT_CAP_BYTES of
  * UTF-8, and a note that does not fit whole is left out, never cut.
+ *
+ * A note that cites where it was learned (KnowledgeNoteV1.evidence) shows
+ * the PRs and checks its text does not already name, and a note whose every
+ * cited PR was reverted after merging is withheld: what it was learned from
+ * was undone. The caller supplies the reverted set (improve/reverted.ts).
  *
  * Veto deltas (vision/playbook.ts, section `strategy`, written by the
  * Leader's veto path) were stored and never read. They are read back here:
@@ -34,6 +40,7 @@ import { getEntries, type PlaybookEntry } from '../../vision/playbook.js';
 import { readApprovedKnowledgeSync, recordKnowledgeHits } from './store.js';
 import {
   KNOWLEDGE_INJECT_CAP_BYTES,
+  type KnowledgeEvidenceRef,
   type KnowledgeNoteV1,
   type KnowledgeScope,
   type KnowledgeTarget,
@@ -113,14 +120,114 @@ function specificity(scope: KnowledgeScope): number {
   return (scope.repo ? 4 : 0) + (scope.pathGlobs.length > 0 ? 2 : 0) + (scope.taskKinds.length > 0 ? 1 : 0);
 }
 
-/** Approved notes that match, most specific / most used / newest first. Pure. */
+// ---------------------------------------------------------------------------
+// Relevance
+// ---------------------------------------------------------------------------
+
+/**
+ * Topical relevance between an approved lesson and a task (pure, deterministic, offline).
+ *
+ * Scope matching alone (repo, path globs, task kinds) lets every open-scoped lesson into every
+ * prompt. This scores how much a lesson is about the task: the shared word stems of the lesson
+ * text and the task text, paths and repo, each weighted by how rare it is across the lessons
+ * being considered (a stem every lesson uses says little).
+ */
+const STOP = new Set(('a an and are as at be been but by can do does for from has have how i if in into is it its '
+  + 'may must not of on or our should so than that the their them then there these they this those to too under up '
+  + 'use used uses using was we were what when where which while who why will with without you your add adds new make '
+  + 'run runs only also any each every before after first again via one two just like get set need needs instead').split(' '));
+
+/** Light suffix stripping so "pins/pinned/pinning" and "importer/importers" meet. */
+export function stem(word: string): string {
+  let w = word;
+  for (const [suffix, min] of [['ations', 5], ['ation', 5], ['ments', 5], ['ment', 5], ['ings', 5], ['ing', 5], ['ers', 5], ['er', 5],
+    ['ies', 4], ['ied', 4], ['es', 5], ['ed', 4], ['ly', 5], ['s', 4]] as const) {
+    if (w.length >= suffix.length + min - 1 && w.endsWith(suffix)) { w = w.slice(0, -suffix.length); break; }
+  }
+  if (w.length > 4 && w.endsWith('e')) w = w.slice(0, -1);
+  return w.replace(/(.)\1$/, '$1');
+}
+
+/** Distinct stems of free text, paths and identifiers (camelCase, snake_case and path segments split). */
+export function relevanceTerms(...parts: Array<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const part of parts) {
+    if (!part) continue;
+    const words = part.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/);
+    for (const word of words) if (word.length >= 2 && !STOP.has(word) && !/^\d+$/.test(word)) out.add(stem(word));
+  }
+  return out;
+}
+
+function noteTerms(note: KnowledgeNoteV1, repoTerms: ReadonlySet<string>): Set<string> {
+  // Glob segments name the code a note is about; a segment that is only the repo's own name ("phantom" in
+  // crates/phantom-vault) would tie the note to every task in that repo, so those count only from the note's text.
+  const text = relevanceTerms(note.text);
+  for (const word of relevanceTerms(...note.scope.pathGlobs.map(glob => glob.replace(/[*?{}]/g, ' ')))) if (!repoTerms.has(word)) text.add(word);
+  return text;
+}
+
+export interface ScoredKnowledge { note: KnowledgeNoteV1; score: number }
+
+/** Relevance of each note to the task, weighted by rarity across `notes`. Pure. */
+export function scoreKnowledge(notes: readonly KnowledgeNoteV1[], target: KnowledgeTarget): ScoredKnowledge[] {
+  const repoTerms = relevanceTerms(target.repo ? target.repo.split(/[\\/]/).pop()!.replace(/^.*__/, '') : null);
+  const task = relevanceTerms(target.text, ...target.paths, ...repoTerms);
+  const termsByNote = notes.map(note => noteTerms(note, repoTerms));
+  const df = new Map<string, number>();
+  for (const set of termsByNote) for (const word of set) df.set(word, (df.get(word) ?? 0) + 1);
+  return notes.map((note, index) => {
+    let score = 0;
+    // Each shared stem counts at most 1 (when only this note uses it), so the score reads as "rare words in common"
+    // whatever the number of notes.
+    for (const word of termsByNote[index]) if (task.has(word)) score += notes.length > 1 ? Math.log(1 + notes.length / df.get(word)!) / Math.log(1 + notes.length) : 1;
+    return { note, score: Math.round(score * 1000) / 1000 };
+  });
+}
+
+/** At most this many notes reach one task prompt once more than this many match its scope. */
+export const KNOWLEDGE_INJECT_MAX_NOTES = 8;
+/** Rare-word weight a note must share with the task text when nothing in its scope ties it to the task. */
+export const KNOWLEDGE_RELEVANCE_MIN = 0.75;
+
+/**
+ * Approved notes that match, most specific / most used / newest first. Pure.
+ *
+ * With the task text known, scope alone is not the whole test:
+ * - Past KNOWLEDGE_INJECT_MAX_NOTES matches, an open-scoped note would otherwise reach every prompt. A note is then kept
+ *   only with evidence that it bears on this task (a path or task-kind scope that matched, or wording that names the
+ *   task's kind) or enough rare words in common with the task (scoreKnowledge).
+ * - A brief is written before its paths are known, so a path-scoped note whose glob prefix the text does not spell out
+ *   would never match. Such a note is also kept when its words (glob segments included) are about the task.
+ * Evidence first, then relevance, at most MAX notes.
+ */
 export function selectKnowledge(notes: readonly KnowledgeNoteV1[], target: KnowledgeTarget): KnowledgeNoteV1[] {
-  return notes
-    .filter((n) => n.status === 'approved' && scopeMatches(n.scope, target))
-    .sort((a, b) => specificity(b.scope) - specificity(a.scope)
-      || b.hits - a.hits
-      || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
-      || a.id.localeCompare(b.id));
+  const order = (a: KnowledgeNoteV1, b: KnowledgeNoteV1): number => specificity(b.scope) - specificity(a.scope)
+    || b.hits - a.hits
+    || (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt)
+    || a.id.localeCompare(b.id);
+  const approved = notes.filter((n) => n.status === 'approved');
+  const matched = approved.filter((n) => scopeMatches(n.scope, target)).sort(order);
+  if (!target.text?.trim()) return matched;
+  const strict = new Set(matched);
+  const pathsUnknown = target.paths.length === 0;
+  const candidates = approved.filter((n) => strict.has(n)
+    || (pathsUnknown && n.scope.pathGlobs.length > 0 && scopeMatches({ ...n.scope, pathGlobs: [] }, target))).sort(order);
+  if (candidates.length === matched.length && matched.length <= KNOWLEDGE_INJECT_MAX_NOTES) return matched;
+  const kind = target.kind ?? classifyTaskKind(target.text);
+  const wordedKind = (note: KnowledgeNoteV1): TaskKind | null => {
+    const k = classifyTaskKind(note.text);
+    return k === 'feature' || k === 'other' ? null : k;
+  };
+  const few = matched.length <= KNOWLEDGE_INJECT_MAX_NOTES;
+  // The sort is stable, so equal entries keep the specificity / hits / recency order above.
+  return scoreKnowledge(candidates, target)
+    .map((s) => ({ ...s, evidence: strict.has(s.note)
+      && (s.note.scope.pathGlobs.length > 0 || s.note.scope.taskKinds.length > 0 || wordedKind(s.note) === kind) }))
+    .filter((s) => s.evidence || s.score >= KNOWLEDGE_RELEVANCE_MIN || (few && strict.has(s.note)))
+    .sort((a, b) => Number(b.evidence) - Number(a.evidence) || b.score - a.score)
+    .slice(0, KNOWLEDGE_INJECT_MAX_NOTES)
+    .map((s) => s.note);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +266,61 @@ function scopeTag(scope: KnowledgeScope): string {
   return parts.join(' · ');
 }
 
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
+/** `owner/repo#n` with the repo lower-cased: the same key as improve/lesson-trial.ts prKey. */
+function citedKey(ref: KnowledgeEvidenceRef): string | null {
+  return ref.number === null ? null : `${ref.repository.toLowerCase()}#${ref.number}`;
+}
+
+/** The PRs a note cites, as prKey keys, deduplicated in citation order. Pure. */
+export function citedPrKeys(note: Pick<KnowledgeNoteV1, 'evidence'>): string[] {
+  return [...new Set((note.evidence ?? []).map(citedKey).filter((k): k is string => k !== null))];
+}
+
+/**
+ * Drop notes whose every cited PR was reverted after merging. A note citing no PR is kept, and so is one that
+ * still has a cited PR standing. `reverted` is read once, only when some note cites a PR; if it throws, nothing is
+ * withheld. Pure but for it.
+ */
+export function withholdReverted(notes: readonly KnowledgeNoteV1[], reverted: () => ReadonlySet<string>): KnowledgeNoteV1[] {
+  if (!notes.some((n) => citedPrKeys(n).length > 0)) return [...notes];
+  let keys: ReadonlySet<string>;
+  try {
+    keys = reverted();
+  } catch {
+    return [...notes]; // an unreadable ledger withholds nothing rather than every lesson
+  }
+  return notes.filter((n) => {
+    const cited = citedPrKeys(n);
+    return cited.length === 0 || !cited.every((k) => keys.has(k));
+  });
+}
+
+/** Most PRs and checks a rendered evidence tag names. */
+const EVIDENCE_TAG_MAX = 3;
+
+/**
+ * What the note cites that its text does not already say: ` (seen on owner/repo#n @abc1234; checks: X, Y)`,
+ * or '' when the text names it all (extracted lessons already cite their PR and checks). Pure.
+ */
+export function evidenceTag(note: Pick<KnowledgeNoteV1, 'text' | 'evidence'>): string {
+  const text = note.text.toLowerCase();
+  const prs = new Map<string, string>();
+  const checks = new Set<string>();
+  for (const ref of note.evidence ?? []) {
+    const key = citedKey(ref);
+    if (key && !prs.has(key) && !text.includes(key)) prs.set(key, `${ref.repository}#${ref.number}${ref.sha ? ` @${ref.sha.slice(0, 7)}` : ''}`);
+    if (ref.kind === 'ci' && ref.detail && !text.includes(ref.detail.toLowerCase())) checks.add(ref.detail);
+  }
+  const parts: string[] = [];
+  if (prs.size) parts.push(`seen on ${[...prs.values()].slice(0, EVIDENCE_TAG_MAX).join(', ')}`);
+  if (checks.size) parts.push(`checks: ${[...checks].slice(0, EVIDENCE_TAG_MAX).join(', ')}`);
+  return parts.length ? ` (${parts.join('; ')})` : '';
+}
+
 export interface RenderedKnowledge {
   /** '' when nothing matched. */
   text: string;
@@ -187,7 +349,7 @@ export function renderKnowledgeBlock(
   if (used > capBytes) return { text: '', noteIds: [], vetoes: 0, bytes: 0 };
   const noteIds: string[] = [];
   for (const note of notes) {
-    const line = `- [${scopeTag(note.scope)}] ${note.text.replace(/\s+/g, ' ').trim()}`;
+    const line = `- [${scopeTag(note.scope)}] ${note.text.replace(/\s+/g, ' ').trim()}${evidenceTag(note).replace(/\s+/g, ' ')}`;
     const cost = utf8(line) + 1;
     if (used + cost > capBytes) continue; // a shorter note further down may still fit
     lines.push(line);
@@ -226,6 +388,11 @@ export interface KnowledgeBlockOptions {
   capBytes?: number;
   /** Record hits (default true). Tests and previews pass false. */
   recordHits?: boolean;
+  /**
+   * PRs reverted after merging, as prKey keys (improve/reverted.ts revertedPrKeys). Notes whose every cited PR is in
+   * it are withheld. Called at most once, and only when some note cites a PR; absent, nothing is withheld.
+   */
+  revertedPrKeys?: () => ReadonlySet<string>;
   /** Injected for tests. */
   notes?: readonly KnowledgeNoteV1[];
   vetoes?: readonly Pick<PlaybookEntry, 'text'>[];
@@ -234,7 +401,8 @@ export interface KnowledgeBlockOptions {
 /** The knowledge block for one task ('' when nothing applies). Never throws. */
 export function knowledgeBlockFor(target: KnowledgeTarget, opts: KnowledgeBlockOptions = {}): RenderedKnowledge {
   try {
-    const notes = selectKnowledge(opts.notes ?? readApprovedKnowledgeSync(), target);
+    const approved = opts.notes ?? readApprovedKnowledgeSync();
+    const notes = selectKnowledge(opts.revertedPrKeys ? withholdReverted(approved, opts.revertedPrKeys) : approved, target);
     const vetoes = opts.fromLeader ? (opts.vetoes ?? readVetoLessonsSync()) : [];
     const rendered = renderKnowledgeBlock(notes, vetoes, opts.capBytes ?? KNOWLEDGE_INJECT_CAP_BYTES);
     if (rendered.noteIds.length > 0 && opts.recordHits !== false) void recordKnowledgeHits(rendered.noteIds);

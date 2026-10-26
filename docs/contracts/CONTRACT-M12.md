@@ -81,7 +81,7 @@ Reused existing types (DO NOT redefine): `AshlrConfig`, `RunBudget`,
 import type { SpecArtifact, AshlrConfig } from '../types.js';
 
 export function specsDir(project?: string): string;
-export async function authorSpec(goal: string, cfg: AshlrConfig, opts?: { project?: string }): Promise<SpecArtifact>;
+export async function authorSpec(goal: string, cfg: AshlrConfig, opts?: { project?: string; allowCloud?: boolean; quietIfNoProvider?: boolean }): Promise<SpecArtifact>;
 export function listSpecs(project?: string): SpecArtifact[];
 export function loadSpec(id: string): { meta: SpecArtifact; body: string } | null;
 export async function refineSpec(id: string, note: string, cfg: AshlrConfig): Promise<SpecArtifact>;
@@ -92,6 +92,9 @@ export async function refineSpec(id: string, note: string, cfg: AshlrConfig): Pr
   structured end-state spec (sections: Context, North Star, Operating
   Principles, Pillars, Roadmap/phases, Verification). Persists
   `<slug>-v1.md` + sidecar `<slug>-v1.json`. version=1, status='draft'.
+  `opts.quietIfNoProvider: true` treats the model as optional: when no
+  provider is usable it writes a template seeded with the goal text and logs
+  nothing; a reachable provider still drafts the spec.
 - `listSpecs` → newest version per spec id, sorted by `updatedAt` desc.
 - `loadSpec(id)` → highest version for that id, or null.
 - `refineSpec` → reads current highest version, produces v+1 incorporating the

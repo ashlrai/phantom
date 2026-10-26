@@ -1007,13 +1007,14 @@ const ENGINEER_TOOLS: EngineerTool[] = [
     name: 'read_file',
     description:
       'Read a UTF-8 text file inside the workspace. Returns line-numbered content; ' +
-      'use offset/limit to window large files. Read-only.',
+      'use offset/limit to window large files. Refuses secrets-looking files (.env, keys, ' +
+      'credentials) and files over 1 MiB; output is capped at 256 KiB. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative file path.' },
         offset: { type: 'number', description: '0-based start line (default 0).' },
-        limit: { type: 'number', description: 'Max lines to return (default all).' },
+        limit: { type: 'number', description: 'Max lines to return (default all, still capped at 256 KiB).' },
       },
       required: ['path'],
     },
@@ -1056,8 +1057,9 @@ const ENGINEER_TOOLS: EngineerTool[] = [
   {
     name: 'write_file',
     description:
-      'Write (create or overwrite) a UTF-8 file inside the workspace. Gated by the ' +
-      'kill switch + repo enrollment and the workspace boundary.',
+      'Write (create or overwrite) a UTF-8 file inside the workspace. Refused unless write ' +
+      'tools are enabled for this session; gated by the kill switch + repo enrollment and ' +
+      'the workspace boundary.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1072,8 +1074,10 @@ const ENGINEER_TOOLS: EngineerTool[] = [
   {
     name: 'edit_file',
     description:
-      'Replace an exact string in a file inside the workspace. Errors if old_string ' +
-      'matches 0 times, or >1 time without replace_all. Gated like write_file.',
+      'Replace a string in a file inside the workspace. Without replace_all, an exact ' +
+      'match is tried first, then whitespace/elision/fuzzy matching of one unique window; ' +
+      'errors when nothing matches or old_string matches >1 time exactly. A single edit ' +
+      'that fails the workspace typecheck is rolled back. Gated like write_file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1091,8 +1095,9 @@ const ENGINEER_TOOLS: EngineerTool[] = [
     name: 'bash',
     description:
       'Run a shell command inside the workspace (cwd = worktree root, minimal env ' +
-      'with NO secrets, clamped timeout). Gated by the kill switch + enrollment and ' +
-      'a destructive/egress deny-list. Returns {exitCode, stdout, stderr, timedOut}.',
+      'with NO secrets, clamped timeout). Refused unless exec is enabled for this session; ' +
+      'gated by the kill switch + enrollment and a destructive/egress deny-list. ' +
+      'Returns {exitCode, stdout, stderr, timedOut}.',
     inputSchema: {
       type: 'object',
       properties: {

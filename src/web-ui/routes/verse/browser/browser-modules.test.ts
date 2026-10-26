@@ -30,7 +30,7 @@ describe('the address bar', () => {
     expect(parseBrowserAddress('example.com/docs', VERSE)).toEqual({ kind: 'url', url: 'https://example.com/docs', loopback: false, frameable: false });
   });
 
-  it('searches for words, refuses other schemes, credentials and Verse itself', () => {
+  it('searches for words, refuses other schemes, credentials and Phantom itself', () => {
     expect(parseBrowserAddress('react useEffect cleanup', VERSE)).toMatchObject({ kind: 'url', url: `${SEARCH_URL}react%20useEffect%20cleanup` });
     for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'ftp://example.com/']) {
       expect([bad, parseBrowserAddress(bad, VERSE).kind]).toEqual([bad, 'invalid']);
@@ -247,7 +247,7 @@ describe('the agent runner re-applies the gate in the pane', () => {
     expect(allowed.ok).toBe(true);
   });
 
-  it('navigates only through the gate (Verse itself and external origins refused)', async () => {
+  it('navigates only through the gate (Phantom itself and external origins refused)', async () => {
     const exec = executor();
     expect((await executeAgentCommand(cmd('navigate', { url: 'http://127.0.0.1:7777/verse/' }), exec, VERSE)).ok).toBe(false);
     expect((await executeAgentCommand(cmd('navigate', { url: 'https://example.com/' }), exec, VERSE)).ok).toBe(false);

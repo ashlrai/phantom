@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { daemonStatePath } from '../../src/core/daemon/state.js';
 import { resolveWorkerHomeParent } from './home.js';
@@ -32,10 +33,26 @@ it('honors the validated local-gate worker-home parent when configured', () => {
   expect(dirname(process.env.HOME!)).toBe(parent);
 });
 
+/**
+ * True when every ancestor of `path` passes the worker-home custody walk:
+ * a real directory owned by root or the current user with no group/other
+ * write bit. Hosted Linux CI gets this from a private TMPDIR; a run whose temp
+ * root is the sticky world-writable /tmp does not.
+ */
+function custodySafeChain(path: string): boolean {
+  for (let cursor = realpathSync(path); ; cursor = dirname(cursor)) {
+    const ancestor = lstatSync(cursor);
+    if (!ancestor.isDirectory() || ancestor.isSymbolicLink()
+      || ![0, process.getuid!()].includes(ancestor.uid) || (ancestor.mode & 0o022) !== 0) return false;
+    if (cursor === sep) return true;
+  }
+}
+
 it('rejects a non-absolute or non-private explicit worker-home parent', () => {
   expect(() => resolveWorkerHomeParent('relative-home')).toThrow(/absolute owned private/u);
-  const parent = mkdtempSync(join(realpathSync(process.env.HOME!), 'ashlr-vitest-parent-validation-'));
+  const workerHome = realpathSync(process.env.HOME!);
   if (typeof process.getuid !== 'function') {
+    const parent = mkdtempSync(join(workerHome, 'ashlr-vitest-parent-validation-'));
     // Windows has no POSIX owner/mode to validate, so an explicit parent is
     // refused outright (fail closed) rather than accepted unchecked.
     try {
@@ -45,6 +62,26 @@ it('rejects a non-absolute or non-private explicit worker-home parent', () => {
     }
     return;
   }
+  // The acceptance half needs a parent whose whole ancestry is custody-safe.
+  // The isolated worker HOME lives under os.tmpdir(); when that is the
+  // world-writable /tmp (a local Linux run without a private TMPDIR), use the
+  // checkout's own ignored node_modules/.cache instead, and prove the
+  // /tmp-rooted parent is refused for its ancestors rather than accepted.
+  const repoCache = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'node_modules', '.cache');
+  const homeIsSafe = custodySafeChain(workerHome);
+  if (!homeIsSafe) {
+    const unsafeParent = mkdtempSync(join(workerHome, 'ashlr-vitest-parent-validation-'));
+    try {
+      expect(lstatSync(unsafeParent).mode & 0o7777).toBe(0o700);
+      expect(() => resolveWorkerHomeParent(unsafeParent)).toThrow(/custody ancestors/u);
+    } finally {
+      rmSync(unsafeParent, { recursive: true, force: true });
+    }
+    mkdirSync(repoCache, { recursive: true });
+  }
+  const base = homeIsSafe ? workerHome : realpathSync(repoCache);
+  expect(custodySafeChain(base), `no custody-safe base for the explicit-parent fixture (tried ${workerHome} and ${base})`).toBe(true);
+  const parent = mkdtempSync(join(base, 'ashlr-vitest-parent-validation-'));
   try {
     expect(resolveWorkerHomeParent(parent)).toBe(realpathSync(parent));
     chmodSync(parent, 0o755);

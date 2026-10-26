@@ -254,6 +254,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   try { setKill(false); } catch { /* best effort */ }
   fs.rmSync(tmpRepo, { recursive: true, force: true });
   fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -644,6 +645,11 @@ describe('M398 merge decision truth', () => {
   });
 
   it('keeps factual fanout independent of degraded judge traces without projecting a merged outcome', async () => {
+    // recordJudgeTrace names its file from the trace ts and this case derives
+    // the same day later: freeze Date at the real current instant (afterEach
+    // restores it) so a run crossing 00:00 UTC observes one day.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
     mocks.persistEvidencePack.mockReturnValue(true);
     const proposal = createFrontierProposal('trajectory-m398-degraded-outcome-retry');
     recordJudgeTrace({

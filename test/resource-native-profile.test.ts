@@ -138,6 +138,18 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
     if (kind === 'writable') chmodSync(binary, 0o722);
     expect(() => prepareResourceNativeProfile(options())).toThrow('Invalid native profile'); expect(existsSync(options().directory)).toBe(false);
   });
+  it.each(['link', 'directory'] as const)('names the real path when the executable goes through an install symlink (%s)', (kind) => {
+    const target = kind === 'link' ? binary : join(base, 'real-dir', 'inert-native');
+    if (kind === 'directory') { mkdirSync(join(base, 'real-dir'), { mode: 0o700 }); writeFileSync(target, 'inert', { mode: 0o700 }); symlinkSync(join(base, 'real-dir'), join(base, 'link-dir')); }
+    const link = kind === 'link' ? join(base, 'install-link') : join(base, 'link-dir', 'inert-native'); if (kind === 'link') symlinkSync(binary, link);
+    expect(() => prepareResourceNativeProfile({ ...options(), executable: link })).toThrow(`pass its real path: ${target}`);
+    expect(existsSync(options().directory)).toBe(false);
+  });
+  it.each([['missing', 'does not exist'], ['not-executable', 'not executable'], ['writable', 'world-writable']] as const)(
+    'names why a %s executable is refused', (kind, reason) => {
+      if (kind === 'missing') rmSync(binary); if (kind === 'not-executable') chmodSync(binary, 0o600); if (kind === 'writable') chmodSync(binary, 0o722);
+      expect(() => prepareResourceNativeProfile(options())).toThrow(reason);
+    });
   it('refuses unsupported Node execution primitives before creating files', () => {
     const descriptor = Object.getOwnPropertyDescriptor(process, 'execve')!;
     Object.defineProperty(process, 'execve', { ...descriptor, value: undefined });

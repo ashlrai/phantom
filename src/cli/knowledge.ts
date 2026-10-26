@@ -1,9 +1,9 @@
 /**
- * CLI handler for `ashlr knowledge` and `ashlr impact`.
+ * CLI handler for `ashlr knowledge` and `ashlr knowledge impact`.
  *
  *   ashlr knowledge build [--repo <path>] [--allow-cloud]
  *   ashlr knowledge graph [--json]
- *   ashlr impact <file|symbol> [--repo <path>] [--json]
+ *   ashlr knowledge impact <file|symbol> [--repo <path>] [--json]
  *
  * All operations are READ-ONLY and LOCAL by default. Indexing/embedding run
  * via the local Ollama provider. Cloud is never used unless --allow-cloud is
@@ -107,7 +107,7 @@ function printKnowledgeHelp(): void {
   const subs: [string, string][] = [
     ['build [--repo <path>] [--allow-cloud]', 'Index enrolled repos (or a single repo) for ask/RAG.'],
     ['graph [--json]',                        'Print the cross-repo knowledge graph (nodes + edges).'],
-    ['impact <target> [--repo <path>]',       'What references/depends on a file or symbol? (alias: ashlr impact)'],
+    ['impact <target> [--repo <path>]',       'What references/depends on a file or symbol?'],
   ];
   const w = Math.max(...subs.map(([s]) => s.length));
   for (const [sub, desc] of subs) {
@@ -133,8 +133,8 @@ function printKnowledgeHelp(): void {
   out(`    ${cyan('ashlr knowledge build --repo ~/projects/my-app')}   ${dim('# index one repo')}`);
   out(`    ${cyan('ashlr knowledge graph')}                            ${dim('# print knowledge graph')}`);
   out(`    ${cyan('ashlr knowledge graph --json')}                     ${dim('# JSON graph for tooling')}`);
-  out(`    ${cyan('ashlr impact src/core/orchestrator.ts')}            ${dim('# what depends on this?')}`);
-  out(`    ${cyan('ashlr impact parseGoal --repo ~/my-app')}           ${dim('# symbol search in one repo')}`);
+  out(`    ${cyan('ashlr knowledge impact src/core/orchestrator.ts')}  ${dim('# what depends on this?')}`);
+  out(`    ${cyan('ashlr knowledge impact parseGoal --repo ~/my-app')} ${dim('# symbol search in one repo')}`);
   out('');
   out('  ' + gray('Enrollment:') + dim(' enroll repos with `ashlr enroll add <path>` before building.'));
   out('');
@@ -146,15 +146,15 @@ function printImpactHelp(): void {
   const out = (s = '') => process.stdout.write(s + '\n');
 
   out('');
-  out(bold('  ashlr impact') + dim(' — Cross-repo reference and dependency analysis'));
+  out(bold('  ashlr knowledge impact') + dim(' — Cross-repo reference and dependency analysis'));
   out('');
   out('  ' + bold('Usage:'));
-  out(`    ${cyan('ashlr impact <file|symbol>')} [--repo <path>] [--json]`);
+  out(`    ${cyan('ashlr knowledge impact <file|symbol>')} [--repo <path>] [--json]`);
   out('');
   out('  ' + bold('Examples:'));
-  out(`    ${cyan('ashlr impact src/core/run/orchestrator.ts')}`);
-  out(`    ${cyan('ashlr impact buildIndex --repo ~/my-app')}`);
-  out(`    ${cyan('ashlr impact lodash --json')}  ${dim('# check which repos depend on lodash')}`);
+  out(`    ${cyan('ashlr knowledge impact src/core/run/orchestrator.ts')}`);
+  out(`    ${cyan('ashlr knowledge impact buildIndex --repo ~/my-app')}`);
+  out(`    ${cyan('ashlr knowledge impact lodash --json')}  ${dim('# check which repos depend on lodash')}`);
   out('');
 }
 
@@ -421,7 +421,7 @@ function printGraphHuman(graph: import('../core/types.js').KnowledgeGraph): void
     out(dim('  Tip: run `ashlr knowledge build` to populate the graph.'));
     out('');
   } else {
-    out(green('  Tip:') + dim(' use `ashlr impact <file|symbol>` to drill into dependencies.'));
+    out(green('  Tip:') + dim(' use `ashlr knowledge impact <file|symbol>` to drill into dependencies.'));
     out('');
   }
 }
@@ -485,7 +485,7 @@ async function runGraph(subArgs: string[]): Promise<number> {
   return 0;
 }
 
-// ─── Subcommand / standalone: impact ─────────────────────────────────────────
+// ─── Subcommand: impact ──────────────────────────────────────────────────────
 
 interface ParsedImpactArgs {
   target: string;
@@ -519,7 +519,7 @@ function parseImpactArgs(args: string[]): ParsedImpactArgs {
       if (target === undefined) {
         target = a;
       } else {
-        error = `Unexpected argument: ${a}. Usage: ashlr impact <file|symbol>`;
+        error = `Unexpected argument: ${a}. Usage: ashlr knowledge impact <file|symbol>`;
         break;
       }
     } else {
@@ -529,7 +529,7 @@ function parseImpactArgs(args: string[]): ParsedImpactArgs {
   }
 
   if (!error && !help && target === undefined) {
-    error = 'A file or symbol target is required. Usage: ashlr impact <file|symbol>';
+    error = 'A file or symbol target is required. Usage: ashlr knowledge impact <file|symbol>';
   }
 
   return { target: target ?? '', repos, json, help, error };
@@ -588,7 +588,7 @@ async function runImpact(subArgs: string[]): Promise<number> {
   }
   if (parsed.error) {
     process.stderr.write('error: ' + parsed.error + '\n');
-    process.stderr.write('Run `ashlr impact --help` for usage.\n');
+    process.stderr.write('Run `ashlr knowledge impact --help` for usage.\n');
     return 2;
   }
 
@@ -670,8 +670,6 @@ export async function cmdKnowledge(args: string[]): Promise<number> {
       return runGraph(subArgs);
 
     case 'impact':
-      // `ashlr knowledge impact <target>` — delegate to the same handler
-      // as standalone `ashlr impact <target>`
       return runImpact(subArgs);
 
     default:
@@ -689,9 +687,10 @@ export async function cmdKnowledge(args: string[]): Promise<number> {
 }
 
 /**
- * `ashlr impact <file|symbol> [--repo <path>] [--json]`
+ * `ashlr knowledge impact <file|symbol> [--repo <path>] [--json]`
  *
- * Standalone alias for `ashlr knowledge impact`. What references or depends on
+ * Programmatic entry for the impact subcommand. There is no top-level
+ * `ashlr knowledge impact` route, so user-facing text must name `ashlr knowledge impact`. What references or depends on
  * the given target, within and across enrolled repos?
  *
  * Exit codes: 0 success, 1 error, 2 bad usage.

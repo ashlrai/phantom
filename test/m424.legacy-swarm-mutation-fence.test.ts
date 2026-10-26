@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   sandboxDiff: vi.fn(),
   removeSandbox: vi.fn(),
   removeSandboxWithBorrowedAuthority: vi.fn(),
+  removeSandboxAsync: vi.fn(),
   createProposal: vi.fn(),
   runGoal: vi.fn(),
   planSwarm: vi.fn(),
@@ -56,6 +57,7 @@ vi.mock('../src/core/sandbox/worktree.js', async (importOriginal) => {
     sandboxDiff: mocks.sandboxDiff,
     removeSandbox: mocks.removeSandbox,
     removeSandboxWithBorrowedAuthority: mocks.removeSandboxWithBorrowedAuthority,
+    removeSandboxAsync: mocks.removeSandboxAsync,
   };
 });
 
@@ -143,6 +145,7 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     });
     mocks.removeSandbox.mockReturnValue({ status: 'complete' });
     mocks.removeSandboxWithBorrowedAuthority.mockReturnValue({ status: 'complete' });
+    mocks.removeSandboxAsync.mockResolvedValue({ status: 'complete' });
     mocks.planSwarm.mockResolvedValue(plan);
   });
 
@@ -158,7 +161,7 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('keeps pause non-quiesced while a held task drains through capture and borrowed cleanup', async () => {
+  it('keeps pause non-quiesced while a held task drains, then removes only its own sandbox under KILL', async () => {
     let releaseTask!: () => void;
     let markEntered!: () => void;
     const entered = new Promise<void>((resolve) => { markEntered = resolve; });
@@ -186,13 +189,16 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     );
     await entered;
 
+    // The fence is no longer held across inference: unenroll takes effect
+    // durably at once, but cannot report quiescence while the run's
+    // execution lease is live.
     expect(unenroll(project, { waitMs: 25 })).toEqual({
       ok: false,
-      changed: false,
+      changed: true,
       quiesced: false,
-      reason: 'outward mutation fence unavailable',
+      reason: 'unenrolled; an autonomous run on this repo has not drained',
     });
-    expect(isEnrolled(project)).toBe(true);
+    expect(isEnrolled(project)).toBe(false);
 
     expect(setKill(true, { waitMs: 25 })).toEqual({
       ok: false,
@@ -210,7 +216,13 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     expect(mocks.sandboxDiff).toHaveBeenCalledOnce();
     expect(mocks.createProposal).not.toHaveBeenCalled();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
-    expect(mocks.removeSandboxWithBorrowedAuthority).toHaveBeenCalledOnce();
+    // No cleanup authority can be minted after KILL; the run removes its OWN
+    // sandbox with the removal right minted at admission (KILL off).
+    expect(mocks.removeSandboxWithBorrowedAuthority).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxAsync).toHaveBeenCalledOnce();
+    expect(mocks.removeSandboxAsync.mock.calls[0]![1]).toMatchObject({
+      ownRemovalRight: expect.objectContaining({ sandboxId: 'm424-sandbox', pid: process.pid }),
+    });
     expect(setKill(true, { waitMs: 500 })).toMatchObject({
       ok: true,
       changed: false,
@@ -218,7 +230,7 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     });
   }, 30_000);
 
-  it('retains authority through held planning and persists the completed plan before quiescence', async () => {
+  it('keeps pause non-quiesced through held planning and persists the completed plan before quiescence', async () => {
     let releasePlanner!: () => void;
     let markEntered!: () => void;
     const entered = new Promise<void>((resolve) => { markEntered = resolve; });
@@ -264,7 +276,8 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     expect(loadSwarm(runId)).toMatchObject({ status: 'aborted', plan });
     expect(mocks.runGoal).not.toHaveBeenCalled();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
-    expect(mocks.removeSandboxWithBorrowedAuthority).toHaveBeenCalledOnce();
+    expect(mocks.removeSandboxWithBorrowedAuthority).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxAsync).toHaveBeenCalledOnce();
     expect(setKill(true, { waitMs: 500 })).toMatchObject({
       ok: true,
       changed: false,
@@ -288,7 +301,7 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     expect(mocks.createSandbox).not.toHaveBeenCalled();
   }, 30_000);
 
-  it('does not report quiescence while proposal capture is inside the retained fence', async () => {
+  it('does not report quiescence while proposal capture is inside the re-acquired fence', async () => {
     mocks.runGoal.mockImplementationOnce(async (goal: string) => completedRun(goal));
     const project = join(home, 'repo');
     expect(enroll(project)).toMatchObject({ ok: true, quiesced: true });
@@ -368,5 +381,6 @@ describe('M424 legacy swarm mutation lifecycle authority', { timeout: 15_000 }, 
     expect(mocks.runGoal).not.toHaveBeenCalled();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
     expect(mocks.removeSandboxWithBorrowedAuthority).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxAsync).not.toHaveBeenCalled();
   });
 });

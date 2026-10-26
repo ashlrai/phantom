@@ -181,6 +181,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fx.cleanup();
 });
 
@@ -596,7 +597,11 @@ describe('M170 — self-heal cadence: NOT called on dry-run', () => {
   it('does not call runSelfHealCycle on a budget-exhausted tick (early return)', async () => {
     const repo = fx.makeRepo();
     repo.enroll();
-    // Seed spend at/above the cap.
+    // Seed spend at/above the cap. Freeze Date at the real current instant
+    // (afterEach restores it) so a run crossing 00:00 UTC cannot seed one
+    // budget day and tick against the next, which would reset the spend.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
     const { saveDaemonState } = await import('../src/core/daemon/state.js');
     saveDaemonState({
       running: false, pid: null, startedAt: null, lastTickAt: null,

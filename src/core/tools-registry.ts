@@ -7,7 +7,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
 import type { ToolInfo, ToolsRegistry } from './types.js';
 
@@ -51,6 +52,13 @@ interface ToolSpec {
    * `binaries` is ignored and version is always null (no CLI to query).
    */
   appPaths?: string[];
+  /**
+   * Claude Code plugin name to look for in the plugin cache when no binary is
+   * on PATH. A marketplace install (`/plugin install ashlr@ashlr-marketplace`)
+   * puts no CLI on PATH; it caches the plugin under
+   * ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.
+   */
+  claudePlugin?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +190,55 @@ function ashlrHubVersionFromPackageJson(resolvedPath: string | null): string | n
   return null;
 }
 
+/**
+ * Find a Claude Code marketplace install of `plugin` in the plugin cache and
+ * return its directory and version, preferring the highest version. A version
+ * directory counts only when its .claude-plugin/plugin.json names the plugin.
+ * Returns null on any failure. Never throws.
+ */
+function probeClaudePluginCache(plugin: string): { path: string; version: string | null } | null {
+  const env = process.env['CLAUDE_CODE_PLUGIN_CACHE_DIR'];
+  const roots = env ? [env, join(env, 'cache')] : [join(homedir(), '.claude', 'plugins', 'cache')];
+  let best: { path: string; version: string | null } | null = null;
+  for (const root of roots) {
+    let marketplaces: string[];
+    try {
+      marketplaces = readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const marketplace of marketplaces) {
+      let versions: string[];
+      try {
+        versions = readdirSync(join(root, marketplace, plugin));
+      } catch {
+        continue;
+      }
+      for (const dir of versions) {
+        const path = join(root, marketplace, plugin, dir);
+        try {
+          const manifest = JSON.parse(readFileSync(join(path, '.claude-plugin', 'plugin.json'), 'utf8')) as Record<string, unknown>;
+          if (manifest['name'] !== plugin) continue;
+          const version = typeof manifest['version'] === 'string' ? manifest['version'] : extractSemver(dir);
+          if (!best || compareSemver(version, best.version) > 0) best = { path, version };
+        } catch {
+          // Not a plugin version directory.
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function compareSemver(a: string | null, b: string | null): number {
+  const parts = (v: string | null) => (v ?? '').split(/[.+-]/).slice(0, 3).map(n => Number.parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Tool catalogue
 // ---------------------------------------------------------------------------
@@ -224,11 +281,15 @@ const TOOL_SPECS: ToolSpec[] = [
   },
 
   // ── ashlr-plugin (Claude Code MCP plugin) ─────────────────────────────────
+  // Its npm package ships `ashlr-plugin` and `ashlr-mcp`. The bare `ashlr`
+  // binary is this product's own alias (ashlr-hub above), so it must not
+  // count as the plugin.
   {
     id: 'ashlr-plugin',
     name: 'ashlr-plugin (Claude Code MCP)',
-    binaries: ['ashlr', 'ashlr-plugin'],
+    binaries: ['ashlr-plugin', 'ashlr-mcp'],
     parseVersion: extractSemver,
+    claudePlugin: 'ashlr',
   },
 
   // ── aw / ashlr-workbench ──────────────────────────────────────────────────
@@ -322,6 +383,10 @@ function probeTool(spec: ToolSpec): ToolInfo {
   }
 
   if (!resolvedPath || !resolvedBinary) {
+    const cached = spec.claudePlugin ? probeClaudePluginCache(spec.claudePlugin) : null;
+    if (cached) {
+      return { id: spec.id, name: spec.name, installed: true, version: cached.version, path: cached.path };
+    }
     return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
   }
 
@@ -338,8 +403,8 @@ function probeTool(spec: ToolSpec): ToolInfo {
       version = spec.parseVersion ? spec.parseVersion(raw) : extractSemver(raw);
     }
 
-    // Special case: ashlr-hub / ashlr-plugin share the `ashlr` binary, whose
-    // `--version` may be unsupported; fall back to a nearby package.json.
+    // Special case: the ashlr-hub / ashlr-plugin binaries' `--version` may be
+    // unsupported; fall back to a nearby package.json.
     if (!version && (spec.id === 'ashlr-hub' || spec.id === 'ashlr-plugin')) {
       version = ashlrHubVersionFromPackageJson(resolvedPath);
     }

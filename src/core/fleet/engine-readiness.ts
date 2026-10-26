@@ -209,6 +209,13 @@ const INSTALL_HINT: Partial<Record<string, string>> = {
 // Core: single-engine readiness probe
 // ---------------------------------------------------------------------------
 
+/** How to hand CLAUDE_CODE_OAUTH_TOKEN to the background daemon on this platform (launchd / systemd --user / schtasks). */
+export function daemonTokenEnvHint(platform: NodeJS.Platform): string {
+  if (platform === 'darwin') return 'To set the env for launchd: launchctl setenv CLAUDE_CODE_OAUTH_TOKEN <token>';
+  if (platform === 'win32') return 'To set the env for the daemon task: setx CLAUDE_CODE_OAUTH_TOKEN <token>';
+  return 'To set the env for the systemd --user daemon: systemctl --user set-environment CLAUDE_CODE_OAUTH_TOKEN=<token>';
+}
+
 /**
  * Return a readiness report for one engine. Never throws.
  * Pass `overrides` to replace subprocess/fs probes in unit tests.
@@ -361,8 +368,8 @@ export function engineReadiness(
       detail:
         'No credential found (neither CLAUDE_CODE_OAUTH_TOKEN nor ~/.claude/credentials.json).',
       fix:
-        'Run: claude (interactive login), then export CLAUDE_CODE_OAUTH_TOKEN if running under a daemon/launchd. ' +
-        'To set the env for launchd: launchctl setenv CLAUDE_CODE_OAUTH_TOKEN <token>',
+        'Run: claude (interactive login), then export CLAUDE_CODE_OAUTH_TOKEN if running under a daemon. ' +
+        daemonTokenEnvHint(process.platform),
     };
   }
 

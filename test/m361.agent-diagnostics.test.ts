@@ -173,14 +173,23 @@ describe('M361 metadata-only agent diagnostics', () => {
     });
     const lockPath = join(dir, '.append.lock');
     let lock = '';
+    let owner: Record<string, unknown> | undefined;
+    let exited = false;
+    void closed.then(() => { exited = true; }, () => { exited = true; });
     try {
-      const deadline = Date.now() + 750;
-      while (lock === '' && Date.now() < deadline) {
-        try { lock = readFileSync(lockPath, 'utf8'); } catch { /* child has not acquired it yet */ }
-        if (lock === '') await new Promise((resolve) => setTimeout(resolve, 10));
+      // The child blocks on the held maintenance lock while it owns the append
+      // lock, so poll until its owner record is complete. A cold `--import tsx`
+      // start alone can exceed a fixed sub-second window on a loaded runner.
+      const deadline = Date.now() + 4_000;
+      while (owner === undefined && !exited && Date.now() < deadline) {
+        try {
+          lock = readFileSync(lockPath, 'utf8');
+          owner = JSON.parse(lock) as Record<string, unknown>;
+        } catch { /* not acquired yet, or the owner record is still being written */ }
+        if (owner === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      const owner = JSON.parse(lock) as Record<string, unknown>;
-      expect(Object.keys(owner).sort()).toEqual(['pid', 'startRef']);
+      expect(owner, `append lock owner record: ${JSON.stringify(lock)}`).toBeDefined();
+      expect(Object.keys(owner!).sort()).toEqual(['pid', 'startRef']);
       expect(owner).toMatchObject({
         pid: child.pid,
         startRef: expect.stringMatching(/^[a-f0-9]{64}$/),

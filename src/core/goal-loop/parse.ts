@@ -14,7 +14,7 @@
  * malformed file yields empty/partial structures the caller can reject.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { MilestoneDoc, MilestoneStep, RoadmapEntry, RoadmapIndex } from './types.js';
 
@@ -48,12 +48,18 @@ function splitLines(content: string): string[] {
 // Roadmap index
 // ---------------------------------------------------------------------------
 
-/** Candidate index filenames tried (in order) when none is given explicitly. */
-const DEFAULT_ROADMAP_NAMES = ['roadmap.md', 'ROADMAP.md', 'README.md'];
+/**
+ * Candidate index filenames tried (in order) when none is given explicitly.
+ * README.md is deliberately not a candidate: its `.md` links are usually docs,
+ * and `roadmap run` would start an agent process for each one.
+ */
+const DEFAULT_ROADMAP_NAMES = ['roadmap.md', 'ROADMAP.md'];
 
 /**
  * Resolve the roadmap index path from a directory + optional explicit filename.
- * Returns an absolute path (not guaranteed to exist — the caller reads it).
+ * Without an explicit file, returns the first default name that exists, else
+ * the first default name. Returns an absolute path (not guaranteed to exist;
+ * parseRoadmap reports a missing index with a next step).
  */
 export function resolveRoadmapPath(dir: string, roadmapFile?: string): string {
   const base = resolve(dir);
@@ -61,8 +67,32 @@ export function resolveRoadmapPath(dir: string, roadmapFile?: string): string {
     const f = roadmapFile.trim();
     return isAbsolute(f) ? f : resolve(base, f);
   }
-  // Default name; existence is the caller's concern (parseRoadmap reports clearly).
+  // Match names against the directory listing, not existsSync: on a
+  // case-insensitive filesystem (default APFS, NTFS) existsSync('roadmap.md')
+  // is true for a file named ROADMAP.md, and the returned path would not be
+  // the file's real name.
+  let entries: Set<string> | undefined;
+  try {
+    entries = new Set(readdirSync(base));
+  } catch {
+    entries = undefined;
+  }
+  for (const name of DEFAULT_ROADMAP_NAMES) {
+    const candidate = resolve(base, name);
+    if (entries ? entries.has(name) : existsSync(candidate)) return candidate;
+  }
   return resolve(base, DEFAULT_ROADMAP_NAMES[0] as string);
+}
+
+/** The error parseRoadmap throws when the index file is missing, with a next step. */
+function missingRoadmapError(base: string, path: string, explicit: boolean): Error {
+  const looked = explicit
+    ? `Roadmap file not found: ${path}.`
+    : `No roadmap index in ${base} (looked for ${DEFAULT_ROADMAP_NAMES.join(', ')}).`;
+  return new Error(
+    `${looked} Create one listing milestones like \`- [M0](M0-bootstrap.md)\` ` +
+      '(format: docs/MILESTONE-CONTRACT.md), or point at it with --roadmap <file> or --dir <dir>.',
+  );
 }
 
 /**
@@ -74,11 +104,14 @@ export function resolveRoadmapPath(dir: string, roadmapFile?: string): string {
  *
  * Order is preserved verbatim (dependency order). Non-matching lines are ignored,
  * so prose/headings around the list are fine. Throws only if the index file
- * cannot be read.
+ * is missing (with a next step) or cannot be read.
  */
 export function parseRoadmap(dir: string, roadmapFile?: string): RoadmapIndex {
   const path = resolveRoadmapPath(dir, roadmapFile);
   const base = resolve(dir);
+  if (!existsSync(path)) {
+    throw missingRoadmapError(base, path, Boolean(roadmapFile && roadmapFile.trim()));
+  }
   const content = readFileSync(path, 'utf8');
   const milestones: RoadmapEntry[] = [];
   const seen = new Set<string>();

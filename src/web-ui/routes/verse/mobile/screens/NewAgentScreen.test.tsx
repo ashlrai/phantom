@@ -137,6 +137,12 @@ describe('NewAgentScreen pickers', () => {
     expect(screen.getByRole('radio', { name: /site/ })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('counts repos in the filter placeholder with the right plural', async () => {
+    routes(bootstrap({ projects: [{ path: '/Users/me/code/hub', name: 'hub', enrolled: true }] }));
+    mount();
+    expect(await screen.findByRole('searchbox', { name: 'Find a repo' })).toHaveAttribute('placeholder', '1 repo');
+  });
+
   it('orders seats Claude, Codex, Grok; disables the unavailable one; lists runnable models', async () => {
     routes();
     mount();
@@ -334,7 +340,7 @@ describe('NewAgentScreen start', () => {
   it('hides Start and says why when this device cannot act', async () => {
     routes();
     mount({ permissions: permissionsFor('unavailable') });
-    expect(await screen.findByText('Your Mac started Verse without dispatch.')).toBeInTheDocument();
+    expect(await screen.findByText('Your Mac started Phantom without dispatch.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start/ })).not.toBeInTheDocument();
   });
 

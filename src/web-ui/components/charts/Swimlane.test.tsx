@@ -44,6 +44,14 @@ describe('Swimlane', () => {
     expect(screen.getByRole('listitem', { name: 'alpha: 3 runs (2 done, 1 failed)' })).toHaveAttribute('tabindex', '0');
   });
 
+  it('counts runs and lanes in the chart summary with the right plural', () => {
+    const { container, unmount } = render(<Swimlane title="Runs" width={800} from={FROM} to={TO} lanes={[lane('alpha', 1)]} />);
+    expect(container.querySelector('svg[role="img"]')!.getAttribute('aria-label')).toMatch(/^Runs: 1 run across 1 lane from /);
+    unmount();
+    const many = render(<Swimlane title="Runs" width={800} from={FROM} to={TO} lanes={[lane('alpha', 2), lane('beta', 1)]} />);
+    expect(many.container.querySelector('svg[role="img"]')!.getAttribute('aria-label')).toMatch(/^Runs: 3 runs across 2 lanes from /);
+  });
+
   it(`virtualizes past ${VIRTUALIZE_AFTER} lanes and renders only rows near the viewport`, () => {
     const many = Array.from({ length: 300 }, (_, i) => lane(`repo-${i}`, 1));
     const { container } = render(<Swimlane title="Runs" width={800} from={FROM} to={TO} lanes={many} />);

@@ -23,6 +23,7 @@
 import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
 import { asSentence } from '../autonomy/format.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 /**
  * The fleet's dark-since instant, or null when the fleet is not dark. A
@@ -45,7 +46,7 @@ function localDay(ms: number): string {
 export function darkSinceLabel(iso: string): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return 'an unknown day';
-  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatDateTime(new Date(ms), 'en-US', { month: 'short', day: 'numeric' });
 }
 
 /**

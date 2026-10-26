@@ -27,7 +27,7 @@
   flex: none;
   border-radius: var(--radius-full);
   background: var(--status-running-solid);
-  animation: live-pulse 1.4s var(--ease-standard) infinite;
+  /* Breathes: LiveStatus.tsx plays LIVE_PULSE (components/motion/pulse.ts). */
 }
 .live[data-phase='waiting'] .pulse { background: var(--border-strong); }
 
@@ -94,13 +94,6 @@
 .noticeWord { color: var(--status-warning-fg); font-weight: var(--font-weight-medium); white-space: nowrap; }
 .notice[data-kind='preflight'] .noticeWord { color: var(--status-info-fg); }
 .noticeText { min-width: 0; }
-
-@keyframes live-pulse { 50% { opacity: 0.3; } }
-
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .pulse { animation: none; }
-}
-:root[data-motion="reduce"] .pulse { animation: none; }
 
 @media (max-width: 480px) {
   /* 3.10: one line above the composer, beside the tasks chip — the text

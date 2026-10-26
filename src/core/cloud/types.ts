@@ -31,6 +31,7 @@
  * gates (custody) or by Mason — never by the cloud lane.
  */
 
+import type { MetricSpec } from '../improve/outcomes.js';
 import type { PlaybookRef } from '../playbooks/types.js';
 
 export const CLOUD_TASK_SCHEMA_VERSION = 1 as const;
@@ -93,6 +94,35 @@ export interface CloudTaskReport {
   testsRun: string[];
   risks: string[];
   filesChanged?: number;
+  /** Companion MCP tools the session reports calling (companionToolsBlock in delivery-contract.ts); absent when not reported. */
+  toolsUsed?: string[];
+}
+
+/** Which arm of the lessons holdout a launch ran in, and the knowledge notes that applied to it. */
+export interface CloudTaskLessons {
+  arm: 'served' | 'holdout';
+  noteIds: string[];
+}
+
+/**
+ * What GitHub showed about the task's PR when it merged or closed: the exact
+ * head (and merge) commit, the CI rollup on that head and the review verdict.
+ * Captured once by the tracker at the terminal transition; absent = not
+ * captured (lookup failed or the task predates it), which is unknown, not green.
+ */
+export interface CloudTaskOutcome {
+  observedAt: string;
+  headSha: string | null;
+  mergeSha: string | null;
+  /** Rollup on the head: 'none' = no checks ran; null = could not be read. */
+  ci: 'success' | 'failure' | 'pending' | 'none' | null;
+  /** Names of failed checks on the head, at most 20. */
+  failedChecks: string[];
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  /** Reviews whose state was CHANGES_REQUESTED. */
+  changesRequested: number;
+  /** Default-branch commit that reverted the merge (`phm improve observe`); null/absent = none seen. */
+  revertedBy?: string | null;
 }
 
 export interface CloudTaskPr {
@@ -175,6 +205,10 @@ export interface CloudTaskV1 {
   intake?: CloudIntakeMemo;
   /** 3.15: the playbook version this task runs under (playbooks/); absent = none. */
   playbookRef?: PlaybookRef;
+  /** Lessons trial arm and the approved notes that applied at launch (improve/lesson-trial.ts); absent = none applied. */
+  lessons?: CloudTaskLessons;
+  /** CI and review evidence at merge/close (cloud/tracker.ts); absent = not captured. */
+  outcome?: CloudTaskOutcome;
   /** Budget accounting — an ESTIMATE fixed at launch. */
   estimatedCostUsd: number;
   /** Backlog item this task came from (self-improvement), if any. */
@@ -264,7 +298,23 @@ export interface CloudBacklogItem {
   priority: 1 | 2 | 3;
   /** Repo the item targets (default: budget.selfImprove.repo). */
   repo?: string;
+  /**
+   * Deterministic metric the item's PR should move. Lets `phm improve
+   * sync-backlog` register the task's PR in the outcome ledger, so it is
+   * measured at its exact merge base and head and credits its `area`.
+   */
+  metric?: MetricSpec;
+  /**
+   * Acceptance condition checked on GitHub before the item is launched:
+   * `path` exists on the target repo's default branch (and contains
+   * `contains`, when given), or issue `issue` of the target repo is closed. A
+   * satisfied item is skipped, so a fix that already landed does not cost a
+   * session that reports "no-change".
+   */
+  doneWhen?: CloudBacklogDoneWhen;
 }
+
+export type CloudBacklogDoneWhen = { path: string; contains?: string } | { issue: number };
 
 export interface CloudBacklogView {
   items: Array<CloudBacklogItem & { claimedBy: string | null; lastState: CloudTaskState | null }>;

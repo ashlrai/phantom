@@ -13,6 +13,33 @@ import {
 } from '../src/core/inbox/store.js';
 import type { Proposal } from '../src/core/types.js';
 
+// Observes (and can fail) fs.openSync. root bypasses DAC mode bits, so a 0o000
+// proposal still opens for read as uid 0; the hook raises the EACCES a user
+// gets from the kernel so the same open-failure branch runs for every uid.
+const openHook = vi.hoisted(() => ({
+  denied: new Set<string>(),
+  hits: [] as string[],
+}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const openSync = ((...args: Parameters<typeof actual.openSync>) => {
+    const target = String(args[0]);
+    if (openHook.denied.has(target)) {
+      openHook.hits.push(target);
+      throw Object.assign(new Error(`EACCES: permission denied, open '${target}'`), {
+        code: 'EACCES',
+        errno: -13,
+        syscall: 'open',
+        path: target,
+      });
+    }
+    return actual.openSync(...args);
+  }) as typeof actual.openSync;
+  return { ...actual, default: { ...actual, openSync }, openSync };
+});
+
+const RUNNING_AS_ROOT = process.getuid?.() === 0;
+
 // The hard-cap test writes thousands of proposal files to real disk. Under
 // full-suite parallel load that filesystem work can individually exceed the
 // 5s default, causing spurious timeouts unrelated to the cap logic itself.
@@ -28,6 +55,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openHook.denied.clear();
+  openHook.hits.length = 0;
   _setProposalReadRaceHookForTest(undefined);
   vi.restoreAllMocks();
   fs.rmSync(home, { recursive: true, force: true });
@@ -131,9 +160,11 @@ describe('M374 bounded detailed proposal enumeration', () => {
     fs.mkdirSync(path.join(inboxDir(), 'd-directory.json'));
     const unreadable = seed('e-unreadable.json', proposal('unreadable'));
     fs.chmodSync(unreadable, 0o000);
+    if (RUNNING_AS_ROOT) openHook.denied.add(unreadable);
 
     try {
       const result = listProposalsDetailed();
+      if (RUNNING_AS_ROOT) expect(openHook.hits).toEqual([unreadable]);
       expect(result.proposals.map((item) => item.id)).toEqual(['good']);
       expect(result).toMatchObject({
         sourceState: 'degraded',

@@ -108,7 +108,7 @@ export function EfficiencyPanel({
       <p className={styles.sourceLine}>
         Computed in this browser from each chat&apos;s recorded totals — no extra request, no spend.
         &ldquo;None reported&rdquo; means the provider reported no cache activity, not a 0% hit rate; a
-        figure marked &le; is an upper bound. Compactions are counted from Verse 3.9 on; earlier ones
+        figure marked &le; is an upper bound. Compactions are counted from version 3.9 on; earlier ones
         were not recorded.
       </p>
     </section>

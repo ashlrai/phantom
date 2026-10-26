@@ -1,7 +1,7 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendFeatures,
   appendSteps,
@@ -29,11 +29,21 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   process.env['HOME'] = saved.HOME;
   if (saved.ASHLR_HOME === undefined) delete process.env['ASHLR_HOME'];
   else process.env['ASHLR_HOME'] = saved.ASHLR_HOME;
   rmSync(home, { recursive: true, force: true });
 });
+
+/** Freeze Date at the real current instant for the rest of the case (afterEach
+ * restores it): appendSteps() files each step under its own UTC day, so a case
+ * that derives the day file itself must not straddle 00:00 UTC. Timers stay
+ * real. */
+function freezeDate(): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date());
+}
 
 function step(overrides: Partial<ReasoningStepV1> = {}): ReasoningStepV1 {
   return {
@@ -82,6 +92,7 @@ describe('reasoning store: location and permissions', () => {
   });
 
   it('writes 0700 directories and 0600 files', () => {
+    freezeDate();
     expect(appendSteps([step()])).toBe(1);
     const root = reasoningRoot();
     const day = new Date().toISOString().slice(0, 10);
@@ -98,6 +109,7 @@ describe('reasoning store: location and permissions', () => {
   });
 
   it('refuses to append through a symlinked day file', () => {
+    freezeDate();
     const root = reasoningRoot();
     mkdirSync(join(root, 'steps'), { recursive: true, mode: 0o700 });
     const target = join(home, 'elsewhere.jsonl');
@@ -111,6 +123,7 @@ describe('reasoning store: location and permissions', () => {
   });
 
   it('refuses a group-writable day file rather than writing to it', () => {
+    freezeDate();
     const root = reasoningRoot();
     mkdirSync(join(root, 'steps'), { recursive: true, mode: 0o700 });
     const day = new Date().toISOString().slice(0, 10);
@@ -213,6 +226,7 @@ describe('reasoning store: reads', () => {
   });
 
   it('skips torn and foreign lines', async () => {
+    freezeDate();
     appendSteps([step({ id: 'good' })]);
     const day = new Date().toISOString().slice(0, 10);
     const file = join(reasoningRoot(), 'steps', `${day}.jsonl`);

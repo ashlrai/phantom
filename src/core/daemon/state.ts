@@ -35,6 +35,7 @@ import { basename, dirname, join } from 'node:path';
 import type { DaemonState } from '../types.js';
 import { acquireLocalStoreLock, acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { pidProvablyReusedSince } from './pid-reuse-proof.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1003,10 +1004,17 @@ function pidExists(pid: number): boolean {
   }
 }
 
-function lockIsSafelyStale(owner: DaemonLockOwner | null, _staleMs: number): boolean {
+/**
+ * Stale when the owner pid is gone (ESRCH), or — a pid REUSED after a crash or
+ * reboot — when the lock's heartbeat has been silent for `staleMs` (a live
+ * owner rewrites it every 30 s) AND the process now holding that pid provably
+ * started after the lock was acquired, so it cannot have taken it. Anything
+ * unprovable (no ps, unparsable timestamps, recent heartbeat) stays held.
+ */
+function lockIsSafelyStale(owner: DaemonLockOwner | null, staleMs: number): boolean {
   if (!owner || !Number.isFinite(owner.pid) || owner.pid <= 0) return true;
-  if (pidExists(owner.pid)) return false;
-  return true;
+  if (!pidExists(owner.pid)) return true;
+  return pidProvablyReusedSince({ pid: owner.pid, acquiredAtMs: Date.parse(owner.acquiredAt), heartbeatAtMs: Date.parse(owner.heartbeatAt), staleMs });
 }
 
 function writeNewLock(path: string, owner: DaemonLockOwner): void {

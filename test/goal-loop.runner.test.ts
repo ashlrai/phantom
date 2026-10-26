@@ -8,11 +8,12 @@
  * TICKS, and NEVER-THROWS.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runGoalLoop } from '../src/core/goal-loop/runner.js';
+import { cmdRoadmap } from '../src/cli/roadmap.js';
 import { loadState, statePath } from '../src/core/goal-loop/state.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { MilestoneDoc, MilestoneResult, RunMilestoneFn } from '../src/core/goal-loop/types.js';
@@ -194,5 +195,34 @@ describe('runGoalLoop — robustness', () => {
     expect(m0).toContain('- [x] M0.1');
     expect(m0).toContain('\r\n'); // CRLF survived the tick
     expect(m0).not.toMatch(/[^\r]\n/); // no bare LF introduced
+  });
+});
+
+describe('ashlr roadmap --json', () => {
+  it('status --json on a missing roadmap writes a JSON error to stdout and exits 1', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await cmdRoadmap(['status', '--dir', dir, '--json'])).toBe(1);
+      expect(error).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(String(log.mock.calls[0]?.[0])) as { error?: unknown };
+      expect(payload.error).toEqual(expect.stringContaining('roadmap.md'));
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('status --json still reports the roadmap state on success', async () => {
+    seedRoadmap();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await cmdRoadmap(['status', '--dir', dir, '--json'])).toBe(0);
+      const payload = JSON.parse(String(log.mock.calls[0]?.[0])) as { roadmap?: unknown };
+      expect(payload.roadmap).toBe(join(dir, 'roadmap.md'));
+    } finally {
+      log.mockRestore();
+    }
   });
 });
