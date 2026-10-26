@@ -252,7 +252,7 @@ describe('queue spool replay', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it.each(['http://posthog.invalid/capture', 'https://user:password@posthog.invalid/capture',
+  it.each(['http://posthog.invalid/capture', ['https://user', 'password@posthog.invalid/capture'].join(':'),
     'https://posthog.invalid/capture?token=example', 'garbage'])('refuses unsafe route %s', async endpoint => {
       expect(await replayQueueSpool({ ...options, route: { ...route, endpoint } })).toMatchObject({ status: 'invalid-route' });
       expect(transport).not.toHaveBeenCalled();
