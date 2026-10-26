@@ -12,7 +12,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Removed
-- Internal dead code: 151 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Includes the internal `GenomeCapture` type in `src/core/types.ts` (deprecated and removed in one step: it was never exported from a published entry point such as `@ashlr/hub`, `@ashlr/hub/types` or `@ashlr/hub/plugin`, so no user import can break; docs/contracts/CONTRACT-M16.md updated). No CLI command, flag or config key changes.
+- Internal dead code: 150 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used (`WIRE_CONTRACT_KEYS` is kept as a compile-time contract guard). Includes the internal `GenomeCapture` type in `src/core/types.ts` (deprecated and removed in one step: it was never exported from a published entry point such as `@ashlr/hub`, `@ashlr/hub/types` or `@ashlr/hub/plugin`, so no user import can break; docs/contracts/CONTRACT-M16.md updated). No CLI command, flag or config key changes.
 
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
