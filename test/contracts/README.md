@@ -211,3 +211,36 @@ Not exercised here: official 0.7.9 release assets, dirty source build/tests,
 the full trusted-terminal reveal ceremony, real vault metadata, child injection,
 broker/lease readiness, cross-platform execution, or the workbench adapter's
 runtime behavior. Those remain owner-coordinated follow-up validation.
+
+## Real exec integration (RQ-INT-1)
+
+`phantom-secrets-exec.integration.test.mjs` runs Phantom's production
+`phantomWrap` command through the real Phantom Secrets CLI and launches the
+Phantom CLI from this checkout inside its child. Phantom currently exposes this
+through its engine launcher, not a public `phm exec` subcommand.
+
+After `npm ci`, provision a reviewed Secrets executable (tested with 0.7.9), then
+run this command in the merge queue, with `PHANTOM_CONTRACT_BIN` set to its
+absolute path:
+
+```sh
+HOME=$(mktemp -d) node --import tsx --test test/contracts/phantom-secrets-exec.integration.test.mjs
+```
+
+This is a separate Node test, not part of the default Vitest collection. Missing
+binary provisioning fails; it never silently skips or discovers a user binary.
+The job needs permission to bind a loopback port. It needs no provider account,
+network service, OS keychain, real credential, or sibling source checkout.
+
+The test creates a disposable encrypted-file vault, supplies a random fake key
+only on stdin, checks the production wrapper's argv, verifies that the child
+receives a placeholder and a loopback proxy URL, and runs `phm --version` from
+source. It checks captured stdout/stderr from every invocation and all fixture
+files, including logs, for the fake key. Child observations use only a digest
+and booleans, and failure messages withhold subprocess output. Cleanup runs on
+success and failure. This proves local launch isolation; it does not exercise
+an upstream provider request or prove protection against arbitrary malicious
+children.
+
+The older `phantom-secrets-cli.test.mjs` is a separate, opt-in help/parser
+contract. Its restrictions on valid vault operations apply to that test only.
