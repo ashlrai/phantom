@@ -45,6 +45,7 @@ import type { AshlrConfig, EngineId, EngineTier, WorkItem, WorkSource } from '..
 import type { EffectivePolicy } from '../authority/types.js';
 import { describeExclusions, routeSeat, ROUTER_CONTEXT_FIT_FRACTION, type RouterWeights } from '../routing/router.js';
 import { routeSeatWithLocalEscalation, type LocalRouteContext, type LocalRouteInput } from '../routing/local-route.js';
+import { routeSeatWithLocalFirstBandit, type LocalFirstBanditContext } from '../routing/local-first-bandit.js';
 import { DEVIN_SEAT_ID, engineOfSeatId, type BudgetEngine } from '../routing/policy.js';
 import { reasonSentences } from '../routing/seat-reasons.js';
 import type { SeatCapacity } from '../routing/headroom.js';
@@ -531,7 +532,16 @@ export interface DispatchRouterContext {
    * built from config (routing-engines.ts).
    */
   localEscalation?: Pick<LocalRouteInput, 'localAvailable' | 'localModel' | 'localContextLimit' | 'needsCredentials' | 'holdsMergeRights'>
-    & { route: Pick<LocalRouteContext, 'localInference' | 'engines'> };
+    & {
+      route: Pick<LocalRouteContext, 'localInference' | 'engines'>;
+      /**
+       * Local-first bandit (opt-in: `localFirstBandit.enabled: true`). Absent
+       * keeps the P4 decision exactly. Present: a P4 'local-ok' item may move
+       * to a frontier seat when local scores worse on merged PRs per $ and per
+       * hour (routing/local-first-bandit.ts); never local for authority roles.
+       */
+      bandit?: Omit<LocalFirstBanditContext, 'itemId'>;
+    };
 }
 
 /** Pure. The P4 escalation input for one work item. */
@@ -541,7 +551,7 @@ export function localEscalationInputFor(
 ): LocalRouteInput {
   const request = routingRequestFor(item);
   const attempts = typeof item.attempts === 'number' && item.attempts > 0 ? item.attempts : 0;
-  const { route: _route, ...rest } = base;
+  const { route: _route, bandit: _bandit, ...rest } = base;
   return {
     ...rest,
     kind: request.difficulty === 'high' ? 'architecture' : 'edit',
@@ -676,7 +686,10 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
     ...(ctx.advisorySeatId ? { advisorySeatId: ctx.advisorySeatId } : {}),
   };
   const decision = ctx.localEscalation
-    ? routeSeatWithLocalEscalation(request, ctx.capacity, ctx.budget, routeOpts, localEscalationInputFor(item, ctx.localEscalation), ctx.localEscalation.route)
+    ? ctx.localEscalation.bandit
+      ? routeSeatWithLocalFirstBandit(request, ctx.capacity, ctx.budget, routeOpts, localEscalationInputFor(item, ctx.localEscalation),
+        ctx.localEscalation.route, { ...ctx.localEscalation.bandit, itemId: item.id })
+      : routeSeatWithLocalEscalation(request, ctx.capacity, ctx.budget, routeOpts, localEscalationInputFor(item, ctx.localEscalation), ctx.localEscalation.route)
     : routeSeat(request, ctx.capacity, ctx.budget, routeOpts);
   const extra: SeatExclusion[] = [];
   const kind = item.source;

@@ -64,6 +64,7 @@
 import { parseLocalInferenceConfig } from '../run/local-inference.js';
 import { routingEnginesFromConfig } from '../routing/routing-engines.js';
 import { recordRoutingDecision } from '../routing/routing-ledger.js';
+import { loadBanditStats, parseLocalFirstBanditConfig, type BanditStats } from '../routing/local-first-bandit.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -2900,6 +2901,17 @@ export function createStandingRun(input: CreateStandingRunInput): StandingRun {
   };
 }
 
+/** The local-first bandit context, only when `localFirstBandit.enabled` is true. Never throws. */
+export function localFirstBanditContext(cfg: AshlrConfig): { bandit?: { config: unknown; stats: BanditStats } } {
+  try {
+    const raw = (cfg as unknown as Record<string, unknown>)['localFirstBandit'];
+    if (!parseLocalFirstBanditConfig(raw).enabled) return {};
+    return { bandit: { config: raw, stats: loadBanditStats() } };
+  } catch {
+    return {};
+  }
+}
+
 /** The dispatch router's hybrid local-escalation context, only when opted in. Never throws. */
 export function hybridLocalEscalation(cfg: AshlrConfig, local: Pick<LocalRuntimeReading, 'reachable'>): Pick<DispatchRouterContext, 'localEscalation'> {
   try {
@@ -2910,6 +2922,7 @@ export function hybridLocalEscalation(cfg: AshlrConfig, local: Pick<LocalRuntime
       localAvailable: local.reachable === true,
       localModel: parsed.config.models.coder ?? null,
       route: { localInference: raw, engines: routingEnginesFromConfig(cfg) },
+      ...localFirstBanditContext(cfg),
     } };
   } catch {
     return {};
