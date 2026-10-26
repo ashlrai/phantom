@@ -1,19 +1,32 @@
 # site/
 
-The Phantom by AshlrAI landing page and ecosystem page at **verse.ashlr.ai**.
+The Phantom by AshlrAI landing, ecosystem and install pages at **verse.ashlr.ai**.
 The domain, CLI, package and installation names stay compatible; see
 [the product naming guide](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-BRAND.md).
 
-Two standalone HTML pages (`index.html` and `ecosystem.html`). No source build,
+Three standalone HTML pages (`index.html`, `ecosystem.html` and
+`install.html`). No source build,
 runtime dependencies, or framework; Vercel's root configuration skips package
 installation and serves this directory as static files. The ecosystem chart uses
 the checked-in `assets/star-history.js` snapshot
 and works when opened from disk. It never embeds a GitHub credential.
-`robots.txt` and `sitemap.xml` list the two public canonical pages for crawlers.
+`robots.txt` and `sitemap.xml` list the public canonical pages for crawlers.
+
+Agent-facing indexes ride along: `llms.txt` is the short index and
+`llms-full.txt` lists every README section and `docs/` guide; both are
+generated from `README.md` and `docs/` headings by
+`node scripts/generate-site-llms.mjs` (`--check` fails on drift; regenerate
+after changing those sources). `capabilities.json` and
+`.well-known/mcp/server.json` are the machine-readable capability and MCP
+manifests, and `AGENTS.md` records this directory's edit rules for agents.
+`test/site-discoverability.test.ts` parses the JSON-LD and llms files,
+validates the sitemap and checks every page carries one canonical URL and one
+`h1`.
 
 ```sh
 open site/index.html
 open site/ecosystem.html
+open site/install.html
 ```
 
 Refresh the chart snapshot before publishing changes to the ecosystem page:
