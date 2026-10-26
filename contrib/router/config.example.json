@@ -1,0 +1,149 @@
+{
+  "org": "ashlrai",
+  "repos": [
+    "phantom",
+    "phantom-secrets",
+    "locus",
+    "lexicon",
+    "ashlr-md",
+    "ashlr-stack",
+    "ashlr-plugin"
+  ],
+  "max_jobs": 2,
+  "max_per_cli": 1,
+  "min_free_gb": 20,
+  "min_battery_pct": 30,
+  "job_timeout_s": 2700,
+  "verify_timeout_s": 600,
+  "phantom_route": true,
+  "codex": {
+    "accounts": [
+      {
+        "id": "durable",
+        "home": "~/.codex-2",
+        "durability": "durable",
+        "primary": true
+      },
+      {
+        "id": "fragile",
+        "home": "~/.codex",
+        "durability": "fragile",
+        "primary": false
+      }
+    ]
+  },
+  "pools": [],
+  "ledger_issue_repo": "ashlrai/phantom",
+  "ledger_issue_title": "router-ledger",
+  "freshness": {
+    "enabled": true,
+    "interval_days": 7,
+    "codex_probe": true
+  },
+  "grok": {
+    "enabled": false,
+    "metered": true
+  },
+  "local": {
+    "enabled": false,
+    "bin": "ollama",
+    "host": "127.0.0.1:11434",
+    "models": ["qwen3.8:27b-ctx64k", "gpt-oss:20b"],
+    "allow_pull": false
+  },
+  "tiers": {
+    "frontier": {
+      "codex": "gpt-6-astra",
+      "claude": "fable",
+      "grok": "grok-4.7",
+      "ollama": ""
+    },
+    "workhorse": {
+      "codex": "gpt-6-sol",
+      "claude": "opus",
+      "grok": "grok-4.5",
+      "ollama": ""
+    },
+    "cheap": {
+      "codex": "gpt-6-luna",
+      "claude": "sonnet",
+      "grok": "grok-4.3",
+      "ollama": "qwen3.8:27b-ctx64k"
+    }
+  },
+  "cli": {
+    "codex": {
+      "bin": "codex",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "update": ["npm", "i", "-g", "@openai/codex@latest"],
+      "args": [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        "{worktree}",
+        "--ephemeral",
+        "--json",
+        "--output-last-message",
+        "{last_message}",
+        "{model}",
+        "-"
+      ],
+      "probe_args": [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "{model}",
+        "Reply with ok"
+      ]
+    },
+    "claude": {
+      "bin": "claude",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "auth_args": ["auth", "status"],
+      "update": ["claude", "update"],
+      "args": [
+        "--permission-mode",
+        "acceptEdits",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "{model}",
+        "-p"
+      ]
+    },
+    "grok": {
+      "bin": "grok",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "list_args": ["models"],
+      "update": [],
+      "args": [
+        "--prompt-file",
+        "{prompt_file}",
+        "{model}",
+        "--permission-mode",
+        "acceptEdits",
+        "--sandbox",
+        "workspace",
+        "--output-format",
+        "json",
+        "--no-auto-update",
+        "--cwd",
+        "{worktree}"
+      ]
+    },
+    "ollama": {
+      "bin": "ollama",
+      "model_flag": "run",
+      "version_args": ["--version"],
+      "list_args": ["list"],
+      "update": [],
+      "args": ["run", "{model_value}"]
+    }
+  }
+}
