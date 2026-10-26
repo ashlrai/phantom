@@ -135,7 +135,9 @@ export function validateLocalBaseUrl(raw: unknown, opts: { allowRemote?: unknown
     if (opts.allowRemote !== true) return refuse('remote-not-allowed');
     if (scheme !== 'https') return refuse('remote-requires-https');
   }
-  return { ok: true, baseUrl: `${parsed.origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
+  // No name resolution for local endpoints (Security, #943): 'localhost' dials 127.0.0.1 directly.
+  const origin = host === 'localhost' ? `${parsed.protocol}//127.0.0.1${parsed.port ? `:${parsed.port}` : ''}` : parsed.origin;
+  return { ok: true, baseUrl: `${origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
 }
 
 /** Abliterated or uncensored weights (refusal removed). Matched by name. */

@@ -353,6 +353,7 @@ async function isOllamaUp(): Promise<boolean> {
       // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       response = await fetch(`${localOllamaBase(process.env, 'http://127.0.0.1:11434')}/api/tags`, {
         method: 'GET',
+        redirect: 'error',
         signal: controller.signal,
       });
     } finally {

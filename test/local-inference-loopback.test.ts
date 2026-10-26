@@ -92,8 +92,8 @@ describe('parseLocalInferenceConfig', () => {
 
 describe('resolveOpenAICompatTarget (OPENAI_COMPAT_BASE_URL gate)', () => {
   const base = { defaultBaseUrl: 'http://localhost:8000/v1', apiKey: '' };
-  it('default and loopback env pass unchanged', () => {
-    expect(resolveOpenAICompatTarget(base)).toMatchObject({ ok: true, baseUrl: 'http://localhost:8000/v1', loopback: true });
+  it('default and loopback env pass (localhost dials 127.0.0.1, no DNS)', () => {
+    expect(resolveOpenAICompatTarget(base)).toMatchObject({ ok: true, baseUrl: 'http://127.0.0.1:8000/v1', loopback: true });
     expect(resolveOpenAICompatTarget({ ...base, envBaseUrl: 'http://127.0.0.1:4000/v1' })).toMatchObject({ ok: true, baseUrl: 'http://127.0.0.1:4000/v1' });
   });
 

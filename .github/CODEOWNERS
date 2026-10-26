@@ -425,6 +425,7 @@
 /test/local-only-dispatch-paths.test.ts @masonwyatt23
 /test/local-only-policy.test.ts @masonwyatt23
 /test/local-route.test.ts @masonwyatt23
+/test/local-routing-dispatch.test.ts @masonwyatt23
 /test/local-work-observation.test.ts @masonwyatt23
 /test/locus-firm-onboard.test.ts @masonwyatt23
 /test/locus-job-env.test.ts @masonwyatt23

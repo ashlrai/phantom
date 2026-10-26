@@ -61,7 +61,7 @@ import { measureAutoMergeDiffScope } from '../foundry/automerge-diff-scope.js';
 import { loadBudgetPolicy, readCapacitySnapshot } from '../routing/budget-store.js';
 import { ensureDaemonCapacityPublisher, type PublisherStatus } from '../daemon/capacity-publisher.js';
 import { engineOfSeatId, type BudgetEngine } from '../routing/policy.js';
-import { routeSeatWithLocalEscalation } from '../routing/local-route.js';
+import { routeSeatWithLocalEscalation, type LocalRouteContext } from '../routing/local-route.js';
 import { isSelfTargetProposal } from './self.js';
 import { fleetMirrorsRoot as u6FleetMirrorsRoot, mirrorNameForPath, mirrorSiblingPins, readMirrorState, type MirrorSiblingPinsRead } from './mirrors.js';
 import { listRepoHolds } from './quarantine.js';
@@ -398,6 +398,9 @@ function routeJudgeLanes(
   seatAdmitted: (seatId: string) => boolean,
   budgetFor: (seatIds: string[]) => ReturnType<typeof loadBudgetPolicy>,
   nowMs: number,
+  // Default: no localInference, so local seats are not eligible here and any
+  // unknown engine id is unclassified (no merge rights).
+  routeCtx: LocalRouteContext = { localInference: undefined },
 ): JudgeSeatLanes {
   try {
     if (allowed.length === 0) return { lanes: [], nextEligibleAt: null };
@@ -414,9 +417,10 @@ function routeJudgeLanes(
     } catch {
       return { lanes: [], nextEligibleAt: null };
     }
-    // The merge-pass judge holds merge rights: frontier-only, never a local seat.
+    // The merge-pass judge holds merge rights: eligible seats are frontier and
+    // loopback local (hard limit 5, outcome-gated); unclassified never.
     const decision = routeSeatWithLocalEscalation({ task: 'review', difficulty: 'medium', autonomous: true }, seats, budget, { nowMs },
-      { kind: 'review', holdsMergeRights: true, localAvailable: false });
+      { kind: 'review', holdsMergeRights: true, localAvailable: false }, routeCtx);
     const admitted = new Set(decision.candidates.map((id) => laneForBudgetEngine(engineOfSeatId(id))).filter((lane): lane is FleetEngine => lane !== null));
     const nextEligibleAt = decision.exclusions
       .map((exclusion) => exclusion.nextEligibleAt)

@@ -111,6 +111,8 @@ export interface StatusJson {
   custody: import('./status-custody.js').CustodyStatus | null;
   /** Local inference probe (loopback GET /models); null when not configured or it could not run. */
   localInference: import('../core/run/local-inference-probe.js').LocalInferenceProbe | null;
+  /** Per-run routing accounting: tier, engine and lane reason per dispatched item. */
+  routing: import('../core/routing/routing-ledger.js').RoutingLedger | null;
   /** Strict phantom preflight; null unless ASHLR_PHANTOM_PREFLIGHT=1 and phantom is configured. */
   phantomPreflight: import('./status-preflight.js').PreflightStatus | null;
 }
@@ -218,6 +220,11 @@ export async function gatherStatus(
     return p.status === 'not-configured' ? null : p;
   });
 
+  const routing = await attempt(async () => {
+    const { readRoutingLedger } = await import('../core/routing/routing-ledger.js');
+    return readRoutingLedger();
+  });
+
   const phantomPreflight = await attempt(async () => {
     const { gatherPreflightStatus } = await import('./status-preflight.js');
     return gatherPreflightStatus({ cwd });
@@ -255,6 +262,7 @@ export async function gatherStatus(
     resources,
     custody,
     localInference,
+    routing,
     phantomPreflight,
   };
 }
