@@ -56,8 +56,13 @@ router_body_directive() {
   model=""
   tier=""
   while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
     case "$line" in
-      model:*) model=${line#model:} ;;
+      model:*)
+        model=${line#model:}
+        model=${model#"${model%%[![:space:]]*}"}
+        model=${model%"${model##*[![:space:]]}"}
+        ;;
       tier:frontier|tier:workhorse|tier:cheap) tier=${line#tier:} ;;
     esac
   done <<EOF
@@ -82,4 +87,14 @@ router_merge_directive() {
     tier=$body_tier
   fi
   printf '%s\t%s\n' "$model" "$tier"
+}
+
+# Preserve an empty model field: read with a tab IFS collapses leading tabs
+# and otherwise misreads a tier-only directive as a model name on Bash.
+router_issue_directive() {
+  local label body
+  label=$(router_label_directive "$1")
+  body=$(router_body_directive "$2")
+  router_merge_directive "${label%%$'\t'*}" "${label#*$'\t'}" \
+    "${body%%$'\t'*}" "${body#*$'\t'}"
 }

@@ -39,7 +39,7 @@ At most 2 jobs run at once, and at most 1 job per CLI. Codex failover stays insi
 
 The active home is passed as `CODEX_HOME`. The personal home is also passed as `CODEX_HOME_ALT`. Neither value is a token.
 
-On any auth or refresh failure the runner marks that pool `dead` in `state.json`, writes the same state on the ledger line, and fails over to the next living account. A dead pool is not retried until the pool state is edited by hand. A Codex home that is simply logged out is skipped with a `login needed` line and is not marked dead.
+On an auth or refresh failure from a failed, non-timeout attempt the runner marks that pool `dead` in `state.json`, writes the same state on the ledger line, and fails over to the next living account. A dead pool is not retried until the pool state is edited by hand. A Codex home that is simply logged out is skipped with a `login needed` line and is not marked dead. Successful output mentioning auth errors or rate limits does not trigger failover or cooldown.
 
 The runner never runs `codex logout`. It does not read, modify, or delete Codex auth files or their backups. Login is whatever `codex login status` prints.
 
@@ -57,7 +57,7 @@ The log line is `keepalive success` or `keepalive failure`. The command output i
 
 ## Devin
 
-Devin is the third pool. The runner shells out to `ashlr devin status --json` and `ashlr devin launch` through `env -i`. That environment keeps `PATH`, `HOME`, `USER`, `LANG`, `TERM`, and `TMPDIR`, and adds only `DEVIN_API_KEY` and `DEVIN_ORG_ID` when they are already set. `GH_TOKEN`, `OPENAI_API_KEY`, `XAI_API_KEY`, and every other token or key are left out. The org on the status payload must equal `DEVIN_ORG_ID` (`org-` plus 1 to 120 letters, digits, `_`, or `-`).
+Devin is the third pool. The runner shells out to `ashlr devin status --json` and `ashlr devin launch` through `env -i`. That environment keeps `PATH`, `HOME`, `USER`, `LANG`, `TERM`, and `TMPDIR`, and adds only `DEVIN_API_KEY` when set and `DEVIN_ORG_ID` from the environment or, as a fallback, `devin.org_id` in config. `GH_TOKEN`, `OPENAI_API_KEY`, `XAI_API_KEY`, and every other token or key are left out. The org on the status payload must equal that resolved org (`org-` plus 1 to 120 letters, digits, `_`, or `-`).
 
 A Devin launch delivers its own draft pull request. The runner claims the issue, records the launch, and does not open a second pull request. Status JSON is not copied into the log. The log says `devin ready` or `devin unavailable`.
 
@@ -97,6 +97,8 @@ Pool rows use Phantom's credit-pool names: `kind` (`gifted-cloud`, `purchased-us
 Codex subscription rows use adapter `codex-rate-limits`. A SuperGrok login uses adapter `grok-usage` and `billing: subscription`.
 
 ## Guardrails
+
+Before a model runs, the worktree HEAD must equal the fetched default-branch commit. Retained branches with earlier attempt commits are refused, and range checks use that fetched base. Concurrent jobs use separate temporary argv, process-group, diff, and mirror files.
 
 No `*_TOKEN` or `*_KEY` variable is passed to a model CLI. Devin is the exception for `DEVIN_API_KEY` only, and only inside its clean environment. Pull requests are drafts. At most 2 jobs run at once, and at most `max_per_cli` jobs per CLI (the default is 1). Free disk under 20 GB, or battery power under 30 percent, skips a tick. A `PAUSE` file in the router home skips selection and skips each job launch. Lease recovery still runs.
 
@@ -141,6 +143,16 @@ POST http://127.0.0.1:8000/v1/chat/completions
 ```
 
 The model flag is omitted when the probe rejected the configured model. Codex probes with `codex exec --sandbox workspace-write --skip-git-repo-check --ephemeral --model "$MODEL" "Reply with ok"`.
+
+## Tests
+
+Run the hermetic shell suites explicitly; they use temporary homes, local Git repositories, and stubbed provider commands:
+
+```bash
+/bin/bash contrib/router/test/router.test.sh
+/bin/bash contrib/router/test/review-helpers.test.sh
+/bin/bash contrib/router/test/review-runner.test.sh
+```
 
 ## Known gaps
 

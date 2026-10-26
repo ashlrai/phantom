@@ -1293,7 +1293,7 @@ function porcelainPaths(buffer) {
 }
 
 function changedPaths(wt) {
-  const status = gitCapture(wt, ['status', '--porcelain=v1', '-z']);
+  const status = gitCapture(wt, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   if (!status || status.status !== 0) return null;
   return porcelainPaths(Buffer.from(status.stdout || '', 'utf8'));
 }
