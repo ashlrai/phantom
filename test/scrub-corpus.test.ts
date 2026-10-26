@@ -20,7 +20,7 @@ const KNOWN_FALSE_ALARMS = new Set(['fp-prose-token-003', 'fp-code-reference-011
 
 // Credentials from the first held-out batch the scrubber still misses (178/183 caught): bare lowercase hex next to a
 // credential word, a lowercase-only app password, and one random value that reads like two capitalized words. That
-// batch was used to tune the prose and quoted-literal rules; test/fixtures/scrub/held-out-positives-2.json was not.
+// batch was used to tune the prose and quoted-literal rules, so 178/183 is a tuning result; no untuned batch exists yet.
 const KNOWN_HELD_OUT_MISSES = ['misc-058', 'name-suffix-017', 'name-suffix-022', 'prose-disclosure-008', 'prose-disclosure-020'];
 
 describe('scrubSecrets corpus', () => {
@@ -46,5 +46,18 @@ describe('scrubSecrets corpus', () => {
     expect(negatives.length).toBeGreaterThan(120);
     const flagged = negatives.filter(entry => scrubSecrets(entry.text) !== entry.text).map(entry => entry.id).sort();
     expect(flagged).toEqual([...KNOWN_FALSE_ALARMS].sort());
+  });
+});
+
+describe('scrubSecrets line and encoding edges', () => {
+  it('does not swallow the next line after an empty secret assignment', () => {
+    const text = 'DB_PASSWORD=\nREDIS_URL=redis://localhost:6379/0';
+    expect(scrubSecrets(text)).toBe(text);
+  });
+  it('redacts Basic credentials whose password is non-ASCII UTF-8', () => {
+    const encoded = Buffer.from(['deploy', ':', 'p\u00e4ss', 'w\u00f6rd', '-42'].join(''), 'utf8').toString('base64');
+    const once = scrubSecrets(`Authorization: Basic ${encoded}`);
+    expect(once).not.toContain(encoded);
+    expect(scrubSecrets(once)).toBe(once);
   });
 });

@@ -128,7 +128,7 @@ const XAI_API_KEY = /(?<![A-Za-z0-9_-])xai-[A-Za-z0-9]{20,}/g;
  * Value shape shared by the suffix-name rules: optional quote, ≥8 chars that
  * are not whitespace/separators/quotes, optional closing quote. Mirrors rule 4.
  */
-const ASSIGNED_VALUE = String.raw`\s*(?::=|[=:])\s*["']?[^\s,;'"]{8,}["']?`;
+const ASSIGNED_VALUE = String.raw`[ \t]*(?::=|[=:])[ \t]*["']?[^\s,;'"]{8,}["']?`;
 
 /**
  * SCREAMING_SNAKE env-var names ending in a secret noun. Rule 4's `\b(token|…)`
@@ -229,11 +229,17 @@ function isProseWord(value: string): boolean {
   return /^(?:[a-z]{2,24}|[A-Z][a-z]{1,23})$/.test(value);
 }
 
-/** `Basic` header value: base64 of printable `user:password`. */
+/** `Basic` header value: base64 of `user:password` with no control characters (UTF-8 bytes above 0x7f allowed). */
 function isBasicCredential(value: string): boolean {
   try {
     const decoded = typeof atob === 'function' ? atob(value) : '';
-    return /^[\x20-\x7e]+:[\x20-\x7e]+$/.test(decoded);
+    const colon = decoded.indexOf(':');
+    if (colon < 1 || colon === decoded.length - 1) return false;
+    for (let i = 0; i < decoded.length; i++) {
+      const code = decoded.charCodeAt(i);
+      if (code < 0x20 || code === 0x7f) return false;
+    }
+    return true;
   } catch {
     return false;
   }
