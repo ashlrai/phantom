@@ -21,8 +21,8 @@
  *     its head is still the SHA the operator clicked on. The same SHA goes to
  *     `gh pr merge --match-head-commit`, so a push that lands between our read
  *     and GitHub's merge is refused by GitHub too. NEVER `--admin` (it
- *     bypasses branch protection) and never `--auto` (it would merge later,
- *     unseen). There is a test for both.
+ *     bypasses branch protection). Enqueue requires `--auto`, a successful
+ *     Cross-model review check and an active merge_queue rule.
  *  3. ONE MUTATION PER REPO AT A TIME. A second POST while one runs, or while
  *     another process holds git's index lock, is a 409 (`GitBusyError`), not a
  *     queue: two commits racing on one index produce a commit nobody asked for.
@@ -501,6 +501,7 @@ export function parseGhPr(raw: unknown): { pr: VerseGitPr; counts: VerseGitCheck
       url,
       state,
       checks: summary.state as VersePrChecks,
+      crossModelReviewed: crossModelReviewPassed(r['statusCheckRollup']),
       mergeable,
       headSha,
       baseRef: str(r['baseRefName'], 256),
@@ -1242,6 +1243,16 @@ export interface MergeInput {
   requiredChecks?: readonly string[];
 }
 
+/** A completed check run, not a PR label, body claim or legacy commit status. */
+function crossModelReviewPassed(rollup: unknown): boolean {
+  if (requiredChecksRefusal(rollup, ['Cross-model review']) !== null || !Array.isArray(rollup)) return false;
+  return rollup.some((entry: unknown) => {
+    if (entry === null || typeof entry !== 'object') return false;
+    const check = entry as Record<string, unknown>;
+    return check['name'] === 'Cross-model review' && check['status'] === 'COMPLETED' && check['conclusion'] === 'SUCCESS';
+  });
+}
+
 function requiredChecksRefusal(rollup: unknown, names: readonly string[]): string | null {
   if (names.length === 0 || !Array.isArray(rollup)) return 'Automatic merging requires passing owner-configured code checks.';
   for (const name of names) {
@@ -1279,11 +1290,11 @@ export function mergeRefusal(pr: VerseGitPr, branch: string | null, headSha: str
   return null;
 }
 
-/** POST /api/verse/git/pr/merge — rule 2. Squash merge, never --admin, never --auto. */
+/** POST /api/verse/git/pr/merge — rule 2. Enqueue only using --auto; never direct merge or --admin. */
 export async function mergePullRequest(root: string, input: MergeInput, opts: GitOpsOptions = {}): Promise<{ status: VerseGitStatusWire; pr: VerseGitPr }> {
   const ctx = ctxOf(opts);
   const gitRoot = await requireGitRoot(root, ctx, opts);
-  let merged: VerseGitPr | null = null;
+  let enqueued: VerseGitPr | null = null;
   await withRepoLock(gitRoot, async () => {
     const porcelain = await readPorcelain(ctx, gitRoot);
     const read = await freshPr(ctx, gitRoot, String(input.number));
@@ -1294,18 +1305,31 @@ export async function mergePullRequest(root: string, input: MergeInput, opts: Gi
       const checkRefusal = requiredChecksRefusal(read.rollup, input.requiredChecks);
       if (checkRefusal) throw new GitOpError('VERSE_GIT_REFUSED', checkRefusal);
     }
-    const args = ['pr', 'merge', String(input.number), '--squash', '--match-head-commit', read.pr.headSha!];
+    if (read.pr.crossModelReviewed !== true) {
+      throw new GitOpError('VERSE_GIT_REFUSED', 'A successful Cross-model review check on this head is required to enqueue.');
+    }
+    // --auto alone can merge immediately without a queue. Refuse unless an
+    // active server-owned branch rule requires the queue; never select a strategy.
+    const rules = await ctx.run('gh', ['api', `repos/{owner}/{repo}/rules/branches/${encodeURIComponent(read.pr.baseRef)}`], { cwd: gitRoot });
+    let queuedOnly = false;
+    try {
+      const raw: unknown = JSON.parse(rules.stdout);
+      queuedOnly = rules.code === 0 && !rules.truncated && Array.isArray(raw)
+        && raw.some((rule: unknown) => rule !== null && typeof rule === 'object' && 'type' in rule && rule.type === 'merge_queue');
+    } catch { /* Unavailable or malformed rules fail closed. */ }
+    if (!queuedOnly) throw new GitOpError('VERSE_GIT_REFUSED', 'An active merge queue rule is required; direct merge is unavailable.');
+    const args = ['pr', 'merge', String(input.number), '--auto', '--match-head-commit', read.pr.headSha!];
     const res = await ctx.run('gh', args, { cwd: gitRoot });
     if (res.code !== 0) throw classifyGitFailure('Merging', res);
     const after = await freshPr(ctx, gitRoot, String(input.number)).catch(() => null);
-    merged = after?.pr ?? { ...read.pr, state: 'merged' };
+    enqueued = after?.pr ?? read.pr;
     if (porcelain.branch) {
-      boundedSet(prCache, prKey(gitRoot, porcelain.branch), { at: ctx.now(), lookup: 'ok', pr: merged, counts: after?.counts ?? read.counts });
+      boundedSet(prCache, prKey(gitRoot, porcelain.branch), { at: ctx.now(), lookup: 'ok', pr: enqueued, counts: after?.counts ?? read.counts });
     }
   }, opts);
   await invalidateGithubPanel();
   const status = await readGitStatus(root, { ...opts, fresh: true });
-  return { status, pr: merged! };
+  return { status, pr: enqueued! };
 }
 
 /** The read-only GitHub panel caches PR lists; a PR we just opened or merged must show there too. */

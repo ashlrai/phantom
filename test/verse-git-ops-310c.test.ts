@@ -78,6 +78,7 @@ interface Scenario {
   ghView: (selector: string) => GitRunResult;
   ghCreate: () => GitRunResult;
   ghMerge: () => GitRunResult;
+  ghRules?: () => GitRunResult;
   push: () => GitRunResult;
   commit: () => GitRunResult;
   patch: (args: string[]) => GitRunResult;
@@ -96,7 +97,7 @@ function prJson(over: Partial<Record<string, unknown>> = {}): string {
     baseRefName: 'main',
     headRefName: 'feat/bar',
     statusCheckRollup: [
-      { status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { name: 'Cross-model review', status: 'COMPLETED', conclusion: 'SUCCESS' },
       { status: 'COMPLETED', conclusion: 'SUCCESS' },
     ],
     ...over,
@@ -147,6 +148,7 @@ function fakeGit(s: Scenario, toplevel: string | null = REPO) {
       if (cmd === 'pr' && sub === 'view') return s.ghView(selector ?? '');
       if (cmd === 'pr' && sub === 'create') return s.ghCreate();
       if (cmd === 'pr' && sub === 'merge') return s.ghMerge();
+      if (cmd === 'api') return s.ghRules?.() ?? ok(JSON.stringify([{ type: 'merge_queue' }]));
       return fail('unknown gh');
     }
     const a = bare(args);
@@ -594,14 +596,14 @@ describe('open a PR', () => {
 describe('merge', () => {
   const view = (over: Partial<Record<string, unknown>>) => () => ok(prJson(over));
 
-  it('squash-merges with --match-head-commit, re-reading GitHub first — and never --admin or --auto', async () => {
+  it('enqueues with --auto and --match-head-commit, re-reading GitHub first — never direct or admin merge', async () => {
     const f = fakeGit(scenario({ ghView: view({}) }));
     const result = await mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA }, f.opts);
     const merge = f.calls.find((c) => c.bin === 'gh' && c.args[1] === 'merge')!;
-    expect(merge.args).toEqual(['pr', 'merge', '463', '--squash', '--match-head-commit', HEAD_SHA]);
+    expect(merge.args).toEqual(['pr', 'merge', '463', '--auto', '--match-head-commit', HEAD_SHA]);
     for (const c of f.calls) {
       expect(c.args).not.toContain('--admin');
-      expect(c.args).not.toContain('--auto');
+      expect(c.args).not.toContain('--squash');
     }
     const viewIndex = f.calls.findIndex((c) => c.bin === 'gh' && c.args[1] === 'view');
     expect(viewIndex).toBeLessThan(f.calls.indexOf(merge));
@@ -609,7 +611,7 @@ describe('merge', () => {
   });
 
   it('rechecks autonomous code gates on the exact head immediately before merging', async () => {
-    const green = fakeGit(scenario({ ghView: view({ statusCheckRollup: [{ name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' }] }) }));
+    const green = fakeGit(scenario({ ghView: view({ statusCheckRollup: [{ name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' }, { name: 'Cross-model review', status: 'COMPLETED', conclusion: 'SUCCESS' }] }) }));
     await mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA, requiredChecks: ['CI'] }, green.opts);
     expect(green.calls.some((c) => c.bin === 'gh' && c.args[1] === 'merge')).toBe(true);
     for (const checks of [
@@ -623,7 +625,24 @@ describe('merge', () => {
     }
   });
 
+  it.each([[], [{ type: 'pull_request' }], null, 'malformed'].map((rules) => ({ rules })))('refuses unavailable or missing queue rules (%j)', async ({ rules }) => {
+    const f = fakeGit(scenario({ ghView: view({}), ghRules: () => ok(JSON.stringify(rules)) }));
+    await expect(mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA }, f.opts)).rejects.toThrow('active merge queue rule');
+    expect(f.calls.some((c) => c.args[1] === 'merge')).toBe(false);
+  });
+
+  it('never claims a PR merged when the post-enqueue read fails', async () => {
+    let reads = 0;
+    const f = fakeGit(scenario({ ghView: () => ++reads === 1 ? ok(prJson()) : fail('unavailable') }));
+    const result = await mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA }, f.opts);
+    expect(result.pr.state).toBe('open');
+  });
+
   const refusals: Array<[string, Partial<Record<string, unknown>>, string, string]> = [
+    ['legacy status claiming review', { statusCheckRollup: [{ context: 'Cross-model review', state: 'SUCCESS' }] }, HEAD_SHA, 'Cross-model review'],
+    ['incomplete review claiming success', { statusCheckRollup: [{ name: 'Cross-model review', conclusion: 'SUCCESS' }] }, HEAD_SHA, 'still running'],
+    ['ambiguous review', { statusCheckRollup: [{ name: 'Cross-model review', status: 'COMPLETED', conclusion: 'SUCCESS' }, { name: 'Cross-model review', status: 'COMPLETED', conclusion: 'SUCCESS' }] }, HEAD_SHA, 'Cross-model review'],
+    ['missing cross-model review', { statusCheckRollup: [{ name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' }] }, HEAD_SHA, 'Cross-model review'],
     ['checks pending', { statusCheckRollup: [{ status: 'IN_PROGRESS' }] }, HEAD_SHA, 'still running'],
     ['checks failing', { statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }] }, HEAD_SHA, 'failing'],
     ['no checks at all', { statusCheckRollup: [] }, HEAD_SHA, 'No passing checks'],

@@ -35,6 +35,7 @@ export function pr(over: Partial<VerseGitPr> = {}): VerseGitPr {
     url: 'https://github.com/ashlrai/ashlr-hub/pull/463',
     state: 'open',
     checks: 'passing',
+    crossModelReviewed: true,
     mergeable: true,
     headSha: 'a'.repeat(40),
     baseRef: 'main',

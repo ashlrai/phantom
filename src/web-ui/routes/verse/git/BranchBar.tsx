@@ -22,6 +22,7 @@
  * polite live region; failures in an alert, in the server's own words.
  */
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Button } from '../../../components/primitives/Button.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { asSentence } from '../autonomy/format.js';
 import { useTokenGate } from '../context/use-token-gate.js';
@@ -130,6 +131,14 @@ export function BranchBar({ roots, onOpenDiff, statusOptions }: BranchBarProps &
     if (!pin) return;
     setDialogError(null);
     setDialog({ kind: 'merge', root: s.root, pin });
+  };
+
+  const enqueue = (s: GitStatusView) => {
+    const pin = pinMerge(s);
+    if (!pin?.headSha || mergeDrift(pin, s)) return;
+    void act(s.root, `Enqueue #${pin.number} for the merge queue.`,
+      () => mergeGitPr({ root: s.root, number: pin.number, headSha: pin.headSha! }),
+      () => `Enqueued #${pin.number} for ${pin.baseRef}.`, false);
   };
 
   const onPrimary = (s: GitStatusView) => {
@@ -260,7 +269,7 @@ export function BranchBar({ roots, onOpenDiff, statusOptions }: BranchBarProps &
             status={s}
             compact={compact}
             busy={busyRoot === s.root}
-            onPrimary={() => onPrimary(s)}
+            onPrimary={() => onPrimary(s)} onEnqueue={() => enqueue(s)}
             onMenu={(id) => onMenu(s, id)}
             onOpenDiff={() => openDiff({ root: s.root, scope: 'branch' })}
           />
@@ -327,12 +336,12 @@ export function BranchBar({ roots, onOpenDiff, statusOptions }: BranchBarProps &
             if (pin.headSha === null || mergeDrift(pin, statusFor(dialog.root)) !== null) return;
             void act(
               dialog.root,
-              `Squash-merge #${pin.number} (head ${pin.headSha.slice(0, 7)}) into ${pin.baseRef}.`,
+              `Enqueue #${pin.number} (head ${pin.headSha.slice(0, 7)}) into ${pin.baseRef}.`,
               async () => {
                 const res = await mergeGitPr({ root: dialog.root, number: pin.number, headSha: pin.headSha! });
                 return { status: { ...res.status, pr: res.pr ?? res.status.pr } };
               },
-              () => `Merged #${pin.number} into ${pin.baseRef}.`,
+              () => `Enqueued #${pin.number} for ${pin.baseRef}.`,
               true,
             );
           }}
@@ -348,12 +357,14 @@ interface BranchRowProps {
   compact: boolean;
   busy: boolean;
   onPrimary: () => void;
+  onEnqueue: () => void;
   onMenu: (id: MenuActionId) => void;
   onOpenDiff: () => void;
 }
 
-function BranchRow({ status: s, compact, busy, onPrimary, onMenu, onOpenDiff }: BranchRowProps) {
+function BranchRow({ status: s, compact, busy, onPrimary, onMenu, onOpenDiff, onEnqueue }: BranchRowProps) {
   const primary = primaryAction(s);
+  const enqueueDisabled = s.pr?.state !== 'open' || !s.pr.headSha || s.pr.checks !== 'passing' || s.pr.crossModelReviewed !== true || s.pr.mergeable !== true;
   const items = menuItems(s);
   const hasStat = s.diffstat.files > 0;
   const checking = s.pr === null && s.prLookup === 'pending' && s.branch !== null && s.suggested === 'none';
@@ -383,8 +394,10 @@ function BranchRow({ status: s, compact, busy, onPrimary, onMenu, onOpenDiff }: 
       {checking ? <span className={styles.checking}>Checking GitHub…</span> : null}
       {(s.conflicts ?? 0) > 0 ? <span className={styles.conflicts}>{s.conflicts} conflicted</span> : null}
       <span className={styles.spacer} />
+      {s.pr?.state === 'open' ? <Button size="sm" variant={primary?.action === 'merge' ? 'primary' : 'subtle'} busy={busy} disabled={enqueueDisabled}
+        title="Requires passing checks, Cross-model review and a server-enforced merge queue" onClick={onEnqueue}>Enqueue to merge queue</Button> : null}
       <ActionMenu
-        primary={primary ? { label: primary.label, disclosure: primary.disclosure, onClick: onPrimary, busy, tone: primary.action === 'view-pr' ? 'subtle' : 'primary' } : null}
+        primary={primary ? { label: primary.label, disclosure: primary.disclosure, disabled: primary.action === 'merge' && enqueueDisabled, onClick: onPrimary, busy, tone: primary.action === 'view-pr' || primary.action === 'merge' ? 'subtle' : 'primary' } : null}
         items={items}
         onSelect={onMenu}
         menuLabel={`More git actions for ${s.name}`}

@@ -23,7 +23,7 @@ export interface ActionMenuItem<Id extends string> {
 
 export interface ActionMenuProps<Id extends string> {
   /** The primary button; null renders the menu button alone. */
-  primary: { label: string; disclosure: string; onClick: () => void; busy?: boolean; tone?: 'primary' | 'subtle' } | null;
+  primary: { label: string; disclosure: string; onClick: () => void; disabled?: boolean; busy?: boolean; tone?: 'primary' | 'subtle' } | null;
   items: ReadonlyArray<ActionMenuItem<Id>>;
   onSelect: (id: Id) => void;
   /** Names the menu button for screen readers ("More git actions for ashlr-hub"). */
@@ -133,7 +133,7 @@ export function ActionMenu<Id extends string>({ primary, items, onSelect, menuLa
           className={styles.primary}
           data-tone={primary.tone ?? 'primary'}
           onClick={primary.onClick}
-          disabled={disabled || primary.busy}
+          disabled={disabled || primary.disabled || primary.busy}
           aria-busy={primary.busy || undefined}
           aria-describedby={disclosureId}
           title={primary.disclosure}

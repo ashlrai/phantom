@@ -527,10 +527,24 @@ describe('the post-PR loop', () => {
     expect((board.body['cards'] as Array<Record<string, unknown>>).find((c) => c['agentId'] === agent.id)!['reason']).toBe('ci-failed');
   });
 
+  it('keeps a queued workspace until a later GitHub read confirms it merged', async () => {
+    let agent = await readyAgent({ autoMerge: true });
+    checksRead = readOf(detail({ ci: 'passing', mergeVerdict: { allowed: true, reason: 'ok' } }));
+    const deps = supervisorDeps({ merge: async () => ({ pr: { state: 'open' } }), checksDeps: { requiredAutoMergeChecks: () => ['CI'], killOn: async () => false, pausedOn: async () => false } });
+    agent = await superviseAgent(deps, agent);
+    expect(agent.archived).toBeNull();
+    expect(existsSync(join(home, '.ashlr-worktrees', 'repo', 'fix-login'))).toBe(true);
+    expect(agent.loopNote).toMatch(/Enqueued PR #9/);
+    checksRead = readOf(detail({ pr: { ...detail().pr!, state: 'merged' } }));
+    deps.now = () => Date.now() + 120_001;
+    agent = await superviseAgent(deps, agent);
+    expect(agent.archived).toMatchObject({ reason: 'merged' });
+  });
+
   it('Auto-merge merges only on an allowed verdict, then archives the workspace (worktree and branch)', async () => {
     let agent = await readyAgent({ autoMerge: true });
     const merges: Array<{ number: number; headSha: string; requiredChecks?: readonly string[] }> = [];
-    const merge = async (_root: string, input: { number: number; headSha: string; requiredChecks?: readonly string[] }) => { merges.push(input); };
+    const merge = async (_root: string, input: { number: number; headSha: string; requiredChecks?: readonly string[] }) => { merges.push(input); return { pr: { state: 'merged' } }; };
     checksRead = readOf(detail({ ci: 'passing', mergeVerdict: { allowed: false, reason: 'It touches .github/workflows/ci.yml — CI config. That merge is yours, never automatic.' } }));
     agent = await superviseAgent(supervisorDeps({ merge }), agent);
     expect(merges).toEqual([]);
