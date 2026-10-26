@@ -17,8 +17,12 @@
  *   - the context exceeds the local model's window;
  *   - local inference is not configured or not reachable.
  * Otherwise stay local. Every decision names one closed reason code.
+ *
+ * Policy only: nothing in src/ calls this yet. Enforcement at inbox/merge.ts
+ * evaluateMergeAuthority and fleet/automerge-pass.ts follows in the next PR.
  */
-import { isAbliteratedModel, isLoopbackHost } from '../run/local-inference.js';
+import { isIP } from 'node:net';
+import { isAbliteratedModel } from '../run/local-inference.js';
 
 export const LOCAL_TASK_KINDS = ['edit', 'test', 'lint', 'tool-loop', 'draft', 'review', 'plan', 'architecture'] as const;
 export type LocalTaskKind = (typeof LOCAL_TASK_KINDS)[number];
@@ -75,39 +79,35 @@ export interface EscalationDecision {
 const COMPLEX_KINDS: ReadonlySet<LocalTaskKind> = new Set(['plan', 'architecture']);
 const nonNeg = (n: unknown): number => (Number.isSafeInteger(n) && (n as number) > 0 ? (n as number) : 0);
 
+// Flags are coerced: any truthy value (true, 'true', 1) counts, so untyped input fails closed.
+const on = (v: unknown): boolean => Boolean(v);
+// A non-finite limit fails closed: 0 makes every count reach it, so the step escalates.
+const limitOf = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(1, v) : 0);
+
 /** Pure. Order matters: authority and safety rules first, then cost signals. */
 export function decideLocalEscalation(
   input: EscalationInput,
   policy: EscalationPolicy = DEFAULT_ESCALATION_POLICY,
 ): EscalationDecision {
   const frontier = (reason: EscalationReason): EscalationDecision => ({ lane: 'frontier', reason });
-  if (input.mergesToMain === true) return frontier('merge-to-main-frontier-only');
-  // Master only enforces this by engine tier (inbox/merge.ts evaluateMergeAuthority),
-  // and config can promote a local engine id to tier 'frontier'. So locality is
-  // enforced here too: any role holding merge rights or credentials is
-  // frontier-only, whatever its kind (coder, reviewer, planner) or model.
-  if (input.holdsMergeRights === true) return frontier('merge-rights-frontier-only');
-  if (input.needsCredentials === true) {
-    return frontier(input.localModel && isAbliteratedModel(input.localModel) ? 'abliterated-with-credentials' : 'credentials-frontier-only');
-  }
+  // Master gates merges by engine tier only (inbox/merge.ts evaluateMergeAuthority),
+  // and config can promote a local engine to tier 'frontier'. So any step or role
+  // holding merge rights or credentials is frontier-only, whatever its kind or model.
+  const authority = on(input.mergesToMain) || on(input.holdsMergeRights) || on(input.needsCredentials);
+  if (authority && input.localModel && isAbliteratedModel(input.localModel)) return frontier('abliterated-with-credentials');
+  if (on(input.mergesToMain)) return frontier('merge-to-main-frontier-only');
+  if (on(input.holdsMergeRights)) return frontier('merge-rights-frontier-only');
+  if (on(input.needsCredentials)) return frontier('credentials-frontier-only');
   if (!input.localAvailable) return frontier('local-unavailable');
   if (COMPLEX_KINDS.has(input.kind) || !(LOCAL_TASK_KINDS as readonly string[]).includes(input.kind)) {
     return frontier('complex-task-kind');
   }
-  if (input.touchesProtectedPath === true) return frontier('protected-path');
-  if (nonNeg(input.failedVerifyAttempts) >= Math.max(1, policy.maxLocalVerifyFailures)) return frontier('verify-failures');
-  if (nonNeg(input.retries) >= Math.max(1, policy.maxLocalRetries)) return frontier('retry-cap');
+  if (on(input.touchesProtectedPath)) return frontier('protected-path');
+  if (nonNeg(input.failedVerifyAttempts) >= limitOf(policy.maxLocalVerifyFailures)) return frontier('verify-failures');
+  if (nonNeg(input.retries) >= limitOf(policy.maxLocalRetries)) return frontier('retry-cap');
   const limit = input.localContextLimit;
   if (typeof limit === 'number' && limit > 0 && nonNeg(input.contextTokens) > limit) return frontier('context-over-local-limit');
   return { lane: 'local', reason: 'local-ok' };
-}
-
-/**
- * Pure. The local lane can never be given main-merge authority, whatever the
- * config says: any attempt to promote returns false.
- */
-export function localLaneMayMergeToMain(): false {
-  return false;
 }
 
 /**
@@ -119,6 +119,41 @@ export const KNOWN_LOCAL_ENGINE_IDS: ReadonlySet<string> = new Set([
   'local', 'local-coder', 'ollama', 'omlx', 'llama-server', 'lmstudio', 'builtin', 'ashlrcode', 'aw',
 ]);
 
+/** Local engine families, matched as a prefix after lowercasing and dropping '-', '_', '.' and spaces. */
+const LOCAL_ENGINE_FAMILIES = ['ollama', 'vllm', 'llama', 'lmstudio', 'tgi', 'omlx', 'localai', 'mlx', 'gguf'];
+
+function isLocalEngineId(id: string): boolean {
+  const lower = id.trim().toLowerCase();
+  const flat = lower.replace(/[-_.\s]/g, '');
+  return KNOWN_LOCAL_ENGINE_IDS.has(lower) || LOCAL_ENGINE_FAMILIES.some((f) => flat.startsWith(f));
+}
+
+// Non-public IPv4 ranges: unspecified, 10/8, CGNAT 100.64/10, loopback, link-local, 172.16/12, 192.168/16.
+const PRIVATE_V4: ReadonlyArray<[number, number]> = [
+  [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8],
+  [0xa9fe0000, 16], [0xac100000, 12], [0xc0a80000, 16],
+];
+
+function v4IsPublic(n: number): boolean {
+  return !PRIVATE_V4.some(([net, bits]) => (n >>> (32 - bits)) === (net >>> (32 - bits)));
+}
+
+/** Pure. True only for a routable public host: not loopback, private, link-local, CGNAT, unspecified or a local suffix. */
+export function isPublicHost(raw: string): boolean {
+  const host = raw.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
+  if (host === '') return false;
+  const ip = isIP(host);
+  if (ip === 4) return v4IsPublic(host.split('.').reduce((n, o) => n * 256 + Number(o), 0));
+  if (ip === 6) {
+    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mapped) return v4IsPublic(parseInt(mapped[1], 16) * 65536 + parseInt(mapped[2], 16));
+    if (host.startsWith('::ffff:')) return false; // any other mapped form fails closed
+    return !(/^::1?$/.test(host) || /^f[cd]/.test(host) || /^fe[89ab]/.test(host));
+  }
+  if (!host.includes('.')) return false; // single-label names are LAN or local
+  return !/(^|\.)(localhost|local|internal)$/.test(host);
+}
+
 export interface EngineIdentity {
   engineId: string;
   /** Configured endpoint, if any (openai-compat, ollama, custom engines). */
@@ -127,22 +162,19 @@ export interface EngineIdentity {
   tier?: string | null;
 }
 
-function hostOf(url: string): string | null {
-  try {
-    const h = new URL(url).hostname;
-    return h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
-  } catch { return null; }
-}
-
-/** Pure. True when the engine is local by id or by a loopback endpoint, whatever its tier. */
+/**
+ * Pure. True when the engine is local by id or its endpoint is anything but
+ * http(s) to a public host, whatever its tier. A present baseUrl that is empty,
+ * unparseable, non-http or has no hostname fails closed. No baseUrl means a
+ * hosted CLI engine (claude, codex), judged by id alone.
+ */
 export function isLocalEngine(engine: EngineIdentity): boolean {
-  if (KNOWN_LOCAL_ENGINE_IDS.has(engine.engineId.toLowerCase())) return true;
-  if (typeof engine.baseUrl === 'string' && engine.baseUrl.length > 0) {
-    const host = hostOf(engine.baseUrl);
-    if (host === null) return true; // unparseable endpoint fails closed
-    if (isLoopbackHost(host) || host === '::1' || /^127\./.test(host) || host === '0.0.0.0') return true;
-  }
-  return false;
+  if (isLocalEngineId(String(engine.engineId ?? ''))) return true;
+  if (engine.baseUrl === undefined || engine.baseUrl === null) return false;
+  let url: URL;
+  try { url = new URL(String(engine.baseUrl).trim()); } catch { return true; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
+  return !isPublicHost(url.hostname);
 }
 
 /**
