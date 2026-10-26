@@ -18,9 +18,11 @@
  *
  * In-process (src/core/devin/*), never through the Verse server, and never
  * imports devin-api.ts (that module starts the background refresher). The key
- * is only ever typed at a hidden prompt — never an argument, never an env
- * var — and goes straight to the Keychain. Output is for people; `--json`
- * prints the service's shapes. Exit codes: 0 ok, 1 error / refused, 2 usage.
+ * for connection setup is typed at a hidden prompt and stored in the Keychain.
+ * Connection setup accepts no key argument or environment variable. `--json`
+ * prints the service's shapes. The separate usage reader accepts a Phantom
+ * Secrets injected key and emits resource.v1 without loading the service.
+ * Exit codes: 0 ok, 1 error / refused, 2 usage.
  */
 import type {
   DevinBudgetUpdate,
@@ -56,6 +58,8 @@ Usage:
       GPT-6) under an elite-direct grant Devin PRs land on green tests; otherwise they merge only
       when two judges from different families ship them.
   ashlr devin status [--json]
+  ashlr devin usage [--json]
+      Read resource.v1 ACUs via Phantom Secrets, or local job wall time.
   ashlr devin launch "<task>" [--repo owner/name] [--base branch] [--title "short title"] [--json]
       Start a Devin session. The repo defaults to this folder's GitHub origin; the base to its default branch.
   ashlr devin list [--all] [--json]
@@ -521,6 +525,19 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
+  }
+  if (sub === 'usage') {
+    if (args.includes('--help') || args.includes('-h')) {
+      print('Usage: ashlr devin usage [--json]');
+      return 0;
+    }
+    if (args.some(arg => arg !== '--json')) {
+      printErr('Usage: ashlr devin usage [--json]');
+      return 2;
+    }
+    const { readDevinResource } = await import('../core/devin/usage-source.js');
+    print(JSON.stringify(await readDevinResource()));
+    return 0;
   }
   const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget'];
   if (!known.includes(sub)) {

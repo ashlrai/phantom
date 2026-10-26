@@ -1,0 +1,5 @@
+{"jobId":"a","lane":"devin","startedAt":"2026-10-25T11:00:00Z","finishedAt":"2026-10-25T13:00:00Z"}
+{"jobId":"b","lane":"devin","startedAt":"2026-10-26T10:00:00Z","finishedAt":"2026-10-26T11:00:00Z"}
+{"jobId":"b","lane":"devin","startedAt":"2026-10-26T10:00:00Z","finishedAt":"2026-10-26T11:00:00Z"}
+{"jobId":"c","lane":"codex","startedAt":"2026-10-26T10:00:00Z","finishedAt":"2026-10-26T11:00:00Z"}
+{"jobId":"old","lane":"devin","startedAt":"2026-10-24T10:00:00Z","finishedAt":"2026-10-24T11:00:00Z"}
