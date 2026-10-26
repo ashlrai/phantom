@@ -3,7 +3,7 @@
 This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`phm improve` / steward) and other coding agents, under the same standing authority that applies to `ashlrai/phantom` (see phantom `docs/STANDING-AUTHORITY.md`).
 
 ## Tools for agents working here
-- This repo's `.mcp.json` declares Phantom's companion MCP servers (Phantom Secrets, Locus, Lexicon, Stack). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
+- This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 
 ## Agents may
@@ -25,6 +25,7 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 
 ## Working in this repository
 - Node `>=22.15.0`. Install with `npm ci`, build with `npm run build`, run the CLI from source with `npm run dev -- <command>`.
+- Use a temporary HOME for manual test runs, for example `HOME="$(mktemp -d)" npx vitest run test/doc-facts.test.ts`.
 - Before a PR: `npm run typecheck`, `npm run lint`, `npm run check:docs`, and the affected tests (`npx vitest run test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together.
 - Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md).
