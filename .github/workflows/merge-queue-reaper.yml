@@ -1,0 +1,66 @@
+# Orphaned merge_group run reaper.
+#
+# Each merge queue entry owns a gh-readonly-queue/<base>/pr-N-<sha> ref. When an
+# entry leaves the queue (merged, removed or invalidated) GitHub deletes that
+# ref, but runs already queued for it keep waiting for runners. This job cancels
+# a merge_group run ONLY when its head ref no longer exists, re-checked
+# immediately before the cancel. It never cancels a run whose merge group is
+# still in the queue, never fails, and its job name is not a required check.
+name: Merge Queue Reaper
+
+on:
+  merge_group:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-queue-reaper-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reap-orphaned-merge-group-runs:
+    name: reap-orphaned-merge-group-runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Cancel merge_group runs whose queue ref is gone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          ref_exists() {
+            # 200 means the queue entry is live; anything else (404) means gone.
+            gh api "repos/${REPO}/git/ref/heads/$1" --silent >/dev/null 2>&1
+          }
+          cancelled=0
+          for status in queued in_progress; do
+            gh api --paginate "repos/${REPO}/actions/runs?event=merge_group&status=${status}&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .head_branch] | @tsv' || true
+          done | while IFS=$'\t' read -r run_id head_branch; do
+            [ -n "${run_id}" ] || continue
+            [ "${run_id}" = "${SELF_RUN_ID}" ] && continue
+            case "${head_branch}" in gh-readonly-queue/*) ;; *) continue ;; esac
+            if ref_exists "${head_branch}"; then
+              echo "keep ${run_id}: queue ref ${head_branch} is live"
+              continue
+            fi
+            # Re-check immediately before cancel so a live entry is never cancelled.
+            if ref_exists "${head_branch}"; then
+              echo "keep ${run_id}: queue ref ${head_branch} reappeared"
+              continue
+            fi
+            echo "cancel ${run_id}: queue ref ${head_branch} no longer exists"
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/cancel" --silent || true
+            cancelled=$((cancelled + 1))
+          done
+          exit 0
