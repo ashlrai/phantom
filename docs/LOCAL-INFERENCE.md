@@ -42,6 +42,40 @@ export OPENAI_COMPAT_BASE_URL=http://127.0.0.1:8000/v1
 export OPENAI_COMPAT_API_KEY=local    # placeholder, not a secret
 ```
 
+### Fleet bus adapter
+
+`src/core/fleet/bus-adapters/omlx.ts` exposes an explicitly constructed,
+keyless adapter backed by `src/core/local-runtime/omlx.ts`:
+
+```ts
+import { createOmlxBusAdapter } from './src/core/fleet/bus-adapters/omlx.js';
+
+const adapter = createOmlxBusAdapter({ baseUrl: 'http://127.0.0.1:8000/v1' });
+const models = await adapter.listModels();
+if (models.length === 0) throw new Error('Install an oMLX model first');
+const answer = await adapter.complete({
+  model: models[0],
+  messages: [{ role: 'user', content: 'Say hello' }],
+  maxTokens: 128,
+}, AbortSignal.timeout(10_000));
+console.log(answer.text);
+```
+
+The base URL defaults to `http://127.0.0.1:8000/v1` and must include the API
+prefix. Only canonical `127.0.0.1`, `localhost`, and `[::1]` hosts are accepted;
+`localhost` connects directly to `127.0.0.1`. Credentials in URLs, queries,
+fragments, remote hosts and redirects are refused. The adapter reads no API
+keys or proxy settings. Its whole-request deadline defaults to 30 seconds
+(`timeoutMs` may be set from 1 to 300,000); request and response bodies are
+limited to 4 MiB. An optional `AbortSignal` cancels either operation.
+
+This boundary supports model discovery and non-streaming text chat. It does
+not register an engine, dispatch fleet work, or execute model tool calls.
+Missing usage is returned as `null`. Failures throw `OmlxRuntimeError` with
+a stable `code` and, for HTTP failures, `status`; errors omit upstream bodies,
+URLs and native transport details. The protocol is based on oMLX's
+[model and chat routes](https://github.com/jundot/omlx/blob/main/omlx/server.py).
+
 ## mlx-lm.server
 
 `mlx_lm.server` serves an OpenAI-like API on `localhost:8080`. Its own docs say it "is not recommended for production as it only implements basic security checks" ([SERVER.md](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md)). Treat it as a dev tool, loopback only. To use it, point `OPENAI_COMPAT_BASE_URL` at `http://127.0.0.1:8080/v1`.
