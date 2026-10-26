@@ -11,15 +11,15 @@ imports belong to the compatibility releases. `phm`, compatible `ashlr` commands
 `/verse/` routes and stored identities retain their supported meanings; see
 [the product naming guide](PHANTOM-BRAND.md).
 Historical Ashlrverse research and build contracts keep their original names.
-Use one canonical guide for each task. The North Star is a target, not a claim
-that every integration, provider or autonomous effect is active.
+Use one canonical guide for each task. The [vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is the target,
+not a claim that every integration, provider, or autonomous effect is active.
 
 ## Start here
 
 | Your task | Canonical guide |
 |-----------|-----------------|
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
-| Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Understand the product direction | [Phantom vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |

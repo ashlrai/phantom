@@ -150,6 +150,31 @@ describe('operator documentation navigation', () => {
     }
   });
 
+  it('keeps the source-only vision reachable from packaged guides without a missing package-relative target', () => {
+    const source = process.cwd();
+    const root = packagedDocumentation();
+    const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as { files: string[] };
+    const visionLinks = manifest.files.filter(file => file.endsWith('.md')).flatMap(file => {
+      const { links } = inspectMarkdown(readFileSync(join(source, file), 'utf8')) as { links: string[] };
+      return links.filter(href => /(?:^|\/)VISION\.md(?:#|$)/.test(href));
+    });
+    expect(visionLinks.length).toBeGreaterThan(0);
+    expect(existsSync(join(root, 'docs/VISION.md'))).toBe(false);
+    // Use the real navigation targets: package mode must retain source URLs,
+    // while checkout mode must validate that the page and its anchors exist.
+    writeFileSync(join(root, 'README.md'), visionLinks.map(href => `[Vision](${href})`).join('\n'));
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['README.md'] }))
+      .toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+    expect(checkDocumentation({ root, entrypoints: ['README.md'] }).ok).toBe(false);
+    cpSync(join(source, 'docs/VISION.md'), join(root, 'docs/VISION.md'));
+    expect(checkDocumentation({ root, entrypoints: ['README.md', 'docs/VISION.md'] }))
+      .toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+    const staleAnchor = `${visionLinks[0]!.split('#')[0]}#missing-vision-heading`;
+    writeFileSync(join(root, 'README.md'), `[Vision](${staleAnchor})`);
+    expect(checkDocumentation({ root, entrypoints: ['README.md'] }).errors)
+      .toEqual([expect.objectContaining({ href: staleAnchor })]);
+  });
+
   it.each(['RESIDENT-RUNTIME', 'DEVIN'])('refuses an omitted %s operator guide in the package', (guide) => {
     const root = packagedDocumentation();
     rmSync(join(root, 'docs', `${guide}.md`));
