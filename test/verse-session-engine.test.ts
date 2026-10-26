@@ -82,6 +82,9 @@ if (argv[0] === 'exec') {
     const resume = argv[1] === 'resume';
     const thread = resume ? argv[2] : 'thr_fake_' + n;
     out({ type: 'thread.started', thread_id: thread });
+    // MIDHANG: the thread did real work (an answer is on the wire), then the
+    // turn never finishes — what a server SIGKILLed mid-turn leaves behind.
+    if (stdin.includes('MIDHANG')) { out({ type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'working on it' } }); return hang(); }
     if (stdin.includes('HANG')) return hang();
     if (stdin.includes('FAIL')) return fail();
     out({ type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: 'codex says: ' + stdin.trim() } });
@@ -113,7 +116,7 @@ if (argv[0] === 'exec') {
   // NOCONV: the vendor conversation is gone — exactly what claude prints when
   // --resume names a deleted transcript. A retry seeded with the handoff note
   // (V3.10 recovery) carries the note's header and gets a normal answer.
-  if (prompt.includes('NOCONV') && !prompt.includes('# Continuing from an earlier Verse session')) {
+  if (prompt.includes('NOCONV') && !prompt.includes('# Continuing from an earlier Phantom session')) {
     out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: sid, errors: ['No conversation found with session ID: ' + sid] });
     fs.writeSync(2, 'No conversation found with session ID: ' + sid + '\\n');
     process.exit(1);
@@ -562,6 +565,35 @@ describe('sendTurn — codex', () => {
     expect(call2.argv).toEqual(expect.arrayContaining(['--json', '-']));
     expect(call2.stdin).toBe('second codex prompt');
     expect(engine.getSession(created.id)!.turnCount).toBe(2);
+  });
+});
+
+describe('sendTurn — codex continuity across a server crash', () => {
+  it('persists the vendor-named thread id as soon as it is printed, so a restart resumes that thread', async () => {
+    const created = engine.createSession({ projectPath: project, seatId: 'codex-a' }, nativeLaunch(CODEX_SEAT));
+    engine.sendTurn(created.id, 'first codex prompt MIDHANG');
+    await waitFor(() => engine.getEvents(created.id).some((e) => e.type === 'assistant-message'));
+    // The server dies here (SIGKILL / power loss): nothing in-process runs
+    // again. Only what is already on disk survives.
+    expect(createVerseSessionStore(root).get(created.id)!.nativeSessionId).toBe('thr_fake_1');
+
+    // The old engine is "dead": the restarted one must not reap its child out
+    // from under it (that would race two engines on one root).
+    const restarted = createEngine({ root, killGraceMs: 200, processRegistry: false });
+    try {
+      const after = restarted.getSession(created.id)!;
+      expect(after.status).toBe('error');
+      expect(after.nativeSessionId).toBe('thr_fake_1');
+      const last = restarted.getEvents(created.id).at(-1)!;
+      expect(last).toMatchObject({ type: 'turn-done', ok: false, nativeSessionId: 'thr_fake_1' });
+      restarted.sendTurn(created.id, 'second codex prompt');
+      const next = await untilTurnDone(restarted, created.id, last.seq);
+      expect(next.at(-1)).toMatchObject({ type: 'turn-done', ok: true, nativeSessionId: 'thr_fake_1' });
+      // Same vendor thread, not a cold start that forgot turn 1.
+      expect(readCalls(side)[1].argv.slice(0, 3)).toEqual(['exec', 'resume', 'thr_fake_1']);
+    } finally {
+      restarted.close();
+    }
   });
 });
 
@@ -1889,7 +1921,7 @@ describe('V3.10 reliability — real processes', () => {
     expect(after.status).toBe('idle');
     const retry = readCalls(side).at(-1)!;
     expect(retry.argv).toContain(after.nativeSessionId);
-    expect(retry.argv.at(-1)).toContain('# Continuing from an earlier Verse session');
+    expect(retry.argv.at(-1)).toContain('# Continuing from an earlier Phantom session');
     expect(retry.argv.at(-1)!.endsWith('NOCONV now add tests')).toBe(true);
   });
 

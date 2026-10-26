@@ -442,9 +442,9 @@ export function buildVerseMcpProposal(
   }
   if (target.id.startsWith('account:')) {
     warnings.push(
-      'Verse launches Claude seats with --strict-mcp-config and an empty --mcp-config, so a server ' +
-      'written here will NOT be loaded by this account\'s Verse turns. It applies to the provider ' +
-      'CLI run outside Verse.',
+      'Phantom launches Claude seats with --strict-mcp-config and an empty --mcp-config, so a server ' +
+      'written here will NOT be loaded by this account\'s Phantom turns. It applies to the provider ' +
+      'CLI run outside Phantom.',
     );
   }
   if (!options.scope.allow) {

@@ -184,6 +184,16 @@ describe('POST /api/verse/cloud/tasks/<id>/land', () => {
     expect(mutations()).toEqual([]);
   });
 
+  it('refuses test tampering (G1b) without touching GitHub', async () => {
+    const t = 'test/thing.test.ts';
+    gh.diff = [`diff --git a/${t} b/${t}`, 'index 1111111..2222222 100644', `--- a/${t}`, `+++ b/${t}`, '@@ -1,1 +1,2 @@', ' a', "+it.only('x', () => {});", ''].join('\n');
+    const { status, body } = await post<{ error: string }>(landPath, { headSha: HEAD });
+    expect(status).toBe(409);
+    expect(body.error).toBe('It skips, deletes or weakens tests; land it on GitHub after review.');
+    expect(mutations()).toEqual([]);
+    expect(readCloudTask(ID)!.state).toBe('pr-open');
+  });
+
   it('refuses a PR that no longer matches the task (another head branch)', async () => {
     gh.view = { ...gh.view, headRefName: 'someone-else' };
     const { status, body } = await post<{ error: string }>(landPath, { headSha: HEAD });

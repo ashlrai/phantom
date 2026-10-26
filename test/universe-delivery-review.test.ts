@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,6 +10,21 @@ import { appendRecord, initUniverse, manifestRecord, newRun, projectUniverse, se
 import type { UniverseManifest, UniverseTrial } from '../src/core/universe/types.js';
 
 const roots: string[] = [];
+// Delivery only commits frozen elite artifacts; no Universe run or
+// evaluator launch is started on any platform.
+// Pin a tiny inert script instead of the ~100 MB node runtime: the real store
+// still freshly hashes and compares the pinned bytes on every comparator check,
+// without re-reading node each time, and an accidental launch would exit 99.
+// Windows has no executable bit for a script, so it keeps the runtime pin.
+let pinnedEvaluatorRoot = '';
+let pinnedEvaluator = process.execPath;
+beforeAll(() => {
+  if (process.platform === 'win32') return;
+  pinnedEvaluatorRoot = realpathSync(mkdtempSync(join(tmpdir(), 'delivery-review-evaluator-')));
+  pinnedEvaluator = join(pinnedEvaluatorRoot, 'never-run-evaluator');
+  writeFileSync(pinnedEvaluator, '#!/bin/sh\nexit 99\n', { mode: 0o700 });
+});
+afterAll(() => { if (pinnedEvaluatorRoot) rmSync(pinnedEvaluatorRoot, { recursive: true, force: true }); });
 afterEach(() => {
   function writable(path: string): void {
     const stat = lstatSync(path);
@@ -42,7 +57,7 @@ function fixture(objectFormat: 'sha1' | 'sha256' = 'sha1') {
     seed: { repo, revision: git(['rev-parse', 'HEAD']) },
     metric: { name: 'checks', direction: 'maximize', minImprovement: 0 },
     budget: { maxTrials: 1, maxParallel: 1, maxDurationMs: 10_000, trialTimeoutMs: 1_000 },
-    evaluation: { command: [process.execPath, 'evaluate.mjs'], timeoutMs: 1_000 },
+    evaluation: { command: [pinnedEvaluator, 'evaluate.mjs'], timeoutMs: 1_000 },
     variants: [{ id: 'candidate', niche: 'correctness', hypothesis: 'Improve the fixture', command: [process.execPath, 'candidate.mjs'] }],
   };
   initUniverse(manifest, { root });

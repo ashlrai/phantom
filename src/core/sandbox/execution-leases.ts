@@ -100,6 +100,12 @@ export const VERIFICATION_REPO_SLOTS = 1;
  */
 export const VERIFICATION_SLOT_WAIT_MS = 30 * 60_000;
 
+/**
+ * How long every candidate lock must keep reporting 'unavailable' before a
+ * keyed wait gives up as "store unavailable" instead of retrying.
+ */
+const UNAVAILABLE_CONFIRM_MS = 1_000;
+
 const LEASE_FILE_RE = /^exec-([0-9a-f]{16})-[A-Za-z0-9_-]{1,120}\.lock$/;
 const POLL_FLOOR_MS = 10;
 
@@ -549,6 +555,7 @@ async function acquireKeyedLock(
   if (!await waitTurn(turn.previous, deadline, opts.signal)) {
     return fail(opts.signal?.aborted ? 'aborted' : 'timeout');
   }
+  let unavailableSince: number | null = null;
   for (;;) {
     if (opts.signal?.aborted) return fail('aborted');
     let unavailable = 0;
@@ -566,9 +573,19 @@ async function acquireKeyedLock(
       if (attempt.state === 'unavailable') unavailable += 1;
     }
     // Every candidate is unusable (unsafe directory, bad HOME): waiting will
-    // not change that, so say so now instead of burning the whole wait.
-    if (unavailable === paths.length) return fail('unavailable');
-    if (Date.now() >= deadline) return fail('timeout');
+    // not change that, so say so instead of burning the whole wait. But one
+    // 1 ms attempt racing a cross-process holder's install / release handoff
+    // also reports 'unavailable' (scripts/daemon-throughput.mjs measured
+    // ~1 in 3 contended attempts), so only a store that stays unusable for
+    // UNAVAILABLE_CONFIRM_MS is unavailable; a busy one keeps waiting.
+    const now = Date.now();
+    if (unavailable === paths.length) {
+      unavailableSince ??= now;
+      if (now - unavailableSince >= UNAVAILABLE_CONFIRM_MS || now >= deadline) return fail('unavailable');
+    } else {
+      unavailableSince = null;
+    }
+    if (now >= deadline) return fail('timeout');
     await delay(Math.min(opts.pollMs, Math.max(1, deadline - Date.now())), opts.signal);
   }
 }

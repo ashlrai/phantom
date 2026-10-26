@@ -75,6 +75,7 @@ import {
   isReadOnlyGhApiCall,
   planAuthoritySetup,
   readOnlyGhRun,
+  renderTrustRootsWithKey,
   rulesetMatches,
   runAuthorityCli,
   type AuthorityCliDeps,
@@ -299,69 +300,117 @@ describe('setup is resumable', () => {
       confirm: true,
       run: (_bin, args) => (args[0] === 'pr' && args[1] === 'list' ? ok('https://github.com/ashlrai/phantom/pull/999\n') : no()),
     });
-    expect(await runAuthorityCli(['setup', '--source', '/nonexistent/checkout'], h.deps)).toBe(0);
+    expect(await runAuthorityCli(['setup'], h.deps)).toBe(0);
     expect(h.out.join('\n')).toMatch(/… trust root: https:\/\/github\.com\/ashlrai\/phantom\/pull\/999 is already open/);
-    expect(h.calls.some((c) => c.args.includes('worktree'))).toBe(false);
+    expect(h.calls.some((c) => c.bin === 'git')).toBe(false);
+    expect(h.calls.some((c) => c.args.includes('--method'))).toBe(false);
   });
 
   it('recognises a key already merged on the base branch as waiting for deploy', async () => {
-    const h = harness({
-      confirm: true,
-      run: (_bin, args) => {
-        if (args[0] === 'pr') return ok('');
-        if (args[0] === 'repo') return ok('master\n');
-        if (args.includes('fetch')) return ok();
-        if (args.includes('show')) return ok(`export const STANDING_GRANT_TRUST_ROOTS = Object.freeze([{ keyId: '${TEST_ROOT.keyId}' }]);`);
-        return no();
-      },
-    });
-    expect(await runAuthorityCli(['setup', '--source', '/nonexistent/checkout'], h.deps)).toBe(0);
+    const hub = trustRootHub({ baseSource: `Object.freeze([Object.freeze({ keyId: '${TEST_ROOT.keyId}' })]);` });
+    const h = harness({ confirm: true, run: hub.run });
+    expect(await runAuthorityCli(['setup'], h.deps)).toBe(0);
     const text = h.out.join('\n');
     expect(text).toMatch(new RegExp(`… trust root: ${TEST_ROOT.keyId} is already on master`));
     expect(text).toMatch(/… deploy: after you merge that PR/);
-    expect(h.calls.some((c) => c.args.includes('worktree'))).toBe(false);
+    expect(hub.writes).toEqual([]);
+    expect(h.calls.some((c) => c.bin === 'git')).toBe(false);
   });
 
-  it('opens the PR from a branch an earlier run pushed', async () => {
-    const h = harness({
-      confirm: true,
-      run: (_bin, args) => {
-        if (args[0] === 'pr' && args[1] === 'list') return ok('');
-        if (args[0] === 'pr' && args[1] === 'create') return ok('https://github.com/ashlrai/phantom/pull/1000\n');
-        if (args[0] === 'repo') return ok('master\n');
-        if (args.includes('fetch')) return ok();
-        if (args.includes('show')) return ok("Object.freeze([]);");
-        if (args.includes('ls-remote')) return ok('abc123\trefs/heads/authority/trust-root-x\n');
-        return no();
-      },
-    });
-    await runAuthorityCli(['setup', '--source', '/nonexistent/checkout'], h.deps);
+  it('writes the branch and its one commit through the GitHub API and never runs git', async () => {
+    const hub = trustRootHub({});
+    const h = harness({ confirm: true, run: hub.run });
+    expect(await runAuthorityCli(['setup', '--source', '/ignored/older/flag'], h.deps)).toBe(0);
     expect(h.out.join('\n')).toMatch(/… trust root: opened https:\/\/github\.com\/ashlrai\/phantom\/pull\/1000/);
-    expect(h.calls.some((c) => c.args.includes('worktree'))).toBe(false);
+    expect(h.calls.some((c) => c.bin === 'git')).toBe(false);
+    expect(hub.writes.map((w) => `${w.method} ${w.path}`)).toEqual([
+      'POST repos/ashlrai/phantom/git/refs',
+      'PUT repos/ashlrai/phantom/contents/src/core/authority/trust-roots.ts',
+    ]);
+    expect(hub.writes[0]!.body).toEqual({ ref: `refs/heads/${TRUST_BRANCH}`, sha: BASE_SHA });
+    const put = hub.writes[1]!.body;
+    expect(put).toMatchObject({ branch: TRUST_BRANCH, sha: 'blob-on-branch', message: `authority: trust custody key ${TEST_ROOT.keyId}` });
+    // The committed bytes are exactly what setup rendered from the base file.
+    expect(Buffer.from(put['content']!, 'base64').toString('utf8')).toBe(renderTrustRootsWithKey(EMPTY_ROOTS, TEST_ROOT));
+    // The body rides stdin, never argv.
+    for (const call of h.calls.filter((c) => c.args.includes('--method'))) {
+      expect(call.args).toContain('--input');
+      expect(call.args.some((a) => a.includes(put['content']!))).toBe(false);
+      expect(call.input).toBeTypeOf('string');
+    }
   });
 
-  it('resets a leftover local branch (-B), deletes it afterwards, and a git failure ends with a summary', async () => {
-    const h = harness({
-      confirm: true,
-      run: (_bin, args) => {
-        if (args[0] === 'pr') return ok('');
-        if (args[0] === 'repo') return ok('master\n');
-        if (args.includes('fetch')) return ok();
-        if (args.includes('show')) return ok('Object.freeze([]);');
-        if (args.includes('ls-remote')) return no('');
-        if (args.includes('add') && args.includes('worktree')) return ok(); // no files appear: the read below fails
-        return ok();
-      },
-    });
-    expect(await runAuthorityCli(['setup', '--source', '/nonexistent/checkout'], h.deps)).toBe(1);
-    const add = h.calls.find((c) => c.args.includes('worktree') && c.args.includes('add'));
-    expect(add?.args).toContain('-B');
-    expect(h.calls.some((c) => c.args.includes('branch') && c.args.includes('-D'))).toBe(true);
-    const text = h.out.join('\n');
-    expect(text).toMatch(/✗ trust root: /);
-    expect(text).toMatch(/Setup: .* 1 failed\./);
+  it('finishes a branch an earlier run created: commits only if it is missing, never recreates the branch', async () => {
+    const bare = trustRootHub({ branch: EMPTY_ROOTS });
+    const h1 = harness({ confirm: true, run: bare.run });
+    expect(await runAuthorityCli(['setup'], h1.deps)).toBe(0);
+    expect(bare.writes.map((w) => w.method)).toEqual(['PUT']);
+
+    const committed = trustRootHub({ branch: renderTrustRootsWithKey(EMPTY_ROOTS, TEST_ROOT)! });
+    const h2 = harness({ confirm: true, run: committed.run });
+    expect(await runAuthorityCli(['setup'], h2.deps)).toBe(0);
+    expect(committed.writes).toEqual([]);
+    expect(h2.out.join('\n')).toMatch(/… trust root: opened https:\/\/github\.com\/ashlrai\/phantom\/pull\/1000/);
+  });
+
+  it('a failed write or a foreign root ends as a failed step with the summary', async () => {
+    const failing = trustRootHub({ failWrites: true });
+    const h1 = harness({ confirm: true, run: failing.run });
+    expect(await runAuthorityCli(['setup'], h1.deps)).toBe(1);
+    expect(h1.out.join('\n')).toMatch(/✗ trust root: gh api POST repos\/ashlrai\/phantom\/git\/refs failed/);
+    expect(h1.out.join('\n')).toMatch(/Setup: .* 1 failed\./);
+
+    const foreign = trustRootHub({ baseSource: "export const STANDING_GRANT_TRUST_ROOTS = Object.freeze([{ keyId: 'someone-else' }]);" });
+    const h2 = harness({ confirm: true, run: foreign.run });
+    expect(await runAuthorityCli(['setup'], h2.deps)).toBe(1);
+    expect(h2.out.join('\n')).toMatch(/✗ trust root: trust-roots\.ts on master already lists a different root/);
+    expect(foreign.writes.map((w) => w.method)).toEqual(['POST']);
   });
 });
+
+const TRUST_BRANCH = `authority/trust-root-${TEST_ROOT.keyId}`;
+const BASE_SHA = 'b'.repeat(40);
+const EMPTY_ROOTS = 'export const STANDING_GRANT_TRUST_ROOTS: readonly Readonly<StandingGrantTrustRoot>[] = Object.freeze([]);\n';
+
+/**
+ * The hub repository as `gh` sees it for the live trust-root step: reads of
+ * the repo, refs and trust-roots.ts, and the two writes (create ref, put
+ * file), which are recorded with their stdin bodies. `branch` is the
+ * trust-roots.ts an earlier run left on the trust-root branch.
+ */
+function trustRootHub(state: { baseSource?: string; branch?: string; failWrites?: boolean }) {
+  const writes: { method: string; path: string; body: Record<string, string> }[] = [];
+  let branch = state.branch;
+  const file = (text: string, sha: string) => ok(JSON.stringify({ encoding: 'base64', content: Buffer.from(text).toString('base64'), sha }));
+  const run = (bin: string, args: readonly string[], input?: string): GhResult => {
+    if (bin !== 'gh') return no('git must not run');
+    if (args[0] === 'pr' && args[1] === 'list') return ok('');
+    if (args[0] === 'pr' && args[1] === 'create') return ok('https://github.com/ashlrai/phantom/pull/1000\n');
+    if (args[0] !== 'api') return no('unexpected command');
+    if (args[1] === '--method') {
+      const method = args[2]!;
+      const path = args[3]!;
+      if (state.failWrites) return no('HTTP 403');
+      const body = JSON.parse(input ?? 'null') as Record<string, string>;
+      writes.push({ method, path, body });
+      if (method === 'POST') branch = state.baseSource ?? EMPTY_ROOTS;
+      if (method === 'PUT') branch = Buffer.from(body['content']!, 'base64').toString('utf8');
+      return ok('{}');
+    }
+    const path = args[1]!;
+    if (path === 'repos/ashlrai/phantom') return ok(JSON.stringify({ default_branch: 'master' }));
+    if (path === 'repos/ashlrai/phantom/git/ref/heads/master') return ok(JSON.stringify({ ref: 'refs/heads/master', object: { sha: BASE_SHA } }));
+    if (path === `repos/ashlrai/phantom/git/ref/heads/${TRUST_BRANCH}`) {
+      return branch === undefined ? no('HTTP 404') : ok(JSON.stringify({ ref: `refs/heads/${TRUST_BRANCH}`, object: { sha: 'c'.repeat(40) } }));
+    }
+    if (path === 'repos/ashlrai/phantom/contents/src/core/authority/trust-roots.ts?ref=master') return file(state.baseSource ?? EMPTY_ROOTS, 'blob-on-master');
+    if (path === `repos/ashlrai/phantom/contents/src/core/authority/trust-roots.ts?ref=${encodeURIComponent(TRUST_BRANCH)}`) {
+      return branch === undefined ? no('HTTP 404') : file(branch, 'blob-on-branch');
+    }
+    return no(`unexpected path ${path}`);
+  };
+  return { run, writes };
+}
 
 // ---------------------------------------------------------------------------
 // Rerun safety: Mason runs setup several times; nothing already in place is
@@ -819,9 +868,9 @@ describe('the dry run finds the trust-root PR through gh api reads (and so does 
   it('none of these (or GitHub unreadable): the step reads as before, and nothing but reads ran', async () => {
     const { step, h } = await trustRoot({});
     expect(step.status).toBe('waiting-on-you');
-    expect(step.detail).toMatch(/^pass --source|^add this root yourself/);
+    expect(step.detail).toMatch(/^add this root yourself/);
     expect(h.calls.every((c) => isReadOnlyGhApiCall(c.bin as 'gh', c.args))).toBe(true);
     const offline = harness();
-    expect((await dryRunReport(offline)).steps.find((s) => s.id === 'trust-root')?.detail).toMatch(/^pass --source|^add this root yourself/);
+    expect((await dryRunReport(offline)).steps.find((s) => s.id === 'trust-root')?.detail).toMatch(/^add this root yourself/);
   });
 });

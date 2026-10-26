@@ -12,6 +12,28 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Every engine spawn that is not wrapped by `phantom exec` now leaves a
+  value-free custody record with a fixed reason code, including when Phantom is
+  off (`phantom-disabled`). `phm status` and `status --json` break unwrapped
+  spawns down by reason. `.phantom.toml` is still never copied into sandbox
+  worktrees (it would select a different, empty vault).
+- `phm status` and `status --json` show the strict Phantom preflight
+  (`phantomPreflight`) when `ASHLR_PHANTOM_PREFLIGHT=1`: verdict, exit code,
+  whether the vault was probed, and whether a fleet spawn here would wrap or
+  run unwrapped with its reason. `ASHLR_PHANTOM_PREFLIGHT_VAULT=1` adds
+  `--vault` to the spawn and status preflight; the default stays metadata-only.
+- Run receipts now record what happened after close: the daemon appends signed
+  `later[]` entries when a run's PR checks settle (ci), it merges (merge), the
+  post-merge watch reports (survival) and a revert lands (revert). Best effort,
+  value-free, deduplicated; runs without a receipt are skipped.
+- Run receipts gain signed `later[]` entries for ci, merge, survival and revert
+  (receipt.v1 R6). Each entry is signed separately and chained to the receipt
+  digest, so the original signed body is never rewritten. `fleet receipt verify`,
+  `show` and `timeline` check and list them; tampering fails verification.
+- `phm pulse connect --token` with no value now asks for the Pulse PAT at a
+  hidden prompt, and `--token-stdin` reads it from a pipe. `--token <pat>` still
+  works but warns on stderr that the PAT is visible in the process list and
+  shell history. The PAT reaches `phantom add` only on stdin.
 - Group resource displays by provider while keeping configured references,
   current readings and verified account coverage separate. Unknown identities,
   balances and capacity stay unknown; grouping does not authorize execution.
@@ -23,6 +45,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   operator controls; source availability does not establish runtime acceptance.
 
 ### Fixed
+- Provider error bodies that echo the rejected API key no longer carry it into
+  thrown errors. The OpenAI-compatible client, visual grounding and the Devin
+  client now redact any run of 8 or more characters of the key they sent, so
+  opaque keys with no vendor prefix are covered as well as known key shapes.
 - Preserve original quota and credit expiry across resource cards, provider
   groups and capacity views. Connection and admission checks cannot refresh
   or extend retained usage evidence.

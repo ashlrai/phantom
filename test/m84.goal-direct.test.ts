@@ -813,6 +813,63 @@ describe('cmdGoal early-return paths (regression)', () => {
   });
 });
 
+describe('cmdGoal first-run guidance (readiness r9)', () => {
+  const stderrText = (): string =>
+    (process.stderr.write as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0])).join('');
+  const stdoutText = (): string =>
+    (console.log as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+  it('refuses a goal with no --project before creating anything, naming both ways forward', async () => {
+    expect(await cmdGoal(['add a readme'])).toBe(2);
+    expect(mockCmdGoals).not.toHaveBeenCalled();
+    expect(mockRunGoal).not.toHaveBeenCalled();
+    const err = stderrText();
+    expect(err).toMatch(/needs --project <enrolled-repo>/);
+    expect(err).toMatch(/Nothing was created/);
+    expect(err).toMatch(/phm enroll add <repo>/);
+    expect(err).toMatch(/--plan-only/);
+  });
+
+  it('--plan-only with no project plans, and does not point at an advance that would refuse', async () => {
+    mockListGoals.mockReturnValue([{
+      id: 'goal-noproj-1', objective: 'add a readme', project: null, status: 'active',
+      milestones: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }]);
+    expect(await cmdGoal(['add a readme', '--plan-only'])).toBe(0);
+    expect(mockCmdGoals.mock.calls.map((c) => (c[0] as string[])[0])).toEqual(['add', 'plan']);
+    const out = stdoutText();
+    expect(out).not.toMatch(/goals advance goal-noproj-1/);
+    expect(out).toMatch(/no project, so it cannot be advanced/);
+    expect(out).toMatch(/--project <repo>/);
+  });
+
+  it('--plan-only with a project still points at advance', async () => {
+    expect(await cmdGoal(['build something', '--project', '/tmp/enrolled-repo', '--plan-only'])).toBe(0);
+    expect(stdoutText()).toMatch(/phm goals advance goal-default-1/);
+  });
+
+  it('a --json usage error keeps stdout pure JSON and says why on stderr', async () => {
+    expect(await cmdGoal(['ship', '--project', '/tmp/enrolled-repo', '--json'])).toBe(2);
+    const calls = (console.log as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]![0]))).toMatchObject({ blockerCode: 'invalid-arguments' });
+    expect(stderrText()).toMatch(/error: --json requires --direct/);
+  });
+
+  it('a missing objective is an error on stderr, not stdout', async () => {
+    expect(await cmdGoal([])).toBe(2);
+    expect(stdoutText()).toBe('');
+    expect(stderrText()).toMatch(/an objective is required/);
+  });
+
+  it('--help documents --project and --plan-only', async () => {
+    expect(await cmdGoal(['--help'])).toBe(0);
+    const out = stdoutText();
+    expect(out).toMatch(/--project <repo>.*Required/s);
+    expect(out).toMatch(/--plan-only\s+Create and plan/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Source-level safety guard — goal.ts carries NO outward-mutation primitive.
 // ---------------------------------------------------------------------------

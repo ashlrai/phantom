@@ -15,6 +15,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -123,10 +126,44 @@ export function recordClaudeRateLimitEventLine(line: string): void {
     if (!event) return;
     const dir = fabricDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    appendFileSync(claudeRateLimitEventsPath(), JSON.stringify(event) + '\n', 'utf8');
+    const path = claudeRateLimitEventsPath();
+    appendFileSync(path, JSON.stringify(event) + '\n', 'utf8');
+    compactIfLarge(path);
     notifyRecorded(event);
   } catch {
     // CLI output capture must never disrupt engine execution.
+  }
+}
+
+/**
+ * Every Claude run appends a record and resource-monitor reads the file whole
+ * on each snapshot, so an unattended fleet grew it (and every read) forever.
+ * Past the cap, rewrite it keeping only records a reader could still return:
+ * the newest-first scan returns the first unexpired record of a type, so a
+ * record is dead once a newer one of its type resets no earlier. Best effort.
+ */
+export const CLAUDE_RATE_LIMIT_EVENTS_MAX_BYTES = 256 * 1024;
+const COMPACT_KEEP_LINES = 512;
+
+function compactIfLarge(path: string): void {
+  try {
+    if (statSync(path).size <= CLAUDE_RATE_LIMIT_EVENTS_MAX_BYTES) return;
+    const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+    const latestReset = new Map<string, number>();
+    const kept: string[] = [];
+    for (let i = lines.length - 1; i >= 0 && kept.length < COMPACT_KEEP_LINES; i--) {
+      const event = parseClaudeRateLimitEventLine(lines[i] ?? '');
+      if (!event) continue;
+      const newer = latestReset.get(event.rateLimitType);
+      if (newer !== undefined && newer >= event.resetsAt) continue;
+      latestReset.set(event.rateLimitType, event.resetsAt);
+      kept.push(JSON.stringify(event));
+    }
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, kept.reverse().map((l) => l + '\n').join(''), 'utf8');
+    renameSync(tmp, path);
+  } catch {
+    // Compaction is an optimisation; the append already landed.
   }
 }
 

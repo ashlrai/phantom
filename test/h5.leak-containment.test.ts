@@ -95,10 +95,20 @@ function setup(): void {
   repo = fx.makeRepo();
 }
 
+const CAP_KEY = 'ASHLR_MAX_SANDBOXES';
+let prevCap: string | undefined;
+let capSet = false;
+
 afterEach(() => {
   if (prevEnv === undefined) delete process.env[ENV_KEY];
   else process.env[ENV_KEY] = prevEnv;
   prevEnv = undefined;
+  if (capSet) {
+    if (prevCap === undefined) delete process.env[CAP_KEY];
+    else process.env[CAP_KEY] = prevCap;
+    capSet = false;
+    prevCap = undefined;
+  }
   fx?.cleanup();
 });
 
@@ -366,6 +376,11 @@ describe('H5 · leak-containment · (d) repeated create/remove cycles leave zero
       .slice()
       .sort();
 
+    // Pin the cap so CYCLES > cap holds on every host (the default is
+    // machine-derived and can reach 64 on a large machine).
+    prevCap = process.env[CAP_KEY];
+    capSet = true;
+    process.env[CAP_KEY] = '16';
     const CYCLES = 24; // well over MAX_SANDBOXES (16) — proves nothing accretes
     for (let i = 0; i < CYCLES; i++) {
       const sb = createSandbox(repo.dir, { allowAnyRepo: true });

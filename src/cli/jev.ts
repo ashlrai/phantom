@@ -166,6 +166,12 @@ export async function runJevCli(argv: readonly string[], injected?: Partial<JevC
     && typeof injected.loadConfig === 'function' && typeof injected.out === 'function' && typeof injected.err === 'function'
     ? injected as JevCliDeps
     : { ...(await defaultDeps()), ...injected };
+  // `jev <verb> --help` / `-h` prints usage: `jev test --help` classified the
+  // flag as an operator message. An option's value is an operand.
+  if (args.some((a, i) => (a === '--help' || a === '-h') && args[i - 1] !== '--day' && args[i - 1] !== '--kind')) {
+    deps.out(HELP);
+    return 0;
+  }
   try {
     switch (sub) {
       case 'help':

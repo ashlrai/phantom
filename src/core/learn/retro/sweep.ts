@@ -260,6 +260,7 @@ export function collectRetros(parts: {
       add(withPlaybookRef(retroFromCloud({
         taskId: t.id, repo: t.repo, state: t.state, endedAt: t.updatedAt, title: t.title, prompt: t.prompt,
         stateReason: t.stateReason, failure: t.failure, report: t.report, origin: t.origin, lane,
+        pr: t.pr?.number ?? null, outcome: 'outcome' in t ? t.outcome ?? null : null,
       }, parts.nowIso), t.playbookRef));
     }
   }

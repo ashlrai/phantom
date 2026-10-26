@@ -342,6 +342,9 @@ export function createProcessRegistry(root: string, opts: ProcessRegistryOptions
         }
         if (entry.pgid === null || !exists(-entry.pgid)) continue; // nothing left to kill
         if (!rows) {
+          // Unverified is not disproven: keep the live group's entry so the
+          // next start (with a working `ps`) can still prove and reap it.
+          keep.push(entry);
           report.skipped.push({ sessionId: entry.sessionId, turnId: entry.turnId, reason: 'process list unavailable; cannot verify identity' });
           log('warn', `orphan check skipped for session ${entry.sessionId}: cannot list processes to verify pgid ${entry.pgid}`);
           continue;

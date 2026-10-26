@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, FixAction } from './types.js';
 import { runDoctor } from './doctor.js';
-import { defaultConfig, saveConfig } from './config.js';
+import { firstRunConfig, saveConfig } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 
@@ -46,7 +46,7 @@ const SAFE_FIXABLE = new Set([
 // ---------------------------------------------------------------------------
 
 /**
- * Fix: config — create missing ~/.ashlr/config.json from defaultConfig().
+ * Fix: config — create missing ~/.ashlr/config.json from firstRunConfig().
  * ONLY when ABSENT; never overwrites an existing config (even a broken one —
  * that's a manual fix to preserve user data).
  */
@@ -73,7 +73,7 @@ async function fixConfig(_cfg: AshlrConfig, checkDetail: string): Promise<FixAct
   }
 
   try {
-    const defaults = defaultConfig();
+    const defaults = firstRunConfig();
     saveConfig(defaults);
     return {
       ...base,
@@ -121,46 +121,58 @@ async function fixIndex(cfg: AshlrConfig): Promise<FixAction> {
 }
 
 /**
- * Fix: local-bin — create the ashlr → ~/.local/bin/ashlr symlink when missing
- * and the source binary resolves. Never modifies shell profiles.
+ * Fix: local-bin — link the canonical `phm` and the compatible `ashlr` into
+ * ~/.local/bin (the same two names install.sh links) when they are missing and
+ * the source binary resolves. Never modifies shell profiles.
  *
- * If ~/.local/bin/ashlr already exists (broken symlink or stale file), we
- * do NOT overwrite it — that's a manual decision.
+ * A name that already exists (a working link, a stale file or a broken
+ * symlink) is NOT overwritten — that's a manual decision.
  *
  * PATH presence is a separate concern — always manual (shell profile edit).
  */
+const LOCAL_BIN_ALIASES = ['phm', 'ashlr'] as const;
+
 async function fixLocalBin(): Promise<FixAction> {
   const base: Omit<FixAction, 'applied' | 'detail' | 'manual'> = {
     checkId: 'local-bin',
-    label: 'Create ~/.local/bin/ashlr symlink',
+    label: 'Create ~/.local/bin/phm and ashlr symlinks',
   };
 
   const localBinDir = join(homedir(), '.local', 'bin');
-  const symlinkPath = join(localBinDir, 'ashlr');
-
-  // If something already exists at the symlink path (any kind), leave it.
-  if (existsSync(symlinkPath)) {
-    // Symlink exists and resolves — check PATH separately (manual).
-    return {
-      ...base,
-      applied: false,
-      manual: true,
-      detail: `${symlinkPath} already exists. If ashlr is not on PATH, add to your shell profile: export PATH="$HOME/.local/bin:$PATH"`,
-    };
+  const existing: string[] = [];
+  const broken: string[] = [];
+  const missing: string[] = [];
+  for (const name of LOCAL_BIN_ALIASES) {
+    const linkPath = join(localBinDir, name);
+    if (existsSync(linkPath)) {
+      existing.push(linkPath);
+      continue;
+    }
+    try {
+      // lstat succeeded but existsSync returned false → broken symlink exists.
+      lstatSync(linkPath);
+      broken.push(linkPath);
+    } catch {
+      // lstatSync threw → path truly does not exist, safe to create.
+      missing.push(linkPath);
+    }
   }
 
-  // Also check lstat: catches broken symlinks that existsSync misses.
-  try {
-    lstatSync(symlinkPath);
-    // lstat succeeded but existsSync returned false → broken symlink exists.
+  if (missing.length === 0) {
+    if (broken.length > 0) {
+      return {
+        ...base,
+        applied: false,
+        manual: true,
+        detail: `${broken.join(' and ')} ${broken.length === 1 ? 'is a broken symlink' : 'are broken symlinks'}. Remove ${broken.length === 1 ? 'it' : 'them'} manually then re-run: ashlr doctor --fix`,
+      };
+    }
     return {
       ...base,
       applied: false,
       manual: true,
-      detail: `${symlinkPath} is a broken symlink. Remove it manually then re-run: ashlr doctor --fix`,
+      detail: `${existing.join(' and ')} already exist. If phm is not on PATH, add to your shell profile: export PATH="$HOME/.local/bin:$PATH"`,
     };
-  } catch {
-    // lstatSync threw → path truly does not exist, safe to create.
   }
 
   // Resolve the source binary path from this module's location.
@@ -177,7 +189,7 @@ async function fixLocalBin(): Promise<FixAction> {
         ...base,
         applied: false,
         manual: true,
-        detail: `Could not locate bin/ashlr (expected at ${sourceBin}). Run install.sh to create the symlink manually.`,
+        detail: `Could not locate bin/ashlr (expected at ${sourceBin}). Run install.sh to create the symlinks manually.`,
       };
     }
   } catch (err) {
@@ -185,7 +197,7 @@ async function fixLocalBin(): Promise<FixAction> {
       ...base,
       applied: false,
       manual: true,
-      detail: `Could not resolve bin/ashlr path: ${String(err)}. Run install.sh to create the symlink manually.`,
+      detail: `Could not resolve bin/ashlr path: ${String(err)}. Run install.sh to create the symlinks manually.`,
     };
   }
 
@@ -201,26 +213,39 @@ async function fixLocalBin(): Promise<FixAction> {
     };
   }
 
-  // Create the symlink.
-  try {
-    symlinkSync(sourceBin, symlinkPath);
-    // Success detail intentionally does NOT mention shell-profile PATH edits —
-    // creating the symlink is the safe local fix; ensuring ~/.local/bin is on
-    // PATH stays a manual shell-profile concern surfaced by the doctor report.
-    return {
-      ...base,
-      applied: true,
-      manual: false,
-      detail: `Created symlink: ${symlinkPath} -> ${sourceBin}.`,
-    };
-  } catch (err) {
+  // Create each missing link; existing names are left as they are.
+  const created: string[] = [];
+  const failures: string[] = [];
+  for (const linkPath of missing) {
+    try {
+      symlinkSync(sourceBin, linkPath);
+      created.push(linkPath);
+    } catch (err) {
+      failures.push(`${linkPath}: ${String(err)}`);
+    }
+  }
+  if (created.length === 0) {
     return {
       ...base,
       applied: false,
       manual: true,
-      detail: `Could not create symlink at ${symlinkPath}: ${String(err)}. Run install.sh manually.`,
+      detail: `Could not create symlink at ${failures.join('; ')}. Run install.sh manually.`,
     };
   }
+  // Success detail intentionally does NOT mention shell-profile PATH edits —
+  // creating the symlink is the safe local fix; ensuring ~/.local/bin is on
+  // PATH stays a manual shell-profile concern surfaced by the doctor report.
+  const notes = [
+    ...(broken.length > 0 ? [`left broken symlink ${broken.join(', ')} for manual removal`] : []),
+    ...(failures.length > 0 ? [`could not create ${failures.join('; ')}`] : []),
+  ];
+  return {
+    ...base,
+    applied: true,
+    manual: false,
+    detail: `Created symlink: ${created.join(', ')} -> ${sourceBin}.` +
+      (notes.length > 0 ? ` ${notes.join('; ')}.` : ''),
+  };
 }
 
 /**

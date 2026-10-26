@@ -143,7 +143,16 @@ fails-the-process for a merely-empty fresh install:**
 | 2 | `daemon-state`     | Daemon state           | `readDaemonHealth()` → `loadDaemonState()` | pass when stopped/healthy; warn if `running` with a live pid is unexpected; the H5 reconcile already self-heals a dead-pid flag |
 | 3 | `kill-switch`      | Kill switch            | `readKillState()` → `killSwitchOn()`       | pass when OFF; warn when ON (autonomy paused) |
 | 4 | `ashlr-writeable`  | `~/.ashlr` writeable   | `checkAshlrWriteable()` (sentinel write+unlink under `CONFIG_DIR`) | pass when writeable; **fail** when not (nothing can persist) |
-| 5 | `sandbox-health`   | Sandbox health         | `readSandboxHealth()` → `listSandboxes()`  | pass when 0/low; warn on high orphan count with `ashlr sandbox gc` fix hint |
+| 5 | `sandbox-health`   | Sandbox health         | `readSandboxHealth()` → `listSandboxes()`  | pass when 0/low; warn on high orphan count with `ashlr sandbox gc` fix hint; detail names the effective sandbox cap and its reason (`resolveSandboxCap()`) |
+
+A later read-only probe, `git-locks` (label "Git lock files"), reads `readGitLockHealth()` in
+`readiness.ts`, which calls `findStaleGitLocks(repos)` from `src/core/sandbox/stale-git-locks.ts`
+over the enrolled repos plus each sandbox's source repo, once per common git dir. It warns when a
+git lock file (`packed-refs.lock`, a `refs/**/*.lock`, or `HEAD`/`index`/`config`/`shallow.lock`,
+including per-worktree `HEAD.lock`/`index.lock`) is older than `STALE_GIT_LOCK_MIN_AGE_MS`
+(10 min); otherwise it passes. Git records no owner in a lock file, so the probe never removes one.
+Instead, its fix hint asks the owner to check that no git process is running before removing the
+lock.
 
 **READ-ONLY JUSTIFICATION.** Four of five are pure reads. The fifth (`ashlr-writeable`) writes +
 immediately `unlink`s a private sentinel under the ISOLATED `CONFIG_DIR` (no repo, no guard, no
@@ -201,6 +210,13 @@ acceptable if BUILD prefers, both routing to the SAME `rollback()` in `onboard.t
    branch-prefix / path-containment guards verbatim (inward cleanup only).
 3. **Optionally** `setKill(true)` when `--kill` is passed — pause ALL autonomy in the same step
    (H6-audited `kill:on`). Off by default; opt-in.
+
+**Never-enrolled path.** When no identity of `<repo>` was enrolled, nothing was swept and
+`--kill` was not passed, rollback did nothing: it exits 1 with
+`{ ok: false, reason: "not-enrolled", wasEnrolled: false, unenrolled: false }` under `--json`
+(prose: "`<repo>` was not enrolled; nothing to roll back") instead of claiming an unenrollment.
+If it still swept a leftover or set the kill switch, it reports success with
+`wasEnrolled: false, unenrolled: false`.
 
 **ROLLBACK-INWARD-ONLY JUSTIFICATION.** Every step REMOVES capability or local state — it
 un-enrolls (narrows the gate), sweeps only `ashlr/sandbox/*` worktrees + scratch refs (pushes

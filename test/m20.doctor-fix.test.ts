@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, symlinkSync, lstatSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -486,5 +486,46 @@ describe('fixDoctor — local-bin symlink vs PATH (PATH stays manual)', () => {
         expect(localBinAction.detail.toLowerCase()).not.toContain('zshrc');
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// local-bin links the canonical phm as well as the compatible ashlr
+// ---------------------------------------------------------------------------
+
+describe('fixDoctor — local-bin links phm and ashlr (as install.sh does)', () => {
+  const posixOnly = it.skipIf(process.platform === 'win32');
+
+  posixOnly('adds the missing phm link next to an existing ashlr link and leaves ashlr alone', async () => {
+    mockFetch.mockRejectedValue(new Error('offline'));
+    const localBin = join(tmpHome, '.local', 'bin');
+    mkdirSync(localBin, { recursive: true });
+    const target = join(tmpHome, 'prior-ashlr-target');
+    writeFileSync(target, '#!/bin/sh\n', 'utf8');
+    symlinkSync(target, join(localBin, 'ashlr'));
+
+    const fixDoctor = await importFixDoctor();
+    const actions = await fixDoctor(makeConfig());
+    const action = actions.find((a) => a.checkId === 'local-bin');
+
+    expect(action?.applied).toBe(true);
+    expect(lstatSync(join(localBin, 'phm')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(localBin, 'phm'))).toMatch(/bin[\\/]ashlr$/);
+    expect(readlinkSync(join(localBin, 'ashlr'))).toBe(target);
+    expect(action?.detail).toContain(join(localBin, 'phm'));
+    expect(action?.detail.toLowerCase()).not.toContain('export path');
+  });
+
+  posixOnly('creates both phm and ashlr on a fresh home', async () => {
+    mockFetch.mockRejectedValue(new Error('offline'));
+    const localBin = join(tmpHome, '.local', 'bin');
+
+    const fixDoctor = await importFixDoctor();
+    const actions = await fixDoctor(makeConfig());
+    const action = actions.find((a) => a.checkId === 'local-bin');
+
+    expect(action?.applied).toBe(true);
+    expect(lstatSync(join(localBin, 'phm')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(localBin, 'ashlr')).isSymbolicLink()).toBe(true);
   });
 });

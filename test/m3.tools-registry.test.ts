@@ -13,7 +13,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SpawnSyncReturns } from 'node:child_process';
-import { win32 } from 'node:path';
+import { win32, join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 // ---------------------------------------------------------------------------
 // Mock child_process BEFORE importing the module under test.
@@ -383,6 +385,78 @@ describe('getToolsRegistry — ashlr-hub entry', () => {
     const reg = getToolsRegistry();
     const t = reg.tools.find(t => t.id === 'ashlr-hub');
     expect(t?.name.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ashlr-plugin is not this product's `ashlr` alias
+// ---------------------------------------------------------------------------
+
+describe('getToolsRegistry — ashlr-plugin detection', () => {
+  it('the bare ashlr alias alone does not mark ashlr-plugin installed', () => {
+    mockInstalled('ashlr', '3.29.15', '/usr/local/bin/ashlr');
+    const reg = getToolsRegistry();
+    expect(reg.tools.find(t => t.id === 'ashlr-hub')?.installed).toBe(true);
+    const plugin = reg.tools.find(t => t.id === 'ashlr-plugin');
+    expect(plugin?.installed).toBe(false);
+    expect(plugin?.version).toBeNull();
+  });
+
+  it('the ashlr-plugin binary reports the plugin and its own version', () => {
+    mockInstalled('ashlr', '3.29.15', '/usr/local/bin/ashlr');
+    mockInstalled('ashlr-plugin', '1.36.5', '/usr/local/bin/ashlr-plugin');
+    const plugin = getToolsRegistry().tools.find(t => t.id === 'ashlr-plugin');
+    expect(plugin?.installed).toBe(true);
+    expect(plugin?.version).toBe('1.36.5');
+    expect(plugin?.path).toBe('/usr/local/bin/ashlr-plugin');
+  });
+
+  describe('Claude Code marketplace install (no binary on PATH)', () => {
+    const origCacheDir = process.env['CLAUDE_CODE_PLUGIN_CACHE_DIR'];
+    let cache: string;
+
+    function cachePlugin(marketplace: string, name: string, version: string, dir = version): string {
+      const path = join(cache, marketplace, name, dir);
+      mkdirSync(join(path, '.claude-plugin'), { recursive: true });
+      writeFileSync(join(path, '.claude-plugin', 'plugin.json'), JSON.stringify({ name, version }));
+      return path;
+    }
+
+    beforeEach(() => {
+      cache = mkdtempSync(join(tmpdir(), 'phm-plugin-cache-'));
+      process.env['CLAUDE_CODE_PLUGIN_CACHE_DIR'] = cache;
+    });
+
+    afterEach(() => {
+      rmSync(cache, { recursive: true, force: true });
+      if (origCacheDir === undefined) delete process.env['CLAUDE_CODE_PLUGIN_CACHE_DIR'];
+      else process.env['CLAUDE_CODE_PLUGIN_CACHE_DIR'] = origCacheDir;
+    });
+
+    it('reports the newest cached version of the ashlr plugin', () => {
+      cachePlugin('ashlr-marketplace', 'ashlr', '1.36.4');
+      const newest = cachePlugin('ashlr-marketplace', 'ashlr', '1.37.0');
+      const plugin = getToolsRegistry().tools.find(t => t.id === 'ashlr-plugin');
+      expect(plugin?.installed).toBe(true);
+      expect(plugin?.version).toBe('1.37.0');
+      expect(plugin?.path).toBe(newest);
+    });
+
+    it('ignores cache directories whose manifest names another plugin', () => {
+      cachePlugin('ashlr-marketplace', 'ashlr', '9.9.9');
+      writeFileSync(join(cache, 'ashlr-marketplace', 'ashlr', '9.9.9', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'other' }));
+      const plugin = getToolsRegistry().tools.find(t => t.id === 'ashlr-plugin');
+      expect(plugin?.installed).toBe(false);
+      expect(plugin?.path).toBeNull();
+    });
+
+    it('a binary on PATH still wins over the cache', () => {
+      cachePlugin('ashlr-marketplace', 'ashlr', '1.37.0');
+      mockInstalled('ashlr-plugin', '1.36.5', '/usr/local/bin/ashlr-plugin');
+      const plugin = getToolsRegistry().tools.find(t => t.id === 'ashlr-plugin');
+      expect(plugin?.path).toBe('/usr/local/bin/ashlr-plugin');
+      expect(plugin?.version).toBe('1.36.5');
+    });
   });
 });
 

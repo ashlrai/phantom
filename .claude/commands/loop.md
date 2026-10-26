@@ -9,6 +9,8 @@ Preview the ashlr **fleet conductor** without dispatching:
 ashlr loop --dry-run
 ```
 
+(`phm loop --dry-run` is the same command.)
+
 The production compiled conductor trust roots are empty. Non-dry `ashlr loop`
 and `ashlr loop --watch` therefore refuse before dispatch or proposal creation;
 this slash command must not pass through non-dry arguments. The dry-run renders

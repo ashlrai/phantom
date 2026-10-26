@@ -17,3 +17,30 @@ describe('improvement CLI protected merge boundary', () => {
     expect(openProposalPr).not.toHaveBeenCalled();
   });
 });
+
+describe('improvement CLI --json with --open-pr', () => {
+  const proposal = { id: 'p1' } as unknown as ReturnType<typeof gatherProposals>[number];
+
+  it('prints one JSON object listing opened PRs instead of bare PR lines', async () => {
+    vi.mocked(gatherProposals).mockReturnValueOnce([proposal]);
+    vi.mocked(openProposalPr).mockReturnValueOnce('https://example.invalid/pr/1');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdImprove(['propose', '--open-pr', '--repo', '/unused', '--json'])).toBe(0);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ opened: [{ id: 'p1', pr: 'https://example.invalid/pr/1' }] });
+  });
+
+  it('reports a failed PR and a missing --repo as JSON errors with non-zero exits', async () => {
+    vi.mocked(gatherProposals).mockReturnValueOnce([proposal]).mockReturnValueOnce([proposal]);
+    vi.mocked(openProposalPr).mockImplementationOnce(() => { throw new Error('no origin'); });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdImprove(['propose', '--open-pr', '--repo', '/unused', '--json'])).toBe(1);
+    expect(await cmdImprove(['propose', '--open-pr', '--json'])).toBe(2);
+    expect(error).not.toHaveBeenCalled();
+    expect(log.mock.calls.map((call) => JSON.parse(String(call[0])) as unknown)).toEqual([
+      { opened: [], error: 'p1: no origin' },
+      { opened: [], error: '--open-pr needs --repo <checkout>' },
+    ]);
+  });
+});

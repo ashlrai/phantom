@@ -611,7 +611,8 @@ describe('the Resources drawer (3.11 C6)', () => {
     expect(document.querySelector('[data-resources-handle]')).not.toBeNull();
     await user.click(tab);
     const drawer = await screen.findByRole('dialog', { name: 'Resources' });
-    expect(drawer.contains(document.activeElement)).toBe(true);
+    // Focus moves in on the drawer's mount effect, a tick after the dialog appears.
+    await waitFor(() => expect(drawer.contains(document.activeElement)).toBe(true));
     act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Resources' })).not.toBeInTheDocument());
     await waitFor(() => expect(document.querySelector('[data-resources-handle]')).toHaveFocus());

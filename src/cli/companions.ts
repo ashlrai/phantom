@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { inventoryCompanions, type CompanionId, type CompanionInventoryOptions } from '../core/companion-inventory.js';
 
@@ -9,7 +10,17 @@ Only --version and --help are run in disposable state with a scrubbed environmen
 Explicit --*-bin paths take precedence. Multiple distinct candidates are refused.
 No configuration, vault, provider, trust, MCP or service state is inspected.
 Nothing is bundled, installed, registered or enabled. Exit 0: inventory completed;
-missing/incompatible companions are reported individually. Exit 2: bad usage.\n`;
+missing/incompatible companions are reported individually. Exit 2: bad usage,
+including a --root/--bin-dir that is not a directory or a --*-bin that does not exist.\n`;
+
+function pathKind(p: string): 'directory' | 'file' | undefined {
+  try {
+    const st = statSync(p);
+    return st.isDirectory() ? 'directory' : 'file';
+  } catch {
+    return undefined;
+  }
+}
 
 export async function cmdCompanions(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
@@ -29,6 +40,12 @@ export async function cmdCompanions(args: string[]): Promise<number> {
     const value = args[++i];
     if (!value || !isAbsolute(value)) {
       process.stderr.write(`${arg} requires an absolute path.\n`);
+      return 2;
+    }
+    // A mistyped path would otherwise report every companion as missing.
+    const kind = arg === '--root' || arg === '--bin-dir' ? 'directory' : 'file';
+    if (pathKind(value) !== kind) {
+      process.stderr.write(`${arg} ${value}: no such ${kind}.\n`);
       return 2;
     }
     if (arg === '--root') directories.push(join(value, 'bin'));

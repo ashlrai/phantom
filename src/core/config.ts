@@ -25,6 +25,8 @@ import {
 import type { Stats } from 'node:fs';
 import type { AshlrConfig, TidyRule } from './types.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from './fleet/local-store-lock.js';
+import { validateGatewayBaseUrl } from './run/gateway-target.js';
+import { localInferenceConfigProblems, parseLocalInferenceConfig } from './run/local-inference.js';
 
 // ---------------------------------------------------------------------------
 // Path constants (exported, resolved immediately)
@@ -454,6 +456,82 @@ export function defaultConfig(): AshlrConfig {
 }
 
 // ---------------------------------------------------------------------------
+// firstRunConfig() — portable defaults for the config file a fresh install writes
+// ---------------------------------------------------------------------------
+
+/**
+ * Code folders probed (relative to home) when the macOS-style default layout
+ * (~/Desktop/github) is absent. Order is the tie-break: every
+ * existing folder becomes a root, in this order. `~/github` is deliberately
+ * absent: the index treats any root named `github` as a category container
+ * (`github/<category>/<repo>`), which would skip the flat `~/github/<repo>`
+ * layout people usually have there.
+ */
+export const FALLBACK_CODE_DIRS: readonly string[] = [
+  'code',
+  'src',
+  'projects',
+  'dev',
+  'Developer',
+  'repos',
+];
+
+export interface FirstRunProbe {
+  /** Home directory to resolve candidate folders against. Default: homedir(). */
+  home?: string;
+  /** Directory existence check. Default: fs.existsSync. */
+  exists?: (path: string) => boolean;
+}
+
+/**
+ * Roots for a fresh config, chosen from folders that actually exist so a new
+ * Linux/Windows machine does not start with two "missing" roots.
+ *
+ * - `~/Desktop/github` (category container) first, then `~/Desktop`, exactly
+ *   as defaultConfig() lists them, each kept only when it exists. When
+ *   `~/Desktop/github` exists that is the whole answer (unchanged behavior).
+ * - Otherwise every existing FALLBACK_CODE_DIRS entry follows, in order. They come after
+ *   `~/Desktop` on purpose: tidy works on the first non-github root, and that
+ *   must stay the Desktop, never a code folder.
+ * - Nothing found: no roots. `ashlr status` then says "no roots configured"
+ *   and prints the `ashlr config set roots` fix instead of listing phantoms.
+ */
+export function detectDefaultRoots(probe: FirstRunProbe = {}): string[] {
+  const home = probe.home ?? homedir();
+  const exists = probe.exists ?? existsSync;
+  const desktopGithub = join(home, 'Desktop', 'github');
+  const desktop = join(home, 'Desktop');
+  const roots: string[] = [];
+  if (exists(desktopGithub)) roots.push(desktopGithub);
+  if (exists(desktop)) roots.push(desktop);
+  // The classic layout is present: keep exactly the classic roots.
+  if (roots[0] === desktopGithub) return roots;
+  for (const rel of FALLBACK_CODE_DIRS) {
+    const candidate = join(home, rel);
+    if (exists(candidate)) roots.push(candidate);
+  }
+  return roots;
+}
+
+/**
+ * The config a first run writes to ~/.ashlr/config.json: defaultConfig() with
+ * roots probed by detectDefaultRoots(), and no tidy rules when there is no
+ * ~/Desktop (the default rules only move files into ~/Desktop/* folders).
+ * Only used where no config file exists yet; a saved config is never
+ * rewritten, and defaultConfig() itself stays filesystem-independent.
+ */
+export function firstRunConfig(probe: FirstRunProbe = {}): AshlrConfig {
+  const home = probe.home ?? homedir();
+  const exists = probe.exists ?? existsSync;
+  const base = defaultConfig();
+  return {
+    ...base,
+    roots: detectDefaultRoots({ home, exists }),
+    tidyRules: exists(join(home, 'Desktop')) ? base.tidyRules : [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Deep merge helper
 // ---------------------------------------------------------------------------
 
@@ -695,6 +773,8 @@ function readConfigOrDefaults(configPath: string): AshlrConfig {
   }
 
   warnUnknownFoundryKeys(parsed as Record<string, unknown>, configPath);
+  warnInvalidGateways(parsed as Record<string, unknown>, configPath);
+  warnInvalidLocalInference(parsed as Record<string, unknown>, configPath);
 
   // Deep-merge the user's persisted config over the defaults so newly-added
   // fields always have a value even on older config files.
@@ -729,6 +809,18 @@ function readConfigStrict(configPath: string): AshlrConfig {
   }
 
   warnUnknownFoundryKeys(parsed as Record<string, unknown>, configPath);
+  const gatewayProblems = gatewaysConfigProblems((parsed as Record<string, unknown>)['gateways']);
+  if (gatewayProblems.length) {
+    throw new Error(
+      `[ashlr] Refusing autonomous activation: config at ${configPath} has an invalid gateways block: ${gatewayProblems.join('; ')}.`,
+    );
+  }
+  const localInferenceProblems = localInferenceConfigProblems((parsed as Record<string, unknown>)['localInference']);
+  if (localInferenceProblems.length) {
+    throw new Error(
+      `[ashlr] Refusing autonomous activation: config at ${configPath} has an invalid localInference block: ${localInferenceProblems.join('; ')}.`,
+    );
+  }
 
   return sanitizeExecutionIdentityConfigBoundary(
     deepMerge(defaultConfig(), parsed as Partial<AshlrConfig>),
@@ -741,7 +833,7 @@ function readConfigStrict(configPath: string): AshlrConfig {
  */
 export function loadConfigReadOnly(): AshlrConfig {
   const configPath = resolveConfigPath();
-  return existsSync(configPath) ? readConfigOrDefaults(configPath) : defaultConfig();
+  return existsSync(configPath) ? readConfigOrDefaults(configPath) : firstRunConfig();
 }
 
 /**
@@ -758,7 +850,8 @@ export function loadConfigReadOnlyStrict(): AshlrConfig {
 /**
  * Load config from CONFIG_PATH.
  * - If CONFIG_DIR does not exist, creates it.
- * - If CONFIG_PATH does not exist, writes the default config and returns it.
+ * - If CONFIG_PATH does not exist, writes firstRunConfig() (defaults with roots
+ *   probed from folders that exist) and returns it.
  * - Otherwise, reads the file, JSON-parses it, deep-merges over defaultConfig()
  *   (so new keys added in future versions are always present), and returns.
  * - On parse error, logs a warning and falls back to the default config
@@ -775,7 +868,7 @@ export function loadConfig(): AshlrConfig {
 
   // If the config file does not exist, bootstrap it with defaults
   if (!existsSync(configPath)) {
-    const defaults = defaultConfig();
+    const defaults = firstRunConfig();
     saveConfig(defaults);
     return defaults;
   }
@@ -1050,4 +1143,110 @@ export function saveConfig(c: AshlrConfig): void {
       try { closeSync(directoryFd); } catch { /* all durable work is already complete */ }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// gateways: opt-in governed-client gateway targets (type only, not wired)
+// ---------------------------------------------------------------------------
+//
+// Top-level `gateways` block in ~/.ashlr/config.json. Absent by default:
+// defaultConfig() and firstRunConfig() never emit it, so every governed client
+// keeps its first-party endpoint. Validation lives in
+// src/core/run/gateway-target.ts. No client reads this block yet, and no
+// environment variable (ANTHROPIC_BASE_URL, OPENAI_BASE_URL) ever selects a
+// gateway. Custom CA and extra headers are deliberately not part of the shape.
+
+/** Governed clients that may later opt in to a gateway. */
+export const GATEWAY_CLIENT_IDS = ['anthropic', 'openaiAgents'] as const;
+export type GatewayClientId = (typeof GATEWAY_CLIENT_IDS)[number];
+
+/** One client's gateway opt-in. */
+export interface GatewayEntryConfig {
+  /** Must be literally `true` to opt in; anything else keeps first-party. */
+  enabled?: boolean;
+  /** Origin plus optional path prefix, for example `https://gw.example.com/anthropic`. */
+  baseUrl?: string;
+  /**
+   * Exact `host:port` entries, for example `gw.example.com:443`. Required for
+   * any non-loopback target. No wildcards, no suffix matching.
+   */
+  allowedHosts?: readonly string[];
+}
+
+/** Top-level `gateways` block. Absent means first-party for every client. */
+export type GatewaysConfig = Partial<Record<GatewayClientId, GatewayEntryConfig>>;
+
+/** AshlrConfig as read from disk, with the optional `gateways` block. */
+export type AshlrConfigWithGateways = AshlrConfig & { gateways?: GatewaysConfig };
+
+// ---------------------------------------------------------------------------
+// gateways: load-time validation (clear, value-free errors)
+// ---------------------------------------------------------------------------
+
+const GATEWAY_ENTRY_KEYS: ReadonlySet<string> = new Set(['enabled', 'baseUrl', 'allowedHosts']);
+
+/**
+ * Validate a raw top-level `gateways` value as read from disk. Absent (or
+ * null) is a no-op and returns []. Each problem names only the fixed client
+ * id or field and a closed reason code; config values (URLs, hosts, unknown
+ * key names) are never echoed, because a mistaken URL can carry userinfo or a
+ * key. Disabled entries are checked too, so a typo surfaces before opt-in.
+ */
+export function gatewaysConfigProblems(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (typeof value !== 'object' || Array.isArray(value)) return ['gateways: must be an object'];
+  const problems: string[] = [];
+  const block = value as Record<string, unknown>;
+  const unknownClients = Object.keys(block).filter((k) => !(GATEWAY_CLIENT_IDS as readonly string[]).includes(k)).length;
+  if (unknownClients) {
+    problems.push(`gateways: ${unknownClients} unrecognized client key(s); supported: ${GATEWAY_CLIENT_IDS.join(', ')}`);
+  }
+  for (const client of GATEWAY_CLIENT_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(block, client)) continue;
+    const entry = block[client];
+    const label = `gateways.${client}`;
+    if (entry === undefined || entry === null) continue;
+    if (typeof entry !== 'object' || Array.isArray(entry)) { problems.push(`${label}: must be an object`); continue; }
+    const fields = entry as Record<string, unknown>;
+    const unknownKeys = Object.keys(fields).filter((k) => !GATEWAY_ENTRY_KEYS.has(k)).length;
+    if (unknownKeys) {
+      problems.push(`${label}: ${unknownKeys} unrecognized key(s); supported: enabled, baseUrl, allowedHosts (custom CA and extra headers are not supported)`);
+    }
+    if (fields['enabled'] !== undefined && typeof fields['enabled'] !== 'boolean') {
+      problems.push(`${label}.enabled: must be true or false`);
+    }
+    if (fields['enabled'] === true && fields['baseUrl'] === undefined) {
+      problems.push(`${label}.baseUrl: required when enabled`);
+      continue;
+    }
+    if (fields['baseUrl'] !== undefined || fields['allowedHosts'] !== undefined) {
+      const checked = validateGatewayBaseUrl(client, fields['baseUrl'], fields['allowedHosts']);
+      if (!checked.ok) problems.push(`${label}: ${checked.reason}`);
+    }
+  }
+  return problems;
+}
+
+function warnInvalidLocalInference(parsed: Record<string, unknown>, configPath: string): void {
+  const problems = localInferenceConfigProblems(parsed['localInference']);
+  if (problems.length) {
+    console.warn(
+      `[ashlr] Warning: ${configPath} has an invalid localInference block (${problems.join('; ')}). ` +
+        'openai-compat refuses to run until it is fixed.',
+    );
+    return;
+  }
+  const r = parseLocalInferenceConfig(parsed['localInference']);
+  if (r.ok && r.config?.warning) {
+    console.warn(`[ashlr] Warning: ${configPath} localInference uses a non-loopback endpoint (allowRemote: true). Prompts leave this machine.`);
+  }
+}
+
+function warnInvalidGateways(parsed: Record<string, unknown>, configPath: string): void {
+  const problems = gatewaysConfigProblems(parsed['gateways']);
+  if (!problems.length) return;
+  console.warn(
+    `[ashlr] Warning: ${configPath} has an invalid gateways block (${problems.join('; ')}). ` +
+      'An invalid entry is never used as a gateway target.',
+  );
 }
