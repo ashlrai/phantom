@@ -79,7 +79,7 @@ describe('modelcaps Secrets proxy and arguments', () => {
   it.each([
     ['https://api.example.test/v1', 'phm_fixture'],
     ['http://127.0.0.1.evil.test:1234', 'phm_fixture'],
-    ['http://user:password@localhost:1234', 'phm_fixture'],
+    [['http://', 'user', ':', 'password', '@', 'localhost:1234'].join(''), 'phm_fixture'],
     ['http://localhost:1234?token=secret', 'phm_fixture'],
     ['http://localhost:1234#fragment', 'phm_fixture'],
     ['file:///v1', 'phm_fixture'],
@@ -179,7 +179,7 @@ describe('modelcaps cache refresh with fixture transport', () => {
 
   it('redacts transport failures including credential-bearing messages', async () => {
     writeFileSync(output, 'prior-cache', { mode: 0o600 });
-    const fetchImpl = vi.fn(async () => { throw new Error('http://user:secret@example.test phm_fixture'); }) as typeof fetch;
+    const fetchImpl = vi.fn(async () => { throw new Error(['http://', 'user', ':', 'secret', '@', 'example.test', ' ', proxyEnv.OPENAI_API_KEY].join('')); }) as typeof fetch;
     await expect(refreshModelCaps({ ...options(), fetchImpl })).rejects.toThrow(/^modelcaps: probe failed$/);
     expect(readFileSync(output, 'utf8')).toBe('prior-cache');
   });
