@@ -55,6 +55,9 @@ The CLI's `universe help`, `resources pool --help` and `runtime help` describe
 the command surface in the exact binary you are running. A source guide may
 describe features not present in an older registry or desktop release.
 
+The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/CLI-REFERENCE.md)
+records the source checkout's overview and full command table.
+
 ## For coding agents
 
 Start with the selected command registry from the binary you intend to use:
