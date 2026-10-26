@@ -465,7 +465,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Job> };
     const ci = jobs.ci!;
     const shared = jobs['ci-shared-macos']!;
-    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}' });
+    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}', platform: '${{ steps.platform.outputs.platform }}' });
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
@@ -482,7 +482,9 @@ describe('M30 CI workflow', () => {
       // Windows portability matrix only; the nightly schedule runs the rest.
       const draft = ['ci', 'windows-service-authority'].includes(id) ? '' : ' && !github.event.pull_request.draft';
       const push = id === 'ci' ? '' : " && github.event_name != 'push'";
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}`);
+      // CI diet: macOS and Windows service lanes skip on non-platform PRs and run in merge_group.
+      const platform = id === 'ci' ? '' : " && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')";
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${draft}${push}${platform}`);
     }
     // The exhaustive Mac partition runs nightly, on reusable calls and on PRs
     // labelled ci:full-mac; unlabelled PRs and master pushes defer it.

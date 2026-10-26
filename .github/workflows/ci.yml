@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      platform: ${{ steps.platform.outputs.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +52,41 @@ jobs:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+      # CI diet: macOS and Windows lanes run in merge_group, on master push and
+      # nightly. On a pull_request they run only when the PR is labelled
+      # ci:full-os / full-ci / ci:full-mac, touches .github/**, a Tier-1 path
+      # (any CODEOWNERS pattern, read from the base ref), or a platform path.
+      # Merge Gate defers them on PRs only when this output is false.
+      - name: Classify platform lanes
+        id: platform
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const out = (v) => { fs.appendFileSync(process.env.GITHUB_OUTPUT, `platform=${v}\n`); console.log(`platform=${v}`); };
+          if (process.env.EVENT_NAME !== 'pull_request') { out(true); process.exit(0); }
+          const labels = JSON.parse(process.env.LABELS || '[]');
+          if (labels.some((l) => ['ci:full-os', 'full-ci', 'ci:full-mac'].includes(l))) { out(true); process.exit(0); }
+          const git = (...a) => execFileSync('git', a, { encoding: 'utf8' });
+          const files = git('diff', '--name-only', `${process.env.BASE_SHA}...${process.env.HEAD_SHA}`).split('\n').filter(Boolean);
+          let owners = '';
+          try { owners = git('show', `${process.env.BASE_SHA}:.github/CODEOWNERS`); } catch { out(true); process.exit(0); }
+          const toRe = (pat) => {
+            const anchored = pat.startsWith('/');
+            let body = pat.replace(/^\//, '').replace(/[.+^${}()|[\]\\]/g, '\\$&')
+              .replace(/\*\*\//g, '\u0000').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '(?:.*/)?');
+            if (body.endsWith('/')) body += '.*';
+            return new RegExp(`${anchored || pat.includes('/') && !pat.startsWith('**') ? '^' : '(?:^|/)'}${body}(?:/.*)?$`);
+          };
+          const tier1 = owners.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => toRe(l.split(/\s+/)[0]));
+          const platformPath = /(^|\/)\.github\/|macos|darwin|windows|win32|launchd|(^|\/)native\/|\.swift$|\.ps1$|service/i;
+          out(files.some((f) => platformPath.test(f) || tier1.some((re) => re.test(f))));
+          NODE
 
   site:
     name: Site PR (ecosystem)
@@ -455,7 +491,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push' && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -573,7 +609,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push' && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -648,7 +684,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push' && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')
     runs-on: macos-latest
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
@@ -838,7 +874,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && (github.event_name != 'pull_request' || needs.classify.outputs.platform == 'true')
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     env:
@@ -920,6 +956,8 @@ jobs:
             *) base="" ;;
           esac
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then base="${HEAD_SHA}~1"; fi
+          # A PR must not allowlist its own leak: ignore any repo-supplied config.
+          rm -f .gitleaks.toml .gitleaksignore
           echo "scanning ${base}..${HEAD_SHA}"
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
 
@@ -942,6 +980,7 @@ jobs:
           EVENT_DRAFT: ${{ github.event.pull_request.draft }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GATE_NEEDS: ${{ toJSON(needs) }}
+          PLATFORM_DEFERRED: ${{ github.event_name == 'pull_request' && needs.classify.outputs.platform != 'true' }}
           MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
           # A master Mac lane cancelled by its concurrency group counts as
@@ -985,6 +1024,14 @@ jobs:
             : process.env.MAC_DRAFT_DEFERRED === 'true'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation']
             : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
+          // CI diet: on a pull_request that classify marks non-platform, the macOS
+          // and Windows service lanes run in merge_group instead; they may only be
+          // skipped, never failed. merge_group and push never take this branch.
+          if (process.env.PLATFORM_DEFERRED === 'true') {
+            for (const name of ['ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+              if (!deferred.includes(name)) deferred.push(name);
+            }
+          }
           // A later master push's run replaced this Mac lane while it waited and
           // covers this commit's code; the cancelled check still marks this
           // commit's own Mac evidence incomplete.
