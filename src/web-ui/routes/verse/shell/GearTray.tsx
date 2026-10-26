@@ -49,6 +49,7 @@ const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: 'Match system' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+  { value: 'high-contrast', label: 'High contrast' },
 ];
 
 export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
