@@ -27,54 +27,56 @@ fixed regardless of this decision:
   needs its own copies; a node without the sentinels is a node that cannot
   be stopped from here.
 
-The options are not exclusive. Local nodes give steady, already-paid
-capacity; remote pools give burst at marginal cost.
+The Mac is the only local hardware. The existing Grok Bot box is a hosted,
+vendor-operated Linux machine shared by all of Mason's Grok Bot agents.
+It is remote capacity, with a different trust boundary from the Mac.
+Existing subscriptions do not establish spare capacity or permission to spend.
 
 ## At a glance
 
 | Node | Security boundary | Cost | Capacity | Latency | Worst failure mode |
 | --- | --- | --- | --- | --- | --- |
-| Grok Bot box, headless | Own sign-ins on owned hardware; nothing copied | $0 incremental | One machine, a few workers | Local spawn, seconds | Box outage; manual re-sign-in |
+| Grok Bot box, headless | Hosted shared Linux; vendor and co-agent credential exposure | No new spend authorized; existing plan limits apply | One shared machine; headroom unverified | Remote dispatch plus process spawn | Shared-host compromise or outage |
 | Cursor cloud agents | Vendor compute; untrusted PR back | Included pool, then API rates | Elastic burst | Minutes per task | Silent spend past intent |
 | Devin and Codex cloud pools | Vendor compute behind existing lanes and gates | Devin ACUs; Codex plan limits | Elastic within plan caps | Minutes; async PR delivery | Budget holds; PR never opens |
 | Small paid VM | Live auth on rented hardware | About $5 to $15 per month | Small fixed box | Always-on, remote | Credential surface on rented disk |
 
 ## Option A: the Grok Bot box as a headless node
 
-The dedicated box Mason already owns, run headless as a second local node.
+The existing hosted shared Linux box provided with Grok Bot is a possible
+remote worker, subject to qualification before any pilot.
 
-- **Security boundary.** The strongest option after the Mac itself. The box
-  is owned hardware on Mason's network, so the credential perimeter stays on
-  devices he controls. Mason signs in to Codex and Claude on the box himself
-  through each CLI's own login flow; nothing is copied from the Mac, which
-  is both the device-binding rule and the correct hygiene (copied session
-  files are stale, untraceable credential sprawl). The box gets its own
-  `~/.ashlr` home rather than a clone of the Mac's, its own PAUSE and KILL
-  sentinels, and workers run under the same worktree-plus-environment-strip
-  sandbox model on that host. A box holding real subscription sessions needs
-  the Mac's posture: full-disk encryption, locked console, current updates.
-  Physical access to the box is access to a signed-in seat.
-- **Cost.** $0 incremental. Hardware is owned, the Codex and Claude
-  subscriptions are already paid, and each device's usage draws down the
-  same account allowance (a second sign-in adds a seat, not a second
-  allowance). The only new costs are electricity and setup time.
-- **Capacity.** One machine's CPU and RAM, independent of Mason's interactive
-  use of the Mac. Under the memory-admission model (at most four concurrent
-  heavy reservations, 30 percent modeled free RAM after reservations, an
-  8 GiB swap block, PAUSE hold), the box roughly doubles local heavy-step
-  throughput. Its ceiling is fixed: a saturated box queues, it does not
-  burst.
-- **Latency.** Lowest of any option. Workers spawn as local processes, repo
-  access rides existing LAN and git credentials, and an always-on headless
-  box avoids the sleep and throttle stalls an interactive machine has.
-- **Failure modes.** Power or LAN outage stalls its workers and leaves
-  STARTING jobs for reconciliation against the queue (fail-closed, not
-  double-dispatch). Reboots and OS updates need a restart story for the
-  supervisor process. Subscription sign-ins expire; there is no headless
-  refresh, so an expired seat surfaces as `auth` launch failures until Mason
-  signs in again by hand. Sustained builds can thermal-throttle. Disk fill
-  fails admission. One box is still one box: whatever runs only there stops
-  when it stops.
+- **Security boundary.** The vendor operates the host, and all of Mason's
+  Grok Bot agents share that machine. Codex and Claude CLI sessions signed
+  in there are usable by every agent on the box. Device-bound sign-in does
+  not isolate one agent from another or remove vendor access. Mason must
+  approve that exposure before signing in through each CLI's native flow.
+  Never copy auth directories from the Mac. A fresh `~/.ashlr` home,
+  worktrees and environment stripping are required hygiene, not proof of
+  credential isolation from other agents or the host operator. The box
+  needs its own PAUSE and KILL sentinels and a tested remote stop path.
+- **Cost.** No new spending is authorized. Reuse is conditional on verified
+  existing plan coverage, included usage and compute limits, with on-demand
+  billing disabled. Remaining allowance, CPU, RAM and concurrent usage by
+  other agents are unverified; hold admission until checked. Signing in on
+  another host does not establish an additional account allowance. See the
+  [Grok Bot companion's billing boundary](GROK-BOT-COMPANION.md#allowance-resets-and-billing).
+- **Capacity.** One shared machine, contending with every agent on it.
+  There is no measured throughput increase or qualified worker ceiling.
+  Current engineer rules keep heavy builds and full suites on the Mac
+  pools. This decision does not change those rules. Mason must explicitly
+  approve any later routing change after capacity and isolation evidence;
+  a pilot here is limited to approved lightweight work.
+- **Latency.** Dispatch and result delivery cross a remote network boundary.
+  Process spawn on the box is only part of the latency; transport and repo
+  access must be measured. Existing authenticated access is a prerequisite,
+  not an assumption that the box shares the Mac's LAN or credentials.
+- **Failure modes.** Provider or network outage, shared-agent resource
+  contention, host restart, disk exhaustion and cross-agent credential use.
+  Lost transport leaves claims for reconciliation on the Mac; it must not
+  trigger duplicate dispatch. Expired subscription sessions hold launches
+  until Mason restores sign-in. Provider maintenance and host custody are
+  outside the Mac's control.
 
 ## Option B: Cursor cloud agents as burst capacity
 
@@ -150,23 +152,24 @@ here; nothing is provisioned.
   class runs about 9 euros to 15 dollars per month depending on provider.
   Recurring spend is owner-reserved under AGENTS.md, so this option needs
   Mason's explicit approval before anything is created.
-- **Security boundary.** The weakest option. The same device-bound rule
+- **Security boundary.** Like option A, this is provider-hosted hardware.
+  A separately administered VM could reduce co-agent sharing, but that
+  isolation would need verification. The same device-bound rule
   applies, so Mason would sign in natively on the VM, which puts live Codex
   and Claude session material on hardware inside a provider's physical and
   hypervisor control. Add SSH attack surface, disk persistence on rented
   storage, an ongoing patching burden, and a real gap in today's auth model:
   Devin's key lives in the macOS Keychain only, and `phantom exec` needs
-  Phantom Secrets installed and initialized on the VM. More boundary to
-  defend for less capacity than the box.
+  Phantom Secrets installed and initialized on the VM. Neither hosted
+  option inherits the Mac's physical custody; relative capacity is unverified.
 - **Capacity.** Small and fixed. 4 GB is tight for typecheck-and-test-class
   heavy steps, so the memory-admission model would queue most parallel work;
   resizing upward costs more. Roughly one modest worker's worth of steady
   capacity.
-- **Latency.** Always-on like the box, but remote: every dispatch crosses
-  the network. Either the queue stays on the Mac (a partition pauses
-  admission, which fails closed correctly but stops the node doing anything)
-  or the store migrates to the VM, which is a real migration of the custody
-  point this document keeps on the Mac.
+- **Latency.** Remote like the Grok Bot box: every dispatch crosses the
+  network. The queue stays on the Mac; a partition pauses admission and
+  requires reconciliation before retry. Moving queue custody is outside
+  this decision.
 - **Failure modes.** Provider outage or billing suspension; SSH
   misconfiguration or lockout; unpatched vulnerabilities; OOM on heavy
   steps; snapshot and image drift; credentials persisting on rented disk;
@@ -174,38 +177,51 @@ here; nothing is provisioned.
 
 ## Recommendation
 
-Run the Grok Bot box as the headless node (option A). It adds a second
-machine of real capacity for $0 incremental spend, keeps every credential on
-hardware Mason controls under correct device-bound sign-ins, and needs no
-new vendor relationship. Keep Devin and Codex cloud sessions as the remote
-pools for elastic work (option C, already built and gated), treat Cursor
-cloud agents as manual burst for now (option B, no adapter exists), and
-defer the paid VM (option D): it buys availability rather than capacity, at
-a recurring bill and the largest credential surface, and is worth revisiting
-only if an off-site always-on node becomes a requirement.
+Keep the Mac as the local execution, heavy-build and full-suite host, with
+sole queue and publish custody. Prefer qualifying the existing Grok Bot box
+(option A) for approved lightweight remote work before buying another VM.
+This is conditional reuse, not permission to sign in or launch workers:
+the hosted shared credential boundary and plan coverage must first be
+accepted by Mason. Option A avoids a new VM bill if existing coverage is
+verified; it has no owned-hardware security advantage over option D, and
+sharing it with all Bot agents adds exposure. A separate VM might offer
+better isolation, but its extra bill is not approved. Defer option D.
+
+Keep Devin and Codex cloud sessions within their existing gated budgets
+(option C), and Cursor manual-only (option B, no adapter exists). No new
+spending, on-demand billing, tokens or paid resources are authorized by
+this decision. If qualification fails, keep execution on the Mac and within
+already authorized remote lanes; do not purchase replacement capacity.
 
 ## What Mason must do
 
-1. Sign in to Codex and Claude on the Grok Bot box himself, through each
-   CLI's own login flow. Never copy `~/.codex`, `~/.claude` or any other
-   auth directory from the Mac or anywhere else.
+1. Before any box pilot, verify existing plan coverage and limits with
+   on-demand billing disabled, and decide whether every agent on the hosted
+   shared Linux box may access the proposed CLI sessions. Only after Mason
+   approves that exposure may he sign in to Codex and Claude there himself,
+   through each CLI's own login flow. Never copy `~/.codex`, `~/.claude` or
+   any other auth directory from the Mac or anywhere else.
 2. Install Node 22.15 or later and Phantom on the box (published package or
    source checkout) and let it create a fresh `~/.ashlr` home; do not clone
    the Mac's `~/.ashlr`.
 3. Sign in `gh` on the box under his own GitHub account so workers can fetch
    and push their branches.
-4. Choose the transport between the Mac's queue and the box. The
-   `phm-drive/v1` bridge is a local subprocess contract, so the box needs
-   either its own bridge executable and queue pair or an authenticated
-   channel (his existing SSH between his own machines, no new token types)
-   to the Mac's bridge. Do not share `~/.ashlr-runs/queue/` over a network
-   filesystem.
+4. Qualify an authenticated channel to the Mac's bridge using existing
+   authorized access, such as SSH if already available; create no new
+   tokens. The `phm-drive/v1` bridge is a local subprocess contract, not a
+   remote transport. The Mac remains the sole `queue.v1` claim and custody
+   authority; the box must not create an independent production queue.
+   Do not share `~/.ashlr-runs/queue/` over a network filesystem. Without a
+   qualified channel, hold the box pilot.
 5. Give the box its own memory-admission state directory and its own PAUSE
-   and KILL sentinels; confirm a file placed there actually pauses launches
-   before trusting it.
+   and KILL sentinels; confirm PAUSE prevents launches and KILL stops an
+   active synthetic worker through the remote control path before trusting it.
 6. Rehearse before cutover: `phm drive --once --dry-run` on the box against
-   synthetic queue state, then a one-pool pilot, with dispatchd left running
-   as the fallback on the Mac.
+   synthetic queue state, then an approved lightweight one-pool pilot.
+   Keep heavy builds and full suites on the Mac pools. The pilot and
+   dispatchd must share the Mac's atomic claim authority; otherwise stop
+   or isolate dispatchd from pilot jobs before admission. Keep dispatchd
+   available for rollback after pilot claims are reconciled.
 7. Keep Devin's ACU budget and any future Codex cloud pool ceilings where
    they are today; set a Cursor spend limit before treating cloud agents as
    burst, and do not build the paid VM without a separate decision.
