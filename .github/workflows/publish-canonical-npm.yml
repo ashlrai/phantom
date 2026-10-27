@@ -46,7 +46,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  full-suite-evidence:
+    # Release gate: the full suite (macOS and Windows included) must have
+    # passed in a scheduled or manual workflow_dispatch run of CI on the exact
+    # candidate sha. The matching run is selected, not just the newest one.
+    name: Full suite green on release sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    steps:
+      - name: Require a successful schedule or workflow_dispatch CI run on this sha
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.candidate_sha }}
+          CI_WORKFLOW: ci.yml
+        run: |
+          set -euo pipefail
+          # Single-line, lowercase 40-hex only. Bash =~ anchors to the whole
+          # value, so a value with a newline never matches.
+          if [[ "$SHA" == *$'\n'* || "$SHA" == *$'\r'* ]] || ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::candidate_sha must be a single full 40-hex commit"; exit 1
+          fi
+          run="$(gh api "repos/${REPO}/actions/workflows/${CI_WORKFLOW}/runs?head_sha=${SHA}&status=success&per_page=100" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"${SHA}\" and .conclusion == \"success\" and (.event == \"schedule\" or .event == \"workflow_dispatch\"))] | max_by(.id) | if . == null then \"\" else \"\\(.id) \\(.event)\" end")"
+          if [ -z "$run" ]; then
+            echo "::error::No successful schedule or workflow_dispatch run of ${CI_WORKFLOW} on ${SHA}. Run 'gh workflow run ${CI_WORKFLOW} --ref <this ref>', wait for green, then release."
+            exit 1
+          fi
+          echo "full suite green on ${SHA} (run ${run})"
+
   admit:
+    needs: [full-suite-evidence]
     if: github.ref == 'refs/heads/master' && github.repository == 'ashlrai/phantom'
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -38,23 +38,6 @@ const events = workflow.on as Record<string, Record<string, unknown> | null>;
 const audit = (workflow.jobs as Record<string, Record<string, unknown>>).audit;
 const steps = audit.steps as Array<Record<string, unknown>>;
 
-const authorityPaths = [
-  'package.json',
-  'package-lock.json',
-  'npm-shrinkwrap.json',
-  '.npmrc',
-  'src/raycast/package.json',
-  'src/raycast/package-lock.json',
-  'src/raycast/npm-shrinkwrap.json',
-  'src/raycast/.npmrc',
-  'scripts/npm-audit-with-osv-fallback.sh',
-  'desktop/src-tauri/Cargo.toml',
-  'desktop/src-tauri/Cargo.lock',
-  'docs/DEPENDENCY-SECURITY.md',
-  '.github/dependabot.yml',
-  '.github/workflows/dependency-audit.yml',
-];
-
 const npmInstallCommand = `npm install --global "npm@\${NPM_VERSION}" --ignore-scripts --no-audit --no-fund
 test "$(npm --version)" = "\${NPM_VERSION}"
 `;
@@ -93,16 +76,11 @@ describe('M440 dependency audit CI', () => {
     expect(workflow).toEqual({
       name: 'Dependency Audit',
       on: {
-        push: { branches: ['master'], paths: authorityPaths },
-        pull_request: { branches: ['**'] },
+        workflow_call: null,
         schedule: [{ cron: '17 9 * * 1' }],
         workflow_dispatch: null,
       },
       permissions: { contents: 'read' },
-      concurrency: {
-        group: 'dependency-audit-${{ github.event.pull_request.number || github.ref }}',
-        'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
-      },
       jobs: {
         audit: {
           name: 'Dependency audit (root + Raycast)',
@@ -184,21 +162,22 @@ describe('M440 dependency audit CI', () => {
     });
   });
 
-  it('runs on every pull request exact head, dependency pushes, weekly drift, and manual dispatch', () => {
-    expect(events.push).toEqual({ branches: ['master'], paths: authorityPaths });
-    expect(events.pull_request).toEqual({ branches: ['**'] });
-    expect(events.pull_request).not.toHaveProperty('paths');
-    expect(events.pull_request).not.toHaveProperty('paths-ignore');
+  it('runs inside CI on every pull request and merge_group head, weekly drift, and manual dispatch', () => {
+    // RQ-FAST-GATE: ci.yml calls this workflow unconditionally and Merge Gate
+    // requires it, so every PR and queue commit is audited inside the one
+    // required check. Push to master no longer runs it (the queue did).
+    expect(Object.keys(events).sort()).toEqual(['schedule', 'workflow_call', 'workflow_dispatch']);
+    expect(events.workflow_call).toBeNull();
     expect(events.schedule).toEqual([{ cron: '17 9 * * 1' }]);
     expect(events.workflow_dispatch).toBeNull();
+    const ci = parse(readFileSync(resolve(repoRoot, '.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Record<string, unknown>> };
+    expect(ci.jobs['dependency-audit']).toEqual({ name: 'Dependency audit', uses: './.github/workflows/dependency-audit.yml' });
+    expect(ci.jobs['merge-gate']!.needs).toContain('dependency-audit');
   });
 
-  it('uses read-only authority, bounded concurrency, and a hard timeout', () => {
+  it('uses read-only authority, the caller concurrency, and a hard timeout', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
-    expect(workflow.concurrency).toEqual({
-      group: 'dependency-audit-${{ github.event.pull_request.number || github.ref }}',
-      'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
-    });
+    expect(workflow.concurrency).toBeUndefined();
     expect(audit['runs-on']).toBe('ubuntu-latest');
     expect(audit['timeout-minutes']).toBe(20);
     expect(audit.env).toEqual({

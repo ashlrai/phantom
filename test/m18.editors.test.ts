@@ -204,7 +204,7 @@ describe('hosted portability coverage', () => {
       fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
     ) as {
       jobs?: {
-        ci?: {
+        [id: string]: {
           strategy?: {
             matrix?: {
               include?: Array<{ os?: string; test_args?: string }>;
@@ -213,7 +213,8 @@ describe('hosted portability coverage', () => {
         };
       };
     };
-    const jobs = workflow.jobs?.ci?.strategy?.matrix?.include ?? [];
+    // The Windows rows live in ci-portability (Linux-only PR CI split).
+    const jobs = ['ci', 'ci-portability'].flatMap((id) => workflow.jobs?.[id]?.strategy?.matrix?.include ?? []);
     expect(jobs.some(job =>
       job.os === 'windows-latest' &&
       job.test_args?.split(/\s+/).includes('test/m18.editors.test.ts'),

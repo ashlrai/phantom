@@ -295,6 +295,11 @@ describe('fresh public facts are data, not saved release authority', () => {
         ] });
       jobs.push({ id: 903, name: 'Docs PR (docs-only)', run_id: 20, head_sha: SOURCE,
         status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
+      // RQ-FAST-GATE: the fast full-lane job and the in-CI dependency audit.
+      for (const [id, name] of [[905, 'Build and Tier-1 security (Linux)'], [906, 'Dependency audit / Dependency audit (root + Raycast)']] as const) {
+        jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'],
+          steps: [{ name: 'Checkout', status: 'completed', conclusion: 'success' }] });
+      }
       jobs.push({ id: 902, name: 'Merge Gate', run_id: 20, head_sha: SOURCE,
         status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
@@ -314,10 +319,10 @@ describe('fresh public facts are data, not saved release authority', () => {
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
   it.each([
-    ['gate omits ci-portability', (ci: string) => ci.replace('needs: [classify, secret-scan, site, docs, ci, ci-portability, ', 'needs: [classify, secret-scan, site, docs, ci, ')],
-    ['gate omits secret-scan', (ci: string) => ci.replace('needs: [classify, secret-scan, site, ', 'needs: [classify, site, ')],
+    ['gate omits ci-portability', (ci: string) => ci.replace('docs, fast, ci, ci-portability, ', 'docs, fast, ci, ')],
+    ['gate omits secret-scan', (ci: string) => ci.replace('needs: [classify, secret-scan, dependency-audit, ', 'needs: [classify, dependency-audit, ')],
     ['secret scan is conditional', (ci: string) => ci.replace('    name: Secret scan (diff)\n', "    name: Secret scan (diff)\n    if: github.event_name != 'pull_request'\n")],
-    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
+    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
     ['ci-portability needs nothing', (ci: string) => ci.replace(/( {2}ci-portability:\n(?: {4}#[^\n]*\n)*) {4}needs: classify\n/, '$1')],
   ])('withholds release facts when the source %s', async (_name, mutate) => {
     const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');

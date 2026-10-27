@@ -1,35 +1,42 @@
 name: CI
 
+# PR and merge_group run one fast required check (Merge Gate): classify,
+# the site or docs lane, or for the full lane a Linux build with the
+# authority ownership check and the Tier-1 security tests, plus the diff
+# secret scan and the dependency audit on every event. The full matrix
+# (Ubuntu authority shards, lint, web typecheck, Windows portability, macOS
+# lanes, Mac exhaustive, Windows service authority) runs at 6 AM and 6 PM ET
+# on master, on workflow_dispatch and when another workflow calls this one;
+# a red scheduled run opens a P0 FIX-MAIN issue (nightly-fix-main.yml).
+# Push to master no longer runs CI: the merge queue ran Merge Gate on the
+# merged tree.
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: ["**"]
     # PRs run no macOS or Windows lane, so a draft PR and a ready PR run the
     # same jobs and ready_for_review no longer starts a second run.
     types: [opened, synchronize, reopened]
-  # A merge queue reruns the full lane on the queued merge commit, macOS and
-  # Windows included. This is where platform coverage gates main.
+  # The merge queue runs the same fast gate on the queued merge commit.
   merge_group:
+  # A workflow_call run is a full run.
   workflow_call:
-  # Push to master skips the macOS and Windows service lanes; this nightly run
-  # on master runs the full matrix, Mac exhaustive included.
+  # Full matrix at 6 AM and 6 PM ET (EDT, UTC-4), Mac exhaustive included.
   schedule:
-    - cron: "41 7 * * *"
-  # Manual full run, macOS and Windows included, on any branch. A red nightly
-  # opens a P0 FIX-MAIN issue (nightly-fix-main.yml).
+    - cron: "1 10 * * *"
+    - cron: "1 22 * * *"
+  # Manual full run, macOS and Windows included, on any branch. Publication
+  # needs a green one on the exact candidate sha.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # Candidate checkouts must match the original GitHub event's tree before gates.
-# Superseded PR revisions can stop safely. Each master push gets its own group
-# keyed by commit, so a run waiting on a Mac runner never cancels or blocks the
-# next push's run: one shared ref group holds a single pending run and cancels
-# the one it replaces, which left master with no completed post-merge Mac run.
+# Superseded PR revisions can stop safely. Schedule, dispatch and workflow_call
+# runs each get their own group keyed by run id, so a newer run never cancels
+# a pending evidence dispatch or a scheduled run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
+  group: ci-${{ github.event.pull_request.number || (github.event_name == 'merge_group' && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -130,7 +137,8 @@ jobs:
 
   ci:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    # Full runs only (schedule, dispatch, workflow_call).
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
     # Ubuntu is the exhaustive authority, partitioned by Vitest's deterministic
     # file sharding so the full suite has margin below the hermetic hard cap.
@@ -386,13 +394,77 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  fast:
+    # Full-lane PR and merge_group check: Linux build (core tsc and bundle),
+    # generated authority ownership (CODEOWNERS, G-path) and the Tier-1
+    # security tests. Runs on every event for the full lane.
+    name: Build and Tier-1 security (Linux)
+    needs: classify
+    if: needs.classify.outputs.lane == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ASHLR_VITEST_TEST_TIMEOUT_MS: "5000"
+      ASHLR_RUN_NATIVE_LAUNCHD_TEST: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: "npm"
+      - name: Drop group/other write from the hosted Node runtime
+        shell: bash
+        run: |
+          node_bin="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          chmod go-w -- "$node_bin"
+      - name: Use a private temp root on Linux
+        shell: bash
+        run: |
+          private_tmp="/ashlr-private-tmp"
+          sudo install -d -m 0700 -o "$(id -un)" -g "$(id -gn)" -- "$private_tmp"
+          echo "TMPDIR=$private_tmp" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        run: npm ci
+      - name: Check generated authority ownership (hermetic)
+        run: >-
+          npm run test:ci -- --maxWorkers=1 --fileParallelism=false
+          test/authority-codeowners-310b.test.ts
+      - name: Build
+        run: npm run build
+      - name: Tier-1 security tests (hermetic)
+        run: >-
+          npm run test:ci --
+          test/authority-tier1-closure-310b.test.ts test/protected-paths-310b.test.ts
+          test/h4.local-first-secret.test.ts test/h5.leak-containment.test.ts
+          test/h6.no-secret-in-audit.test.ts test/h6.scrub-parity.test.ts
+          test/m107.security-hardening.test.ts test/m1214.secret-scan-ci.test.ts
+          test/m3.redact-args.test.ts test/m349.secret-safety-invariants.test.ts
+          test/redact-known.test.ts test/scrub-310.test.ts test/m65.secrets.test.ts
+          test/m481.ci-action-pins.test.ts test/m479.release-workflow-policy.test.ts
+
+  dependency-audit:
+    # Supply-chain audit (npm + OSV + cargo-audit), pre-merge on every PR and
+    # queue run, inside Merge Gate. Skipped or failed fails the gate.
+    name: Dependency audit
+    uses: ./.github/workflows/dependency-audit.yml
+
   ci-portability:
     # Windows portability partitions. Off pull_request to keep PR CI on Linux
     # runners only (Actions concurrency is the merge bottleneck). They run in
     # merge_group, on master push, nightly and on workflow_dispatch, and Merge
     # Gate fails there unless every partition succeeds.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -476,7 +548,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -500,12 +572,10 @@ jobs:
               test/m466.host-merge-revocation-protocol.test.ts
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Each run gets its own Mac lane group keyed by run id, so a scheduled or
+    # dispatched full run is never cancelled by a newer one.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-shared', github.run_id) }}
+      group: ${{ format('ci-mac-{0}-shared', github.run_id) }}
       cancel-in-progress: false
     env: *node_ci_environment
     steps: *node_ci_steps
@@ -520,16 +590,14 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Each run gets its own Mac lane group keyed by run id, so a scheduled or
+    # dispatched full run is never cancelled by a newer one.
     concurrency:
-      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard) }}
+      group: ${{ format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard) }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -594,16 +662,14 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Each run gets its own Mac lane group keyed by run id, so a scheduled or
+    # dispatched full run is never cancelled by a newer one.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-isolated', github.run_id) }}
+      group: ${{ format('ci-mac-{0}-isolated', github.run_id) }}
       cancel-in-progress: false
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
@@ -669,14 +735,12 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: macos-latest
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Each run gets its own Mac lane group keyed by run id, so a scheduled or
+    # dispatched full run is never cancelled by a newer one.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-broker', github.run_id) }}
+      group: ${{ format('ci-mac-{0}-broker', github.run_id) }}
       cancel-in-progress: false
     steps:
       - name: Checkout
@@ -859,7 +923,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     env:
@@ -947,11 +1011,14 @@ jobs:
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
 
   merge-gate:
-    # One stable required check across both PR lanes. The classifier and every
-    # matrix job must settle before this job can report a result. A skipped or
-    # failed selected lane is a failure, including when classification failed.
+    # One stable required check. PR and merge_group: classify, the secret
+    # scan, the dependency audit and the selected lane (site, docs, or the
+    # fast full-lane job) must succeed and every full-matrix job must be
+    # skipped. Full runs (schedule, dispatch, workflow_call): every
+    # full-lane job must succeed too. A skipped, cancelled or failed security
+    # job fails the gate.
     name: Merge Gate
-    needs: [classify, secret-scan, site, docs, ci, ci-portability, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    needs: [classify, secret-scan, dependency-audit, site, docs, fast, ci, ci-portability, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -959,61 +1026,33 @@ jobs:
       - name: Require selected CI lane
         env:
           EVENT_NAME: ${{ github.event_name }}
-          COMMIT_SHA: ${{ github.sha }}
-          REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
           GATE_NEEDS: ${{ toJSON(needs) }}
-          MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
-          # A master Mac lane cancelled by its concurrency group counts as
-          # superseded only when master has really moved past this commit.
-          MAC_SUPERSEDED=false
-          if [ "$EVENT_NAME" = push ]; then
-            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-            head=$(git -c http.extraheader="AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPOSITORY" refs/heads/master | cut -f1) || head=''
-            if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi
-          fi
-          export MAC_SUPERSEDED
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
-          const full = ['ci', 'ci-portability', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const expected = ['classify', 'secret-scan', 'site', 'docs', ...full];
+          const matrix = ['ci', 'ci-portability', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+          const expected = ['classify', 'secret-scan', 'dependency-audit', 'site', 'docs', 'fast', ...matrix];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
           }
           const outcome = (name) => jobs[name]?.result;
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
-          // Security floor: a skipped, cancelled or failed secret scan fails the gate.
-          if (outcome('secret-scan') !== 'success') throw new Error(`secret-scan concluded ${outcome('secret-scan') ?? 'missing'}`);
+          // Security floor: a skipped, cancelled or failed secret scan or
+          // dependency audit fails the gate.
+          for (const name of ['secret-scan', 'dependency-audit']) {
+            if (outcome(name) !== 'success') throw new Error(`${name} concluded ${outcome(name) ?? 'missing'}`);
+          }
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'full' ? full : [lane];
-          const excluded = ['site', 'docs', ...full].filter((name) => !selected.includes(name));
-          // mac-general is deferred to post-merge on unlabelled PRs (see job).
-          // A push to master defers the macOS and Windows service lanes to the
-          // nightly scheduled run; they must be skipped, never failed.
-          // A pull request runs Linux only: every macOS and Windows lane is
-          // deferred to merge_group, where it must succeed. mac-general still runs
-          // (and must pass) on a PR labelled ci:full-mac.
-          const platform = ['ci-portability', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const deferred = process.env.EVENT_NAME === 'push'
-            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']
-            : process.env.EVENT_NAME === 'pull_request'
-            ? [...platform, ...(process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [])]
-            : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
-          // A later master push's run replaced this Mac lane while it waited and
-          // covers this commit's code; the cancelled check still marks this
-          // commit's own Mac evidence incomplete.
-          const superseded = process.env.MAC_SUPERSEDED === 'true'
-            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'] : [];
+          const fullRun = process.env.EVENT_NAME !== 'pull_request' && process.env.EVENT_NAME !== 'merge_group';
+          const selected = lane === 'full' ? ['fast', ...(fullRun ? matrix : [])] : [lane];
+          const excluded = ['site', 'docs', 'fast', ...matrix].filter((name) => !selected.includes(name));
           for (const name of selected) {
-            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred ${process.env.EVENT_NAME === 'push' ? 'to the nightly run' : process.env.EVENT_NAME === 'pull_request' ? 'to merge_group' : 'to post-merge'}`); continue; }
-            if (superseded.includes(name) && outcome(name) === 'cancelled') { console.log(`${name} superseded by a later master push`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           for (const name of excluded) {
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
-          console.log(`Merge Gate passed: ${lane} CI`);
+          console.log(`Merge Gate passed: ${lane} CI (${fullRun ? 'full run' : 'fast gate'})`);
           NODE

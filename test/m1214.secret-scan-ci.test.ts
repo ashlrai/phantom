@@ -1,5 +1,5 @@
 // Security floor (RQ-PHANTOM-SECRET-SCAN-CI): the diff secret scan runs on
-// every PR, merge_group and master push, on Linux only, from a pinned and
+// every PR, merge_group, scheduled and dispatch run, on Linux only, from a pinned and
 // checksum-verified Gitleaks, ignores repo-supplied config and gates merges.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -20,10 +20,11 @@ const scan = steps.find((step) => step.name === 'Scan the commits this event add
 const gitleaks = process.env.PHANTOM_GITLEAKS_BIN;
 
 describe('secret-scan CI job', () => {
-  it('runs unconditionally on Ubuntu for PR, merge_group and master push', () => {
-    expect(Object.keys(workflow.on)).toEqual(expect.arrayContaining(['pull_request', 'merge_group', 'push']));
-    expect((workflow.on['push'] as { branches: string[] }).branches).toEqual(['master']);
-    for (const event of ['push', 'pull_request', 'merge_group']) {
+  it('runs unconditionally on Ubuntu for PR, merge_group, scheduled and dispatch runs', () => {
+    // RQ-FAST-GATE: push to master no longer runs CI; the merge queue does.
+    expect(Object.keys(workflow.on)).toEqual(expect.arrayContaining(['pull_request', 'merge_group', 'schedule', 'workflow_dispatch', 'workflow_call']));
+    expect(workflow.on['push']).toBeUndefined();
+    for (const event of ['pull_request', 'merge_group']) {
       const trigger = (workflow.on[event] ?? {}) as Record<string, unknown>;
       expect(trigger['paths']).toBeUndefined(); expect(trigger['paths-ignore']).toBeUndefined();
     }
@@ -52,11 +53,10 @@ describe('secret-scan CI job', () => {
     const gate = workflow.jobs['merge-gate']!;
     expect(gate.needs).toContain('secret-scan');
     const source = String((gate.steps as { run: string }[])[0]!.run);
-    expect(source).toContain("if (outcome('secret-scan') !== 'success')");
-    const deferred = source.match(/const deferred[\s\S]*?: \[\];/)?.[0];
-    expect(deferred).toBeTruthy();
-    expect(deferred).not.toContain('secret-scan');
-    expect(source.match(/const superseded[\s\S]*?: \[\];/)?.[0]).not.toContain('secret-scan');
+    expect(source).toContain("for (const name of ['secret-scan', 'dependency-audit']) {");
+    expect(source).toContain("if (outcome(name) !== 'success') throw new Error(`${name} concluded");
+    // Nothing defers or supersedes a security job.
+    expect(source).not.toMatch(/deferred|superseded/);
   });
 
   it.runIf(gitleaks && existsSync(gitleaks))('fails on a committed fake secret even when the repo allowlists it', () => {
