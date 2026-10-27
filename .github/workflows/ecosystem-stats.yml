@@ -1,0 +1,59 @@
+name: ecosystem-stats
+
+# Daily aggregate of GitHub stars + commits across the Phantom ecosystem repos
+# (ecosystem/repos.json). Publishes JSON + shields.io endpoint badges to the
+# `ecosystem-stats` data branch (read by README badges and phm.dev). Uses only
+# the default GITHUB_TOKEN; never touches the default branch.
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ecosystem-stats
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compute stats
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ecosystem-stats.mjs "$RUNNER_TEMP/stats"
+      - name: Publish to ecosystem-stats branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$remote" ecosystem-stats >/dev/null; then
+            git clone --quiet --depth 1 --branch ecosystem-stats "$remote" data
+          else
+            git init --quiet data && git -C data checkout --quiet --orphan ecosystem-stats
+            git -C data remote add origin "$remote"
+          fi
+          cp stats/*.json data/
+          cat > data/README.md <<'MD'
+          # Phantom ecosystem stats (generated)
+          Written daily by `.github/workflows/ecosystem-stats.yml` on the default branch. Do not edit.
+          MD
+          cd data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit --quiet -m "stats: $(jq -c .totals ecosystem.json)"
+          git push --quiet origin HEAD:ecosystem-stats
