@@ -45,6 +45,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 export const REAL_IO_TEST_FILES = [
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
+  'test/m1214.secret-scan-ci.test.ts', // real temp git repo plus bash subprocess runs of the CI secret-scan step.
 
   'test/proactive-profiles.test.ts', // actual private metadata storage, stale-write races and symlink refusal
   'test/proactive-coordination.test.ts', // immutable ledger/watermark fsync, prefix-loss detection and ownership recovery
