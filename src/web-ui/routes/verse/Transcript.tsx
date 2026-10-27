@@ -482,9 +482,9 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
       // back here via onTranscriptStep / onTranscriptFind); an event it
       // already took must not step twice.
       if (event.defaultPrevented) return;
-      const target = event.target as HTMLElement | null;
+      const target = event.target;
       const typing = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement
-        || target?.isContentEditable === true;
+        || (target instanceof HTMLElement && target.isContentEditable === true);
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f') {
         if (turns.length < NAV_MIN_TURNS) return;
         event.preventDefault();
@@ -502,8 +502,8 @@ export function Transcript({ transcript, loaded, loadError, onRetry, emptyHint, 
 
   /** Plain ↑/↓ once a turn container itself has focus. */
   function onListKeyDown(event: KeyboardEvent<HTMLOListElement>) {
-    const target = event.target as HTMLElement | null;
-    if (!target?.hasAttribute('data-turn-key')) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.hasAttribute('data-turn-key')) return;
     if (event.key === 'ArrowDown') { event.preventDefault(); stepTurn(1); }
     else if (event.key === 'ArrowUp') { event.preventDefault(); stepTurn(-1); }
     else if (event.key === 'Home') { event.preventDefault(); jumpToTurn(turns[0]!.key); }
