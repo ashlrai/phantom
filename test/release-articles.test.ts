@@ -309,7 +309,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each([
     ['gate omits ci-portability', (ci: string) => ci.replace('needs: [classify, site, docs, ci, ci-portability, ', 'needs: [classify, site, docs, ci, ')],
-    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
+    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
     ['ci-portability needs nothing', (ci: string) => ci.replace(/( {2}ci-portability:\n(?: {4}#[^\n]*\n)*) {4}needs: classify\n/, '$1')],
   ])('withholds release facts when the source %s', async (_name, mutate) => {
     const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');

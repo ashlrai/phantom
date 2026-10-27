@@ -167,12 +167,12 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(site['needs'], 'classify', 'site source dependency'); equal(site['if'], "needs.classify.outputs.lane == 'site'", 'site source condition');
   equal(full['needs'], 'classify', 'full source dependency'); equal(full['if'], "needs.classify.outputs.lane == 'full'", 'full source condition');
   // Sources after the Linux-only PR CI split run the Windows portability rows
-  // in their own job; it runs only off the PR, merge-queue and push events.
+  // in their own job; it runs on every event except pull_request.
   const hasPortability = Object.hasOwn(jobs, 'ci-portability');
   if (hasPortability) {
     const portability = object(jobs['ci-portability']);
     equal(portability['needs'], 'classify', 'portability source dependency');
-    equal(portability['if'], "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'", 'portability source condition');
+    equal(portability['if'], "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'", 'portability source condition');
   }
   if (!Array.isArray(classifier['steps'])) throw new Error('Classifier source steps unavailable');
   for (const [name, command] of [['Bind candidate source', 'node .github/scripts/ci-source-binding.mjs'],

@@ -8,16 +8,16 @@ on:
     # PRs run no macOS or Windows lane, so a draft PR and a ready PR run the
     # same jobs and ready_for_review no longer starts a second run.
     types: [opened, synchronize, reopened]
-  # A merge queue reruns the Linux lane on the queued merge commit. macOS and
-  # Windows run only nightly on master and on workflow_dispatch; a red nightly
-  # opens a P0 FIX-MAIN issue (nightly-fix-main.yml).
+  # A merge queue reruns the full lane on the queued merge commit, macOS and
+  # Windows included. This is where platform coverage gates main.
   merge_group:
   workflow_call:
   # Push to master skips the macOS and Windows service lanes; this nightly run
   # on master runs the full matrix, Mac exhaustive included.
   schedule:
     - cron: "41 7 * * *"
-  # Manual full run, macOS and Windows included, on any branch.
+  # Manual full run, macOS and Windows included, on any branch. A red nightly
+  # opens a P0 FIX-MAIN issue (nightly-fix-main.yml).
   workflow_dispatch:
 
 permissions:
@@ -387,12 +387,12 @@ jobs:
           retention-days: 7
 
   ci-portability:
-    # Windows portability partitions. PRs and merge_group run Linux only
-    # (Actions concurrency is the merge bottleneck). These run nightly on
-    # master, on workflow_dispatch and on reusable calls, and Merge Gate fails
-    # there unless every partition succeeds.
+    # Windows portability partitions. Off pull_request to keep PR CI on Linux
+    # runners only (Actions concurrency is the merge bottleneck). They run in
+    # merge_group, on master push, nightly and on workflow_dispatch, and Merge
+    # Gate fails there unless every partition succeeds.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -476,7 +476,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -594,7 +594,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -669,7 +669,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     runs-on: macos-latest
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
@@ -859,7 +859,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     env:
@@ -943,23 +943,22 @@ jobs:
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
           // A push to master defers the macOS and Windows service lanes to the
           // nightly scheduled run; they must be skipped, never failed.
-          // Pull requests, merge_group entries and master pushes run Linux only:
-          // every macOS and Windows lane is deferred to the nightly run on master
-          // (or workflow_dispatch), where it must succeed. Only those lanes may be
-          // skipped; classify and the Linux matrix must succeed. mac-general still
-          // runs (and must pass) on a PR labelled ci:full-mac.
+          // A pull request runs Linux only: every macOS and Windows lane is
+          // deferred to merge_group, where it must succeed. mac-general still runs
+          // (and must pass) on a PR labelled ci:full-mac.
           const platform = ['ci-portability', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const linuxOnly = ['pull_request', 'merge_group', 'push'].includes(process.env.EVENT_NAME);
-          const deferred = linuxOnly
-            ? [...platform, ...(process.env.EVENT_NAME !== 'pull_request' || process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [])]
-            : [];
+          const deferred = process.env.EVENT_NAME === 'push'
+            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']
+            : process.env.EVENT_NAME === 'pull_request'
+            ? [...platform, ...(process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [])]
+            : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
           // A later master push's run replaced this Mac lane while it waited and
           // covers this commit's code; the cancelled check still marks this
           // commit's own Mac evidence incomplete.
           const superseded = process.env.MAC_SUPERSEDED === 'true'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'] : [];
           for (const name of selected) {
-            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to the nightly run`); continue; }
+            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred ${process.env.EVENT_NAME === 'push' ? 'to the nightly run' : process.env.EVENT_NAME === 'pull_request' ? 'to merge_group' : 'to post-merge'}`); continue; }
             if (superseded.includes(name) && outcome(name) === 'cancelled') { console.log(`${name} superseded by a later master push`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
