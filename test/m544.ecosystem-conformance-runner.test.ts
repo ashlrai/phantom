@@ -267,7 +267,8 @@ async function arrange(options: FixtureOptions = {}): Promise<EcosystemConforman
 }
 
 beforeEach(async () => {
-  vi.useFakeTimers();
+  // Freeze receipt freshness without disabling the producer-worker watchdog.
+  vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   directory = await mkdtemp(join(tmpdir(), 'ashlr-conformance-'));
 });
@@ -311,6 +312,37 @@ describe('M544 ecosystem conformance runner', () => {
     expect(report.products.stack.acceptanceClock).toBe('live');
     expect(report.products.stack.releaseReady).toBe(true);
   });
+
+  it.each(['live', 'explicit-historical'] as const)(
+    'rejects expired Stack evidence at the expiry boundary with a %s acceptance clock',
+    async (acceptanceClock) => {
+      const options = await arrange();
+      options.stackNow = acceptanceClock === 'live' ? undefined : NOW;
+      options.coreFixtureProvenance = 'released-source';
+      options.pluginFixtureProvenance = 'released-source';
+      options.stackFixtureProvenance = 'released-source';
+      const expiry = new Date('2026-09-03T12:05:00.000Z');
+      vi.setSystemTime(expiry);
+
+      const report = await runEcosystemConformanceV1(options);
+
+      expect(report.evaluatedAt).toBe(expiry.toISOString());
+      expect(report.state).toBe('fail');
+      expect(report.releaseReady).toBe(false);
+      expect(report.products.coreEfficiency.state).toBe('pass');
+      expect(report.products.plugin.state).toBe('pass');
+      expect(report.products.stack.acceptanceClock).toBe(acceptanceClock);
+      expect(report.products.stack.checks['protocol-compatible']).toBe('pass');
+      expect(report.products.stack.checks['fixture-byte-identical']).toBe('pass');
+      expect(report.products.stack.checks['Hub-accepted']).toBe(
+        acceptanceClock === 'live' ? 'fail' : 'pass',
+      );
+      expect(report.products.stack.checks['current-freshness']).toBe('fail');
+      expect(report.products.stack.currentFreshness).toBe(false);
+      expect(report.products.stack.releaseReady).toBe(false);
+      expect(report.authority).toBe(false);
+    },
+  );
 
   it('reports missing builds and fixtures as unavailable, never pass', async () => {
     const missingBuild = await arrange();
