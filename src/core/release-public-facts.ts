@@ -166,6 +166,14 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(site['name'], 'Site PR (ecosystem)', 'site source name'); equal(site['runs-on'], 'ubuntu-latest', 'site source runner');
   equal(site['needs'], 'classify', 'site source dependency'); equal(site['if'], "needs.classify.outputs.lane == 'site'", 'site source condition');
   equal(full['needs'], 'classify', 'full source dependency'); equal(full['if'], "needs.classify.outputs.lane == 'full'", 'full source condition');
+  // Sources after the Linux-only PR CI split run the Windows portability rows
+  // in their own job; it runs only off the PR, merge-queue and push events.
+  const hasPortability = Object.hasOwn(jobs, 'ci-portability');
+  if (hasPortability) {
+    const portability = object(jobs['ci-portability']);
+    equal(portability['needs'], 'classify', 'portability source dependency');
+    equal(portability['if'], "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'", 'portability source condition');
+  }
   if (!Array.isArray(classifier['steps'])) throw new Error('Classifier source steps unavailable');
   for (const [name, command] of [['Bind candidate source', 'node .github/scripts/ci-source-binding.mjs'],
     ['Classify exact ecosystem-only PR', 'node .github/scripts/ci-site-lane.mjs']]) {
@@ -185,13 +193,11 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     equal(docs['name'], 'Docs PR (docs-only)', 'docs source name'); equal(docs['runs-on'], 'ubuntu-latest', 'docs source runner');
     equal(docs['needs'], 'classify', 'docs source dependency'); equal(docs['if'], "needs.classify.outputs.lane == 'docs'", 'docs source condition');
   }
-  // Sources after the PR-CI split run the Windows portability partitions in
-  // their own `ci-portability` job (same check names); older sources keep them
-  // in `ci`. Either exact inventory is accepted, nothing in between.
-  const required = (portability: boolean) => ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', ...(portability ? ['ci-portability'] : []),
+  // The gate must need exactly the jobs this source defines: `ci-portability`
+  // only when the source has that job (same check names as the old rows in `ci`).
+  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', ...(hasPortability ? ['ci-portability'] : []),
     'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-  const needs = JSON.stringify(gate['needs']);
-  if (!Array.isArray(gate['needs']) || (needs !== JSON.stringify(required(false)) && needs !== JSON.stringify(required(true)))) throw new Error('Incomplete source merge gate dependencies');
+  if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
   const step = object(gate['steps'][0]);
   equal(step['name'], 'Require selected CI lane', 'merge gate source step');

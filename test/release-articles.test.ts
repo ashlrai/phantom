@@ -307,6 +307,18 @@ describe('fresh public facts are data, not saved release authority', () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
+  it.each([
+    ['gate omits ci-portability', (ci: string) => ci.replace('needs: [classify, site, docs, ci, ci-portability, ', 'needs: [classify, site, docs, ci, ')],
+    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.event_name != 'push'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
+    ['ci-portability needs nothing', (ci: string) => ci.replace(/( {2}ci-portability:\n(?: {4}#[^\n]*\n)*) {4}needs: classify\n/, '$1')],
+  ])('withholds release facts when the source %s', async (_name, mutate) => {
+    const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const mutated = mutate(source);
+    expect(mutated).not.toBe(source);
+    await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(source) }), NOW)).resolves.toBeTruthy();
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(mutated) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(/merge gate dependencies|portability source/);
+  });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
       const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
