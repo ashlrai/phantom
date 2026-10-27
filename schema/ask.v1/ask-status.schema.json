@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ask.v1/ask-status.schema.json",
+  "title": "ask.status.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ask_id", "job_id", "state", "pool", "ts", "pr", "pr_url", "merged_at", "reverted_at", "checks", "reason", "tokens_total", "wall_s"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["ask.status.v1"]},
+    "ask_id": {"$ref": "ask.schema.json#/$defs/askId"},
+    "job_id": {"type": ["string", "null"], "pattern": "^RQ-[A-Z0-9][A-Z0-9._-]{0,79}$"},
+    "state": {"$ref": "#/$defs/state"},
+    "pool": {"type": ["string", "null"], "enum": ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "local", "cursor-cloud", "grok-build", null]},
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:?[0-9]{2}|Z)$"},
+    "pr": {"type": ["integer", "null"], "minimum": 1, "maximum": 1000000},
+    "pr_url": {"type": ["string", "null"], "pattern": "^https://github\\.com/ashlrai/[a-z0-9-]+/pull/[0-9]{1,7}$"},
+    "merged_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:?[0-9]{2}|Z)$"},
+    "reverted_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:?[0-9]{2}|Z)$"},
+    "checks": {"type": ["string", "null"], "enum": ["pending", "success", "failure", null]},
+    "reason": {"type": ["string", "null"], "pattern": "^[a-z0-9_]{1,60}$"},
+    "tokens_total": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000000},
+    "wall_s": {"type": ["integer", "null"], "minimum": 0, "maximum": 604800}
+  },
+  "$defs": {
+    "state": {"type": "string", "enum": ["refused", "queued", "claimed", "running", "verifying", "pr_open", "in_merge_queue", "merged", "reverted", "publish_only", "failed"]}
+  }
+}

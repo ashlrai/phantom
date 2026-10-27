@@ -1,6 +1,7 @@
 // workbench.v1 schema validator (RQ-DESK-1-SCHEMA). Supports only the JSON Schema
 // subset used by schema/workbench.v1: type, enum, pattern, required, properties,
-// additionalProperties:false, items, maxItems, minimum, maximum, maxLength, $ref.
+// additionalProperties:false, items, maxItems, minimum, maximum, minLength, maxLength,
+// $ref (#/$defs/x, file.json, file.json#/$defs/x). Also used by schema/ask.v1 (RQ-ONEASK-1).
 // Fail closed: any unknown key in data is an error. Errors carry paths, never values.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,15 +21,20 @@ function typeOf(v: unknown): string {
   return typeof v;
 }
 
-export function validateWorkbench(dir: string, name: WorkbenchSchemaName, data: unknown): string[] {
+export function validateWorkbench(dir: string, name: WorkbenchSchemaName | (string & {}), data: unknown): string[] {
   const errors: string[] = [];
   const root = loadWorkbenchSchema(dir, name);
   const walk = (s: Schema, v: unknown, path: string, doc: Schema): void => {
     const ref = s.$ref as string | undefined;
     if (ref) {
-      if (ref.startsWith('#/$defs/')) return walk((doc.$defs as Record<string, Schema>)[ref.slice(8)], v, path, doc);
-      const other = loadWorkbenchSchema(dir, ref);
-      return walk(other, v, path, other);
+      const [file, frag] = ref.split('#');
+      const target = file ? loadWorkbenchSchema(dir, file) : doc;
+      const sub = frag?.startsWith('/$defs/') ? (target.$defs as Record<string, Schema>)[frag.slice(7)] : target;
+      if (!sub) {
+        errors.push(`${path}: bad ref`);
+        return;
+      }
+      return walk(sub, v, path, target);
     }
     const t = typeOf(v);
     if (s.type !== undefined) {
@@ -42,6 +48,7 @@ export function validateWorkbench(dir: string, name: WorkbenchSchemaName, data: 
     if (typeof v === 'string') {
       if (typeof s.pattern === 'string' && !new RegExp(s.pattern, 'u').test(v)) errors.push(`${path}: pattern`);
       if (typeof s.maxLength === 'number' && v.length > s.maxLength) errors.push(`${path}: maxLength`);
+      if (typeof s.minLength === 'number' && v.length < s.minLength) errors.push(`${path}: minLength`);
     }
     if (typeof v === 'number') {
       if (typeof s.minimum === 'number' && v < s.minimum) errors.push(`${path}: minimum`);
