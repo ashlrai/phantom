@@ -1,4 +1,6 @@
 import { neutralTokenEvidence, requestTokenEvidence, tokenEvidenceFromSteps, validateTokenEvidence } from './token-evidence.js';
+import { recordTerminalRunRouting } from '../routing/routing-account.js';
+import { routingEnginesFromConfig } from '../routing/routing-engines.js';
 import { assertSelectedOutcomeAdmission, selectedOutcomeAdmissionCurrent, SelectedOutcomeAdmissionRefusal, withSelectedOutcomeAdmission } from './outcome-admission.js';
 /**
  * core/run/orchestrator.ts — M4/M11/M15 local-first agent orchestrator.
@@ -2385,6 +2387,11 @@ async function runGoalInternal(
     // window synchronously before publishing it; an ordinary flush retains it.
     endSink();
     saveRun(terminalState);
+    // Accounting is best-effort and never a receipt. A failure here cannot
+    // change the run that was just saved.
+    try {
+      recordTerminalRunRouting(terminalState, routingEnginesFromConfig(cfg));
+    } catch { /* accounting never blocks a finished run */ }
   };
 
   try {

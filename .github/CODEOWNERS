@@ -853,6 +853,7 @@
 /test/resource-spark-enrollment.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/routing-account.test.ts @masonwyatt23
 /test/routing-budget-api.test.ts @masonwyatt23
 /test/routing-budget-store.test.ts @masonwyatt23
 /test/routing-capacity-history.test.ts @masonwyatt23

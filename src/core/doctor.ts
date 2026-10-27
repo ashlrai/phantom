@@ -16,8 +16,10 @@ import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
 import { parseLocalInferenceConfig } from './run/local-inference.js';
+import type { SeatCapacity } from './routing/headroom.js';
 import { classifyEngine } from './routing/local-route.js';
 import { routingEnginesFromConfig } from './routing/routing-engines.js';
+import { readRoutingStatus, routingSplitDetail } from './routing/routing-account.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -554,24 +556,46 @@ export async function checkLocalInference(
 }
 
 /**
- * Hybrid routing row. Never fails: local inference is optional, so a missing
- * or invalid block, or a missing local model, only warns. Warns when a
- * configured engine is unclassified (it gets no merge, credential or publish work).
+ * Hybrid routing row. Optional local inference never fails this row: a missing
+ * block, an invalid block, a non-loopback endpoint, or an endpoint that is
+ * down is a warning. `phm doctor` exits 1 only when some check fails, so
+ * these warnings do not change the exit code (there is no warn-to-fail
+ * switch on this command). A non-loopback endpoint is reported and never
+ * contacted.
  */
-export function checkRouting(cfg: AshlrConfig): DoctorCheck {
+export async function checkRouting(
+  cfg: AshlrConfig,
+  opts: { fetchImpl?: ProbeFetch; timeoutMs?: number; now?: Date; accountPath?: string } = {},
+): Promise<DoctorCheck> {
   const title = 'Routing (local/frontier)';
+  const split = routingSplitDetail(readRoutingStatus({ now: opts.now, accountPath: opts.accountPath }));
   const raw = (cfg as unknown as Record<string, unknown>)['localInference'];
-  if (raw === undefined) return check('routing', title, 'pass', 'frontier only (localInference absent)');
+  if (raw === undefined) return check('routing', title, 'warn', `localInference absent; ${split}`);
   const parsed = parseLocalInferenceConfig(raw);
-  if (!parsed.ok || !parsed.config) return check('routing', title, 'warn', 'localInference invalid; routing stays frontier only', 'Fix localInference in ~/.ashlr/config.json');
+  if (!parsed.ok || !parsed.config) {
+    return check('routing', title, 'warn', `localInference invalid; routing stays frontier only; ${split}`, 'Fix localInference in ~/.ashlr/config.json');
+  }
   const li = parsed.config;
-  if (li.routing !== 'hybrid') return check('routing', title, 'pass', 'frontier only (localInference.routing is off)');
-  if (!li.loopback) return check('routing', title, 'warn', 'hybrid requested but endpoint is not loopback; local lane disabled');
-  if (!li.models.coder) return check('routing', title, 'warn', 'hybrid on but no coder model configured; local lane idle', 'Set localInference.models.coder');
+  if (!li.loopback) {
+    return check('routing', title, 'warn', `endpoint is not loopback (not contacted); ${split}`);
+  }
+  if (li.routing === 'hybrid' && !li.models.coder) {
+    return check('routing', title, 'warn', `hybrid on but no coder model configured; local lane idle; ${split}`, 'Set localInference.models.coder');
+  }
+  const probe = await probeLocalInference(raw, { fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs });
+  if (probe.status !== 'reachable') {
+    return check('routing', title, 'warn', `loopback endpoint down; ${split}`, li.provider === 'ollama' ? 'Start it: ollama serve' : 'Start the local server');
+  }
+  const mode = li.routing === 'hybrid' ? 'hybrid' : 'routing off';
   const engines = Object.keys((cfg as { engines?: Record<string, unknown> }).engines ?? {});
-  const unclassified = engines.filter((id) => classifyEngine({ engine: id } as never, routingEnginesFromConfig(cfg)) === 'unclassified');
-  if (unclassified.length) return check('routing', title, 'warn', `hybrid on; ${unclassified.length} configured engine(s) unclassified (no merge/credential/publish): ${unclassified.join(', ')}`, 'Give each custom engine an api.defaultBaseUrl');
-  return check('routing', title, 'pass', `hybrid on: coding loops may run on ${li.provider} (${li.models.coder}); merge and publish gated by outcome`);
+  const unclassified = li.routing === 'hybrid'
+    ? engines.filter((id) => classifyEngine({ engine: id as SeatCapacity['engine'] }, routingEnginesFromConfig(cfg)) === 'unclassified')
+    : [];
+  if (unclassified.length) {
+    const shown = unclassified.map((id) => (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(id) && !/sk-|phm_|token|key/i.test(id) ? id : 'redacted'));
+    return check('routing', title, 'warn', `hybrid on; ${unclassified.length} configured engine(s) unclassified (no merge/credential/publish): ${shown.join(', ')}; ${split}`, 'Give each custom engine an api.defaultBaseUrl');
+  }
+  return check('routing', title, 'pass', `loopback ${li.provider} up (${mode}); ${split}`);
 }
 
 /**
@@ -1473,7 +1497,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(await checkPlugins(cfg));
   checks.push(await checkLocalInference(cfg));
-  checks.push(checkRouting(cfg));
+  checks.push(await checkRouting(cfg));
 
   // --- Async: provider registry ---
   try {

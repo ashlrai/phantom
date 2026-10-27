@@ -16,6 +16,7 @@ import type { AshlrConfig, ProviderEndpoint, ProviderRegistry } from './types.js
 // having to restate the URL in a second place.
 import { resolveLlamaServerOrigin } from './local-runtime/llama/config.js';
 import { pinLoopbackHost } from './run/local-inference.js';
+import { LOCAL_PROBE_MAX_BODY_BYTES, readJsonBounded } from './run/bounded-body.js';
 
 // ---------------------------------------------------------------------------
 // Loopback-only reading of OLLAMA_HOST for the two code paths that talk to a
@@ -247,18 +248,17 @@ export async function probeEndpoint(id: string, url: string): Promise<ProviderEn
       };
     }
 
-    let body: unknown;
-    try {
-      body = await response.json() as unknown;
-    } catch {
+    const parsed = await readJsonBounded(response, LOCAL_PROBE_MAX_BODY_BYTES);
+    if (!parsed.ok) {
       return {
         id,
         url: probeUrl,
         up: false,
         models: [],
-        error: 'Response body is not valid JSON',
+        error: parsed.reason === 'too-large' ? 'response body exceeded byte limit' : 'Response body is not valid JSON',
       };
     }
+    const body = parsed.value;
 
     const models = parseModels(probeUrl, body);
     return { id, url: probeUrl, up: true, models };

@@ -12,6 +12,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.29.15] — Unreleased
 
 ### Added
+- Per-run routing accounting. A finished run appends one JSON line to
+  `~/.ashlr/routing/accounting.jsonl` (route, escalation reason, engine id,
+  tokens in and out per tier, estimated frontier tokens saved). `phm status
+  --json` publishes the last 24 hours under `routing`. The slice 2 dispatch
+  ledger stays available at `routing.ledger`. `phm doctor` reports the same split: a missing
+  localInference block, a non-loopback endpoint, or an endpoint that is down
+  warns and does not fail. A non-loopback endpoint is never contacted.
 - Local-first bandit lane behind the new opt-in key `localFirstBandit.enabled`
   (default off). When on, an item the P4 policy already sends local may move to
   a frontier seat if local scores worse on merged PRs per dollar and per hour
@@ -65,6 +72,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   operator controls; source availability does not establish runtime acceptance.
 
 ### Fixed
+- Local model probes (`probeEndpoint` and the Ollama size lookup) stop reading
+  a response body at 256 KiB. A larger or endless reply is reported as down
+  and is not buffered.
 - Provider error bodies that echo the rejected API key no longer carry it into
   thrown errors. The OpenAI-compatible client, visual grounding and the Devin
   client now redact any run of 8 or more characters of the key they sent, so
