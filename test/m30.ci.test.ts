@@ -129,7 +129,7 @@ describe('M30 CI workflow', () => {
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'ci-portability', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
     expect(gate.name).toBe('Merge Gate');
-    expect(gate.needs).toEqual(['classify', 'site', 'docs', ...full]);
+    expect(gate.needs).toEqual(['classify', 'secret-scan', 'site', 'docs', ...full]);
     expect(gate.if).toBe('${{ always() }}');
     expect(gate['runs-on']).toBe('ubuntu-latest');
     expect(gate['continue-on-error']).toBeUndefined();
@@ -139,8 +139,8 @@ describe('M30 CI workflow', () => {
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
     const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? classify : name === 'secret-scan' ? (outcomes[name] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
@@ -161,6 +161,14 @@ describe('M30 CI workflow', () => {
     expect(execute('full', { ...complete, site: 'skipped', docs: 'success' })).toThrow();
     expect(execute('bogus', { ...site, site: 'skipped', docs: 'success' })).toThrow();
     expect(execute('full', { ...complete, site: 'skipped', docs: 'skipped' })).not.toThrow();
+    // Security floor: the diff secret scan must succeed in every lane; a
+    // skipped, cancelled or failed scan fails the gate even for docs-only PRs.
+    for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+      const scan = { 'secret-scan': outcome as string };
+      expect(execute('full', { ...complete, site: 'skipped', docs: 'skipped', ...scan }), `full scan: ${outcome}`).toThrow();
+      expect(execute('docs', { ...site, site: 'skipped', docs: 'success', ...scan }), `docs scan: ${outcome}`).toThrow();
+      expect(execute('site', { ...site, site: 'success', docs: 'skipped', ...scan }), `site scan: ${outcome}`).toThrow();
+    }
     for (const name of full) {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
         expect(execute('full', { ...complete, [name]: outcome, site: 'skipped', docs: 'skipped' }), `${name}: ${outcome}`).toThrow();
@@ -180,8 +188,8 @@ describe('M30 CI workflow', () => {
     // cancellation still fail the gate.
     const mac = ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'];
     const superseded = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full', mac: 'run' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : name === 'secret-scan' ? (outcomes[name] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full', mac: 'run' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', MAC_SUPERSEDED: 'true' } }, console: { log: () => {} },
@@ -202,8 +210,8 @@ describe('M30 CI workflow', () => {
     // and the Linux and Windows portability matrix (ci) must succeed.
     const pushDeferred = [...mac, 'windows-service-authority'];
     const pushed = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : name === 'secret-scan' ? (outcomes[name] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'false', EVENT_NAME: 'push' } }, console: { log: () => {} },
@@ -223,8 +231,8 @@ describe('M30 CI workflow', () => {
     // Linux matrix (ci) must succeed. merge_group defers only mac-general.
     const platform = ['ci-portability', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
     const pr = (outcomes: Record<string, string>, label = false) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : name === 'secret-scan' ? (outcomes[name] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: label ? 'false' : 'true', EVENT_NAME: 'pull_request' } }, console: { log: () => {} },
@@ -248,8 +256,8 @@ describe('M30 CI workflow', () => {
     }
     // Same with the real event name: merge_group defers only mac-general.
     const mq = (outcomes: Record<string, string>) => {
-      const dependencies = Object.fromEntries(['classify', 'site', 'docs', ...full].map((name) => [name, {
-        result: name === 'classify' ? 'success' : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
+      const dependencies = Object.fromEntries(['classify', 'secret-scan', 'site', 'docs', ...full].map((name) => [name, {
+        result: name === 'classify' ? 'success' : name === 'secret-scan' ? (outcomes[name] ?? 'success') : outcomes[name], ...(name === 'classify' ? { outputs: { lane: 'full' } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: 'true', EVENT_NAME: 'merge_group' } }, console: { log: () => {} },
@@ -532,8 +540,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(19);
-    expect(new Set(names).size).toBe(19);
+    expect(names).toHaveLength(20);
+    expect(new Set(names).size).toBe(20);
+    expect(names).toContain('Secret scan (diff)');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
