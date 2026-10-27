@@ -146,3 +146,32 @@ test('non-PR events never take the docs lane', () => {
     assert.equal(classifyLane({ eventName }), 'full');
   }
 });
+
+test('a docs-only change skips heavy work and a code change does not', () => {
+  const docs = docsFixture();
+  try {
+    writeFileSync(join(docs.cwd, 'docs/GUIDE.md'), 'changed\n');
+    assert.equal(classifyLane(docs.finish()), 'docs');
+  } finally { docs.cleanup(); }
+  const code = docsFixture();
+  try {
+    writeFileSync(join(code.cwd, 'docs/GUIDE.md'), 'changed\n');
+    writeFileSync(join(code.cwd, 'src/app.ts'), 'changed\n');
+    assert.equal(classifyLane(code.finish()), 'full');
+  } finally { code.cleanup(); }
+});
+
+test('a git merge-base or diff failure falls back to full CI', () => {
+  const work = docsFixture();
+  try {
+    writeFileSync(join(work.cwd, 'docs/GUIDE.md'), 'changed\n');
+    const candidate = work.finish();
+    // An unknown base object makes git merge-base fail; the lane must be full.
+    const missing = 'f'.repeat(40);
+    assert.equal(classifyDocsLane({ ...candidate, base: missing }), 'full');
+    assert.equal(classifySiteLane({ ...candidate, base: missing }), 'full');
+    assert.equal(classifyLane({ ...candidate, base: missing }), 'full');
+    // Identity errors still fail closed rather than falling back.
+    assert.throws(() => classifyLane({ ...candidate, head: candidate.base }), /checkout does not match/);
+  } finally { work.cleanup(); }
+});

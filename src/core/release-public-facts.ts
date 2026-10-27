@@ -144,7 +144,13 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
  * later site lane and merge gate. Neither replaces the 15 authority gates. */
-async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<'historical' | 'site' | 'gate' | 'gate-docs'> {
+type SourceCiTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-scan' | 'gate-docs-scan' | 'gate-docs-scan-fast';
+/** RQ-FAST-GATE sources: PR and merge_group run the fast job; the 15 authority
+ * gates run only on full runs (schedule, dispatch, release workflow_call). */
+const FAST_GATE_FULL_CONDITION = "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'";
+const FAST_GATE_JOB = 'Build and Tier-1 security (Linux)';
+const FAST_GATE_AUDIT_JOB = 'Dependency audit / Dependency audit (root + Raycast)';
+async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<SourceCiTopology> {
   const path = '.github/workflows/ci.yml';
   const file = object(await reader.github(`${base}/contents/${path}?ref=${sourceSha}`, signal));
   equal(file['type'], 'file', 'CI workflow type'); equal(file['path'], path, 'CI workflow path');
@@ -165,7 +171,17 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(classifier['runs-on'], 'ubuntu-latest', 'classifier source runner');
   equal(site['name'], 'Site PR (ecosystem)', 'site source name'); equal(site['runs-on'], 'ubuntu-latest', 'site source runner');
   equal(site['needs'], 'classify', 'site source dependency'); equal(site['if'], "needs.classify.outputs.lane == 'site'", 'site source condition');
-  equal(full['needs'], 'classify', 'full source dependency'); equal(full['if'], "needs.classify.outputs.lane == 'full'", 'full source condition');
+  const hasFast = Object.hasOwn(jobs, 'fast');
+  equal(full['needs'], 'classify', 'full source dependency');
+  equal(full['if'], hasFast ? FAST_GATE_FULL_CONDITION : "needs.classify.outputs.lane == 'full'", 'full source condition');
+  // Sources after the Linux-only PR CI split run the Windows portability rows
+  // in their own job; it runs on every event except pull_request.
+  const hasPortability = Object.hasOwn(jobs, 'ci-portability');
+  if (hasPortability) {
+    const portability = object(jobs['ci-portability']);
+    equal(portability['needs'], 'classify', 'portability source dependency');
+    equal(portability['if'], hasFast ? FAST_GATE_FULL_CONDITION : "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'", 'portability source condition');
+  }
   if (!Array.isArray(classifier['steps'])) throw new Error('Classifier source steps unavailable');
   for (const [name, command] of [['Bind candidate source', 'node .github/scripts/ci-source-binding.mjs'],
     ['Classify exact ecosystem-only PR', 'node .github/scripts/ci-site-lane.mjs']]) {
@@ -185,23 +201,46 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     equal(docs['name'], 'Docs PR (docs-only)', 'docs source name'); equal(docs['runs-on'], 'ubuntu-latest', 'docs source runner');
     equal(docs['needs'], 'classify', 'docs source dependency'); equal(docs['if'], "needs.classify.outputs.lane == 'docs'", 'docs source condition');
   }
-  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
-    'native-macos-broker-foundation', 'windows-service-authority'];
+  // The gate must need exactly the jobs this source defines: `ci-portability`
+  // only when the source has that job (same check names as the old rows in `ci`).
+  // Sources with the Security-floor secret scan gate on it as well; it runs on
+  // Ubuntu on every event with no condition, so a skip can never pass.
+  const hasScan = Object.hasOwn(jobs, 'secret-scan');
+  if (hasScan) {
+    const scan = object(jobs['secret-scan']);
+    equal(scan['name'], 'Secret scan (diff)', 'secret scan source name'); equal(scan['runs-on'], 'ubuntu-latest', 'secret scan source runner');
+    if (Object.hasOwn(scan, 'if') || Object.hasOwn(scan, 'needs') || Object.hasOwn(scan, 'strategy')) throw new Error('Conditional source secret scan');
+  }
+  if (hasFast) {
+    if (!hasScan || !hasDocs || !hasPortability) throw new Error('Incomplete source fast gate topology');
+    const fast = object(jobs['fast']); const audit = object(jobs['dependency-audit']);
+    equal(fast['needs'], 'classify', 'fast source dependency'); equal(fast['if'], "needs.classify.outputs.lane == 'full'", 'fast source condition');
+    equal(fast['runs-on'], 'ubuntu-latest', 'fast source runner');
+    equal(audit['uses'], './.github/workflows/dependency-audit.yml', 'dependency audit source workflow');
+    if (Object.hasOwn(audit, 'if') || Object.hasOwn(audit, 'needs')) throw new Error('Conditional source dependency audit');
+  }
+  const required = ['classify', ...(hasScan ? ['secret-scan'] : []), ...(hasFast ? ['dependency-audit'] : []), 'site', ...(hasDocs ? ['docs'] : []), ...(hasFast ? ['fast'] : []), 'ci', ...(hasPortability ? ['ci-portability'] : []),
+    'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
   if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
   const step = object(gate['steps'][0]);
   equal(step['name'], 'Require selected CI lane', 'merge gate source step');
   equal(object(step['env'])['GATE_NEEDS'], '${{ toJSON(needs) }}', 'merge gate source input');
-  const selection = hasDocs ? "const selected = lane === 'full' ? full : [lane];" : "const selected = lane === 'site' ? ['site'] : full;";
+  const selection = hasFast ? "const selected = lane === 'full' ? ['fast', ...(fullRun ? matrix : [])] : [lane];"
+    : hasDocs ? "const selected = lane === 'full' ? full : [lane];" : "const selected = lane === 'site' ? ['site'] : full;";
   if (typeof step['run'] !== 'string' || !step['run'].includes(selection) ||
       !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')")) {
     throw new Error('Incomplete source merge gate decision');
   }
-  return hasDocs ? 'gate-docs' : 'gate';
+  if (hasScan && !hasFast && !step['run'].includes("if (outcome('secret-scan') !== 'success')")) throw new Error('Incomplete source merge gate decision');
+  if (hasFast && !step['run'].includes("for (const name of ['secret-scan', 'dependency-audit'])")) throw new Error('Incomplete source merge gate decision');
+  if (hasFast) return 'gate-docs-scan-fast';
+  return hasDocs ? (hasScan ? 'gate-docs-scan' : 'gate-docs') : (hasScan ? 'gate-scan' : 'gate');
 }
 
-function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean, docs = false): void {
-  for (const name of ['Classify PR site lane', 'Site PR (ecosystem)', ...(docs ? ['Docs PR (docs-only)'] : [])]) {
+function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean, docs = false, scan = false, fast = false): void {
+  for (const name of ['Classify PR site lane', ...(scan ? ['Secret scan (diff)'] : []), 'Site PR (ecosystem)', ...(docs ? ['Docs PR (docs-only)'] : []),
+    ...(fast ? [FAST_GATE_JOB, FAST_GATE_AUDIT_JOB] : [])]) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Ancillary qualification job missing or ambiguous');
     const job = matches[0]!;
@@ -212,6 +251,9 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
     if (name === 'Site PR (ecosystem)' || name === 'Docs PR (docs-only)') {
       // A public full release must qualify every authority gate, not the site lane.
       equal(job['conclusion'], 'skipped', 'site qualification outcome'); equal(job['steps'].length, 0, 'site skipped steps');
+    } else if (name === 'Secret scan (diff)' || name === FAST_GATE_JOB || name === FAST_GATE_AUDIT_JOB) {
+      equal(job['conclusion'], 'success', 'secret scan qualification outcome');
+      if (job['steps'].some((step) => object(step)['status'] !== 'completed' || object(step)['conclusion'] !== 'success')) throw new Error('Secret scan qualification steps incomplete');
     } else {
       equal(job['conclusion'], 'success', 'classifier qualification outcome');
       if (job['steps'].some((step) => !['success', 'skipped'].includes(String(object(step)['conclusion'])) || object(step)['status'] !== 'completed')) throw new Error('Classifier qualification steps incomplete');
@@ -252,11 +294,12 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
   const names = workflow === 'ci.yml' ? RELEASE_CI_JOBS : ['Dependency audit (root + Raycast)'];
   const ancillary = workflow === 'ci.yml' ? await sourceCiAncillaryJobs(base, sourceSha, reader, signal) : 'historical';
   const allNames: readonly string[] = ancillary === 'historical' ? names :
-    [...names, 'Classify PR site lane', 'Site PR (ecosystem)', ...(ancillary === 'gate-docs' ? ['Docs PR (docs-only)'] : []),
-      ...(ancillary === 'gate' || ancillary === 'gate-docs' ? ['Merge Gate'] : [])];
+    [...names, 'Classify PR site lane', ...(ancillary.includes('-scan') ? ['Secret scan (diff)'] : []), 'Site PR (ecosystem)',
+      ...(ancillary.startsWith('gate-docs') ? ['Docs PR (docs-only)'] : []), ...(ancillary.startsWith('gate') ? ['Merge Gate'] : []),
+      ...(ancillary.endsWith('-fast') ? [FAST_GATE_JOB, FAST_GATE_AUDIT_JOB] : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||
       new Set(jobs.map((job) => job['name'])).size !== jobs.length || jobs.some((job) => !allNames.includes(String(job['name'])))) throw new Error('Unexpected qualification job inventory');
-  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary === 'gate' || ancillary === 'gate-docs', ancillary === 'gate-docs');
+  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary.startsWith('gate'), ancillary.startsWith('gate-docs'), ancillary.includes('-scan'), ancillary.endsWith('-fast'));
   for (const name of names) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Required qualification job missing or ambiguous');

@@ -1,35 +1,15 @@
 name: Dependency Audit
 
+# Runs inside CI (ci.yml calls it on every PR, merge_group and full run, and
+# Merge Gate requires it), weekly on its own, and on dispatch.
 on:
-  push:
-    branches: [master]
-    paths:
-      - "package.json"
-      - "package-lock.json"
-      - "npm-shrinkwrap.json"
-      - ".npmrc"
-      - "src/raycast/package.json"
-      - "src/raycast/package-lock.json"
-      - "src/raycast/npm-shrinkwrap.json"
-      - "src/raycast/.npmrc"
-      - "scripts/npm-audit-with-osv-fallback.sh"
-      - "desktop/src-tauri/Cargo.toml"
-      - "desktop/src-tauri/Cargo.lock"
-      - "docs/DEPENDENCY-SECURITY.md"
-      - ".github/dependabot.yml"
-      - ".github/workflows/dependency-audit.yml"
-  pull_request:
-    branches: ["**"]
+  workflow_call:
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: dependency-audit-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   audit:
