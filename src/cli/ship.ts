@@ -35,25 +35,10 @@ const { bold, dim, red, green, yellow, cyan, gray } = makeColors(isTty());
 // Lazy imports — lifecycle modules built by other M6 agents
 // ---------------------------------------------------------------------------
 
-async function importShip(): Promise<{
-  runShipGate: (
-    projectPath: string,
-    opts: { strict: boolean },
-  ) => Promise<ShipGate>;
-  deploy: (
-    projectPath: string,
-    target: string,
-    opts: { confirm: boolean },
-  ) => Promise<{ ran: boolean; dryRun: boolean; detail: string }>;
-}> {
-  return import('../core/lifecycle/ship.js') as Promise<{
-    runShipGate: (projectPath: string, opts: { strict: boolean }) => Promise<ShipGate>;
-    deploy: (
-      projectPath: string,
-      target: string,
-      opts: { confirm: boolean },
-    ) => Promise<{ ran: boolean; dryRun: boolean; detail: string }>;
-  }>;
+type ShipModule = typeof import('../core/lifecycle/ship.js');
+
+async function importShip(): Promise<ShipModule> {
+  return import('../core/lifecycle/ship.js');
 }
 
 // ---------------------------------------------------------------------------
@@ -402,12 +387,8 @@ export async function cmdShip(args: string[]): Promise<number> {
   }
 
   // Load lifecycle/ship module (lazy — built by another M6 agent)
-  let runShipGate: (projectPath: string, opts: { strict: boolean }) => Promise<ShipGate>;
-  let deployFn: (
-    projectPath: string,
-    target: string,
-    opts: { confirm: boolean },
-  ) => Promise<{ ran: boolean; dryRun: boolean; detail: string }>;
+  let runShipGate: ShipModule['runShipGate'];
+  let deployFn: ShipModule['deploy'];
 
   try {
     const mod = await importShip();
@@ -504,7 +485,7 @@ export async function cmdShip(args: string[]): Promise<number> {
 
   // ── Deploy ────────────────────────────────────────────────────────────────
 
-  let deployOutcome: { ran: boolean; dryRun: boolean; detail: string };
+  let deployOutcome: Awaited<ReturnType<ShipModule['deploy']>>;
 
   try {
     deployOutcome = await deployFn(
