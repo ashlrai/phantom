@@ -152,6 +152,10 @@ describe('autopilot CLI arguments', () => {
   it('refuses an interval that setTimeout would cut to 1 ms', async () => {
     expect(await cmdAutopilot(['#1', '--repo', 'o/r', '--interval', '2147484'])).toBe(2);
     expect(await cmdAutopilot(['#1', '--repo', 'o/r', '--interval', 'soon'])).toBe(2);
+    expect(await cmdAutopilot(['#1', '--repo', 'o/r', '--verify'])).toBe(2);
+    expect(parsePrRef('#0')).toBeNull();
+    expect(parsePrRef('#99999999999999999999999')).toBeNull();
+    expect(parsePrRef('https://github.com/o/r/pull/0')).toBeNull();
   });
 });
 
@@ -239,11 +243,12 @@ describe('autopilot tick (real git, fake GitHub)', () => {
   });
 
   it('refuses before any git command runs a filter driver the fixer planted', async () => {
-    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js; echo '* filter=evil' > .gitattributes; git config filter.evil.clean "sh -c 'touch $PWD/../../pwned; cat'"`);
+    const marker = join(mkdtempSync(join(tmpdir(), 'autopilot-marker-')), 'pwned');
+    const f = fixture(`echo 'module.exports = (a, b) => a + b;' > sum.js; echo '* filter=evil' > .gitattributes; git config filter.evil.clean "sh -c 'touch ${marker}; cat'"`);
     const gh: Gh = async (args) => (args[args.length - 1]!.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(await f.gh(args)), base: { ref: 'main', sha: 'c'.repeat(40) } }) : f.gh(args));
     const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
     expect(r.result).toBe('refused');
-    expect(existsSync(join(f.root, 'pwned'))).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('refuses when verify plants commit signing in git config, before committing', async () => {

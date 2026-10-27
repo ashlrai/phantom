@@ -37,8 +37,9 @@ export function repoFromRemote(url: string): string | null {
 export function parsePrRef(ref: string | undefined): { number: number; repo: string | null } | null {
   if (!ref) return null;
   const url = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(ref);
-  if (url) return { repo: url[1]!, number: Number(url[2]) };
-  return /^#?\d+$/.test(ref) ? { repo: null, number: Number(ref.replace('#', '')) } : null;
+  const n = url ? Number(url[2]) : /^#?\d+$/.test(ref) ? Number(ref.replace('#', '')) : NaN;
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return { repo: url ? url[1]! : null, number: n };
 }
 
 /** A command string → argv. Splits on whitespace; double quotes group. No shell. */
@@ -54,6 +55,10 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   const sweep = args[0] === '--all';
   const ref = sweep ? { repo: null, number: 0 } : parsePrRef(args[0]);
   if (!ref) { console.error(USAGE); return 2; }
+  // A value flag at the very end would otherwise read as absent and fall back to its default.
+  for (const flag of ['--repo', '--checkout', '--fixer', '--verify', '--prefix', '--max-pushes', '--interval']) {
+    if (args.some((a, i) => a === flag && args[i + 1] === undefined)) { console.error(`${flag} needs a value`); return 2; }
+  }
   const checkout = val('--checkout') ?? process.cwd();
   let repo = val('--repo') ?? ref.repo;
   if (!repo) {
@@ -86,7 +91,8 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   };
 
   let stop = false;
-  process.once('SIGINT', () => { stop = true; });
+  let wake: (() => void) | null = null;
+  process.once('SIGINT', () => { stop = true; wake?.(); });
   const finished = new Set<number>();
   let failed = false;
   for (;;) {
@@ -114,6 +120,8 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
     // One PR: stop when it reaches an end state. A sweep keeps watching for new PRs until interrupted.
     const done = !sweep && finished.has(ref.number);
     if (!args.includes('--watch') || done || stop) return failed ? 1 : 0;
-    await new Promise((res) => setTimeout(res, interval));
+    await new Promise<void>((res) => { const t = setTimeout(res, interval); wake = () => { clearTimeout(t); res(); }; });
+    wake = null;
+    if (stop) return failed ? 1 : 0;
   }
 }
