@@ -87,7 +87,9 @@ jobs:
     # Docs-only PRs (every changed path is Markdown outside code and test trees,
     # or under docs/) cannot change runtime behaviour, so they skip the Ubuntu,
     # Windows and Mac matrix. They still run the documentation checks and every
-    # test that reads a Markdown file, and the Merge Gate still reports.
+    # Markdown-reading test that does not need a built dist/. Tests that import
+    # test/helpers/require-built-dist.js need npm run build, so the selector
+    # leaves them for the full lane, which builds first. The Merge Gate still reports.
     name: Docs PR (docs-only)
     needs: classify
     if: needs.classify.outputs.lane == 'docs'
@@ -117,7 +119,7 @@ jobs:
         run: npm run check:docs
       - name: Run tests that read Markdown
         run: |
-          mapfile -t files < <(grep -lE "\.md['\"\`]|['\"\`]docs/" test/*.test.ts)
+          mapfile -t files < <(node .github/scripts/select-docs-markdown-tests.mjs)
           if [ "${#files[@]}" -eq 0 ]; then echo "no Markdown-reading tests found" >&2; exit 1; fi
           npm run test:ci -- "${files[@]}"
 
