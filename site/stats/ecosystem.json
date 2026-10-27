@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-10-12T23:46:17.016Z",
+  "owner": "ashlrai",
+  "scope": "Sum of GitHub stars and default-branch commits across Phantom ecosystem repos (ecosystem/repos.json).",
+  "totals": {
+    "repos": 11,
+    "stars": 41,
+    "commits": 4704,
+    "forks": 8
+  },
+  "repos": [
+    {
+      "repo": "phantom",
+      "url": "https://github.com/ashlrai/phantom",
+      "description": "Phantom by AshlrAI: an open-source engineering agent workbench for Claude Code, Codex, Devin, Grok and local models. Connect your resources, work with agents, or run an autonomous fleet.",
+      "stars": 5,
+      "forks": 2,
+      "commits": 3181,
+      "defaultBranch": "master",
+      "pushedAt": "2026-10-12T23:46:12Z"
+    },
+    {
+      "repo": "phantom-secrets",
+      "url": "https://github.com/ashlrai/phantom-secrets",
+      "description": "Stop AI coding agents from leaking your API keys. Local proxy + MCP that swaps real secrets for phm_ tokens — works with Claude Code, Cursor, Windsurf, and Codex.",
+      "stars": 18,
+      "forks": 4,
+      "commits": 259,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-12T23:44:58Z"
+    },
+    {
+      "repo": "locus",
+      "url": "https://github.com/ashlrai/locus",
+      "description": "Identity plane for coding agents — wrong account, impossible. Multi-account MCP/CLI bindings so agents never act in the wrong tenant.",
+      "stars": 2,
+      "forks": 0,
+      "commits": 76,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-09T07:27:24Z"
+    },
+    {
+      "repo": "lexicon",
+      "url": "https://github.com/ashlrai/lexicon",
+      "description": "A personal lexicon for voice-to-agents. One YAML file of the words speech-to-text gets wrong, applied everywhere your voice lands: MCP, Claude Code, the browser, macOS.",
+      "stars": 2,
+      "forks": 1,
+      "commits": 149,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-10T09:54:58Z"
+    },
+    {
+      "repo": "ashlr-md",
+      "url": "https://github.com/ashlrai/ashlr-md",
+      "description": "An open-source, AI-native Markdown app for macOS, Windows, and Linux. Open any .md and it's instantly beautiful, with free on-device AI and agent (MCP) integration.",
+      "stars": 3,
+      "forks": 0,
+      "commits": 123,
+      "defaultBranch": "main",
+      "pushedAt": "2026-09-29T14:35:50Z"
+    },
+    {
+      "repo": "ashlr-stack",
+      "url": "https://github.com/ashlrai/ashlr-stack",
+      "description": "Provision and connect development services through CLI and MCP tools, with Phantom for credential handling.",
+      "stars": 2,
+      "forks": 0,
+      "commits": 88,
+      "defaultBranch": "main",
+      "pushedAt": "2026-09-29T14:35:35Z"
+    },
+    {
+      "repo": "ashlr-plugin",
+      "url": "https://github.com/ashlrai/ashlr-plugin",
+      "description": "Token-efficiency plugin for Claude Code and Codex: MCP tools and hooks that replace high-volume Read/Grep/Edit/Bash calls with compact equivalents, powered by @ashlr/core-efficiency.",
+      "stars": 3,
+      "forks": 1,
+      "commits": 590,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-12T04:47:58Z"
+    },
+    {
+      "repo": "ashlr-core-efficiency",
+      "url": "https://github.com/ashlrai/ashlr-core-efficiency",
+      "description": "Token-efficiency primitives for Claude Code: genome, compression, provider-aware budgeting.",
+      "stars": 2,
+      "forks": 0,
+      "commits": 81,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-11T23:15:53Z"
+    },
+    {
+      "repo": "binshield",
+      "url": "https://github.com/ashlrai/binshield",
+      "description": "Supply-chain security for npm and PyPI: scans install scripts and native binaries (Ghidra decompilation, YARA, AI classification), checks OSV malware advisories, and gates PRs with a GitHub Action.",
+      "stars": 3,
+      "forks": 0,
+      "commits": 126,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-09T07:04:56Z"
+    },
+    {
+      "repo": "homebrew-phantom",
+      "url": "https://github.com/ashlrai/homebrew-phantom",
+      "description": "Homebrew tap for Phantom Secrets",
+      "stars": 1,
+      "forks": 0,
+      "commits": 18,
+      "defaultBranch": "main",
+      "pushedAt": "2026-10-06T15:27:34Z"
+    },
+    {
+      "repo": "homebrew-tap",
+      "url": "https://github.com/ashlrai/homebrew-tap",
+      "description": "Homebrew tap for Locus and Ashlr tools",
+      "stars": 0,
+      "forks": 0,
+      "commits": 13,
+      "defaultBranch": "main",
+      "pushedAt": "2026-09-21T15:42:22Z"
+    }
+  ]
+}
