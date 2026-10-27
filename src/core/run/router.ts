@@ -258,6 +258,12 @@ export interface RoutingContext {
 const FRONTIER_EFFORT_THRESHOLD = 4;
 const FRONTIER_SCORE_THRESHOLD = 8;
 
+// Legacy routing signals are optional enrichments, absent from the base contracts.
+type RoutingWorkItem = WorkItem & {
+  localizedScope?: { fileCount?: number; symbolCount?: number };
+};
+type CascadeFoundry = AshlrConfig['foundry'] & { cascade?: boolean };
+
 /** True when a WorkItem is "hard" by effort/score/source. */
 function isHardItem(item: WorkItem): boolean {
   if ((item.source as string) === 'escalation') return true;
@@ -325,10 +331,7 @@ export const SUBSTANTIVE_SOURCES = new Set([
 export function isSubstantiveItem(item: WorkItem): boolean {
   if (SUBSTANTIVE_SOURCES.has(item.source as string)) return true;
   if (isHardItem(item)) return true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const scope = (item as any).localizedScope as
-    | { fileCount?: number; symbolCount?: number }
-    | undefined;
+  const scope = (item as RoutingWorkItem).localizedScope;
   if ((scope?.fileCount ?? 0) > 5 || (scope?.symbolCount ?? 0) > 20) return true;
   return false;
 }
@@ -585,8 +588,7 @@ function routeTaskUnenforced(
 ): TaskRouteDecision {
   try {
     const policy: RoutingPolicy =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((cfg.foundry as any)?.routingPolicy as RoutingPolicy | undefined) ?? 'balanced';
+      cfg.foundry?.routingPolicy ?? 'balanced';
 
     const effort = typeof item.effort === 'number' ? item.effort : 3;
     const score = typeof item.score === 'number' ? item.score : 3;
@@ -620,10 +622,7 @@ function routeTaskUnenforced(
     // entries by proposalId) drive a cheapest-model-that-ships pick inside
     // tryEngine/tryFrontier. Flag off / cold start / thin samples ⇒ null ⇒
     // the static policy pick below — byte-identical behavior.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mgCfg = (cfg.foundry as any)?.modelGranularRouting as
-      | { enabled?: boolean; minShipRate?: number }
-      | undefined;
+    const mgCfg = cfg.foundry?.modelGranularRouting;
     const producerScores: EngineScoreMap | null =
       mgCfg?.enabled === true ? operationalProducerScoresForRouting(item.source) : null;
     const minShipRate = typeof mgCfg?.minShipRate === 'number' ? mgCfg.minShipRate : 0.6;
@@ -1331,7 +1330,7 @@ const CASCADE_CHEAP_EFFORT_THRESHOLD = 3;
  *     cheapFirst=false always (flag-off parity).
  *
  * Optional M154 localized-scope signal: if `item` has a
- * `(item as any).localizedScope` with `fileCount` and/or `symbolCount`, the
+ * `localizedScope` enrichment with `fileCount` and/or `symbolCount`, the
  * cheap-first decision uses those as an additional difficulty input — a large
  * localized scope (fileCount > 5 or symbolCount > 20) nudges toward skipping
  * the cheap-first step.
@@ -1350,8 +1349,7 @@ export function routeTaskCascade(
   attempt = 1,
 ): CascadeDecision {
   // ── Flag gate ──────────────────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cascadeEnabled = (cfg.foundry as any)?.cascade === true;
+  const cascadeEnabled = (cfg.foundry as CascadeFoundry | undefined)?.cascade === true;
 
   if (!cascadeEnabled) {
     // FLAG-OFF: delegate byte-identically to the base routeTask.
@@ -1401,10 +1399,7 @@ export function routeTaskCascade(
   const hard = isHardItem(item);
 
   // M154 localized-scope signal (tolerate absence).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const localizedScope = (item as any).localizedScope as
-    | { fileCount?: number; symbolCount?: number }
-    | undefined;
+  const localizedScope = (item as RoutingWorkItem).localizedScope;
   const largeScope =
     (localizedScope?.fileCount ?? 0) > 5 || (localizedScope?.symbolCount ?? 0) > 20;
 
@@ -1440,8 +1435,7 @@ export function routeTaskCascade(
       ...cfg.foundry,
       // Bias toward cost/local for cheap-first attempt; cap effort signal at threshold
       // so routeTask's hard-item fast-path doesn't fire.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      routingPolicy: effort <= CASCADE_CHEAP_EFFORT_THRESHOLD ? 'cost' : (cfg.foundry as any)?.routingPolicy ?? 'balanced',
+      routingPolicy: effort <= CASCADE_CHEAP_EFFORT_THRESHOLD ? 'cost' : cfg.foundry?.routingPolicy ?? 'balanced',
     } as AshlrConfig['foundry'],
   };
 
