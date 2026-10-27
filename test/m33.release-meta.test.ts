@@ -326,7 +326,11 @@ describe('release workflow', () => {
     expect(ledgerSteps[0]?.run?.trim()).toBe('npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/m342.dispatch-production-ledger.test.ts');
     expect(ciSteps.indexOf(ledgerSteps[0]!)).toBeGreaterThan(ciSteps.findIndex((step) => step.name === 'Test (hermetic)'));
     const ci = ciJob!;
-    const windows = (ci.strategy?.matrix?.include ?? []).filter(entry => entry['label'] === 'windows, portability 2/3');
+    // Windows portability legs live in ci-windows, which runs on every
+    // non-PR event, including this workflow_call from the release.
+    const ciWindows = (parsedCi.jobs as Record<string, typeof ci> | undefined)?.['ci-windows'];
+    expect((ciWindows as { if?: string } | undefined)?.if).toBe("needs.classify.outputs.lane == 'full' && needs.classify.outputs.full_os == 'true'");
+    const windows = (ciWindows?.strategy?.matrix?.include ?? []).filter(entry => entry['label'] === 'windows, portability 2/3');
     expect(windows).toHaveLength(1);
     expect(windows[0]?.['os']).toBe('windows-latest');
     expect((windows[0]?.['test_args'] as string).trim().split(/\s+/)).toEqual([
