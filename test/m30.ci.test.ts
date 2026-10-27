@@ -113,7 +113,9 @@ describe('M30 CI workflow', () => {
     expect(docs).toContain('run: node .github/scripts/ci-source-binding.mjs');
     expect(docs).toContain('run: node --test .github/tests/ci-site-lane.test.mjs');
     expect(docs).toContain('run: npm run check:docs');
+    expect(docs).toContain('node .github/scripts/select-docs-markdown-tests.mjs');
     expect(docs).toContain('npm run test:ci -- "${files[@]}"');
+    expect(docs).not.toContain('grep -lE');
     expect(docs).not.toMatch(/continue-on-error|upload-artifact|npm publish|deploy|macos|windows/);
     for (const name of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(workflowJob(name)).toContain("needs.classify.outputs.lane == 'full'");
