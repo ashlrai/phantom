@@ -35,11 +35,22 @@ export interface BackendRecord {
   meteredReason?: string;
   /** Name only. The Devin key is never loaded from this field. */
   secretName?: string;
+  /** Non-secret org id. The API key never lives here. */
+  orgId?: string;
   installed?: boolean;
   /** OpenAI-compatible base URL. oMLX accepts a loopback URL only. */
   baseUrl?: string;
   /** When set, this backend is used only if `fallbackFor` cannot serve. */
   fallbackFor?: string;
+}
+
+export interface AccountRecord {
+  id: string;
+  backend: string;
+  /** Env var that holds the credential home, such as CODEX_HOME. Not a secret name. */
+  homeEnv: string | null;
+  /** When true, a missing home makes the account unusable. The primary Codex login may omit it. */
+  requiresHome: boolean;
 }
 
 export interface CodingCliCatalog {
@@ -50,6 +61,7 @@ export interface CodingCliCatalog {
   machine: { chip: string; ramGb: number; diskUsedPercent: number; diskFreeGiB: number; note: string };
   concurrency: Readonly<Record<string, number>>;
   backends: Readonly<Record<string, BackendRecord>>;
+  accounts: readonly AccountRecord[];
   tiers: Readonly<Record<ModelTierName, readonly TierCandidate[]>>;
   cacheListings: {
     codex: readonly string[];
@@ -121,6 +133,7 @@ export function parseCatalog(text: string): CodingCliCatalog {
     const record: BackendRecord = { billing, bin: bin === null ? null : bin, enabledByDefault: row['enabledByDefault'] };
     if (row['meteredReason'] !== undefined) record.meteredReason = str(row['meteredReason'], `backends.${id}.meteredReason`);
     if (row['secretName'] !== undefined) record.secretName = str(row['secretName'], `backends.${id}.secretName`);
+    if (row['orgId'] !== undefined) record.orgId = str(row['orgId'], `backends.${id}.orgId`);
     if (row['installed'] !== undefined) {
       if (typeof row['installed'] !== 'boolean') fail(`backends.${id}.installed`);
       record.installed = row['installed'];
@@ -152,6 +165,27 @@ export function parseCatalog(text: string): CodingCliCatalog {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 8) fail(`concurrency.${id}`);
     concurrency[id] = value;
   }
+  const accounts: AccountRecord[] = [];
+  if (root['accounts'] !== undefined) {
+    if (!Array.isArray(root['accounts'])) fail('accounts');
+    const seen = new Set<string>();
+    for (let i = 0; i < root['accounts'].length; i += 1) {
+      const raw = root['accounts'][i];
+      const path = `accounts[${i}]`;
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail(path);
+      const row = raw as Record<string, unknown>;
+      const id = str(row['id'], `${path}.id`);
+      if (seen.has(id)) fail(`${path}.id`);
+      seen.add(id);
+      const homeEnv = row['homeEnv'] === null || row['homeEnv'] === undefined ? null : str(row['homeEnv'], `${path}.homeEnv`);
+      if (homeEnv !== null && (!/^[A-Z][A-Z0-9_]*$/.test(homeEnv) || /TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL/i.test(homeEnv))) {
+        fail(`${path}.homeEnv`);
+      }
+      const requiresHome = row['requiresHome'] === undefined ? false : row['requiresHome'];
+      if (typeof requiresHome !== 'boolean') fail(`${path}.requiresHome`);
+      accounts.push({ id, backend: str(row['backend'], `${path}.backend`), homeEnv, requiresHome });
+    }
+  }
   if (typeof root['meteredEnabledByDefault'] !== 'boolean') fail('meteredEnabledByDefault');
   return {
     version: 1,
@@ -167,6 +201,7 @@ export function parseCatalog(text: string): CodingCliCatalog {
     },
     concurrency,
     backends,
+    accounts,
     tiers,
     cacheListings: {
       codex: names('codex'),

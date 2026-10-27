@@ -131,6 +131,7 @@ readings as zero or claiming invoice completeness.
 | needs-you-priority | `verse/activity.ts` (background, never awaited) | 0.75 | severity → expiry → age | re-ranks within a severity band only |
 | interrupt-worthiness | exported `worthInterrupting` | 0.8 | severity/expiry/quiet-hours rule | never suppresses high/blocking |
 | resource-choice | selected autonomous batch preparation | 0.8 | existing deterministic feasible-seat order | metadata-only ordinal candidates; cached advice never establishes eligibility |
+| job-shape | `decide/job-shape.ts` `classifyJob` | 0.75 | length and keyword heuristic | risk is escalate-only and cannot drop below the heuristic; context is measured from the text and can only rise |
 | lane-choice | exported `chooseLane`; Devin fleet `laneAdvisor` | 0.8 | size/keyword heuristic over available lanes | advisor returns null on fallback; launcher only narrows |
 | trigger-triage | exported `triageTrigger` | 0.8 | label/keyword triage | every part must clear the gate |
 | action-class | `suggestActionClass`, called by `vision/leader-advice.ts` after `enactLeaderActions` (≤ 8 actions per memo) | 0.85 | the deterministic class | advisory, escalate-only: a `memo.actionAdvice` label and a line in the memo message; asked after every class and window is decided, read by no gate, can never lower a class or approve |

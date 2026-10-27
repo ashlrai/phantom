@@ -311,6 +311,8 @@ describe('worker plan', () => {
       billing: 'metered' as const,
       model: null,
       role: 'produce' as const,
+      accountId: null,
+      poolId: null,
       worktree: '/tmp/issue-9',
       pullRequest: 'draft' as const,
     };
@@ -322,14 +324,14 @@ describe('worker plan', () => {
     }), { DEVIN_API_KEY: sourceEnvKey }, { get: () => { gets += 1; return lookup; } });
     const rendered = [planText, result.detail, result.commands.join('\n'), logs.join('\n'), JSON.stringify(result), JSON.stringify(plan)].join('\n');
     expect(gets).toBe(0);
-    expect(result.detail).toMatch(/key is present and was not logged/);
+    expect(result.detail).toMatch(/DEVIN_API_KEY|enabled for/);
     expect(result.commands).toEqual([]);
     for (const secret of [key, lookup, sourceEnvKey]) expect(rendered).not.toContain(secret);
     vi.unstubAllEnvs();
     const absent = await executeStep(step, issue, catalog, runner(() => {
       throw new Error('runner must not be called');
     }), { DEVIN_API_KEY: sourceEnvKey }, { get: () => lookup });
-    expect(absent.detail).toMatch(/No key is configured/);
+    expect(absent.detail).toMatch(/disabled until DEVIN_API_KEY/);
     expect(absent.detail).not.toContain(lookup);
     expect(absent.detail).not.toContain(sourceEnvKey);
     for (const spy of spies) spy.mockRestore();

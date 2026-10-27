@@ -17,7 +17,8 @@ import { readFileSync } from 'node:fs';
 
 import { loadConfig, saveConfig } from '../core/config.js';
 import { loadCatalog } from '../core/providers/coding-cli/catalog.js';
-import { formatPlan, parseIssues, planWorker } from '../core/providers/coding-cli/worker-plan.js';
+import { planLabelledWork } from '../core/providers/coding-cli/policy.js';
+import { formatPlan, parseIssues } from '../core/providers/coding-cli/worker-plan.js';
 import { noColorRequested } from './ui.js';
 import { setupWizard } from '../core/onboard.js';
 import { enroll, listEnrolled } from '../core/sandbox/policy.js';
@@ -270,12 +271,13 @@ async function cmdWorkerQueue(args: string[]): Promise<number> {
     console.error(`worker: ${error instanceof Error ? error.message : String(error)}`);
     return 2;
   }
-  const plan = planWorker({
+  const plan = await planLabelledWork({
     catalog,
     issues,
     repo,
     nowMs: Date.now(),
     meteredEnabled: args.includes('--enable-metered'),
+    env: process.env,
   });
   if (args.includes('--json')) console.log(JSON.stringify(plan));
   else console.log(formatPlan(plan));
