@@ -27,10 +27,15 @@ const script: string = job.steps[0].run;
 // Run the committed script with fake curl (returns scripted HTTP codes in
 // order) and fake gh (one queued run 1, records cancels). Returns cancelled ids.
 function runStubbed(codes: string[], headBranch: string): string[] {
+  return runStubbedIn(codes, headBranch).cancelled;
+}
+
+function runStubbedIn(codes: string[], headBranch: string): { cancelled: string[]; dir: string } {
   const dir = mkdtempSync(resolve(tmpdir(), 'reaper-'));
   writeFileSync(resolve(dir, 'codes'), codes.join('\n') + '\n');
   writeFileSync(resolve(dir, 'curl'), `#!/usr/bin/env bash
 n=$(cat "${dir}/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${dir}/n"
+printf '%s\n' "$*" >> "${dir}/argv"; cat >> "${dir}/stdin"
 c=$(sed -n "\${n}p" "${dir}/codes")
 [ "$c" = FAIL ] && exit 7
 [ -z "$c" ] && c=200
@@ -48,9 +53,9 @@ case "$*" in *status=queued*) printf '1\\t%s\\n' "$HEAD_BRANCH" ;; esac
     env: { PATH: `${dir}:/usr/bin:/bin`, GH_TOKEN: 't', REPO: 'o/r', SELF_RUN_ID: '999', HEAD_BRANCH: headBranch },
   });
   try {
-    return readFileSync(resolve(dir, 'cancelled'), 'utf8').split('\n').filter(Boolean);
+    return { dir, cancelled: readFileSync(resolve(dir, 'cancelled'), 'utf8').split('\n').filter(Boolean) };
   } catch {
-    return [];
+    return { dir, cancelled: [] };
   }
 }
 
@@ -113,6 +118,19 @@ describe('merge queue reaper', () => {
     for (const [label, codes, expected] of cases) {
       it(label, () => expect(runStubbed(codes, 'gh-readonly-queue/master/pr-1-abc')).toEqual(expected));
     }
+    it('rejects any head ref containing .. before calling the refs API', () => {
+      const { dir, cancelled } = runStubbedIn(['404', '404'], 'gh-readonly-queue/master/../pr-1-abc');
+      expect(cancelled).toEqual([]);
+      expect(() => readFileSync(resolve(dir, 'argv'), 'utf8')).toThrow();
+    });
+    it('keeps the token off the curl command line and sends it on stdin', () => {
+      const { dir, cancelled } = runStubbedIn(['404', '404'], 'gh-readonly-queue/master/pr-1-abc');
+      expect(cancelled).toEqual(['1']);
+      const argv = readFileSync(resolve(dir, 'argv'), 'utf8');
+      expect(argv).not.toContain('Bearer');
+      expect(argv).toContain('-H @-');
+      expect(readFileSync(resolve(dir, 'stdin'), 'utf8')).toContain('Authorization: Bearer t');
+    });
     it('skips malformed head refs without calling the refs API', () => {
       expect(runStubbed(['404', '404'], 'gh-readonly-queue/master/../x?y')).toEqual([]);
       expect(runStubbed(['404', '404'], 'feature/branch')).toEqual([]);
