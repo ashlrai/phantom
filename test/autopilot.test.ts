@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { parsePrRef, repoFromRemote, splitCommand } from '../src/cli/autopilot.js';
+import { cmdAutopilot, parsePrRef, repoFromRemote, splitCommand } from '../src/cli/autopilot.js';
 import { tick, verifyPlan } from '../src/core/autopilot/act.js';
 import { emptyState, fixBrief, plan, weakeningRefusals, type CheckRun, type Guards, type Observation } from '../src/core/autopilot/diagnose.js';
 import { readReviews, type Gh } from '../src/core/autopilot/github.js';
@@ -147,6 +147,11 @@ describe('autopilot CLI arguments', () => {
     expect(repoFromRemote('git@github.com:ashlrai/phantom.git')).toBe('ashlrai/phantom');
     expect(repoFromRemote('https://github.com/ashlrai/phantom')).toBe('ashlrai/phantom');
     expect(splitCommand('claude -p --append-system-prompt "be brief"')).toEqual(['claude', '-p', '--append-system-prompt', 'be brief']);
+  });
+
+  it('refuses an interval that setTimeout would cut to 1 ms', async () => {
+    expect(await cmdAutopilot(['#1', '--repo', 'o/r', '--interval', '2147484'])).toBe(2);
+    expect(await cmdAutopilot(['#1', '--repo', 'o/r', '--interval', 'soon'])).toBe(2);
   });
 });
 

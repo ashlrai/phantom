@@ -67,7 +67,8 @@ export async function cmdAutopilot(argv: string[]): Promise<number> {
   const maxPushes = val('--max-pushes') ? Number(val('--max-pushes')) : DEFAULT_LIMITS.maxPushes;
   if (!Number.isSafeInteger(maxPushes) || maxPushes < 0) { console.error('--max-pushes must be a whole number'); return 2; }
   const intervalSec = Number(val('--interval') ?? 90);
-  if (!Number.isFinite(intervalSec)) { console.error('--interval must be a number of seconds'); return 2; }
+  // setTimeout treats any delay above 2^31-1 ms as 1 ms, which would turn --watch into a busy poll.
+  if (!Number.isFinite(intervalSec) || intervalSec * 1000 > 2_147_483_647) { console.error('--interval must be a number of seconds up to 2147483'); return 2; }
   const interval = Math.max(15, intervalSec) * 1000;
   const json = args.includes('--json');
   const fixer = args.includes('--no-fixer') ? null : val('--fixer') ? splitCommand(val('--fixer')!) : [...DEFAULT_FIXER];
