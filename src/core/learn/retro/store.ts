@@ -20,12 +20,15 @@
  * Paths re-resolve homedir() per call so tests can relocate HOME.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { appendFile, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants, readFileSync } from 'node:fs';
+import { appendFile, lstat, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { scrubPrivateText } from '../../util/scrub.js';
+import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
+import { writePrivateFileAtomicallyAsync } from '../../util/private-file-write.js';
+import type { NightlyState } from './nightly-types.js';
 import {
   KNOWLEDGE_EVIDENCE_MAX,
   KNOWLEDGE_NOTE_MAX_CHARS,
@@ -59,6 +62,114 @@ export function knowledgeHitsPath(): string {
 }
 export function sweepStatePath(): string {
   return join(learnHome(), 'retro-sweep.json');
+}
+
+export const NIGHTLY_MAX_BYTES = 8 * 1024 * 1024;
+export const NIGHTLY_MAX_RECORDS = 10_000;
+
+export function nightlyProposalsPath(): string {
+  return join(learnHome(), 'retro-proposals.json');
+}
+
+/** Refuse redirected or externally writable paths, including parent directories. */
+async function inspectNightlyDirectory(input: boolean, create = false): Promise<void> {
+  const directories = [join(homedir(), '.ashlr'), learnHome()];
+  if (input) directories.push(join(learnHome(), 'retro-input'));
+  for (const directory of directories) {
+    if (create) {
+      // Never recursively mkdir through a pre-existing symlinked parent.
+      await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+      });
+    }
+    const s = await lstat(directory);
+    if (!s.isDirectory() || s.isSymbolicLink() ||
+      (typeof process.getuid === 'function' && s.uid !== process.getuid()) ||
+      (process.platform !== 'win32' && (s.mode & 0o022) !== 0)) throw new Error('Unsafe nightly directory');
+  }
+}
+
+/** Bounded stable read. Missing, torn, replaced and oversized sources are not empty evidence. */
+async function readNightlyFile(path: string, input: boolean): Promise<string> {
+  await inspectNightlyDirectory(input);
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const before = await handle.stat();
+    const named = await lstat(path);
+    if (!before.isFile() || named.isSymbolicLink() || before.nlink !== 1 ||
+      before.dev !== named.dev || before.ino !== named.ino || before.size > NIGHTLY_MAX_BYTES ||
+      (typeof process.getuid === 'function' && before.uid !== process.getuid()) ||
+      (process.platform !== 'win32' && (before.mode & 0o022) !== 0)) throw new Error('Unsafe nightly file');
+    const bytes = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (!bytesRead) throw new Error('Short nightly read');
+      offset += bytesRead;
+    }
+    const after = await handle.stat();
+    const namedAfter = await lstat(path);
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs ||
+      namedAfter.isSymbolicLink() || namedAfter.dev !== before.dev || namedAfter.ino !== before.ino ||
+      namedAfter.size !== after.size || namedAfter.mtimeMs !== after.mtimeMs || namedAfter.ctimeMs !== after.ctimeMs) {
+      throw new Error('Nightly file changed during read');
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } finally { await handle.close(); }
+}
+
+export async function readNightlyInputs(): Promise<{ jobs: unknown[]; reviews: unknown[] }> {
+  const parse = (raw: string): unknown[] => {
+    if (raw && !raw.endsWith('\n')) throw new Error('Incomplete nightly JSONL');
+    const lines = raw.split('\n').filter((line) => line.trim());
+    if (lines.length > NIGHTLY_MAX_RECORDS) throw new Error('Nightly input exceeds record bound');
+    return lines.map((line) => JSON.parse(line) as unknown);
+  };
+  const [jobs, reviews] = await Promise.all([
+    readNightlyFile(join(learnHome(), 'retro-input', 'jobs.jsonl'), true),
+    readNightlyFile(join(learnHome(), 'retro-input', 'review-blocks.jsonl'), true),
+  ]);
+  return { jobs: parse(jobs), reviews: parse(reviews) };
+}
+
+/** Missing output is a first run. Corrupt or unsafe output must never reset deduplication. */
+export async function readNightlyState(): Promise<NightlyState | null> {
+  let raw: unknown;
+  try { raw = JSON.parse(await readNightlyFile(nightlyProposalsPath(), false)) as unknown; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!isRecord(raw) || raw['v'] !== 1 || raw['advisoryOnly'] !== true ||
+    typeof raw['completedNight'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw['completedNight']) ||
+    !['jobs', 'reviews', 'priors', 'lessons', 'proposals'].every((key) => Array.isArray(raw[key]) && raw[key].length <= NIGHTLY_MAX_RECORDS)) {
+    throw new Error('Invalid nightly state');
+  }
+  return raw as unknown as NightlyState;
+}
+
+/** One cross-process transaction for deduplication, advisory outputs and completion. */
+export async function updateNightlyState(
+  update: (state: NightlyState | null) => Promise<NightlyState | null>,
+): Promise<'busy' | 'not-due' | 'completed'> {
+  await inspectNightlyDirectory(false, true);
+  const lock = acquireLocalStoreLock(join(learnHome(), '.retro-nightly.lock'), 0, { anchorPath: homedir(), exactPrivateStorage: true });
+  if (!lock) return 'busy';
+  try {
+    const state = await update(await readNightlyState());
+    if (!state) return 'not-due';
+    if ([state.jobs, state.reviews, state.priors, state.lessons, state.proposals].some((rows) => rows.length > NIGHTLY_MAX_RECORDS)) {
+      throw new Error('Nightly output exceeds record bound');
+    }
+    const bytes = `${JSON.stringify(state, null, 2)}\n`;
+    if (Buffer.byteLength(bytes) > NIGHTLY_MAX_BYTES) throw new Error('Nightly state exceeds byte bound');
+    const target = nightlyProposalsPath();
+    await writePrivateFileAtomicallyAsync(`${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`, target, bytes, {
+      anchorPath: homedir(), label: 'nightly proposals',
+      beforePublish: () => { if (!ownsLocalStoreLock(lock)) throw new Error('Nightly lock lost'); },
+    });
+    return 'completed';
+  } finally { releaseLocalStoreLock(lock); }
 }
 
 // ---------------------------------------------------------------------------
