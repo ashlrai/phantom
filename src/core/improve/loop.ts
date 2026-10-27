@@ -12,6 +12,8 @@ import { createHash } from 'node:crypto';
 import { listContext, teamState } from '../teams/index.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { StewardReport } from '../steward/disk.js';
+import { readTelemetry } from '../metrics/telemetry.js';
+import { rollup } from '../metrics/scoring.js';
 
 export interface Evidence { ref: string; summary: string }
 /**
@@ -65,6 +67,18 @@ export function gatherProposals(team: string, steward?: StewardReport): Proposal
     const id = pid(localTitle);
     const ev = [{ ref: f.source, summary: f.title }];
     out.push({ id, kind: 'team-feedback', title: `Address feedback item ${id}`, rationale: 'A team feedback/bug report (private; details withheld from the PR).', evidence: publicEvidence(ev), local: { title: localTitle, rationale: f.text.slice(0, 600), evidence: ev }, evalPlan: 'Add a failing test or eval reproducing the report, then make it pass.', metric: 'task success rate on the reported workflow' });
+  }
+  for (const a of rollup(readTelemetry()).byAgent) {
+    if (a.prsShipped < 3 || a.avgQuality === null || a.avgQuality >= 0.5) continue;
+    // Attribution and scores remain local, like team feedback and steward data.
+    const localTitle = `Improve PR quality for ${a.key}`;
+    const id = pid(localTitle);
+    const evidence = [{ ref: `metrics:agent/${a.key}`, summary: `value/1M tok ${a.valuePerMTok}` }];
+    out.push({ id, kind: 'metrics-quality', title: `Improve PR quality for agent ${id}`,
+      rationale: 'Local telemetry indicates repeated low-quality PR outcomes (private details withheld).',
+      evidence: publicEvidence(evidence), local: { title: localTitle,
+        rationale: `${a.key} shipped ${a.prsShipped} PRs with mean quality ${a.avgQuality}.`, evidence },
+      evalPlan: 'Compare quality on the next 10 tasks of the same type with a revised strategy.', metric: 'mean PR quality score' });
   }
   return out;
 }
