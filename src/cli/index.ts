@@ -1978,6 +1978,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'queue': {
+        process.exitCode = await (await import('./queue.js')).cmdQueue(rest);
+        break;
+      }
+
       case 'benchmark': {
         process.exitCode = await (await loadBenchmarkCmd())(rest);
         break;
