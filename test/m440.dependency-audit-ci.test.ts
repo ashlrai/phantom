@@ -38,6 +38,8 @@ const events = workflow.on as Record<string, Record<string, unknown> | null>;
 const audit = (workflow.jobs as Record<string, Record<string, unknown>>).audit;
 const steps = audit.steps as Array<Record<string, unknown>>;
 
+const prTypes = ['opened', 'synchronize', 'reopened', 'ready_for_review'];
+const scopeIf = "steps.scope.outputs.run == 'true'";
 const authorityPaths = [
   'package.json',
   'package-lock.json',
@@ -94,7 +96,7 @@ describe('M440 dependency audit CI', () => {
       name: 'Dependency Audit',
       on: {
         push: { branches: ['master'], paths: authorityPaths },
-        pull_request: { branches: ['**'] },
+        pull_request: { branches: ['**'], types: prTypes },
         schedule: [{ cron: '17 9 * * 1' }],
         workflow_dispatch: null,
       },
@@ -126,55 +128,80 @@ describe('M440 dependency audit CI', () => {
               with: {
                 'persist-credentials': false,
                 ref: '${{ github.event.pull_request.head.sha || github.sha }}',
+                'fetch-depth': "${{ github.event_name == 'pull_request' && '0' || '1' }}",
               },
             },
             {
-              name: 'Set up Node.js 22',
+              name: 'Scope',
+              id: 'scope',
+              env: {
+                EVENT: '${{ github.event_name }}',
+                DRAFT: '${{ github.event.pull_request.draft }}',
+                BASE: '${{ github.event.pull_request.base.sha }}',
+                HEAD: '${{ github.event.pull_request.head.sha }}',
+                DEPS: expect.any(String),
+              },
+              shell: 'bash',
+              run: expect.stringContaining('echo "run=$run" >> "$GITHUB_OUTPUT"'),
+            },
+            {
+if: scopeIf,
+                            name: 'Set up Node.js 22',
               uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
               with: { 'node-version': '22' },
             },
             {
+              if: scopeIf,
               name: 'Install pinned npm',
               run: npmInstallCommand,
             },
             {
+              if: scopeIf,
               name: 'Install pinned OSV-Scanner',
               shell: 'bash',
               run: osvScannerInstallCommand,
             },
             {
+              if: scopeIf,
               name: 'Install pinned cargo-audit',
               shell: 'bash',
               run: cargoAuditInstallCommand,
             },
             {
+              if: scopeIf,
               name: 'Verify root dependency graph installs',
               run: 'npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps',
             },
             {
+              if: scopeIf,
               name: 'Verify Raycast dependency graph installs',
               'working-directory': 'src/raycast',
               run: 'npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps',
             },
             {
+              if: scopeIf,
               name: 'Audit root dependencies',
               run: 'bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json',
             },
             {
+              if: scopeIf,
               name: 'Audit root production dependencies',
               run: 'bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev',
             },
             {
+              if: scopeIf,
               name: 'Audit Raycast dependencies',
               'working-directory': 'src/raycast',
               run: 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json',
             },
             {
+              if: scopeIf,
               name: 'Audit Raycast production dependencies',
               'working-directory': 'src/raycast',
               run: 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev',
             },
             {
+              if: scopeIf,
               name: 'Audit desktop Cargo dependencies',
               run: 'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429',
             },
@@ -186,7 +213,7 @@ describe('M440 dependency audit CI', () => {
 
   it('runs on every pull request exact head, dependency pushes, weekly drift, and manual dispatch', () => {
     expect(events.push).toEqual({ branches: ['master'], paths: authorityPaths });
-    expect(events.pull_request).toEqual({ branches: ['**'] });
+    expect(events.pull_request).toEqual({ branches: ['**'], types: prTypes });
     expect(events.pull_request).not.toHaveProperty('paths');
     expect(events.pull_request).not.toHaveProperty('paths-ignore');
     expect(events.schedule).toEqual([{ cron: '17 9 * * 1' }]);
@@ -221,7 +248,7 @@ describe('M440 dependency audit CI', () => {
   });
 
   it('uses only approved actions with bounded checkout authority', () => {
-    expect(steps).toHaveLength(12);
+    expect(steps).toHaveLength(13);
     expect(steps.filter((step) => step.uses).map((step) => step.uses)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
@@ -231,25 +258,28 @@ describe('M440 dependency audit CI', () => {
       with: {
         'persist-credentials': false,
         ref: '${{ github.event.pull_request.head.sha || github.sha }}',
+        'fetch-depth': "${{ github.event_name == 'pull_request' && '0' || '1' }}",
       },
     });
-    expect(steps[1]).toMatchObject({
+    expect(steps[2]).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': '22' },
     });
   });
 
   it('pins npm and fail-closes on clean installs before auditing complete lockfile graphs', () => {
-    expect(steps[2]).toEqual({
+    expect(steps[3]).toEqual({
+      if: scopeIf,
       name: 'Install pinned npm',
       run: npmInstallCommand,
     });
-    expect(steps[3]).toEqual({
+    expect(steps[4]).toEqual({
+      if: scopeIf,
       name: 'Install pinned OSV-Scanner',
       shell: 'bash',
       run: osvScannerInstallCommand,
     });
-    expect(steps.slice(5, 11).map(({ run, ['working-directory']: cwd }) => ({ run, cwd }))).toEqual([
+    expect(steps.slice(6, 12).map(({ run, ['working-directory']: cwd }) => ({ run, cwd }))).toEqual([
       {
         run: 'npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps',
         cwd: undefined,
@@ -283,7 +313,7 @@ describe('M440 dependency audit CI', () => {
     const firstAuditIndex = steps.findIndex((step) =>
       String(step.run ?? '').includes('npm-audit-with-osv-fallback.sh'),
     );
-    expect(installIndexes).toEqual([5, 6]);
+    expect(installIndexes).toEqual([6, 7]);
     expect(Math.max(...installIndexes)).toBeLessThan(firstAuditIndex);
     for (const index of installIndexes) {
       const command = String(steps[index]?.run ?? '');
@@ -291,7 +321,7 @@ describe('M440 dependency audit CI', () => {
       expect(command).toContain('--legacy-peer-deps=false');
       expect(command).toContain('--strict-peer-deps');
     }
-    expect(steps[1]?.with).not.toHaveProperty('cache');
+    expect(steps[2]?.with).not.toHaveProperty('cache');
     expect(osvScannerInstallCommand).toContain('--proto \'=https\' --tlsv1.2');
     expect(osvScannerInstallCommand).toContain('sha256sum --check --strict');
     expect(npmAuditFallbackText).toContain('for attempt in 1 2 3');
@@ -497,7 +527,8 @@ exit "\${TEST_OSV_RC:-0}"
   });
 
   it('pins RustSec tooling and fails on every vulnerability except the open GLib quarantine', () => {
-    expect(steps[4]).toEqual({
+    expect(steps[5]).toEqual({
+      if: scopeIf,
       name: 'Install pinned cargo-audit',
       shell: 'bash',
       run: cargoAuditInstallCommand,
@@ -506,13 +537,33 @@ exit "\${TEST_OSV_RC:-0}"
     expect(cargoAuditInstallCommand).toContain('sha256sum --check --strict');
     expect(cargoAuditInstallCommand).not.toMatch(/cargo install|latest|stable/);
 
-    expect(steps[11]).toEqual({
+    expect(steps[12]).toEqual({
+      if: scopeIf,
       name: 'Audit desktop Cargo dependencies',
       run: 'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429',
     });
-    expect(String(steps[11]?.run).match(/--ignore\s+RUSTSEC-/g)).toHaveLength(1);
-    expect(String(steps[11]?.run)).not.toMatch(/continue|allow|deny warnings/i);
+    expect(String(steps[12]?.run).match(/--ignore\s+RUSTSEC-/g)).toHaveLength(1);
+    expect(String(steps[12]?.run)).not.toMatch(/continue|allow|deny warnings/i);
     expect(steps.some((step) => step['continue-on-error'] === true)).toBe(false);
+  });
+
+  it('skips the audit only on draft PRs or PRs that touch no dependency input, never on push, schedule or dispatch', () => {
+    const scope = steps[1]!;
+    expect(scope).toMatchObject({ name: 'Scope', id: 'scope', shell: 'bash' });
+    const deps = new RegExp(String((scope.env as Record<string, string>).DEPS));
+    // The PR scope list is exactly the push path filter.
+    for (const path of authorityPaths) expect(deps.test(path), path).toBe(true);
+    for (const path of ['src/index.ts', 'README.md', 'x/package.json', 'package.json.bak', 'desktop/src-tauri/Cargo.tomlx']) expect(deps.test(path), path).toBe(false);
+    const run = String(scope.run);
+    expect(run.startsWith('set -euo pipefail\nrun=true\n')).toBe(true);
+    expect(run).toContain('if [ "$EVENT" = "pull_request" ]; then');
+    expect(run.match(/run=false/g)).toHaveLength(2);
+    expect(run).toContain('git diff --name-only "$BASE...$HEAD"');
+    // Every audit step is gated by the scope output and nothing else.
+    for (const step of steps.slice(2)) expect(step.if, String(step.name)).toBe(scopeIf);
+    expect(steps[0]).not.toHaveProperty('if');
+    expect(scope).not.toHaveProperty('if');
+    expect(audit).not.toHaveProperty('if');
   });
 
   it('cannot publish, deploy, mutate settings, or consume secrets', () => {

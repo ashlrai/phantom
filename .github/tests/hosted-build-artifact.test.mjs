@@ -197,9 +197,10 @@ test('overlapping short Mac gates cannot qualify a release before all fifteen so
   assert.equal(required.length, 15);
   // Lane selection and the stable merge result are ancillary to release
   // authority. All fifteen source-owned qualification jobs remain required.
-  const laneNames = ['Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate'];
-  assert.equal(names.length, 19);
-  assert.equal(new Set(names).size, 19);
+  // Secret scan (diff) is a PR/merge_group guard that feeds Merge Gate.
+  const laneNames = ['Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Secret scan (diff)', 'Merge Gate'];
+  assert.equal(names.length, 20);
+  assert.equal(new Set(names).size, 20);
   assert.deepEqual([...required.map((job) => job.name), ...laneNames].sort(), names.sort());
   const f = official();
   const completed = required.map((job, index) => ({ ...f.job, id: index + 10, name: job.name, labels: job.labels,

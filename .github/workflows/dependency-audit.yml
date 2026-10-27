@@ -20,6 +20,7 @@ on:
       - ".github/workflows/dependency-audit.yml"
   pull_request:
     branches: ["**"]
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:
@@ -50,18 +51,52 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+
+      # #811 skip-step pattern: the job always runs and reports under the same
+      # name. On a PR the audit steps run only when a dependency input changed
+      # (the same list as the push filter) and the PR is not a draft. Push to
+      # master, the weekly schedule and manual runs always audit everything.
+      - name: Scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # Same list as the push path filter above.
+          DEPS: '^(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc|src/raycast/(package\.json|package-lock\.json|npm-shrinkwrap\.json|\.npmrc)|scripts/npm-audit-with-osv-fallback\.sh|desktop/src-tauri/Cargo\.(toml|lock)|docs/DEPENDENCY-SECURITY\.md|\.github/dependabot\.yml|\.github/workflows/dependency-audit\.yml)$'
+        shell: bash
+        run: |
+          set -euo pipefail
+          run=true
+          if [ "$EVENT" = "pull_request" ]; then
+            if [ "$DRAFT" = "true" ]; then
+              run=false
+            else
+              files="$(git diff --name-only "$BASE...$HEAD")"
+              # Capture first so an early-exit grep cannot SIGPIPE under pipefail.
+              hits="$(printf '%s\n' "$files" | grep -E "$DEPS" || true)"
+              if [ -z "$hits" ]; then run=false; fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "dependency audit run=$run"
 
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: "22"
 
       - name: Install pinned npm
+        if: steps.scope.outputs.run == 'true'
         run: |
           npm install --global "npm@${NPM_VERSION}" --ignore-scripts --no-audit --no-fund
           test "$(npm --version)" = "${NPM_VERSION}"
 
       - name: Install pinned OSV-Scanner
+        if: steps.scope.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +112,7 @@ jobs:
           "${bin_dir}/osv-scanner" --version
 
       - name: Install pinned cargo-audit
+        if: steps.scope.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -95,27 +131,34 @@ jobs:
           "${bin_dir}/cargo-audit" --version
 
       - name: Verify root dependency graph installs
+        if: steps.scope.outputs.run == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps
 
       - name: Verify Raycast dependency graph installs
+        if: steps.scope.outputs.run == 'true'
         working-directory: src/raycast
         run: npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps
 
       - name: Audit root dependencies
+        if: steps.scope.outputs.run == 'true'
         run: bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json
 
       - name: Audit root production dependencies
+        if: steps.scope.outputs.run == 'true'
         run: bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev
 
       - name: Audit Raycast dependencies
+        if: steps.scope.outputs.run == 'true'
         working-directory: src/raycast
         run: bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json
 
       - name: Audit Raycast production dependencies
+        if: steps.scope.outputs.run == 'true'
         working-directory: src/raycast
         run: bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev
 
       # The only exception is the still-open, externally contained Linux GLib
       # advisory. New RustSec vulnerabilities continue to fail this job.
       - name: Audit desktop Cargo dependencies
+        if: steps.scope.outputs.run == 'true'
         run: cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429
