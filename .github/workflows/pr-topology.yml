@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: pr-topology-shadow-${{ github.event.pull_request.number || inputs.pull_request_number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   topology:
