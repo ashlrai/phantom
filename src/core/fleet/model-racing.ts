@@ -124,7 +124,7 @@ function stubProposal(
     diff,
     status: 'pending',
     createdAt: new Date().toISOString(),
-  } as Proposal;
+  };
 }
 
 /** Resolve the local engine to race. Default: 'local-coder'. */
