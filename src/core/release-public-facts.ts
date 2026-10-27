@@ -185,9 +185,13 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     equal(docs['name'], 'Docs PR (docs-only)', 'docs source name'); equal(docs['runs-on'], 'ubuntu-latest', 'docs source runner');
     equal(docs['needs'], 'classify', 'docs source dependency'); equal(docs['if'], "needs.classify.outputs.lane == 'docs'", 'docs source condition');
   }
-  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
-    'native-macos-broker-foundation', 'windows-service-authority'];
-  if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
+  // Sources after the PR-CI split run the Windows portability partitions in
+  // their own `ci-portability` job (same check names); older sources keep them
+  // in `ci`. Either exact inventory is accepted, nothing in between.
+  const required = (portability: boolean) => ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', ...(portability ? ['ci-portability'] : []),
+    'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+  const needs = JSON.stringify(gate['needs']);
+  if (!Array.isArray(gate['needs']) || (needs !== JSON.stringify(required(false)) && needs !== JSON.stringify(required(true)))) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
   const step = object(gate['steps'][0]);
   equal(step['name'], 'Require selected CI lane', 'merge gate source step');
