@@ -33,9 +33,20 @@ function runFixture(
   const root = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-shards-')); roots.push(root);
   mkdirSync(join(root, 'scripts'));
   mkdirSync(join(root, 'node_modules', 'vitest'), { recursive: true });
+  const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+  mkdirSync(dirname(policy), { recursive: true });
+  copyFileSync(resolve(sourceScripts, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
   for (const file of ['test-ci.mjs', 'test-ci-sharded.mjs']) {
     copyFileSync(join(sourceScripts, file), join(root, 'scripts', file));
   }
+  // Capacity is synthetic here; policy boundary tests cover actual low-memory
+  // inputs. Preserve the original shard concurrency assertions on busy hosts.
+  const fixtureWrapper = join(root, 'scripts', 'test-ci.mjs');
+  expect(readFileSync(fixtureWrapper, 'utf8'), 'Fixture capacity call must match production').toContain('boundedVitestJob(process.env, process.argv.slice(2))');
+  writeFileSync(fixtureWrapper, readFileSync(fixtureWrapper, 'utf8').replace(
+    'boundedVitestJob(process.env, process.argv.slice(2))',
+    'boundedVitestJob(process.env, process.argv.slice(2), 68719476736, 8)',
+  ));
   let reportDirectory: string | undefined;
   if (report !== undefined) {
     reportDirectory = join(realpathSync(root), 'reports');
