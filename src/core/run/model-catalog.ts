@@ -213,6 +213,15 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     minEffort: 4, apiModelId: CODEX_ASTRA_MODEL_ID,
     relativeSpeed: 1, planAllowanceWeight: 5,
   },
+  // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
+  // Pricing is a routing estimate, not account admission or spending authority.
+  {
+    id: 'claude:claude-haiku-5-5', engine: 'claude', tier: 'small',
+    // Conservative >100k prompt rate; shorter prompts cost $0.10/$0.50.
+    costPerMTokIn: 0.5, costPerMTokOut: 2.5,
+    capabilities: ['fast', 'general', 'long-context'],
+    minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
+  },
   // -- Claude (subscription / token-billed via API) -------------------------
   {
     id: 'claude:opus',
