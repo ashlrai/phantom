@@ -1,0 +1,21 @@
+{
+  "authority_verified": false,
+  "binding": "personal",
+  "error": "authority anchor not checked: no LOCUS_CONTROL_CAPABILITY in this shell",
+  "expired": false,
+  "expires_at": "<EXPIRES_AT>",
+  "expires_in_secs": 1,
+  "frozen": false,
+  "frozen_reason": null,
+  "mode": "exclusive",
+  "namespaces": [
+    "personal"
+  ],
+  "ok": true,
+  "pinned": true,
+  "recovery": "eval \"$(locus hook bash)\"",
+  "require_pin": false,
+  "seal_ok": true,
+  "session_id": "<SESSION_ID>",
+  "tenant": "personal"
+}
