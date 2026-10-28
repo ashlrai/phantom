@@ -12,6 +12,12 @@ on:
       - 'tools/custody/**'
       - 'scripts/install-custody.sh'
       - '.github/workflows/custody.yml'
+  # Runner capacity P0 (Oct 26): nightly too. No merge_group (Mason waived
+  # macOS/Windows in the phantom merge queue). On PRs the macOS job runs only
+  # on opt-in: repo variable DESKTOP_ON_PR == 'true' or label ci:desktop
+  # (read when the run starts, so add it, then push). Not a required check.
+  schedule:
+    - cron: "47 7 * * *"
   workflow_dispatch:
 
 permissions:
@@ -24,6 +30,7 @@ concurrency:
 jobs:
   verify:
     name: Custody (macOS, Swift)
+    if: github.event_name != 'pull_request' || vars.DESKTOP_ON_PR == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:desktop')
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -34,6 +41,40 @@ jobs:
         run: swift build -c release --package-path tools/custody
       - name: Check installer syntax
         run: bash -n scripts/install-custody.sh
+
+  # Fix-forward only: a red or cancelled nightly opens (or comments on) one P0
+  # FIX-MAIN issue, same shape as nightly-fix-main.yml. Never reverts.
+  fix-main:
+    name: File FIX-MAIN issue
+    needs: verify
+    if: always() && github.event_name == 'schedule' && (needs.verify.result == 'failure' || needs.verify.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the FIX-MAIN issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RESULT: ${{ needs.verify.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sha7="${SHA:0:7}"
+          title="FIX-MAIN phantom ${sha7} (nightly)"
+          gh label create P0 --color B60205 --description "Highest priority" 2>/dev/null || true
+          gh label create FIX-MAIN --color D93F0B --description "Default branch is red; fix forward, no revert" 2>/dev/null || true
+          body="Nightly Custody helper on master concluded **${RESULT}** at ${SHA}. Run: ${RUN_URL}
+
+          Fix forward only (no revert)."
+          existing="$(gh issue list --state open --label FIX-MAIN --search "in:title FIX-MAIN phantom" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label P0 --label FIX-MAIN --body "$body"
+          fi
 
 # These checks compile the OS adapters and exercise injected contract tests.
 # They never install the helper, authenticate a person, read Keychain secrets,
