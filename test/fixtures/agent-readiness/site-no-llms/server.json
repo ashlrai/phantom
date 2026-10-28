@@ -1,0 +1,14 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "com.example/acme-widget",
+  "description": "MCP server exposing Acme Widget format and validate tools.",
+  "version": "1.2.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "acme-widget",
+      "version": "1.2.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
