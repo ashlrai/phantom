@@ -116,6 +116,36 @@ stderr.
 For the desktop app and the first useful turn, follow the
 [Quickstart](QUICKSTART.md) and [desktop/README.md](../desktop/README.md).
 
+### Local message bus
+
+`phm bus` manages durable local mailboxes. It does not dispatch remote work,
+execute agents or grant authority. Addresses are routing labels accessible to
+processes running as the same OS user, not authenticated principals.
+
+```sh
+phm bus send --from codex-cmp --to fleet --id task-1 --body '{"task":"review"}' --priority P1 --ttl 60000 --json
+phm bus inbox --to fleet --limit 100 --json
+phm bus ack task-1 --to fleet --json
+```
+
+The envelope is exactly `id/from/to/priority/ttl/body`; body accepts any JSON
+value. Send defaults to a UUID, P2 and 300000 ms. Preserve the original envelope
+and ID when retrying a send: identical retries deduplicate without extending
+TTL; changed contents under the same ID refuse. Inbox returns unacknowledged,
+unexpired envelopes in priority and acceptance order, with remaining TTL and
+`hasMore` for a truncated result. Reading never acknowledges. Ack checks the
+recipient and is idempotent; unknown IDs refuse.
+
+State lives under `$ASHLR_HOME/bus`, default `~/.ashlr/bus`. Reads create
+nothing; corrupt, unsafe or concurrently changing stores refuse rather than
+reporting an empty inbox. Retry a transient storage refusal. History is retained
+with a 5000-message/64 MiB admission limit, reserving space for acknowledgments.
+At capacity, existing inboxes, retries and acknowledgments remain available;
+new traffic needs a new private `ASHLR_HOME`. No history is automatically deleted.
+Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
+`--json` emits one object on stdout, including errors. Exit codes are 0 success,
+1 operational refusal and 2 bad usage. `phm bus --help` performs no work.
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,

@@ -1926,6 +1926,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'bus': {
+        const { cmdBus } = await import('./bus.js');
+        process.exitCode = await cmdBus(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
