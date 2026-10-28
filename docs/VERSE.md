@@ -1943,6 +1943,27 @@ the prompt instead of blindly dispatching it again.
 
 Port allocation is a physical resource constraint. Workspace creation and restore serialize across repositories in the owning Phantom server process; exhaustion or an occupied restore range produces an explicit refusal instead of overlapping another workspace. Separate Phantom server processes do not share a reservation lock. Repositories needing no dedicated ports can set `ports: 0`.
 
+Verse worktree creation and agent restore require at least 5 GiB available on the
+destination filesystem. Set `ASHLR_WORKTREE_MIN_FREE_BYTES` to a positive integer
+number of bytes to choose another floor; invalid values or unreadable disk
+measurements refuse creation. This is an admission check, not a reservation
+against other processes writing to the same disk.
+
+New and restored agent workspaces reuse root `node_modules` through copy-on-write
+clones when `package.json` and the lockfiles match. Unsupported clone filesystems,
+external dependency symlinks, non-ignored or existing destination dependencies, and mismatched
+lockfiles skip reuse; the repository's setup command remains responsible for a
+valid installation. Writable hardlinks and full-copy fallbacks are never used. If staging cleanup fails,
+the private `.phantom-deps-*` directory is retained for manual recovery; it is
+never used as the installation.
+
+The agent supervisor retries archiving a merged workspace when Auto-merge is on,
+the agent is unpinned and idle, and the PR belongs to its workspace branch. The
+existing archive path saves a private snapshot before removal. Active, unknown,
+and unfinished agents are retained. These controls cover Verse workspaces; the
+separate sandbox/fleet worktree lifecycle keeps its existing policy.
+
+
 
 ### Cash exhaustion and resident capacity (3.18)
 
