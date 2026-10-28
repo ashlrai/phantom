@@ -1,5 +1,7 @@
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
-export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN';
+import { isReportOnlyLine } from './report-lines.js';
+
+export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN' | 'REPORTED';
 export interface DriveJob {
   id: string;
   pool: string;
@@ -26,6 +28,8 @@ export interface DriveReport {
   launched: string[];
   published: string[];
   publicationUnknown: string[];
+  /** Report-only lines settled through the report step this tick (report-lines.ts). */
+  reported: string[];
   held: string | null;
 }
 
@@ -42,6 +46,14 @@ export interface DriveBridge {
   launch(lease: string, job: string): Promise<'launched' | 'held'>;
   reservePublish(lease: string, job: string): Promise<boolean>;
   finishPublish(lease: string, job: string, outcome: 'published' | 'unknown'): Promise<void>;
+  /**
+   * The non-publishing report step for report-only lines (report-lines.ts):
+   * durably record the line's report completion as native REPORTED with its
+   * ledger event. It never reserves publication and never invokes publish.sh,
+   * so the line can never count as an empty (EMPTY_DONE) run. Absent means the
+   * step is unimplemented: the line stays parked rather than being published.
+   */
+  report?(lease: string, job: string): Promise<void>;
   writeStatus(lease: string, report: DriveReport): Promise<void>;
   release(lease: string): Promise<void>;
 }
@@ -54,7 +66,7 @@ export interface DriveDependencies {
   now?(): Date;
 }
 
-const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN']);
+const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN', 'REPORTED']);
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -101,7 +113,9 @@ export function planDrive(snapshot: DriveSnapshot): string[] {
   const counts = new Map(snapshot.pools.map(pool => [pool.id, snapshot.jobs.filter(job => job.pool === pool.id && active(job)).length]));
   const pools = new Map(snapshot.pools.map(pool => [pool.id, pool]));
   let total = snapshot.jobs.filter(active).length;
-  const ready = snapshot.jobs.filter(job => job.state === 'READY');
+  // A report-only line is parked from launch regardless of pool capacity:
+  // its only route is the report step, never a worker lane.
+  const ready = snapshot.jobs.filter(job => job.state === 'READY' && !isReportOnlyLine(job.id));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
     const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling);
@@ -124,7 +138,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
   const dryRun = options.dryRun === true;
   let lease: string | null = null;
   const report: DriveReport = { version: 1, at: (deps.now?.() ?? new Date()).toISOString(), dryRun,
-    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null };
+    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], reported: [], held: null };
   const snapshot = async (): Promise<DriveSnapshot> => {
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
@@ -148,6 +162,18 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
     let state = await snapshot();
     for (const job of state.jobs) {
       if (options.signal?.aborted) break;
+      if (isReportOnlyLine(job.id)) {
+        // Verification moved off the lane: a READY report-only line and a
+        // cleanly FINISHED one both settle through the report step. Any other
+        // state (HELD, FAILED, an ambiguous PUBLISH_*) stays exactly as found.
+        // With no report step the line simply remains parked — it is never
+        // routed to publish.sh where its no-diff result would read EMPTY_DONE.
+        if (bridge.report && (job.state === 'READY' || (job.state === 'FINISHED' && job.exitCode === 0))) {
+          await bridge.report(lease, job.id);
+          report.reported.push(job.id);
+        }
+        continue;
+      }
       if (job.state !== 'FINISHED' || job.exitCode !== 0 || !await bridge.reservePublish(lease, job.id)) continue;
       // Persist PUBLISHING before calling the only pusher. A lost acknowledgement
       // is ambiguous, never an automatic retry of an outward mutation.

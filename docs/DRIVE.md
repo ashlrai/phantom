@@ -50,6 +50,12 @@ accepted as the publisher basename.
 3. For each successful FINISHED job, reserve publication durably, invoke
    `phantom exec -- /absolute/path/publish.sh <bridge-supplied arguments>`,
    then record its outcome. No direct Git or GitHub push exists in the driver.
+   Report-only lines (the VERIFY-PR family, see report-lines.ts) settle through
+   the `report` step instead: READY and clean-FINISHED report-only lines are
+   recorded REPORTED durably — they never launch, never reserve publication,
+   and never reach publish.sh, so a verification run can never count as an
+   empty (EMPTY_DONE) run. Lines whose family is unknown keep their normal
+   route; a line stays parked when the bridge has no `report` step.
 4. Read current queue and capacity. Fill below-floor pools first, then remaining
    capacity by descending priority and queue order. Re-read before every launch.
 5. Recheck PAUSE and ask the bridge to atomically verify READY, completed
@@ -170,6 +176,7 @@ environment dumps, prompts or auth material in any reply.
 | `launch` | `lease`, `job` | `"launched"` or `"held"`. Recheck shared ownership, pool/global counts and PAUSE; atomically claim READY with all dependencies DONE using the queue claim owner. Persist STARTING execution evidence before invoking the existing sandboxed runner with #1014 heavy-step gating. Do not reserve a heavy slot for the worker's entire lifetime. |
 | `reserve-publish` | `lease`, `job` | `null` if not eligible; otherwise `{"argv":["literal","arguments"]}` after durably recording PUBLISHING. Use the existing publish.sh argument contract. |
 | `finish-publish` | `lease`, `job`, `outcome` | `true` after durably recording `published` or `unknown` and its native ledger event. |
+| `report` | `lease`, `job` | `true` after durably recording the report-only line's completion as REPORTED and its native ledger event. The non-publishing report step: no publication reservation, no publish.sh. |
 | `write-status` | `lease`, `report` | `true` after atomically writing `status.json` in the dispatchd format. Map the normalized report; never replace native schema with the CLI report. |
 | `release` | `lease` | `true` after releasing only this owner's lease. Must not release a successor's ownership. |
 
@@ -206,8 +213,10 @@ pool identifiers use ASCII letters, digits, dots, underscores and hyphens, start
 with a letter or digit, and are at most 160 characters. Jobs have unique IDs and
 must reference a configured pool. Priorities are safe integers; higher goes first.
 
-States are READY, HELD, STARTING, RUNNING, FINISHED, FAILED, PUBLISHING, PUBLISHED
-and PUBLISH_UNKNOWN. HELD is not launchable. FINISHED requires an integer
+States are READY, HELD, STARTING, RUNNING, FINISHED, FAILED, PUBLISHING, PUBLISHED,
+PUBLISH_UNKNOWN and REPORTED. HELD is not launchable, and report-only family
+lines are never launchable either — they settle as REPORTED through `report`.
+FINISHED requires an integer
 `exitCode`; only zero is eligible
 for publication. A lost/failed publication becomes PUBLISH_UNKNOWN and requires
 reconciliation against publish.sh evidence before another attempt. A driver
