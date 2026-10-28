@@ -104,6 +104,8 @@ import { isPersistedManagerEvent, readStoredManagerEvents } from './manager-conv
 import {
   argvMarkers,
   createProcessRegistry,
+  spawnSessionChild,
+  sessionChildStarted,
   type ProcessRegistryOptions,
   type VerseProcessRegistry,
 } from './process-registry.js';
@@ -2111,7 +2113,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     // was cancelled part-way can still have compacted. Skipped only when the
     // process never existed (async spawn failure, no pid): it wrote nothing,
     // and a file read then could only find some OTHER run's records.
-    if (turn.child.pid !== undefined) runTelemetryHook(id, turn, 'afterTurn');
+    if (sessionChildStarted(turn.child)) runTelemetryHook(id, turn, 'afterTurn');
 
     const session = store.get(id);
     if (!session) {
@@ -2290,6 +2292,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   }
 
   function detachChild(turn: RunningTurn): void {
+    turn.child.stdio?.[3]?.destroy();
     turn.child.removeAllListeners();
     turn.child.on('error', () => { /* late errors after settlement are noise */ });
     turn.child.stdout?.removeAllListeners();
@@ -2404,12 +2407,12 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
 
     let child: ChildProcess;
     try {
-      child = spawn(bin, args, {
+      child = spawnSessionChild(bin, args, {
         cwd: launch.cwd,
         env,
         stdio: [launch.stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         ...(detached ? { detached: true } : {}),
-      });
+      }, id, spawn);
     } catch (err) {
       // Never `err.message`: Node's text names the launcher path.
       const message = describeSpawnFailure(`failed to start ${session.engine}`, err);
@@ -2516,7 +2519,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       // Async spawn failures (ENOENT) carry the launcher path in err.message; keep the errno only.
       emit(id, { type: 'error', turnId, message: describeSpawnFailure(`${session.engine} process error`, err) });
       // Spawn failures (ENOENT) never fire 'close' with a code; settle now.
-      if (child.pid === undefined) finalize(id, turn, null);
+      if (!sessionChildStarted(child)) finalize(id, turn, null);
     });
 
     child.on('close', (code) => {
