@@ -1972,6 +1972,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'metrics': {
+        process.exitCode = await (await import('./metrics.js')).cmdMetrics(rest);
+        break;
+      }
+
       case 'benchmark': {
         process.exitCode = await (await loadBenchmarkCmd())(rest);
         break;
