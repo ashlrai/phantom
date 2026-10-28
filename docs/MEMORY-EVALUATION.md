@@ -63,7 +63,7 @@ npm run --silent bench:memory -- --check           # regression gate: exit 1 bel
 
 CI runs `--check` on one Linux job. It fails when the governed arm drops below the floors in `src/core/local-eval/memory-benchmark-floors.ts`, which hold the current numbers: cases passed per dimension and per retrieval set (paraphrase recall and unanswerable-left-empty alike), no forbidden text, no out-of-scope receipt IDs, every contested slot mentioned, and no pack over its byte or fact budget. Case counts must match too, so a set cannot be shrunk to pass. Raise a floor in the change that raises the measurement.
 
-It has 500 cases and 509 steps in six dimensions:
+It has 539 cases and 548 steps in six dimensions:
 
 | Dimension | Cases | What it measures |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ It has 500 cases and 509 steps in six dimensions:
 | Contradiction | 8 | No silent winner between contested claims, unrelated facts still served, and non-conflicts (agreement, unreviewed, expired or foreign rivals) not mistaken for conflicts. |
 | Temporal | 10 | A four-revision chain queried at each interval, at exact boundaries, with a knowledge cutoff, a future correction, a late import and a backdated correction. |
 | Withdrawal | 8 | Retirement without fallback, history before it, re-approval, future and unreviewed withdrawals, and isolation from other facts. |
-| Agent writes | 204 | Questions over histories written the way independent agents write memory: near-duplicates under different keys, newer facts that contradict older ones without superseding them, facts whose cited code later changed, weakly cited claims next to cited ones, writes that carry a credential or private path, and cited lines that are only reformatted. Four sets (two of 32 scenarios, two of 24) were written by separate agents; credentials appear as placeholders that expand to fake values of the real shapes. A step passes when it serves one fact from each group that answers the question, with no wrong or stale fact, no second copy of the same fact, and a notice when the question needs one. |
+| Agent writes | 243 | Questions over histories written the way independent agents write memory: near-duplicates under different keys, newer facts that contradict older ones without superseding them, facts whose cited code later changed, weakly cited claims next to cited ones, writes that carry a credential or private path, and cited lines that are only reformatted. Six sets (two of 32 scenarios, two of 24, then W5 with 16 and W6 with 20) were written by separate agents; credentials appear as placeholders that expand to fake values of the real shapes. A step passes when it serves one fact from each group that answers the question, with no wrong or stale fact, no second copy of the same fact, and a notice when the question needs one. |
 | Task | 8 | Multi-step scripted sessions (fix CI, ship a release, onboard, migrate a database, audit, cross-project work, tight budget, paraphrase). A task passes only when every step's pack has every required fact and no forbidden one. No model executes the task. |
 
 Each step passes when the expected status matches, every required fact text appears in the model-facing pack text, no forbidden text (stale, withdrawn, contested, deleted or foreign) appears, and the budget holds. The report also gives recall, rank-1 rate and mean reciprocal rank, extraneous facts per step, whether a contested slot is mentioned in the pack text, the payload ratio (required fact bytes over pack bytes) and the number of out-of-scope event IDs in receipts. A case whose expected outcome depends on an open owner decision is reported under `pendingDecisions` and left out of the scores; none is pending now.
@@ -187,7 +187,7 @@ The same separate agent wrote two more sets, 24 scenarios each: 12 where one age
 
 Still open: a fact whose cited comment is reworded with the same meaning is withheld, and a quote-only comment edit that only drops a period still counts as a change. The three W3 credential misses are false alarms in the shared screening patterns: the clean answers ("minted with `kestrelctl token mint --role admin`", "The Slack bot token is read from SLACK_BOT_TOKEN") are withheld because `token` followed by a word reads as a token value. The other W3 miss is a duplicate. W4's misses were not inspected, to keep it unseen for later rounds. Earlier W1 questions that were refused whole now serve: one of them shows a cross-key contradiction that the refusal used to hide.
 
-`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 5 tuning, 9 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.
+`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 1 tuning, 19 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.
 
 ### Cross-key evidence links
 

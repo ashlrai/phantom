@@ -13,9 +13,6 @@
  *   - gcRunStreams deletes only files past STREAM_RETENTION_MS, never fresh
  *     ones, and is a safe no-op on a missing directory.
  *   - emitSinkEvent never throws even when the sink itself throws.
- *
- * One assertion is DELIBERATELY inverted (see "sanity" test) so this suite
- * doesn't pass vacuously if scrubbing were ever removed from fileSink.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
@@ -46,6 +43,7 @@ import {
   MAX_STREAM_READ_BYTES,
   STREAM_REDACTION_WINDOW_CHARS,
   STREAM_TRUNCATION_MARKER,
+  STREAM_RETENTION_MS,
 } from '../src/core/run/streaming.js';
 import {
   acquireLocalStoreLock,
@@ -94,6 +92,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
   setRunStreamGcBeforeCapacityUnlinkHookForTests(undefined);
   setRunStreamReadAfterOpenHookForTests(undefined);
@@ -356,6 +355,13 @@ describe('durable run-output policy', () => {
     expect(readStoredText(runId)).toBe('one durable terminal result');
   });
 });
+
+// Build each private ancestor explicitly, including on platforms whose recursive
+// mkdir does not apply the requested mode to intermediate directories.
+function createPrivateStreamDirectory(): void {
+  fs.mkdirSync(path.dirname(runStreamsDir()), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+}
 
 function makeEvent(overrides: Partial<RunStreamEvent> = {}): RunStreamEvent {
   return { kind: 'model-delta', ts: new Date().toISOString(), text: 'hello', ...overrides };
@@ -778,6 +784,27 @@ describe('emitSinkEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('gcRunStreams', () => {
+  beforeEach(() => {
+    // Freeze policy time without faking filesystem I/O or lock scheduling.
+    vi.spyOn(Date, 'now').mockReturnValue(Math.floor(Date.now() / 1_000) * 1_000);
+  });
+
+  it('retains the exact retention boundary and expires it one millisecond later', () => {
+    createPrivateStreamDirectory();
+    const file = runStreamFilePath('retention-boundary')!;
+    fs.writeFileSync(file, '{}\n', { mode: 0o600 });
+    const now = Date.now();
+    const boundary = new Date(now - STREAM_RETENTION_MS);
+    fs.utimesSync(file, boundary, boundary);
+
+    gcRunStreams(true);
+    expect(fs.existsSync(file)).toBe(true);
+
+    vi.mocked(Date.now).mockReturnValue(now + 1);
+    gcRunStreams(true);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
   it('is a safe no-op when the directory does not exist yet', () => {
     expect(() => gcRunStreams(true)).not.toThrow();
   });
@@ -801,7 +828,7 @@ describe('gcRunStreams', () => {
   });
 
   it('prunes oldest files to the aggregate file-count cap', () => {
-    fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+    createPrivateStreamDirectory();
     for (let i = 0; i < MAX_STREAM_FILES + 3; i += 1) {
       const file = runStreamFilePath(`count-${i}`)!;
       fs.writeFileSync(file, '{}\n', { mode: 0o600 });
@@ -814,7 +841,7 @@ describe('gcRunStreams', () => {
   });
 
   it('prunes oldest files to the aggregate byte cap', () => {
-    fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+    createPrivateStreamDirectory();
     for (let i = 0; i < 33; i += 1) {
       const file = runStreamFilePath(`bytes-${i}`)!;
       fs.writeFileSync(file, '', { mode: 0o600 });
@@ -830,7 +857,7 @@ describe('gcRunStreams', () => {
   });
 
   it('candidate claim runs retention while preserving its exact orphan target', () => {
-    fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+    createPrivateStreamDirectory();
     const oldPath = runStreamFilePath('claim-gc-old')!;
     fs.writeFileSync(oldPath, '{}\n', { mode: 0o600 });
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
@@ -866,7 +893,7 @@ describe('gcRunStreams', () => {
   });
 
   it('rechecks a claim marker created after enumeration before capacity unlink', () => {
-    fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+    createPrivateStreamDirectory();
     const racedPath = runStreamFilePath('capacity-race-0')!;
     for (let i = 0; i < MAX_STREAM_FILES + 1; i += 1) {
       const file = runStreamFilePath(`capacity-race-${i}`)!;
@@ -896,7 +923,7 @@ describe('gcRunStreams', () => {
 
 describe('readRunStreamChunk — fail-closed reader', () => {
   function privateFile(runId: string, body: string): string {
-    fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+    createPrivateStreamDirectory();
     const file = runStreamFilePath(runId)!;
     fs.writeFileSync(file, body, { mode: 0o600 });
     return file;
@@ -952,7 +979,7 @@ describe('readRunStreamChunk — fail-closed reader', () => {
     setRunStreamReadAfterOpenHookForTests(() => {
       setRunStreamReadAfterOpenHookForTests(undefined);
       fs.renameSync(root, `${root}.old`);
-      fs.mkdirSync(runStreamsDir(), { recursive: true, mode: 0o700 });
+      createPrivateStreamDirectory();
     });
     expect(readRunStreamChunk('root-raced', 0)).toBeUndefined();
   });

@@ -6,6 +6,9 @@
 # the owner lane before a PR exists, and GitHub additionally requires the
 # owner's review (the ashlr-fleet App is never a code owner). Regenerate it
 # instead of editing it by hand; test/authority-codeowners-310b.test.ts fails on drift.
+# Secret-scan configuration: owner-reviewed, kept above the generated block so regeneration preserves it.
+/.gitleaks.toml @masonwyatt23
+/.gitleaksignore @masonwyatt23
 # Generated from src/core/authority/protected-paths.ts — the fleet's owner lane (SPEC-310B §2 G1).
 # The ashlr-fleet App is never a code owner, so every path below needs the owner's review on GitHub too.
 # ci-config: CI configuration decides which checks guard the default branch; only Mason changes it
@@ -221,6 +224,12 @@
 /src/core/learning/agent-semantic-events.ts @masonwyatt23
 /src/core/verse/authority-api.ts @masonwyatt23
 /src/cli/authority.ts @masonwyatt23
+/src/core/improve/** @masonwyatt23
+/src/cli/improve.ts @masonwyatt23
+/src/core/autopilot/** @masonwyatt23
+/src/cli/autopilot.ts @masonwyatt23
+/src/core/cloud/pr-actions.ts @masonwyatt23
+/src/core/cloud/pr-preview.ts @masonwyatt23
 # tier1-test-infra: test setup and build config decide which tests run and whether HOME is isolated
 /test/setup/** @masonwyatt23
 /test/config/** @masonwyatt23
@@ -265,6 +274,7 @@
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
+/test/autopilot.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
@@ -274,12 +284,16 @@
 /test/cloud-api-scheduler.test.ts @masonwyatt23
 /test/cloud-budget.test.ts @masonwyatt23
 /test/cloud-intake-313.test.ts @masonwyatt23
+/test/cloud-pr-actions.test.ts @masonwyatt23
+/test/cloud-pr-triage.test.ts @masonwyatt23
 /test/cloud-timeline.test.ts @masonwyatt23
 /test/codex-selected-producer.test.ts @masonwyatt23
+/test/codex-session-usage.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
 /test/confine-autonomous-310b.test.ts @masonwyatt23
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
+/test/context-compiler-improve.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
 /test/custody-ledger.test.ts @masonwyatt23
@@ -289,9 +303,11 @@
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
 /test/daemon-first-tick-314.test.ts @masonwyatt23
+/test/daemon-health-revive.test.ts @masonwyatt23
 /test/daemon-liveness-310b.test.ts @masonwyatt23
 /test/daemon-resident-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-start-temp-worktree-sweep.test.ts @masonwyatt23
+/test/daemon-state-resolution-clock.test.ts @masonwyatt23
 /test/decide-critics-315.test.ts @masonwyatt23
 /test/decide-judge-manager-315.test.ts @masonwyatt23
 /test/decide-resource-choice.test.ts @masonwyatt23
@@ -305,11 +321,14 @@
 /test/devin-cli-engine-315.test.ts @masonwyatt23
 /test/devin-cli-engine-realio-315.test.ts @masonwyatt23
 /test/devin-engine-identity-315.test.ts @masonwyatt23
+/test/devin-evidence-triage-315.test.ts @masonwyatt23
 /test/devin-fleet-launcher-315.test.ts @masonwyatt23
 /test/devin-intake-315.test.ts @masonwyatt23
 /test/devin-lane-315.test.ts @masonwyatt23
+/test/devin-lane-adapter-contracts.test.ts @masonwyatt23
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
+/test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
 /test/engines-custody-record.test.ts @masonwyatt23
 /test/engines-judges-310b.test.ts @masonwyatt23
@@ -318,8 +337,10 @@
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
+/test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/m454/agent-skills-ff2df4c.provenance.json @masonwyatt23
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
+/test/fixtures/queue/router-queue.md @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
@@ -336,6 +357,7 @@
 /test/goal-loop.result.test.ts @masonwyatt23
 /test/goal-loop.runner.test.ts @masonwyatt23
 /test/goal-preferences.test.ts @masonwyatt23
+/test/graph-live.test.ts @masonwyatt23
 /test/grok-capacity-publish-e2e-315.test.ts @masonwyatt23
 /test/h1.apply-guardrails.test.ts @masonwyatt23
 /test/h1.audit.test.ts @masonwyatt23
@@ -391,8 +413,19 @@
 /test/helpers/policy-child-bundle.ts @masonwyatt23
 /test/helpers/preparation-workflow-manager-fixture.ts @masonwyatt23
 /test/helpers/process-liveness.ts @masonwyatt23
+/test/helpers/router-replay.ts @masonwyatt23
 /test/host-merge-310b.test.ts @masonwyatt23
+/test/improve-api.test.ts @masonwyatt23
+/test/improve-backlog-leverage.test.ts @masonwyatt23
+/test/improve-boundary.test.ts @masonwyatt23
+/test/improve-cli-boundary.test.ts @masonwyatt23
+/test/improve-discover.test.ts @masonwyatt23
+/test/improve-lesson-trial.test.ts @masonwyatt23
+/test/improve-observe.test.ts @masonwyatt23
+/test/improve-outcomes.test.ts @masonwyatt23
+/test/improve-promote-redteam.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
+/test/job-memory-accounting.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
 /test/l1-core-fixes-310.test.ts @masonwyatt23
@@ -417,8 +450,10 @@
 /test/leader-store-cas-310.test.ts @masonwyatt23
 /test/leader-thread-314.test.ts @masonwyatt23
 /test/leader-thread-routes-314.test.ts @masonwyatt23
+/test/learn-eval-gate.test.ts @masonwyatt23
 /test/learn-experiments-310b.test.ts @masonwyatt23
 /test/learn-harness-310b.test.ts @masonwyatt23
+/test/learn-knowledge-evidence.test.ts @masonwyatt23
 /test/learn-retro-sweep-315.test.ts @masonwyatt23
 /test/learn-retro-sweep-timer-315.test.ts @masonwyatt23
 /test/legacy-collector-reconciliation-driver.test.ts @masonwyatt23
@@ -436,6 +471,7 @@
 /test/locus-firm-onboard.test.ts @masonwyatt23
 /test/locus-job-env.test.ts @masonwyatt23
 /test/locus-job-secrets-wrapper.test.ts @masonwyatt23
+/test/locus-producer-contract.test.ts @masonwyatt23
 /test/locus-provider-scope.test.ts @masonwyatt23
 /test/locus-readiness.test.ts @masonwyatt23
 /test/locus-session-authority.test.ts @masonwyatt23
@@ -480,6 +516,7 @@
 /test/m145.judge-calibration.test.ts @masonwyatt23
 /test/m149.ace-playbook.test.ts @masonwyatt23
 /test/m15.model-manager.test.ts @masonwyatt23
+/test/m15.router-replay.test.ts @masonwyatt23
 /test/m15.router.test.ts @masonwyatt23
 /test/m151.edv-feedback.test.ts @masonwyatt23
 /test/m153.verification-gate.test.ts @masonwyatt23
@@ -579,6 +616,7 @@
 /test/m297.retry-transient-abort.test.ts @masonwyatt23
 /test/m298.test.ts @masonwyatt23
 /test/m299.web-fleet-control.test.ts @masonwyatt23
+/test/m30.merge-queue-reaper.test.ts @masonwyatt23
 /test/m300.resource-aware-dispatch.test.ts @masonwyatt23
 /test/m301.autonomy-policy.test.ts @masonwyatt23
 /test/m303.guard-health.test.ts @masonwyatt23
@@ -784,10 +822,14 @@
 /test/memory-foundation.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
+/test/metrics-boundary.test.ts @masonwyatt23
+/test/metrics-pillar.test.ts @masonwyatt23
 /test/mirror-git-bounded.test.ts @masonwyatt23
 /test/mirror-sibling-deps-314.test.ts @masonwyatt23
 /test/mirrors-310b.test.ts @masonwyatt23
+/test/model-racing-proposal-types.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
+/test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/orchestrator-bash-standing-310b.test.ts @masonwyatt23
 /test/outcome-core.test.ts @masonwyatt23
 /test/outcome-daemon-loop.test.ts @masonwyatt23
@@ -801,7 +843,11 @@
 /test/outcomes-api.test.ts @masonwyatt23
 /test/overnight-api-310b.test.ts @masonwyatt23
 /test/phantom-custody.test.ts @masonwyatt23
+/test/planning-client-discovery-revive.test.ts @masonwyatt23
+/test/planning-clients-revive.test.ts @masonwyatt23
 /test/playbooks-315.test.ts @masonwyatt23
+/test/pool-budget-store.test.ts @masonwyatt23
+/test/pool-budget.test.ts @masonwyatt23
 /test/post-merge-credit-import-cycle.test.ts @masonwyatt23
 /test/post-merge-credit-release.test.ts @masonwyatt23
 /test/post-merge-halt-310b.test.ts @masonwyatt23
@@ -822,6 +868,7 @@
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23
 /test/reset-aware-scheduling.test.ts @masonwyatt23
+/test/reset-calendar.test.ts @masonwyatt23
 /test/reset-spending-park-delay.test.ts @masonwyatt23
 /test/reset-spending.test.ts @masonwyatt23
 /test/resident-awake-plist-read.test.ts @masonwyatt23
@@ -845,6 +892,7 @@
 /test/resource-engineering-supervisor-acceptance.test.ts @masonwyatt23
 /test/resource-engineering-supervisor-admission-acceptance.test.ts @masonwyatt23
 /test/resource-engineering-supervisor.test.ts @masonwyatt23
+/test/resource-identity-history-expiry.test.ts @masonwyatt23
 /test/resource-native-profile-identity.test.ts @masonwyatt23
 /test/resource-native-profile-review.test.ts @masonwyatt23
 /test/resource-native-profile.test.ts @masonwyatt23
@@ -866,8 +914,12 @@
 /test/resource-spark-enrollment.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/router-calibration.test.ts @masonwyatt23
+/test/router-current-claude-models.test.ts @masonwyatt23
+/test/router-typing.test.ts @masonwyatt23
 /test/routing-budget-api.test.ts @masonwyatt23
 /test/routing-budget-store.test.ts @masonwyatt23
+/test/routing-calibration-properties.test.ts @masonwyatt23
 /test/routing-capacity-history.test.ts @masonwyatt23
 /test/routing-interactive-scope.test.ts @masonwyatt23
 /test/routing-readiness-314.test.ts @masonwyatt23
@@ -882,7 +934,9 @@
 /test/sandbox-kernel-evidence-310.test.ts @masonwyatt23
 /test/sandbox-reservation-recovery.test.ts @masonwyatt23
 /test/scan-skip-mirrors-310b.test.ts @masonwyatt23
+/test/schemas/fixtures/loop.v1.json @masonwyatt23
 /test/scrub-310.test.ts @masonwyatt23
+/test/scrub-corpus.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
@@ -946,6 +1000,7 @@
 /test/verse-local-fleet.test.ts @masonwyatt23
 /test/verse-manager-conversation.test.ts @masonwyatt23
 /test/verse-manager-session.test.ts @masonwyatt23
+/test/verse-mcp-grants-types.test.ts @masonwyatt23
 /test/verse-mcp-scope.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
@@ -956,6 +1011,7 @@
 /test/w1.post-merge-halt.test.ts @masonwyatt23
 /test/w1.run-window-loop.test.ts @masonwyatt23
 /test/web-console-sse-backpressure.test.ts @masonwyatt23
+/test/website-ci-qualification.test.ts @masonwyatt23
 /test/website-host-release.test.ts @masonwyatt23
 /test/website-output-materialization.test.ts @masonwyatt23
 /test/website-public-build-env.test.ts @masonwyatt23

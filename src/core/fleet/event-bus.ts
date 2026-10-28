@@ -36,6 +36,7 @@
  */
 
 import type { AshlrConfig } from '../types.js';
+import type { BusEnvelope } from './bus-envelope.js';
 
 // ---------------------------------------------------------------------------
 // Event catalogue
@@ -81,6 +82,11 @@ export interface FleetBusPayloadMap {
 }
 
 export type FleetBusPayload<K extends FleetBusEventKind> = FleetBusPayloadMap[K];
+
+/** Optional wire representation; the local emit API keeps its existing semantics. */
+export type FleetBusEnvelope<K extends FleetBusEventKind = FleetBusEventKind> = {
+  [Kind in K]: BusEnvelope<{ kind: Kind; payload: FleetBusPayload<Kind> }>;
+}[K];
 
 // ---------------------------------------------------------------------------
 // Handler registry

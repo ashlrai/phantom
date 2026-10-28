@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CORPUS = 'test/fixtures/memory/corpus-v1.json';
 const SOURCES = ['src/core/memory/types.ts', 'src/core/memory/validate.ts', 'src/core/memory/scope.ts', 'src/core/memory/temporal.ts', 'src/core/memory/pack.ts',
+  'src/core/memory/source.ts', 'src/core/memory/vocabulary.ts',
   'src/core/local-eval/memory-evaluation-types.ts', 'src/core/local-eval/memory-evaluation-baseline.ts', 'src/core/local-eval/memory-evaluation.ts',
   'src/core/local-eval/memory-performance.ts', 'src/core/authority/canonical-json.ts', 'src/core/util/scrub-secrets.ts'];
 const digest = (bytes: string | Uint8Array) => 'sha256_' + createHash('sha256').update(bytes).digest('hex');

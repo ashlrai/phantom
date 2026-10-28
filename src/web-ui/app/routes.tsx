@@ -20,6 +20,7 @@
  * changes here once the legacy app is retired and server.ts gains a real
  * SPA catch-all.
  */
+import { DecisionInbox } from '../routes/verse/inbox/DecisionInbox.js';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from '../components/layout/Shell.js';
 import { PlaceholderView } from '../routes/PlaceholderView.js';
@@ -72,6 +73,7 @@ export function AppRoutes() {
         <Route path="/control/fleet" element={<FleetView />} />
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
+        <Route path="/verse/inbox" element={<DecisionInbox />} />
         <Route path="/inbox" element={<InboxView />} />
         <Route path="/inbox/:id" element={<InboxView />} />
         <Route path="*" element={<Navigate to="/overview" replace />} />
