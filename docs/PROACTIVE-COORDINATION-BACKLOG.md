@@ -8,12 +8,11 @@ product roles or authority. Multiple agents may share a provider or account.
 
 ## Product acceptance direction
 
-The north star is a unified self-improving engineering workspace and service,
-with Ashlr dogfooding its service delivery toward SaaS and autonomous operations.
-**Work with me** and **Work for me** must share task identity, context, resources
-and evidence. Users can inspect, interject, approve, take over and return work to
-agents. This direction is an aspiration, not evidence of a completed product or
-measured autonomous performance.
+The product direction is [VISION.md](VISION.md): a chat-first open-source
+assistant, not a hosted service. **Work with me** and **Work for me** share
+task identity, context, resources, and evidence. Users can inspect, interject,
+approve, take over, and return work to agents. This backlog is an aspiration
+for the coordination slice, not evidence of a completed product.
 
 Acceptance for subsequent milestones:
 

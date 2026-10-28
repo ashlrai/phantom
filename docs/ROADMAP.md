@@ -1,31 +1,47 @@
-# ashlr-hub roadmap
+# Phantom roadmap
 
-The forward-looking companion to [CHANGELOG.md](../CHANGELOG.md) (what shipped)
-and [docs/contracts/](./contracts/) (the binding per-milestone specs). This
-file states direction; contracts state commitments. For an ID-by-ID status
-lookup across every milestone (including confirmed spec-vs-shipped
-collisions), see [`docs/MILESTONE-INDEX.md`](./MILESTONE-INDEX.md) — check it
-before citing a milestone number as evidence of what shipped.
+Product direction lives in [VISION.md](VISION.md). This file is milestone
+history plus the invariants that still bind the code. Contracts in
+[docs/contracts/](./contracts/) state commitments. For an ID-by-ID status
+lookup, see [`docs/MILESTONE-INDEX.md`](./MILESTONE-INDEX.md) before citing a
+milestone number as evidence of what shipped. [CHANGELOG.md](../CHANGELOG.md)
+is what shipped, in release order.
 
-> **Historical/design context — not current runtime activation guidance.**
-> “Shipped” below means source and test delivery, not live runtime authority.
-> Current compiled daemon and conductor trust roots are empty: non-dry daemon
-> and resident loop execution is dormant, while owner-invoked `ashlr goal
-> "<objective>"` remains a live proposal-only plan-and-advance path.
+> **Historical record, not an activation recipe.**
+> "Shipped" below means source and test delivery, not live runtime authority.
+> `DAEMON_ACTIVATION_TRUST_ROOTS` and `GOAL_CONDUCTOR_ACTIVATION_TRUST_ROOTS`
+> in `src/core/daemon/activation-permit.ts` are empty. Owner-invoked
+> `ashlr goal "<objective>"` remains a live plan-and-advance path.
 
-## Design principles (constant across every milestone)
+## Design principles
 
-1. **Local-first.** No network egress without explicit opt-in; local models by
-   default; cloud is a flag plus a key, never a silent fallback.
-2. **Proposal-only autonomy.** Every outward mutation passes through the
-   approval inbox. There is no agent-reachable approve/apply path — and there
-   never will be.
-3. **Safety by construction, proven by tests.** Enrollment gating, kill
-   switch, sandboxed execution, append-only audit, secret scrubbing — each
-   invariant has a named adversarial test, not a paragraph of intent.
-4. **Contracts-first.** A milestone is a contract doc + regression tests +
-   implementation, in that order.
-5. **Zero runtime dependencies** except the MCP SDK. Boring is a feature.
+1. **Choose the provider on purpose.** A model connects through a subscription
+   login, a command-line agent, an API key, or a local model. Local listeners
+   stay on loopback unless the operator persists an opt-in
+   (`gateBindHost` in `src/core/local-runtime/llama/config.ts`,
+   `src/core/run/local-inference.ts`).
+2. **Autonomy with gates on consequential actions.** Routine work can proceed
+   under a signed standing grant. Main merges stay frontier-only, local or
+   unparseable endpoints stay out of merge and credential roles, and Tier-1
+   paths stay protected. See [VISION.md](VISION.md). The old line that an
+   agent-reachable approve path would never exist is withdrawn. The code is
+   still stricter than that sentence: `applyProposal` in
+   `src/core/inbox/apply.ts` requires an approved proposal and `confirmed:
+   true`, and `autoMergeProposal` stays off unless
+   `cfg.foundry.autoMerge.enabled` is set (`src/core/inbox/merge.ts`).
+   Main merge already refuses a non-frontier tier. A normal loopback model can
+   still run coder, reviewer, and planner (`supportsRoleExecution` in
+   `src/core/run/role-invocation.ts`). That gap is listed in
+   [VISION.md](VISION.md).
+3. **Safety by construction, proven by tests.** Enrollment gating, the kill
+   switch, sandboxed execution, an append-only audit, and secret scrubbing
+   each need a named adversarial test.
+4. **Contracts-first.** A milestone is a contract doc, regression tests, and
+   an implementation, in that order.
+5. **Add runtime dependencies only when the product needs them.** The
+   manifest is the inventory. MCP is the plug-in standard. The old claim of
+   zero runtime dependencies except the MCP SDK does not match
+   [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Shipped
 
@@ -81,29 +97,13 @@ before citing a milestone number as evidence of what shipped.
   regression gate (exit 3 on a newly-broken task or resolve-rate drop —
   wire into CI/cron).
 
-## Historical near-term list (stale — kept for reference only)
+## Removed near-term list
 
-> **This section is ~9 minor versions stale.** It was written when the repo
-> was pre-first-release and targeted "v2.3"; the package is now at
-> **3.2.0** (`package.json`) with v3 through v6.x shipped (see "Shipped"
-> above) and npm publication already the baseline for the 3.0.x line (see
-> README "Version history"). None of the five bullets below have been
-> re-verified against current `src/`; treat every one as a historical
-> artifact, not a current backlog. For what's actually next, check open
-> GitHub issues and `docs/MILESTONE-INDEX.md` for gaps. This section is kept
-> only so old links into it don't 404 — do not plan against it.
-
-- **First public release.** Tag `v2.2.0` → npm publish via the release
-  pipeline; gather real-world install feedback (docs/RELEASING.md).
-- **Plugin ecosystem seeding.** A handful of reference plugins (e.g. a Jira
-  backlog scanner, an org-template pack) exercising each capability kind, plus
-  authoring docs hardening from real usage.
-- **Estimator learning loop.** Feed `reflect` outcomes back into `--estimate`
-  (per-goal-class priors instead of keyword similarity alone).
-- **Web command center depth.** Run/swarm detail drill-downs, goal/milestone
-  views, and a first-run tour mirroring `ashlr onboard`.
-- **Agent contract v2.** Versioned `--json` schemas surfaced in
-  `docs --agent --json`; conformance tests that fail when a shape drifts.
+A stale v2.3 backlog used to live here (first public release at `v2.2.0`,
+plugin seeding, an estimator learning loop, web command-center depth, and an
+agent-contract v2). It named package 3.2.0. `package.json` is now 3.29.15.
+Those five items are deleted. Direction is [VISION.md](VISION.md). Milestone
+status is [`docs/MILESTONE-INDEX.md`](./MILESTONE-INDEX.md).
 
 ## v3 — Team Command Center (gate opened 2026-06-12, NOT YET BUILT)
 
@@ -117,21 +117,25 @@ Milestones M34–M40, contracts-first, registered as an ashlr goal 2026-06-12.
 `test/m40.*` exist; `hub/v1` and `ASHLR_API_URL` are absent from `src/`. What
 exists today is the M30 local-only seam layer, deliberately gated to throw
 (`src/core/seams/identity.ts:45`, `src/core/seams/daemon-coordinator.ts:79`).
-"Gate opened" means a goal was registered and the spec was written — it does
-not mean the milestones were delivered. See `docs/MILESTONE-INDEX.md` §3 and
-the status banner at the top of `docs/SPEC-V3-TEAM.md`. Everything stays
-local-first: cloud is sync, not dependency.
+"Gate opened" means a goal was registered and the spec was written. It does
+not mean the milestones were delivered. See `docs/MILESTONE-INDEX.md` and
+the status banner at the top of `docs/SPEC-V3-TEAM.md`. A hosted team
+backbone is not the product in [VISION.md](VISION.md).
 
-## Gated future (explicitly NOT scheduled)
-- **Public SaaS / anything world-readable.** The team backbone is
-  founders-only and self-hostable (`ASHLR_API_URL`).
-- **Plugin marketplace / remote plugin fetch.** Plugins remain files you
-  place locally and enable explicitly.
-- **OS-level plugin sandboxing.** Out of scope; the trust model is gating +
-  least privilege + tamper evidence + audit (docs/PLUGINS.md).
+## Not the current product
+
+- **A public hosted service.** SPEC-V3-TEAM is unbuilt, and `ASHLR_API_URL`
+  is absent from `src/`. [VISION.md](VISION.md) is a local open-source
+  assistant, not a hosted multi-tenant product.
+- **In-process plugin fetch.** Plugins in [PLUGINS.md](PLUGINS.md) remain
+  files you place locally and enable explicitly. A registry-style install
+  for MCP servers is a gap in [VISION.md](VISION.md), not a ban.
+- **OS-level plugin sandboxing.** Out of scope for the in-process plugin
+  loader. The trust model there is gating, least privilege, tamper evidence,
+  and audit ([PLUGINS.md](PLUGINS.md)).
 
 ## How to influence this
 
-Open a GitHub issue with the problem (not the feature). Anything that touches
-an invariant in the design principles above starts as a contract draft in
-docs/contracts/.
+Open a GitHub issue with the problem. Product direction is
+[VISION.md](VISION.md). Anything that touches a safety invariant starts as a
+contract draft in docs/contracts/.

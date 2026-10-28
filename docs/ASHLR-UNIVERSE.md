@@ -4,12 +4,10 @@
 
 # Phantom operator guide
 
-Phantom is the public product vision for a self-improving engineering fleet:
-turn an objective and a resource budget into a continuing search for better
-products, tools, and ways of working. Phantom supplies execution, integration, and
-observation. A universe supplies the objective, candidate population, experiments,
-and accumulated evidence. The [North Star](NORTH-STAR.md) describes the ambition;
-this guide documents the implemented interfaces and their operational boundaries.
+The product direction is the [vision](VISION.md). This guide is the Universe
+experiment runtime: an objective, a resource budget, a candidate population,
+experiments, and accumulated evidence. Phantom supplies execution, integration,
+and observation for those experiments.
 
 The useful unit of progress is an improvement demonstrated in a working environment. A universe should be able to propose alternatives, build them, evaluate their effects, retain useful variants, and use the result to choose its next experiment. As models improve, the same loop can explore more ambitious work.
 
@@ -2940,7 +2938,7 @@ Custom evaluator authors must keep acceptance logic outside the process executin
 
 Each stage should demonstrate a better outcome on a real task and preserve a reproducible path back to the evidence. The destination is an engineering system whose experimentation improves the system itself and the products it builds.
 
-See the [research grounding](UNIVERSE-RESEARCH.md) for the methods and their evidence limits, and the [North Star](NORTH-STAR.md) for the broader product objective.
+See the [research grounding](UNIVERSE-RESEARCH.md) for the methods and their evidence limits, and the [vision](VISION.md) for the product direction.
 
 The [autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) connects durable
 execution, measured engineering yield and self-improving harness research to a
