@@ -104,6 +104,15 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
+`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
+as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
+2, frontier 3) over the first N listed repos. Every repo must be one of the
+seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
+whole. The projection is deterministic, so replayed asks dedupe by job id at
+the queue store, and it mutates nothing: no receipts, queue file or audit log
+are written. `task` stays untrusted prompt data on each emitted job.
+
 `phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
 The bridge passes `prompt` only as untrusted model input, never as shell,
 command arguments, configuration, an execution path, or authority. It must
