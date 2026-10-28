@@ -2180,6 +2180,10 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   if (metrics.verifyPassRate > 0 || metrics.proposalsCreated > 0) {
     console.log(`    verify pass rate:   ${pct(metrics.verifyPassRate)}`);
   }
+  if (metrics.crossReview) {
+    const { share, comparable, unknown } = metrics.crossReview;
+    console.log(`    cross-provider reviews: ${share === null ? 'unavailable' : pct(share)} (${comparable} comparable, ${unknown} unknown)`);
+  }
   console.log(`    trivial ratio:      ${pct(metrics.trivialRatio)}`);
   console.log(`    empty-diff rate:    ${pct(metrics.emptyRate)}`);
   console.log(`    avg diff lines:     ${metrics.avgDiffLines.toFixed(1)}`);
