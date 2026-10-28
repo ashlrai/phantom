@@ -263,6 +263,7 @@
 /test/automerge-pass-standing-310b.test.ts @masonwyatt23
 /test/autonomous-env-310b.test.ts @masonwyatt23
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
+/test/autopilot.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
