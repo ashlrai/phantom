@@ -269,6 +269,106 @@ Phase 0. Agents do not sign grants. The policy reserved for the owner is in
 [AGENTS.md](../AGENTS.md). Design and procedures:
 [STANDING-AUTHORITY.md](STANDING-AUTHORITY.md) and [AUTHORITY.md](AUTHORITY.md).
 
+### Offline router backlog planning
+
+`phm backlog plan` (RQ-BACKLOG-GEN) proposes READY jobs from captured VISION
+checklists, open issues and repository scanner findings. Invoke it after each
+bridge queue refresh. Below three READY jobs per active slot it refills toward
+five per slot; at or above three it emits nothing. Zero slots emits nothing.
+Existing excess work is preserved. If sources run out, it emits the available
+jobs and reports the remaining gap rather than inventing work.
+
+```sh
+phm backlog plan --config rq-config.json --input rq-sources.json \
+  --queue router-queue.md --previous-queue previous-queue.md
+```
+
+The command is offline and read-only: no model, GitHub, subprocess, credential
+access, queue writes or dispatch. The bridge supplies fresh source snapshots
+and the active slot count, invokes the planner repeatedly, and applies output
+under its own queue lock only if the current queue SHA-256 matches the `sha`
+in the stderr `rq-plan` record. If the queue changed, replan. READY here means
+available work data; it grants no execution, review or merge authority. The
+supervisor still owns isolated review, exact-head checks, denylist/sensitive-path
+checks, credential isolation, merge caps, PAUSE and post-merge stop controls.
+
+Configuration is separate from untrusted queue/source data. Its allowlist must
+contain exactly the bridge's seven approved `ashlrai/<repo>` identities. The
+following names are illustrative; replace all seven with the approved list.
+The command cannot discover or expand that authority:
+
+```json
+{
+  "v": 1,
+  "activeSlots": 2,
+  "allowedRepos": [
+    "ashlrai/repo-0", "ashlrai/repo-1", "ashlrai/repo-2", "ashlrai/repo-3",
+    "ashlrai/repo-4", "ashlrai/repo-5", "ashlrai/repo-6"
+  ]
+}
+```
+
+Source snapshots have this shape (repositories may be an approved subset):
+
+```json
+{
+  "v": 1,
+  "repositories": [{
+    "repo": "ashlrai/repo-0",
+    "vision": "# VISION\n- [ ] Restore offline search",
+    "issues": [{
+      "number": 42, "state": "open", "title": "Fix search pagination",
+      "body": "Reproduce duplicate results on the second page."
+    }],
+    "scans": [{
+      "id": "search:test:pagination", "source": "test",
+      "title": "Cover empty search pages", "detail": "Add a regression case.",
+      "value": 4, "effort": 2
+    }]
+  }]
+}
+```
+
+`vision`, `issues` and `scans` are required; use empty text/arrays for a known
+empty source. Collectors must surface failed or incomplete discovery themselves,
+never replace unknown evidence with empty arrays. VISION accepts explicit
+unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced code; narrative and
+completed tasks do not generate jobs. Issues require a unique positive number,
+`open`/`closed` state, title and body (empty body allowed); closed issues are
+excluded. Scans accept the existing `WorkItem` fields shown above (extra fields
+are ignored), with a unique ID, a backlog source and integer value/effort 1–5.
+Ranking reuses portfolio value/effort and source weighting, with stable ID order
+for ties. VISION uses value 5/effort 2 and goal weighting; issues use 3/2.
+
+stdout contains **only new jobs as JSON Lines** with fields `v:1`, `id`, `repo`,
+`status:"READY"`, `source` (`vision`, `issue`, `scan`), `sourceId`, `title` and
+`prompt`. The queue uses that same row schema, with status one of `READY`,
+`RUNNING`, `BLOCKED`, `DONE`, `FAILED`, `CANCELLED`; initialize it as an empty
+file. Despite its `.md` name, `router-queue.md` contains JSON Lines, without
+Markdown fences or headings. Escaped prompt newlines remain within one row.
+All source/task text is untrusted model prompt data and must never enter shell
+commands. The planner does not approve paths or interpret source instructions.
+
+Stable IDs, source identities and normalized per-repo titles prevent duplicate
+work, including against every terminal and in-progress queue status. Keep queue
+history (or equivalent tombstones); removing history permits replay. Existing
+READY capacity counts distinct source identities and titles rather than copied
+rows with different IDs; the bridge owns stale-job reconciliation.
+stderr is JSON Lines too: each successful queue read emits `rq-queue-read`,
+with before/after hashes and added/removed/changed row identities, states and
+hashes. Task and diff text never appear in audit logs. Supply `--previous-queue`
+to compare against the last read; without it, the baseline is empty. A malformed
+queue produces a rejection hash record and no work. Invalid UTF-8, oversized,
+missing or symlinked files are refused. File reads are capped at 8 MiB, queue
+rows at 20,000, slots at 1,000, and issues/scans at 1,000 each per repo. Titles
+are capped at 240 characters, issue bodies/scan details at 16,000, VISION at
+128,000, and queue prompts at 20,000.
+
+Exit 0 means no refill needed or target reached; exit 1 means source exhaustion
+with possibly usable partial rows; exit 2 means bad usage or invalid snapshots
+and no rows. Bridge collectors and the supervisor are separate components;
+this command does not install or activate either.
+
 ## 4. Native engines
 
 There are two registries:
@@ -330,3 +430,56 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 
 For more failure modes and their recovery, see
 [RELIABILITY.md](RELIABILITY.md#failure-modes--recovery).
+
+## Per-pool budget ledger
+
+`phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
+same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
+observation ledger, with no dispatch or spending authority. Pools are
+`codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and
+`grok-ultra`. Claude remains `held`; local oMLX reports capacity only.
+
+```sh
+phm budget add codex-cmp --bucket weeklyPct --remaining 0 --reset-at 2026-11-01T12:00:00Z --json
+phm budget add codex-cmp --bucket credits --remaining 42 --json
+phm budget add devin --bucket acus --remaining 12.5 --json
+phm budget add local-omlx --bucket capacity --remaining 2 --json
+phm budget add codex-cmp --source log --input ./quota.log --json
+phm budget show --json
+```
+
+Manual is the default source. `--at` sets an observation's UTC ISO timestamp;
+future readings are rejected. Manual readings override later automatic readings
+in the same pool and bucket until their explicit reset. Without a reset, that
+manual override persists until another manual reading. Record a new manual
+reading to correct it. A reset makes an old balance unknown until a new reading
+arrives; it never assumes a full refill. Weekly percentages and credit balances
+are independent, including when the weekly allowance is exhausted.
+
+Automatic imports accept `--source cli|log --input <file|->` (`-` is stdin).
+The caller supplies the pool explicitly, so personal and company accounts cannot
+be inferred from account identifiers. Input is limited to 1 MiB. Supported
+labelled lines are `weekly remaining: 25% reset: 2026-11-01T12:00:00Z`,
+`weekly used: 75%`, `credits remaining: 42`, `acus remaining: 12.5`, and
+`capacity remaining: 2`, optionally prefixed with `rate-limit`. Codex native
+`event_msg` / `token_count` JSONL rate-limit records are also supported: only
+10080-minute windows, finite credit balances, and observation/reset times are
+kept. Unknown output is ignored; an import with no recognized readings fails.
+No provider CLI is launched, no authentication file is read, and no raw log,
+transcript, account identifier, or credential is stored.
+
+Records are immutable batches under `~/.ashlr/fleet/budgets/`. Concurrent
+imports cannot overwrite each other's batches. Unreadable or malformed records
+make the snapshot `unavailable`, with unknown balances. Bucket projections
+include remaining amount, source, timestamp, reset, last-two and trailing-12-hour
+burn per hour, and projected exhaustion. Rates use observations in the current
+uninterrupted window; refills and resets break the series. The 12-hour rate uses
+the earliest available reading within that interval, so it can cover less than
+12 hours. Projection uses the last-two rate from the observation timestamp and
+is unknown if exhaustion would occur after reset. Capacity has no burn estimate.
+
+The router queue's external `fleet.v1` and `dispatchd/status.json` producers are
+not present in this repository. Their consumer contract is to embed the same
+`budgets` object from `phm budget show --json`; this change does not create or
+replace those external files. The core reader is `readPoolBudgets` in
+`src/core/fleet/pool-budget-store.ts`.

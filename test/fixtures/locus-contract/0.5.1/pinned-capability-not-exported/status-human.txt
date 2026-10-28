@@ -1,0 +1,4 @@
+UNVERIFIED personal (personal)  <SESSION_ID>
+  expires  <COUNTDOWN>
+  note     authority anchor not checked: no LOCUS_CONTROL_CAPABILITY in this shell
+  recover  eval "$(locus hook bash)"

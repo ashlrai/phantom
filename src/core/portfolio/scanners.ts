@@ -12,7 +12,7 @@
  *  - No secrets in any emitted WorkItem.
  */
 
-import { execFile } from 'node:child_process';
+import { credentialExecFile as execFile } from '../integrations/secrets.js';
 import { promisify } from 'node:util';
 import { existsSync, lstatSync, opendirSync, statSync, readFileSync } from 'node:fs';
 import { join, basename, relative, resolve } from 'node:path';
