@@ -164,7 +164,7 @@ export function FleetSection() {
         </Button>
         <div id={worldId}>
           {worldOpen ? <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the agent world…</p>}>
-            <FleetWorld read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
+            <FleetWorld agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
           </Suspense> : null}
         </div>
         <ResourcePanel />

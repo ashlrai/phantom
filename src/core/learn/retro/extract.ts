@@ -32,6 +32,60 @@ import type {
 } from './types.js';
 import { classifyTaskKind } from './inject.js';
 import type { ExecutionFeedbackCase } from '../../fleet/execution-feedback-types.js';
+import type { NightlyCause, NightlyJob, NightlyReview } from './nightly-types.js';
+
+function nightlyRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid nightly record');
+  return raw as Record<string, unknown>;
+}
+
+function nightlyIdentifier(raw: unknown, repo = false): string {
+  const pattern = repo ? /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/ : /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+  if (typeof raw !== 'string' || !pattern.test(raw) || cleanText(raw, 201) !== raw) throw new Error('Invalid nightly identifier');
+  return raw;
+}
+
+function nightlyTimestamp(raw: unknown): string {
+  if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw)) || new Date(raw).toISOString() !== raw) {
+    throw new Error('Invalid nightly timestamp');
+  }
+  return raw;
+}
+
+/** Strict, versioned local adapter. Unknown outcomes never become failures. */
+export function extractNightlyJob(raw: unknown): NightlyJob {
+  const r = nightlyRecord(raw);
+  if (r['v'] !== 1 || typeof r['status'] !== 'string' || !['succeeded', 'failed', 'cancelled', 'running', 'blocked'].includes(r['status'])) {
+    throw new Error('Unsupported nightly job');
+  }
+  return {
+    v: 1, id: nightlyIdentifier(r['id']), repo: nightlyIdentifier(r['repo'], true),
+    arm: nightlyIdentifier(r['arm']), playbook: r['playbook'] == null ? null : nightlyIdentifier(r['playbook']),
+    status: r['status'] as NightlyJob['status'], updatedAt: nightlyTimestamp(r['updatedAt']),
+  };
+}
+
+/** Classify comments without persisting their text or interpreting instructions. */
+export function extractNightlyReview(raw: unknown, persisted = false): NightlyReview {
+  const r = nightlyRecord(raw);
+  if (r['v'] !== 1 || r['kind'] !== 'review-block') throw new Error('Unsupported nightly review');
+  let cause: NightlyCause;
+  if (persisted) {
+    if (typeof r['cause'] !== 'string' || !['verification', 'scope', 'safety', 'review', 'execution'].includes(r['cause'])) throw new Error('Invalid nightly cause');
+    cause = r['cause'] as NightlyCause;
+  } else {
+    if (typeof r['body'] !== 'string' || r['body'].length > 16_384) throw new Error('Invalid nightly comment');
+    const text = r['body'].toLowerCase();
+    cause = /\b(security|secret|credential|permission|unsafe)\b/.test(text) ? 'safety'
+      : /\b(test|tests|typecheck|lint|build|verification)\b/.test(text) ? 'verification'
+      : /\b(scope|unrelated|oversized)\b/.test(text) ? 'scope' : 'review';
+  }
+  return {
+    v: 1, id: nightlyIdentifier(r['id']), jobId: nightlyIdentifier(r['jobId']),
+    repo: nightlyIdentifier(r['repo'], true), kind: 'review-block',
+    updatedAt: nightlyTimestamp(r['updatedAt']), cause,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Inputs
