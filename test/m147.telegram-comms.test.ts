@@ -1087,7 +1087,7 @@ describe('Telegram display-brand preview and apply', () => {
     expect((await syncTelegramDisplayBrand(cfgTelegram(), { apply: true, expectedBotId })).status).toBe('blocked');
     expect(fixture.calls).toEqual([]);
   });
-  it.each([cfgDisabled, cfgTelegramMissingToken, cfgTelegramMissingChatId, cfgIMessage])('never contacts a disabled/incomplete Telegram configuration', async (makeConfig) => {
+  it.each([cfgDisabled, cfgTelegramMissingToken, cfgTelegramMissingChatId, cfgIMessage])('never contacts a disabled/incomplete Telegram configuration (%#)', async (makeConfig) => {
     const previous = process.env.TELEGRAM_BOT_TOKEN; delete process.env.TELEGRAM_BOT_TOKEN;
     try {
       const fixture = profile(); setTelegramTransportForTests(fixture.transport);
@@ -1100,11 +1100,11 @@ describe('Telegram display-brand preview and apply', () => {
     expect(result.status).toBe('blocked'); expect(result.errors[0]?.reason).toBe('bot-mismatch');
     expect(fixture.calls.map((c) => c.method)).toEqual(['getMe']);
   });
-  it.each([{ id: botId, is_bot: false }, { id: '123', is_bot: true }, { id: Number.MAX_SAFE_INTEGER + 1, is_bot: true }])('refuses malformed/non-bot identity', async (result) => {
+  it.each([{ id: botId, is_bot: false }, { id: '123', is_bot: true }, { id: Number.MAX_SAFE_INTEGER + 1, is_bot: true }])('refuses malformed/non-bot identity (%#)', async (result) => {
     const transport = vi.fn(async () => ({ ok: true, result })); setTelegramTransportForTests(transport);
     expect((await syncTelegramDisplayBrand(cfgTelegram())).status).toBe('unknown'); expect(transport).toHaveBeenCalledTimes(1);
   });
-  it.each([{}, { name: 1 }, { name: 'x'.repeat(65) }])('treats malformed getter values as unknown and never writes', async (badValue) => {
+  it.each([{}, { name: 1 }, { name: 'x'.repeat(65) }])('treats malformed getter values as unknown and never writes (%#)', async (badValue) => {
     const fixture = profile(); setTelegramTransportForTests(async (method, body) => method === 'getMyName'
       ? { ok: true, result: badValue } : fixture.transport(method, body));
     const result = await syncTelegramDisplayBrand(cfgTelegram(), { apply: true, expectedBotId: botId });

@@ -26,6 +26,7 @@ either name.
 | Web console tests | `npm run test:web` |
 | Safety invariant suites | `npm run test:invariants` |
 | Documentation links and anchors (offline) | `npm run check:docs` |
+| Duplicate test names across `test/` (describe path + title) | `node scripts/check-test-names.mjs` |
 | Fast local gate: build, static checks, related tests, smoke set | `npm run gate` (`-- --base <ref>`, `-- --json`) |
 | Full gate: complete backend and web suites | `npm run gate:full` |
 | Release-readiness subset | `npm run check:release` |
