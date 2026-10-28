@@ -2548,6 +2548,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'budget': {
+        const { cmdBudget } = await import('./budget.js');
+        process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
       case 'usage': {
         // M194: frontier usage table — per-engine calls/tokens/cost + window state.
         const cmdUsage = await loadUsageCmd();

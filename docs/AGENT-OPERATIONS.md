@@ -429,3 +429,56 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 
 For more failure modes and their recovery, see
 [RELIABILITY.md](RELIABILITY.md#failure-modes--recovery).
+
+## Per-pool budget ledger
+
+`phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
+same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
+observation ledger, with no dispatch or spending authority. Pools are
+`codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and
+`grok-ultra`. Claude remains `held`; local oMLX reports capacity only.
+
+```sh
+phm budget add codex-cmp --bucket weeklyPct --remaining 0 --reset-at 2026-11-01T12:00:00Z --json
+phm budget add codex-cmp --bucket credits --remaining 42 --json
+phm budget add devin --bucket acus --remaining 12.5 --json
+phm budget add local-omlx --bucket capacity --remaining 2 --json
+phm budget add codex-cmp --source log --input ./quota.log --json
+phm budget show --json
+```
+
+Manual is the default source. `--at` sets an observation's UTC ISO timestamp;
+future readings are rejected. Manual readings override later automatic readings
+in the same pool and bucket until their explicit reset. Without a reset, that
+manual override persists until another manual reading. Record a new manual
+reading to correct it. A reset makes an old balance unknown until a new reading
+arrives; it never assumes a full refill. Weekly percentages and credit balances
+are independent, including when the weekly allowance is exhausted.
+
+Automatic imports accept `--source cli|log --input <file|->` (`-` is stdin).
+The caller supplies the pool explicitly, so personal and company accounts cannot
+be inferred from account identifiers. Input is limited to 1 MiB. Supported
+labelled lines are `weekly remaining: 25% reset: 2026-11-01T12:00:00Z`,
+`weekly used: 75%`, `credits remaining: 42`, `acus remaining: 12.5`, and
+`capacity remaining: 2`, optionally prefixed with `rate-limit`. Codex native
+`event_msg` / `token_count` JSONL rate-limit records are also supported: only
+10080-minute windows, finite credit balances, and observation/reset times are
+kept. Unknown output is ignored; an import with no recognized readings fails.
+No provider CLI is launched, no authentication file is read, and no raw log,
+transcript, account identifier, or credential is stored.
+
+Records are immutable batches under `~/.ashlr/fleet/budgets/`. Concurrent
+imports cannot overwrite each other's batches. Unreadable or malformed records
+make the snapshot `unavailable`, with unknown balances. Bucket projections
+include remaining amount, source, timestamp, reset, last-two and trailing-12-hour
+burn per hour, and projected exhaustion. Rates use observations in the current
+uninterrupted window; refills and resets break the series. The 12-hour rate uses
+the earliest available reading within that interval, so it can cover less than
+12 hours. Projection uses the last-two rate from the observation timestamp and
+is unknown if exhaustion would occur after reset. Capacity has no burn estimate.
+
+The router queue's external `fleet.v1` and `dispatchd/status.json` producers are
+not present in this repository. Their consumer contract is to embed the same
+`budgets` object from `phm budget show --json`; this change does not create or
+replace those external files. The core reader is `readPoolBudgets` in
+`src/core/fleet/pool-budget-store.ts`.
