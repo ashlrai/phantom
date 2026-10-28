@@ -1,25 +1,18 @@
 name: Custody helper
 
 on:
-  pull_request:
-    paths:
-      - 'tools/custody/**'
-      - 'scripts/install-custody.sh'
-      - '.github/workflows/custody.yml'
-  push:
-    branches: [master]
-    paths:
-      - 'tools/custody/**'
-      - 'scripts/install-custody.sh'
-      - '.github/workflows/custody.yml'
+  # Daily full-suite policy (Mason, Oct 28 2026): macOS custody runs with the
+  # daily master run, never per PR or per push.
+  schedule:
+    - cron: "0 10 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: custody-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: custody-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -27,7 +20,9 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Test custody contracts without hardware or credentials
         run: swift test --package-path tools/custody
       - name: Compile the macOS security adapters
