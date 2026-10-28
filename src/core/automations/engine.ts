@@ -81,6 +81,11 @@ interface Ctx {
 
 const defaultGh: AutomationGh = async (args) => (await import('../cloud/tracker.js')).defaultCloudGh(args);
 
+/** Every state write prunes dedupe keys against the engine clock, not the wall clock. */
+function mutateState<T>(ctx: Ctx, fn: (state: AutomationStateV1) => T | Promise<T>): Promise<T> {
+  return mutateAutomationState(fn, () => ctx.now().getTime());
+}
+
 function ctxOf(deps: AutomationEngineDeps = {}): Ctx {
   return {
     lane: resolveLaneDeps(deps),
@@ -457,7 +462,7 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
   }
 
   const journal: AutomationJournalRecord[] = [];
-  await mutateAutomationState((state) => {
+  await mutateState(ctx, (state) => {
     for (const { c, keep } of plan) {
       const key = seenKey(automation.id, c.dedupeKey);
       if (key in state.seen || recentlyDropped(state, automation.id, c.dedupeKey, nowMs)) {
@@ -479,7 +484,7 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
       result.queued.push(firing);
       journal.push(journalRecord(firing, 'fired', firing.createdAt));
     }
-  }, () => ctx.now().getTime());
+  });
   await appendAutomationJournal(journal);
   return result;
 }
@@ -490,7 +495,7 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
 
 async function updateQueuedReason(firingId: string, reason: string, ctx: Ctx, event: AutomationJournalEvent | null): Promise<void> {
   let record: AutomationJournalRecord | null = null;
-  await mutateAutomationState((state) => {
+  await mutateState(ctx, (state) => {
     const f = state.firings.find((x) => x.id === firingId);
     if (!f || f.state !== 'queued' || f.reason === reason) return;
     f.reason = reason;
@@ -546,7 +551,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
 
     // Claim under the lock, re-checking limits against the CURRENT state.
     type Claim = { ok: true; firing: AutomationFiringV1 } | { ok: false; reason: string | null };
-    const claim = await mutateAutomationState<Claim>((state) => {
+    const claim = await mutateState<Claim>(ctx, (state) => {
       const f = state.firings.find((x) => x.id === queued.id);
       if (!f || f.state !== 'queued') return { ok: false, reason: null };
       const refusal = limitRefusal(automation, limitCounts(automation.id, state, ctx.now()), estimate);
@@ -569,7 +574,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
       outcome = { kind: 'failed', reason: 'The lane call failed unexpectedly; check the lane before re-running.', ref: null };
     }
     let record: AutomationJournalRecord | null = null;
-    await mutateAutomationState((state) => {
+    await mutateState(ctx, (state) => {
       const f = state.firings.find((x) => x.id === claim.firing.id);
       if (!f) return;
       const event = applyOutcome(f, outcome, ctx.now().toISOString());
@@ -585,7 +590,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
 /** Keep at most `queueDepth` waiting: the newest extras are dropped and their keys freed. */
 async function trimQueue(automation: AutomationV1, ctx: Ctx): Promise<void> {
   const journal: AutomationJournalRecord[] = [];
-  await mutateAutomationState((state) => {
+  await mutateState(ctx, (state) => {
     const queued = state.firings
       .filter((f) => f.automationId === automation.id && f.state === 'queued')
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
@@ -614,7 +619,7 @@ async function settle(ctx: Ctx): Promise<number> {
   }
   const journal: AutomationJournalRecord[] = [];
   let changed = 0;
-  await mutateAutomationState((state) => {
+  await mutateState(ctx, (state) => {
     const now = ctx.now();
     const iso = now.toISOString();
     for (const f of state.firings) {
@@ -694,7 +699,7 @@ async function tickOnce(deps: AutomationEngineDeps): Promise<AutomationsTickSumm
       collected = { events: [], cursor: { ...cursor, lastPolledAt: now.toISOString(), lastError: 'The trigger check failed; it will retry.' }, sourceKind: automation.trigger.kind };
     }
     summary.polled += 1;
-    await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; });
+    await mutateState(ctx, (s) => { s.cursors[automation.id] = collected.cursor; });
     const res = await intake(automation, candidatesFor(automation, collected.events, collected.sourceKind), ctx, now);
     summary.queued += res.queued.length;
   }
@@ -820,7 +825,7 @@ export async function fireAutomation(id: string, req: AutomationFireRequest = {}
     cursor = collected.cursor;
     candidates = candidatesFor(automation, collected.events, collected.sourceKind);
     if (collected.events.length === 0 && collected.cursor.lastError) {
-      if (!dryRun) await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; });
+      if (!dryRun) await mutateState(ctx, (s) => { s.cursors[automation.id] = collected.cursor; });
       return refuse(collected.cursor.lastError);
     }
   }
@@ -829,7 +834,7 @@ export async function fireAutomation(id: string, req: AutomationFireRequest = {}
 
   if (cursor) {
     const next = cursor;
-    await mutateAutomationState((s) => { s.cursors[automation.id] = next; });
+    await mutateState(ctx, (s) => { s.cursors[automation.id] = next; });
   }
   const res = await intake(automation, candidates, ctx, now);
   const touched = await drainAutomation(automation, ctx);
@@ -921,7 +926,7 @@ export async function reviewFiring(firingId: string, decision: 'approve' | 'reje
   }
   let result: ReviewResult = { ok: false, status: 409, error: 'The firing changed while it was being reviewed.' };
   let record: AutomationJournalRecord | null = null;
-  await mutateAutomationState((s) => {
+  await mutateState(ctx, (s) => {
     const f = s.firings.find((x) => x.id === firingId);
     if (!f || f.state !== 'awaiting-review') return;
     const iso = ctx.now().toISOString();
