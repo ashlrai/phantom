@@ -52,6 +52,7 @@ To install the CLI while developing:
 | `npm test` | Run the backend unit and real-I/O lanes once (`vitest run`); web tests are separate |
 | `npm run test:serial` | Run tests without file parallelism — required for tests that touch the same home dir |
 | `npm run test:ci` | Run backend lanes locally with isolated test homes, inactivity detection and a hard runtime cap |
+| `npm run test:ci:balanced` | Run the complete backend suite as four concurrent shards balanced by measured file durations |
 | `npm run test:web` | Run the separate jsdom/Testing Library console suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
