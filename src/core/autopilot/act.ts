@@ -446,7 +446,7 @@ export function untrustedEnv(role: 'fixer' | 'verify', base: NodeJS.ProcessEnv =
   for (const k of Object.keys(env)) {
     if (fixerAuth(k)) continue;
     if (/^(GH_|GITHUB_|GIT_CONFIG|GIT_ASKPASS|SSH_ASKPASS|AWS_|AZURE_|GOOGLE_APPLICATION_CREDENTIALS$)/.test(k) || /TOKEN$/.test(k) && /GIT|GH/.test(k)) delete env[k];
-    else if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?)$/i.test(k)) delete env[k];
+    else if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|SECRET_KEY|AUTH_CONFIG|(^|_)AUTH|CREDENTIALS?)$/i.test(k)) delete env[k];
   }
   for (const k of AUTONOMOUS_UNSET_ENV) if (!fixerAuth(k)) delete env[k];
   delete env['SSH_AUTH_SOCK'];
