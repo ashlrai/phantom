@@ -34,6 +34,7 @@
  *   openai-agents <sessions|inspect|turns>  Read managed OpenAI Agents API metadata; no execution.
  *   benchmark run|--compare-reports  Local-agent trials or offline receipt comparison.
  *   devin <connect|status|launch|list|refresh|message|budget>  Devin sessions that deliver PRs through the gates (3.15).
+ *   connect <status|request|approve|deny|revoke|discover|requests|wizard>  One-approval-per-account sign-in wizard for agents and nodes.
  *   automations <list|templates|add|enable|disable|remove|fire>  Issues, red builds, schedules and webhooks become work (3.15).
  *   jev <status|test>          Jev typed decisions: status by kind, and one live test decision (3.15).
  *   spec new "<goal>" [opts]   Author a versioned end-state spec artifact.
@@ -755,6 +756,13 @@ const loadDevinCmd = lazyCmd(
   () => import('./devin.js'),
   (m) => m.runDevinCli as Cmd,
   'devin command requires a current build of src/cli/devin.ts (3.15 Devin lane).',
+);
+
+// ─── Connect wizard (agent/node sign-in approvals) ──────────────────
+const loadConnectCmd = lazyCmd(
+  () => import('./connect.js'),
+  (m) => m.runConnectCli as Cmd,
+  'connect command requires a current build of src/cli/connect.ts.',
 );
 
 const loadOpenaiAgentsCmd = lazyCmd(
@@ -2488,6 +2496,15 @@ async function main(): Promise<void> {
         // nothing merges from here.
         const cmdDevin = await loadDevinCmd();
         process.exitCode = await cmdDevin(rest);
+        break;
+      }
+
+      case 'connect': {
+        // One-approval-per-account sign-in wizard for agents and nodes
+        // (src/cli/connect.ts). Requests stay pending until an operator
+        // approves; there is no flag that skips approval.
+        const cmdConnect = await loadConnectCmd();
+        process.exitCode = await cmdConnect(rest);
         break;
       }
 
