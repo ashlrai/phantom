@@ -16,6 +16,8 @@ that every integration, provider or autonomous effect is active.
 
 ## Start here
 
+Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
+
 | Your task | Canonical guide |
 |-----------|-----------------|
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](observability/README.md) |
