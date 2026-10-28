@@ -28,6 +28,7 @@ Install the canonical package's promoted release.
 Read the source candidate version from [package.json](package.json); check canonical release availability and exact matching assets before installation.
 
 ```sh
+node --version                  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom   # `phm` and compatible `ashlr`; Node.js 22.15+ and Git; macOS, Linux, Windows
 phm --version             # report the installed version
 phm verse                 # start the console at http://127.0.0.1:7777/verse/
