@@ -166,6 +166,14 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(site['name'], 'Site PR (ecosystem)', 'site source name'); equal(site['runs-on'], 'ubuntu-latest', 'site source runner');
   equal(site['needs'], 'classify', 'site source dependency'); equal(site['if'], "needs.classify.outputs.lane == 'site'", 'site source condition');
   equal(full['needs'], 'classify', 'full source dependency'); equal(full['if'], "needs.classify.outputs.lane == 'full'", 'full source condition');
+  // Sources after the Linux-only PR CI split run the Windows portability rows
+  // in their own job; it runs on every event except pull_request.
+  const hasPortability = Object.hasOwn(jobs, 'ci-portability');
+  if (hasPortability) {
+    const portability = object(jobs['ci-portability']);
+    equal(portability['needs'], 'classify', 'portability source dependency');
+    equal(portability['if'], "needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'", 'portability source condition');
+  }
   if (!Array.isArray(classifier['steps'])) throw new Error('Classifier source steps unavailable');
   for (const [name, command] of [['Bind candidate source', 'node .github/scripts/ci-source-binding.mjs'],
     ['Classify exact ecosystem-only PR', 'node .github/scripts/ci-site-lane.mjs']]) {
@@ -185,8 +193,10 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     equal(docs['name'], 'Docs PR (docs-only)', 'docs source name'); equal(docs['runs-on'], 'ubuntu-latest', 'docs source runner');
     equal(docs['needs'], 'classify', 'docs source dependency'); equal(docs['if'], "needs.classify.outputs.lane == 'docs'", 'docs source condition');
   }
-  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
-    'native-macos-broker-foundation', 'windows-service-authority'];
+  // The gate must need exactly the jobs this source defines: `ci-portability`
+  // only when the source has that job (same check names as the old rows in `ci`).
+  const required = ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', ...(hasPortability ? ['ci-portability'] : []),
+    'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
   if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
   const step = object(gate['steps'][0]);

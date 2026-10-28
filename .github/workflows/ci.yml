@@ -5,15 +5,20 @@ on:
     branches: [master]
   pull_request:
     branches: ["**"]
-    # ready_for_review starts the Mac lanes that a draft PR defers.
-    types: [opened, synchronize, reopened, ready_for_review]
-  # A merge queue reruns the full lane on the queued merge commit.
+    # PRs run no macOS or Windows lane, so a draft PR and a ready PR run the
+    # same jobs and ready_for_review no longer starts a second run.
+    types: [opened, synchronize, reopened]
+  # A merge queue reruns the full lane on the queued merge commit, macOS and
+  # Windows included. This is where platform coverage gates main.
   merge_group:
   workflow_call:
   # Push to master skips the macOS and Windows service lanes; this nightly run
   # on master runs the full matrix, Mac exhaustive included.
   schedule:
     - cron: "41 7 * * *"
+  # Manual full run, macOS and Windows included, on any branch. A red nightly
+  # opens a P0 FIX-MAIN issue (nightly-fix-main.yml).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -146,75 +151,6 @@ jobs:
             label: ubuntu, authority 3/3
             node_version: "22.15.0"
             test_args: "--shard=3/3 --exclude=test/m342.dispatch-production-ledger.test.ts"
-          - os: windows-latest
-            label: windows, portability 1/3
-            test_args: >-
-              test/setup/home.test.ts test/classify.test.ts
-              test/m2.doctor.test.ts test/m3.tools-registry.test.ts
-              test/m18.editors.test.ts
-              test/m43.verify-commands.test.ts
-              test/m113.coordinator-wire.test.ts test/m373.directory-durability.test.ts
-              test/m395.effect-terminal-retention.test.ts
-              test/m404.policy-result-surfaces.test.ts
-              test/m428.goal-source-quality.test.ts
-              test/m409.engine-execution-mutation-fence.test.ts
-              test/m410.policy-opposing-race.test.ts
-              test/m414.local-store-lock-unknown-owner.test.ts
-              test/m415.policy-durability-races.test.ts
-              test/m422.policy-transaction-recovery.test.ts
-              test/m425.policy-startup-recovery.test.ts
-              test/m416.local-store-lock-handoff.test.ts
-          - os: windows-latest
-            label: windows, portability 2/3
-            # Complete M426 runs below with native alias authority in a fresh
-            # hermetic HOME on this same Windows platform.
-            test_args: >-
-              test/m21.worktree.test.ts test/m23.apply.test.ts
-              test/m100.web-open.test.ts test/m119.quality-metrics.test.ts
-              test/m332.outcome-watcher.test.ts
-              test/m405.apply-mutation-fence.test.ts
-              test/m406.daemon-stop-quiescence.test.ts
-              test/m411.local-merge-reconciliation.test.ts
-              test/m412.sandbox-pre-effect-recovery.test.ts
-              test/m413.engineer-run-mutation-fence.test.ts
-              test/m417.sandbox-cleanup-quiescence.test.ts
-              test/m424.legacy-swarm-mutation-fence.test.ts
-              test/m425.persistence-private-temp.test.ts
-              test/sandbox-reservation-recovery.test.ts
-          - os: windows-latest
-            label: windows, portability 3/3
-            test_args: >-
-              --reporter=dot
-              test/m315.remote-handoff-truth.test.ts
-              test/m372.test-ci-watchdog.test.ts
-              test/m423.control-plane-lock-order.test.ts
-              test/m455.external-skill-maturity.test.ts
-              test/m456.skill-retrieval-calibration.test.ts
-              test/m457.external-skill-artifact-firewall.test.ts
-              test/m460.policy-assignment-receipts.test.ts
-              test/m463.claimed-batch-admission.test.ts
-              test/m526.execution-identity-v1.test.ts
-          - os: windows-latest
-            label: windows, portability overflow
-            test_args: >-
-              --reporter=dot
-              test/m220.anticlog-verdict-feedback.test.ts
-              test/m286.worktree-verify-env.test.ts
-              test/m367.daemon-observer-scheduler.test.ts
-              test/m379.private-storage.test.ts test/m385.cutoff-checkpoint-windows.test.ts
-              test/m385.cutoff-checkpoint-scheduler.test.ts
-              test/m407.verification-mutation-fence.test.ts
-              test/m408.sandbox-creation-mutation-fence.test.ts
-              test/m11.stream-file-sink.test.ts
-              test/m420.remote-handoff-recovery.test.ts
-              test/m421.legacy-pulse-quiescence.test.ts
-              test/m464.agent-work-transitions.test.ts
-              test/m466.host-merge-revocation-protocol.test.ts
-              test/m467.detached-post-merge-verification.test.ts
-              test/m299.web-fleet-control.test.ts
-              test/npm-cli-launch.test.ts
-              test/activation-readiness-package.test.ts
-              test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
@@ -450,12 +386,97 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  ci-portability:
+    # Windows portability partitions. Off pull_request to keep PR CI on Linux
+    # runners only (Actions concurrency is the merge bottleneck). They run in
+    # merge_group, on master push, nightly and on workflow_dispatch, and Merge
+    # Gate fails there unless every partition succeeds.
+    needs: classify
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request'
+    name: CI (Node 22, ${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows, portability 1/3
+            test_args: >-
+              test/setup/home.test.ts test/classify.test.ts
+              test/m2.doctor.test.ts test/m3.tools-registry.test.ts
+              test/m18.editors.test.ts
+              test/m43.verify-commands.test.ts
+              test/m113.coordinator-wire.test.ts test/m373.directory-durability.test.ts
+              test/m395.effect-terminal-retention.test.ts
+              test/m404.policy-result-surfaces.test.ts
+              test/m428.goal-source-quality.test.ts
+              test/m409.engine-execution-mutation-fence.test.ts
+              test/m410.policy-opposing-race.test.ts
+              test/m414.local-store-lock-unknown-owner.test.ts
+              test/m415.policy-durability-races.test.ts
+              test/m422.policy-transaction-recovery.test.ts
+              test/m425.policy-startup-recovery.test.ts
+              test/m416.local-store-lock-handoff.test.ts
+          - os: windows-latest
+            label: windows, portability 2/3
+            # Complete M426 runs below with native alias authority in a fresh
+            # hermetic HOME on this same Windows platform.
+            test_args: >-
+              test/m21.worktree.test.ts test/m23.apply.test.ts
+              test/m100.web-open.test.ts test/m119.quality-metrics.test.ts
+              test/m332.outcome-watcher.test.ts
+              test/m405.apply-mutation-fence.test.ts
+              test/m406.daemon-stop-quiescence.test.ts
+              test/m411.local-merge-reconciliation.test.ts
+              test/m412.sandbox-pre-effect-recovery.test.ts
+              test/m413.engineer-run-mutation-fence.test.ts
+              test/m417.sandbox-cleanup-quiescence.test.ts
+              test/m424.legacy-swarm-mutation-fence.test.ts
+              test/m425.persistence-private-temp.test.ts
+              test/sandbox-reservation-recovery.test.ts
+          - os: windows-latest
+            label: windows, portability 3/3
+            test_args: >-
+              --reporter=dot
+              test/m315.remote-handoff-truth.test.ts
+              test/m372.test-ci-watchdog.test.ts
+              test/m423.control-plane-lock-order.test.ts
+              test/m455.external-skill-maturity.test.ts
+              test/m456.skill-retrieval-calibration.test.ts
+              test/m457.external-skill-artifact-firewall.test.ts
+              test/m460.policy-assignment-receipts.test.ts
+              test/m463.claimed-batch-admission.test.ts
+              test/m526.execution-identity-v1.test.ts
+          - os: windows-latest
+            label: windows, portability overflow
+            test_args: >-
+              --reporter=dot
+              test/m220.anticlog-verdict-feedback.test.ts
+              test/m286.worktree-verify-env.test.ts
+              test/m367.daemon-observer-scheduler.test.ts
+              test/m379.private-storage.test.ts test/m385.cutoff-checkpoint-windows.test.ts
+              test/m385.cutoff-checkpoint-scheduler.test.ts
+              test/m407.verification-mutation-fence.test.ts
+              test/m408.sandbox-creation-mutation-fence.test.ts
+              test/m11.stream-file-sink.test.ts
+              test/m420.remote-handoff-recovery.test.ts
+              test/m421.legacy-pulse-quiescence.test.ts
+              test/m464.agent-work-transitions.test.ts
+              test/m466.host-merge-revocation-protocol.test.ts
+              test/m467.detached-post-merge-verification.test.ts
+              test/m299.web-fleet-control.test.ts
+              test/npm-cli-launch.test.ts
+              test/activation-readiness-package.test.ts
+              test/activation-readiness-windows.test.ts
+    runs-on: ${{ matrix.os }}
+    env: *node_ci_environment
+    steps: *node_ci_steps
+
   ci-shared-macos:
     # Queues with the isolated lane instead of after it. PRs no longer run the
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -573,7 +594,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
@@ -648,7 +669,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && !github.event.pull_request.draft && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     runs-on: macos-latest
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
@@ -838,7 +859,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'push'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     env:
@@ -882,7 +903,7 @@ jobs:
     # matrix job must settle before this job can report a result. A skipped or
     # failed selected lane is a failure, including when classification failed.
     name: Merge Gate
-    needs: [classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    needs: [classify, site, docs, ci, ci-portability, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -893,8 +914,6 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          EVENT_DRAFT: ${{ github.event.pull_request.draft }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           GATE_NEEDS: ${{ toJSON(needs) }}
           MAC_GENERAL_DEFERRED: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac')) }}
         run: |
@@ -907,17 +926,9 @@ jobs:
             if [ -n "$head" ] && [ "$head" != "$COMMIT_SHA" ]; then MAC_SUPERSEDED=true; fi
           fi
           export MAC_SUPERSEDED
-          # A draft PR skips its Mac lanes until ready_for_review. Defer them only
-          # while the PR is a draft right now, so a re-run of a draft-era run after
-          # it was marked ready cannot pass without them. A failed read fails closed.
-          MAC_DRAFT_DEFERRED=false
-          if [ "$EVENT_NAME" = pull_request ] && [ "$EVENT_DRAFT" = true ]; then
-            MAC_DRAFT_DEFERRED=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .draft) || MAC_DRAFT_DEFERRED=false
-          fi
-          export MAC_DRAFT_DEFERRED
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
-          const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+          const full = ['ci', 'ci-portability', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
           const expected = ['classify', 'site', 'docs', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
@@ -932,10 +943,14 @@ jobs:
           // mac-general is deferred to post-merge on unlabelled PRs (see job).
           // A push to master defers the macOS and Windows service lanes to the
           // nightly scheduled run; they must be skipped, never failed.
+          // A pull request runs Linux only: every macOS and Windows lane is
+          // deferred to merge_group, where it must succeed. mac-general still runs
+          // (and must pass) on a PR labelled ci:full-mac.
+          const platform = ['ci-portability', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
           const deferred = process.env.EVENT_NAME === 'push'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']
-            : process.env.MAC_DRAFT_DEFERRED === 'true'
-            ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation']
+            : process.env.EVENT_NAME === 'pull_request'
+            ? [...platform, ...(process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [])]
             : process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
           // A later master push's run replaced this Mac lane while it waited and
           // covers this commit's code; the cancelled check still marks this
@@ -943,7 +958,7 @@ jobs:
           const superseded = process.env.MAC_SUPERSEDED === 'true'
             ? ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation'] : [];
           for (const name of selected) {
-            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred ${process.env.EVENT_NAME === 'push' ? 'to the nightly run' : process.env.MAC_DRAFT_DEFERRED === 'true' ? 'while the PR is a draft' : 'to post-merge'}`); continue; }
+            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred ${process.env.EVENT_NAME === 'push' ? 'to the nightly run' : process.env.EVENT_NAME === 'pull_request' ? 'to merge_group' : 'to post-merge'}`); continue; }
             if (superseded.includes(name) && outcome(name) === 'cancelled') { console.log(`${name} superseded by a later master push`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
