@@ -145,7 +145,7 @@ describe('operator documentation navigation', () => {
     const result = checkDocumentation({ root, mode: 'package' });
     expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });
     expect(result.sourceLinks).toBeGreaterThan(0);
-    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md']) {
+    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md', 'docs/BRIDGE-WORKTREES.md']) {
       expect(existsSync(join(root, excluded))).toBe(false);
     }
   });
