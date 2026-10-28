@@ -7,8 +7,9 @@ const MAX_ROWS = 20_000;
 const REPO_RE = /^ashlrai\/[a-z0-9][a-z0-9._-]{0,99}$/;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,179}$/;
 const STATES = ['READY', 'RUNNING', 'BLOCKED', 'DONE', 'FAILED', 'CANCELLED'] as const;
-const SOURCES = ['vision', 'issue', 'scan'] as const;
+const SOURCES = ['vision', 'issue', 'scan', 'fixup'] as const;
 const SCAN_SOURCES = ['issue', 'todo', 'test', 'dep', 'doc', 'security', 'plugin', 'self', 'lint', 'goal', 'hygiene', 'invent'];
+const PASSING_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
 export interface RqConfig {
   v: 1;
@@ -37,6 +38,8 @@ export interface RqPlan {
   target: number;
   /** Remaining gap to target after exhausting available grounded candidates. */
   shortfall: number;
+  /** PR FIXUPs not emitted because every failing check was non-required. */
+  skippedNonRequired: number;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -145,10 +148,39 @@ function candidate(repository: string, source: RqJob['source'], sourceId: string
   };
 }
 
-function candidates(value: unknown, config: RqConfig): Candidate[] {
+/**
+ * Required check contexts from a branch rules API snapshot (the array that
+ * `gh api repos/{owner}/{repo}/rules/branches/{branch}` returns): the
+ * `required_status_checks` rule's context list. Any other rule shape is
+ * ignored. An absent or empty rules snapshot yields an empty set — no check
+ * can then be proven required, and `prs` FIXUPs are suppressed rather than
+ * generated against unverifiable gates.
+ */
+export function requiredChecksOf(rulesValue: unknown): Set<string> {
+  const required = new Set<string>();
+  if (!Array.isArray(rulesValue)) return required;
+  for (const rule of rulesValue) {
+    if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) continue;
+    const record = rule as Record<string, unknown>;
+    if (record['type'] !== 'required_status_checks') continue;
+    const parameters = record['parameters'];
+    if (parameters === null || typeof parameters !== 'object' || Array.isArray(parameters)) continue;
+    const checks = (parameters as Record<string, unknown>)['required_status_checks'];
+    if (!Array.isArray(checks)) continue;
+    for (const entry of checks) {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const context = (entry as Record<string, unknown>)['context'];
+      if (typeof context === 'string' && context.trim() && context.length <= 200) required.add(context.trim());
+    }
+  }
+  return required;
+}
+
+function candidates(value: unknown, config: RqConfig): { list: Candidate[]; skippedNonRequired: number } {
   const input = object(value);
   if (input['v'] !== 1) throw new Error('Unsupported source version');
   const result: Candidate[] = [];
+  let skippedNonRequired = 0;
   const seenRepos = new Set<string>();
   for (const raw of array(input['repositories'], 7)) {
     const row = object(raw);
@@ -203,15 +235,54 @@ function candidates(value: unknown, config: RqConfig): Candidate[] {
       const effort = integer(scan['effort'], 1, 5);
       result.push(candidate(repository, 'scan', id, title, detail, scoreItem(value, effort) * sourceTierMultiplier(source)));
     }
+    // PR FIXUPs: emit one repair candidate only when a failing check is in
+    // the repo's required set (the branch rules API snapshot). A PR whose
+    // only failing checks are non-required — Vercel, SonarCloud Code
+    // Analysis — yields no line: dispatching those produced empty runs.
+    const requiredChecks = requiredChecksOf(array(row['branchRules'] ?? [], 200));
+    const prNumbers = new Set<number>();
+    for (const rawPr of array(row['prs'] ?? [], 1000)) {
+      const pr = object(rawPr);
+      const number = integer(pr['number'], 1, Number.MAX_SAFE_INTEGER);
+      if (prNumbers.has(number)) throw new Error('Duplicate pull request number');
+      prNumbers.add(number);
+      const prTitle = pr['title'] === undefined ? '' : text(pr['title'], 240);
+      const url = pr['url'] === undefined ? '' : text(pr['url'], 400);
+      const headSha = pr['headSha'] === undefined ? '' : text(pr['headSha'], 80);
+      const firstError = pr['firstError'] === undefined ? '' : text(pr['firstError'], 400);
+      const failing: string[] = [];
+      for (const rawCheck of array(pr['checks'], 1000)) {
+        const check = object(rawCheck);
+        const name = text(check['name'], 160);
+        if (check['status'] !== undefined && check['status'] !== 'completed') continue;
+        const conclusion = check['conclusion'];
+        if (typeof conclusion === 'string' && !PASSING_CONCLUSIONS.has(conclusion)) failing.push(name);
+      }
+      if (failing.length === 0) continue;
+      const requiredFailed = failing.filter((name) => requiredChecks.has(name));
+      if (requiredFailed.length === 0) { skippedNonRequired++; continue; }
+      const checkName = requiredFailed[0]!;
+      const base = `FIXUP ${repository.replace(/^ashlrai\//, '')} PR #${number} ${checkName}${headSha ? ` (${headSha.slice(0, 12)})` : ''}`;
+      const title = (firstError ? `${base}: ${firstError}` : base).slice(0, 240).trimEnd();
+      const prompt = [
+        `The required check "${checkName}" is failing on ${repository} PR #${number}${url ? ` (${url})` : ''}${headSha ? ` (head ${headSha})` : ''}.${prTitle ? ` PR title: ${prTitle}` : ''}`,
+        firstError ? `First error line: ${firstError}` : '',
+        `Failing required checks: ${requiredFailed.join(', ')}`,
+        failing.length > requiredFailed.length ? `Non-required failures (not the gate): ${failing.filter((name) => !requiredChecks.has(name)).join(', ')}` : '',
+        'Find the root cause and fix it with the smallest safe change plus its test; do not touch .github/. If the check is already green, report no-change.',
+      ].filter(Boolean).join('\n');
+      const sourceId = `pr-checks:${number}${headSha ? `:${headSha.slice(0, 12)}` : ''}`;
+      result.push(candidate(repository, 'fixup', sourceId, title, prompt, scoreItem(4, 2) * sourceTierMultiplier('test')));
+    }
   }
-  return result;
+  return { list: result, skippedNonRequired };
 }
 
 /** Repeated calls on the applied queue are idempotent; history blocks replay. */
 export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueText: string): RqPlan {
   const config = parseRqConfig(configValue);
   const queue = parseRqQueue(queueText, config);
-  const available = candidates(sourceValue, config);
+  const { list: available, skippedNonRequired } = candidates(sourceValue, config);
   // Queue rows are untrusted: changing IDs on duplicate work must not inflate
   // capacity and suppress replenishment. Historical rows still block replay.
   const readyObjectives = new Set<string>();
@@ -227,7 +298,7 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
   }
   const minimum = config.activeSlots * 3;
   const target = config.activeSlots * 5;
-  if (ready >= minimum) return { jobs: [], ready, minimum, target, shortfall: 0 };
+  if (ready >= minimum) return { jobs: [], ready, minimum, target, shortfall: 0, skippedNonRequired };
   const ids = new Set(queue.map((job) => job.id));
   const objectives = new Set(queue.map(objectiveKey));
   const titles = new Set(queue.map(workKey));
@@ -245,7 +316,7 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
     objectives.add(objective);
     titles.add(title);
   }
-  return { jobs, ready, minimum, target, shortfall: Math.max(0, target - ready - jobs.length) };
+  return { jobs, ready, minimum, target, shortfall: Math.max(0, target - ready - jobs.length), skippedNonRequired };
 }
 
 export function formatRqQueue(jobs: readonly RqJob[]): string {
