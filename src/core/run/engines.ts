@@ -1,4 +1,5 @@
 import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
+import { checkHostHeadroom } from './host-headroom.js';
 /**
  * engines.ts — M11: hardened per-engine adapters.
  *
@@ -848,6 +849,13 @@ async function spawnEngineInner(
       error: msg,
       terminationReason: 'error-exit',
     };
+  }
+
+  if (!selectedOutcomeAdmissionCurrent(opts?.selectedOutcomeAdmission)) return cancelledEngineResult();
+  const hostHeadroom = checkHostHeadroom();
+  if (!hostHeadroom.allowed) {
+    return { ok: false, output: '', error: hostHeadroom.reason ?? 'Host memory pressure; launch held.',
+      terminationReason: 'error-exit' };
   }
 
   // Apply phantom-exec wrap when enabled, installed, AND the cwd contains
