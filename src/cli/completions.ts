@@ -18,7 +18,7 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'mem', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -62,6 +62,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   benchmark: ['run', '--compare-reports', 'help'],
   config: ['get', 'set', 'path', 'effective'],
+  mem: ['reclaim', '--apply', '--json', '--queue-status', '--ollama-url', '--omlx-url', '--no-models', '--vmmap', '--grace-ms', 'help'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],

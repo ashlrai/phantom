@@ -34,6 +34,7 @@ that every integration, provider or autonomous effect is active.
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
+| Reclaim memory from idle local models, orphaned dev processes and finished-job leftovers | [Memory reclaim](MEM-RECLAIM.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
