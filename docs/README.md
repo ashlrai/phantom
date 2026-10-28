@@ -42,6 +42,7 @@ Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](BRIDGE-WORKTREES.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
+| Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
