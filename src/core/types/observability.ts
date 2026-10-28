@@ -111,6 +111,8 @@ export interface BudgetAlert {
 
 /** The full observability roll-up for a window. */
 export interface ActivityRollup {
+  /** Independent hop-ledger productivity; never combined with transcript totals. */
+  hopEfficiency?: import('../observability/hop-events.js').HopRollup;
   /** Window label (e.g. '1d' | '7d' | '30d'). */
   window: string;
   /** ISO timestamp marking the start of the window. */

@@ -10,6 +10,10 @@ import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 
 const USAGE = 'Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>> [--json]';
 export async function cmdMetrics(argv: string[]): Promise<number> {
+  if (argv[0] === 'ingest') {
+    const { cmdMetrics: ingest } = await import('./metrics-ingest.js');
+    return ingest(argv);
+  }
   if (argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); return 0; }
   const json = argv.includes('--json');
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');

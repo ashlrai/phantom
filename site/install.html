@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Install Phantom, the open-source engineering agent workbench: npm i -g @ashlr/phantom on macOS, Linux or Windows with Node.js 22.15+, then open the console with phm verse.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://verse.ashlr.ai/install">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://verse.ashlr.ai/install">
+<meta property="og:title" content="Install Phantom">
+<meta property="og:description" content="Install the open-source Phantom CLI with npm, open the loopback console, and verify the release. macOS, Linux and Windows; Node.js 22.15+ and Git required.">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/verse-console.png">
+<meta property="og:image:alt" content="Phantom coding-agent console">
+<meta name="twitter:title" content="Install · Phantom">
+<meta name="twitter:description" content="npm i -g @ashlr/phantom, then phm verse. Node.js 22.15+ and Git on macOS, Linux or Windows.">
+<meta name="twitter:image:alt" content="Phantom coding-agent workbench">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/verse-console.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebPage",
+      "@id": "https://verse.ashlr.ai/install#webpage",
+      "name": "Install Phantom",
+      "url": "https://verse.ashlr.ai/install",
+      "isPartOf": { "@id": "https://verse.ashlr.ai/#website" }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://verse.ashlr.ai/#application",
+      "name": "Phantom",
+      "url": "https://verse.ashlr.ai/",
+      "description": "One coding-agent workbench for individual engineers and engineering teams. Use your accounts and local models, review changes, and add signed fleet work when ready.",
+      "applicationCategory": "DeveloperApplication",
+      "softwareVersion": "3.29.15",
+      "operatingSystem": "macOS, Linux, Windows",
+      "license": "https://github.com/ashlrai/phantom/blob/master/LICENSE",
+      "codeRepository": "https://github.com/ashlrai/phantom",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": "https://github.com/ashlrai/phantom"
+    }
+  ]
+}
+</script>
+<title>Install · Phantom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg:#edf0f4; --paper:#fff; --ink:#0f1822; --muted:#58657a; --line:#d3dbe4;
+    --accent:#4e43cb; --font-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+    --font-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark) {
+    :root { --bg:#0c121a; --paper:#121a24; --ink:#e7edf4; --muted:#a8b5c7; --line:#273748; --accent:#aca3ff; }
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; -webkit-text-size-adjust:100%; }
+  @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  body { margin:0; color:var(--ink); background:var(--bg); font:16px/1.55 var(--font-body); -webkit-font-smoothing:antialiased; }
+  a { color:inherit; text-underline-offset:3px; }
+  a:focus-visible, button:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+  .wrap { max-width:900px; margin:auto; padding-inline:clamp(20px,5vw,64px); }
+  .skip { position:absolute; left:16px; top:-100px; background:var(--ink); color:var(--paper); padding:10px; z-index:10; }
+  .skip:focus { top:12px; }
+  header { border-bottom:1px solid var(--line); }
+  header .wrap { min-height:72px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+  .brand { display:inline-flex; align-items:center; gap:10px; font:700 19px var(--font-display); text-decoration:none; letter-spacing:-.03em; }
+  .header-links { display:flex; align-items:center; flex-wrap:wrap; gap:clamp(12px,2.4vw,28px); font-size:14px; }
+  .header-links a { text-decoration:none; color:var(--muted); }
+  .header-links a:hover { color:var(--ink); }
+  main { padding-bottom:80px; }
+  .eyebrow { font:500 12px var(--font-mono); letter-spacing:.11em; text-transform:uppercase; color:var(--muted); }
+  .intro { padding-block:clamp(52px,8vw,96px) 20px; }
+  .intro h1 { font:700 clamp(44px,7vw,84px)/.98 var(--font-display); letter-spacing:-.06em; margin:13px 0 22px; }
+  .intro p { max-width:60ch; margin:0; color:var(--muted); font-size:18px; }
+  .intro strong { color:var(--ink); }
+  section { border-top:1px solid var(--line); padding-block:44px; }
+  section h2 { font:700 clamp(24px,3.2vw,34px)/1.15 var(--font-display); letter-spacing:-.03em; margin:0 0 16px; }
+  section p { max-width:66ch; margin:0 0 14px; }
+  section p:last-child { margin-bottom:0; }
+  ul.plain { margin:0 0 14px; padding-left:22px; }
+  ul.plain li { margin:6px 0; max-width:64ch; }
+  pre { background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:16px 18px; font:500 14px/1.65 var(--font-mono); overflow-x:auto; margin:14px 0; }
+  code { font-family:var(--font-mono); font-size:.92em; }
+  .copy-row { display:flex; align-items:center; gap:12px; }
+  .copy-command { font:500 12px/1.2 var(--font-mono); cursor:pointer; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:4px; min-height:36px; padding:7px 12px; }
+  .copy-command:hover { border-color:var(--accent); }
+  .copy-status { font-size:13px; color:var(--muted); }
+  .note { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:20px 22px; }
+  footer { border-top:1px solid var(--line); padding-block:26px; }
+  footer .wrap { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--muted); }
+  footer a { color:var(--muted); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><div class="wrap">
+  <a class="brand" href="/" aria-label="Phantom home">
+    <img src="/assets/phantom-mark.svg" width="26" height="26" alt="" />
+    Phantom
+  </a>
+  <nav class="header-links" aria-label="Site"><a href="/">Product</a><a href="/ecosystem">Ecosystem</a><a href="https://github.com/ashlrai/phantom">GitHub</a></nav>
+</div></header>
+
+<main id="main"><div class="wrap">
+  <div class="intro">
+    <p class="eyebrow">Install</p>
+    <h1>Install Phantom.</h1>
+    <p>Phantom is the open-source engineering agent workbench from AshlrAI, published as
+    <strong>@ashlr/phantom</strong> on npm under the MIT license. The CLI runs on macOS, Linux
+    and Windows; <code>phm</code> and <code>ashlr</code> are the same binary under two names.</p>
+  </div>
+
+  <section>
+    <h2>What you need</h2>
+    <ul class="plain">
+      <li><strong>Node.js 22.15 or newer</strong> and <strong>Git</strong>.</li>
+      <li>Whichever agent CLIs you already use; each signs in with the vendor's own login.</li>
+      <li>Optional: <a href="https://ollama.com">Ollama</a> for local model discovery.</li>
+      <li>Optional: a Mac for the desktop app and resident autonomy; the CLI itself is cross-platform.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Install the CLI</h2>
+    <p>Install the promoted release globally, then open the loopback console:</p>
+    <pre id="install-command">npm i -g @ashlr/phantom
+phm verse</pre>
+    <div class="copy-row">
+      <button class="copy-command" type="button" data-copy="install-command">Copy commands</button>
+      <span class="copy-status" role="status" aria-live="polite"></span>
+    </div>
+    <p>Check the installed version with <code>phm --version</code>, then browse
+    <a href="https://github.com/ashlrai/phantom/releases/latest">GitHub releases</a> and select that
+    same version before using desktop artifacts. The console is loopback-only and requires its
+    startup token.</p>
+  </section>
+
+  <section>
+    <h2>Build from source</h2>
+    <p>Phantom is developed in the open. A source checkout builds and runs the same CLI:</p>
+    <pre id="source-command">git clone https://github.com/ashlrai/phantom.git
+cd phantom
+npm ci
+npm run build
+npm run dev -- status</pre>
+    <div class="copy-row">
+      <button class="copy-command" type="button" data-copy="source-command">Copy commands</button>
+      <span class="copy-status" role="status" aria-live="polite"></span>
+    </div>
+    <p>Agents working on the repository should read
+    <a href="https://github.com/ashlrai/phantom/blob/master/AGENTS.md">AGENTS.md</a> and the
+    <a href="https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md">agent operations guide</a>
+    first, and can enumerate the command surface with <code>phm docs --agent --json</code>.</p>
+  </section>
+
+  <section>
+    <h2>Desktop app (macOS)</h2>
+    <p>On an Apple silicon Mac, use the qualified signed-update or maintainer artifact path in the
+    <a href="https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install">desktop installation guide</a>.
+    Downloading or unpacking an app archive alone does not perform installation. The app is locally
+    signed, not Apple Developer ID notarized; macOS may require Open Anyway on first launch. Desktop
+    installation and fleet activation are separate steps, and resident autonomy stays dormant until a
+    Touch-ID-signed grant starts it.</p>
+  </section>
+
+  <section>
+    <h2>After install</h2>
+    <div class="note">
+      <p>Follow the <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">quickstart</a>
+      to connect a resource and make a first useful turn, or browse the
+      <a href="https://github.com/ashlrai/phantom/blob/master/docs/README.md">documentation index</a>
+      for one canonical guide per task.</p>
+      <p>Machine-readable surfaces: <a href="/capabilities.json">capabilities.json</a>,
+      <a href="/llms.txt">llms.txt</a>, <a href="/llms-full.txt">llms-full.txt</a> and the
+      <a href="/.well-known/mcp/server.json">MCP server manifest</a>.</p>
+    </div>
+  </section>
+</div></main>
+
+<footer><div class="wrap"><span>Phantom · by AshlrAI</span><span><a href="/">Product</a> · <a href="/ecosystem">Ecosystem</a> · <a href="https://github.com/ashlrai/phantom">GitHub</a></span></div></footer>
+<script>
+  document.querySelectorAll('[data-copy]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const status = button.nextElementSibling;
+      const target = document.getElementById(button.dataset.copy);
+      try {
+        await navigator.clipboard.writeText(target.textContent.trim());
+        status.textContent = 'Copied';
+      } catch {
+        status.textContent = 'Select the commands above to copy';
+      }
+    });
+  });
+</script>
+</body>
+</html>
