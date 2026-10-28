@@ -52,6 +52,7 @@ Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
 | Hand work to Claude Code cloud sessions or Devin, and triage what they deliver | [Cloud lane — source guide](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD.md) · [Devin — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md) |
 | Understand the standing authority design, and turn autonomy on under a grant that starts in shadow | [Standing authority — source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) · [Current activation state](AUTONOMY-GAP.md#current-activation-state-315) |
 | Find a Verse route family, its gates and wire shapes | [Verse build contract — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console) |
+| Score a built site or repo checkout for agent-facing readiness signals | [Agent readiness scorer (source)](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md) |
 
 The CLI's `universe help`, `resources pool --help` and `runtime help` describe
 the command surface in the exact binary you are running. A source guide may
