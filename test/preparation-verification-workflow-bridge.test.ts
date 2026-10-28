@@ -47,6 +47,7 @@ function imports(text: string) {
 }
 
 beforeAll(async () => {
+  vi.stubEnv('ASHLR_UNIVERSE_CANDIDATE', undefined);
   root = realpathSync(mkdtempSync(join(tmpdir(), 'preparation-workflow-bridge-')));
   first = join(root, 'first'); second = join(root, 'second');
   await buildPreparationVerificationBridge(repository, join(first, 'preparation-bridge.mjs'));
@@ -57,8 +58,11 @@ beforeAll(async () => {
   const candidate = join(root, 'candidate');
   mkdirSync(join(candidate, 'scripts/evaluators'), { recursive: true, mode: 0o700 });
   mkdirSync(join(candidate, 'src/core/resources'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(candidate, 'scripts/evaluators/preparation-verification-workflow.ts'), 'export const candidateOnly = true;\n');
-  writeFileSync(join(candidate, 'src/core/resources/engineering-preparation.ts'), 'export const candidateOnly = true;\n');
+  // Invalid syntax makes accidental candidate resolution fail at build time,
+  // before artifact comparison, without executing any candidate code.
+  const poisonedSource = 'export const candidateOnly = ;\n';
+  writeFileSync(join(candidate, 'scripts/evaluators/preparation-verification-workflow.ts'), poisonedSource);
+  writeFileSync(join(candidate, 'src/core/resources/engineering-preparation.ts'), poisonedSource);
   vi.stubEnv('ASHLR_UNIVERSE_CANDIDATE', candidate);
   await buildPreparationVerificationBridge(repository, join(second, 'preparation-bridge.mjs'));
 }, 30000);
