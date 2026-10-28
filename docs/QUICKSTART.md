@@ -29,6 +29,7 @@ does not establish installed fleet or hosted-service readiness.
 Install Node.js 22.15+ and Git, then install the canonical package's promoted release:
 
 ```sh
+node --version  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom
 phm --version   # report the installed version
 phm verse
