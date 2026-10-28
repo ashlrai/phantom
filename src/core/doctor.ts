@@ -13,6 +13,7 @@ import type { AshlrConfig, DoctorCheck, DoctorCheckStatus, DoctorReport, McpRegi
 import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
 import { receiptStatus } from './receipt/receipt-store.js';
+import { readTempWorktreeStorage } from './inbox/temp-worktree-reaper.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
 import { getProviderRegistry } from './providers.js';
@@ -1340,6 +1341,20 @@ function checkSandboxHealth(): DoctorCheck {
   }
 }
 
+/** Logical bytes are an estimate; symlinked shared dependencies are excluded. */
+export function checkWorktreeStorage(probe = readTempWorktreeStorage): DoctorCheck {
+  try {
+    const { bytes, worktrees, complete } = probe();
+    return check(
+      'worktree-storage', 'Reclaimable worktree storage', complete && bytes === 0 ? 'pass' : 'warn',
+      `${(bytes / 1_000_000_000).toFixed(2)} GB reclaimable (logical estimate) in ${worktrees} clean inactive inbox worktrees` +
+      (complete ? '; FIXUP allowlist respected' : '; scan incomplete, total unknown'),
+    );
+  } catch {
+    return check('worktree-storage', 'Reclaimable worktree storage', 'warn', 'reclaimable GB unknown; scan unavailable');
+  }
+}
+
 /**
  * Probe: stale git lock files.
  * id: 'git-locks'
@@ -1444,6 +1459,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkKillSwitch());
   checks.push(checkAshlrWriteableProbe());
   checks.push(checkSandboxHealth());
+  checks.push(checkWorktreeStorage());
   checks.push(checkGitLocks());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
