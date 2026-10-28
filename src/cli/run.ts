@@ -499,8 +499,9 @@ async function cmdRunShow(id: string, jsonMode: boolean): Promise<number> {
  * Also handles `ashlr run show <id>`.
  */
 export async function cmdRun(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit — anywhere in argv, before config/orchestrator work:
+  // `run show --help` used to look "--help" up as a run id (exit 1).
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     printRunHelp();
     return 0;
   }
@@ -746,6 +747,10 @@ function relativeTime(iso: string): string {
  * `ashlr runs [--json]` — list past runs.
  */
 export async function cmdRuns(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    printRunsHelp();
+    return 0;
+  }
   const jsonMode = args.includes('--json');
 
   let listRuns: () => RunState[];
@@ -819,6 +824,16 @@ export async function cmdRuns(args: string[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
+
+function printRunsHelp(): void {
+  console.log('');
+  console.log(bold('  ashlr runs') + dim(' — list past runs'));
+  console.log('');
+  console.log('  ' + bold('Usage:'));
+  console.log('');
+  console.log(`    ${cyan('ashlr runs [--json]')}   ${dim('list past runs (newest first); details via `ashlr run show <id>`')}`);
+  console.log('');
+}
 
 function printRunHelp(): void {
   console.log('');
