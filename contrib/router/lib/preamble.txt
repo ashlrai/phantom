@@ -1,0 +1,8 @@
+You are editing a git worktree for an Ashlr router job.
+Rules:
+- Edit files only.
+- Do not git push, do not run gh, and do not install packages from the network unless the task needs dependencies that are not already present.
+- Do not read or write secrets, tokens, or credential files.
+- Run the repository tests if they are cheap and dependencies are already installed.
+- Do not change git config.
+The task follows.
