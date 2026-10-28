@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/slowest-tests.test.ts', // Real Node subprocesses exercise file/stdin input, output and CLI exit codes.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
@@ -81,6 +82,7 @@ export const REAL_IO_TEST_FILES = [
   'test/remote-gateway-auth.test.ts', // real loopback gateway and Mac-only Unix socket pairing ceremony
   'test/remote-admin-race.test.ts', // real owned Unix socket child killed to reproduce stale-admin startup races
   'test/remote-gateway-http.test.ts', // real loopback Hub and gateway servers, Access assertion and SSE lifecycle
+  'test/api-error-no-echo.test.ts', // one real loopback web server per test sweeping the /api error paths
   'test/builtin-activity-pgid-reuse.test.ts', // private activity journals with synthetic identity reuse probes
   'test/builtin-activity-settlement-witness.test.ts', // private journals and one real owned subprocess
   'test/resource-quota-cleanup-diagnostics.test.ts', // private real collector leases with inert failure witnesses
