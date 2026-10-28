@@ -155,6 +155,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   unverified GitHub evidence, and scrub public titles consistently. Proposals
   remain drafts; automatic merging requires the existing protected process.
 
+### Deprecated
+- `npm run release:canary` and the signed observation-only release canary are
+  retired: `scripts/run-signed-release-canary.mjs` and
+  `scripts/verify-signed-release-canary-receipt.mjs` are removed, so the
+  `release:canary` manifest alias now fails until owner-lane cleanup removes
+  it and the frozen `v3.3.2` `release.yml`/`promote.yml` workflows. The
+  commissioned `publish-canonical-npm.yml` trusted-publishing workflow is the
+  one sanctioned npm release path.
+- The manual `npm pack`/`npm publish` release instructions formerly in
+  `docs/RELEASING-LOCALLY.md` are retired; publish only through the
+  commissioned canonical publisher and reconcile uncertain registry state by
+  reads, never replayed writes. The legacy `verify:local-production` gate
+  remains in-tree as evidence only and admits no canonical package.
+
 ## [3.29.14] — Unreleased
 
 ### Added

@@ -354,54 +354,16 @@ Two defects made `npm run build` fail for everyone, both fixed:
 
 ## Publishing
 
-For a canonical release, publish only the original `ashlr-phantom-<version>.tgz`
-from the freshly verified CI handoff, with the pinned release tools and exact
-recorded digest. Do not run `npm pack` again on the adopted or installed tree.
-Public exact-version byte/SRI readback and an isolated consumer installation
-are separate acceptance gates; a publish exit code alone is insufficient.
-
-### Historical local packaging and npm observations
-
-The legacy packaging examples below describe the earlier `@ashlr/hub` lane.
-They do not replace canonical hosted admission or authorize replaying a publish.
-
-In this historical manual lane, `auth-type` was `web` and 2FA was
-`auth-and-writes`, so npm opened a browser for owner approval. The commissioned
-canonical workflow uses short-lived GitHub identity instead of these repeated
-manual approvals.
-
-```sh
-npm pack --ignore-scripts --pack-destination /tmp
-npm publish /tmp/ashlr-hub-<version>.tgz --access public
-```
-
-`--ignore-scripts` on the pack skips `prepack`, which would rebuild everything
-again. Only use it when you have *just* built; otherwise drop it.
-
-On npm 11, publishing an existing tarball skips this package's
-`prepublishOnly` lifecycle. Run `npm run prepublishOnly` on the exact final
-commit before `ship:local`, then publish only the tarball it printed.
-
-**The 2FA window is about four minutes, and it is not a background job.**
-`auth-type` is `web`, so the publish prints a `npmjs.com/auth/cli/<uuid>` URL
-and polls. Approve it within roughly four minutes or the publish dies with a
-confusing `404 Not Found - GET .../-/v1/done?authId=***` — which reads like a
-registry fault and is really "nobody clicked in time". Run the publish when you
-are at the keyboard, not before.
-
-**A succeeded publish can look like a failure for minutes afterwards.** The
-registry index lags: `npm view @ashlr/hub version` kept answering with the
-PREVIOUS version for three minutes after a publish that had already printed
-`+ @ashlr/hub@<version>`. Trust the log line, not the view. The unambiguous
-confirmation that a version is already staged is a second publish attempt
-returning `409 Conflict — Cannot publish over previously staged version`.
-
-**`npm publish` can print `exit 0` and still have failed.** Read the log for
-`npm error`, then confirm against the registry:
-
-```sh
-npm view @ashlr/hub version
-```
+The commissioned [canonical npm publisher](#canonical-npm-trusted-publishing)
+is the only sanctioned release path. It publishes the original
+`ashlr-phantom-<version>.tgz` from the freshly verified CI handoff once,
+verifies public registry bytes, SRI and provenance, validates an isolated
+installed consumer, then promotes and reads back `latest`. No manual
+`npm pack` or `npm publish` lane remains: the earlier `@ashlr/hub` commands,
+their browser 2FA approval flow and their registry-lag observations are
+retired. An uncertain publication is reconciled from public registry reads,
+never by replaying a write, and a publish exit code alone was never sufficient
+evidence anyway.
 
 ## Installing a qualified release
 
