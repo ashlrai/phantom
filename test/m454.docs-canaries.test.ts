@@ -20,6 +20,7 @@ describe('M454 docs canaries', () => {
       'docs/RESIDENT-RUNTIME.md', 'docs/AUTHORITY.md', 'docs/STANDING-AUTHORITY.md',
       'docs/CLOUD.md', 'docs/LEADER.md', 'docs/DEVIN.md', 'docs/VERSE-CONTEXT.md',
       'docs/VERSE-BROWSER.md', 'docs/JEV-INTEGRATION.md', 'docs/COMPANIONS.md',
+      'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
       'docs/PROACTIVE-COORDINATION.md', 'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     ]) {

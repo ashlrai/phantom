@@ -1,5 +1,17 @@
 # DIAGNOSIS: Why 23 Proposals Are Stuck Pending (Never Drain)
 
+Current routing guidance (2026-10-26): use `claude-sonnet-5-5` for new
+Sonnet work and `claude-haiku-5-5` for fast, inexpensive tasks. Sonnet 4.5
+retires on **November 30, 2026**. The old model identifiers below describe
+historical observations and grants, not recommended routing configuration.
+See Anthropic's [retirement schedule](https://platform.claude.com/docs/en/about-claude/model-deprecations)
+and [Haiku 5.5 specifications](https://platform.claude.com/docs/en/models/haiku-5-5/overview).
+
+The router catalog preserves old aliases for exact telemetry lookup. The Haiku 5.5
+entry uses a conservative $0.50/$2.50 per million input/output token estimate
+(prompts up to 100k tokens cost $0.10/$0.50). Catalog metadata does not
+authorize account use or spending.
+
 **Date:** 2026-06-29  
 **Branch:** feat/v4-foundry  
 **Status:** Read-only diagnosis. No code changed.
