@@ -41,7 +41,8 @@ manual release does not gain provenance retroactively.
 ### Keep candidate versions consistent
 
 Run `npm run version:sync -- X.Y.Z` to update the workbench package, lockfile,
-desktop package, native version, desktop URL and the README/quickstart source-candidate lines
+desktop package, native version, desktop URL, the MCP registry manifest and the
+README/quickstart source-candidate lines
 together. `npm run check:version`
 checks these fields without changing files and runs before every build.
 Dependency versions and release history remain unchanged. Website and article
