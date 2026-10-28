@@ -2307,8 +2307,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
-  // released it. automerge-canary owns its own help and refusals.
-  if (sub !== 'automerge-canary' && (rest.includes('--help') || rest.includes('-h'))) {
+  // released it. automerge-canary and xreview own their own help and refusals.
+  if (sub !== 'automerge-canary' && sub !== 'xreview' && (rest.includes('--help') || rest.includes('-h'))) {
     printFleetHelp();
     return 0;
   }
@@ -2352,6 +2352,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
       const { cmdAutoMergeCanary } = await import('./automerge-canary.js');
       return cmdAutoMergeCanary(rest);
     }
+    case 'xreview': {
+      const { cmdFleetCrossReview } = await import('./cross-review.js');
+      return cmdFleetCrossReview(rest);
+    }
     case 'receipt': {
       const { cmdFleetReceipt } = await import('./receipt.js');
       return cmdFleetReceipt(rest);
@@ -2390,6 +2394,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
+  console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);
+  console.log(`                          ${cyan('# cross-model review on another pool + SHA-bound merge decision')}`);
   console.log(`    ashlr fleet evidence doctor <source> [--deep] [--json]`);
   console.log(`                          ${cyan('# bounded read-only ledger diagnosis')}`);
   console.log(`    ashlr fleet scorecard [--window 7d|30d|all] [--by-engine] [--by-repo] [--json]`);
