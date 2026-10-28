@@ -16,6 +16,10 @@ that every integration, provider or autonomous effect is active.
 
 ## Start here
 
+Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
+
+Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
+
 | Your task | Canonical guide |
 |-----------|-----------------|
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
