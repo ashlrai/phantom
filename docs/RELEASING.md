@@ -91,6 +91,14 @@ validates an isolated installed consumer, then promotes and reads back `latest`.
 Unknown publication state is reconciled through reads rather than replaying
 writes. See [publisher commissioning and dispatch](RELEASING-LOCALLY.md#canonical-npm-trusted-publishing).
 
+The `phm release-train` command automates the daily rhythm around this lane:
+`plan` decides the version bump from conventional commits since the latest
+release, `open` pushes the `release-train/vX.Y.Z` branch and opens the
+version-bump PR, and `dispatch` — after that PR merges and master carries the
+full CI, attestor and Audit evidence — runs only the canonical publisher
+workflow. The train refuses a red or held main, never pushes tags and never
+touches any other workflow.
+
 Native desktop finalization creates the original signed app archive and paired
 manifest. Use the [artifact installer](../scripts/install-desktop-artifacts.mjs)
 only after its original-asset qualification and required Stop/drain and Quit.

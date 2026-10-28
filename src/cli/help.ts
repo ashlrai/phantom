@@ -566,6 +566,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'backlog',                      desc: 'Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
+  { cmd: 'release-train plan|open|dispatch [--dry-run] [--json]', desc: 'Daily version-bump PR planner plus post-merge dispatch of the one sanctioned release workflow; refuses a red or held main and never pushes tags.', topic: 'autonomy' },
   { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
   { cmd: 'backlog --repo <path>',        desc: 'Filter backlog to a specific enrolled repo.', topic: 'autonomy' },
   { cmd: 'backlog --limit <n>',          desc: 'Show only the top N items.', topic: 'autonomy' },
