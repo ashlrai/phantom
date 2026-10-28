@@ -42,6 +42,7 @@ that every integration, provider or autonomous effect is active.
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Observe box queue, publication and GitHub delivery stations for a job | [Router queue stations](ROUTER-QUEUE-STATIONS.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
+| Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
 | See what multi-folder workspaces, GitHub and MCP management still need | [Workspaces build contract](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-WORKSPACES.md) |
