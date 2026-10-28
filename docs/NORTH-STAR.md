@@ -187,3 +187,10 @@ not their category. The [Phantom user guide](VERSE.md) describes the workbench;
 the [Universe experiment guide](ASHLR-UNIVERSE.md) describes the separate
 experiment runtime and its current executable scope. Reuse task playbooks and
 recorded strategic lessons for shared engineering guidance across providers.
+
+## Chat-first delivery plan
+
+The [chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md)
+translate this vision into dependency-ordered assistant work, with acceptance
+criteria and a combined journey gate. This is a planning handoff, not runtime
+activation or evidence that the planned capabilities have shipped.

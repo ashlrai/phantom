@@ -2,6 +2,15 @@
 
 # Quickstart — Phantom
 
+<!-- fresh:begin install-snippet -->
+Latest dated changelog release (verify promoted package availability before installing):
+
+```sh
+npm install -g @ashlr/phantom@3.29.13
+phm --version
+```
+<!-- fresh:end -->
+
 Phantom by AshlrAI is the everyday coding-agent workbench, formerly Ashlr Verse.
 The Universe experiment kernel is a separate, bounded source-checkout path below.
 Installing Phantom, enrolling a repo, starting a resident fleet and publishing
@@ -29,6 +38,7 @@ does not establish installed fleet or hosted-service readiness.
 Install Node.js 22.15+ and Git, then install the canonical package's promoted release:
 
 ```sh
+node --version  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom
 phm --version   # report the installed version
 phm verse

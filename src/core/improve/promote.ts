@@ -7,7 +7,7 @@
  * pushes, tags or deploys directly; deploys happen only where the repository's
  * own merge-triggered CI already performs them.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { detectTestTampering, globMatches, protectedPathHits } from '../authority/protected-paths.js';
 import type { MetricSpec, ProposalOutcome } from './outcomes.js';
 
@@ -66,8 +66,51 @@ export interface Remeasurement { base: number | null; head: number | null; reaso
 
 export const NOT_REMEASURED = 'the gate has not re-measured the metric itself yet';
 
-/** Why a diff may not be promoted without a person: owner-lane paths, the gate's own code, test tampering, a self-edited metric. */
-export function diffRefusals(diff: DiffEvidence, metric: MetricSpec | undefined): string[] {
+/**
+ * Repository files an npm metric script runs, as named by the merge base's package.json: the script's own command,
+ * its `pre`/`post` scripts and any `npm run <other>` it chains. These are the yardstick, like a node runner's path:
+ * package.json itself is owner-lane, but the file its script runs (`node scripts/bench.mjs`) usually is not.
+ * Null when the script cannot be read at the base, so the gate fails closed.
+ */
+export function npmMetricFiles(packageJson: string | null, script: string): string[] | null {
+  if (packageJson === null) return null;
+  let scripts: Record<string, unknown>;
+  try { scripts = (JSON.parse(packageJson) as { scripts?: Record<string, unknown> }).scripts ?? {}; } catch { return null; }
+  if (!scripts || typeof scripts !== 'object' || typeof scripts[script] !== 'string') return null;
+  const files = new Set<string>();
+  const seen = new Set<string>();
+  const queue = [script];
+  while (queue.length && seen.size < 50) {
+    const name = queue.shift()!;
+    for (const key of [`pre${name}`, name, `post${name}`]) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const cmd = scripts[key];
+      if (typeof cmd !== 'string') continue;
+      const tokens = cmd.split(/[\s&|;()<>=]+/).map((t) => t.replace(/^['"]+|['"]+$/g, '').replace(/^\.\//, '')).filter(Boolean);
+      tokens.forEach((t, i) => {
+        if (/^(run|run-script)$/.test(t) && tokens[i - 1] === 'npm') {
+          const next = tokens.slice(i + 1).find((x) => !x.startsWith('-'));
+          if (next && typeof scripts[next] === 'string') queue.push(next);
+        }
+        if (/^[A-Za-z0-9_@][A-Za-z0-9_.@/-]*\.(mjs|cjs|js|ts|mts|cts|sh|json|py)$/.test(t) && !t.split('/').includes('..')) files.add(t);
+      });
+    }
+  }
+  return [...files];
+}
+
+/** A file's content at an exact commit, or null when it does not exist there. */
+export function readFileAt(repoDir: string, sha: string, path: string, exec: PromoteExec = realExec): string | null {
+  if (!/^[0-9a-f]{40}$/.test(sha)) return null;
+  try { return exec('git', [...SAFE_GIT, 'show', `${sha}:${path}`], repoDir); } catch { return null; }
+}
+
+/**
+ * Why a diff may not be promoted without a person: owner-lane paths, the gate's own code, test tampering, a self-edited
+ * metric. `npmFiles` is npmMetricFiles() at the merge base for an npm runner; undefined or null refuses that runner.
+ */
+export function diffRefusals(diff: DiffEvidence, metric: MetricSpec | undefined, npmFiles?: string[] | null): string[] {
   const reasons: string[] = [];
   if (!diff.paths.length) reasons.push('the PR changes nothing between its merge base and head');
   for (const hit of protectedPathHits(diff.paths, { selfRepo: true }).slice(0, 5)) reasons.push(`touches ${hit.path}: ${hit.why}`);
@@ -76,6 +119,14 @@ export function diffRefusals(diff: DiffEvidence, metric: MetricSpec | undefined)
   if (metric?.runner.kind === 'node') {
     const runner = metric.runner.path.toLowerCase();
     if (diff.paths.some((p) => p.toLowerCase() === runner)) reasons.push(`changes its own metric script ${metric.runner.path}; the yardstick must come from the base`);
+  }
+  if (metric?.runner.kind === 'npm') {
+    if (!npmFiles) reasons.push(`could not resolve npm metric script ${metric.runner.script} at the merge base`);
+    else {
+      const own = new Set(npmFiles.map((f) => f.toLowerCase()));
+      const hit = diff.paths.filter((p) => own.has(p.toLowerCase()));
+      if (hit.length) reasons.push(`changes the file its npm metric script runs (${hit.slice(0, 5).join(', ')}); the yardstick must come from the base`);
+    }
   }
   if (diff.patch.trim()) {
     const scan = detectTestTampering(diff.patch);
@@ -93,6 +144,8 @@ export function evaluatePromotion(input: {
   ledgerIntact: boolean;
   guards: PromotionGuards;
   diff: DiffEvidence;
+  /** For an npm runner: npmMetricFiles() of the merge base's package.json. Missing refuses that runner. */
+  npmMetricFiles?: string[] | null;
   /** Absent until the gate measures; promotion is never admitted without it. */
   remeasured?: Remeasurement;
 }): PromotionDecision {
@@ -118,7 +171,7 @@ export function evaluatePromotion(input: {
     if (outcome.head && outcome.head.sha !== pr.headRefOid) reasons.push('metric was measured on a different head commit; re-measure');
     if (outcome.base && outcome.base.sha !== input.mergeBase) reasons.push('base branch moved since the baseline was measured; re-measure');
   }
-  reasons.push(...diffRefusals(input.diff, outcome?.metric));
+  reasons.push(...diffRefusals(input.diff, outcome?.metric, input.npmMetricFiles));
   const fresh = input.remeasured;
   if (!fresh) reasons.push(NOT_REMEASURED);
   else if (outcome) {

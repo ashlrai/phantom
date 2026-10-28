@@ -38,6 +38,25 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
+  {
+    usage: 'phm budget show [--json]',
+    description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
+    safety: 'read',
+    jsonShape: '{ budgets: PoolBudgetSnapshot }',
+  },
+  {
+    usage: 'phm budget add <pool> --bucket <bucket> --remaining N [--reset-at UTC] [--at UTC] [--json]',
+    description: 'Append a manual reading, or import counts and times with --source cli|log --input <file|->. Manual readings override automatic readings until reset.',
+    safety: 'append',
+    jsonShape: '{ budgets: PoolBudgetSnapshot }',
+  },
+  {
+    usage: 'phm resource --json [--directory <fleet-directory>]',
+    description: 'Refresh the shared resource projection in fleet.json from recorded usage and machine telemetry; no provider calls or dispatch.',
+    safety: 'append',
+    jsonShape: 'resource.v1; missing or stale inputs have null measurements and unknown status',
+  },
   {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
@@ -476,13 +495,14 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status [--json]',              desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },
-  { cmd: 'config [get <k>|set <k> <v>]', desc: 'Read/write a config value. No args prints a summary.', topic: 'core' },
+  { cmd: 'config [list|get <k>|set <k> <v>]', desc: 'Read/write a config value. `list` prints a summary; no args prints the path.', topic: 'core' },
   { cmd: 'config effective [--json]',     desc: 'Read-only effective autonomy/daemon/foundry/backend settings.', topic: 'core' },
   { cmd: 'config set <k> --json <v>',    desc: 'Set a structured (array/object) config value as JSON.', topic: 'core' },
   { cmd: 'config path',                  desc: 'Print the path to config.json.', topic: 'core' },
@@ -552,6 +572,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'inbox submit <id> --yes',      desc: 'Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.', topic: 'autonomy' },
   { cmd: 'inbox reject <id>',            desc: 'Discard a pending proposal; applies nothing.', topic: 'autonomy' },
   { cmd: 'inbox --json',                 desc: 'Emit JSON for inbox list, show, approve, submit, or automerge results.', topic: 'autonomy' },
+  { cmd: 'drive [--once --dry-run] [--tick <seconds>]', desc: 'Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.', topic: 'autonomy' },
   { cmd: 'daemon start --once',          desc: 'Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.', topic: 'autonomy' },
   { cmd: 'daemon start --once --dry-run', desc: 'Plan only: which backlog items WOULD be worked (no swarm/proposal).', topic: 'autonomy' },
   { cmd: 'daemon start --once --drain diagnostic-reslices --limit 3', desc: 'Dormant non-dry diagnostic drain; compiled daemon trust roots are empty.', topic: 'autonomy' },
@@ -569,6 +590,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
   { cmd: 'fleet automerge-canary status|prepare-shadow|activate-shadow|halt', desc: 'Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.', topic: 'autonomy' },
+  { cmd: 'fleet xreview run|decide --request <file>', desc: 'Cross-model review on another pool (no tools, no credentials) and the deterministic SHA-bound auto-merge decision; never merges.', topic: 'autonomy' },
   { cmd: 'fleet pause',                  desc: 'Pause the fleet: engage the global kill switch (idempotent).', topic: 'autonomy' },
   { cmd: 'fleet resume',                 desc: 'Resume the fleet: release the global kill switch (idempotent).', topic: 'autonomy' },
   { cmd: 'recovery list|inspect',         desc: 'Inspect bounded metadata-only prepared/committed tool-effect evidence.', topic: 'autonomy' },
@@ -649,15 +671,19 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'health',                       desc: 'Score every ENROLLED repo on quality (tests/docs/deps/security/debt/CI/conventions); ranked, read-only.', topic: 'autonomy' },
   { cmd: 'health <repo>',                desc: 'Per-repo health detail with the per-dimension breakdown + worst offenders (ENROLLED only).', topic: 'autonomy' },
   { cmd: 'health propose',               desc: 'Emit deterministic safe-fix advisories as PENDING inbox proposals (never auto-applies).', topic: 'autonomy' },
+  { cmd: 'sweep report [--repo <dir>]', desc: 'Write a local weekly deletion review report from a Phantom checkout.', topic: 'autonomy' },
   { cmd: 'digest',                       desc: 'Write an ORG-LEVEL portfolio digest (health, goals, costs, today) to ~/.ashlr/digests/ (LOCAL-FIRST; reads only).', topic: 'autonomy' },
   { cmd: 'digest --notify',              desc: 'Also deliver the digest via a configured Slack/Discord webhook (OPT-IN; no-op when unconfigured).', topic: 'autonomy' },
 
+  { cmd: 'queue report --events <file> [--json]', desc: 'Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.', topic: 'observability' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
   { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
   { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
+  { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
+  { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
@@ -667,6 +693,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
+  { cmd: 'autopilot <pr> [--apply] [--watch]', desc: 'Drive one of Phantom\'s own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR\'s. Plan only unless --apply; never force-pushes or merges the PR.', topic: 'integrations' },
+  { cmd: 'metrics <summary|dashboard|record|recommend>', desc: 'Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard.', topic: 'integrations' },
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.', topic: 'integrations' },
   { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
@@ -683,6 +711,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
+  { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
   { cmd: 'sandbox cleanup <id>',         desc: 'Remove a sandbox worktree and scratch branch.', topic: 'safety' },
