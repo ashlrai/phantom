@@ -294,6 +294,57 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Lane reward \u00b7 bandit vs static",
+      "description": "Mean unit reward per routing policy (static = the logged router, bandit = the Thompson-sampling replay). Emitted by the router-bandit exporter contract in README.md; reward is merged\u226424h with green CI minus normalized cost and CI wall time, in [0,1].",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "avg by (policy) (phantom_router_lane_reward{repo=~\"$repo\", pool=~\"$pool\"})",
+          "legendFormat": "{{policy}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "noValue": "No observations",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ]
 }
