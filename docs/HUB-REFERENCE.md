@@ -508,6 +508,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr pulse` | Rolling activity + spend analytics |
 | `ashlr eval` | Local agent eval harness (adaptive-prompts A/B) |
 | `ashlr eval attention` | Metadata-only fleet attention report (context, retrieval, yield, routing, traces) |
+| `ashlr eval router` | Offline router/prompt-policy replay over frozen lines; merge rate, cost per merged PR, wall time with CIs |
 | `ashlr verify-safety` | Run the safety invariant suite |
 | `ashlr doctor` | One-glance health check |
 | `ashlr models` | List + manage model backends |
