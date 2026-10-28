@@ -4,6 +4,8 @@
 
 # Phantom documentation
 
+Mac queue supervisor: [Drive and host bridge integration](DRIVE.md).
+
 Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
 kernel includes the Universe experiment runtime and compatible command interfaces.
 The published canonical package is `@ashlr/phantom`; existing `@ashlr/hub` SDK
@@ -16,8 +18,11 @@ that every integration, provider or autonomous effect is active.
 
 ## Start here
 
+Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
+
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Maintain a structured fleet queue without dispatchd cutover | [Job queue](QUEUE.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
