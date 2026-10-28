@@ -43,6 +43,7 @@
 
 import type { AshlrConfig } from '../types.js';
 import { buildFleetStatus, type FleetStatus } from '../fleet/status.js';
+import { buildFleetView, type FleetView, type FleetViewOptions } from '../fleet/view.js';
 
 const FLEET_STATUS_CACHE_MS = 5_000;
 
@@ -143,4 +144,47 @@ export function primeFleetStatusCache(cfg: AshlrConfig, status: FleetStatus): vo
   entry.value = status;
   entry.computedAt = now;
   entry.expiresAt = now + FLEET_STATUS_CACHE_MS;
+}
+
+// ---------------------------------------------------------------------------
+// fleet-view.v1 cache (RQ-FLEET-VIEW-V1): the GET /api/verse/fleet/view path.
+// buildFleetView is far cheaper than buildFleetStatus (a handful of bounded
+// file reads), but the same concurrent-poll pressure applies: the phone
+// page's 15 s poll plus the TUI's 2 s tick should coalesce, not fan out.
+// The view needs no cfg: one TTL entry per process.
+// ---------------------------------------------------------------------------
+
+const FLEET_VIEW_CACHE_MS = 2_000;
+
+interface FleetViewCacheEntry {
+	value: FleetView | null;
+	computedAt: number;
+	expiresAt: number;
+}
+
+let fleetViewEntry: FleetViewCacheEntry = { value: null, computedAt: 0, expiresAt: 0 };
+
+// The builder is injectable so tests drive the source files deterministically.
+let fleetViewBuild: (opts?: FleetViewOptions) => FleetView = buildFleetView;
+
+/** Test hook: replace the view builder (nil restores the real one). */
+export function setFleetViewBuilderForTest(build: ((opts?: FleetViewOptions) => FleetView) | null): void {
+	fleetViewBuild = build ?? buildFleetView;
+	fleetViewEntry = { value: null, computedAt: 0, expiresAt: 0 };
+}
+
+/**
+ * Cached accessor for the fleet-view.v1 document: builds inside the TTL
+ * coalesce onto the last value, past it the bounded synchronous rebuild
+ * runs once. The document's own `generatedAt` is the freshness the
+ * caller reports.
+ */
+export function getCachedFleetView(): FleetView {
+	const now = Date.now();
+	if (fleetViewEntry.value === null || now >= fleetViewEntry.expiresAt) {
+		fleetViewEntry.value = fleetViewBuild();
+		fleetViewEntry.computedAt = now;
+		fleetViewEntry.expiresAt = now + FLEET_VIEW_CACHE_MS;
+	}
+	return fleetViewEntry.value;
 }

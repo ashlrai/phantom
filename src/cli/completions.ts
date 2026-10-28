@@ -85,7 +85,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   worker: ['setup', 'status'],
   fleet: [
-    'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
+    'status', 'view', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt',
   ],

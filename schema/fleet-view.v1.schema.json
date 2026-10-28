@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ashlr.ai/schema/fleet-view.v1.schema.json",
+  "title": "FleetView",
+  "description": "The fleet-view.v1 live aggregate: phm fleet view --json and GET /api/verse/fleet/view. null always means unknown; the document is read-only and carries per-source provenance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generatedAt",
+    "readOnly",
+    "pause",
+    "host",
+    "queue",
+    "agents",
+    "accounts",
+    "throughput",
+    "impact",
+    "lanes",
+    "sources"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fleet-view.v1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "readOnly": {
+      "const": true
+    },
+    "pause": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": { "enum": ["engaged", "clear", "unknown"] },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "memoryTotalBytes",
+        "memoryUsedBytes",
+        "memoryUsedPct",
+        "swapTotalBytes",
+        "swapUsedBytes"
+      ],
+      "properties": {
+        "state": { "enum": ["measured", "partial", "unavailable"] },
+        "memoryTotalBytes": { "type": ["number", "null"], "minimum": 0 },
+        "memoryUsedBytes": { "type": ["number", "null"], "minimum": 0 },
+        "memoryUsedPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "swapTotalBytes": { "type": ["number", "null"], "minimum": 0 },
+        "swapUsedBytes": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "depth", "running", "jobs", "byLane"],
+      "properties": {
+        "state": { "enum": ["ok", "partial", "missing", "invalid", "unsafe"] },
+        "depth": { "type": "integer", "minimum": 0 },
+        "running": { "type": "integer", "minimum": 0 },
+        "jobs": { "type": "integer", "minimum": 0 },
+        "byLane": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lane", "queued", "running"],
+            "properties": {
+              "lane": { "type": "string" },
+              "queued": { "type": "integer", "minimum": 0 },
+              "running": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "description": "Every running agent, oldest start first.",
+      "items": { "$ref": "#/definitions/agent" }
+    },
+    "accounts": {
+      "type": "array",
+      "description": "One resource bar per tracked account; the canonical ids come first.",
+      "items": { "$ref": "#/definitions/account" }
+    },
+    "throughput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completedJobs",
+        "merged",
+        "mergeRate",
+        "reverted",
+        "knownTokens",
+        "tokenSamples",
+        "recentMerged"
+      ],
+      "properties": {
+        "completedJobs": { "type": "integer", "minimum": 0 },
+        "merged": { "type": "integer", "minimum": 0 },
+        "mergeRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "reverted": { "type": "integer", "minimum": 0 },
+        "knownTokens": { "type": "integer", "minimum": 0 },
+        "tokenSamples": { "type": "integer", "minimum": 0 },
+        "recentMerged": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pr", "lane", "mergedAt", "reverted", "impact"],
+            "properties": {
+              "pr": { "type": "string" },
+              "lane": { "type": "string" },
+              "mergedAt": { "type": ["string", "null"], "format": "date-time" },
+              "reverted": { "type": ["boolean", "null"] },
+              "impact": { "type": ["number", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "samples", "perLane"],
+      "properties": {
+        "total": { "type": ["number", "null"], "minimum": 0 },
+        "samples": { "type": "integer", "minimum": 0 },
+        "perLane": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lane", "merged", "impact", "impactPerToken"],
+            "properties": {
+              "lane": { "type": "string" },
+              "merged": { "type": "integer", "minimum": 0 },
+              "impact": { "type": ["number", "null"], "minimum": 0 },
+              "impactPerToken": { "type": ["number", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "description": "The agent map: every lane that has work, with its running job ids.",
+      "items": { "$ref": "#/definitions/lane" }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobs", "status", "resources"],
+      "properties": {
+        "jobs": { "$ref": "#/definitions/sourceFile" },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "detail", "bytes", "sha256", "mtimeMs", "applied", "hashMatched"],
+          "properties": {
+            "state": { "enum": ["ok", "partial", "missing", "invalid", "unsafe"] },
+            "detail": { "type": "string" },
+            "bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "sha256": { "type": ["string", "null"] },
+            "mtimeMs": { "type": ["number", "null"] },
+            "applied": { "type": "integer", "minimum": 0 },
+            "hashMatched": { "type": ["boolean", "null"] }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "state", "detail"],
+          "properties": {
+            "kind": { "enum": ["resource.v1", "manual", "none"] },
+            "state": { "enum": ["ok", "partial", "missing", "invalid", "unsafe"] },
+            "detail": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "lane",
+        "account",
+        "tier",
+        "repo",
+        "title",
+        "startedAt",
+        "elapsedSeconds",
+        "tokens"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "lane": { "type": "string" },
+        "account": { "type": "string" },
+        "tier": { "type": "string" },
+        "repo": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "startedAt": { "type": ["string", "null"], "format": "date-time" },
+        "elapsedSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "tokens": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "lanes",
+        "sharedWith",
+        "source",
+        "usedPct",
+        "remainingPct",
+        "credits",
+        "resetAt",
+        "windowStart",
+        "burnPctPerHour",
+        "runwayHours",
+        "projectedPct",
+        "idealPct",
+        "readingAt",
+        "ageSeconds"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "lanes": { "type": "array", "items": { "type": "string" } },
+        "sharedWith": { "type": ["string", "null"] },
+        "source": { "enum": ["resource.v1", "manual", "estimate", "unknown"] },
+        "usedPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "remainingPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "credits": { "type": ["number", "null"], "minimum": 0 },
+        "resetAt": { "type": ["string", "null"], "format": "date-time" },
+        "windowStart": { "type": ["string", "null"], "format": "date-time" },
+        "burnPctPerHour": { "type": ["number", "null"], "minimum": 0 },
+        "runwayHours": { "type": ["number", "null"], "minimum": 0 },
+        "projectedPct": { "type": ["number", "null"], "minimum": 0 },
+        "idealPct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "readingAt": { "type": ["string", "null"], "format": "date-time" },
+        "ageSeconds": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane", "account", "tier", "queued", "running", "tokens", "agents"],
+      "properties": {
+        "lane": { "type": "string" },
+        "account": { "type": "string" },
+        "tier": { "type": ["string", "null"] },
+        "queued": { "type": "integer", "minimum": 0 },
+        "running": { "type": "integer", "minimum": 0 },
+        "tokens": { "type": "integer", "minimum": 0 },
+        "agents": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "detail", "bytes", "sha256", "mtimeMs"],
+      "properties": {
+        "state": { "enum": ["ok", "partial", "missing", "invalid", "unsafe"] },
+        "detail": { "type": "string" },
+        "bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "sha256": { "type": ["string", "null"] },
+        "mtimeMs": { "type": ["number", "null"] }
+      }
+    }
+  }
+}

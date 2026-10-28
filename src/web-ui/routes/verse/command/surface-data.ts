@@ -46,6 +46,7 @@ import type {
   AuthorityStatusV1,
 } from '../../../../core/authority/types.js';
 import type { FleetLiveActionRequest, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
+import type { FleetView } from '../../../../core/fleet/view.js';
 import type { LeaderActionRequest, LeaderStateV1 } from '../../../../core/vision/leader-types.js';
 import type { LearningStateV1 } from '../../../../core/learn/harness-types.js';
 import type { VerseActivityResponse } from '../../../../core/verse/workbench-types.js';
@@ -59,6 +60,7 @@ export type OptionalRead<T> = OptionalFleetRead<T>;
 export const AUTHORITY_PATH = '/api/verse/authority';
 export const AUTHORITY_DRAFT_PATH = '/api/verse/authority/draft';
 export const FLEET_LIVE_PATH = '/api/verse/fleet/live';
+export const FLEET_VIEW_PATH = '/api/verse/fleet/view';
 export const LEADER_PATH = '/api/verse/leader';
 export const LEARNING_PATH = '/api/verse/learning';
 export const FLEET_HISTORY_PATH = '/api/verse/fleet/history?days=90';
@@ -82,6 +84,7 @@ export const SURFACE_KEYS = Object.freeze({
   authorityDraft: 'verse-authority-draft',
   authorityEliteDraft: 'verse-authority-draft-elite',
   fleetLive: 'verse-fleet-live',
+  fleetView: 'verse-fleet-view',
   leader: 'verse-leader',
   learning: 'verse-learning',
   fleetHistory: 'verse-fleet-history-90d',
@@ -109,6 +112,11 @@ export const narrow = {
   fleetLive(raw: unknown): FleetLiveSnapshotV1 | null {
     return isRecord(raw) && raw['v'] === 1 && Array.isArray(raw['runs']) && Array.isArray(raw['repos']) && Array.isArray(raw['lanes']) && isRecord(raw['summary'])
       ? (raw as unknown as FleetLiveSnapshotV1)
+      : null;
+  },
+  fleetView(raw: unknown): FleetView | null {
+    return isRecord(raw) && raw['schema'] === 'fleet-view.v1' && Array.isArray(raw['agents']) && Array.isArray(raw['accounts']) && isRecord(raw['queue'])
+      ? (raw as unknown as FleetView)
       : null;
   },
   leader(raw: unknown): LeaderStateV1 | null {
@@ -173,6 +181,7 @@ export const authorityDraftQuery = optionalQuery(SURFACE_KEYS.authorityDraft, AU
 /** 3.15: the same draft with the one `elite-direct` rung (elite models land on green tests, no judge). */
 export const authorityEliteDraftQuery = optionalQuery(SURFACE_KEYS.authorityEliteDraft, `${AUTHORITY_DRAFT_PATH}?eliteDirect=1`, 'The elite-direct grant draft', narrow.draft);
 export const fleetLiveQuery = optionalQuery(SURFACE_KEYS.fleetLive, FLEET_LIVE_PATH, 'The live fleet view', narrow.fleetLive);
+export const fleetViewQuery = optionalQuery(SURFACE_KEYS.fleetView, FLEET_VIEW_PATH, 'The fleet view', narrow.fleetView);
 export const leaderQuery = optionalQuery(SURFACE_KEYS.leader, LEADER_PATH, 'The Leader', narrow.leader);
 export const learningQuery = optionalQuery(SURFACE_KEYS.learning, LEARNING_PATH, 'Self-improvement', narrow.learning);
 export const fleetHistoryQuery = optionalQuery(SURFACE_KEYS.fleetHistory, () => fleetHistoryPath(), 'Fleet history', narrow.fleetHistory);

@@ -1,0 +1,36 @@
+ ashlr fleet LIVE                                                            16:00:00 · data 0s ago
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◆ Agents: 2 running · 1 queued                                                 905.4k tok in flight
+   JOB                    LANE         ACCOUNT        REPO       ELAPSED  TOKENS 
+   RQ-FLEET-VIEW-V1       codex-cmp    codex-cmp      ashlrai/p~ 1h50m    845.0k 
+   RQ-GRAPH-1-r3          grok         grok-ultra-we~ ashlrai/l~ 58m      60.4k  
+
+ ◆ Accounts: 8 tracked · 3 measured                                                    weekly window
+   codex-cmp        │███████░░░░░│  60% used  40% left cr:  - reset  6d8h burn    5%/h out in     7h
+   codex-personal   --------------   -% used   -% left cr:  - reset     - burn     - out in      -
+   claude-max       --------------   -% used   -% left cr:  - reset     - burn     - out in      -
+   devin            │███░░░░░░░░░│  25% used  75% left cr:  - reset     - burn     - out in      -
+   grok-build       --------------   -% used   -% left cr:  - reset     - burn     - out in      -
+   grok-ultra-week~ │█████░░░░░░░│  40% used  60% left cr:  - reset  2d8h burn     - out in      -
+   cursor           --------------   -% used   -% left cr:  - reset  2d8h burn     - out in      -
+   omlx             --------------   -% used   -% left cr:  - reset     - burn     - out in      -
+
+ ◆ Queue: depth 1 · running 2                                                       6 jobs on record
+   prs 2 merged of 3 completed · merge rate 67%   latest phantom#938 phantom#939
+   lanes codex-cmp:1/0 grok:1/0 codex-secondary:0/1  (running/queued)
+
+ ◆ Impact: scoreboard                                                                       total 23
+   codex-cmp 14(0.02/1k tok)  claude 9(0.03/1k tok)
+
+ ◆ Host                                                                                memory · swap
+   mem │███████████░░░│ 75% of 64G   swap │████░░░░░░░░░░│ 25% of 8G
+
+ ◆ Agent map                                                                              by account
+   codex-cmp        codex-cmp ●RQ-FLEET-VIEW-V1
+   grok-ultra-week~ grok ●RQ-GRAPH-1-r3
+   codex-personal   codex-secondary (1q)
+   claude-max       ·idle
+   devin            ·idle
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ r refresh · q quit     ·jobs ·status ·resources:manual ·host

@@ -1656,6 +1656,15 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     prefixes: ['/api/verse/fleet/live'],
   },
   {
+    // RQ-FLEET-VIEW-V1: the fleet-view.v1 aggregate, the same projection
+    // `phm fleet view` renders. GET only, cached off the request path.
+    id: 'fleet-view',
+    owner: 'fleet-view',
+    module: 'src/core/verse/fleet-view-api.ts',
+    handler: 'handleFleetViewApi',
+    prefixes: ['/api/verse/fleet/view'],
+  },
+  {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
     // per-run stop and interject, task and goal edits). Its own prefix, so it
     // never shadows /api/verse/fleet (V2.2) or /api/verse/fleet/live.

@@ -13,6 +13,7 @@
 
 import type { DashboardSnapshot, TuiTab } from '../core/types.js';
 import type { FleetNextAction, FleetStatus } from '../core/fleet/status.js';
+import type { FleetView } from '../core/fleet/view.js';
 import { C, stripAnsi, pad, makeColors } from '../cli/ui.js';
 
 // ---------------------------------------------------------------------------
@@ -983,4 +984,280 @@ function formatClock(iso: string): string {
   } catch {
     return '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fleet view (RQ-FLEET-VIEW-V1): one live frame over fleet-view.v1 data.
+// ---------------------------------------------------------------------------
+
+/** Fixed-width console column (leave one space of right-hand margin). */
+const FLEET_VIEW_COLS = 100;
+
+export interface FleetViewRenderState {
+  cols?: number;
+  nowMs?: number;
+}
+
+function fvPad(s: string, w: number): string {
+  const len = stripAnsi(s).length;
+  return len >= w ? s : s + ' '.repeat(w - len);
+}
+
+function fvCut(s: string, w: number): string {
+  if (stripAnsi(s).length <= w) return s;
+  return stripAnsi(s).slice(0, Math.max(0, w - 1)) + '~';
+}
+
+function fvCell(s: string, w: number): string {
+  return fvPad(fvCut(s, w), w);
+}
+
+/** Format a duration in seconds as e.g. 47m, 3h21m, 2d4h. */
+function fvFmtDuration(sec: number | null): string {
+  if (sec === null || !Number.isFinite(sec) || sec < 0) return '-';
+  const s = Math.floor(sec);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d${h % 24}h` : `${d}d`;
+}
+
+/** Hours as a short duration ('12h' → '12h'); 24h+ → '1d3h' style. */
+function fvFmtHours(hours: number | null): string {
+  if (hours === null || !Number.isFinite(hours) || hours < 0) return '-';
+  return fvFmtDuration(hours * 3600);
+}
+
+/** An ISO timestamp as "in <duration>" for resets, or "-" when unknown. */
+function fvFmtUntil(iso: string | null, nowMs: number): string {
+  if (iso === null) return '-';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '-';
+  return t <= nowMs ? 'now' : fvFmtDuration((t - nowMs) / 1000);
+}
+
+function fvFmtTokens(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '-';
+  return fmtNum(n);
+}
+
+function fvPctBand(pct: number | null): 'ok' | 'warn' | 'hot' | 'none' {
+  if (pct === null) return 'none';
+  return pct >= 80 ? 'hot' : pct >= 50 ? 'warn' : 'ok';
+}
+
+function fvBar(pct: number | null, col: ReturnType<typeof makeColors>, width: number): string {
+  if (pct === null) return col.dim('-'.repeat(width));
+  const inner = width - 2;
+  const used = Math.round(inner * Math.min(100, Math.max(0, pct)) / 100);
+  const bar = '█'.repeat(used) + '░'.repeat(inner - used);
+  const band = fvPctBand(pct);
+  const colored = band === 'hot' ? col.red(bar) : band === 'warn' ? col.yellow(bar) : col.green(bar);
+  return `│${colored}│`;
+}
+
+function fvSectionHead(
+  title: string,
+  note: string,
+  w: number,
+): string {
+  const head = ` ◆ ${title}`;
+  const gap = ' '.repeat(Math.max(1, w - stripAnsi(head).length - stripAnsi(note).length));
+  return fvCut(head + gap + note, w);
+}
+
+/**
+ * Render one fleet-view frame. Pure: same view + same nowMs + same cols →
+ * identical output (snapshot-testable). Colors follow makeColors(true), so
+ * NO_COLOR=1 gives clean text.
+ */
+export function renderFleetViewFrame(
+  view: FleetView,
+  state: FleetViewRenderState = {},
+): string {
+  const col = makeColors(true);
+  const w = Math.max(40, Math.min(state.cols ?? FLEET_VIEW_COLS, FLEET_VIEW_COLS));
+  const nowMs = state.nowMs ?? Date.now();
+  const lines: string[] = [];
+  const g = (s: string) => col.gray(s);
+  const d = (s: string) => col.dim(s);
+  const dash = '─';
+
+  // ── Header ──────────────────────────────────────────────────────────────
+  const pauseBadge = view.pause.state === 'engaged'
+    ? ' ' + col.yellow('PAUSED')
+    : view.pause.state === 'clear'
+      ? ' ' + col.green('LIVE')
+      : ' ' + col.dim('PAUSE?');
+  const title = ' ' + col.bold('ashlr fleet');
+  const clock = formatClock(view.generatedAt);
+  const ageMs = nowMs - Date.parse(view.generatedAt);
+  const right = Number.isFinite(ageMs)
+    ? `${clock} · ${d(`data ${fvFmtDuration(Math.max(0, ageMs / 1000))} ago`)}`
+    : clock;
+  const gap = ' '.repeat(Math.max(1, w - stripAnsi(title).length - stripAnsi(pauseBadge).length - stripAnsi(right).length - 1));
+  lines.push(fvCut(title + pauseBadge + gap + right, w));
+  lines.push(g(dash.repeat(w)));
+
+  // ── Agents ──────────────────────────────────────────────────────────────
+  const runningTokens = view.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0);
+  lines.push(fvSectionHead(
+    `Agents: ${view.agents.length} running · ${view.queue.depth} queued`,
+    d(`${fvFmtTokens(runningTokens)} tok in flight`),
+    w,
+  ));
+  if (view.agents.length === 0) {
+    lines.push(d('   no agents running'));
+  } else {
+    const cw = { job: 22, lane: 12, account: 14, repo: 10, elapsed: 8, tokens: 7 };
+    lines.push(g(fvCut(
+      '   ' +
+      fvCell('JOB', cw.job) + ' ' + fvCell('LANE', cw.lane) + ' ' +
+      fvCell('ACCOUNT', cw.account) + ' ' + fvCell('REPO', cw.repo) + ' ' +
+      fvCell('ELAPSED', cw.elapsed) + ' ' + fvCell('TOKENS', cw.tokens),
+      w,
+    )));
+    for (const a of view.agents.slice(0, 12)) {
+      lines.push(fvCut(
+        '   ' +
+        fvCell(a.id, cw.job) + ' ' + fvCell(a.lane, cw.lane) + ' ' +
+        fvCell(a.account, cw.account) + ' ' + fvCell(a.repo ?? '-', cw.repo) + ' ' +
+        fvCell(fvFmtDuration(a.elapsedSeconds), cw.elapsed) + ' ' +
+        fvCell(fvFmtTokens(a.tokens), cw.tokens),
+        w,
+      ));
+    }
+    if (view.agents.length > 12) lines.push(d(`   +${view.agents.length - 12} more`));
+  }
+  lines.push('');
+
+  // ── Accounts ────────────────────────────────────────────────────────────
+  const withReading = view.accounts.filter((a) => a.usedPct !== null).length;
+  lines.push(fvSectionHead(
+    `Accounts: ${view.accounts.length} tracked · ${withReading} measured`,
+    d('weekly window'),
+    w,
+  ));
+  if (view.accounts.every((a) => a.usedPct === null)) {
+    lines.push(d('   no account readings (fleet.json absent or empty)'));
+  }
+  const barW = w >= 88 ? 14 : 10;
+  for (const a of view.accounts) {
+    const name = fvCell(a.id, 16);
+    const bar = fvBar(a.usedPct, col, barW);
+    const band = fvPctBand(a.usedPct);
+    const pctCol = band === 'hot' ? col.red : band === 'warn' ? col.yellow : col.green;
+    const usedTxt = a.usedPct === null ? '  -%' : pctCol(`${a.usedPct}%`.padStart(4));
+    const leftTxt = a.remainingPct === null ? '  -%' : `${a.remainingPct}%`.padStart(4);
+    const credits = a.credits === null ? '-' : String(a.credits);
+    const reset = fvFmtUntil(a.resetAt, nowMs).padStart(5);
+    const burn = a.burnPctPerHour === null ? '    -' : `${a.burnPctPerHour}%/h`.padStart(7);
+    const runway = a.runwayHours === null
+      ? '     -'
+      : (a.runwayHours <= 0 ? '   out' : fvFmtHours(a.runwayHours).padStart(6));
+    const srcTag = a.source === 'manual' ? '' : a.source === 'unknown' ? '' : d(` ${a.source}`);
+    lines.push(fvCut(
+      `   ${name} ${bar} ${usedTxt} ${d('used')} ${leftTxt} ${d('left')} cr:${credits.padStart(3)} ${d('reset')} ${reset} ${d('burn')} ${burn} ${d('out in')} ${runway}${srcTag}`,
+      w,
+    ));
+  }
+  lines.push('');
+
+  // ── Queue + throughput ──────────────────────────────────────────────────
+  const laneBits = view.queue.byLane
+    .filter((l) => l.queued > 0 || l.running > 0)
+    .slice(0, 6)
+    .map((l) => `${l.lane}:${l.running}/${l.queued}`)
+    .join(' ');
+  lines.push(fvSectionHead(
+    `Queue: depth ${view.queue.depth} · running ${view.queue.running}`,
+    d(`${view.queue.jobs} jobs on record`),
+    w,
+  ));
+  const tp = view.throughput;
+  const mergeRate = tp.mergeRate === null ? '-' : `${Math.round(tp.mergeRate * 100)}%`;
+  const mergeTail = tp.recentMerged.slice(0, 3).map((m) => m.pr.split('/').pop()).join(' ');
+  lines.push(fvCut(
+    `   ${d('prs')} ${tp.merged} merged of ${tp.completedJobs} completed · merge rate ${mergeRate}` +
+    (tp.reverted > 0 ? ` · ${col.yellow(`${tp.reverted} reverted`)}` : '') +
+    (mergeTail ? `   ${d('latest')} ${mergeTail}` : ''),
+    w,
+  ));
+  if (laneBits) lines.push(fvCut(`   ${d('lanes')} ${laneBits}  ${d('(running/queued)')}`, w));
+  lines.push('');
+
+  // ── Impact ──────────────────────────────────────────────────────────────
+  if (view.impact.perLane.length > 0) {
+    lines.push(fvSectionHead(
+      'Impact: scoreboard',
+      d(view.impact.total === null ? 'partial samples' : `total ${view.impact.total}`),
+      w,
+    ));
+    const board = view.impact.perLane.slice(0, 6)
+      .map((e) => `${e.lane} ${e.impact === null ? '-' : e.impact}${e.impactPerToken === null ? '' : `(${(e.impactPerToken * 1000).toFixed(2)}/1k tok)`}`)
+      .join('  ');
+    lines.push('   ' + fvCut(board, w - 4));
+    lines.push('');
+  }
+
+  // ── Host ────────────────────────────────────────────────────────────────
+  lines.push(fvSectionHead('Host', d('memory · swap'), w));
+  const memW = w >= 88 ? 16 : 12;
+  const swapPct = view.host.swapTotalBytes !== null && view.host.swapTotalBytes > 0 && view.host.swapUsedBytes !== null
+    ? Math.round(view.host.swapUsedBytes / view.host.swapTotalBytes * 1000) / 10
+    : view.host.swapTotalBytes === 0 ? 0 : null;
+  const memTxt = view.host.memoryTotalBytes === null
+    ? '-'
+    : `${view.host.memoryUsedPct === null ? '-' : view.host.memoryUsedPct + '%'} of ${Math.round(view.host.memoryTotalBytes / 1024 / 1024 / 1024)}G`;
+  const swapTxt = view.host.swapTotalBytes === null
+    ? '-'
+    : view.host.swapTotalBytes === 0
+      ? 'none'
+      : `${swapPct === null ? '-' : swapPct + '%'} of ${Math.round(view.host.swapTotalBytes / 1024 / 1024 / 1024)}G`;
+  lines.push(
+    `   ${d('mem')} ${fvBar(view.host.memoryUsedPct, col, memW)} ${memTxt}` +
+    `   ${d('swap')} ${view.host.swapTotalBytes === 0 ? d('none      ') : fvBar(swapPct, col, memW)} ${swapTxt}`,
+  );
+  lines.push('');
+
+  // ── Agent map ───────────────────────────────────────────────────────────
+  if (view.lanes.length > 0) {
+    lines.push(fvSectionHead('Agent map', d('by account'), w));
+    const byAccount = new Map<string, FleetView['lanes']>();
+    for (const lane of view.lanes) {
+      const list = byAccount.get(lane.account) ?? [];
+      list.push(lane);
+      byAccount.set(lane.account, list);
+    }
+    for (const [account, lanes] of [...byAccount.entries()].slice(0, 10)) {
+      const cells = lanes
+        .map((l) => {
+          if (l.running === 0 && l.queued === 0) return null;
+          const ids = l.agents.slice(0, 3).map((id) => `●${id}`).join(' ');
+          const extra = l.agents.length > 3 ? ` +${l.agents.length - 3}` : '';
+          const queued = l.queued > 0 ? `(${l.queued}q)` : '';
+          return `${l.lane} ${ids}${extra}${queued}`.trim();
+        })
+        .filter((s): s is string => s !== null)
+        .join('  ');
+      lines.push(fvCut(`   ${fvCell(account, 16)} ${cells || '·idle'}`, w));
+    }
+    lines.push('');
+  }
+
+  // ── Footer ──────────────────────────────────────────────────────────────
+  lines.push(g(dash.repeat(w)));
+  const mark = (s: string) => s === 'ok' ? '·' : s === 'partial' ? '~' : s === 'missing' ? '-' : s === 'invalid' ? '!' : '✕';
+  const srcBits = [
+    `${mark(view.sources.jobs.state)}jobs`,
+    `${mark(view.sources.status.state)}status${view.sources.status.hashMatched === false ? '?' : ''}`,
+    `${mark(view.sources.resources.state)}resources:${view.sources.resources.kind}`,
+    `${mark(view.host.state === 'measured' ? 'ok' : view.host.state === 'partial' ? 'partial' : 'missing')}host`,
+  ].join(' ');
+  lines.push(fvCut(` r refresh · q quit     ${d(srcBits)}`, w));
+
+  return lines.join('\n') + '\n';
 }

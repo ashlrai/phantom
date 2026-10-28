@@ -1,0 +1,12 @@
+{
+  "readings": [
+    {"pool": "codex-cmp", "used_pct": 55, "at": "2026-02-13T14:00:00.000Z", "source": "manual"},
+    {"pool": "codex-cmp", "used_pct": 60, "at": "2026-02-13T15:00:00.000Z", "source": "manual"},
+    {"pool": "grok-ultra-weekly", "used_pct": 40, "at": "2026-02-13T15:30:00.000Z", "source": "manual"},
+    {"pool": "devin", "used_pct": 25, "at": "2026-02-13T15:45:00.000Z", "source": "manual"}
+  ],
+  "windows": [
+    {"pool": "codex-cmp", "reset": "2026-02-20T00:00:00.000Z", "reset_every_days": 7, "timezone": "UTC"},
+    {"pool": "grok-ultra-weekly", "reset": "2026-02-16T00:00:00.000Z", "reset_every_days": 7, "timezone": "UTC"}
+  ]
+}

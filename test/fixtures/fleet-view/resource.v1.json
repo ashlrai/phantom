@@ -1,0 +1,11 @@
+{
+  "schema": "resource.v1",
+  "accounts": [
+    {"id": "codex-cmp", "usedPct": 71.4, "remainingPct": 28.6, "credits": 12,
+     "resetAt": "2026-02-20T00:00:00.000Z", "windowStart": "2026-02-13T00:00:00.000Z",
+     "burnPctPerHour": 4.2, "runwayHours": 6.8, "projectedPct": 80.1, "idealPct": 9.5,
+     "readingAt": "2026-02-13T15:55:00.000Z"},
+    {"id": "devin", "usedPct": 25, "credits": 4, "estimate": true,
+     "readingAt": "2026-02-13T15:00:00.000Z"}
+  ]
+}

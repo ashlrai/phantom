@@ -33,7 +33,7 @@ import type { AuditEntry } from '../core/types.js';
 import type { FleetStatus } from '../core/fleet/status.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
-import { rejectUnknownOptions, type AllowedOptions } from './args.js';
+import { parsePositiveInt, rejectUnknownOptions, type AllowedOptions } from './args.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2284,9 +2284,37 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `fleet view`: live fleet TUI / fleet-view.v1 JSON projection.
+ * Thin dispatcher: parse flags, delegate to the tui driver (which owns the
+ * terminal lifecycle) and core (which owns the data projection).
+ */
+async function cmdFleetView(rest: string[]): Promise<number> {
+  const jsonMode = rest.includes('--json');
+  const once = rest.includes('--once');
+  const intervalIdx = rest.indexOf('--interval');
+  let intervalMs: number | undefined;
+  if (intervalIdx >= 0) {
+    const raw = rest[intervalIdx + 1];
+    const parsed = parsePositiveInt('interval', raw);
+    if ('error' in parsed) {
+      process.stderr.write(red('error: ') + parsed.error + '\n');
+      return 2;
+    }
+    intervalMs = parsed.n;
+  }
+  const { runFleetViewTui, parseFleetViewInterval } = await import('../tui/app.js');
+  if (intervalMs !== undefined && parseFleetViewInterval(String(intervalMs)) === null) {
+    process.stderr.write(red('error: ') + `--interval must be 250-30000 ms, got: ${intervalMs}\n`);
+    return 2;
+  }
+  return runFleetViewTui({ once, json: jsonMode, intervalMs });
+}
+
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  view:           { allowed: { flags: ['--json', '--once'], values: ['--interval'] }, usage: 'ashlr fleet view [--json] [--once] [--interval <ms>]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2336,6 +2364,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
   switch (sub) {
     case 'status':
       return cmdFleetStatus(rest.includes('--json'));
+    case 'view':
+      return cmdFleetView(rest);
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
     case 'direction':
@@ -2382,6 +2412,8 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet view [--json] [--once] [--interval <ms>]`);
+  console.log(`                          ${cyan('# live agents/accounts/queue/host TUI (fleet-view.v1)')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
