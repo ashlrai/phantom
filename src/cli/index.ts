@@ -2505,6 +2505,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'resource': {
+        const { cmdResource } = await import('./resource.js');
+        process.exitCode = await cmdResource(rest);
+        break;
+      }
+
       case 'resources': {
         // M253: Resource Control Plane god-view — per-backend availability/used%/cap/resets.
         const cmdResources = await loadResourcesCmd();

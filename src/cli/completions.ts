@@ -28,7 +28,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'roadmap', 'stack', 'ecosystem', 'digest', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'director', 'best-of-n', 'invent', 'resources', 'usage', 'version', 'help',
+  'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
