@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "id": "RQ-PLAN-QUEUE",
+  "baseline": "a6f3c323",
+  "status": "proposed-not-enqueued",
+  "parents": [
+    {
+      "id": "RQ-PLAN-QUEUE",
+      "evidenceKind": "parent-handoff",
+      "source": "router task text (repo=phantom, P0, tier=frontier, pool=codex-cmp)",
+      "scope": "Design the fleet queueing-network model and split it into child jobs covering schema, emitters, estimator, controller, LP/bandit feed, desktop graph and tests. The queueing-network model: job classes by (sourceKind, tierRequirement, effortBand); nodes backlog, lane:<laneId> G/G/c servers with capacity-window vacations and presence caps, hold:{park,cooldown,demote} delay nodes, hold:split absorbing fail state, verify queue, serial merge gates G1b..G7, owner review, and landed/rejected/reverted/dropped/quarantined sinks; routing matrix estimated per (class, lane) route; estimators for arrival rate, service rate, transition probabilities and lane availability with null=unknown honesty; advisory controller recommending admission and slot allocation; metadata-only LP/bandit feed; desktop graph rendering; replay-simulation and conformance tests; flag-gated integration."
+    }
+  ],
+  "externalPrerequisites": [
+    {
+      "id": "queue-reconciliation",
+      "acceptance": "Router owner confirms ID uniqueness against the live queue and records these children as dispatched; the manifest is a proposed backlog, not proof of enqueue. Reuse delivered work instead of dispatching duplicates."
+    },
+    {
+      "id": "owner-lane",
+      "acceptance": "Changes to protected routing, dispatch, backpressure, merge-gate and daemon paths require an owner-authorized job; manifest entries that name those paths do not authorize editing them under the current job rules."
+    },
+    {
+      "id": "flag-rollout",
+      "acceptance": "Enabling any foundry.qnet.* flag beyond shadow observe-only mode requires an owner decision after replay and shadow evidence; no child may self-promote advisory output into live routing."
+    }
+  ],
+  "sharedAcceptance": [
+    "One self-contained, mergeable change per child with no commits, pushes, tags, releases or edits to protected paths under the current job rules.",
+    "Use a temporary HOME for tests, synthetic secret fixtures only, Phantom Secrets for secret delivery and Locus for account/MCP/CLI access.",
+    "Run npm run typecheck, npm run lint, npm run check:docs and the child testFiles with npx vitest run; run npm run test:web for src/web-ui changes.",
+    "Record commands, pass/fail counts, net LOC, source revision and toolsUsed in BRIDGE_NOTES.md.",
+    "Queue telemetry is metadata-only: allowlisted ids, enums, counts and timestamps; never prompt text, diffs, paths, argv, stdout, stderr, environment or secret material.",
+    "The queueing model is advisory: it never mutates routing, dispatch, budgets, backlog or authority; flag-off restores byte-identical legacy behaviour; unknown inputs stay unknown (null), never zero.",
+    "Unreadable or hostile sources mark the affected estimates degraded rather than fabricating quiet queues; fail closed on identity and authority questions.",
+    "Reconcile existing work before dispatch; only the established publisher may push after a separately authorized handoff."
+  ],
+  "jobs": [
+    {
+      "id": "RQ-QN-01",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Define the qnet.v1 queue-network schema and contract",
+      "component": "schema",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/types.ts",
+        "src/core/qnet/schema.ts",
+        "docs/contracts/CONTRACT-QNET.md"
+      ],
+      "acceptance": [
+        "Define qnet.v1 node kinds (backlog, lane, hold, verify, gate, review, sink), job class (sourceKind, tierRequirement, effortBand), edge kinds, server counts, disciplines and the vacation/availability field per workplans/2026-10-26-queue-network/model.md.",
+        "Validation rejects duplicate node ids, dangling edges, unknown kinds, negative server counts and malformed class tuples; errors identify fields without echoing attacker-controlled values.",
+        "Golden fixture serializes deterministically; schema version is explicit and unknown versions fail closed."
+      ],
+      "testFiles": [
+        "test/qnet-schema.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-02",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Project live fleet state into a qnet.v1 snapshot",
+      "component": "schema",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-01"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/projection.ts",
+        "src/core/qnet/node-map.ts"
+      ],
+      "acceptance": [
+        "Map backlog items, lane slots and current holds, waiting verifications, open proposals and gate state onto qnet.v1 nodes with per-input sourceState (healthy/degraded/unavailable), reusing existing read-*Detailed readers rather than new file access.",
+        "A missing or malformed source degrades only the nodes it feeds; the projection distinguishes an empty healthy queue from an unreadable one and fabricates no depths.",
+        "Projection is read-only and pure over injected reads: no dispatch, no ledger writes, no model calls; identity fields stay at the existing hashed-accountHint granularity."
+      ],
+      "testFiles": [
+        "test/qnet-projection.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-03",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Emit bounded qnet.v1 queue events at network edges",
+      "component": "emitters",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-01"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/events.ts",
+        "src/core/qnet/event-ledger.ts"
+      ],
+      "acceptance": [
+        "Define the event kinds arrive, enqueue, dispatch, hold, release, depart, verify-enter, verify-leave, gate-verdict, land, reject, revert and expire with the allowlisted field set from model.md (schema id, kind, timestamp, item id + class, node id, lane category, post-event queue depth, bounded correlation id).",
+        "Append into a per-day bounded ledger under ASHLR_HOME with the same fail-soft never-throw, private-permission discipline as dispatch-production-ledger; corrupt tails degrade reads instead of poisoning the stream.",
+        "Provide pure classification helpers so call sites in intake, dispatch, verify and gate code emit exactly one event per transition; duplicate and out-of-order events are detectable by the reader."
+      ],
+      "testFiles": [
+        "test/qnet-events.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-04",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Estimate arrival, service and routing parameters",
+      "component": "estimator",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-01",
+        "RQ-QN-03"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/estimator.ts",
+        "src/core/qnet/availability.ts"
+      ],
+      "acceptance": [
+        "Produce per-(class, lane) arrival rates (windowed EWMA), service-time percentiles, transition probabilities and the lane availability schedule a_i(t) from headroom windows, with explicit identifiability labels identified/pooled/insufficient.",
+        "Insufficient cohorts yield null, never zero or silently global estimates; unreadable event history marks estimates degraded rather than quiet.",
+        "Functions are pure over injected samples and clock; reuse the percentile machinery of src/core/routing/work-estimates.ts semantics rather than duplicating percentile code."
+      ],
+      "testFiles": [
+        "test/qnet-estimator.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-05",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Compute network metrics over the analytic model",
+      "component": "estimator",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-01",
+        "RQ-QN-04"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/model.ts",
+        "src/core/qnet/metrics.ts"
+      ],
+      "acceptance": [
+        "Compute per-node utilization, expected queue number, mean wait and cycle time, per-lane and per-class throughput, rework amplification and the Little's-law residual health metric using a GI/G/c approximation with observed coefficient of variation plus explicit delay-node semantics for holds.",
+        "Flag nodes at or above rho = 1 as unstable rather than reporting infinite waits as numbers; vacationing lanes report suspended availability with their known reopening time.",
+        "Every computed metric carries the identifiability and sourceState of its inputs; a degraded input degrades only dependent metrics."
+      ],
+      "testFiles": [
+        "test/qnet-model.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-06",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Advisory queueing controller for admission and slots",
+      "component": "controller",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-02",
+        "RQ-QN-05"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/controller.ts",
+        "src/core/qnet/recommendation.ts"
+      ],
+      "acceptance": [
+        "Evaluate a pure function (snapshot, estimates, policy) -> recommendations covering admit/hold per class, per-lane suggested server counts under the availability schedule, and reroute suggestions away from vacationing or demoted lanes; every recommendation carries reasons and the inputs it used.",
+        "Enforce the precedence kill-switch and holds > backpressure brakes > budget policy > qnet advice inside the controller itself, so downstream saturation early-holds intake the fixed brakes cannot see.",
+        "The controller mutates nothing: recommendations are data; applying them is owned by the flag-gated integration job, and flag-off output is an empty recommendation set."
+      ],
+      "testFiles": [
+        "test/qnet-controller.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-07",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Export the LP and bandit feed for route allocation",
+      "component": "lp-bandit",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-04",
+        "RQ-QN-05"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/lp-feed.ts",
+        "src/core/qnet/lp-solve.ts",
+        "src/core/qnet/bandit-feed.ts"
+      ],
+      "acceptance": [
+        "Emit a per-epoch normalized export: reward vector per (route, class) of landedPerHour, usdPerLanded, pSuccess and reworkRate with identifiability tags, plus constraint rows for slot bounds, window reserves, per-repo open-PR caps, verify capacity and budget caps.",
+        "Solve the bounded allocation LP max r.x s.t. Ax <= b with a small deterministic in-repo solver over fixture sizes; the solver input rejects NaN, negative capacities and unbounded directions instead of producing junk allocations.",
+        "Export bandit context (class, availability, utilization, brake state) and realized landed-per-attempt rewards as a metadata-only stream; promotion of any learned weight into live routing is documented as human-gated and stays unimplemented here."
+      ],
+      "testFiles": [
+        "test/qnet-lp-feed.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-08",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Expose queue status through CLI and FleetStatus",
+      "component": "status-surface",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-02",
+        "RQ-QN-05"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/cli/queue.ts",
+        "src/cli/index.ts",
+        "src/core/fleet/status.ts"
+      ],
+      "acceptance": [
+        "phm queue status --json emits one deterministic qnet.v1 view: nodes with depths and utilization, engaged brakes, lane availability and identifiability/degradation labels; --help exits 0 without acting on HOME state.",
+        "FleetStatus gains a bounded qnet field sourced from the projection, with absent, malformed and unavailable inputs rendered distinctly from a healthy empty network.",
+        "The command performs no dispatch, emission or mutation; doc-facts coverage is updated for the new command and flags."
+      ],
+      "testFiles": [
+        "test/qnet-status.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-09",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Render the queue network in the console desktop surface",
+      "component": "desktop-graph",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-08"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/web-ui/routes/verse/fleet/QueueNetworkGraph.tsx",
+        "src/web-ui/routes/verse/fleet/queue-network-graph.ts",
+        "src/web-ui/routes/verse/fleet/queue-network.module.css",
+        "src/web-ui/routes/verse/fleet/QueueNetworkGraph.test.tsx"
+      ],
+      "acceptance": [
+        "Render one node per queue with WIP badge and utilization ring, edges whose width follows measured flow, suspended lanes with reopening times, and brakes as engaged/idle behind a query flag that defaults off, consistent with the existing Fleet graph approach.",
+        "Degraded and unavailable source states are rendered explicitly with omission counts; the view never fabricates a quiet queue and starts no work or extra reads beyond existing polling.",
+        "Keyboard-focusable controls, SVG edges with accessible names, bounded node rendering and empty states are covered by the web test suite via npm run test:web."
+      ],
+      "testFiles": [
+        "src/web-ui/routes/verse/fleet/QueueNetworkGraph.test.tsx"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-10",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Replay recorded queues in a discrete-event simulator",
+      "component": "tests",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-04",
+        "RQ-QN-05"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/qnet/sim.ts",
+        "src/core/qnet/replay.ts"
+      ],
+      "acceptance": [
+        "Implement a deterministic discrete-event replay over the qnet.v1 event stream that reconstructs per-node queue depth, wait times and hold durations without wall-clock sleeps or randomness (seeded inputs only).",
+        "Compare model predictions against replayed realized metrics and emit a calibration report bounded to counts and rates; disagreement beyond stated tolerances is reported, never smoothed over.",
+        "Replay is read-only over fixture and recorded ledgers and fails closed on corrupt, non-monotonic or hostile event streams."
+      ],
+      "testFiles": [
+        "test/qnet-sim-replay.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-11",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Conformance suite for telemetry privacy and fail-closed behaviour",
+      "component": "tests",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-03",
+        "RQ-QN-06",
+        "RQ-QN-07"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "test/qnet-conformance.test.ts",
+        "test/fixtures/qnet/"
+      ],
+      "acceptance": [
+        "Assert the emitted event stream contains only allowlisted fields using synthetic sentinel secrets, prompts and paths that must never appear in any record, projection, export or status surface.",
+        "Exercise hostile inputs: malformed ledger rows, reversed timestamps, absurd queue depths, unknown node ids and injected fields; each fails closed or is degraded without contaminating healthy nodes.",
+        "Prove flag-off equivalence: with qnet disabled the daemon-facing surfaces are byte-identical to legacy behaviour, and no code path reachable from tests mutates routing, budgets or authority."
+      ],
+      "testFiles": [
+        "test/qnet-conformance.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-QN-12",
+      "parent": "RQ-PLAN-QUEUE",
+      "title": "Wire shadow-mode integration behind foundry.qnet flags",
+      "component": "integration",
+      "repo": "phantom",
+      "pool": "codex-cmp",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-QN-01",
+        "RQ-QN-02",
+        "RQ-QN-03",
+        "RQ-QN-04",
+        "RQ-QN-05",
+        "RQ-QN-06",
+        "RQ-QN-07",
+        "RQ-QN-08",
+        "RQ-QN-09",
+        "RQ-QN-10",
+        "RQ-QN-11"
+      ],
+      "dispatchGate": "owner-lane",
+      "scope": [
+        "src/core/qnet/shadow.ts",
+        "src/core/fleet/dispatch-router.ts",
+        "src/core/fleet/status.ts"
+      ],
+      "acceptance": [
+        "Wire emitters, projection, estimator, model and controller into the daemon tick in shadow observe-only mode behind foundry.qnet.* flags that default off; shadow records advice beside the actual decision without influencing it.",
+        "Touch protected dispatch and status seams only under the owner-authorized job this entry requires; flag-off restores byte-identical behaviour and leaves all persisted qnet state unread by production paths.",
+        "Ship rollback evidence: replay fixtures over crash, duplicate-event and flag-flip sequences showing zero unauthorized dispatches, zero fabricated metrics and a clean revert to legacy routing."
+      ],
+      "testFiles": [
+        "test/qnet-integration.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation",
+        "owner-lane",
+        "flag-rollout"
+      ]
+    }
+  ]
+}

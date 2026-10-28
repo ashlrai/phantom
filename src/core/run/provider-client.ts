@@ -958,6 +958,68 @@ function isLoopbackEndpoint(value: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * A provider capacity refusal scoped to service tiers: the endpoint answered,
+ * but reports it cannot serve the requested or assigned service tier right
+ * now. Callers that own capacity (the resource pool) map this to pool
+ * unavailability so the job reroutes to another worker instead of settling as
+ * a task failure. Message text stays scrubbed and bounded like any other
+ * HTTP error; only the closed classification marker and a bounded retry hint
+ * are added.
+ */
+export class OpenAICompatServiceTierError extends Error {
+  /** Discriminating marker; always true on this class. */
+  readonly serviceTierUnavailable = true;
+  /** Bounded provider retry hint in milliseconds, or null when absent. */
+  readonly retryAfterMs: number | null;
+  constructor(message: string, retryAfterMs: number | null) {
+    super(message);
+    this.name = 'OpenAICompatServiceTierError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Closed vocabulary of structured provider markers that name a service-tier refusal. */
+const SERVICE_TIER_REFUSAL_MARKERS = new Set([
+  'service_tier',
+  'service_tier_unavailable',
+  'service_tier_at_capacity',
+  'service_tier_not_supported',
+  'unsupported_service_tier',
+  'invalid_service_tier',
+]);
+
+/** Bounded Retry-After delta-seconds only; an HTTP date or junk is no hint. */
+function retryAfterHeaderMs(header: string | null): number | null {
+  if (header === null || !/^\s*\d{1,9}\s*$/.test(header)) return null;
+  return Math.min(Number(header.trim()) * 1_000, 3_600_000);
+}
+
+/** Retry-After is optional; a response without a headers object is no hint either. */
+function retryAfterHeaderValue(response: Response): string | null {
+  try { return response.headers.get('retry-after'); } catch { return null; }
+}
+
+/**
+ * Structured-only check for a service-tier refusal: the provider error
+ * envelope's `param`, `code` or `type` must name the tier. Free-text messages
+ * are never pattern-matched, so an arbitrary task or vendor sentence cannot
+ * manufacture this classification.
+ */
+function serviceTierRefusal(errorText: string, retryAfterHeader: string | null): { matched: boolean; retryAfterMs: number | null } {
+  const retryAfterMs = retryAfterHeaderMs(retryAfterHeader);
+  let value: unknown;
+  try { value = JSON.parse(errorText); } catch { return { matched: false, retryAfterMs }; }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { matched: false, retryAfterMs };
+  const error = (value as Record<string, unknown>)['error'];
+  if (typeof error !== 'object' || error === null || Array.isArray(error)) return { matched: false, retryAfterMs };
+  const markers = ['param', 'code', 'type']
+    .map((key) => (error as Record<string, unknown>)[key])
+    .filter((field): field is string => typeof field === 'string' && field.length > 0 && field.length <= 120)
+    .map((field) => field.trim().toLowerCase());
+  return { matched: markers.some((marker) => SERVICE_TIER_REFUSAL_MARKERS.has(marker)), retryAfterMs };
+}
+
 /** One bounded text completion; partial output never triggers a second request. */
 async function strictTextStream(options: {
   url: string; headers: Record<string, string>; body: string; signal?: AbortSignal;
@@ -1100,6 +1162,14 @@ export function buildOpenAICompatibleClient(
      */
     topP?: number;
     reasoningEffort?: string;
+    /**
+     * Top-level `prompt_cache_retention` for every request: the per-job
+     * retention the caller's routing pick asked for (for example '12h' for a
+     * long job reusing a large prefix). Absent = the provider's default
+     * retention, byte-identical request; 'in_memory' names the default tier
+     * explicitly and is only sent when a caller asks for it.
+     */
+    promptCacheRetention?: 'in_memory' | '12h';
     onRequestStart?: () => void;
     /**
      * Optional config for the local-only gate below. Callers that hold an
@@ -1157,6 +1227,7 @@ export function buildOpenAICompatibleClient(
       if (temperature !== undefined) body['temperature'] = temperature;
       if (transport?.topP !== undefined) body['top_p'] = transport.topP;
       if (transport?.reasoningEffort !== undefined) body['reasoning_effort'] = transport.reasoningEffort;
+      if (transport?.promptCacheRetention !== undefined) body['prompt_cache_retention'] = transport.promptCacheRetention;
       if (maxOutputTokens !== undefined) body['max_tokens'] = maxOutputTokens;
 
       if (supportsTools && tools && tools.length > 0) {
@@ -1201,6 +1272,10 @@ export function buildOpenAICompatibleClient(
             throwIfAborted(requestSignal);
           }
           const safeError = redactKnownValues(scrubSecrets(errText), [apiKey]).slice(0, MAX_ERROR_TEXT_CHARS);
+          const refusal = serviceTierRefusal(errText, retryAfterHeaderValue(response));
+          if (refusal.matched) {
+            throw new OpenAICompatServiceTierError(`OpenAI-compat HTTP ${response.status}: ${safeError}`, refusal.retryAfterMs);
+          }
           throw new Error(`OpenAI-compat HTTP ${response.status}: ${safeError}`);
         }
 
@@ -1368,9 +1443,14 @@ export function buildOpenAICompatibleClient(
 
         if (!response.ok) {
           const errText = await readBoundedResponseText(response, MAX_ERROR_RESPONSE_BYTES).catch(() => '');
+          const refusal = serviceTierRefusal(errText, retryAfterHeaderValue(response));
+          const safeError = scrubSecrets(errText).slice(0, MAX_ERROR_TEXT_CHARS);
+          if (refusal.matched) {
+            throw new OpenAICompatServiceTierError(`OpenAI-compat stream HTTP ${response.status}: ${safeError}`, refusal.retryAfterMs);
+          }
           throw new Error(
             `OpenAI-compat stream HTTP ${response.status}: ${
-              scrubSecrets(errText).slice(0, MAX_ERROR_TEXT_CHARS)
+              safeError
             }`,
           );
         }
@@ -1502,6 +1582,9 @@ export function buildOpenAICompatibleClient(
       } catch (err) {
         cleanupStream();
         if (requestSignal?.aborted) throw abortReason(requestSignal);
+        // A classified tier refusal fails identically on the chat() retry; let
+        // the caller's capacity mapping see it instead of making a second request.
+        if (err instanceof OpenAICompatServiceTierError) throw err;
         if (maxOutputTokens !== undefined) throw err;
         const result = await this.chat(messages, tools, requestSignal, limits);
         if (result.content) onDelta(result.content);

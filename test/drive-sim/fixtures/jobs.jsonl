@@ -1,0 +1,53 @@
+{"v":1,"at":"2026-10-26T06:02:00Z","id":"RQ-001","repo":"phantom","pool":"devin","tier":"frontier","priority":"P1","serviceMin":75,"task":"drive sim harness"}
+{"v":1,"at":"2026-10-26T06:05:00Z","id":"RQ-002","repo":"binshield","pool":"devin","tier":"frontier","priority":"P1","serviceMin":90,"task":"credential rotation audit"}
+{"v":1,"at":"2026-10-26T06:10:00Z","id":"RQ-003","repo":"phantom","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":45,"task":"lint sweep"}
+{"v":1,"at":"2026-10-26T06:15:00Z","id":"RQ-004","repo":"site","pool":"devin","tier":"standard","priority":"P2","serviceMin":50,"task":"docs link audit"}
+{"v":1,"at":"2026-10-26T06:25:00Z","id":"RQ-005","repo":"custody","pool":"devin","tier":"frontier","priority":"P1","serviceMin":80,"task":"grant ledger index"}
+{"v":1,"at":"2026-10-26T06:40:00Z","id":"RQ-006","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":60,"task":"test flake triage"}
+{"v":1,"at":"2026-10-26T06:55:00Z","id":"RQ-007","repo":"binshield","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":40,"task":"dependency bump verify"}
+{"v":1,"at":"2026-10-26T07:05:00Z","id":"RQ-008","repo":"phantom","pool":"devin","tier":"frontier","priority":"P2","serviceMin":100,"task":"router queue replay"}
+{"v":1,"at":"2026-10-26T07:15:00Z","id":"RQ-009","repo":"locus","pool":"devin","tier":"frontier","priority":"P1","serviceMin":70,"task":"pin scope freeze tests"}
+{"v":1,"at":"2026-10-26T07:20:00Z","id":"RQ-010","repo":"phantom","pool":"codex-personal","tier":"standard","priority":"P1","serviceMin":35,"allowLanes":["codex-cmp","devin"],"task":"changelog draft"}
+{"v":1,"at":"2026-10-26T07:35:00Z","id":"RQ-011","repo":"site","pool":"devin","tier":"standard","priority":"P1","serviceMin":55,"task":"article queue drain"}
+{"v":1,"at":"2026-10-26T07:50:00Z","id":"RQ-012","repo":"custody","pool":"devin","tier":"frontier","priority":"P2","serviceMin":85,"task":"volume grant fixture"}
+{"v":1,"at":"2026-10-26T08:10:00Z","id":"RQ-013","repo":"phantom","pool":"codex-cmp","tier":"frontier","priority":"P1","serviceMin":50,"task":"dispatch router edge cases"}
+{"v":1,"at":"2026-10-26T08:20:00Z","id":"RQ-014","repo":"ashlr-cli","pool":"devin","tier":"standard","priority":"P1","serviceMin":65,"task":"completions refresh"}
+{"v":1,"at":"2026-10-26T08:30:00Z","id":"RQ-015","repo":"binshield","pool":"codex-personal","tier":"standard","priority":"P1","serviceMin":110,"task":"secrets scan deep pass"}
+{"v":1,"at":"2026-10-26T08:45:00Z","id":"RQ-016","repo":"phantom","pool":"devin","tier":"frontier","priority":"P1","serviceMin":95,"task":"verse session engine"}
+{"v":1,"at":"2026-10-26T09:05:00Z","id":"RQ-017","repo":"locus","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":45,"task":"binding drift check"}
+{"v":1,"at":"2026-10-26T09:20:00Z","id":"RQ-018","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":60,"task":"fleet history rollup"}
+{"v":1,"at":"2026-10-26T09:35:00Z","id":"RQ-019","repo":"phantom","pool":"codex-personal","tier":"frontier","priority":"P0","serviceMin":40,"allowLanes":["codex-cmp","devin"],"task":"hotfix release blocker"}
+{"v":1,"at":"2026-10-26T09:45:00Z","id":"RQ-021","repo":"binshield","pool":"codex-personal","tier":"standard","priority":"P1","serviceMin":35,"allowLanes":["codex-cmp"],"task":"audit log export"}
+{"v":1,"at":"2026-10-26T10:05:00Z","id":"RQ-022","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":60,"task":"daemon loop guard"}
+{"v":1,"at":"2026-10-26T10:10:00Z","id":"RQ-051","repo":"site","pool":"codex-personal","tier":"standard","priority":"P2","serviceMin":30,"task":"typo sweep"}
+{"v":1,"at":"2026-10-26T10:15:00Z","id":"RQ-023","repo":"custody","pool":"codex-cmp","tier":"standard","priority":"P2","serviceMin":35,"allowLanes":["devin"],"task":"attestation docs"}
+{"v":1,"at":"2026-10-26T10:40:00Z","id":"RQ-024","repo":"phantom","pool":"devin","tier":"frontier","priority":"P1","serviceMin":75,"task":"leader preferences"}
+{"v":1,"kind":"cancel","at":"2026-10-26T10:55:00Z","id":"RQ-051"}
+{"v":1,"at":"2026-10-26T11:10:00Z","id":"RQ-025","repo":"binshield","pool":"codex-cmp","tier":"frontier","priority":"P1","serviceMin":55,"task":"baseline scan runner"}
+{"v":1,"at":"2026-10-26T11:30:00Z","id":"RQ-026","repo":"site","pool":"devin","tier":"standard","priority":"P2","serviceMin":50,"task":"rss feed fix"}
+{"v":1,"at":"2026-10-26T11:55:00Z","id":"RQ-027","repo":"phantom","pool":"codex-personal","tier":"standard","priority":"P1","serviceMin":30,"task":"readme badge refresh"}
+{"v":1,"at":"2026-10-26T12:20:00Z","id":"RQ-028","repo":"custody","pool":"devin","tier":"frontier","priority":"P1","serviceMin":80,"task":"custody attestation v2"}
+{"v":1,"at":"2026-10-26T12:45:00Z","id":"RQ-029","repo":"phantom","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":45,"task":"mcp config validator"}
+{"v":1,"at":"2026-10-26T13:05:00Z","id":"RQ-030","repo":"ashlr-cli","pool":"devin","tier":"standard","priority":"P1","serviceMin":60,"task":"onboarding flow"}
+{"v":1,"at":"2026-10-26T13:15:00Z","id":"RQ-031","repo":"binshield","pool":"codex-personal","tier":"standard","priority":"P2","serviceMin":40,"allowLanes":["devin"],"task":"sbom refresh"}
+{"v":1,"at":"2026-10-26T13:40:00Z","id":"RQ-032","repo":"phantom","pool":"devin","tier":"frontier","priority":"P2","serviceMin":70,"task":"inbox merge tuning"}
+{"v":1,"at":"2026-10-26T14:05:00Z","id":"RQ-033","repo":"phantom","pool":"codex-cmp","tier":"frontier","priority":"P0","serviceMin":50,"allowLanes":["devin"],"task":"security patch apply"}
+{"v":1,"at":"2026-10-26T14:10:00Z","id":"RQ-034","repo":"locus","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":45,"task":"session pack verify"}
+{"v":1,"at":"2026-10-26T14:30:00Z","id":"RQ-035","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":55,"task":"cli status json"}
+{"v":1,"at":"2026-10-26T15:00:00Z","id":"RQ-036","repo":"custody","pool":"devin","tier":"frontier","priority":"P1","serviceMin":85,"task":"standing grant renewal"}
+{"v":1,"at":"2026-10-26T15:10:00Z","id":"RQ-037","repo":"phantom","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":40,"task":"eslint lane prune"}
+{"v":1,"at":"2026-10-26T15:20:00Z","id":"RQ-038","repo":"binshield","pool":"devin","tier":"frontier","priority":"P1","serviceMin":75,"task":"hook sandbox tests"}
+{"v":1,"at":"2026-10-26T15:45:00Z","id":"RQ-039","repo":"phantom","pool":"codex-personal","tier":"standard","priority":"P1","serviceMin":35,"task":"gitignore audit"}
+{"v":1,"at":"2026-10-26T16:05:00Z","id":"RQ-040","repo":"site","pool":"devin","tier":"standard","priority":"P2","serviceMin":50,"task":"sitemap refresh"}
+{"v":1,"at":"2026-10-26T16:20:00Z","id":"RQ-041","repo":"phantom","pool":"devin","tier":"frontier","priority":"P1","serviceMin":90,"task":"verse web terminal"}
+{"v":1,"at":"2026-10-26T16:40:00Z","id":"RQ-042","repo":"locus","pool":"codex-cmp","tier":"standard","priority":"P2","serviceMin":45,"allowLanes":["devin"],"task":"alias resolution tests"}
+{"v":1,"at":"2026-10-26T17:10:00Z","id":"RQ-043","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":60,"task":"fleet ledger verify"}
+{"v":1,"at":"2026-10-26T17:20:00Z","id":"RQ-044","repo":"binshield","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":50,"task":"scan report schema"}
+{"v":1,"at":"2026-10-26T17:50:00Z","id":"RQ-045","repo":"custody","pool":"devin","tier":"frontier","priority":"P2","serviceMin":65,"task":"grant expiry sweep"}
+{"v":1,"at":"2026-10-26T18:15:00Z","id":"RQ-046","repo":"phantom","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":40,"task":"fixture hygiene"}
+{"v":1,"at":"2026-10-26T18:40:00Z","id":"RQ-047","repo":"phantom","pool":"devin","tier":"standard","priority":"P1","serviceMin":70,"task":"router weights review"}
+{"v":1,"at":"2026-10-26T19:10:00Z","id":"RQ-048","repo":"binshield","pool":"devin","tier":"frontier","priority":"P1","serviceMin":80,"task":"ci attestation replay"}
+{"v":1,"at":"2026-10-26T19:40:00Z","id":"RQ-049","repo":"ashlr-cli","pool":"codex-cmp","tier":"standard","priority":"P1","serviceMin":45,"task":"alias flags"}
+{"v":1,"at":"2026-10-26T20:10:00Z","id":"RQ-050","repo":"phantom","pool":"devin","tier":"standard","priority":"P2","serviceMin":55,"task":"doc facts sweep"}
+{"v":1,"at":"2026-10-26T21:30:00Z","id":"RQ-052","repo":"site","pool":"codex-cmp","tier":"standard","priority":"P2","serviceMin":40,"task":"footer links"}
+{"v":1,"at":"2026-10-26T21:45:00Z","id":"RQ-053","repo":"phantom","pool":"codex-personal","tier":"standard","priority":"P2","serviceMin":30,"task":"license headers"}

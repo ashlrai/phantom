@@ -124,6 +124,7 @@ import {
   onFleetEvent,
   _clearHandlers,
   registerBuiltInHandlers,
+  _handlerCounts,
 } from '../src/core/fleet/event-bus.js';
 
 // ---------------------------------------------------------------------------
@@ -150,10 +151,6 @@ async function flush(): Promise<void> {
   await Promise.resolve();
   await new Promise<void>((r) => setTimeout(r, 0));
 }
-
-// Fixed timestamp constant — avoids any Date.now() dependency in assertions.
-const FIXED_ISO = '2026-06-17T00:00:00.000Z';
-void FIXED_ISO; // suppress "declared but never read" lint
 
 // ---------------------------------------------------------------------------
 // Test 1 — emit dispatches to a registered handler
@@ -465,5 +462,91 @@ describe('5. SAFETY: handlers only enqueue/notify — no merge/push/apply', () =
     expect(mockAutoMergeProposal).not.toHaveBeenCalled();
     expect(mockApplyDiff).not.toHaveBeenCalled();
     expect(mockGitPush).not.toHaveBeenCalled();
+  });
+});
+
+describe('event ordering and replay boundaries', () => {
+  beforeEach(() => _clearHandlers());
+
+  it('waits for an asynchronous handler before calling the next handler and resolving', async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    onFleetEvent('anomaly', async () => {
+      order.push('started');
+      await pending;
+      order.push('finished');
+    });
+    onFleetEvent('anomaly', () => { order.push('next'); });
+    const emitted = emit('anomaly', {}, cfgOn()).then(() => { order.push('resolved'); });
+    expect(order).toEqual(['started']);
+    release();
+    await emitted;
+    expect(order).toEqual(['started', 'finished', 'next', 'resolved']);
+  });
+
+  it('deduplicates registrations by identity, with idempotent removal and no historical replay', async () => {
+    await emit('anomaly', { detail: 'before registration' }, cfgOn());
+    const handler = vi.fn();
+    const off = onFleetEvent('anomaly', handler);
+    onFleetEvent('anomaly', handler);
+    expect(handler).not.toHaveBeenCalled();
+    expect(_handlerCounts()).toEqual({ anomaly: 1 });
+    await emit('anomaly', { detail: 'current' }, cfgOn());
+    expect(handler).toHaveBeenCalledOnce();
+    off();
+    off();
+    await emit('anomaly', {}, cfgOn());
+    expect(handler).toHaveBeenCalledOnce();
+    expect(_handlerCounts()).toEqual({ anomaly: 0 });
+  });
+
+  it('continues after an asynchronous rejection and resolves after the following handler', async () => {
+    const next = vi.fn();
+    onFleetEvent('anomaly', async () => { await Promise.resolve(); throw new Error('unavailable'); });
+    onFleetEvent('anomaly', next);
+    await expect(emit('anomaly', {}, cfgOn())).resolves.toBeUndefined();
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('deduplicates a replay against persisted objectives after signal truncation', async () => {
+    registerBuiltInHandlers();
+    registerBuiltInHandlers();
+    expect(_handlerCounts()['regression:detected']).toBe(1);
+    const signal = 'x'.repeat(120);
+    mockCreateGoal.mockImplementationOnce((objective: string) => {
+      mockListGoals.mockReturnValue([{ objective }]);
+      return { id: 'goal-fix-1', objective, status: 'planning' };
+    });
+    await emit('regression:detected', { repo: '/repo', signal: signal + 'first' }, cfgOn());
+    await emit('regression:detected', { repo: '/repo', signal: signal + 'replay' }, cfgOn());
+    expect(mockCreateGoal).toHaveBeenCalledOnce();
+    await emit('regression:detected', { repo: '/other', signal }, cfgOn());
+    expect(mockCreateGoal).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { repo: '/home/operator/.ashlr/sandboxes/job/worktree' },
+    { repo: 'C:\\Users\\operator\\.ashlr\\tmp\\vwt-job' },
+    { signal: 'failure in /home/operator/.ashlr/tmp/vwt-job' },
+  ])('rejects transient worktrees in either the repo or objective: %j', async (payload) => {
+    registerBuiltInHandlers();
+    await emit('regression:detected', payload, cfgOn());
+    expect(mockListGoals).not.toHaveBeenCalled();
+    expect(mockCreateGoal).not.toHaveBeenCalled();
+  });
+
+  it('contains built-in persistence, notification and invent failures', async () => {
+    registerBuiltInHandlers();
+    mockListGoals.mockImplementationOnce(() => { throw new Error('unreadable'); });
+    mockNotifyFleetEvent.mockRejectedValueOnce(new Error('offline'));
+    mockRunInventCycle.mockRejectedValueOnce(new Error('unavailable'));
+    const next = vi.fn();
+    onFleetEvent('goal:done', next);
+    await expect(emit('regression:detected', {}, cfgOn())).resolves.toBeUndefined();
+    await expect(emit('merge:shipped', {}, cfgOn())).resolves.toBeUndefined();
+    await expect(emit('goal:done', { goalId: 'done', objective: 'done' }, cfgOn({ generative: true }))).resolves.toBeUndefined();
+    expect(mockCreateGoal).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
   });
 });

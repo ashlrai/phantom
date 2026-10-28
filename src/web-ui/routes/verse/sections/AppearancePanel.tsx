@@ -50,6 +50,7 @@ const THEME_OPTIONS = [
   { value: 'system' as ThemePreference, label: 'System', icon: <IconMonitor /> },
   { value: 'light' as ThemePreference, label: 'Light', icon: <IconSun /> },
   { value: 'dark' as ThemePreference, label: 'Dark', icon: <IconMoon /> },
+  { value: 'high-contrast' as ThemePreference, label: 'High contrast', icon: <IconMonitor /> },
 ];
 
 /**

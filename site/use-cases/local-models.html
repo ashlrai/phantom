@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Run coding agents on local models with Phantom: Ollama discovery, llama-server dispatch through a normalizing proxy, measured token and wall-clock numbers from the repo.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://verse.ashlr.ai/use-cases/local-models">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://verse.ashlr.ai/use-cases/local-models">
+<meta property="og:title" content="Coding agents on local models · Phantom">
+<meta property="og:site_name" content="Phantom">
+<meta property="og:description" content="Run coding agents on local models: Ollama discovery, llama-server dispatch, and measured numbers from the repository's own receipts.">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/work-for-me-3.24.3-demo.jpg">
+<meta property="og:image:alt" content="Phantom 3.24.3 compiled browser Demo history excerpt; no provider ran">
+<meta name="twitter:title" content="Coding agents on local models · Phantom">
+<meta name="twitter:description" content="Run coding agents on local models: Ollama discovery, llama-server dispatch, and measured numbers from the repository's own receipts.">
+<meta name="twitter:image:alt" content="Phantom 3.24.3 compiled browser Demo history excerpt; no provider ran">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/work-for-me-3.24.3-demo.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": "https://verse.ashlr.ai/use-cases/local-models#webpage",
+  "url": "https://verse.ashlr.ai/use-cases/local-models",
+  "name": "Coding agents on local models · Phantom",
+  "description": "Run coding agents on local models: Ollama discovery, llama-server dispatch, and measured numbers from the repository's own receipts.",
+  "isPartOf": { "@id": "https://verse.ashlr.ai/#website" },
+  "about": { "@id": "https://verse.ashlr.ai/#application" }
+}
+</script>
+<title>Coding agents on local models · Phantom use cases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
+<style>
+:root{--bg:#EDF0F4;--surface:#FFFFFF;--surface-2:#F5F8FA;--ink:#0F1822;--muted:#58657A;--faint:#5F6C80;--line:#D3DBE4;--line-soft:#E3E9EF;--accent:hsl(245 72% 50%);--accent-dim:hsl(245 72% 94%);--live:#0E6F78;--live-dim:#D2E6E8;--warn:#8A6100;--f-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;--f-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;--step--1:0.8125rem;--step-0:1rem;--step-1:1.1875rem;--step-2:1.5rem;--step-3:2.125rem;--gutter:clamp(20px,5vw,64px);--max:1160px}
+@media (prefers-color-scheme:dark){:root{--bg:#0C121A;--surface:#121A24;--surface-2:#17212C;--ink:#E7EDF4;--muted:#93A1B4;--faint:#7B8EA4;--line:#22303F;--line-soft:#1B2734;--accent:hsl(245 72% 66%);--accent-dim:hsl(245 40% 20%);--live:#44CBD8;--live-dim:#0F3239;--warn:#E0A93B}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:var(--step-0);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin-inline:auto;padding-inline:var(--gutter)}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-0.02em}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.skip-link{position:fixed;z-index:30;top:-100px;left:var(--gutter);padding:10px 14px;background:var(--ink);color:var(--surface);border-radius:3px;font-weight:600;text-decoration:none}
+.skip-link:focus{top:max(12px,env(safe-area-inset-top))}
+main,section{scroll-margin-top:72px}
+.masthead{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft)}
+.masthead .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:14px}
+.brand{white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:var(--step-1);letter-spacing:-0.03em;color:var(--ink);text-decoration:none}
+.brand .sub{color:var(--faint);font-weight:500}
+.masthead nav{display:flex;gap:18px;font-size:var(--step--1);flex-wrap:wrap}
+.masthead nav a{color:var(--muted);text-decoration:none}
+.masthead nav a:hover{color:var(--ink)}
+.masthead nav a[aria-current]{color:var(--ink);font-weight:600}
+@media (max-width:860px){.masthead nav{display:none}}
+.hero{padding-block:clamp(40px,6vw,72px) clamp(24px,4vw,40px)}
+.hero h1{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.04;font-weight:700;max-width:20ch;margin-block:16px 18px}
+.hero .lede{font-size:var(--step-1);color:var(--muted);max-width:64ch;margin:0}
+.eyebrow{font-family:var(--f-mono);font-size:var(--step--1);letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);margin:0}
+.eyebrow a{color:var(--faint);text-decoration:none}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;align-items:center}
+.btn{font-weight:600;font-size:var(--step-0);padding:11px 20px;border-radius:3px;text-decoration:none;border:1px solid transparent;display:inline-block}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn-ghost{border-color:var(--line);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--muted)}
+section{padding-block:clamp(40px,6vw,72px);border-top:1px solid var(--line-soft)}
+.sec-head{max-width:66ch;margin-bottom:30px}
+.sec-head h2{font-size:var(--step-3);margin-block:10px 12px;line-height:1.12}
+.sec-head p{color:var(--muted);margin:0}
+.claims{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.claim{border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:18px 20px;display:grid;gap:8px;align-content:start}
+.claim h3{font-size:var(--step-1)}
+.claim p{margin:0;color:var(--muted);font-size:var(--step--1);line-height:1.6}
+.src{font-family:var(--f-mono);font-size:.75rem;color:var(--faint);margin:0;line-height:1.5}
+.claim .src{border-top:1px solid var(--line-soft);padding-top:9px;margin-top:2px}
+.src a{color:var(--accent)}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:560px;background:var(--surface);border:1px solid var(--line)}
+caption{caption-side:bottom;text-align:left;padding-top:12px;font-size:var(--step--1);color:var(--faint);font-family:var(--f-mono)}
+th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+thead th{font-family:var(--f-mono);font-size:var(--step--1);font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);border-bottom:1px solid var(--line)}
+td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right}
+th.num{text-align:right}
+tbody tr:last-child td,tbody tr:last-child th{border-bottom:none}
+code{font-family:var(--f-mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--line-soft);padding:1px 5px;border-radius:2px}
+pre{margin:0;padding:14px 16px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:3px;font-family:var(--f-mono);font-size:var(--step--1);line-height:1.7}
+.related{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.related a{display:grid;gap:6px;border:1px solid var(--line);border-radius:4px;background:var(--surface);padding:16px 18px;text-decoration:none;color:var(--ink)}
+.related a:hover{border-color:var(--accent)}
+.related .t{font-family:var(--f-display);font-weight:700;font-size:var(--step-0)}
+.related .d{font-size:var(--step--1);color:var(--muted);line-height:1.5}
+footer{border-top:1px solid var(--line-soft);padding-block:32px 44px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;justify-content:space-between;align-items:baseline}
+footer p{margin:0;color:var(--faint);font-size:var(--step--1);font-family:var(--f-mono)}
+footer a{color:var(--muted);text-decoration:none;font-size:var(--step--1)}
+footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img class="mark" src="/assets/phantom-mark.svg" width="24" height="24" alt="" />Phantom&nbsp;<span class="sub">by AshlrAI</span></a>
+    <nav aria-label="Site">
+      <a href="/">Product</a>
+      <a href="/use-cases/own-accounts">Own accounts</a>
+      <a href="/use-cases/local-models" aria-current="page">Local models</a>
+      <a href="/use-cases/signed-autonomy">Signed autonomy</a>
+      <a href="/use-cases/review-agent-work">Review work</a>
+      <a href="/compare/agent-clis">Compare</a>
+      <a href="/ecosystem">Ecosystem</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content" tabindex="-1">
+  <div class="wrap hero">
+    <p class="eyebrow">Phantom &middot; use cases</p>
+    <h1>Your hardware. Your models. Real seats.</h1>
+    <p class="lede">
+      Local models are first-class seats in Phantom, not a demo lane. Discovery and dispatch are
+      separate problems, and the numbers below come from the repository's own changelog,
+      receipts and source files rather than a benchmark we cannot show.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="/#install-verse">Install Phantom</a>
+      <a class="btn btn-ghost" href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">Read the local inference guide</a>
+    </div>
+  </div>
+
+  <section aria-labelledby="how-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">How local works</p>
+        <h2 id="how-title">Discovery stays on Ollama. Dispatch is opt-in.</h2>
+        <p>Most local setups collapse the two, then wonder why the model picker goes empty.
+        Keeping them apart is what lets dispatch move onto the fast runtime without losing the
+        seat list.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>Discovery answers what you have</h3>
+          <p>Installed tags, context window and tool capability come from Ollama's <code>/api/tags</code> and <code>/api/show</code>. Every tag whose capabilities include tools becomes a <code>local:&lt;tag&gt;</code> seat.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>A model without tools is hidden</h3>
+          <p>A model that cannot call tools cannot drive an agent session, so Phantom hides it rather than letting you pick something that fails on the first turn.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Dispatch is a separate, opt-in lane</h3>
+          <p>Turn dispatch optionally goes to llama-server through a normalizing proxy that keeps the prompt prefix append-only. The proxy is a separate listener, so an unset or malformed value falls back to the lane that already works.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/src/core/local-runtime/llama/anthropic-shim.ts">src/core/local-runtime/llama/anthropic-shim.ts</a></p>
+        </div>
+        <div class="claim">
+          <h3>Local engines are honest about their tier</h3>
+          <p>The <code>local-coder</code> and <code>openai-compat</code> engines are defined in the engine registry with tier <code>mid</code>: they can work on branches but can never satisfy the frontier requirement for merging to main.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/src/core/run/engine-registry.ts">src/core/run/engine-registry.ts</a></p>
+        </div>
+        <div class="claim">
+          <h3>Context windows are read, not assumed</h3>
+          <p>A local seat compacts at the window the runner actually serves, minus 33k of headroom. Tags under a 56k window are listed but disabled, with the reason shown.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md">docs/VERSE-CONTEXT.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Weights plus cache is the real budget</h3>
+          <p>A 27B model at four-bit lists an 18 GB download on the Ollama tag pages, and a 27B model at eight-bit keeps about 27 GB of weights resident before the KV cache. The docs tell you to leave room for the cache and the rest of the system.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md, model table</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="measured-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Measured, with receipts</p>
+        <h2 id="measured-title">Numbers we can point at.</h2>
+        <p>Recorded runs on a 128 GB machine with a 27B local model. These describe what was
+        measured where it says so, not a promise about your hardware.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>Prompt tokens reprocessed per turn: 23,500 &rarr; 34 to 556</h3>
+          <p>The Anthropic-compatible shim used to fold per-turn counters ahead of the whole conversation, invalidating the prefix cache every turn. The same fix took four parallel agents from 1386s to 540s.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">CHANGELOG.md, 3.3 local lane</a>, <a href="https://github.com/ashlrai/phantom/blob/master/src/core/local-runtime/llama/anthropic-shim.ts">src/core/local-runtime/llama/anthropic-shim.ts</a></p>
+        </div>
+        <div class="claim">
+          <h3>Aggregate decode throughput</h3>
+          <p>9.05, 15.61 and 22.79 tokens per second at 1, 2 and 4 llama-server batching slots, and four agents completing 4 of 4 correct in a 521s wall run, all on one GPU with one copy of the weights.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/site/README.md">site/README.md, provenance table</a></p>
+        </div>
+        <div class="claim">
+          <h3>A public qualification receipt</h3>
+          <p>One recorded online qualification on 2026-10-01: a multi-file rename fixture passed its checker in 392.5s, changing 3 files across 12 turns, on Qwen3.8 27B at Q8_0 with uncontrolled cache. One observed run, not a baseline or head comparison.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/benchmarks/local-qualification-2026-10-01.json">benchmarks/local-qualification-2026-10-01.json</a></p>
+        </div>
+        <div class="claim">
+          <h3>Measure your own setup</h3>
+          <p><code>ashlr benchmark run</code> explicitly starts local model work. <code>ashlr benchmark --compare-reports BASE CANDIDATE</code> is fully offline and refuses incompatible or uncontrolled receipts; it reports matched observations, not universal savings.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/AGENT-HARNESS-EVOLUTION.md">docs/AGENT-HARNESS-EVOLUTION.md</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="models-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Picking a model</p>
+        <h2 id="models-title">Sizes the guide already recorded.</h2>
+        <p>Four-bit download sizes as listed on the Ollama library tag pages in the setup guide,
+        checked 2026-10-25. Download size is not total memory in use.</p>
+      </div>
+      <div class="claim">
+        <div class="tbl-scroll">
+          <table>
+            <caption>From docs/LOCAL-INFERENCE.md; each row names its Ollama library page in the guide.</caption>
+            <thead><tr><th scope="col">Ollama tag</th><th scope="col" class="num">Download size</th><th scope="col">Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>qwen3.8:27b</code></td><td class="num">18 GB</td><td>dense 27B</td></tr>
+              <tr><td><code>qwen3.6:27b</code></td><td class="num">18 to 19 GB</td><td>dense 27B; a coding tag is the same size</td></tr>
+              <tr><td><code>qwen3.6:35b</code></td><td class="num">23 to 24 GB</td><td>35B-A3B MoE, same digest</td></tr>
+              <tr><td><code>qwen3-coder:30b</code></td><td class="num">19 GB</td><td>30B-A3B MoE, q4_K_M digest</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="src">Sources: <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md</a>, <a href="https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx">Ollama OpenAI compatibility</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="try-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Try it</p>
+        <h2 id="try-title">Pull a model, then open the console.</h2>
+      </div>
+      <pre>ollama pull qwen3.8:27b
+npm i -g @ashlr/phantom
+phm verse</pre>
+      <p class="src" style="margin-top:12px">Setup as documented: <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">docs/LOCAL-INFERENCE.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">docs/QUICKSTART.md</a></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="more-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Keep going</p>
+        <h2 id="more-title">Related guides</h2>
+      </div>
+      <div class="related">
+        <a href="/use-cases/own-accounts"><span class="t">Bring your own agent accounts</span><span class="d">Every CLI you already use, pinned to its own profile.</span></a>
+        <a href="/use-cases/signed-autonomy"><span class="t">Autonomy inside a signed scope</span><span class="d">A Touch ID grant, an eight-stage ladder, the same gates for every merge.</span></a>
+        <a href="/use-cases/review-agent-work"><span class="t">Review every agent change</span><span class="d">Per-turn checkpoints, per-hunk accept and reject, recorded decisions.</span></a>
+        <a href="/compare/agent-clis"><span class="t">Phantom or the CLIs directly</span><span class="d">What each vendor CLI already does, and what a workbench adds.</span></a>
+        <a href="/#install-verse"><span class="t">Install Phantom</span><span class="d">Node 22.15+, one global package, console on loopback.</span></a>
+        <a href="/ecosystem"><span class="t">The ecosystem</span><span class="d">Six public Ashlr repositories with dated GitHub history.</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Phantom &middot; by AshlrAI</p>
+    <span><a href="/">Product</a> &middot; <a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md">Local inference</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
+  </div>
+</footer>
+</body>
+</html>

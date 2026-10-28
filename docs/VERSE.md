@@ -487,6 +487,14 @@ or the time. A running row adds a muted second line from the live activity feed
 pin, archive, rename, hand off or delete. Unread is counted by turns: a chat that
 existed before 3.10 does not show unread on its first launch.
 
+Below the chats, **Agents** opens the existing agents section and **Routines**
+opens Automations. **Machine ▸ This machine** shows the console URL and bind
+address, the configured local inference bind, and whether `~/.ashlr/KILL` is
+present. This summary is read-only and refreshes every ten seconds while open
+and visible, or on **Refresh**. Uninspectable Stop state is **Unknown**;
+an absent marker does not authorize work, and a configured bind does not prove
+that a model is running.
+
 **Transcript.** Consecutive tool calls fold into one activity row ("▸ Ran 12
 commands · read 8 files · edited 3 files · 1 failed · 2m 14s"); a failure or a
 running call opens the group on just those rows. A **chapter rail** on the
@@ -1934,6 +1942,27 @@ response: uncertain delivery pauses Start and offers chat inspection, keeping
 the prompt instead of blindly dispatching it again.
 
 Port allocation is a physical resource constraint. Workspace creation and restore serialize across repositories in the owning Phantom server process; exhaustion or an occupied restore range produces an explicit refusal instead of overlapping another workspace. Separate Phantom server processes do not share a reservation lock. Repositories needing no dedicated ports can set `ports: 0`.
+
+Verse worktree creation and agent restore require at least 5 GiB available on the
+destination filesystem. Set `ASHLR_WORKTREE_MIN_FREE_BYTES` to a positive integer
+number of bytes to choose another floor; invalid values or unreadable disk
+measurements refuse creation. This is an admission check, not a reservation
+against other processes writing to the same disk.
+
+New and restored agent workspaces reuse root `node_modules` through copy-on-write
+clones when `package.json` and the lockfiles match. Unsupported clone filesystems,
+external dependency symlinks, non-ignored or existing destination dependencies, and mismatched
+lockfiles skip reuse; the repository's setup command remains responsible for a
+valid installation. Writable hardlinks and full-copy fallbacks are never used. If staging cleanup fails,
+the private `.phantom-deps-*` directory is retained for manual recovery; it is
+never used as the installation.
+
+The agent supervisor retries archiving a merged workspace when Auto-merge is on,
+the agent is unpinned and idle, and the PR belongs to its workspace branch. The
+existing archive path saves a private snapshot before removal. Active, unknown,
+and unfinished agents are retained. These controls cover Verse workspaces; the
+separate sandbox/fleet worktree lifecycle keeps its existing policy.
+
 
 
 ### Cash exhaustion and resident capacity (3.18)

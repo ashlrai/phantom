@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { localOllamaBase } from '../src/core/providers.js';
 
-const DEFAULT = 'http://localhost:11434';
+const DEFAULT = 'http://127.0.0.1:11434';
 const at = (v: string | undefined) => localOllamaBase({ OLLAMA_HOST: v });
 
-describe('localOllamaBase: defaults are unchanged', () => {
+describe('localOllamaBase: loopback defaults', () => {
   it('unset, empty and whitespace give the default', () => {
     expect(localOllamaBase({})).toBe(DEFAULT);
     for (const v of [undefined, '', '   ', '/', ' // ']) expect(at(v)).toBe(DEFAULT);
@@ -27,17 +27,17 @@ describe('localOllamaBase: defaults are unchanged', () => {
   });
 });
 
-describe('localOllamaBase: accepted forms on loopback', () => {
+describe('localOllamaBase: accepted forms on loopback (localhost pinned to 127.0.0.1, Security #952 L2)', () => {
   it('host, host:port, :port and a URL', () => {
-    expect(at('localhost')).toBe('http://localhost:11434');
-    expect(at('localhost:11500')).toBe('http://localhost:11500');
-    expect(at(':11500')).toBe('http://localhost:11500');
+    expect(at('localhost')).toBe('http://127.0.0.1:11434');
+    expect(at('localhost:11500')).toBe('http://127.0.0.1:11500');
+    expect(at(':11500')).toBe('http://127.0.0.1:11500');
     expect(at('127.0.0.1')).toBe('http://127.0.0.1:11434');
     expect(at('127.0.0.1:9999')).toBe('http://127.0.0.1:9999');
     expect(at('http://127.0.0.1:9999')).toBe('http://127.0.0.1:9999');
-    expect(at('HTTP://LOCALHOST:5')).toBe('http://LOCALHOST:5');
-    expect(at('https://localhost:8443/')).toBe('https://localhost:8443');
-    expect(at('  localhost:11500//  ')).toBe('http://localhost:11500');
+    expect(at('HTTP://LOCALHOST:5')).toBe('http://127.0.0.1:5');
+    expect(at('https://localhost:8443/')).toBe('https://127.0.0.1:8443');
+    expect(at('  localhost:11500//  ')).toBe('http://127.0.0.1:11500');
   });
   it('the whole 127/8 block and IPv6 loopback', () => {
     expect(at('127.1.2.3:1')).toBe('http://127.1.2.3:1');
