@@ -65,6 +65,10 @@ those (except `README.md`) must also appear in `package.json` `files`
 unpackaged one through a `https://github.com/ashlrai/phantom/blob/master/...`
 source link, which the checker resolves locally.
 
+### Publish preflight for a proposed PR
+
+Run `node scripts/check-publish.mjs --base origin/master --body /path/to/pr-body.txt --held-path path/to/held` before handing a branch to a publish workflow. Repeat `--held-path` for each held file or directory, or explicitly use `--no-held-paths` when none apply. Supply the actual target base and the exact proposed PR body; this script does not discover either or fetch remote state. It checks committed changes since the merge base plus staged, unstaged, and untracked files, reports every prohibited `.github` path, recognized lockfile under a held path, and em dash in the body, and exits nonzero on refusal or an input error. It does not create a PR or certify CI, permissions, or mergeability. Rerun it after any changes to the branch, held paths, or PR body.
+
 ## 2. Installing and running Phantom
 
 ```sh
