@@ -134,6 +134,19 @@ The protocol was set before measuring: tune thresholds on the authored sets and 
 
 None beat the lexical ranker even on the tuning sets. Static vectors separate answerable from unanswerable questions only weakly (AUC about 0.65), so nothing ships. A real signal needs a contextual encoder through the local Ollama path (for example `all-minilm` or `bge-small`). It would pass the pack precomputed similarities, so the pack stays pure, and CI would read committed vectors keyed by model digest. The same protocol would then be rerun.
 
+That path now exists, off by default. `buildMemoryContextPack` accepts an optional `semantic` option holding caller-computed scores (`{ scores: { [eventId]: cosine }, minScore }`). The kernel computes nothing and stays pure. A fact with a lexical match always outranks one that matches only by meaning. A meaning-only fact is admitted when its score reaches `minScore`, and then ranks by that score. An optional `singleTermFloor` drops a fact that shares only one word with the query when its score is under the floor. Most of the questions memory cannot answer still get a fact this way: one shared word such as "password" or "pager" pulls in something unrelated, and on the validation sets only 8 of 30 such questions come back empty. No word-level rule separates those from real one-word hits, so the floor needs a meaning score. Malformed scores refuse the pack.
+
+`src/core/local-eval/memory-embeddings.ts` holds a loopback-only Ollama client (`/api/tags` and `/api/embeddings`, preferring bge, nomic-embed, mxbai-embed or all-minilm) and the pure conversion from vectors to that option. Any failure returns null and the caller keeps lexical ranking. Nothing is wired into a running session yet.
+
+To measure on a machine with a local embedding model, run one command:
+
+```sh
+ollama pull all-minilm                         # or bge-small, nomic-embed-text
+npm run --silent bench:memory:embed            # optional: -- --model all-minilm
+```
+
+It embeds every benchmark text once and sweeps `minScore` from 0.20 to 0.90. It picks the threshold that passes the most tuning cases (authored, held-out, absent, the non-retrieval dimensions and the agent-written tuning histories); ties go to the higher threshold. At that threshold it tries `singleTermFloor` values from 0.1 to 0.5, also on tuning cases only, and keeps one only when it passes strictly more of them. It then reports governed with and without the signal on every set, with unseen, fresh and second-fresh retrieval and the agent-written validation histories scored only at that threshold. It exits 3 and measures nothing when no local embedding model is reachable. No result is recorded here yet, and the flag ships only if the validation sets gain.
+
 ### Facts written by agents
 
 Autonomous agents hurt memory most on the write side. Two separate agents each wrote 32 scenarios of agent-authored writes for fictional services, 8 for each hazard. Every write is approved, the worst case where nobody reviews agent writes. The fixes in `pack.ts` were chosen while reading the first set (tuning). The second set (validation) was scored only after they were frozen; the one change made after that kept its numbers identical and only made the same-citation rule stricter (it now also requires a shared topic stem).
