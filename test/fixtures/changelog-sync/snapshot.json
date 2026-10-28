@@ -1,0 +1,49 @@
+{
+  "pullRequests": [
+    {
+      "number": 42,
+      "title": "feat(cli): add search",
+      "mergedAt": "2026-10-25T12:00:00Z",
+      "mergeCommit": {
+        "oid": "abc"
+      }
+    },
+    {
+      "number": 43,
+      "title": "fix: not merged",
+      "mergedAt": null
+    }
+  ],
+  "commits": [
+    {
+      "oid": "abc",
+      "message": "feat(cli): add search"
+    },
+    {
+      "oid": "def",
+      "message": "fix: handle empty input"
+    },
+    {
+      "oid": "ghi",
+      "message": "feat!: replace old API"
+    },
+    {
+      "oid": "jkl",
+      "message": "Merge branch main"
+    },
+    {
+      "oid": "mno",
+      "message": "constructor: maintain integration"
+    }
+  ],
+  "tags": [
+    "v1.0.0"
+  ],
+  "releases": [
+    {
+      "tagName": "v1.0.0",
+      "body": "### Fixed\n- Original fix.\n",
+      "isDraft": false
+    }
+  ]
+}
