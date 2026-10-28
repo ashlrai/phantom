@@ -2308,7 +2308,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
   // released it. automerge-canary owns its own help and refusals.
-  if (sub !== 'automerge-canary' && (rest.includes('--help') || rest.includes('-h'))) {
+  if (!['automerge-canary', 'grok-usage'].includes(sub) && (rest.includes('--help') || rest.includes('-h'))) {
     printFleetHelp();
     return 0;
   }
@@ -2334,6 +2334,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'grok-usage': {
+      const { cmdFleetGrokUsage } = await import('./fleet-grok-usage.js');
+      return cmdFleetGrokUsage(rest);
+    }
     case 'status':
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
@@ -2382,6 +2386,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
