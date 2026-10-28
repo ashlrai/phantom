@@ -1,0 +1,80 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CLI: phm status --json > prints one parseable JSON object with no ANSI codes 1`] = `
+{
+  "activity7d": {
+    "budgetLevel": "<value>",
+    "commits": "<value>",
+    "estCostUsd": "<value>",
+    "sessions": "<value>",
+    "tokensIn": "<value>",
+    "tokensOut": "<value>",
+  },
+  "custody": "<value>",
+  "dirty": [],
+  "github": "<value>",
+  "identity": "<value>",
+  "localInference": "<value>",
+  "mcpServers": {
+    "discovered": "<value>",
+  },
+  "memory": {
+    "embeddingsAvailable": "<value>",
+    "genomeEntries": "<value>",
+    "projects": "<value>",
+  },
+  "offSync": [],
+  "phantomPreflight": "<value>",
+  "resources": [
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+    {
+      "availability": "<value>",
+      "backend": "<value>",
+      "usedPct": "<value>",
+    },
+  ],
+  "roots": [],
+  "schemaVersion": "<value>",
+  "stale": [],
+  "summary": {
+    "clean": "<value>",
+    "dirty": "<value>",
+    "offSync": "<value>",
+    "stale": "<value>",
+    "staleDays": "<value>",
+    "tracked": "<value>",
+  },
+  "tools": {
+    "installed": "<value>",
+    "installedIds": [
+      "<value>",
+    ],
+    "total": "<value>",
+  },
+  "vercel": "<value>",
+}
+`;

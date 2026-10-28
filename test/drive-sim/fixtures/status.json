@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "day": "2026-10-26",
+  "startAt": "2026-10-26T06:00:00Z",
+  "endAt": "2026-10-26T22:00:00Z",
+  "tickSec": 60,
+  "starveAfterMin": 180,
+  "lanes": [
+    { "id": "codex-cmp", "floor": 1, "ceiling": 2, "pacePerHour": 1 },
+    { "id": "codex-personal", "floor": 0, "ceiling": 1, "pacePerHour": 1 },
+    { "id": "devin", "floor": 1, "ceiling": 4, "pacePerHour": 2 }
+  ],
+  "memguard": [
+    { "at": "2026-10-26T09:30:00Z", "op": "PAUSE", "lanes": ["codex-personal"], "reason": "local memory pressure" },
+    { "at": "2026-10-26T12:00:00Z", "op": "RESUME", "lanes": ["codex-personal"] },
+    { "at": "2026-10-26T14:00:00Z", "op": "PAUSE", "lanes": ["codex-cmp"], "reason": "local memory pressure" },
+    { "at": "2026-10-26T14:45:00Z", "op": "RESUME", "lanes": ["codex-cmp"] },
+    { "at": "2026-10-26T17:30:00Z", "op": "PAUSE", "lanes": ["codex-cmp", "codex-personal"], "reason": "operator workload running" },
+    { "at": "2026-10-26T18:00:00Z", "op": "RESUME", "lanes": ["codex-cmp", "codex-personal"] }
+  ]
+}

@@ -542,6 +542,8 @@ export function applyVerseEvent(sessionId: string, event: VerseEvent): boolean {
 /** A persisted event's effect on the session record (the old applyVerseEvent switch). */
 function sessionAfter(session: VerseSession, event: VerseEvent): VerseSession {
   switch (event.type) {
+    case 'assistant-status':
+      return event.phase === 'result' ? { ...session, lastResult: event.text } : session;
     case 'turn-started':
       return { ...session, status: 'running', lastError: null, updatedAt: event.at };
     case 'usage':
