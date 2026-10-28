@@ -2177,6 +2177,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'worktrees': {
+        const { cmdWorktrees } = await import('./worktrees.js');
+        process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
       case 'sandbox': {
         const cmdSandbox = await loadSandboxCmd();
         process.exitCode = await cmdSandbox(rest);
