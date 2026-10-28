@@ -162,6 +162,7 @@ function printResourcesHelp(): void {
   console.log('');
   console.log('  Usage: phm resources [--json] [--watch]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
+  console.log('         phm resources figures');
   console.log('         phm resources launcher --help');
   console.log('         phm resources profile --help');
   console.log('         phm resources claude-promotion --help');
@@ -184,6 +185,15 @@ export async function cmdResources(args: string[]): Promise<number> {
   if (args[0] === 'launcher') {
     const { cmdResourceLauncher } = await import('./resource-launcher.js');
     return cmdResourceLauncher(args.slice(1));
+  }
+  if (args[0] === 'figures') {
+    const { loadCatalog } = await import('../core/providers/coding-cli/catalog.js');
+    const { resolveAccounts } = await import('../core/providers/coding-cli/accounts.js');
+    const { formatPoolFigures, seedCodingPools } = await import('../core/providers/coding-cli/pools.js');
+    const catalog = loadCatalog();
+    const seeded = seedCodingPools({ catalog, accounts: resolveAccounts(catalog, process.env), env: process.env });
+    console.log(formatPoolFigures(seeded.figures));
+    return 0;
   }
   if (args[0] === 'pool') {
     const { cmdResourcePool } = await import('./resource-pool.js');

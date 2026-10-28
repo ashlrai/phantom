@@ -11,6 +11,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [3.29.15] — Unreleased
 
+### Changed
+- `phm fleet status [--json]` now refreshes the local `fleet.v1` coding-pool
+  snapshot. Use `phm fleet status --legacy [--json]` for the previous read-only
+  operational report. The paired phone gateway serves the snapshot at `/fleet/`.
+
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
   value-free custody record with a fixed reason code, including when Phantom is
