@@ -1,0 +1,11 @@
+{
+  "name": "acme-widget",
+  "version": "1.2.0",
+  "description": "Formats widget manifests for humans and agents.",
+  "capabilities": ["format", "validate", "lint"],
+  "install": "npm install -g acme-widget",
+  "commands": {
+    "format": "acme-widget format <file>",
+    "validate": "acme-widget validate <file>"
+  }
+}
