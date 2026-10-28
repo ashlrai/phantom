@@ -60,7 +60,7 @@ describe('VerseConsoleApp', () => {
     window.history.replaceState(null, '', '/verse/#/inbox');
     const net = verseFetch();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input) === '/api/inbox' ? Response.json({ pending: 0, proposals: [] }) : net.fetch(input, init)));
+      String(input) === '/api/inbox' ? Response.json({ pending: 0, proposals: [] }) : (net.fetch as typeof fetch)(input, init)));
     markCheckComplete(true);
     render(<VerseConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Decision inbox' })).toBeInTheDocument();

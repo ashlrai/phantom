@@ -4,7 +4,7 @@
 
 # Phantom documentation
 
-Mac queue supervisor: [Drive and host bridge integration](DRIVE.md).
+Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
 
 Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
 kernel includes the Universe experiment runtime and compatible command interfaces.
@@ -18,11 +18,11 @@ that every integration, provider or autonomous effect is active.
 
 ## Start here
 
-Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
+Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
 
 | Your task | Canonical guide |
 |-----------|-----------------|
-| Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](observability/README.md) |
+| Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
@@ -38,13 +38,13 @@ Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
-| Review the default-off Mac memory pressure policy | [Memguard rules](MEMGUARD-RULES.md) |
+| Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
-| Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](CROSS-REVIEW.md) |
+| Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
-| Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](BRIDGE-WORKTREES.md) |
+| Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
@@ -52,7 +52,7 @@ Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
 | Run bounded synthetic memory evaluations without model credentials | [Offline memory evaluation](MEMORY-EVALUATION.md) |
-| Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](PEERS-INTERFACES.md) |
+| Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
