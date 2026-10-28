@@ -31,6 +31,36 @@ and prints its UTC snapshot date. A static snapshot may age: each project links
 to GitHub for its current count. Adding another repository requires a deliberate
 edit to the generator, page controls, and project copy.
 
+## Generated facts (freshness)
+
+Version strings, install commands, provider model lists and the declared
+companion MCP server list on these pages are generated blocks between
+`<!-- fresh:begin NAME -->` and `<!-- fresh:end -->` markers. Regenerate them
+after a release, a CLI rename, a documented-model change or a `.mcp.json`
+edit:
+
+```sh
+node scripts/site-freshness.mjs           # rewrite managed blocks in place
+node scripts/site-freshness.mjs --check   # read-only; exits 1 on drift
+```
+
+`test/site-freshness.test.ts` runs the drift check, and the generator also
+validates every `ashlr`/`phm` command line inside `<pre>` and `<code>`
+elements against the real CLI dispatch, verbs and flags, so a stale page
+fails the test suite. Facts come from `package.json` (name, bins, Node
+floor), `CHANGELOG.md` (latest dated release, which feeds the JSON-LD
+`softwareVersion` and the release line), `src/cli/index.ts` plus
+`src/cli/completions.ts` (commands and verbs),
+`src/core/verse/model-windows.ts` (documented model lists) and `.mcp.json`
+(declared companion MCP servers).
+
+The page's published software metadata tracks the latest dated changelog
+release, not the package.json candidate: `scripts/sync-candidate-version.mjs`
+must not update this page's install target or software metadata before
+release verification. Historical version references (the 3.14-3.25 feature
+milestones and the dated 3.24.3 demo captures) are source facts about those
+releases and stay hand-written. If a measurement changes, change the page.
+
 ## Deploying
 
 Vercel deploys `site/` to `verse.ashlr.ai` from `master`. Any static host
