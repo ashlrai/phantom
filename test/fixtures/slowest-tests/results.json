@@ -1,0 +1,16 @@
+{
+  "success": false,
+  "testResults": [
+    {"name":"fast.test.ts","startTime":100,"endTime":110,"assertionResults":[
+      {"fullName":"group fast","duration":1.25,"status":"passed"},
+      {"fullName":"group skipped","status":"pending"},
+      {"fullName":"group zero","duration":0,"status":"passed"}
+    ]},
+    {"name":"slow.test.ts","startTime":100,"endTime":300,"assertionResults":[
+      {"fullName":"group failed","duration":99.5,"status":"failed"},
+      {"fullName":"group tie","duration":1.25,"status":"passed"},
+      {"fullName":"group unknown","duration":null,"status":"pending"}
+    ]},
+    {"name":"unmeasured.test.ts","assertionResults":[]}
+  ]
+}
