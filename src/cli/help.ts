@@ -314,6 +314,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: 'WorkItem[]',
   },
+  {
+    usage: 'phm mem reclaim [--json]',
+    description: 'Dry-run JSON report of reclaimable memory: idle resident local models, orphaned dev processes and finished-job leftovers. Report only.',
+    safety: 'read',
+    jsonShape: 'ReclaimReport',
+  },
+  {
+    usage: 'phm mem reclaim --apply',
+    description: 'HUMAN-ONLY: kills processes and unloads models per the reclaim plan. Agents must never run this.',
+    safety: 'human-gate',
+    jsonShape: 'ReclaimReport',
+  },
 ];
 
 /** Render the cheat sheet as plain text (llms.txt-style; no ANSI). */
@@ -482,6 +494,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'ls [category]',                desc: 'List all indexed items, optionally filtered by category.', topic: 'core' },
   { cmd: 'open [query]',                 desc: 'Open the best match in your editor; no query opens an interactive picker.', topic: 'core' },
   { cmd: 'tidy [--apply]',               desc: 'Show (or apply) tidy moves for loose Desktop files.', topic: 'core' },
+  { cmd: 'mem reclaim [--apply]',        desc: 'Reclaim memory: unload idle local models via their loopback APIs, kill orphaned dev processes and finished-job leftovers. Dry-run JSON report by default.', topic: 'memory' },
   { cmd: 'config [get <k>|set <k> <v>]', desc: 'Read/write a config value. No args prints a summary.', topic: 'core' },
   { cmd: 'config effective [--json]',     desc: 'Read-only effective autonomy/daemon/foundry/backend settings.', topic: 'core' },
   { cmd: 'config set <k> --json <v>',    desc: 'Set a structured (array/object) config value as JSON.', topic: 'core' },
