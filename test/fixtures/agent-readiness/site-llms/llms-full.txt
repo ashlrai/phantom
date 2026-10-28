@@ -1,0 +1,25 @@
+# Acme Widget
+
+> Full documentation bundle for agents. Everything below is plain Markdown.
+
+## Overview
+
+Acme Widget formats widget manifests. It validates fields, normalizes
+ordering and prints a canonical form.
+
+## Install
+
+```sh
+npm install -g acme-widget
+```
+
+## Commands
+
+- `acme-widget format <file>` writes the canonical manifest.
+- `acme-widget validate <file>` checks fields and exits nonzero on errors.
+
+## Reference
+
+- [Capabilities](https://widget.example.com/capabilities.json)
+- [MCP entry](https://widget.example.com/server.json)
+- [Sitemap](https://widget.example.com/sitemap.xml)
