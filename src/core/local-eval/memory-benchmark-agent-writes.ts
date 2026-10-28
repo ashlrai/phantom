@@ -31,7 +31,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_TUNING: readonly MemoryBenchmarkAgent
   { "id": "s2", "kind": "near-duplicate", "why": "The local Postgres host port is recorded three times with different keys and sources.", writes: [
     {"id": "s2-w1", "agent": "agent:onboarding", "day": 2, "subject": "dev-env", "slot": "database", "text": "The local Postgres from docker-compose is exposed on host port 5433, not 5432.", "source": {"kind": "file", "locator": "docker-compose.yml:12", "quote": "      - \"5433:5432\""}, "supersedes": []},
     {"id": "s2-w2", "agent": "agent:builder", "day": 6, "subject": "docker-compose", "slot": "postgres", "text": "docker-compose maps the postgres container to localhost:5433.", "source": {"kind": "file", "locator": "docker-compose.yml:12", "quote": "      - \"5433:5432\""}, "supersedes": []},
-    {"id": "s2-w3", "agent": "agent:planner", "day": 9, "subject": "db", "slot": "local-port", "text": "Developers connect to the dev database at 127.0.0.1:5433.", "source": {"kind": "file", "locator": ".env.example:3", "quote": "DATABASE_URL=postgres://ledger:ledger@127.0.0.1:5433/ledgerline_dev"}, "supersedes": []},
+    {"id": "s2-w3", "agent": "agent:planner", "day": 9, "subject": "db", "slot": "local-port", "text": "Developers connect to the dev database at 127.0.0.1:5433.", "source": {"kind": "file", "locator": ".env.example:3", "quote": "DATABASE_URL={{dsn:postgres:ledger:=ledger}}@127.0.0.1:5433/ledgerline_dev"}, "supersedes": []},
     {"id": "s2-w4", "agent": "agent:builder", "day": 7, "subject": "api", "slot": "health-endpoint", "text": "The health check route is GET /healthz and it returns {status: 'ok'}.", "source": {"kind": "file", "locator": "src/http/routes/health.ts:5", "quote": "app.get('/healthz', async () => ({ status: 'ok' }));"}, "supersedes": []},
     {"id": "s2-w5", "agent": "agent:ci-fixer", "day": 9, "subject": "ci", "slot": "cache", "text": "CI caches ~/.npm with a key based on the package-lock.json hash.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:20", "quote": "          key: npm-${{ hashFiles('package-lock.json') }}"}, "supersedes": []},
   ],
@@ -701,7 +701,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_VALIDATION: readonly MemoryBenchmarkA
 /** Set W3 (fictional "kestrel" service): secret-bearing writes and cosmetic code edits; the per-write screening and source check were chosen while reading it. */
 export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING: readonly MemoryBenchmarkAgentScenario[] = Object.freeze([
   { "id": "k1", "kind": "secret-write", "why": "Agent quotes the full DATABASE_URL line from .env.local; the fact text is clean but the quote carries the password. A separate clean write gives the port.", writes: [
-    {"id": "k1-w1", "agent": "atlas", "day": 3, "subject": "db", "slot": "connection", "text": "Local Postgres for kestrel runs on localhost:5433 with database kestrel_dev.", "source": {"kind": "file", "locator": ".env.local:2", "quote": "DATABASE_URL=postgres://kestrel:{{secret:url-password}}@localhost:5433/kestrel_dev"}, "supersedes": []},
+    {"id": "k1-w1", "agent": "atlas", "day": 3, "subject": "db", "slot": "connection", "text": "Local Postgres for kestrel runs on localhost:5433 with database kestrel_dev.", "source": {"kind": "file", "locator": ".env.local:2", "quote": "DATABASE_URL={{dsn:postgres:kestrel:url-password}}@localhost:5433/kestrel_dev"}, "supersedes": []},
     {"id": "k1-w2", "agent": "ferry", "day": 4, "subject": "postgres", "slot": "local-port", "text": "docker-compose publishes the Postgres container's 5432 on host port 5433.", "source": {"kind": "file", "locator": "docker-compose.yml:18", "quote": "- \"5433:5432\""}, "supersedes": []},
     {"id": "k1-w3", "agent": "wren", "day": 4, "subject": "shipment", "slot": "id-format", "text": "Shipment IDs are ULIDs generated in internal/shipment/id.go.", "source": {"kind": "file", "locator": "internal/shipment/id.go:11", "quote": "return ulid.Make().String()"}, "supersedes": []},
   ],
@@ -779,7 +779,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING: readonly MemoryBenc
     {"query": "what env var should hold the Slack credential?", "day": 8, "expect": {"anyOf": [["k8-w3"]], "forbidden": ["k8-w1"], "duplicates": [], "contradiction": false}},
   ] },
   { "id": "k9", "kind": "secret-write", "why": "git remote -v output pasted as the quote shows a token embedded in the HTTPS remote URL.", writes: [
-    {"id": "k9-w1", "agent": "scout", "day": 2, "subject": "repo", "slot": "remote", "text": "origin points to github.com/kestrel-logistics/kestrel over HTTPS.", "source": {"kind": "command-output", "locator": "git remote -v", "quote": "origin  https://{{secret:github-token}}@github.com/kestrel-logistics/kestrel.git (fetch)"}, "supersedes": []},
+    {"id": "k9-w1", "agent": "scout", "day": 2, "subject": "repo", "slot": "remote", "text": "origin points to github.com/kestrel-logistics/kestrel over HTTPS.", "source": {"kind": "command-output", "locator": "git remote -v", "quote": "origin  {{dsn:https::github-token}}@github.com/kestrel-logistics/kestrel.git (fetch)"}, "supersedes": []},
     {"id": "k9-w2", "agent": "atlas", "day": 4, "subject": "ci", "slot": "pipeline", "text": "GitHub Actions workflow .github/workflows/ci.yml runs go test ./... and the web vitest suite.", "source": {"kind": "file", "locator": ".github/workflows/ci.yml:22", "quote": "run: go test ./..."}, "supersedes": []},
     {"id": "k9-w3", "agent": "ferry", "day": 4, "subject": "github", "slot": "repo-name", "text": "The repository is kestrel-logistics/kestrel on GitHub.", "source": {"kind": "chat", "locator": "kickoff thread", "quote": "repo is kestrel-logistics/kestrel"}, "supersedes": []},
   ],
@@ -808,7 +808,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_TUNING: readonly MemoryBenc
   ] },
   { "id": "k12", "kind": "secret-write", "why": "A secret-bearing write supersedes a clean Redis fact with a new host; a later clean write by another agent restates the new host without linking.", writes: [
     {"id": "k12-w1", "agent": "ferry", "day": 2, "subject": "redis", "slot": "rate-limit", "text": "Rate limiting uses the compose redis service at redis:6379, db 2.", "source": {"kind": "file", "locator": "internal/ratelimit/redis.go:12", "quote": "Addr: \"redis:6379\""}, "supersedes": []},
-    {"id": "k12-w2", "agent": "wren", "day": 8, "subject": "redis", "slot": "rate-limit", "text": "Rate-limit Redis moved to the managed instance: REDIS_URL=rediss://default:{{secret:url-password}}@cache.kestrel.internal:6380/2.", "source": {"kind": "command-output", "locator": "kubectl get secret ratelimit -o yaml | base64 -d", "quote": "rediss://default:{{secret:url-password}}@cache.kestrel.internal:6380/2"}, "supersedes": ["k12-w1"]},
+    {"id": "k12-w2", "agent": "wren", "day": 8, "subject": "redis", "slot": "rate-limit", "text": "Rate-limit Redis moved to the managed instance: REDIS_URL={{dsn:rediss:default:url-password}}@cache.kestrel.internal:6380/2.", "source": {"kind": "command-output", "locator": "kubectl get secret ratelimit -o yaml | base64 -d", "quote": "{{dsn:rediss:default:url-password}}@cache.kestrel.internal:6380/2"}, "supersedes": ["k12-w1"]},
     {"id": "k12-w3", "agent": "atlas", "day": 9, "subject": "ratelimiter", "slot": "backend", "text": "The rate limiter now connects over TLS to cache.kestrel.internal:6380.", "source": {"kind": "file", "locator": "internal/ratelimit/redis.go:12", "quote": "Addr: \"cache.kestrel.internal:6380\""}, "supersedes": []},
     {"id": "k12-w4", "agent": "scout", "day": 9, "subject": "geocoding", "slot": "provider", "text": "Address geocoding is cached for 24 hours.", "source": {"kind": "file", "locator": "internal/geo/cache.go:6", "quote": "const geocodeTTL = 24 * time.Hour"}, "supersedes": []},
   ],
@@ -971,7 +971,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION: readonly Memory
   ] },
   { "id": "q4", "kind": "secret-write", "why": "A secret-bearing write supersedes a clean warehouse fact (changed target); a later clean write restates the new target without linking.", writes: [
     {"id": "q4-w1", "agent": "miner", "day": 2, "subject": "warehouse", "slot": "target", "text": "The loader writes to Postgres 15 at warehouse.quarry.internal:5432, database analytics.", "source": {"kind": "file", "locator": "quarry/load/sink.py:9", "quote": "engine = create_engine(settings.WAREHOUSE_URL)"}, "supersedes": []},
-    {"id": "q4-w2", "agent": "sable", "day": 8, "subject": "warehouse", "slot": "target", "text": "Warehouse moved to ClickHouse; the loader DSN is clickhouse://loader:{{secret:url-password}}@ch.quarry.internal:8443/analytics.", "source": {"kind": "command-output", "locator": "printenv WAREHOUSE_URL", "quote": "clickhouse://loader:{{secret:url-password}}@ch.quarry.internal:8443/analytics"}, "supersedes": ["q4-w1"]},
+    {"id": "q4-w2", "agent": "sable", "day": 8, "subject": "warehouse", "slot": "target", "text": "Warehouse moved to ClickHouse; the loader DSN is {{dsn:clickhouse:loader:url-password}}@ch.quarry.internal:8443/analytics.", "source": {"kind": "command-output", "locator": "printenv WAREHOUSE_URL", "quote": "{{dsn:clickhouse:loader:url-password}}@ch.quarry.internal:8443/analytics"}, "supersedes": ["q4-w1"]},
     {"id": "q4-w3", "agent": "otto", "day": 9, "subject": "sink", "slot": "client", "text": "quarry/load/sink.py now builds a clickhouse_connect client against ch.quarry.internal on port 8443.", "source": {"kind": "file", "locator": "quarry/load/sink.py:9", "quote": "host=\"ch.quarry.internal\", port=8443"}, "supersedes": []},
     {"id": "q4-w4", "agent": "lumen", "day": 9, "subject": "load", "slot": "batching", "text": "Loader inserts in batches of 50k rows.", "source": {"kind": "file", "locator": "quarry/load/sink.py:14", "quote": "INSERT_BATCH = 50_000"}, "supersedes": []},
   ],
@@ -1044,7 +1044,7 @@ export const MEMORY_BENCHMARK_AGENT_WRITES_SCREENING_VALIDATION: readonly Memory
     {"query": "how often does the slack credential change?", "day": 6, "expect": {"anyOf": [["q11-w3"]], "forbidden": ["q11-w1"], "duplicates": [], "contradiction": false}},
   ] },
   { "id": "q12", "kind": "secret-write", "why": "alembic.ini line with an embedded password is quoted; a later clean write by the same agent supersedes it after the URL moved to an env var.", writes: [
-    {"id": "q12-w1", "agent": "lumen", "day": 2, "subject": "alembic", "slot": "db-url", "text": "Alembic migrations target the staging database by default via alembic.ini.", "source": {"kind": "file", "locator": "alembic.ini:9", "quote": "sqlalchemy.url = postgresql://migrator:{{secret:url-password}}@staging-db:5432/quarry"}, "supersedes": []},
+    {"id": "q12-w1", "agent": "lumen", "day": 2, "subject": "alembic", "slot": "db-url", "text": "Alembic migrations target the staging database by default via alembic.ini.", "source": {"kind": "file", "locator": "alembic.ini:9", "quote": "sqlalchemy.url = {{dsn:postgresql:migrator:url-password}}@staging-db:5432/quarry"}, "supersedes": []},
     {"id": "q12-w2", "agent": "lumen", "day": 7, "subject": "alembic", "slot": "db-url", "text": "migrations/env.py reads the database URL from QUARRY_DB_URL; alembic.ini no longer has a default URL.", "source": {"kind": "file", "locator": "migrations/env.py:18", "quote": "url = os.environ[\"QUARRY_DB_URL\"]"}, "supersedes": ["q12-w1"]},
     {"id": "q12-w3", "agent": "drift", "day": 7, "subject": "retention", "slot": "partitions", "text": "The retention job drops partitions older than 400 days.", "source": {"kind": "file", "locator": "quarry/maintenance/retention.py:6", "quote": "KEEP_DAYS = 400"}, "supersedes": []},
   ],
@@ -1537,23 +1537,33 @@ function fake(length: number, seed: string, alphabet = 'abcdefghijkmnopqrstuvwxy
   for (let i = 0; i < length; i++) { state = (state * 1103515245 + 12345) >>> 0; out += alphabet[(state >>> 8) % alphabet.length]; }
   return out;
 }
-const PLACEHOLDER = /\{\{(secret:[a-z0-9-]+|home:[^}]*)\}\}/g;
+// A connection string's scheme and userinfo sit inside one {{dsn:scheme:user:token}} placeholder (token is a secret kind,
+// or =text for a literal password), so the committed corpus never holds a URL with a password in its userinfo.
+const PLACEHOLDER = /\{\{(secret:[a-z0-9-]+|home:[^}]*|dsn:[a-z0-9+]+:[a-z0-9-]*:=?[a-z0-9-]+)\}\}/g;
 export function expandMemoryBenchmarkPlaceholders(text: string, seed: string): string {
   // Seeded by scenario and token, so a value quoted in one write and in a code change expands identically.
   return text.replace(PLACEHOLDER, (_match, token: string) => {
-    const key = `${seed}:${token}`;
     if (token.startsWith('home:')) return ['', 'Users', 'riley'].join('/') + token.slice(5);
-    switch (token.slice(7)) {
-      case 'openai-key': return ['sk', 'proj', fake(40, key)].join('-');
-      case 'anthropic-key': return ['sk', 'ant', 'api03', fake(48, key)].join('-');
-      case 'github-token': return ['ghp', fake(36, key)].join('_');
-      case 'aws-access-key': return 'AK' + 'IA' + fake(16, key, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
-      case 'slack-token': return ['xo' + 'xb', fake(11, key, '0123456789'), fake(13, key + 'b', '0123456789'), fake(24, key + 'c')].join('-');
-      case 'jwt': return ['ey' + 'J' + fake(20, key), 'ey' + 'J' + fake(40, key + 'p'), fake(43, key + 's')].join('.');
-      case 'hex64': return fake(64, key, '0123456789abcdef');
-      case 'url-password': return fake(18, key);
-      case 'private-key': return ['-----BEGIN ' + 'PRIVATE KEY-----', fake(64, key), fake(64, key + 'b'), '-----END ' + 'PRIVATE KEY-----'].join('\n');
-      default: return fake(32, key);
+    if (token.startsWith('dsn:')) {
+      const [, scheme, user, secret] = token.split(':');
+      const password = secret.startsWith('=') ? secret.slice(1) : fakeSecret(`secret:${secret}`, seed);
+      return `${scheme}://${user ? `${user}:` : ''}${password}`;
     }
+    return fakeSecret(token, seed);
   });
+}
+function fakeSecret(token: string, seed: string): string {
+  const key = `${seed}:${token}`;
+  switch (token.slice(7)) {
+    case 'openai-key': return ['sk', 'proj', fake(40, key)].join('-');
+    case 'anthropic-key': return ['sk', 'ant', 'api03', fake(48, key)].join('-');
+    case 'github-token': return ['ghp', fake(36, key)].join('_');
+    case 'aws-access-key': return 'AK' + 'IA' + fake(16, key, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
+    case 'slack-token': return ['xo' + 'xb', fake(11, key, '0123456789'), fake(13, key + 'b', '0123456789'), fake(24, key + 'c')].join('-');
+    case 'jwt': return ['ey' + 'J' + fake(20, key), 'ey' + 'J' + fake(40, key + 'p'), fake(43, key + 's')].join('.');
+    case 'hex64': return fake(64, key, '0123456789abcdef');
+    case 'url-password': return fake(18, key);
+    case 'private-key': return ['-----BEGIN ' + 'PRIVATE KEY-----', fake(64, key), fake(64, key + 'b'), '-----END ' + 'PRIVATE KEY-----'].join('\n');
+    default: return fake(32, key);
+  }
 }
