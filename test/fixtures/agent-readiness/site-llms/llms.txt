@@ -1,0 +1,13 @@
+# Acme Widget
+
+> Acme Widget is a small tool that formats widget manifests for humans and agents.
+
+## Docs
+
+- [Overview](https://widget.example.com/): what the tool does
+- [About](https://widget.example.com/about.html): maintainers and contact
+- [Install](https://widget.example.com/install.html): getting started
+
+## Optional
+
+- [Capabilities](https://widget.example.com/capabilities.json): machine-readable manifest
