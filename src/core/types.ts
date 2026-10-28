@@ -2574,6 +2574,8 @@ export interface BudgetAlert {
 
 /** The full observability roll-up for a window. */
 export interface ActivityRollup {
+  /** Independent hop-ledger productivity; never combined with transcript totals. */
+  hopEfficiency?: import('./observability/hop-events.js').HopRollup;
   /** Window label (e.g. '1d' | '7d' | '30d'). */
   window: string;
   /** ISO timestamp marking the start of the window. */
@@ -3309,7 +3311,7 @@ export interface DashboardSnapshot {
   /** Ecosystem tools roll-up: installed vs. total probed. */
   tools: { installed: number; total: number };
   /** Activity roll-up over the dashboard window (sessions/tokens/cost/commits). */
-  activity: { sessions: number; tokens: number; estCostUsd: number; commits: number };
+  activity: { sessions: number; tokens: number; estCostUsd: number; commits: number; hopEfficiency?: import('./observability/hop-events.js').HopRollup };
   /** Recent runs (most-recent first), each with status + cumulative tokens. */
   runs: { id: string; goal: string; status: string; tokens: number }[];
   /** Active/recent swarms with live task burndown + optional current phase. */

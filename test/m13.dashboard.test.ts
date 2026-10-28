@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DashboardSnapshot, AshlrConfig } from '../src/core/types.js';
+import type { HopRollup } from '../src/core/observability/hop-events.js';
 
 // ---------------------------------------------------------------------------
 // Config fixture
@@ -358,6 +359,20 @@ describe('buildSnapshot — tools', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildSnapshot — activity', () => {
+  it('retains hop efficiency and its evidence status in dashboard JSON', async () => {
+    const { buildRollup } = await import('../src/core/observability/rollup.js');
+    const hopEfficiency: HopRollup = {
+      schemaVersion: 1, since: '2026-10-24T00:00:00.000Z', until: '2026-10-26T00:00:00.000Z',
+      sourceState: 'available', status: 'complete',
+      diagnostics: { invalidEvents: 0, duplicateEvents: 0, conflictingEvents: 0, excludedEvents: 0 },
+      totals: { hops: 1, mergedPrs: 1, tokens: 150, costUsd: 2, hopsWithTokens: 1, hopsWithCost: 1, tokensPerMergedPr: 150, mergedPrsPerDollar: 0.5 },
+      byRepo: [],
+    };
+    vi.mocked(buildRollup).mockReturnValue({ ...FIXTURE_ROLLUP, hopEfficiency });
+    const snap = await buildSnapshot(makeConfig());
+    expect(JSON.parse(JSON.stringify(snap)).activity.hopEfficiency).toEqual(hopEfficiency);
+  });
+
   it('activity.sessions comes from rollup totals', async () => {
     const snap = await buildSnapshot(makeConfig());
     expect(snap.activity.sessions).toBe(FIXTURE_ROLLUP.totals.sessions);

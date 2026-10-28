@@ -28,6 +28,116 @@ import { estCostUsd } from '../run/budget.js';
 import { loadIndex } from '../index-engine.js';
 import { localDay } from '../reasoning/insights.js';
 import type { AshlrIndex } from '../types.js';
+import { collectHopEvents, parseHopEvent } from './hop-events.js';
+import type { HopEfficiencyMetrics, HopEvent, HopRollup, HopSourceState } from './hop-events.js';
+import { parseGithubRemote } from '../knowledge/wiki/scan.js';
+
+/**
+ * Interval productivity, not a merged-PR cohort: failed/unmerged work also
+ * costs tokens and dollars. Merge evidence is explicit, never inferred from
+ * commits or task completion. No transcript usage is mixed into this ledger.
+ */
+export function buildHopRollup(
+  events: readonly unknown[],
+  opts: { sinceMs: number; untilMs: number; project?: string; repos?: readonly string[]; sourceState?: HopSourceState },
+): HopRollup {
+  const { sinceMs, untilMs } = opts;
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs) || sinceMs > untilMs ||
+      !Number.isFinite(new Date(sinceMs).getTime()) || !Number.isFinite(new Date(untilMs).getTime())) {
+    throw new RangeError('Invalid hop rollup interval');
+  }
+  const sourceState = opts.sourceState ?? 'available';
+  const diagnostics = { invalidEvents: 0, duplicateEvents: 0, conflictingEvents: 0, excludedEvents: 0 };
+  const unique = new Map<string, HopEvent>();
+  const signatures = new Map<string, Set<string>>();
+  const conflicts = new Set<string>();
+  for (const raw of events) {
+    const event = parseHopEvent(raw);
+    if (!event) { diagnostics.invalidEvents++; continue; }
+    // Ids are scoped to a repository, allowing independent producers per repo.
+    const key = JSON.stringify([event.repo, event.id]);
+    const signature = JSON.stringify(event);
+    const variants = signatures.get(key);
+    if (!variants) {
+      unique.set(key, event);
+      signatures.set(key, new Set([signature]));
+    } else if (variants.has(signature)) diagnostics.duplicateEvents++;
+    else { variants.add(signature); conflicts.add(key); }
+  }
+  diagnostics.conflictingEvents = conflicts.size;
+  for (const key of conflicts) unique.delete(key);
+
+  // Pick the earliest observation before window filtering so a replay next
+  // week cannot make the same PR count as another merge in that week's view.
+  const merges = new Map<string, HopEvent>();
+  const hops: HopEvent[] = [];
+  for (const event of unique.values()) {
+    if (event.kind === 'hop.completed') hops.push(event);
+    else {
+      const key = JSON.stringify([event.repo, event.prNumber]);
+      const previous = merges.get(key);
+      if (previous) diagnostics.duplicateEvents++;
+      if (!previous || Date.parse(event.ts) < Date.parse(previous.ts)) merges.set(key, event);
+    }
+  }
+  const empty = (): HopEfficiencyMetrics => ({
+    hops: 0, mergedPrs: 0, tokens: 0, costUsd: 0, hopsWithTokens: 0, hopsWithCost: 0,
+    tokensPerMergedPr: null, mergedPrsPerDollar: null,
+  });
+  const totals = empty();
+  const byRepo = new Map<string, HopEfficiencyMetrics>();
+  const project = opts.project?.trim().toLowerCase();
+  const repos = opts.repos ? new Set(opts.repos.map((repo) => repo.toLowerCase())) : null;
+  // Stable addition order also makes fractional dollar totals reproducible.
+  const ordered = [...hops, ...merges.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.id.localeCompare(b.id));
+  for (const event of ordered) {
+    const ts = Date.parse(event.ts);
+    const matchesProject = repos ? repos.has(event.repo) : !project || event.repo === project || basename(event.repo) === project;
+    if (ts < sinceMs || ts > untilMs || !matchesProject) {
+      diagnostics.excludedEvents++;
+      continue;
+    }
+    let repo = byRepo.get(event.repo);
+    if (!repo) { repo = empty(); byRepo.set(event.repo, repo); }
+    for (const metric of [totals, repo]) {
+      if (event.kind === 'pr.merged') metric.mergedPrs++;
+      else {
+        metric.hops++;
+        if (event.tokensIn !== null && event.tokensOut !== null) {
+          const tokens = (metric.tokens ?? NaN) + event.tokensIn + event.tokensOut;
+          metric.tokens = Number.isSafeInteger(tokens) ? tokens : null;
+          metric.hopsWithTokens++;
+        }
+        if (event.costUsd !== null) {
+          const cost = (metric.costUsd ?? NaN) + event.costUsd;
+          metric.costUsd = Number.isFinite(cost) ? cost : null;
+          metric.hopsWithCost++;
+        }
+      }
+    }
+  }
+  const evidenceValid = sourceState === 'available' && !diagnostics.invalidEvents && !conflicts.size;
+  let ratioOverflow = false;
+  for (const metric of [totals, ...byRepo.values()]) {
+    // Overflow is unknown, never Infinity (which JSON would silently null).
+    const tokensKnown = evidenceValid && metric.hops > 0 && metric.hopsWithTokens === metric.hops && metric.tokens !== null;
+    const costKnown = evidenceValid && metric.hops > 0 && metric.hopsWithCost === metric.hops && metric.costUsd !== null;
+    if (tokensKnown && metric.mergedPrs > 0) metric.tokensPerMergedPr = metric.tokens! / metric.mergedPrs;
+    if (costKnown && metric.costUsd! > 0) {
+      const ratio = metric.mergedPrs / metric.costUsd!;
+      metric.mergedPrsPerDollar = Number.isFinite(ratio) ? ratio : null;
+      if (!Number.isFinite(ratio)) ratioOverflow = true;
+    }
+  }
+  const partial = !evidenceValid || ratioOverflow || totals.hopsWithTokens < totals.hops || totals.hopsWithCost < totals.hops ||
+    totals.tokens === null || totals.costUsd === null || (totals.mergedPrs > 0 && totals.hops === 0);
+  return {
+    schemaVersion: 1, since: new Date(sinceMs).toISOString(), until: new Date(untilMs).toISOString(), sourceState,
+    status: sourceState !== 'available' ? sourceState : partial ? 'partial' : totals.hops + totals.mergedPrs === 0 ? 'empty' : 'complete',
+    diagnostics, totals,
+    byRepo: [...byRepo].sort(([a], [b]) => a.localeCompare(b)).map(([repo, metric]) => ({ repo, ...metric })),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // windowToMs
@@ -430,6 +540,17 @@ export function buildRollup(
 
   // ── Optional project filter ──────────────────────────────────────────────
   const projectFilter = opts?.project?.trim();
+  // Reuse indexed origins rather than guessing a slug from a checkout's name
+  // (especially worktrees). This performs no new git or network reads.
+  const matchedRepos = index && projectFilter ? indexedRepos(index, projectFilter) : [];
+  const hopRepos = matchedRepos.length > 0 ? matchedRepos.flatMap((item) => {
+    const repo = item.remote ? parseGithubRemote(item.remote) : null;
+    return repo ? [repo] : [];
+  }) : undefined;
+  const hops = collectHopEvents();
+  const hopEfficiency = buildHopRollup(hops.events, {
+    sinceMs, untilMs: now, project: projectFilter, repos: hopRepos, sourceState: hops.state,
+  });
   if (projectFilter) {
     events = events.filter((e) => {
       if (!e.project) return false;
@@ -649,6 +770,7 @@ export function buildRollup(
   return {
     window,
     since: sinceIso,
+    hopEfficiency,
     totals: {
       ...(totalTokenEvidence ? { tokenEvidence: totalTokenEvidence } : {}),
       tokensIn:   totalTokensIn,
