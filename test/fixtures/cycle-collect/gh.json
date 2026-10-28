@@ -1,0 +1,18 @@
+{
+  "search": { "issueCount": 1, "nodes": [{ "number": 42, "createdAt": "2026-10-25T10:00:00Z", "mergedAt": "2026-10-25T11:30:00Z", "headRefOid": "abcdef0123456789abcdef0123456789abcdef01", "headRefName": "ashlr-cloud/RQ-CYCLE-1", "isDraft": false }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+  "timelineItems": { "nodes": [
+    { "__typename": "ReadyForReviewEvent", "createdAt": "2026-10-25T10:05:00Z" },
+    { "__typename": "IssueComment", "author": { "login": "coderabbitai" }, "body": "Review in progress", "createdAt": "2026-10-25T10:06:00Z" },
+    { "__typename": "IssueComment", "author": { "login": "coderabbitai" }, "body": "No actionable comments were generated. private-title-sentinel", "createdAt": "2026-10-25T10:15:00Z" },
+    { "__typename": "AutoMergeEnabledEvent", "createdAt": "2026-10-25T10:01:00Z" },
+    { "__typename": "AddedToMergeQueueEvent", "createdAt": "2026-10-25T11:10:00Z" }
+  ], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+  "checkSuites": { "nodes": [
+    { "id": "suite1", "createdAt": "2026-10-25T10:40:00Z", "app": { "slug": "github-actions" } },
+    { "id": "suite2", "createdAt": "2026-10-25T10:00:00Z", "app": { "slug": "unrelated-app" } }
+  ], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+  "checkRuns": { "nodes": [
+    { "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-10-25T10:55:00Z" },
+    { "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-10-25T11:00:00Z" }
+  ], "pageInfo": { "hasNextPage": false, "endCursor": null } }
+}
