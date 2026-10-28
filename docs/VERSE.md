@@ -487,6 +487,14 @@ or the time. A running row adds a muted second line from the live activity feed
 pin, archive, rename, hand off or delete. Unread is counted by turns: a chat that
 existed before 3.10 does not show unread on its first launch.
 
+Below the chats, **Agents** opens the existing agents section and **Routines**
+opens Automations. **Machine ▸ This machine** shows the console URL and bind
+address, the configured local inference bind, and whether `~/.ashlr/KILL` is
+present. This summary is read-only and refreshes every ten seconds while open
+and visible, or on **Refresh**. Uninspectable Stop state is **Unknown**;
+an absent marker does not authorize work, and a configured bind does not prove
+that a model is running.
+
 **Transcript.** Consecutive tool calls fold into one activity row ("▸ Ran 12
 commands · read 8 files · edited 3 files · 1 failed · 2m 14s"); a failure or a
 running call opens the group on just those rows. A **chapter rail** on the
