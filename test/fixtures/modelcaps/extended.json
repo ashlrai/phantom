@@ -1,0 +1,20 @@
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    {
+      "id": "fixture/model-tags",
+      "object": "model",
+      "context_length": 128000,
+      "max_output_tokens": 8192,
+      "capabilities": ["tools", "vision", "completion"]
+    },
+    {
+      "id": "fixture/model-booleans",
+      "object": "model",
+      "context_length": 64000,
+      "capabilities": { "tools": true, "vision": false, "reasoning": null, "vendor_extra": "ignored" },
+      "vendor_private": "must-not-be-cached"
+    }
+  ]
+}
