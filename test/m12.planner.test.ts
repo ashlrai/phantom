@@ -393,7 +393,7 @@ describe('planSwarm — selected outcome admission', () => {
       .rejects.toMatchObject({ name: 'SelectedOutcomeAdmissionRefusal', usage: { tokensIn: 0, tokensOut: 0 } });
     expect(mockChatFn).not.toHaveBeenCalled();
   });
-  it.each([() => false, () => { throw new Error('private refusal'); }])('holds before any client setup', async selectedOutcomeAdmission => {
+  it.each([() => false, () => { throw new Error('private refusal'); }])('holds before any client setup (%#)', async selectedOutcomeAdmission => {
     const { getActiveClient } = await import('../src/core/run/provider-client.js');
     const { planSwarm: plan } = await import('../src/core/swarm/planner.js');
     await expect(plan({ goal: 'held' }, makeConfig(), undefined, undefined, undefined, selectedOutcomeAdmission)).rejects.toMatchObject({ name: 'SelectedOutcomeAdmissionRefusal' });

@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- fresh:begin version-table -->
+| Version source | Version |
+| --- | --- |
+| Source package | 3.29.15 |
+| Latest dated changelog release (2026-10-12) | 3.29.13 |
+<!-- fresh:end -->
+
 All notable changes to Phantom are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -10,6 +17,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [3.29.15] — Unreleased
+
+### Fixed
+- Local inference URLs and local Ollama defaults pin `localhost` to
+  `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
+  lookups refuse redirects instead of contacting another endpoint.
 
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a

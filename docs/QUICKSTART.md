@@ -2,6 +2,15 @@
 
 # Quickstart — Phantom
 
+<!-- fresh:begin install-snippet -->
+Latest dated changelog release (verify promoted package availability before installing):
+
+```sh
+npm install -g @ashlr/phantom@3.29.13
+phm --version
+```
+<!-- fresh:end -->
+
 Phantom by AshlrAI is the everyday coding-agent workbench, formerly Ashlr Verse.
 The Universe experiment kernel is a separate, bounded source-checkout path below.
 Installing Phantom, enrolling a repo, starting a resident fleet and publishing

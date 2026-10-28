@@ -29,6 +29,7 @@ import type { AshlrConfig, EngineCommand } from '../src/core/types.js';
 // ---------------------------------------------------------------------------
 
 import { EventEmitter } from 'node:events';
+import { waitForProcessExit } from './helpers/process-liveness.js';
 
 interface FakeChildControl {
   child: ReturnType<typeof makeFakeChild>;
@@ -523,7 +524,7 @@ describe('spawnEngine — never throws on failure', () => {
     setTimeoutSpy.mockRestore();
   });
 
-  it('spawns signal-owned POSIX runs in a detached process group only', async () => {
+  it('spawns every POSIX session child in its own process group', async () => {
     const { spawn } = await import('node:child_process');
     const controller = new AbortController();
     const signaled = spawnEngine(
@@ -536,7 +537,7 @@ describe('spawnEngine — never throws on failure', () => {
     await expect(signaled).resolves.toMatchObject({ ok: true });
 
     const plain = spawnEngine({ bin: 'aw', args: ['auto', GOAL] }, makeConfig());
-    expect(vi.mocked(spawn).mock.calls[1]![2]).not.toHaveProperty('detached');
+    expect(vi.mocked(spawn).mock.calls[1]![2]?.detached).toBe(process.platform === 'win32' ? undefined : true);
     getSpawnControl().resolve(0, null, 'ok\n');
     await expect(plain).resolves.toMatchObject({ ok: true });
   });
@@ -654,7 +655,7 @@ describe('spawnEngine — never throws on failure', () => {
   });
 
   it.skipIf(process.platform === 'win32')(
-    'fails closed without claiming cleanup after a real process-group leader exits',
+    'fails closed after leader exit while its watchdog reaps the remaining group',
     async () => {
       const { spawn } = await import('node:child_process');
       const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
@@ -663,14 +664,16 @@ describe('spawnEngine — never throws on failure', () => {
 
       const descendantScript = [
         "process.on('SIGINT', () => {});",
+        "process.on('SIGTERM', () => {});",
+        "require('node:fs').writeSync(3, 'ready');",
         'setInterval(() => {}, 1_000);',
       ].join('');
       const leaderScript = [
         "const { spawn } = require('node:child_process');",
         `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], `,
-        "{ stdio: ['ignore', 'inherit', 'inherit'] });",
+        "{ stdio: ['ignore', 'inherit', 'inherit', 'pipe'] });",
         'child.unref();',
-        "process.stdout.write(`descendant:${child.pid}\\n`, () => process.exit(0));",
+        "child.stdio[3].once('data', () => process.stdout.write(`descendant:${child.pid}\\n`, () => process.exit(0)));",
       ].join('');
       const controller = new AbortController();
       let descendantPid: number | undefined;
@@ -701,13 +704,15 @@ describe('spawnEngine — never throws on failure', () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
         controller.abort();
         const result = await pending;
+        // The caller still refuses an unverifiable numeric PGID. Its watchdog
+        // anchors the original group independently and cleans the descendants.
         expect(result).toMatchObject({
           ok: false,
           error: expect.stringContaining('leader identity is no longer provable'),
           terminationReason: 'error-exit',
         });
         expect(result.output).toContain(`descendant:${descendantPid}`);
-        expect(() => process.kill(descendantPid!, 0)).not.toThrow();
+        expect(await waitForProcessExit(descendantPid!, { timeoutMs: 2_000 })).toBe(true);
       } finally {
         if (descendantPid) {
           try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already gone */ }
@@ -923,7 +928,7 @@ describe('spawnEngine — never throws on failure', () => {
     expect(result.error).not.toContain('taskkill');
   });
 
-  it.each([() => false, () => { throw new Error('private callback error'); }])('refuses a retired or unknown outcome at the exact CLI spawn without launching', async selectedOutcomeAdmission => {
+  it.each([() => false, () => { throw new Error('private callback error'); }])('refuses a retired or unknown outcome at the exact CLI spawn without launching (%#)', async selectedOutcomeAdmission => {
     const { spawn } = await import('node:child_process');
     const result = await spawnEngine({ bin: 'aw', args: ['auto', GOAL] }, makeConfig(), { selectedOutcomeAdmission });
     expect(result).toMatchObject({ ok: false, terminationReason: 'cancelled' });
