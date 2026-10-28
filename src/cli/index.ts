@@ -1892,6 +1892,12 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'router-calibration': {
+        const { cmdRouterCalibration } = await import('./router-calibration.js');
+        process.exitCode = await cmdRouterCalibration(rest);
+        break;
+      }
+
       case 'index':
         cmdIndex(rest);
         break;
@@ -2174,6 +2180,12 @@ async function main(): Promise<void> {
       case 'telemetry': {
         const cmdTelemetry = await loadTelemetryCmd();
         process.exitCode = await cmdTelemetry(rest);
+        break;
+      }
+
+      case 'worktrees': {
+        const { cmdWorktrees } = await import('./worktrees.js');
+        process.exitCode = cmdWorktrees(rest);
         break;
       }
 

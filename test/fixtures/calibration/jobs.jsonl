@@ -1,0 +1,9 @@
+{"event":"launch","job_id":"TEST-job-1","arm":"codex","timestamp":"2026-01-01T00:00:00Z","predicted_merge_rate":0.8,"predicted_tokens":100,"predicted_wall_time_ms":1000}
+{"event":"finish","job_id":"TEST-job-1","timestamp":"2026-01-01T00:00:02Z"}
+{"event":"publish","job_id":"TEST-job-1"}
+{"event":"outcome","job_id":"TEST-job-1","outcome":"merged"}
+{"event":"launch","job_id":"TEST-job-2","arm":"codex","predicted_merge_rate":0.4,"predicted_tokens":300,"predicted_wall_time_ms":4000}
+{"event":"finish","job_id":"TEST-job-2","tokens":240,"wall_time_ms":3000}
+{"event":"outcome","job_id":"TEST-job-2","outcome":"closed"}
+{"event":"launch","job_id":"TEST-job-3","arm":"other","predicted_merge_rate":0.7}
+{"event":"publish","job_id":"TEST-job-3"}

@@ -1681,7 +1681,7 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(status) + '\n');
     return 0;
   }
 
@@ -1709,7 +1709,7 @@ async function cmdFleetDirection(args: string[]): Promise<number> {
     const { buildResourceStrategyReport } = await import('../core/autonomy/resource-strategy.js');
     const report = await buildResourceStrategyReport(cfg);
     if (jsonMode) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      process.stdout.write(JSON.stringify(report) + '\n');
       return 0;
     }
     console.log('');
@@ -1801,7 +1801,7 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
   // ── JSON mode ────────────────────────────────────────────────────────────
   if (jsonMode) {
     process.stdout.write(
-      JSON.stringify({ fleet: fleetStatus, recentActions, recentErrors }, null, 2) + '\n',
+      JSON.stringify({ fleet: fleetStatus, recentActions, recentErrors }) + '\n',
     );
     return 0;
   }
@@ -2010,7 +2010,7 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
   const results = fleetReadiness(cfg ?? undefined);
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(results, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(results) + '\n');
     return 0;
   }
 
@@ -2152,7 +2152,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }) + '\n');
     return 0;
   }
 
@@ -2433,7 +2433,7 @@ async function cmdFleetEvidence(args: string[]): Promise<number> {
   }
   const result = diagnoseFleetEvidence(source, { deep: flags.includes('--deep') });
   if (jsonMode) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
     console.log('');
     console.log(bold(`  ${result.source} evidence`));
@@ -2483,7 +2483,7 @@ async function cmdFleetOversight(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(snapshot, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(snapshot) + '\n');
     return 0;
   }
 
@@ -2579,7 +2579,7 @@ async function cmdFleetJudgeTraces(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ traces, stats }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ traces, stats }) + '\n');
     return 0;
   }
 
@@ -2696,7 +2696,7 @@ async function cmdFleetJudgeHealth(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(report) + '\n');
     return 0;
   }
 
@@ -2898,7 +2898,7 @@ async function cmdFleetOptimizePrompt(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(result) + '\n');
     return 0;
   }
 

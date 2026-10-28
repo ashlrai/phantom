@@ -249,7 +249,7 @@ describe('command catalog — table integrity', () => {
     expect(PALETTE_RECENT_LIMIT).toBe(5);
     expect(paletteCommands('go-to').map((c) => c.id)).toEqual([
       'mode.with-me', 'mode.for-me', 'surface.command', 'surface.fleet', 'surface.growth', 'surface.mind', 'surface.chat', 'surface.agents', 'section.settings', 'section.apps', 'section.usage', 'section.wiki',
-      'section.playbooks', 'section.automations',
+      'section.playbooks', 'section.automations', 'section.ops',
     ]);
     // ⌘K never lists itself.
     expect(COMMANDS.find((c) => c.id === 'palette.open')!.group).toBeNull();
