@@ -86,7 +86,8 @@
     "docs/contracts/CONTRACT-M515.md",
     "docs/contracts/CONTRACT-M521.md",
     "docs/contracts/CONTRACT-M568.md",
-    "docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md"
+    "docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md",
+    "docs/MODEL-INVENTORY.md"
   ],
   "bundledDependencies": [
     "@modelcontextprotocol/sdk",
