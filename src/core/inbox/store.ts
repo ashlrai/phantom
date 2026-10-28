@@ -14,6 +14,7 @@
  *  - No secrets stored: diffs contain user-owned code (fine); tokens/keys are
  *    not proposal fields. audit() strips secrets defensively on its side.
  */
+import { recordProposalBanditOutcome } from '../fleet/bandit-feedback.js';
 
 import {
   chmodSync,
@@ -1608,6 +1609,7 @@ export function setStatus(
     } catch {
       return false;
     }
+    recordProposalBanditOutcome(updated);
 
     // The proposal decision is authoritative and must commit before its queue
     // projection is cleaned up. Dispatch independently revalidates any stale

@@ -91,7 +91,16 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   of `~/code`, `~/src`, `~/projects`, `~/dev`, `~/Developer` and `~/repos`
   exist, and there are no tidy rules without a `~/Desktop`.
 - `phm status [--json]` is the attention board (dirty, off-sync and stale
-  repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI.
+  repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI. Its
+  `bandit` block reports per-arm pulls, merges, `costUsd`, and `hours`, plus
+  `enabled` and a readiness `reason` (`disabled`, `cold-start-p4`, or `ready`).
+  Learning is default-off: opt in with `localFirstBandit.enabled: true` in
+  config. Fleet PR completion joins `proposal.workItemId` to the routing ledger
+  and numeric usage from the linked run/swarm ledger; missing cost is excluded,
+  measured zero cost is retained. The feedback sweep recovers persisted exits.
+  Outcomes in `~/.ashlr/routing/merge-outcomes.json` contain only item IDs,
+  merge flags, cost and elapsed time. The optional doctor row warns during cold
+  start and never makes doctor fail.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
