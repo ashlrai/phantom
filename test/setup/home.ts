@@ -27,7 +27,7 @@
  *   override, is now a thrown error — the offending test fails immediately and
  *   loudly instead of the suite quietly writing through the isolation boundary.
  */
-import { lstatSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { vi } from 'vitest';
@@ -73,7 +73,9 @@ if (!workerHome || process.env[workerPidKey] !== String(process.pid)) {
     if (ambientHome) process.env[realHomeKey] = resolve(ambientHome);
   }
 
-  workerHome = mkdtempSync(join(resolveWorkerHomeParent(), 'ashlr-vitest-home-'));
+  // macOS commonly exposes its temporary directory through a symlink. Keep
+  // the canonical identity so custody checks and exit cleanup agree.
+  workerHome = realpathSync(mkdtempSync(join(resolveWorkerHomeParent(), 'ashlr-vitest-home-')));
   process.env[workerHomeKey] = workerHome;
   process.env[workerPidKey] = String(process.pid);
   const homeToRemove = workerHome;
@@ -96,6 +98,19 @@ if (!workerHome || process.env[workerPidKey] !== String(process.pid)) {
 process.env.HOME = workerHome;
 process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
+// HOME does not override explicit XDG locations inherited from the shell.
+// Reassert these for every module, just like HOME, including for subprocesses.
+for (const [key, name] of Object.entries({
+  XDG_CONFIG_HOME: 'config',
+  XDG_CACHE_HOME: 'cache',
+  XDG_DATA_HOME: 'data',
+  XDG_STATE_HOME: 'state',
+  XDG_RUNTIME_DIR: 'runtime',
+})) {
+  const directory = join(workerHome, '.xdg', name);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  process.env[key] = directory;
+}
 scrubAmbientGitEnv(process.env);
 
 /**

@@ -383,6 +383,7 @@ function staticSteps() {
     { name: 'realio-lane', cmd: npm, args: ['run', '--silent', 'lint:realio-lane'] },
     { name: 'verse-sync-io', cmd: npm, args: ['run', '--silent', 'lint:verse-sync-io'] },
     { name: 'docs', cmd: npm, args: ['run', '--silent', 'check:docs'] },
+    { name: 'test-names', cmd: node, args: ['scripts/check-test-names.mjs'] },
   ];
 }
 

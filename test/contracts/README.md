@@ -1,3 +1,76 @@
+# Cross-repository CLI JSON contracts
+
+The default Vitest lane pins three machine interfaces under `schemas/` and
+source-derived synthetic examples under `fixtures/`:
+
+| Producer | CLI argv | Pinned boundary |
+| --- | --- | --- |
+| Locus | `agent report --json` | Official upstream agent-report JSON Schema, readiness ladder, process/document exit codes, identity/secrets server pair |
+| Lexicon | `--ashlr-handshake --json` | Shared handshake v1, product identity, protocols, capabilities, health and edit-path vocabulary |
+| Phantom Secrets (`phantom`) | `status --json` | Metadata-only status v1 as accepted by Phantom's existing consumer |
+
+```sh
+HOME=$(mktemp -d) npm test -- test/contracts/cli-json.test.ts
+```
+
+The suite checks positive and negative fixtures, recursively mutates required
+fields and types, and feeds Secrets documents into the real `getPhantomStatus`
+consumer with subprocesses mocked. Capture-checker integration tests launch only
+Node against synthetic files. No companion executable, vault, identity session,
+provider, network, or user configuration is accessed. Existing Secrets grammar
+checks below remain a separate opt-in lane.
+
+## Detecting producer drift
+
+Offline fixtures establish compatibility with the pinned surface, not the
+behavior of an independently updated executable. To check fresh producer output,
+collect the three commands above in a disposable project/HOME through the
+job's approved Locus execution boundary, preserving each actual process exit
+code (Locus protected=1 and unsafe=2 are valid report states). Do not run against
+personal configuration or copy credential-bearing reports into this repository.
+Supply an explicit capture directory containing all six files:
+
+```text
+locus.json                 locus.exit-code
+lexicon.json               lexicon.exit-code
+phantom-secrets.json       phantom-secrets.exit-code
+```
+
+Each `.json` is exactly the corresponding CLI stdout document; each `.exit-code`
+is its decimal process exit status, optionally followed by one newline. The
+checker reads these files, never invokes binaries or discovers anything on PATH:
+
+```sh
+HOME=$(mktemp -d) node test/contracts/check-cli-json.mjs /absolute/path/to/captures
+```
+
+Missing files, legacy text, multiple documents, oversized JSON, unsupported
+versions, field/type/enum drift and inconsistent exits fail with a nonzero
+status. All three products are required; there is no absent-binary skip or
+fixture fallback. Diagnostics name products and fixed failure codes without
+printing producer output. Capture files stay outside the worktree.
+
+Locus's vendored schema is byte-identical to the upstream file. It allows
+additive fields; its opaque doctor object is not a full doctor-schema check.
+Lexicon's schema translates its shared handshake descriptor and allows additive
+fields. Secrets intentionally closes the field/enum vocabulary to match the
+existing security-conscious consumer, even though the producer documentation
+allows additive changes. New metadata fields therefore require an explicit
+consumer review. This change does not alter runtime parsing or authority.
+
+`producer-pins.json` records producer commits and SHA-256 of the inspected public
+source files. Examples are synthetic, not captured executions or release
+attestations. To refresh: inspect the new producer source, review the schema
+change and consumer compatibility together, update provenance and examples,
+and rerun both the offline suite and fresh capture check. Never automatically
+replace pins or loosen schemas in response to a failure.
+
+The small dependency-free checker implements only the JSON Schema keywords used
+by these pins. It rejects unsupported schema keywords and remote references;
+extend and test it deliberately before adopting a richer producer schema.
+
+---
+
 # Phantom Secrets CLI compatibility fixture
 
 The workbench's optional `foundry.usePhantom` adapter currently calls

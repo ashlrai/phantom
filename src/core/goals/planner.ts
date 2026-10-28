@@ -82,8 +82,8 @@ const STANDARD_PHASES: { title: string; detail: string }[] = [
 // Frontier engine detection (local CLIs — no cloud key required)
 // ---------------------------------------------------------------------------
 
-/** Frontier engine ids in preference order (mirrors router.ts FRONTIER_PREFERENCE). */
-const FRONTIER_PREFERENCE: readonly EngineId[] = ['claude', 'codex'];
+/** Existing Claude/Codex preference, followed by the account-bound Grok CLI. */
+const FRONTIER_PREFERENCE: readonly EngineId[] = ['claude', 'codex', 'grok-cli'];
 
 /**
  * Return the first frontier engine that is BOTH in allowedBackends AND installed
@@ -93,14 +93,14 @@ const FRONTIER_PREFERENCE: readonly EngineId[] = ['claude', 'codex'];
 export function pickFrontierEngine(cfg: AshlrConfig): EngineId | null {
   const allowed = new Set<EngineId>(cfg.foundry?.allowedBackends ?? ['builtin']);
   for (const e of FRONTIER_PREFERENCE) {
-    if (allowed.has(e) && engineInstalled(e)) return e;
+    if (allowed.has(e) && engineInstalled(e, cfg)) return e;
   }
   return null;
 }
 
 /**
  * Decompose an objective into milestone parts using a FRONTIER engine CLI
- * (claude/codex) when one is allowed+installed. Returns a JSON-parsed array
+ * (claude/codex/grok-cli) when one is allowed+installed. Returns a JSON-parsed array
  * of {title, detail} parts on success, or throws on any failure so the caller
  * can fall back to the deterministic split.
  *
@@ -115,6 +115,7 @@ async function decomposeWithFrontier(
   objective: string,
   cfg: AshlrConfig,
   cap: number,
+  engine: EngineId,
 ): Promise<{ title: string; detail: string; effort?: number; scope?: string }[]> {
   // Lazy import to avoid loading the heavy orchestrator at module-load time.
   const { runGoal } = await import('../run/orchestrator.js');
@@ -140,6 +141,9 @@ async function decomposeWithFrontier(
     `Objective: ${objective}`;
 
   const run = await runGoal(prompt, cfg, {
+    // Preserve the detected route; a second automatic choice can select a
+    // different backend and silently discard the available frontier client.
+    engine,
     budget: { maxTokens: 8_000, maxSteps: 3 },
     allowCloud: false,
     noMemory: true,
@@ -184,7 +188,7 @@ async function decomposeWithFrontier(
  * Decompose a high-level `objective` into an ordered list of Milestones.
  *
  * FRONTIER-FIRST (when a frontier engine is allowed+installed): routes the
- * decomposition to the best available frontier CLI (claude/codex) via runGoal —
+ * decomposition to the best available frontier CLI via runGoal:
  * these engines produce well-structured, actionable plans. Falls back to the
  * deterministic local split on any engine error or garbled output.
  *
@@ -226,7 +230,7 @@ export async function decomposeGoal(
   const frontier = pickFrontierEngine(cfg);
   if (frontier) {
     try {
-      const frontierParts = await decomposeWithFrontier(objective, cfg, cap);
+      const frontierParts = await decomposeWithFrontier(objective, cfg, cap, frontier);
       // COUNT-GUARD: reject plans that wildly exceed the cap (the frontier may
       // over-decompose). Trim to cap but keep if >= 2 items.
       if (frontierParts.length >= 2 && frontierParts.length <= HARD_MAX_MILESTONES) {
