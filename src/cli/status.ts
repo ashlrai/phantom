@@ -219,6 +219,7 @@ export async function gatherStatus(
   });
 
   const phantomPreflight = await attempt(async () => {
+    if (process.env['ASHLR_PHANTOM_PREFLIGHT'] !== '1') return null;
     const { gatherPreflightStatus } = await import('./status-preflight.js');
     return gatherPreflightStatus({ cwd });
   });

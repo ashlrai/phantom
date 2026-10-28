@@ -53,21 +53,13 @@
  * Exit codes: 0 success, 1 error/not-found, 2 bad usage.
  */
 
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
-import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
 import { PROBE_HELPER_FLAGS } from '../core/resources/probe-helper-invocation.js';
-import { CLAUDE_TOOL_WORKER_FLAG } from '../core/sandbox/claude-broker-tool-invocation.js';
 import { ANTHROPIC_PROXY_HOST_FLAG } from '../core/local-runtime/llama/proxy-invocation.js';
 import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
-import { planTidy, applyTidy } from '../core/tidy.js';
-import { openInEditor } from './open.js';
-import { pick } from './picker.js';
-import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
@@ -833,12 +825,14 @@ function die(msg: string, code = 1): never {
 
 
 /** Ensure the index exists; auto-build if missing. Returns the index. */
-function requireIndex(cfg: AshlrConfig): AshlrIndex {
+async function requireIndex(cfg: AshlrConfig): Promise<AshlrIndex> {
+  const { loadIndex, writeIndex } = await import('../core/index-store.js');
   let idx = loadIndex();
   if (!idx) {
     // Informational chatter goes to stderr so stdout stays clean for capture
     // (e.g. `cd $(ashlr go foo --cd)`).
     console.error(dim('No index found — building now…'));
+    const { buildIndex } = await import('../core/index-engine.js');
     idx = buildIndex(cfg);
     writeIndex(idx);
   }
@@ -963,12 +957,14 @@ function setConfigValue(cfg: AshlrConfig, key: string, rawValue: string): void {
   setByPath(cfg, key, value);
 }
 
-function persistConfigSet(
+async function persistConfigSet(
   cfg: AshlrConfig,
   repairHandoffV2WasEnabled: boolean,
   previousActivation: { id: string; activatedAt: string } | undefined,
   key: string,
-): void {
+): Promise<void> {
+  const { saveConfig } = await import('../core/config.js');
+  const { randomUUID } = await import('node:crypto');
   if (!repairHandoffV2WasEnabled && cfg.foundry?.repairHandoffV2Write === true) {
     cfg.foundry.repairHandoffV2Activation = {
       id: randomUUID(),
@@ -992,8 +988,10 @@ function persistConfigSet(
 
 // ─── Command: index ───────────────────────────────────────────────────────────
 
-function cmdIndex(args: string[]): void {
+async function cmdIndex(args: string[]): Promise<void> {
+  const { loadIndex, writeIndex } = await import('../core/index-store.js');
   const refresh = args.includes('--refresh');
+  const { loadConfig, CONFIG_PATH } = await import('../core/config.js');
   const cfg = loadConfig();
 
   let idx = loadIndex();
@@ -1003,6 +1001,7 @@ function cmdIndex(args: string[]): void {
     } else {
       console.error(dim('Building index…'));
     }
+    const { buildIndex } = await import('../core/index-engine.js');
     idx = buildIndex(cfg);
     writeIndex(idx);
   }
@@ -1040,7 +1039,7 @@ function cmdIndex(args: string[]): void {
   // No repos found → roots are almost certainly misconfigured. Point the user
   // at the full setup guidance (printed in detail by `ashlr status`).
   if (repos.length === 0) {
-    printNoReposHelp(cfg);
+    printNoReposHelp(cfg, CONFIG_PATH);
   }
 }
 
@@ -1052,8 +1051,9 @@ async function cmdGo(args: string[]): Promise<void> {
   const queryArgs = args.filter(a => !a.startsWith('--'));
   const query = queryArgs.join(' ');
 
+  const { loadConfig } = await import('../core/config.js');
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   const candidates = filterItems(idx.items, query);
 
@@ -1065,6 +1065,7 @@ async function cmdGo(args: string[]): Promise<void> {
     chosen = candidates[0];
   } else {
     // Let user pick (fzf or readline)
+    const { pick } = await import('./picker.js');
     chosen = await pick(candidates.length > 0 ? candidates : idx.items);
   }
 
@@ -1073,6 +1074,7 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (openFlag) {
+    const { openInEditor } = await import('./open.js');
     openInEditor(chosen.path, cfg);
     console.log(green('opened: ') + chosen.path);
   } else if (cdFlag) {
@@ -1115,7 +1117,7 @@ function printItemSummary(item: IndexedItem): void {
  * ~/Desktop/github). Rather than a bare "0 repos tracked", show which roots
  * were scanned, whether each one exists, and the exact commands to fix it.
  */
-function printNoReposHelp(cfg: AshlrConfig): void {
+function printNoReposHelp(cfg: AshlrConfig, configPath: string): void {
   console.log(yellow('  No git repos are being tracked yet.'));
   console.log('');
   console.log(`  phm scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
@@ -1142,7 +1144,7 @@ function printNoReposHelp(cfg: AshlrConfig): void {
   } else {
     console.log(`       ${cyan(`phm config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
   }
-  console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
+  console.log(`       ${dim('…or edit')} ${cyan(configPath)} ${dim('directly.')}`);
   console.log('');
   console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('phm index --refresh')}`);
   console.log('');
@@ -1151,8 +1153,10 @@ function printNoReposHelp(cfg: AshlrConfig): void {
 }
 
 async function cmdStatus(args: string[]): Promise<void> {
+  const { classifyRepos, printStatusJson } = await import('./status.js');
+  const { loadConfig, CONFIG_PATH } = await import('../core/config.js');
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   if (args.includes('--json')) {
     await printStatusJson(cfg, idx, {
@@ -1174,7 +1178,7 @@ async function cmdStatus(args: string[]): Promise<void> {
     console.log('');
     console.log(bold('  ashlr status') + gray(' — 0 repos tracked'));
     console.log('');
-    printNoReposHelp(cfg);
+    printNoReposHelp(cfg, CONFIG_PATH);
     return;
   }
 
@@ -1411,15 +1415,17 @@ async function cmdStatus(args: string[]): Promise<void> {
   }
 
   // Phantom strict preflight: only when the spawn gate is on (value-free)
-  try {
-    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
-    const pre = gatherPreflightStatus();
-    if (pre) {
-      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
-      console.log('');
+  if (process.env['ASHLR_PHANTOM_PREFLIGHT'] === '1') {
+    try {
+      const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
+      const pre = gatherPreflightStatus();
+      if (pre) {
+        console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+        console.log('');
+      }
+    } catch {
+      // silently omit; never break status
     }
-  } catch {
-    // silently omit; never break status
   }
 
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
@@ -1439,10 +1445,11 @@ async function cmdStatus(args: string[]): Promise<void> {
 
 // ─── Command: ls ─────────────────────────────────────────────────────────────
 
-function cmdLs(args: string[]): void {
+async function cmdLs(args: string[]): Promise<void> {
   const catFilter = args.filter(a => !a.startsWith('--'))[0] ?? null;
+  const { loadConfig } = await import('../core/config.js');
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   let items = idx.items;
   if (catFilter) {
@@ -1495,8 +1502,9 @@ function cmdLs(args: string[]): void {
 
 async function cmdOpen(args: string[]): Promise<void> {
   const query = args.filter(a => !a.startsWith('--')).join(' ');
+  const { loadConfig } = await import('../core/config.js');
   const cfg = loadConfig();
-  const idx = requireIndex(cfg);
+  const idx = await requireIndex(cfg);
 
   let chosen: IndexedItem | null = null;
 
@@ -1508,6 +1516,7 @@ async function cmdOpen(args: string[]): Promise<void> {
     // Take top match directly if score is unambiguous, else pick
     chosen = candidates[0];
   } else {
+    const { pick } = await import('./picker.js');
     chosen = await pick(idx.items);
   }
 
@@ -1515,9 +1524,9 @@ async function cmdOpen(args: string[]): Promise<void> {
     die('Nothing selected.', 1);
   }
 
+  const { openInEditor, planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
   const md = planMarkdownOpen(chosen.path, cfg);
   if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
   else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
@@ -1525,9 +1534,11 @@ async function cmdOpen(args: string[]): Promise<void> {
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
 
-function cmdTidy(args: string[]): void {
+async function cmdTidy(args: string[]): Promise<void> {
+  const { planTidy, applyTidy } = await import('../core/tidy.js');
   const apply = args.includes('--apply');
   const json  = args.includes('--json');
+  const { loadConfig } = await import('../core/config.js');
   const cfg = loadConfig();
   const plan = planTidy(cfg);
 
@@ -1647,6 +1658,7 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
+  const { CONFIG_PATH } = await import('../core/config.js');
   const subCmd = args[0];
 
   if (subCmd === 'effective') {
@@ -1667,6 +1679,7 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
+  const { loadConfig } = await import('../core/config.js');
   const cfg = loadConfig();
 
   if (!subCmd || subCmd === 'path') {
@@ -1733,7 +1746,7 @@ async function cmdConfig(args: string[]): Promise<void> {
       }
       // Walk to the parent object and set the leaf key
       setByPath(cfg, key, parsed);
-      persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
+      await persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
       const persisted = getConfigValue(cfg, key);
       const shown = isSensitiveKey(key) ? '<redacted>' : JSON.stringify(persisted);
       console.log(`${green('set')} ${key} = ${shown}`);
@@ -1749,7 +1762,7 @@ async function cmdConfig(args: string[]): Promise<void> {
         die(`Invalid JSON for "${key}": ${jsonValue}`, 2);
       }
       setByPath(cfg, key, parsed);
-      persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
+      await persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
       const persisted = getConfigValue(cfg, key);
       const shown = isSensitiveKey(key) ? '<redacted>' : JSON.stringify(persisted);
       console.log(`${green('set')} ${key} = ${shown}`);
@@ -1757,7 +1770,7 @@ async function cmdConfig(args: string[]): Promise<void> {
     }
     if (rawValue === undefined) die(`Usage: ashlr config set <key> <value>`, 2);
     setConfigValue(cfg, key, rawValue);
-    persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
+    await persistConfigSet(cfg, repairHandoffV2WasEnabled, previousRepairHandoffV2Activation, key);
     const shown = isSensitiveKey(key) ? '<redacted>' : rawValue;
     console.log(`${green('set')} ${key} = ${shown}`);
     return;
@@ -1806,10 +1819,13 @@ async function main(): Promise<void> {
   // selects a known package-owned helper and nothing else. It is
   // matched before any parsing and is absent from help and completions.
   if (argv.length === 1) {
-    if (argv[0] === CLAUDE_TOOL_WORKER_FLAG) {
-      const { runClaudeBrokerToolWorker } = await import('../core/sandbox/claude-broker-tool-worker.js');
-      await runClaudeBrokerToolWorker();
-      return;
+    if (argv[0]?.startsWith('--_')) {
+      const { CLAUDE_TOOL_WORKER_FLAG } = await import('../core/sandbox/claude-broker-tool-invocation.js');
+      if (argv[0] === CLAUDE_TOOL_WORKER_FLAG) {
+        const { runClaudeBrokerToolWorker } = await import('../core/sandbox/claude-broker-tool-worker.js');
+        await runClaudeBrokerToolWorker();
+        return;
+      }
     }
     if (argv[0] === PROBE_HELPER_FLAGS.codex) {
       await import('../core/resources/codex-account-probe-process.js');
@@ -1871,10 +1887,39 @@ async function main(): Promise<void> {
   const cmd  = argv[0] ?? 'help';
   const rest = argv.slice(1);
 
+  // Metadata commands must not load configuration or command implementation graphs.
+  switch (cmd) {
+    case 'version':
+    case '--version':
+    case '-v': {
+      // ASHLR_VERSION is set by the Bun SEA shim (build-sea.mjs) because
+      // createRequire(import.meta.url) cannot resolve package.json from
+      // inside Bun's virtual FS (/$bunfs/root/…) at runtime.
+      let version = process.env.ASHLR_VERSION;
+      if (!version) {
+        try {
+          const { createRequire } = await import('node:module');
+          const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
+          version = pkg.version;
+        } catch {
+          version = 'unknown';
+        }
+      }
+      console.log(version);
+      return;
+    }
+
+    case 'help':
+    case '--help':
+    case '-h':
+      process.exitCode = await cmdHelp(rest);
+      return;
+  }
+
   try {
     switch (cmd) {
       case 'index':
-        cmdIndex(rest);
+        await cmdIndex(rest);
         break;
 
       case 'go':
@@ -1886,7 +1931,7 @@ async function main(): Promise<void> {
         break;
 
       case 'ls':
-        cmdLs(rest);
+        await cmdLs(rest);
         break;
 
       case 'open':
@@ -1894,7 +1939,7 @@ async function main(): Promise<void> {
         break;
 
       case 'tidy':
-        cmdTidy(rest);
+        await cmdTidy(rest);
         break;
 
       case 'config':
@@ -2519,26 +2564,6 @@ async function main(): Promise<void> {
         break;
       }
 
-      case 'version':
-      case '--version':
-      case '-v': {
-        // ASHLR_VERSION is set by the Bun SEA shim (build-sea.mjs) because
-        // createRequire(import.meta.url) cannot resolve package.json from
-        // inside Bun's virtual FS (/$bunfs/root/…) at runtime.
-        let version = process.env.ASHLR_VERSION;
-        if (!version) {
-          try {
-            const { createRequire } = await import('node:module');
-            const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
-            version = pkg.version;
-          } catch {
-            version = 'unknown';
-          }
-        }
-        console.log(version);
-        break;
-      }
-
       case '--ashlr-handshake': {
         // Companion handshake v1: one JSON object, no network, exit 0.
         let version = process.env.ASHLR_VERSION;
@@ -2554,12 +2579,6 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(buildPhmHandshake(version)));
         break;
       }
-
-      case 'help':
-      case '--help':
-      case '-h':
-        process.exitCode = await cmdHelp(rest);
-        break;
 
       default: {
         console.error(red(`Unknown command: ${cmd}`));

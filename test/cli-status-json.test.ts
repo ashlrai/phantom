@@ -16,14 +16,20 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const homes: string[] = [];
 afterEach(() => { for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
 
-function runStatus(args: string[], writeConfig: (home: string) => void = () => {}) {
+function runStatus(args: string[], writeConfig: (home: string) => void = () => {}, observerSource?: string) {
   const home = mkdtempSync(join(tmpdir(), 'phantom-status-json-')); homes.push(home);
   writeConfig(home);
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, PATH: dirname(process.execPath) };
   delete env.ASHLR_HOME;
   delete env.NO_COLOR;
   delete env.FORCE_COLOR;
-  const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', 'status', ...args], {
+  const imports = ['--import', 'tsx'];
+  if (observerSource) {
+    const observer = join(home, 'observe.mjs');
+    writeFileSync(observer, observerSource);
+    imports.push('--import', observer);
+  }
+  const result = spawnSync(process.execPath, [...imports, 'src/cli/index.ts', 'status', ...args], {
     cwd: root, encoding: 'utf8', timeout: 20_000, env,
   });
   return { home, result };
@@ -80,4 +86,21 @@ describe('CLI: phm status --json', () => {
     if (process.platform !== 'win32') expect(result.stdout).not.toContain('PowerShell');
     expect(() => JSON.parse(result.stdout)).toThrow();
   });
+});
+
+
+it('reads a cached status without loading scanners, tidy or picker modules', () => {
+  const { result } = runStatus([], home => {
+    mkdirSync(join(home, '.ashlr'));
+    writeFileSync(join(home, '.ashlr', 'config.json'), JSON.stringify({ version: 1, roots: [] }));
+    writeFileSync(join(home, '.ashlr', 'index.json'), JSON.stringify({ version: 1, items: [], generatedAt: new Date().toISOString() }));
+  }, `import { registerHooks } from 'node:module';
+registerHooks({ load(url, context, nextLoad) {
+  if (/\\/(?:index-engine|classify|tidy|picker|open)\\.ts$/.test(url)) throw Error('Cached status loaded: ' + url);
+  return nextLoad(url, context);
+}});`);
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('No git repos are being tracked yet.');
+  expect(result.stderr).toBe('');
 });
