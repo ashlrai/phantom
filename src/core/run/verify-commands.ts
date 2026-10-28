@@ -36,7 +36,7 @@ import { audit } from '../sandbox/audit.js';
 import { prepareConfinedVerification, recordAutonomousViolations, type ConfinedVerification } from '../sandbox/autonomous-run.js';
 import { isSandboxTripwireKill, sandboxViolationsInOutput } from '../sandbox/confine.js';
 import { detectRepoExecutionProfile, verifyExecutablePathError } from './repo-profile.js';
-import { buildToolPath } from './tool-path.js';
+import { buildToolPath, collectJobMemory, memoryJobEnv, type JobMemoryUsage } from './tool-path.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,6 +110,8 @@ export interface VerifyCommandResult {
   /** Combined stdout+stderr, secret-scrubbed and size-capped (≤32KB). */
   output: string;
   timedOut: boolean;
+  /** Advisory class-labelled per-Node-process peak RSS observations. */
+  memoryUsage?: JobMemoryUsage;
   /** True only when the invocation owner requested cancellation. */
   cancelled?: boolean;
   /** Present only for non-OK results; lets autonomous repair loops avoid infra false positives. */
@@ -750,7 +752,7 @@ export function runVerifyCommand(
             shell: false,
             windowsHide: true,
             env: {
-              ...(confinement ? confinement.env : isolated.env),
+              ...memoryJobEnv(confinement ? confinement.env : isolated.env, vc.kind),
               ASHLR_VERIFY_SHELL: baseOptions.shell === true ? '1' : '0',
             },
           },
@@ -771,6 +773,7 @@ export function runVerifyCommand(
       });
     }
 
+    const measured = collectJobMemory(`${res.stdout ?? ''}${res.stderr ?? ''}`, vc.kind);
     const timedOut =
       res.status === 124 ||
       (res.error !== undefined && (res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT');
@@ -778,7 +781,7 @@ export function runVerifyCommand(
     // spawn-level failure (binary not found, timeout, …): res.status is null.
     if (res.error) {
       const output = renderToolText(
-        `${command}\n${(res.stdout ?? '')}${res.stderr ?? ''}\n${res.error.message}`,
+        `${command}\n${measured.output}\n${res.error.message}`,
       );
       const failureCategory = verifyFailureCategory(output, {
         exitCode: -1,
@@ -789,15 +792,15 @@ export function runVerifyCommand(
         action: 'verify:command',
         repo: workspaceRoot,
         sandboxId: null,
-        summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : 'spawn error'}`,
+        summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : 'spawn error'}; peakNodeRssKiB=${measured.memoryUsage.peakRssKiB ?? 'unknown'}`,
         result: 'error',
       });
-      return { ok: false, command, exitCode: -1, output, timedOut, failureCategory };
+      return { ok: false, command, exitCode: -1, output, timedOut, failureCategory, memoryUsage: measured.memoryUsage };
     }
 
     const exitCode = res.status ?? -1;
     const ok = exitCode === 0;
-    const output = renderToolText(`${(res.stdout ?? '')}${res.stderr ?? ''}`);
+    const output = renderToolText(measured.output);
     const failureCategory = ok
       ? undefined
       : verifyFailureCategory(output, { exitCode, timedOut });
@@ -806,11 +809,11 @@ export function runVerifyCommand(
       action: 'verify:command',
       repo: workspaceRoot,
       sandboxId: null,
-      summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : `exit ${exitCode}`}`,
+      summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : `exit ${exitCode}`}; peakNodeRssKiB=${measured.memoryUsage.peakRssKiB ?? 'unknown'}`,
       result: ok ? 'ok' : 'error',
     });
 
-    return { ok, command, exitCode, output, timedOut, ...(failureCategory ? { failureCategory } : {}) };
+    return { ok, command, exitCode, output, timedOut, memoryUsage: measured.memoryUsage, ...(failureCategory ? { failureCategory } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const output = renderToolText(`${command}\n${msg}`);
@@ -1561,7 +1564,7 @@ export async function runVerifyCommandAsync(
       }
     }
     const runSubprocess = opts?._runSubprocess ?? runVerifySubprocessAsync;
-    const commandEnv = confinement ? confinement.env : isolated.env;
+    const commandEnv = memoryJobEnv(confinement ? confinement.env : isolated.env, vc.kind);
     let subprocess: VerifySubprocessResult;
     try {
       subprocess = await runSubprocess(confinement ? [...confinement.prefix, ...argv] : argv, {
@@ -1596,14 +1599,15 @@ export async function runVerifyCommandAsync(
     }
 
     const timedOut = subprocess.timedOut || subprocess.exitCode === 124;
-    const capturedOutput = `${subprocess.stdout}${subprocess.stderr}`;
+    const measured = collectJobMemory(`${subprocess.stdout}${subprocess.stderr}`, vc.kind);
+    const capturedOutput = measured.output;
     if (subprocess.cancelled) {
       const output = renderToolText(capturedOutput);
       audit({
         action: 'verify:command',
         repo: workspaceRoot,
         sandboxId: null,
-        summary: `${vc.kind}: ${command} → cancelled`,
+        summary: `${vc.kind}: ${command} → cancelled; peakNodeRssKiB=${measured.memoryUsage.peakRssKiB ?? 'unknown'}`,
         result: 'error',
       });
       return {
@@ -1614,6 +1618,7 @@ export async function runVerifyCommandAsync(
         timedOut: false,
         cancelled: true,
         failureCategory: 'cancelled',
+        memoryUsage: measured.memoryUsage,
       };
     }
 
@@ -1628,7 +1633,7 @@ export async function runVerifyCommandAsync(
         action: 'verify:command',
         repo: workspaceRoot,
         sandboxId: null,
-        summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : 'subprocess error'}`,
+        summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : 'subprocess error'}; peakNodeRssKiB=${measured.memoryUsage.peakRssKiB ?? 'unknown'}`,
         result: 'error',
       });
       return {
@@ -1638,6 +1643,7 @@ export async function runVerifyCommandAsync(
         output,
         timedOut,
         failureCategory,
+        memoryUsage: measured.memoryUsage,
       };
     }
 
@@ -1652,7 +1658,7 @@ export async function runVerifyCommandAsync(
       action: 'verify:command',
       repo: workspaceRoot,
       sandboxId: null,
-      summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : `exit ${exitCode}`}`,
+      summary: `${vc.kind}: ${command} → ${timedOut ? 'timed out' : `exit ${exitCode}`}; peakNodeRssKiB=${measured.memoryUsage.peakRssKiB ?? 'unknown'}`,
       result: ok ? 'ok' : 'error',
     });
 
@@ -1662,6 +1668,7 @@ export async function runVerifyCommandAsync(
       exitCode,
       output,
       timedOut,
+      memoryUsage: measured.memoryUsage,
       ...(failureCategory ? { failureCategory } : {}),
     };
   } catch (err) {

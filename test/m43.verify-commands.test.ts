@@ -36,6 +36,8 @@ import {
 import { verifyTaskStructured } from '../src/core/run/verify.js';
 import { newUsage } from '../src/core/run/budget.js';
 import { processIsRunning, waitForProcessExit } from './helpers/process-liveness.js';
+import { JOB_MEMORY_LIMITS } from '../src/core/run/tool-path.js';
+import { readAudit } from '../src/core/sandbox/audit.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -362,6 +364,37 @@ describe('detectVerifyCommands', () => {
 // ---------------------------------------------------------------------------
 
 describe('runVerifyCommand', () => {
+  it.each(Object.keys(JOB_MEMORY_LIMITS) as Array<keyof typeof JOB_MEMORY_LIMITS>)(
+    'caps %s descendants and records their own peak RSS in sync and async jobs', async (kind) => {
+      const maxMiB = JOB_MEMORY_LIMITS[kind].maxOldSpaceMiB;
+      // Check the effective V8 heap in a grandchild, not just an environment
+      // string in the watchdog. V8 adds a small fixed young-generation margin.
+      const child = `const { getHeapStatistics } = require('node:v8');
+        const heapMiB = getHeapStatistics().heap_size_limit / 1048576;
+        if (heapMiB < ${maxMiB} || heapMiB > ${maxMiB + 128}) process.exit(8);
+        console.log('heap-cap-ok'); process.exit(0);`;
+      const script = `require('node:child_process').execFileSync(process.execPath,
+        ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' });`;
+      const vc: VerifyCommand = { kind, cmd: ['node', '-e', script] };
+      for (const result of [runVerifyCommand(vc, workdir, cfg), await runVerifyCommandAsync(vc, workdir, cfg)]) {
+        expect(result.ok, result.output).toBe(true);
+        expect(result.output).toContain('heap-cap-ok');
+        const receipts = result.memoryUsage!.processes;
+        expect(result.memoryUsage!.jobClass).toBe(kind);
+        expect(result.memoryUsage!.peakRssKiB).toBe(Math.max(...receipts.map(row => row.peakRssKiB)));
+        expect(result.output).not.toContain('[job-memory]');
+        expect(receipts.length).toBeGreaterThanOrEqual(2);
+        expect(new Set(receipts.map(row => row.pid)).size).toBe(receipts.length);
+        for (const row of receipts) {
+          expect(row).toEqual({ pid: expect.any(Number), peakRssKiB: expect.any(Number) });
+          expect(row.peakRssKiB).toBeGreaterThan(0);
+        }
+        expect(readAudit(50).some(row => row.action === 'verify:command' &&
+          row.summary.startsWith(`${kind}:`) && row.summary.endsWith(`peakNodeRssKiB=${result.memoryUsage!.peakRssKiB}`))).toBe(true);
+      }
+    },
+  );
+
   it('reports ok:true / exit 0 for a passing command', () => {
     const vc: VerifyCommand = { kind: 'test', cmd: ['node', '-e', 'process.exit(0)'] };
     const res = runVerifyCommand(vc, workdir, cfg);

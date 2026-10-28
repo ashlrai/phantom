@@ -7,7 +7,8 @@
  * only a bounded last-line diagnostic is retained.
  */
 
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -29,6 +30,13 @@ const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_LINE_TAIL = 2_048;
+
+// Share the production policy without a build or a transpiler subprocess.
+// The local launch utility imports only Node builtins, so stripping its types
+// into an in-memory module needs no persistent/global loader hooks.
+const memorySource = stripTypeScriptTypes(readFileSync(
+  new URL('../src/core/run/tool-path.ts', import.meta.url), 'utf8'));
+const { boundedVitestJob } = await import(`data:text/javascript;base64,${Buffer.from(memorySource).toString('base64')}`);
 
 function readPositiveDuration(name, fallback) {
   const raw = Number(process.env[name] ?? fallback);
@@ -52,12 +60,13 @@ const heartbeatIntervalMs = readPositiveDuration(
   DEFAULT_HEARTBEAT_INTERVAL_MS,
 );
 
+const memoryJob = boundedVitestJob(process.env, process.argv.slice(2));
+const extraArgs = memoryJob.args;
 const home = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-home-'));
 const privateTmp = join(home, 'tmp');
 mkdirSync(privateTmp);
 const vitestBin = join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs');
 const progressReporter = fileURLToPath(new URL('./vitest-progress-reporter.mjs', import.meta.url));
-const extraArgs = process.argv.slice(2);
 const hasExplicitReporter = extraArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='));
 const args = [
   vitestBin,
@@ -71,7 +80,7 @@ const child = spawn(process.execPath, args, {
   cwd: process.cwd(),
   stdio: ['inherit', 'pipe', 'pipe'],
   env: {
-    ...process.env,
+    ...memoryJob.env,
     HOME: home,
     USERPROFILE: home,
     ASHLR_HOME: join(home, '.ashlr'),
