@@ -656,6 +656,12 @@ const loadWorkerCmd = lazyCmd(
   'worker command requires src/cli/worker.ts (M112 module not yet built).',
 );
 
+const loadRouterCmd = lazyCmd(
+  () => import('./router.js'),
+  (m) => m.runRouterCli as Cmd,
+  'router command requires src/cli/router.ts.',
+);
+
 // ─── M137 command loader ────────────────────────────────────────────
 
 const loadCommsCmd = lazyCmd(
@@ -2181,6 +2187,12 @@ async function main(): Promise<void> {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);
+        break;
+      }
+
+      case 'router': {
+        const cmdRouter = await loadRouterCmd();
+        process.exitCode = await cmdRouter(rest);
         break;
       }
 
