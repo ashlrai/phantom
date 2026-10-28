@@ -203,17 +203,16 @@ describe('hosted portability coverage', () => {
     const workflow = parseYaml(
       fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
     ) as {
-      jobs?: {
-        ci?: {
-          strategy?: {
-            matrix?: {
-              include?: Array<{ os?: string; test_args?: string }>;
-            };
+      jobs?: Record<string, {
+        strategy?: {
+          matrix?: {
+            include?: Array<{ os?: string; test_args?: string }>;
           };
         };
-      };
+      }>;
     };
-    const jobs = workflow.jobs?.ci?.strategy?.matrix?.include ?? [];
+    // Any workflow job may own the Windows lane (ci or ci-portability).
+    const jobs = Object.values(workflow.jobs ?? {}).flatMap(job => job.strategy?.matrix?.include ?? []);
     expect(jobs.some(job =>
       job.os === 'windows-latest' &&
       job.test_args?.split(/\s+/).includes('test/m18.editors.test.ts'),

@@ -326,7 +326,8 @@ describe('release workflow', () => {
     expect(ledgerSteps[0]?.run?.trim()).toBe('npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/m342.dispatch-production-ledger.test.ts');
     expect(ciSteps.indexOf(ledgerSteps[0]!)).toBeGreaterThan(ciSteps.findIndex((step) => step.name === 'Test (hermetic)'));
     const ci = ciJob!;
-    const windows = (ci.strategy?.matrix?.include ?? []).filter(entry => entry['label'] === 'windows, portability 2/3');
+    const portability = (parsedCi.jobs as Record<string, NonNullable<typeof ciJob>>)["ci-portability"]!;
+    const windows = [...(ci.strategy?.matrix?.include ?? []), ...(portability.strategy?.matrix?.include ?? [])].filter(entry => entry['label'] === 'windows, portability 2/3');
     expect(windows).toHaveLength(1);
     expect(windows[0]?.['os']).toBe('windows-latest');
     expect((windows[0]?.['test_args'] as string).trim().split(/\s+/)).toEqual([

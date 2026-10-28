@@ -287,6 +287,12 @@ describe('fresh public facts are data, not saved release authority', () => {
     const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
     if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
       const jobs = value['jobs'] as Record<string, unknown>[];
+      jobs.push({ id: 904, name: 'Secret scan (diff)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
+          { name: 'Checkout', status: 'completed', conclusion: 'success' },
+          { name: 'Install pinned Gitleaks', status: 'completed', conclusion: 'success' },
+          { name: 'Scan the commits this event adds', status: 'completed', conclusion: 'success' },
+        ] });
       jobs.push({ id: 903, name: 'Docs PR (docs-only)', run_id: 20, head_sha: SOURCE,
         status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
       jobs.push({ id: 902, name: 'Merge Gate', run_id: 20, head_sha: SOURCE,
@@ -306,6 +312,33 @@ describe('fresh public facts are data, not saved release authority', () => {
   it('binds the new source Merge Gate while retaining all fifteen full qualification jobs', async () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each([
+    ['gate omits ci-portability', (ci: string) => ci.replace('needs: [classify, secret-scan, site, docs, ci, ci-portability, ', 'needs: [classify, secret-scan, site, docs, ci, ')],
+    ['gate omits secret-scan', (ci: string) => ci.replace('needs: [classify, secret-scan, site, ', 'needs: [classify, site, ')],
+    ['secret scan is conditional', (ci: string) => ci.replace('    name: Secret scan (diff)\n', "    name: Secret scan (diff)\n    if: github.event_name != 'pull_request'\n")],
+    ['ci-portability runs on pull_request', (ci: string) => ci.replace("lane == 'full' && github.event_name != 'pull_request'\n    name: CI (Node 22", "lane == 'full'\n    name: CI (Node 22")],
+    ['ci-portability needs nothing', (ci: string) => ci.replace(/( {2}ci-portability:\n(?: {4}#[^\n]*\n)*) {4}needs: classify\n/, '$1')],
+  ])('withholds release facts when the source %s', async (_name, mutate) => {
+    const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const mutated = mutate(source);
+    expect(mutated).not.toBe(source);
+    await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(source) }), NOW)).resolves.toBeTruthy();
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(mutated) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(/merge gate dependencies|portability source|Conditional source secret scan/);
+  });
+  it.each(['failure', 'skipped', 'cancelled', 'missing'])('withholds release facts when the source secret scan is %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const index = jobs.findIndex((job) => job['name'] === 'Secret scan (diff)');
+        if (kind === 'missing') jobs.splice(index, 1); else jobs[index] = { ...jobs[index], conclusion: kind, steps: kind === 'failure' ? jobs[index]!['steps'] : [] };
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
