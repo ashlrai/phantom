@@ -34,6 +34,8 @@
  * calls, the Jev layer's daily budget and kill switches) — the timer adds none.
  */
 
+import type { NightlyRetroResult } from './nightly.js';
+
 /** First tick after server start. Long enough that startup (and any TCC prompt) is over. */
 export const RETRO_SWEEP_FIRST_DELAY_MS = 5 * 60_000;
 /** Between ticks. */
@@ -53,6 +55,8 @@ export interface RetroSweepTimerDeps {
   inFlight(): Promise<boolean>;
   /** Run one sweep. */
   sweep(): Promise<unknown>;
+  /** Independently due nightly local mining, even when an hourly sweep is recent. */
+  nightly?(): Promise<NightlyRetroResult>;
   setTimer(fn: () => void, ms: number): { unref?(): unknown };
   clearTimer(handle: { unref?(): unknown }): void;
 }
@@ -64,6 +68,8 @@ export interface RetroSweepTimerOptions {
   stopWaitMs?: number;
   /** Called after every tick (observability and tests). Never throws out. */
   onTick?(outcome: RetroSweepTickOutcome): void;
+  /** Independent nightly diagnostics; unavailable input is never reported as success. */
+  onNightly?(result: NightlyRetroResult): void;
 }
 
 export interface RetroSweepTimer {
@@ -106,6 +112,11 @@ export function startRetroSweepTimer(deps: RetroSweepTimerDeps, opts: RetroSweep
   const tick = async (): Promise<RetroSweepTickOutcome> => {
     if (stopped) return 'stopped';
     try {
+      if (deps.nightly) {
+        const result = await deps.nightly().catch((): NightlyRetroResult => ({ status: 'unavailable', jobs: 0, reviews: 0, proposals: 0 }));
+        try { opts.onNightly?.(result); } catch { /* observability only */ }
+      }
+      if (stopped) return 'stopped';
       if (await deps.inFlight()) return 'skipped-busy';
       const last = await deps.lastSweptAt();
       const lastMs = last ? Date.parse(last) : Number.NaN;
@@ -165,6 +176,7 @@ export function startRetroSweepTimer(deps: RetroSweepTimerDeps, opts: RetroSweep
 export function defaultRetroSweepTimerDeps(cfg: unknown): RetroSweepTimerDeps {
   return {
     now: () => Date.now(),
+    nightly: async () => (await import('./nightly.js')).runNightlyRetro(cfg),
     lastSweptAt: async () => (await (await import('./store.js')).readSweepState()).sweptAt,
     inFlight: async () => (await import('./sweep.js')).isRetroSweepInFlight(),
     sweep: async () => {
