@@ -536,10 +536,15 @@ export function loadGenome(cfg: AshlrConfig): GenomeEntry[] {
  *  - Optionally drops a NEW note file under the resolved project's
  *    .ashlrcode/genome/hub-notes/ — never modifies existing genome files.
  *  - Returns the written entry (source 'hub').
+ *  - Throws on blank text: a note with no body is never stored, so `phm learn`
+ *    and the `ashlr_learn` MCP tool refuse it the same way.
  */
 export function appendHubEntry(input: LearnInput): GenomeEntry {
   const now = new Date().toISOString();
-  const safeText = scrubSecrets(input.text).trim();
+  const safeText = scrubSecrets(typeof input.text === 'string' ? input.text : '').trim();
+  if (!safeText) {
+    throw new Error('note text is empty; pass the text to remember (nothing was stored)');
+  }
 
   // Derive title: supplied title, else first non-empty line of text.
   const title =

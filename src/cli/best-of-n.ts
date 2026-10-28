@@ -9,6 +9,8 @@
  * Prints per-candidate scores and the winner. Exit 0 = winner found; 1 = no winner.
  */
 
+import { noColorRequested } from './ui.js';
+
 // Cmd type matches index.ts: (args: string[]) => Promise<number>
 type Cmd = (args: string[]) => Promise<number>;
 
@@ -18,13 +20,15 @@ export { cmdBestOfN };
 // ---------------------------------------------------------------------------
 // ANSI helpers — prefixed to avoid shadowing builtins
 // ---------------------------------------------------------------------------
-const _reset  = '\x1b[0m';
-const _dim    = (s: string): string => `\x1b[2m${s}${_reset}`;
-const _bold_s = '\x1b[1m';
-const _green  = (s: string): string => `\x1b[32m${s}${_reset}`;
-const _yellow = (s: string): string => `\x1b[33m${s}${_reset}`;
-const _red    = (s: string): string => `\x1b[31m${s}${_reset}`;
-const _cyan   = (s: string): string => `\x1b[36m${s}${_reset}`;
+const _plain  = noColorRequested();
+const _reset  = _plain ? '' : '\x1b[0m';
+const _paint  = (code: string, s: string): string => (_plain ? s : `\x1b[${code}m${s}${_reset}`);
+const _dim    = (s: string): string => _paint('2', s);
+const _bold_s = _plain ? '' : '\x1b[1m';
+const _green  = (s: string): string => _paint('32', s);
+const _yellow = (s: string): string => _paint('33', s);
+const _red    = (s: string): string => _paint('31', s);
+const _cyan   = (s: string): string => _paint('36', s);
 
 function printUsage(log: (s: string) => void = console.error): void {
   log(`${_bold_s}ashlr best-of-n${_reset} — M142 best-of-N generation + critic selection

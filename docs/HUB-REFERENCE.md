@@ -294,7 +294,7 @@ proposal-only path that plans and advances one bounded milestone. It does not
 grant resident or unattended conductor authority:
 
 ```sh
-ashlr goal "harden the inbox apply path"
+ashlr goal "harden the inbox apply path" --project <enrolled-repo>
 ashlr goals list                         # track progress
 ashlr goals advance <id>                 # execute the goal's next milestone
 
@@ -489,7 +489,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr enroll kill on/off` | Engage/clear the kill-switch |
 | `ashlr daemon start/stop/status` | Runtime operator; current production start refuses with empty compiled roots, while status remains observational |
 | `ashlr loop [--watch] [--dry-run]` | Goal-aware conductor; current production admits dry-run only |
-| `ashlr goal "<objective>"` | Set a strategic goal; plan + dispatch milestones |
+| `ashlr goal "<objective>" --project <repo>` | Set a strategic goal; plan + dispatch milestones (`--plan-only` needs no repo) |
 | `ashlr goals add/list/show/plan/advance/status` | Manage goals + milestones |
 | `ashlr vision show/review/preview/shadow/approve/reconcile` | Mission OS: strategy, bounded DAG preview, authenticated shadow evidence, and explicit goal adoption |
 | `ashlr inbox [show/approve/submit/reject]` | Review and act on proposals |
@@ -568,8 +568,8 @@ Full invariant set: [`docs/SPEC-V4-FOUNDRY.md`](https://github.com/ashlrai/phant
 ├── audit/               # Append-only confinement + action audit log
 ├── manager/             # Manager judge scorecards
 ├── native-profiles/     # One private profile per seat (launcher, command.json, native state)
-├── account-connections/ # connections.json: the seats Verse lists
-├── verse/               # Verse sessions, workspaces, project memory, attachments
+├── account-connections/ # connections.json: the seats Phantom lists
+├── verse/               # Phantom console sessions, workspaces, project memory, attachments
 ├── authority/           # Standing grants and the hash-chained ledger
 ├── budget.json          # Budget mode and per-seat overrides
 ├── routing/

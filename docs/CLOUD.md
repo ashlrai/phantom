@@ -117,7 +117,10 @@ stored task keeps only your text. The contract tells the session to:
    ````
 
    `status` is one of `done`, `partial`, `blocked` or `no-change`.
-   `filesChanged` is optional.
+   `filesChanged` is optional. When the repository's `.mcp.json` declares
+   Phantom's companion servers, the prompt also names each one and when to
+   call it, and the report may carry `"toolsUsed"`: the companion tools the
+   session called. `ashlr cloud list` prints it as a `Companion tools:` line.
 6. If nothing needs changing, still push an empty commit and open the PR with
    status `no-change`, so Phantom sees that the task finished.
 
@@ -275,9 +278,16 @@ ashlr cloud improve [--count N]            # launch backlog items now
 ashlr cloud budget --total 250 --spent 12 --per-session 3 --max-per-day 20 \
                    --self-improve on --self-improve-max 4 --self-improve-max-open 3 --reserve 40
 ashlr cloud backlog
+ashlr cloud stats [--days N] [--json]      # how tasks ended, and the merged rate
 ```
 
 `launch` defaults `--repo` to the current directory's GitHub origin.
+
+`stats` counts every task by how it ended (merged, closed, failed with its
+launch failure code, expired) and what is still in flight. Its merged rate is
+merged PRs over finished PRs that carried a change: a PR closed after the
+session reported no change was needed is a correct verdict, so it is counted
+under closed but left out of the rate.
 
 ### Triage in Needs you
 

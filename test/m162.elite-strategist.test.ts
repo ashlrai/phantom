@@ -168,10 +168,10 @@ describe('M162 — computeNorthStar', () => {
     expect(typeof metric.substantiveMerges7d).toBe('number');
     expect(metric.substantiveMerges7d).toBeGreaterThanOrEqual(0);
     expect(typeof metric.engHoursSaved7d).toBe('number');
-    expect(typeof metric.leverageScore).toBe('number');
-    expect(metric.leverageScore).toBeGreaterThanOrEqual(0);
-    expect(metric.leverageScore).toBeLessThanOrEqual(100);
-    expect(['up', 'flat', 'down']).toContain(metric.trend);
+    // No outcome ledger in the hermetic HOME: the score is unknown, never 0.
+    expect(metric.leverageScore).toBeNull();
+    expect(metric.leverage).toMatchObject({ measured: 0, unknown: 0, ledgerIntact: true });
+    expect(metric.trend).toBe('unknown');
   });
 
   it('keeps factual merges raw while withholding substantive credit', async () => {
@@ -194,7 +194,7 @@ describe('M162 — computeNorthStar', () => {
     const metric = computeNorthStar(mockCfgBase);
 
     expect(metric.raw.acceptRate).toBe(0.75);
-    expect(metric.leverageScore).toBe(0);
+    expect(metric.leverageScore).toBeNull();
   });
 
   it('never throws on any input', async () => {
@@ -214,15 +214,16 @@ describe('M162 — northStarSummary', () => {
     expect(summary.length).toBeGreaterThan(20);
     expect(summary).toContain('NORTH-STAR');
     expect(summary).toContain('Positive post-merge leverage credit: unavailable');
-    expect(summary).toContain('Adaptive leverage score and trend: unavailable');
+    expect(summary).toContain('Measured leverage score: unavailable (0 measured');
     expect(summary).not.toContain('Acceptance rate:');
   });
 
   it('never throws on any metric shape', async () => {
     const { northStarSummary } = await import('../src/core/vision/north-star.js');
     const zero = {
-      substantiveMerges7d: 0, engHoursSaved7d: 0, leverageScore: 0,
-      trend: 'flat' as const, computedAt: new Date().toISOString(),
+      substantiveMerges7d: 0, engHoursSaved7d: 0, leverageScore: null,
+      trend: 'unknown' as const, computedAt: new Date().toISOString(),
+      leverage: { measured: 0, improved: 0, unchanged: 0, regressed: 0, unknown: 0, priorScore: null, ledgerIntact: true, reasons: [] },
       raw: { merged: 0, trivialRatio: 0, acceptRate: 0, emptyRate: 0, avgDiffLines: 0, proposalsCreated: 0 },
     };
     expect(() => northStarSummary(zero)).not.toThrow();

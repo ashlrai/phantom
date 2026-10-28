@@ -106,54 +106,82 @@ describe('M30 CI workflow', () => {
     expect(policy).toContain("if (paths.some((path) => !allowed.has(path))) return 'full'");
   });
 
+  it('routes docs-only PRs to an Ubuntu docs check instead of the OS matrix', () => {
+    const docs = workflowJob('docs');
+    expect(docs).toContain("if: needs.classify.outputs.lane == 'docs'");
+    expect(docs).toContain('runs-on: ubuntu-latest');
+    expect(docs).toContain('run: node .github/scripts/ci-source-binding.mjs');
+    expect(docs).toContain('run: node --test .github/tests/ci-site-lane.test.mjs');
+    expect(docs).toContain('run: npm run check:docs');
+    expect(docs).toContain('node .github/scripts/select-docs-markdown-tests.mjs');
+    expect(docs).toContain('npm run test:ci -- "${files[@]}"');
+    expect(docs).not.toContain('grep -lE');
+    expect(docs).not.toMatch(/continue-on-error|upload-artifact|npm publish|deploy|macos|windows/);
+    for (const name of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+      expect(workflowJob(name)).toContain("needs.classify.outputs.lane == 'full'");
+    }
+    const policy = readFileSync(resolve(repoRoot, '.github/scripts/ci-site-lane.mjs'), 'utf8');
+    expect(policy).toContain("export function classifyDocsLane({ eventName, base, head, cwd }) {\n  if (eventName !== 'pull_request') return 'full';");
+  });
+
   it('publishes one fail-closed Merge Gate result for exactly the selected lane', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
-    const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
+    const full = ['ci', 'windows-service-authority'];
+    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
     expect(gate.name).toBe('Merge Gate');
-    expect(gate.needs).toEqual(['classify', 'site', ...full]);
+    expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
-    expect(gate['runs-on']).toBe('ubuntu-latest');
     expect(gate['continue-on-error']).toBeUndefined();
+    // The secret-shape scan always runs: no if, no paths filter.
+    expect(jobs['secret-shape']!.if).toBeUndefined();
+    expect(jobs['secret-shape']!.needs).toBeUndefined();
     const steps = gate.steps as { env: Record<string, string>; run: string }[];
     expect(steps).toHaveLength(1);
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (lane: string, outcomes: Record<string, string>, classify = 'success', deferred = 'false') => {
-      const dependencies = Object.fromEntries(['classify', 'site', ...full].map((name) => [name, {
-        result: name === 'classify' ? classify : outcomes[name], ...(name === 'classify' ? { outputs: { lane } } : {}),
+    const execute = (event: string, lane: string, outcomes: Record<string, string>, drop?: string) => {
+      const dependencies = Object.fromEntries(keys.filter((k) => k !== drop).map((name) => [name, {
+        result: outcomes[name] ?? 'skipped', ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
-        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), MAC_GENERAL_DEFERRED: deferred } }, console: { log: () => {} },
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), EVENT_NAME: event } }, console: { log: () => {} },
       });
     };
-    const site = Object.fromEntries(full.map((name) => [name, 'skipped']));
-    const complete = Object.fromEntries(full.map((name) => [name, 'success']));
-    expect(execute('site', { ...site, site: 'success' })).not.toThrow();
-    expect(execute('full', { ...complete, site: 'skipped' })).not.toThrow();
-    for (const name of full) {
+    const ok = { 'secret-shape': 'success', classify: 'success' };
+    for (const event of ['pull_request', 'merge_group']) {
+      expect(execute(event, 'full', { ...ok, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'site', { ...ok, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'docs', ok)).not.toThrow();
+      expect(execute(event, 'docs', { ...ok, quick: 'success' })).toThrow();
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-        expect(execute('full', { ...complete, [name]: outcome, site: 'skipped' }), `${name}: ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...ok, 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...ok, quick: outcome }), `quick ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...ok, quick: 'success', classify: outcome })).toThrow();
+      }
+      for (const name of ['site', 'docs', ...full]) {
+        expect(execute(event, 'full', { ...ok, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
+      }
+      for (const name of keys) expect(execute(event, 'full', { ...ok, quick: 'success' }, name), `missing ${name}`).toThrow();
+      expect(execute(event, 'bogus', { ...ok, quick: 'success' })).toThrow();
+    }
+    const complete = { ...ok, ci: 'success', 'windows-service-authority': 'success' };
+    for (const event of ['schedule', 'workflow_dispatch']) {
+      expect(execute(event, 'full', complete)).not.toThrow();
+      expect(execute(event, 'full', { ...complete, quick: 'success' })).toThrow();
+      expect(execute(event, 'full', { ...complete, 'secret-shape': 'skipped' })).toThrow();
+      for (const name of full) {
+        for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+          expect(execute(event, 'full', { ...complete, [name]: outcome }), `${name}: ${outcome}`).toThrow();
+        }
       }
     }
-    // Deferred PR: only a skipped mac-general is accepted; failures still block
-    // and every other full-lane job must still succeed.
-    expect(execute('full', { ...complete, 'mac-general': 'skipped', site: 'skipped' }, 'success', 'true')).not.toThrow();
-    for (const outcome of ['failure', 'cancelled', 'neutral']) {
-      expect(execute('full', { ...complete, 'mac-general': outcome, site: 'skipped' }, 'success', 'true')).toThrow();
-    }
-    for (const name of full.filter((name) => name !== 'mac-general')) {
-      expect(execute('full', { ...complete, [name]: 'skipped', site: 'skipped' }, 'success', 'true')).toThrow();
-    }
-    expect(steps[0]!.env.MAC_GENERAL_DEFERRED).toBe(
-      "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}",
-    );
-    expect(execute('site', { ...site, site: 'failure' })).toThrow();
-    expect(execute('site', { ...site, site: 'success', ci: 'success' })).toThrow();
-    expect(execute('full', { ...complete, site: 'success' })).toThrow();
-    expect(execute('full', { ...complete, site: 'skipped' }, 'failure')).toThrow();
-    expect(execute('unknown', { ...complete, site: 'skipped' })).toThrow();
+    // Reusable call from a tag push: Windows service authority is deferred.
+    expect(execute('push', 'full', { ...ok, ci: 'success' })).not.toThrow();
+    expect(execute('push', 'full', { ...ok, ci: 'failure' })).toThrow();
+    expect(execute('push', 'full', { ...ok, ci: 'success', 'windows-service-authority': 'failure' })).toThrow();
   });
 
   it('is reusable as the canonical release verification authority', () => {
@@ -163,8 +191,11 @@ describe('M30 CI workflow', () => {
       'permissions:\n  contents: read',
     );
     expect(ciYml.match(/^\s{2,}permissions:/gm) ?? []).toHaveLength(0);
-    expect(ciYml).toMatch(/^concurrency:\n {2}group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m);
-    expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
+    expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    // Full suites run daily on master, not on every push.
+    expect(ciYml).not.toMatch(/^ {2}push:/m);
+    // The required Merge Gate must also report on merge-queue commits.
+    expect(ciYml).toMatch(/^ {2}merge_group:$/m);
   });
 
   it('checks out the exact candidate and binds its tree to the original event before gates', () => {
@@ -188,7 +219,7 @@ describe('M30 CI workflow', () => {
     expect(sourceBinding).not.toMatch(/appendFileSync\([^;]*GITHUB_SHA=/s);
   });
 
-  it('adds all four exhaustive Mac general partitions and one complete serial isolated lane', () => {
+  it('adds all four exhaustive Mac general partitions and one complete paired isolated lane', () => {
     const general = workflowJob('mac-general');
     const isolated = workflowJob('mac-isolated');
     expect(general).toContain('name: Mac exhaustive (${{ matrix.shard }}/4)');
@@ -198,6 +229,8 @@ describe('M30 CI workflow', () => {
     expect(general).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}');
     expect(isolated).toContain('name: Mac exhaustive (isolated)');
     expect(isolated).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-isolated');
+    expect(isolated).toContain("ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2'");
+    expect(general).not.toContain('ASHLR_TEST_CI_ISOLATED_CONCURRENCY');
     for (const job of [general, isolated]) {
       expect(job).toContain('runs-on: macos-15');
       expect(job).toContain("ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'");
@@ -287,7 +320,7 @@ describe('M30 CI workflow', () => {
         expect(step).toContain('timeout-minutes: 2');
         expect(step).not.toMatch(/always\(\)|needs:|permissions:|qualifyArtifact|verifyArtifact|adoptArtifact/);
       }
-      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}');
+      expect(observations[0]).toContain('ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}');
       expect(observations[1]).toContain("if: success() && steps.shadow.outputs.shadow_dir != ''");
       expect(observations[1]).toContain('name: phantom-impact-shadow-');
       const full = job.match(/^ {6}- name: Test (?:web operator console|complete Mac [^\n]+)\n[\s\S]*?(?=^ {6}- name:)/m)?.[0] ?? '';
@@ -318,7 +351,7 @@ describe('M30 CI workflow', () => {
     expect(ciYml).not.toContain('pull_request_target');
   });
 
-  it('releases only the two short Mac gates after isolated work while general lanes remain independent', () => {
+  it('queues the short Mac gates beside the isolated lane while general lanes remain independent', () => {
     type Job = {
       name: string;
       'runs-on': string;
@@ -341,35 +374,22 @@ describe('M30 CI workflow', () => {
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
-    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site'");
+    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group'");
     expect(shared, 'shared Mac still requires its own complete named gate').toBeDefined();
+    // Each Mac gate queues straight after classify: chaining one Mac job behind
+    // another adds a whole Mac queue wait to the PR's wall clock.
     for (const id of ['ci-shared-macos', 'native-macos-broker-foundation']) {
-      const short = jobs[id]!;
-      expect(short.needs).toEqual(['classify', 'mac-isolated']);
-      expect(jobs['mac-isolated']!.needs).toBe('classify');
-      // The actual transitive graph cannot reintroduce the general matrix as
-      // a predecessor; this is scheduling overlap, never missing coverage.
-      const predecessors = (jobId: string): string[] => {
-        const needs = jobs[jobId]!.needs;
-        const dependencies = needs === undefined ? [] : Array.isArray(needs) ? needs : [needs];
-        return dependencies.flatMap((dependency) => [dependency, ...predecessors(dependency)]);
-      };
-      expect(new Set(predecessors(id))).toEqual(new Set(['classify', 'mac-isolated']));
-      // An explicit status function keeps the short gate eligible on predecessor
-      // failure; cancellation stops it rather than starting more work.
-      expect(short.if).toBe("${{ !cancelled() && needs.classify.outputs.lane == 'full' }}");
-      expect(short['continue-on-error']).toBeUndefined();
+      expect(jobs[id]!['continue-on-error']).toBeUndefined();
     }
-    for (const id of ['ci', 'mac-isolated', 'windows-service-authority']) {
+    // Every full lane runs only in the daily, dispatch and reusable runs: never
+    // on a PR or merge-queue commit. Mac and Windows service lanes also skip the
+    // caller's push event (reusable call from a tag push).
+    for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
-      expect(jobs[id]!.if).toBe("needs.classify.outputs.lane == 'full'");
+      const push = id === 'ci' ? '' : " && github.event_name != 'push'";
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group'`);
     }
-    // The exhaustive Mac partition runs on master pushes, reusable calls and
-    // PRs labelled ci:full-mac; unlabelled PRs defer it to post-merge.
-    expect(jobs['mac-general']!.needs).toBe('classify');
-    expect(jobs['mac-general']!.if).toBe(
-      "needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))",
-    );
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '0 10 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     expect(ci.strategy!.matrix.include).toHaveLength(7);
@@ -389,8 +409,8 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(18);
-    expect(new Set(names).size).toBe(18);
+    expect(names).toHaveLength(22);
+    expect(new Set(names).size).toBe(22);
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
@@ -400,7 +420,7 @@ describe('M30 CI workflow', () => {
   it('keeps native cache reuse independent from test and artifact admission', () => {
     const native = workflowJob('native-macos-broker-foundation');
     expect(native).not.toMatch(/restore-keys:|enableCrossOsArchive:|continue-on-error:|pull_request_target|cache-mode:/);
-    expect(native).toContain("if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
+    expect(native).toContain("if: success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'");
     expect(native.match(/cache-hit/g)).toHaveLength(1);
     expect(native.match(/path: desktop\/src-tauri\/target\/debug\//g)).toHaveLength(2);
     expect(native.indexOf('- name: Bind candidate source')).toBeLessThan(native.indexOf('- name: Restore native compilation cache'));
@@ -469,7 +489,7 @@ describe('M30 CI workflow', () => {
     expect(pkg.scripts?.build?.split(' && ').slice(0, 2)).toEqual(['npm run check:version', 'tsc -p tsconfig.json']);
     expect(pkg.scripts?.['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
     expect(ciYml).toContain('npm run lint');
-    const docs = ciYml.match(/^ {6}- name: Check documentation[\s\S]*?(?=^ {6}- name:)/gm) ?? [];
+    const docs = ciYml.match(/^ {6}- name: Check documentation\n[\s\S]*?(?=^ {6}- name:)/gm) ?? [];
     expect(docs).toHaveLength(1);
     expect(docs[0]).toContain("if: matrix.label == 'ubuntu, authority 3/3'");
     expect(docs[0]).toContain('run: npm run check:docs');

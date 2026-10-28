@@ -197,3 +197,42 @@ export function canonicalizeProposalDiff(text: string): string {
   }
   throw new Error('proposal diff canonicalization did not converge');
 }
+
+const KNOWN_VALUE_MIN_RUN = 8;
+
+/**
+ * Known-value redaction for text that came back from an upstream service.
+ * scrubSecrets() matches key SHAPES; a provider that echoes the key it
+ * rejected can echo an opaque key no shape rule catches. This redacts the
+ * values actually sent: any run of 8 or more characters of a known secret,
+ * so whole and partially masked echoes are both covered.
+ */
+export function redactKnownValues(text: string, secrets: ReadonlyArray<string | null | undefined>): string {
+  if (!text) return text;
+  const windows = new Set<string>();
+  for (const secret of secrets) {
+    if (typeof secret !== 'string') continue;
+    const value = secret.trim();
+    if (value.length < KNOWN_VALUE_MIN_RUN) continue;
+    for (let i = 0; i + KNOWN_VALUE_MIN_RUN <= value.length; i += 1) windows.add(value.slice(i, i + KNOWN_VALUE_MIN_RUN));
+  }
+  if (windows.size === 0) return text;
+  const hit = new Uint8Array(text.length);
+  let any = false;
+  for (let i = 0; i + KNOWN_VALUE_MIN_RUN <= text.length; i += 1) {
+    if (windows.has(text.slice(i, i + KNOWN_VALUE_MIN_RUN))) {
+      hit.fill(1, i, i + KNOWN_VALUE_MIN_RUN);
+      any = true;
+    }
+  }
+  if (!any) return text;
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    if (hit[i]) {
+      if (i === 0 || !hit[i - 1]) out += REDACTED;
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}

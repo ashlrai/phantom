@@ -290,7 +290,7 @@ describe('M71 cmdOnboard — stack advisory is additive, never blocks', () => {
     const out = logged();
     // All five numbered steps must still be in the output.
     expect(out).toContain('ashlr preflight');
-    expect(out).toMatch(/ashlr sandbox enroll/);
+    expect(out).toMatch(/ashlr enroll add /);
     expect(out).toMatch(/--dry-run/);
     expect(out).toContain('ashlr inbox');
     expect(out).toMatch(/--rollback/);

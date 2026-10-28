@@ -14,6 +14,7 @@
  */
 
 import { loadConfig, saveConfig } from '../core/config.js';
+import { noColorRequested } from './ui.js';
 import { setupWizard } from '../core/onboard.js';
 import { enroll, listEnrolled } from '../core/sandbox/policy.js';
 import { install as installService, serviceStatus } from '../core/daemon/service.js';
@@ -51,7 +52,7 @@ function sharedQueueLabel(sharedQueue: unknown, dim: (s: string) => string): str
 }
 
 async function cmdWorkerSetup(args: string[]): Promise<number> {
-  const colors = makeColors(isTty());
+  const colors = makeColors(isTty() && !noColorRequested());
   const { bold, green, cyan, dim, red } = colors;
 
   try {
@@ -183,7 +184,7 @@ async function cmdWorkerSetup(args: string[]): Promise<number> {
 // ─── Worker status ────────────────────────────────────────────────────────────
 
 async function cmdWorkerStatus(_args: string[]): Promise<number> {
-  const colors = makeColors(isTty());
+  const colors = makeColors(isTty() && !noColorRequested());
   const { bold, green, yellow, red, dim, cyan } = colors;
 
   const cfg    = loadConfig();
@@ -220,9 +221,22 @@ async function cmdWorkerStatus(_args: string[]): Promise<number> {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+const WORKER_USAGE = [
+  'usage:',
+  '  ashlr worker setup ...  (temporarily unavailable; performs no setup mutation)',
+  '  ashlr worker status',
+];
+
 export async function cmdWorker(args: string[]): Promise<number> {
   const sub = args[0];
   const rest = args.slice(1);
+
+  // Help wins anywhere: `worker setup --help` must print usage, never reach
+  // the setup path (config, enrollment and service install).
+  if (sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    for (const line of WORKER_USAGE) console.log(line);
+    return 0;
+  }
 
   switch (sub) {
     case 'setup':
@@ -232,12 +246,10 @@ export async function cmdWorker(args: string[]): Promise<number> {
       return cmdWorkerStatus(rest);
 
     default: {
-      const colors = makeColors(isTty());
+      const colors = makeColors(isTty() && !noColorRequested());
       console.error(colors.red('error: ') + `unknown worker subcommand: ${sub ?? '(none)'}`);
       console.error('');
-      console.error('usage:');
-      console.error('  ashlr worker setup ...  (temporarily unavailable; performs no setup mutation)');
-      console.error('  ashlr worker status');
+      for (const line of WORKER_USAGE) console.error(line);
       console.error('');
       return 1;
     }

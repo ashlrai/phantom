@@ -117,9 +117,10 @@ export function CalendarHeatmap({
   const knownDays = days.filter((d) => d.value !== null);
   const total = knownDays.reduce((s, d) => s + (d.value ?? 0), 0);
   const busiest = knownDays.reduce<CalendarDatum | null>((b, d) => (!b || (d.value ?? 0) > (b.value ?? 0) ? d : b), null);
-  const summary = ariaLabel ?? `${title}: ${days.length} days, ${formatValue(total)}${unitText} in total` +
+  const missingDays = days.length - knownDays.length;
+  const summary = ariaLabel ?? `${title}: ${days.length} day${days.length === 1 ? '' : 's'}, ${formatValue(total)}${unitText} in total` +
     (busiest && (busiest.value ?? 0) > 0 ? `, busiest ${formatDayLabel(busiest.day)} with ${formatValue(busiest.value!)}` : '') +
-    (days.length - knownDays.length > 0 ? `, ${days.length - knownDays.length} days without data` : '') + '.';
+    (missingDays > 0 ? `, ${missingDays} day${missingDays === 1 ? '' : 's'} without data` : '') + '.';
 
   const columns: TableColumn<CalendarDatum>[] = [
     { key: 'day', label: 'Day', render: (d) => formatDayLabel(d.day) },

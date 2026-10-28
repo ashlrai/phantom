@@ -29,6 +29,7 @@ does not establish installed fleet or hosted-service readiness.
 Install Node.js 22.15+ and Git, then install the canonical package's promoted release:
 
 ```sh
+node --version  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom
 phm --version   # report the installed version
 phm verse
@@ -109,6 +110,10 @@ workbench, but keep their own billing and limits. In **Resources**, check both
 chat and fleet readiness. Signed out, missing usage, exhausted quota, reserved
 capacity or missing authority can hold work; connection alone is not readiness.
 See [Automatic work](AUTOMATIC-OUTCOMES.md) for resource boundaries and recovery.
+
+To give Claude Code, Codex or Cursor the tools of Phantom Secrets, Locus and
+Ashlr MD through one MCP connection, see
+[One connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
 
 ### Make your first useful turn
 

@@ -6,7 +6,7 @@
  * result is durably attached, including mid-tier review PRs.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,6 +31,23 @@ const {
   stagingPushHookMock: vi.fn(),
   viewPrMock: vi.fn(),
 }));
+
+// The auto-merge canary shadow observer is non-authoritative and runs after the
+// outward result is fixed. Under vitest its child boots tsx and re-imports the
+// whole module graph (seconds per merge on Windows). Run the same observer
+// in-process instead; m402 covers the real child-process boundary.
+vi.mock('../src/core/fleet/automerge-canary-observer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/fleet/automerge-canary-observer.js')>();
+  return {
+    ...actual,
+    observeAutoMergeCanaryShadowAsync: async (
+      input: Parameters<typeof actual.observeAutoMergeCanaryShadowAsync>[0],
+    ) => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return actual.observeAutoMergeCanaryShadow(input);
+    },
+  };
+});
 
 vi.mock('../src/core/autonomy/evidence-pack.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/autonomy/evidence-pack.js')>();
@@ -336,6 +353,27 @@ function afterEvidencePersist(mutate: (id: string, file: string) => void): void 
   evidencePersistHookMock.mockImplementationOnce(mutate);
 }
 
+// One seeded repo + bare origin is built once per file and copied per test:
+// every test still gets its own private working repo, index and bare remote
+// (with the origin URL rebound to its own copy), but skips ~10 git spawns.
+let templateRoot: string;
+let templateRepo: string;
+let templateBare: string;
+beforeAll(() => {
+  templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m419-template-'));
+  templateRepo = path.join(templateRoot, 'repo');
+  templateBare = path.join(templateRoot, 'bare');
+  initRepo(templateRepo);
+  execFileSync('git', ['init', '--bare', templateBare], { stdio: 'pipe' });
+  git(templateRepo, ['remote', 'add', 'origin', templateBare]);
+  git(templateRepo, ['push', '-u', 'origin', 'main']);
+  git(templateRepo, ['fetch', 'origin']);
+  git(templateRepo, ['remote', 'set-head', 'origin', 'main']);
+}, 60_000);
+afterAll(() => {
+  fs.rmSync(templateRoot, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   useNativePrivateStorageRunner();
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m419-home-'));
@@ -346,12 +384,12 @@ beforeEach(() => {
   process.env.ASHLR_HOME = path.join(tmpHome, '.ashlr');
   process.env.ASHLR_TEST_ALLOW_ANY_REPO = '1';
   setKill(false);
-  initRepo(tmpRepo);
-  execFileSync('git', ['init', '--bare', bareRepo], { stdio: 'pipe' });
-  git(tmpRepo, ['remote', 'add', 'origin', bareRepo]);
-  git(tmpRepo, ['push', '-u', 'origin', 'main']);
-  git(tmpRepo, ['fetch', 'origin']);
-  git(tmpRepo, ['remote', 'set-head', 'origin', 'main']);
+  fs.cpSync(templateRepo, tmpRepo, { recursive: true });
+  fs.cpSync(templateBare, bareRepo, { recursive: true });
+  git(tmpRepo, ['remote', 'set-url', 'origin', bareRepo]);
+  // The copied index carries the template's stat data; refresh it so the
+  // checkout is exactly as clean as a freshly committed repository.
+  git(tmpRepo, ['update-index', '-q', '--refresh']);
   expect(enroll(tmpRepo).ok).toBe(true);
   if (process.platform === 'win32') useSemanticPrivateStorageRunner();
 

@@ -1,23 +1,81 @@
 name: CI
 
 on:
-  push:
-    branches: [master]
+  # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
+  # merge fast, test later, fix forward daily). Full suites run once a day on
+  # master, on manual dispatch, and on reusable workflow_call.
   pull_request:
     branches: ["**"]
+    types: [opened, synchronize, reopened]
+  merge_group:
   workflow_call:
+  # Daily full suite on master at 06:00 ET (10:00 UTC).
+  schedule:
+    - cron: "0 10 * * *"
+  # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Candidate checkouts must match the original GitHub event's tree before gates.
-# Superseded PR revisions can stop safely; default
-# branch pushes and reusable workflow callers retain independent full matrices.
+# PR runs cancel superseded revisions. merge_group, schedule, dispatch and
+# workflow_call runs each get their own group (keyed by run_id) and never cancel.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  secret-shape:
+    # Security floor: runs on every event with no if and no paths filter. Scans
+    # the added lines of the candidate diff with the pinned scrub.pl and fails
+    # closed on any token-shaped match outside FAKE test fixtures.
+    name: Secret-shape scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Scan candidate diff (fail closed)
+        env:
+          SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+          if [ -z "${BASE_SHA}" ]; then BASE_SHA="$(git rev-parse "${HEAD_SHA}^1")"; fi
+          base="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
+          git diff --no-color --no-ext-diff "${base}" "${HEAD_SHA}" > "${RUNNER_TEMP}/candidate.diff"
+          perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
+
+  quick:
+    # The only per-PR build step: install plus the core TypeScript no-emit check.
+    # Docs-only PRs skip it. Full suites run in the daily run.
+    name: Quick typecheck
+    needs: classify
+    if: needs.classify.outputs.lane != 'docs' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Core no-emit type check
+        run: npx tsc --noEmit -p tsconfig.json
+
   classify:
     name: Classify PR site lane
     runs-on: ubuntu-latest
@@ -45,7 +103,7 @@ jobs:
   site:
     name: Site PR (ecosystem)
     needs: classify
-    if: needs.classify.outputs.lane == 'site'
+    if: needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -73,9 +131,49 @@ jobs:
       - name: Smoke-test ecosystem markup, data, and controls
         run: npm run test:ci -- test/site-ecosystem-smoke.test.ts
 
+  docs:
+    # Docs-only PRs (every changed path is Markdown outside code and test trees,
+    # or under docs/) cannot change runtime behaviour, so they skip the Ubuntu,
+    # Windows and Mac matrix. They still run the documentation checks and every
+    # Markdown-reading test that does not need a built dist/. Tests that import
+    # test/helpers/require-built-dist.js need npm run build, so the selector
+    # leaves them for the full lane, which builds first. The Merge Gate still reports.
+    name: Docs PR (docs-only)
+    needs: classify
+    if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test fail-closed lane classification
+        run: node --test .github/tests/ci-site-lane.test.mjs
+      - name: Check documentation (docs lane)
+        run: npm run check:docs
+      - name: Run tests that read Markdown
+        run: |
+          mapfile -t files < <(node .github/scripts/select-docs-markdown-tests.mjs)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no Markdown-reading tests found" >&2; exit 1; fi
+          npm run test:ci -- "${files[@]}"
+
   ci:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
     # Ubuntu is the exhaustive authority, partitioned by Vitest's deterministic
     # file sharding so the full suite has margin below the hermetic hard cap.
@@ -166,6 +264,7 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}
@@ -293,7 +392,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 2
         env:
-          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: node .github/scripts/ci-impact-shadow.mjs web "${{ steps.web.outputs.lane_dir }}"
       - name: Upload advisory web impact shadow
         if: success() && steps.shadow.outputs.shadow_dir != ''
@@ -407,10 +506,11 @@ jobs:
           retention-days: 7
 
   ci-shared-macos:
-    # Scheduling experiment: start this short Mac gate after the isolated
-    # lane settles so it can overlap unfinished general lanes, unless cancelled.
-    needs: [classify, mac-isolated]
-    if: ${{ !cancelled() && needs.classify.outputs.lane == 'full' }}
+    # Queues with the isolated lane instead of after it. PRs no longer run the
+    # general Mac matrix, so waiting on mac-isolated only added a second Mac
+    # queue wait to every PR.
+    needs: classify
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -434,6 +534,14 @@ jobs:
               test/m466.host-merge-revocation-protocol.test.ts
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-shared', github.run_id) }}
+      cancel-in-progress: false
     env: *node_ci_environment
     steps: *node_ci_steps
 
@@ -445,11 +553,19 @@ jobs:
     # the macOS-specific authority suites still run per PR (mac-isolated,
     # ci-shared-macos, native-macos-broker-foundation). The exhaustive Mac
     # partition runs on every master push, reusable workflow_call runs and any PR
-    # labelled `ci:full-mac`.
-    if: needs.classify.outputs.lane == 'full' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-mac'))
+    # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
+    # push that follows the queue still runs it.
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 90
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard) }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -487,7 +603,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 2
         env:
-          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: node .github/scripts/ci-impact-shadow.mjs mac-general-${{ matrix.shard }} "${{ steps.lane.outputs.lane_dir }}"
       - name: Upload advisory Mac impact shadow
         if: success() && steps.shadow.outputs.shadow_dir != ''
@@ -513,14 +629,24 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 90
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-isolated', github.run_id) }}
+      cancel-in-progress: false
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
       ASHLR_TEST_CI_TIMEOUT_MS: '5400000'
+      # The isolated suites mostly wait on real child processes. Two run at a
+      # time, longest first, each in its own home with one worker.
+      ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -549,7 +675,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 2
         env:
-          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ASHLR_SHADOW_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: node .github/scripts/ci-impact-shadow.mjs mac-isolated "${{ steps.lane.outputs.lane_dir }}"
       - name: Upload advisory Mac impact shadow
         if: success() && steps.shadow.outputs.shadow_dir != ''
@@ -575,11 +701,19 @@ jobs:
 
   native-macos-broker-foundation:
     name: Native macOS broker foundation (Rust 1.97.1)
-    # Own checkout and fixtures remain independent evidence. Start this short
-    # gate after the isolated lane settles, including failure, to overlap general lanes.
-    needs: [classify, mac-isolated]
-    if: ${{ !cancelled() && needs.classify.outputs.lane == 'full' }}
+    # Own checkout and fixtures remain independent evidence. Queues with the
+    # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
+    needs: classify
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: macos-latest
+    timeout-minutes: 45
+    # Master runs each Mac lane one push at a time: a newer push replaces the
+    # one still waiting, so a burst of merges cannot stack hours of Mac work
+    # ahead of every PR. Merge Gate accepts that replacement only once master
+    # has moved past this commit. PR runs get a group of their own.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-broker', github.run_id) }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -753,7 +887,7 @@ jobs:
           fi
 
       - name: Save native compilation cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'
+        if: success() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: desktop/src-tauri/target/debug/
@@ -761,9 +895,10 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
+    timeout-minutes: 30
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: "30000"
     steps:
@@ -801,42 +936,97 @@ jobs:
           test/m93.daemon-service-windows-integration.test.ts
 
   merge-gate:
-    # One stable required check across both PR lanes. The classifier and every
-    # matrix job must settle before this job can report a result. A skipped or
-    # failed selected lane is a failure, including when classification failed.
+    # One stable required check. PR and merge_group: Secret-shape scan, Classify
+    # and (unless docs-only) Quick typecheck must pass, and every full lane must
+    # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
+    # selected full lanes. Exact dependency keys; anything skipped, cancelled or
+    # missing that should have run is a failure.
     name: Merge Gate
-    needs: [classify, site, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority]
+    # macOS lanes are not needed: they never run on PR or merge_group (waiver).
+    needs: [secret-shape, classify, quick, site, docs, ci, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require selected CI lane
         env:
+          EVENT_NAME: ${{ github.event_name }}
           GATE_NEEDS: ${{ toJSON(needs) }}
-          MAC_GENERAL_DEFERRED: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-mac') }}
         run: |
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
-          const full = ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
-          const expected = ['classify', 'site', ...full];
+          const full = ['ci', 'windows-service-authority'];
+          const expected = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
           }
           const outcome = (name) => jobs[name]?.result;
+          if (outcome('secret-shape') !== 'success') throw new Error(`Secret-shape scan concluded ${outcome('secret-shape') ?? 'missing'}`);
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
-          if (lane !== 'site' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const selected = lane === 'site' ? ['site'] : full;
-          const excluded = lane === 'site' ? full : ['site'];
-          // mac-general is deferred to post-merge on unlabelled PRs (see job).
-          const deferred = process.env.MAC_GENERAL_DEFERRED === 'true' ? ['mac-general'] : [];
-          for (const name of selected) {
-            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to post-merge`); continue; }
+          if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
+          const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
+          const lanes = ['site', 'docs', ...full];
+          const selected = lane === 'full' ? full : [lane];
+          // PR and merge queue: only the quick check, and none for docs-only.
+          const chosen = fast ? (lane === 'docs' ? [] : ['quick']) : selected;
+          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
+          // A reusable workflow_call runs under the caller's push event: the Windows
+          // service lane is deferred there, so it must be skipped, never failed.
+          const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
+          for (const name of chosen) {
+            if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to the daily run`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           for (const name of excluded) {
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
-          console.log(`Merge Gate passed: ${lane} CI`);
+          console.log(`Merge Gate passed: ${fast ? 'fast' : 'full'} ${lane} CI`);
           NODE
+
+  fixup-queue:
+    # Daily red run -> READY FIXUP lines for the router queue (fix-forward owner:
+    # ci-efficiency). One line per failed job from the needs context only: no
+    # logs, env or API reads, default read-only token, output passed through the
+    # pinned scrub.pl. Retention 7 days.
+    name: Daily fixup queue
+    needs: [secret-shape, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate]
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout scrubber
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/tests/secret-shape/scrub.pl
+          sparse-checkout-cone-mode: false
+      - name: Build fixup-queue.txt
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+        run: |
+          set -euo pipefail
+          echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+          node <<'NODE' > raw.txt
+          const needs = JSON.parse(process.env.NEEDS);
+          const sha7 = process.env.GITHUB_SHA.slice(0, 7);
+          const run = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          let n = 0;
+          for (const [job, { result }] of Object.entries(needs)) {
+            if (result !== 'failure' && result !== 'cancelled') continue;
+            n += 1;
+            console.log(`- READY RQ-FIXUP-PHANTOM-${sha7}-${n} (P0, pool=any, repo=phantom, lead=CI-Efficiency, owner=ci-efficiency, job=${job}, result=${result}, run=${run}, sha=${sha7}): daily full suite job ${job} concluded ${result}; first error is in the run's failed step.`);
+          }
+          NODE
+          perl .github/tests/secret-shape/scrub.pl < raw.txt > fixup-queue.txt
+          echo "fixup_lines=$(wc -l < fixup-queue.txt)"
+          cat fixup-queue.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload fixup queue
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phantom-fixup-queue
+          path: fixup-queue.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -166,6 +166,7 @@ import {
   type AutoMergeScopePolicyResolution,
 } from '../foundry/automerge-scope-policy.js';
 import { measureAutoMergeDiffScopeForGate } from '../foundry/automerge-diff-scope.js';
+import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
 import {
   judgeProposal,
   resolveFrontierJudgeClient,
@@ -231,6 +232,15 @@ import {
   REMOTE_HANDOFF_RECOVERY_MARKER,
 } from './remote-handoff.js';
 import { findLocalRealizedMergeDescendant } from './realized-merge.js';
+import {
+  ashlrTmpDir,
+  reapLeakedTempWorktrees,
+  releaseTempWorktreeOwner,
+  releaseTmpScratchOwner,
+  tempWorktreePatchPath,
+  writeTempWorktreeOwner,
+  writeTmpScratchOwner,
+} from './temp-worktree-reaper.js';
 
 function auditAutoMergeCanaryFailure(repo: string, sandboxId: string): void {
   try {
@@ -300,9 +310,13 @@ const SELF_EVAL_PARITY_RETRY_DELAY_MS = 500;
  * `core.fsmonitor` command would otherwise run UNCONFINED as the daemon on the
  * next `worktree add`. No automated merge / verify flow here ever relied on a
  * hook (commits already pass --no-verify); smudge filters still apply.
+ * Replace refs are ignored for the same reason (see the body).
  */
 function gitRun(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
+  // --no-replace-objects: a refs/replace/<oid> planted in the shared object
+  // store would otherwise make every object read here (the staged tree, the
+  // merge parent) resolve to content no gate ever saw.
+  return execFileSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
     cwd,
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
@@ -434,18 +448,23 @@ async function runFencedMutation<T>(
   }
 }
 
-/** Write `content` to a temp file under ~/.ashlr/tmp; caller cleans it up. */
-function writeTmpFile(content: string): string {
-  const dir = join(homedir(), '.ashlr', 'tmp');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const p = join(dir, `merge-${randomBytes(6).toString('hex')}.diff`);
+/**
+ * Write `content` to the patch file of the temp worktree at `worktreeDir`
+ * (`<dir>.patch`, beside its owner marker); caller cleans it up. Named after
+ * the worktree so a SIGKILL between write and cleanup leaves a file the
+ * temp-worktree reaper removes under the same owner rules as the worktree.
+ */
+function writeTmpFile(content: string, worktreeDir: string): string {
+  const p = tempWorktreePatchPath(worktreeDir);
   // M292: `git apply` rejects a patch whose final line lacks a trailing newline
   // ("corrupt patch at line N"). Captured sandbox diffs frequently end without
   // one, which made EVERY verify/merge git-apply fail → no proposal could ever
   // merge. Ensure a trailing newline on the apply temp file (does NOT touch the
   // stored proposal.diff or its provenance hash — only this throwaway apply file).
   const body = content.endsWith('\n') ? content : content + '\n';
-  writeFileSync(p, body, 'utf8');
+  // `wx`: the name is unique per temp worktree id, so an existing file there is
+  // never ours; fail instead of writing through whatever was planted at it.
+  writeFileSync(p, body, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return p;
 }
 
@@ -1560,6 +1579,23 @@ function verificationBlockerCode(reason: string): AutoMergeGateCheckCode {
   return 'verification-gate';
 }
 
+const AGENT_INSTRUCTION_FILES = new Set(['agents.md', 'claude.md', 'constitution.md', 'gemini.md', '.mcp.json']);
+const AGENT_CONFIG_DIRS = new Set(['.claude', '.cursor', '.codex']);
+
+/**
+ * Files every later agent session reads as instructions or runs as tool
+ * config (AGENTS.md, CLAUDE.md, CONSTITUTION.md, .mcp.json, .claude/ and the
+ * like). An unattended local merge never lands them: a proposal could
+ * otherwise rewrite the rules the next agent follows, or register a command
+ * that runs on the owner's machine.
+ */
+function isAgentInstructionPath(path: string): boolean {
+  const segments = path.replace(/\\/g, '/').toLowerCase().split('/').filter((segment) => segment.length > 0);
+  if (segments.length === 0) return false;
+  if (AGENT_INSTRUCTION_FILES.has(segments[segments.length - 1]!)) return true;
+  return segments.slice(0, -1).some((segment) => AGENT_CONFIG_DIRS.has(segment));
+}
+
 /**
  * Explain, without side effects, whether the proposal is auto-mergeable from
  * the evidence the caller already has. This is a display/helper surface for CLI,
@@ -2481,6 +2517,7 @@ export async function openStandingVerificationConfinement(
     try {
       rmSync(runTmpDir, { recursive: true, force: true });
     } catch { /* a leftover private dir under ~/.ashlr/tmp is harmless */ }
+    releaseTmpScratchOwner(runTmpDir);
     runTmpDir = null;
   };
   try {
@@ -2488,6 +2525,7 @@ export async function openStandingVerificationConfinement(
     const parent = join(home, '.ashlr', 'tmp');
     mkdirSync(parent, { recursive: true, mode: 0o700 });
     runTmpDir = realpathSync(mkdtempSync(join(parent, 'verify-confine-')));
+    writeTmpScratchOwner(runTmpDir);
     chmodSync(runTmpDir, 0o700);
     const base = overlayMod.buildAutonomousEnvOverlay({ engine: 'local', runTmpDir, home, seatId: null });
     const cargo = opts.cargoAttachment;
@@ -2694,8 +2732,11 @@ async function verifyProposalAgainstCurrentPins(
     return { ok: false, ran: [], detail: `could not resolve head of default branch '${base}'`, baseBranch: base };
   }
 
-  const tmpBranch = `ashlr/verify/${randomBytes(6).toString('hex')}`;
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `vwt-${randomBytes(6).toString('hex')}`);
+  // One id for both, so the reaper can find a crashed verify's scratch branch
+  // from its owner marker after the worktree itself is gone.
+  const tmpId = randomBytes(6).toString('hex');
+  const tmpBranch = `ashlr/verify/${tmpId}`;
+  const tmpDir = join(ashlrTmpDir(), `vwt-${tmpId}`);
 
   // Create the isolated worktree on a scratch branch off the default-branch head.
   // V3.10 (U6): in a fleet mirror this is a ref + worktree mutation, so it
@@ -2706,11 +2747,16 @@ async function verifyProposalAgainstCurrentPins(
   try {
     added = await underMirrorLease(repo, () => {
       try {
+        // Reap crash leftovers (SIGKILL/OOM mid-verify skips the finally below)
+        // under the same lease, then mark this worktree's owner before creating it.
+        reapLeakedTempWorktrees(repo);
+        writeTempWorktreeOwner(tmpDir, repo);
         gitRun(repo, ['worktree', 'add', '-b', tmpBranch, tmpDir, baseHead]);
         installGrants = linkVerifyNodeModules(repo, tmpDir);
         return null;
       } catch (err) {
         gitTry(repo, ['worktree', 'prune']);
+        releaseTempWorktreeOwner(tmpDir);
         return err instanceof Error ? err.message : String(err);
       }
     });
@@ -2813,7 +2859,7 @@ async function verifyProposalAgainstCurrentPins(
     // command list, then run those (immutable) commands against the patched tree.
     // Apply exactly to the verified index. Context drift is a refusal, not
     // authority to synthesize a three-way result that was never proposed.
-    patchFile = writeTmpFile(diff);
+    patchFile = writeTmpFile(diff, tmpDir);
     try {
       gitRun(tmpDir, ['apply', '--index', patchFile]);
     } catch (err) {
@@ -2973,6 +3019,7 @@ async function verifyProposalAgainstCurrentPins(
       gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
       gitTry(repo, ['worktree', 'prune']);
       gitTry(repo, ['branch', '-D', tmpBranch]);
+      releaseTempWorktreeOwner(tmpDir);
     };
     // Under the mirror lease when it comes free; otherwise anyway — a stranded
     // worktree and scratch branch in the mirror are worse than an unleased
@@ -3207,10 +3254,12 @@ function buildMergeBranch(
     };
   }
 
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `mwt-${randomBytes(6).toString('hex')}`);
+  const tmpDir = join(ashlrTmpDir(), `mwt-${randomBytes(6).toString('hex')}`);
   try {
     const authorityFailure = finalAuthority?.();
     if (authorityFailure) return { branch: null, head: null, detail: authorityFailure };
+    reapLeakedTempWorktrees(repo);
+    writeTempWorktreeOwner(tmpDir, repo);
     // Build detached so a crash cannot leave a half-built named branch that
     // permanently blocks reconstruction on the next attempt.
     gitRun(repo, ['worktree', 'add', '--detach', tmpDir, expectedBaseHead ?? baseHead]);
@@ -3221,6 +3270,7 @@ function buildMergeBranch(
     // Cleanup belongs to the already-authorized fenced operation. KILL may be
     // armed while waiting for this fence and must not strand its temp worktree.
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
     return {
       branch: null,
       head: null,
@@ -3238,7 +3288,7 @@ function buildMergeBranch(
       detail = writeAuthorityFailure;
       return { branch: null, head: null, detail };
     }
-    patchFile = writeTmpFile(diff);
+    patchFile = writeTmpFile(diff, tmpDir);
     try {
       const applyAuthorityFailure = finalAuthority?.();
       if (applyAuthorityFailure) throw new Error(applyAuthorityFailure);
@@ -3275,6 +3325,7 @@ function buildMergeBranch(
     }
     gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
   }
   if (ok && !head) {
     return { branch: null, head: null, detail: 'staged branch head could not be resolved' };
@@ -3305,6 +3356,7 @@ function mergeLocally(
   repo: string,
   branch: string,
   base: string,
+  expectedProposalHead: string,
   expectedBaseHead?: string,
   finalAuthority?: () => string | null,
 ): { ok: false; detail: string } | {
@@ -3353,21 +3405,34 @@ function mergeLocally(
       };
     }
   }
-  const proposalHeadOid = gitTry(repo, ['rev-parse', '--verify', branch]);
+  // Resolve the full branch ref, never the short name: a tag or another ref
+  // named like the staging branch would otherwise win, and the gated commit is
+  // the one buildMergeBranch staged, so anything else is refused.
+  const proposalHeadOid = gitTry(repo, ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`]);
   if (!proposalHeadOid || !/^[a-f0-9]{40}$/i.test(proposalHeadOid)) {
     return {
       ok: false,
       detail: `could not resolve proposal head '${branch}' before local merge`,
     };
   }
+  if (proposalHeadOid.toLowerCase() !== expectedProposalHead.toLowerCase()) {
+    return {
+      ok: false,
+      detail: `proposal branch '${branch}' moved since it was staged (staged ${expectedProposalHead.slice(0, 8)}, now ${proposalHeadOid.slice(0, 8)}) — refusing local merge`,
+    };
+  }
 
-  const tmpDir = join(homedir(), '.ashlr', 'tmp', `mergewt-${randomBytes(6).toString('hex')}`);
+  const tmpDir = join(ashlrTmpDir(), `mergewt-${randomBytes(6).toString('hex')}`);
   // Check out the default branch into a dedicated worktree so we never touch the
   // user's tree, merge the staging branch, then the worktree's branch ref (base)
   // advances in the shared object store.
   try {
     const worktreeAuthorityFailure = finalAuthority?.();
     if (worktreeAuthorityFailure) return { ok: false, detail: worktreeAuthorityFailure };
+    // A leaked mergewt- from a killed daemon keeps `base` checked out and would
+    // fail this add forever: reap provably-orphaned ones first, then mark ours.
+    reapLeakedTempWorktrees(repo);
+    writeTempWorktreeOwner(tmpDir, repo);
     gitRun(repo, ['worktree', 'add', tmpDir, base]);
     const linkAuthorityFailure = finalAuthority?.();
     if (linkAuthorityFailure) throw new Error(linkAuthorityFailure);
@@ -3377,6 +3442,7 @@ function mergeLocally(
       if (checkedOutHead !== expectedBaseHead) {
         gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
         gitTry(repo, ['worktree', 'prune']);
+        releaseTempWorktreeOwner(tmpDir);
         return {
           ok: false,
           detail: `default branch '${base}' moved while preparing local merge (verified ${expectedBaseHead.slice(0, 8)}, checked out ${checkedOutHead?.slice(0, 8) ?? 'unknown'}) — branch '${branch}' left for manual reverify`,
@@ -3385,6 +3451,7 @@ function mergeLocally(
     }
   } catch (err) {
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
     return {
       ok: false,
       detail: `git worktree add for '${base}' failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -3440,6 +3507,7 @@ function mergeLocally(
   } finally {
     gitTry(repo, ['worktree', 'remove', '--force', tmpDir]);
     gitTry(repo, ['worktree', 'prune']);
+    releaseTempWorktreeOwner(tmpDir);
   }
   return { ok: false, detail };
 }
@@ -3878,6 +3946,30 @@ export async function autoMergeProposal(
       if (!scope.ok) {
         return refuse(`malformed diff scope (${scope.reason})`, repo);
       }
+      // Gate 5.6: the same protected-path (G1) and test-tampering (G1b) rules
+      // the fleet merge gates apply. classifyRisk alone rates gate code,
+      // CONSTITUTION.md and AGENTS.md as low or medium risk, so without this a
+      // proposal could auto-merge a change to the rules that judge it.
+      const protectedHits = protectedPathHits(scope.touchedPaths, { selfRepo: isSelfTargetProposal(proposal, cfg) });
+      if (protectedHits.length > 0) {
+        const listed = protectedHits.slice(0, 3).map((hit) => `${hit.path} (${hit.ruleId})`).join(', ');
+        return refuse(`protected path: ${listed} — left for owner review, never auto-merged`, repo);
+      }
+      const instructionHits = scope.touchedPaths.filter(isAgentInstructionPath);
+      if (instructionHits.length > 0) {
+        return refuse(
+          `protected path: ${instructionHits.slice(0, 3).join(', ')} (agent-instructions) — left for owner review, never auto-merged`,
+          repo,
+        );
+      }
+      const tamper = detectTestTampering(diff);
+      if (tamper.parseError) {
+        return refuse(`test tampering could not be ruled out: ${tamper.parseError}`, repo);
+      }
+      if (tamper.findings.length > 0) {
+        return refuse(`test tampering: ${tamper.findings.slice(0, 3).map((f) => f.detail).join('; ')}`, repo);
+      }
+
       const scopeFiles = scope.files;
       const scopeLines = scope.lines;
       scopeFilesForEvidence = scopeFiles;
@@ -4914,7 +5006,7 @@ export async function autoMergeProposal(
           (signedEvidenceSealIsLive(id, evidencePackDigest)
             ? null
             : 'signed evidence seal is no longer live during local merge');
-        const local = mergeLocally(repo, branch, base, boundBaseHead, localAuthority);
+        const local = mergeLocally(repo, branch, base, stagedHead, boundBaseHead, localAuthority);
         if (!local.ok) return { local, receiptPersisted: false };
         if (!stillOwnsFence()) return { local, receiptPersisted: false };
         // Keep the fence through the durable receipt. Revocation that loses this

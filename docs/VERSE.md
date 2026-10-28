@@ -1064,8 +1064,16 @@ the like) also get a category from it; the codes themselves never change.
 Lessons** you approve, edit then approve, or reject each note; a rejected note
 is never suggested again. Approved notes are added, only where their scope
 matches and within a 16 KiB cap that drops whole notes, to fleet goals, cloud
-briefs and the Leader's evidence. When nothing matches, the prompt is exactly
-what it was before. **Propose for AGENTS.md** files an ordinary fleet task that
+briefs and the Leader's evidence. When more than 8 notes match a task, a task
+prompt gets at most 8, and only notes that are about the task: a path or
+task-kind scope that matched, or words in common with the task text, rarer
+words counting more. A note scoped to paths also reaches a brief written
+before its files are known when its words are about the task. The Leader's
+evidence still carries every approved note. A note that cites the PRs and
+checks it was learned from shows the ones its text does not already name, and
+a note whose every cited PR was reverted after merging stays out of fleet goals
+and cloud briefs. When nothing matches, the prompt
+is exactly what it was before. **Propose for AGENTS.md** files an ordinary fleet task that
 goes through every gate; it never writes to a repository directly. The Leader's
 veto lessons are read back into its evidence and into tasks the Leader started.
 

@@ -16,23 +16,33 @@
  *     the repo path hash, never shared across repos.
  *   - write() is fire-and-forget (sync write in try/catch).
  *
- * Eviction fields are structural-only in M249 (shadow). No eviction fires until
- * M250+ — the fields are present so the file format is stable.
+ * Bounded growth: write() runs the per-file sweep (TTL, reject>ship, LRU, byte
+ * budget) once the file exceeds CACHE_SWEEP_TRIGGER_ENTRIES lines or
+ * CACHE_SWEEP_TRIGGER_BYTES, so the file never grows without limit even though
+ * no daemon tick calls sweep().
+ *
+ * Crash safety: whole-file rewrites (sweep, recordOutcome) go through a private
+ * temporary in the same directory + fsync + rename + directory fsync, so a
+ * SIGKILL mid-rewrite leaves either the old or the new file, never a torn one.
+ * Leftover `.*.tmp` temporaries are ignored by readers and reaped by sweep.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   mkdirSync,
   existsSync,
   appendFileSync,
   readFileSync,
-  writeFileSync,
   readdirSync,
+  statSync,
+  lstatSync,
+  unlinkSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { AshlrConfig } from '../../types.js';
+import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -40,6 +50,13 @@ import type { AshlrConfig } from '../../types.js';
 
 const CACHE_MAX_ENTRIES = 2000;    // mirrors HUB_MAX_ENTRIES
 const CACHE_TTL_DAYS = 7;          // matches Portkey/Helicone norm
+/** Byte budget a sweep trims each per-repo file down to (LRU beyond it). */
+const CACHE_MAX_BYTES = 32 * 1024 * 1024;
+/** write() auto-sweeps above these (25% headroom amortizes the full rewrite). */
+const CACHE_SWEEP_TRIGGER_ENTRIES = Math.floor(CACHE_MAX_ENTRIES * 1.25);
+const CACHE_SWEEP_TRIGGER_BYTES = Math.floor(CACHE_MAX_BYTES * 1.25);
+/** Leftover rewrite temporaries older than this are reaped by sweep. */
+const STALE_TEMP_MS = 10 * 60 * 1000;
 const SCHEMA_VERSION = 1 as const;
 
 // ---------------------------------------------------------------------------
@@ -91,6 +108,8 @@ export interface CacheEntry {
  * Avoids re-parsing the JSONL on every call within a single process lifetime.
  */
 const _indexCache = new Map<string, Map<string, CacheEntry>>();
+/** JSONL path → number of non-empty lines on disk (duplicates included). */
+const _lineCounts = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -119,9 +138,11 @@ function getIndex(jsonlPath: string): Map<string, CacheEntry> {
   try {
     if (existsSync(jsonlPath)) {
       const lines = readFileSync(jsonlPath, 'utf8').split('\n');
+      let lineCount = 0;
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+        lineCount += 1;
         try {
           const entry = JSON.parse(trimmed) as CacheEntry;
           if (
@@ -134,6 +155,7 @@ function getIndex(jsonlPath: string): Map<string, CacheEntry> {
           // Malformed line — skip silently.
         }
       }
+      _lineCounts.set(jsonlPath, lineCount);
     }
   } catch {
     // File unreadable — start with empty index.
@@ -145,6 +167,88 @@ function getIndex(jsonlPath: string): Map<string, CacheEntry> {
 /** Invalidate the in-process index for a given path (after write). */
 function invalidateIndex(jsonlPath: string): void {
   _indexCache.delete(jsonlPath);
+  _lineCounts.delete(jsonlPath);
+}
+
+/**
+ * Crash-safe whole-file replacement: private same-directory temporary, fsync,
+ * rename, directory fsync. Throws on failure (callers swallow); the original
+ * file is left intact unless the rename committed.
+ */
+function rewriteAtomically(jsonlPath: string, content: string): void {
+  const dir = dirname(jsonlPath);
+  const temporary = join(dir, `.${basename(jsonlPath)}.${randomBytes(8).toString('hex')}.tmp`);
+  writePrivateFileAtomically(temporary, jsonlPath, content, {
+    anchorPath: dir,
+    label: 'fabric run-cache file',
+  });
+}
+
+/** Parse every current-schema entry in a JSONL file (later lines win per key order). */
+function readEntries(jsonlPath: string): CacheEntry[] {
+  const entries: CacheEntry[] = [];
+  for (const line of readFileSync(jsonlPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const e = JSON.parse(trimmed) as CacheEntry;
+      if (typeof e.key === 'string' && e.schemaVersion === SCHEMA_VERSION) entries.push(e);
+    } catch { /* skip */ }
+  }
+  return entries;
+}
+
+/**
+ * Sweep one per-repo file: drop expired and reject>ship entries, collapse
+ * duplicate keys (last write wins, matching the index), then keep the most
+ * recently hit entries within CACHE_MAX_ENTRIES and CACHE_MAX_BYTES. Rewrites
+ * crash-safely and primes the in-process index with the survivors.
+ * Returns the number of on-disk lines removed. Throws on IO failure.
+ */
+function sweepFile(jsonlPath: string, nowMs: number): number {
+  const entries = readEntries(jsonlPath);
+  const cutoff = new Date(nowMs - CACHE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const latest = new Map<string, CacheEntry>();
+  for (const e of entries) latest.set(e.key, e);
+
+  const candidates = [...latest.values()]
+    .filter((e) => e.createdAt > cutoff)
+    .filter((e) => e.shipOutcomes.reject <= e.shipOutcomes.ship)
+    .sort((a, b) => (b.lastHit > a.lastHit ? 1 : b.lastHit < a.lastHit ? -1 : 0));
+
+  const kept: string[] = [];
+  const keptEntries: CacheEntry[] = [];
+  let bytes = 0;
+  for (const e of candidates) {
+    if (kept.length >= CACHE_MAX_ENTRIES) break;
+    const line = JSON.stringify(e) + '\n';
+    const size = Buffer.byteLength(line, 'utf8');
+    if (bytes + size > CACHE_MAX_BYTES) continue;
+    bytes += size;
+    kept.push(line);
+    keptEntries.push(e);
+  }
+
+  rewriteAtomically(jsonlPath, kept.join(''));
+  const index = new Map<string, CacheEntry>();
+  for (const e of keptEntries) index.set(e.key, e);
+  _indexCache.set(jsonlPath, index);
+  _lineCounts.set(jsonlPath, keptEntries.length);
+  return entries.length - keptEntries.length;
+}
+
+/** Remove our own stale rewrite temporaries (crash leftovers). Never throws. */
+function reapStaleTemporaries(dir: string, nowMs: number): void {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!/^\.[0-9a-f]{16}\.jsonl\.[0-9a-f]{16}\.tmp$/.test(name)) continue;
+      const path = join(dir, name);
+      try {
+        const st = lstatSync(path);
+        if (st.isFile() && nowMs - st.mtimeMs > STALE_TEMP_MS) unlinkSync(path);
+      } catch { /* raced or unremovable — leave it */ }
+    }
+  } catch { /* best effort */ }
 }
 
 /** Extract the flag state from cfg. */
@@ -191,8 +295,27 @@ export function write(cfg: AshlrConfig, entry: CacheEntry, repoPath: string): vo
     const dir = cacheBaseDir();
     mkdirSync(dir, { recursive: true });
     const jsonlPath = jsonlPathFor(repoPath);
-    appendFileSync(jsonlPath, JSON.stringify(entry) + '\n', 'utf8');
-    invalidateIndex(jsonlPath);
+    // Load (once per process) before appending so the index can be updated in
+    // place instead of re-parsing the whole file on the next lookup.
+    const index = getIndex(jsonlPath);
+    const line = JSON.stringify(entry);
+    appendFileSync(jsonlPath, line + '\n', { encoding: 'utf8', mode: 0o600 });
+    index.set(entry.key, JSON.parse(line) as CacheEntry);
+    const lineCount = (_lineCounts.get(jsonlPath) ?? 0) + 1;
+    _lineCounts.set(jsonlPath, lineCount);
+
+    // Self-bounding: no daemon tick calls sweep(), so trim here once the file
+    // passes the entry or byte trigger.
+    if (
+      lineCount > CACHE_SWEEP_TRIGGER_ENTRIES ||
+      statSync(jsonlPath).size > CACHE_SWEEP_TRIGGER_BYTES
+    ) {
+      try {
+        sweepFile(jsonlPath, Date.now());
+      } catch {
+        invalidateIndex(jsonlPath);
+      }
+    }
   } catch {
     // Fire-and-forget: silently swallow all errors.
   }
@@ -240,7 +363,7 @@ export function recordOutcome(
           return line;
         });
         if (changed) {
-          writeFileSync(jsonlPath, updated.join('\n'), 'utf8');
+          rewriteAtomically(jsonlPath, updated.join('\n'));
           invalidateIndex(jsonlPath);
         }
       } catch { /* skip file */ }
@@ -251,15 +374,16 @@ export function recordOutcome(
 }
 
 /**
- * LRU + TTL + quality-feedback sweep. Called from the optimizer tick.
+ * LRU + TTL + quality-feedback sweep over every per-repo file. write() also
+ * runs the same per-file sweep automatically once a file passes its trigger.
  *
  * Eviction criteria:
  *   1. Entries older than CACHE_TTL_DAYS.
  *   2. Entries where shipOutcomes.reject > shipOutcomes.ship.
- *   3. When total entries > CACHE_MAX_ENTRIES: evict least-recently-hit entries.
+ *   3. Superseded duplicate lines for the same key.
+ *   4. Beyond CACHE_MAX_ENTRIES or CACHE_MAX_BYTES: least-recently-hit entries.
  *
- * Returns count of removed entries. Never throws.
- * In M249 shadow mode this is structural-only — sweep is not called from M249.
+ * Returns count of removed lines. Never throws.
  */
 export function sweep(cfg: AshlrConfig): { removed: number } {
   let removed = 0;
@@ -268,42 +392,15 @@ export function sweep(cfg: AshlrConfig): { removed: number } {
     const dir = cacheBaseDir();
     if (!existsSync(dir)) return { removed: 0 };
 
+    const nowMs = Date.now();
+    reapStaleTemporaries(dir, nowMs);
     const files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
-    const cutoff = new Date(Date.now() - CACHE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
     for (const file of files) {
-      const jsonlPath = join(dir, file);
       try {
-        const lines = readFileSync(jsonlPath, 'utf8').split('\n');
-        const entries: CacheEntry[] = [];
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const e = JSON.parse(trimmed) as CacheEntry;
-            if (e.schemaVersion === SCHEMA_VERSION) entries.push(e);
-          } catch { /* skip */ }
-        }
-
-        const before = entries.length;
-        let kept = entries
-          .filter((e) => e.createdAt > cutoff)
-          .filter((e) => e.shipOutcomes.reject <= e.shipOutcomes.ship);
-
-        if (kept.length > CACHE_MAX_ENTRIES) {
-          kept = kept
-            .sort((a, b) => (b.lastHit > a.lastHit ? 1 : -1))
-            .slice(0, CACHE_MAX_ENTRIES);
-        }
-
-        removed += before - kept.length;
-        writeFileSync(
-          jsonlPath,
-          kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length > 0 ? '\n' : ''),
-          'utf8',
-        );
-        invalidateIndex(jsonlPath);
-      } catch { /* skip file */ }
+        removed += sweepFile(join(dir, file), nowMs);
+      } catch {
+        invalidateIndex(join(dir, file));
+      }
     }
   } catch {
     // Never throws.
@@ -318,4 +415,5 @@ export function sweep(cfg: AshlrConfig): { removed: number } {
 /** Clear the in-process index cache. Used in tests to reset state. */
 export function _clearIndexCache(): void {
   _indexCache.clear();
+  _lineCounts.clear();
 }

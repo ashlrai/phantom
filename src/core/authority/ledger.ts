@@ -983,6 +983,24 @@ function lenientGrantSeqFloor(path: string): number {
   return floor;
 }
 
+/**
+ * Post-append observers (receipt.v1 R6 later[] wiring). Called with the rows a
+ * transaction appended, AFTER the ledger lock is released. Observers are
+ * best-effort: a throw is swallowed and never changes the transaction result.
+ */
+type LedgerAppendObserver = (entries: readonly LedgerEntryOf<LedgerEventKind>[]) => void;
+const appendObservers = new Set<LedgerAppendObserver>();
+export function registerLedgerAppendObserver(fn: LedgerAppendObserver): () => void {
+  appendObservers.add(fn);
+  return () => { appendObservers.delete(fn); };
+}
+function notifyAppendObservers(entries: LedgerEntryOf<LedgerEventKind>[]): void {
+  if (entries.length === 0) return;
+  for (const fn of appendObservers) {
+    try { fn(entries); } catch { /* best effort, never affects the ledger */ }
+  }
+}
+
 export function withLedgerTransaction<T>(fn: (tx: LedgerTransaction) => T): LedgerTransactionResult<T> {
   try {
     ensureAuthorityDir();
@@ -991,6 +1009,7 @@ export function withLedgerTransaction<T>(fn: (tx: LedgerTransaction) => T): Ledg
   }
   const lock = acquireLocalStoreLock(ledgerLockPath(), LOCK_WAIT_MS, { anchorPath: resolve(homedir()), exactPrivateStorage: true });
   if (!lock) return { ok: false, reason: 'ledger lock unavailable (another writer is busy)' };
+  const appended: LedgerEntryOf<LedgerEventKind>[] = [];
   try {
     const synced = syncChain('cached');
     if (synced.broken) markBroken(synced.broken, synced.state?.head ?? null);
@@ -1014,6 +1033,7 @@ export function withLedgerTransaction<T>(fn: (tx: LedgerTransaction) => T): Ledg
         }
         const entry = writeEntry(open, input.kind, input.data as unknown as Record<string, unknown>, input.actor, input.grantId, input.repo);
         snapshot = snapshotOf(state, null);
+        appended.push(entry as unknown as LedgerEntryOf<LedgerEventKind>);
         return entry as LedgerEntryOf<K>;
       },
       brokenChainFloor(): number {
@@ -1062,6 +1082,7 @@ export function withLedgerTransaction<T>(fn: (tx: LedgerTransaction) => T): Ledg
     return { ok: false, reason: (error as Error).message || 'ledger transaction failed' };
   } finally {
     releaseLocalStoreLock(lock);
+    notifyAppendObservers(appended);
   }
 }
 
