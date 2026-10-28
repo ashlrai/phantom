@@ -108,6 +108,8 @@ import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.
 import { handleVerseGithubApi, isVerseGithubPath } from '../verse/github-api.js';
 // MCP + per-account CLI management (mounted BEFORE both — see handleApi).
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
+// Desktop native-shell read API (GET /api/wb/v1/*).
+import { handleWbApi, isWbApiPath } from './wb-read-api.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -2246,6 +2248,13 @@ export async function handleApi(
         workspace: workspaceSection,
       });
       return true;
+    }
+
+    // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
+    // Versioned loopback read surface for desktop/src-tauri fleet ops.
+    // GET-only; already behind the read-session boundary like every /api/* GET.
+    if (isWbApiPath(path)) {
+      return handleWbApi(req, res, cfg, path);
     }
 
     // ── /api/verse/mcp[/...] (MCP + per-account CLI management) ─────────────
