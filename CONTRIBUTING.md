@@ -54,6 +54,7 @@ To install the CLI while developing:
 | `npm run test:ci` | Run backend lanes locally with isolated test homes, inactivity detection and a hard runtime cap |
 | `npm run test:web` | Run the separate jsdom/Testing Library console suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
+| `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |

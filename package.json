@@ -146,6 +146,7 @@
     "test:ci:sharded": "node scripts/test-ci-sharded.mjs",
     "test:invariants": "vitest run test/h*.test.ts --no-file-parallelism",
     "test:engineering-responsiveness": "vitest run --config vitest.config.engineering-performance.ts",
+    "eval:routing": "tsx src/core/routing-eval/main.ts",
     "conformance:ecosystem": "tsx scripts/run-ecosystem-conformance.ts",
     "check:first-paint": "node scripts/check-first-paint-budget.mjs --budget-kb 354 --mobile-budget-kb 250",
     "check:first-paint:built": "node scripts/check-first-paint-budget.mjs --no-build --out-dir dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250",

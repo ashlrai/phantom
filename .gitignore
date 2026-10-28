@@ -37,5 +37,8 @@ undefined/
 
 # Fleet runtime artifacts
 .ashlr/
+
+# Routing eval report (npm run eval:routing). The corpus stays checked in.
+eval/routing/out/
 *.launchd.err.log
 *.launchd.out.log
