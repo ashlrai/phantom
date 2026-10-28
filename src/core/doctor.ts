@@ -15,6 +15,7 @@ import { getPhantomStatus } from './phantom.js';
 import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
+import { checkPoolCliVersions } from './resources/pool-cli-doctor.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -1416,6 +1417,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
 
   // --- Synchronous checks ---
   checks.push(checkNodeVersion());
+  checks.push(...await checkPoolCliVersions());
   checks.push(checkGit());
   checks.push(checkLocalBin());
   checks.push(checkAshlrInstalled());
