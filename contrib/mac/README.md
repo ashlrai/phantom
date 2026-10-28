@@ -35,3 +35,35 @@ the fixture suite:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
 ```
+
+## Router-queue restock
+
+`contrib/mac/restock.py` is the deterministic restocker that `dispatchd`/`selfrun.sh`
+invoke on the Mac (installed as `~/.ashlr-runs/bin/restock.py` through `swap.sh`,
+sha-pinned by `selfrun.sh`). It reads `~/.ashlr-runs/queue/router-queue.md`,
+picks eligible `READY` lines into per-lane prompts, marks them `CLAIMED`, and
+never calls a model or the network. It runs as
+`restock.py [--dry-run] [--per-lane N]` and creates or selects no lines for
+repos outside the `GS_REPOS` fleet allowlist or for PRs on the queue's hold list
+(`HOLD`/`HOLD-SECURITY` lines).
+
+Two queue policies live here (RQ-QUEUEGEN-BOLD-30, SPEC-AMEND Security #5):
+
+- **Bold floor:** before each restock the `bet=bold` share of `READY` lines is
+  counted; while it is under 30%, bold lines pick first. The summary line prints
+  `bold ready=B/N(f) picked=b/n(f) prefer=bold`.
+- **Security pin:** a `READY` line touching `.github`, `publish.sh`, `dispatchd`,
+  `git-safe`, `scrub` or `reap` is parked as `HOLD-SECURITY` carrying
+  `[Security pin required]`; bold preference never promotes it back to `READY`.
+  Negated mentions ("never touch .github") stay eligible.
+
+Install of a new rev is gated on the `G1-CODE-PIN`: update `PIN_RESTOCK_PY` in
+`selfrun.sh` and the `want` lines in `swap.sh` to the new file's sha256 before
+`swap.sh` can place it in `~/.ashlr-runs/bin/`. The `restock.sh` wrapper in that
+directory is unchanged; it only execs this file.
+
+Run the fixture tests (HOME-isolated, no live queue access):
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
+```
