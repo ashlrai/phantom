@@ -1,0 +1,5 @@
+{"id":"done1","lane":"fast","status":"completed","startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:05:00Z"}
+{"id":"done2","lane":"fast","status":"completed","startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:15:00Z"}
+{"id":"long","lane":"fast","status":"running","startedAt":"2025-12-31T23:59:00Z"}
+{"id":"boundary","lane":"fast","status":"running","startedAt":"2026-01-01T00:00:00Z"}
+{"id":"no-history","lane":"slow","status":"running","startedAt":"2025-12-31T23:00:00Z"}
