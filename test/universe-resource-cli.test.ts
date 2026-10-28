@@ -55,21 +55,21 @@ describe('execution-only resource runtime option', () => {
     expect(files.readFileSync).not.toHaveBeenCalled();
   });
   it.each([
-    ['status', '--resource-runtime', runtime], ['archive', '--resource-runtime', runtime],
-    ['init', '--manifest', '/private/fixture.json', '--resource-runtime', runtime], ['demo', '--resource-runtime', runtime],
-    ['run', 'fixture', '--resource-runtime'], ['run', 'fixture', '--resource-runtime', 'relative.json'],
-    ['run', 'fixture', '--resource-runtime', '/private/bad\nfile'],
-    ['run', 'fixture', '--resource-runtime', runtime, '--resource-runtime', runtime],
-  ])('rejects invalid or non-execution Universe scope %j', async (...args) => {
+    [['status', '--resource-runtime', runtime]], [['archive', '--resource-runtime', runtime]],
+    [['init', '--manifest', '/private/fixture.json', '--resource-runtime', runtime]], [['demo', '--resource-runtime', runtime]],
+    [['run', 'fixture', '--resource-runtime']], [['run', 'fixture', '--resource-runtime', 'relative.json']],
+    [['run', 'fixture', '--resource-runtime', '/private/bad\nfile']],
+    [['run', 'fixture', '--resource-runtime', runtime, '--resource-runtime', runtime]],
+  ])('rejects invalid or non-execution Universe scope %j', async (args) => {
     expect(await cmdUniverse([...args, '--json'])).toBe(2);
     expect(core.runUniverse).not.toHaveBeenCalled(); expect(core.initUniverse).not.toHaveBeenCalled(); expect(files.readFileSync).not.toHaveBeenCalled();
   });
   it.each([
-    ['status', '--resource-runtime', runtime], ['pause', 'campaign', '--resource-runtime', runtime],
-    ['stop', 'campaign', '--resource-runtime', runtime], ['init', '--manifest', '/private/fixture.json', '--resource-runtime', runtime],
-    ['resume', 'campaign', '--resource-runtime', 'relative.json'], ['run', 'campaign', '--resource-runtime'],
-    ['run', 'campaign', '--resource-runtime', runtime, '--resource-runtime', runtime],
-  ])('rejects invalid or non-execution campaign scope %j', async (...args) => {
+    [['status', '--resource-runtime', runtime]], [['pause', 'campaign', '--resource-runtime', runtime]],
+    [['stop', 'campaign', '--resource-runtime', runtime]], [['init', '--manifest', '/private/fixture.json', '--resource-runtime', runtime]],
+    [['resume', 'campaign', '--resource-runtime', 'relative.json']], [['run', 'campaign', '--resource-runtime']],
+    [['run', 'campaign', '--resource-runtime', runtime, '--resource-runtime', runtime]],
+  ])('rejects invalid or non-execution campaign scope %j', async (args) => {
     expect(await cmdUniverseCampaign([...args, '--json'])).toBe(2);
     expect(core.runUniverseCampaign).not.toHaveBeenCalled(); expect(core.requestUniverseCampaignControl).not.toHaveBeenCalled();
     expect(core.initUniverseCampaign).not.toHaveBeenCalled(); expect(files.readFileSync).not.toHaveBeenCalled();

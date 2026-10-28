@@ -42,18 +42,18 @@ describe('Universe comparison CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    [], ['baseline'], ['baseline', 'challenger', 'extra'], ['same', 'same'], ['UPPER', 'challenger'],
-    ['baseline', '../escape'], ['a'.repeat(65), 'challenger'], ['', 'challenger'], ['baseline', ' '],
-    ['baseline', 'a\n'], ['a\x85', 'challenger'], ['baseline', 'challenger', '--unknown'],
-    ['baseline', 'challenger', '--root'], ['baseline', 'challenger', '--root', '--json'],
-    ['baseline', 'challenger', '--root', ''], ['baseline', 'challenger', '--root', '  '],
-    ['baseline', 'challenger', '--root', 'a\0b'], ['baseline', 'challenger', '--root', 'a\nb'],
-    ['baseline', 'challenger', '--root', 'a\x85b'], ['baseline', 'challenger', '--root', '-odd'],
-    ['baseline', 'challenger', '--root', 'a'.repeat(4097)],
-    ['baseline', 'challenger', '--root', '/one', '--root', '/two'],
-    ['baseline', 'challenger', '--json'], ['--help', '-h'], ['--help', '--unknown'],
-    ['--help', 'same', 'same'], ['--help', 'UPPER'], ['baseline', 'challenger', '--root=/tmp'],
-  ])('rejects invalid arguments %j before reading', async (...args) => {
+    [[]], [['baseline']], [['baseline', 'challenger', 'extra']], [['same', 'same']], [['UPPER', 'challenger']],
+    [['baseline', '../escape']], [['a'.repeat(65), 'challenger']], [['', 'challenger']], [['baseline', ' ']],
+    [['baseline', 'a\n']], [['a\x85', 'challenger']], [['baseline', 'challenger', '--unknown']],
+    [['baseline', 'challenger', '--root']], [['baseline', 'challenger', '--root', '--json']],
+    [['baseline', 'challenger', '--root', '']], [['baseline', 'challenger', '--root', '  ']],
+    [['baseline', 'challenger', '--root', 'a\0b']], [['baseline', 'challenger', '--root', 'a\nb']],
+    [['baseline', 'challenger', '--root', 'a\x85b']], [['baseline', 'challenger', '--root', '-odd']],
+    [['baseline', 'challenger', '--root', 'a'.repeat(4097)]],
+    [['baseline', 'challenger', '--root', '/one', '--root', '/two']],
+    [['baseline', 'challenger', '--json']], [['--help', '-h']], [['--help', '--unknown']],
+    [['--help', 'same', 'same']], [['--help', 'UPPER']], [['baseline', 'challenger', '--root=/tmp']],
+  ])('rejects invalid arguments %j before reading', async (args) => {
     expect(await cmdUniverseCompare([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.readUniverseCampaignComparison).not.toHaveBeenCalled();

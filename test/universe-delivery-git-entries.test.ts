@@ -97,8 +97,8 @@ describe('Universe delivery Git entry reads', () => {
   });
 
   it.each([
-    ['file', 'file'], ['file', 'file/child'], ['Foo', 'foo/child'], ['Dir/a', 'dir/b'],
-  ])('rejects duplicate and colliding paths %j before reading blobs', (...paths) => {
+    [['file', 'file']], [['file', 'file/child']], [['Foo', 'foo/child']], [['Dir/a', 'dir/b']],
+  ])('rejects duplicate and colliding paths %j before reading blobs', (paths) => {
     const f = fixture(); vi.mocked(spawnSync).mockClear();
     expect(() => f.helper.readEntries(paths.map((path) => ({ path, oid: 'a'.repeat(40), executable: false })))).toThrow();
     expect(spawnSync).not.toHaveBeenCalled();
