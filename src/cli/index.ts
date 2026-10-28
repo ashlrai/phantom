@@ -1673,6 +1673,19 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
+  const CONFIG_USAGE =
+    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
+  if (subCmd === '--help' || subCmd === '-h' || subCmd === 'help') {
+    console.log(CONFIG_USAGE);
+    console.log('  (no args) or path  print the config file path');
+    console.log('  list               print a summary of the config');
+    return;
+  }
+  // A typo such as `config gt roots` used to print the summary and exit 0.
+  if (subCmd && !['path', 'list', 'show', 'get', 'set'].includes(subCmd)) {
+    die(`Unknown config subcommand: ${subCmd}\n${CONFIG_USAGE}`, 2);
+  }
+
   const cfg = loadConfig();
 
   if (!subCmd || subCmd === 'path') {
@@ -1769,7 +1782,7 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
-  // No sub-command: print a formatted summary
+  // `config list` (or `show`): print a formatted summary
   console.log('');
   console.log(bold('  ashlr config') + gray(` — ${CONFIG_PATH}`));
   console.log('');

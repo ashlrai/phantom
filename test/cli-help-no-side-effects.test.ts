@@ -132,7 +132,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'ls -h': 'exit 1: builds the index, then treats -h as a category',
   open: 'exit 1: builds the index, then "Nothing selected."',
   tidy: 'exit 0: runs the Desktop tidy plan ("Nothing to tidy.")',
-  config: 'exit 0: prints the config',
   'config get': 'exit 1: looks the flag up as a config key',
   'config path': 'exit 0: prints the config path',
   'config effective': 'exit 0: prints the effective config snapshot (read-only)',

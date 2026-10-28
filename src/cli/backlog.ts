@@ -284,6 +284,11 @@ export async function cmdBacklog(args: string[]): Promise<number> {
       console.error(col.red('error: ') + `Unknown flag: ${a}`);
       console.error(col.dim('Usage: ashlr backlog [refresh] [--repo <path>] [--source <src>] [--limit <n>] [--json]'));
       return 2;
+    } else if (a !== undefined) {
+      // A typo such as `backlog refesh` used to fall through to `list` silently.
+      console.error(col.red('error: ') + `Unknown backlog subcommand: ${a}`);
+      console.error(col.dim('Usage: ashlr backlog [list|refresh] [--repo <path>] [--source <src>] [--limit <n>] [--json]'));
+      return 2;
     }
   }
 
