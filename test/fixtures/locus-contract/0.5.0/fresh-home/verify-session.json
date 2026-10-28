@@ -1,0 +1,106 @@
+{
+  "kind": "session",
+  "version": "0.5.0",
+  "doctor": {
+    "version": "0.5.0",
+    "home": "<LOCUS_HOME>",
+    "seal_ok": true,
+    "bindings": 0,
+    "runtime": {
+      "pinned": false,
+      "seal_ok": false,
+      "authority_anchor_ok": false,
+      "backing_ok": false,
+      "binding_present": false,
+      "binding_id_match": false,
+      "tenant_match": false,
+      "providers_match": true,
+      "frozen": false,
+      "expired": false,
+      "providers": [],
+      "issues": [
+        "not_pinned"
+      ],
+      "ok": false
+    },
+    "approvals": {
+      "dir": "<LOCUS_HOME>/approvals",
+      "exists": true,
+      "writable": true,
+      "total": 0,
+      "pending": 0,
+      "approved_valid": 0,
+      "untrusted_approved": 0,
+      "expired_grants": 0,
+      "denied": 0,
+      "corrupt": 0,
+      "approval_authority": "local_advisory",
+      "authoritative_path_enabled": false,
+      "ok": true
+    },
+    "pending_approvals": 0,
+    "dual_control_waiting": 0,
+    "phantom_on_path": false,
+    "unresolved_phm": [],
+    "autopin": {
+      "path": "<LOCUS_HOME>/config.toml",
+      "present": false,
+      "remote_autopin_enabled": false,
+      "remote_rules": 0,
+      "ok": true,
+      "note": "config.toml not present (defaults: manual pin)"
+    },
+    "workspace": {
+      "found": false,
+      "valid": true,
+      "allowed_bindings": [],
+      "require_pin": false
+    },
+    "audit": {
+      "path": "<LOCUS_HOME>/audit/events.jsonl",
+      "total": 0,
+      "last": [],
+      "scope_freeze": 0,
+      "deny": 0
+    },
+    "near_miss_count": 0,
+    "near_miss": {
+      "window_hours": 24,
+      "count": 0,
+      "scope_freeze": 0,
+      "require_approval": 0
+    },
+    "findings": [
+      {
+        "severity": "warn",
+        "code": "no_bindings",
+        "message": "no bindings configured (locus init --with-samples)"
+      },
+      {
+        "severity": "warn",
+        "code": "phantom_missing",
+        "message": "phantom not on PATH (install Phantom Secrets for Phantom credential references)"
+      },
+      {
+        "severity": "warn",
+        "code": "control_capability_missing",
+        "message": "LOCUS_CONTROL_CAPABILITY is not set — control commands (init/enter/pin/leave) will fail. Fix: locus quickstart (mints + persists one), or: export LOCUS_CONTROL_CAPABILITY=\"$(openssl rand -hex 32)\"; then persist for new shells with eval \"$(locus hook zsh)\""
+      }
+    ],
+    "issues": [
+      "no bindings configured (locus init --with-samples)",
+      "phantom not on PATH (install Phantom Secrets for Phantom credential references)",
+      "LOCUS_CONTROL_CAPABILITY is not set — control commands (init/enter/pin/leave) will fail. Fix: locus quickstart (mints + persists one), or: export LOCUS_CONTROL_CAPABILITY=\"$(openssl rand -hex 32)\"; then persist for new shells with eval \"$(locus hook zsh)\""
+    ],
+    "verdict": "WARN",
+    "ok": false
+  },
+  "safe_next": {
+    "action": "init",
+    "command": "locus init --with-samples",
+    "agent_tool": "locus_list_bindings",
+    "message": "No bindings configured. Human: `locus init --with-samples` or `locus binding add`.",
+    "ready": false
+  },
+  "session_ok": false
+}

@@ -11,6 +11,7 @@
  * server was started without --allow-dispatch — apiPost maps that code-less
  * 404 to DispatchDisabledError (a 404 carrying a `code` stays an ApiError).
  */
+import { emitAgentDecision } from './agent-decisions.js';
 import { apiPost } from './client.js';
 import { getMutationToken, touchMutationHold } from './auth-store.js';
 import { invalidate, invalidatePrefix } from './cache.js';
@@ -48,6 +49,7 @@ export async function resumeFleet(): Promise<void> {
 
 export async function approveProposal(id: string): Promise<void> {
   await post(`/api/inbox/${encodeURIComponent(id)}/approve`, {});
+  emitAgentDecision(id, 'approve');
   invalidate('inbox');
   invalidate('dashboard-snapshot');
   invalidate(`proposal-detail-${id}`);
@@ -56,6 +58,7 @@ export async function approveProposal(id: string): Promise<void> {
 
 export async function rejectProposal(id: string): Promise<void> {
   await post(`/api/inbox/${encodeURIComponent(id)}/reject`, {});
+  emitAgentDecision(id, 'deny');
   invalidate('inbox');
   invalidate('dashboard-snapshot');
   invalidate(`proposal-detail-${id}`);

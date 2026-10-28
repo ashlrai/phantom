@@ -168,10 +168,11 @@ export function verifyCanonicalProvenance(record, audit, revision, currentRun, c
 }
 
 class RegistryReadPending extends Error {}
-async function registryFetch(url, timeoutMs = 30_000) {
+async function registryFetch(url, timeoutMs = 30_000, {headers, onStatus} = {}) {
   let response;
-  try {response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(timeoutMs)});}
+  try {response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(timeoutMs), ...(headers ? {headers} : {})});}
   catch {throw new RegistryReadPending('Public registry read unavailable');}
+  onStatus?.(response.status);
   if ([404, 408, 429].includes(response.status) || response.status >= 500) {
     throw new RegistryReadPending('Public registry is still processing or unavailable');
   }
@@ -179,8 +180,8 @@ async function registryFetch(url, timeoutMs = 30_000) {
   return response;
 }
 
-async function registry(record, directory) {
-  const response = await registryFetch(`https://registry.npmjs.org/@ashlr%2Fphantom/${record.version}`);
+async function registry(record, directory, onStatus) {
+  const response = await registryFetch(`https://registry.npmjs.org/@ashlr%2Fphantom/${record.version}`, 30_000, {headers: {'Cache-Control': 'no-cache'}, onStatus});
   const metadata = await response.json();
   const url = new URL(metadata.dist?.tarball);
   assert.equal(url.origin, 'https://registry.npmjs.org');
@@ -194,15 +195,23 @@ async function registry(record, directory) {
 /** Wait only for transient public reads; substituted bytes or metadata hold immediately. */
 export async function reconcileRegistry(record, directory) {
   // npm may accept HTTP 202 well before public visibility. This never republishes.
-  const deadline = Date.now() + 15 * 60_000;
+  const started = Date.now();
+  const deadline = started + 15 * 60_000;
+  let attempt = 0;
   let delay = 2000;
   for (;;) {
-    try {await registry(record, directory); return;}
+    let status = 'unavailable';
+    attempt++;
+    try {
+      try {await registry(record, directory, value => {status = value;});}
+      finally {console.log(`Registry verification attempt ${attempt}: elapsed=${Date.now() - started}ms HTTP status=${status}`);}
+      return;
+    }
     catch (error) {
       const remaining = deadline - Date.now();
       if (!(error instanceof RegistryReadPending) || remaining <= 0) throw error;
       await new Promise(done => setTimeout(done, Math.min(delay, remaining)));
-      delay = Math.min(delay * 2, 30_000);
+      delay = Math.min(delay * 2, 5000);
     }
   }
 }

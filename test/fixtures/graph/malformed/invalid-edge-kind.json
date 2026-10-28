@@ -1,0 +1,20 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [],
+  "edges": [
+    {
+      "id": "executes:agent%3Aa/agent%3Ab",
+      "kind": "executes",
+      "source": "fleet",
+      "from": "agent:a",
+      "to": "agent:b"
+    }
+  ],
+  "issues": []
+}
