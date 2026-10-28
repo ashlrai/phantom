@@ -58,6 +58,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'resource.v1; missing or stale inputs have null measurements and unknown status',
   },
   {
+    usage: 'ashlr fleet queue merged|read|complete <job-id> [--json]',
+    description: 'Trusted bridge router handoff: merged reads verified metadata from stdin; read emits untrusted model prompts and audits queue changes; complete acknowledges work. Requires an operator-owned seven-repo allowlist.',
+    safety: 'append',
+    jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
