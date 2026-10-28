@@ -32,6 +32,11 @@
  *  - A lane outside the grant's current rollout stage has zero slots.
  *  - A seat is a PRODUCER only when the grant gives it the `producer` role;
  *    claude-a is judge / Leader only by default.
+ *  - A job whose declared `acceptance:` command already passes on the
+ *    default branch is closed as a no-op instead of dispatched
+ *    (fleet/empty-run-precheck.ts; tests in test/empty-run-precheck.test.ts).
+ *    The run's verdict arrives with the context like every other
+ *    once-per-tick input — `route` stays synchronous.
  *
  * Honesty: `null` = unknown. Every exclusion carries a specific sentence, and
  * a hold always says why and (when a date is known) until when.
@@ -76,6 +81,10 @@ import {
   type FleetLaneState,
   type RouteHold,
 } from './fleet-types.js';
+// TYPE-ONLY: the precheck verdict is injected through the context, so this
+// module needs its types but never its runtime — the Tier-1 closure stays
+// exactly the reviewed list (test/authority-tier1-closure-310b.test.ts).
+import type { EmptyRunVerdict, NoopClose } from './empty-run-precheck.js';
 
 // ---------------------------------------------------------------------------
 // Lanes
@@ -519,6 +528,13 @@ export interface DispatchRouterContext {
   repoOf: (repoPath: string) => string | null;
   /** Engine tier (sandboxed-engine engineTierOf), injected so this module stays light. */
   tierOf: (engine: EngineId) => EngineTier | null;
+  /**
+   * Empty-run precheck (fleet/empty-run-precheck.ts): the verdict of the
+   * item's declared `acceptance:` command as run on the repo's default
+   * branch — gathered once per tick like every other input. Absent = the
+   * precheck was not performed this tick and every job routes normally.
+   */
+  emptyRunPrecheck?: (item: WorkItem) => EmptyRunVerdict;
   cfg?: AshlrConfig;
 }
 
@@ -533,6 +549,14 @@ export interface DispatchRoute {
   lane: FleetEngine | null;
   /** nameWithOwner of the item's repo; null when unknown. */
   repo: string | null;
+  /**
+   * Set only when the job's acceptance already holds on the default branch:
+   * the job is closed as a no-op, never dispatched. `hold` is still set (a
+   * park with no reopening) so a consumer that predates this field skips
+   * the job instead of launching it; `noop` lets the caller record the
+   * close — a worked-ledger 'empty', a completed task — rather than a wait.
+   */
+  noop: NoopClose | null;
 }
 
 function lowerFirst(text: string): string {
@@ -591,6 +615,7 @@ function held(
     hold,
     lane: null,
     repo,
+    noop: null,
   };
 }
 
@@ -625,6 +650,25 @@ export function executionForSeat(item: WorkItem, legacy: LegacyRoute, seat: Seat
  */
 export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: DispatchRouterContext): DispatchRoute {
   const repo = ctx.repoOf(item.repo);
+  const precheck = ctx.emptyRunPrecheck?.(item);
+  if (precheck?.kind === 'close-noop') {
+    // The job's acceptance already holds on the default branch: no lane has
+    // work to do. The park-shaped hold keeps every consumer that predates
+    // `noop` from dispatching it; `noop` carries the close for ones that
+    // record it. A satisfied job closes even where nothing could route it —
+    // it needs no seat and no repo identity in the grant.
+    return {
+      backend: legacy.backend,
+      tier: legacyTier(legacy, ctx),
+      ...(legacy.model ? { model: legacy.model } : {}),
+      reason: `empty-run precheck: ${precheck.reason}`,
+      seatDecision: null,
+      hold: { kind: 'park', reason: precheck.reason, nextEligibleAt: null },
+      lane: null,
+      repo,
+      noop: precheck,
+    };
+  }
   if (repo === null) {
     return held(legacy, ctx, null, null, {
       kind: 'park',
@@ -746,6 +790,7 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
         hold: null,
         lane: DEVIN_CLI_LANE,
         repo,
+        noop: null,
       };
     }
     if (devin.exclusion) extra.push(devin.exclusion);
@@ -817,6 +862,7 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
     hold: null,
     lane: chosenLane,
     repo,
+    noop: null,
   };
 }
 
