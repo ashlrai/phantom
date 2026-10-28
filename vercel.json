@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "site",
   "buildCommand": "echo 'Static Verse site: source files are ready'",
-  "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- site vercel.json || exit 1",
+  "ignoreCommand": "if [ -n \"$VERCEL_GIT_PREVIOUS_SHA\" ] && git cat-file -e \"$VERCEL_GIT_PREVIOUS_SHA\" 2>/dev/null && git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" HEAD -- site vercel.json; then exit 1; fi; if git cat-file -e HEAD^ 2>/dev/null && git diff --quiet HEAD^ HEAD -- site vercel.json; then exit 1; fi",
   "installCommand": "",
   "framework": null,
   "cleanUrls": true
