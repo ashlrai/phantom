@@ -1,0 +1,11 @@
+{"id":"free-first","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"merged","tokens":1000}
+{"id":"context-fit","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true,"contextTokens":50000},"actualLane":"codex-personal","outcome":"merged","tokens":3000}
+{"id":"failed-attempt","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"failed","tokens":2000}
+{"id":"closed-pr","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"closed","tokens":4000}
+{"id":"spent","snapshotId":"spent","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":null,"outcome":"held","tokens":0}
+{"id":"unknown","snapshotId":"unknown","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":null,"outcome":"held","tokens":0}
+{"id":"stale","snapshotId":"stale","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":null,"outcome":"held","tokens":0}
+{"id":"stable-tie","snapshotId":"tie","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:second","outcome":"merged","tokens":2000}
+{"id":"missing-usage","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"merged","tokens":null}
+{"id":"unfinished","snapshotId":"normal","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"pending","tokens":500}
+{"id":"interactive-reserve","snapshotId":"interactive","request":{"task":"code","difficulty":"high","autonomous":false},"actualLane":"codex-personal","outcome":"merged","tokens":8000}
