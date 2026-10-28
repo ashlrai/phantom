@@ -40,8 +40,10 @@ that every integration, provider or autonomous effect is active.
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
+| Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
+| Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
 | See what multi-folder workspaces, GitHub and MCP management still need | [Workspaces build contract](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-WORKSPACES.md) |
@@ -51,6 +53,7 @@ that every integration, provider or autonomous effect is active.
 | Hand work to Claude Code cloud sessions or Devin, and triage what they deliver | [Cloud lane — source guide](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD.md) · [Devin — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md) |
 | Understand the standing authority design, and turn autonomy on under a grant that starts in shadow | [Standing authority — source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) · [Current activation state](AUTONOMY-GAP.md#current-activation-state-315) |
 | Find a Verse route family, its gates and wire shapes | [Verse build contract — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console) |
+| Score a built site or repo checkout for agent-facing readiness signals | [Agent readiness scorer (source)](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md) |
 
 The CLI's `universe help`, `resources pool --help` and `runtime help` describe
 the command surface in the exact binary you are running. A source guide may
