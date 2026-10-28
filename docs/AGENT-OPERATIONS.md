@@ -190,6 +190,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 
 | Group | Purpose (from `phm help`) |
 | --- | --- |
+| `phm sweep report [--repo <dir>]` | Weekly, local deletion review report; see [DELETION-SWEEP.md](https://github.com/ashlrai/phantom/blob/master/docs/DELETION-SWEEP.md) |
 | `phm orient [--repo <r>] [--json]` | Read-only session-start context: memory hits, health, backlog, pending proposals |
 | `phm enroll list\|add\|remove\|kill` | Repos open to autonomous work, plus the global kill switch (`enroll add <repo> --json` never prompts) |
 | `phm backlog [refresh]` | Scored work queue across enrolled repos |
