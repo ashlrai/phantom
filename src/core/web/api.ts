@@ -1315,6 +1315,12 @@ export async function handleApi(
     }
 
     // ── GET /api/snapshot ───────────────────────────────────────────────────
+    if (path === '/api/resource' && method === 'GET') {
+      const { readResourceView } = await import('../fabric/resource-view-store.js');
+      sendJson(res, 200, await readResourceView());
+      return true;
+    }
+
     if (path === '/api/snapshot' && method === 'GET') {
       const snapshot = await buildCachedSnapshot(cfg, ctx.readProjections);
       // Read authority after the potentially slow snapshot build so the
