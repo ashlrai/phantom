@@ -27,7 +27,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
-  'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
+  'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'bus',
   'director', 'best-of-n', 'invent', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -55,6 +55,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  bus: ['thread', 'task', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],

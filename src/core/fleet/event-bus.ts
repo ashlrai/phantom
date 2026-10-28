@@ -36,6 +36,8 @@
  */
 
 import type { AshlrConfig } from '../types.js';
+import type { BusEnvelope } from './bus-envelope.js';
+import type { BusThreadDelivery } from './bus-delivery.js';
 
 // ---------------------------------------------------------------------------
 // Event catalogue
@@ -47,10 +49,13 @@ export type FleetBusEventKind =
   | 'merge:shipped'
   | 'regression:detected'
   | 'goal:done'
+  | 'bus:delivery'
   | 'anomaly';
 
 /** Per-kind payload shapes. */
 export interface FleetBusPayloadMap {
+  /** Delivered peer data; handlers must never treat it as execution authority. */
+  'bus:delivery': BusThreadDelivery;
   'proposal:filed': {
     proposalId: string;
     title?: string;
@@ -81,6 +86,11 @@ export interface FleetBusPayloadMap {
 }
 
 export type FleetBusPayload<K extends FleetBusEventKind> = FleetBusPayloadMap[K];
+
+/** Optional v1 wire representation; local emit keeps its existing semantics. */
+export type FleetBusEnvelope<K extends FleetBusEventKind = FleetBusEventKind> = {
+  [Kind in K]: BusEnvelope<{ kind: Kind; payload: FleetBusPayload<Kind> }>;
+}[K];
 
 // ---------------------------------------------------------------------------
 // Handler registry
