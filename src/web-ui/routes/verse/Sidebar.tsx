@@ -69,6 +69,9 @@ import { SavedProjects } from './workspaces/SavedProjects.js';
 import { findCommand, formatChord } from './shell/command-catalog.js';
 import { pulse } from '../../components/motion/pulse.js';
 import styles from './Sidebar.module.css';
+import { useAgentWorkspaceEnabled } from './agents/agent-workspace-flag.js';
+
+const AgentChatRoster = lazy(() => import('./agents/AgentChatRoster.js').then(m => ({ default: m.AgentChatRoster })));
 
 export interface SidebarProps {
   sessions: readonly VerseSession[];
@@ -130,6 +133,7 @@ export function Sidebar(props: SidebarProps) {
   const [filter, setFilter] = useState<SidebarFilter>('all');
   const [archivedOpen, setArchivedOpen] = useState(false);
   const collapsedGroups = useSidebarCollapse();
+  const showAgentChats = useAgentWorkspaceEnabled();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ row: SidebarRow; anchor: MenuAnchor; from: HTMLElement } | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -190,6 +194,9 @@ export function Sidebar(props: SidebarProps) {
 
       <div ref={scrollRef} className={styles.scroll} onKeyDown={onRowsKeyDown}>
         <SavedProjects />
+        {showAgentChats ? <Suspense fallback={null}>
+          <AgentChatRoster selectedId={selectedId} onSelect={onSelect} query={query} />
+        </Suspense> : null}
         {loading ? (
           <div className={styles.skeleton} aria-busy="true">
             <SkeletonLine width="48%" /><SkeletonLine width="86%" /><SkeletonLine width="74%" />
