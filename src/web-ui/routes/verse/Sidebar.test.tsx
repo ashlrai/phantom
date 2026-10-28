@@ -721,6 +721,17 @@ describe('Sidebar — first paint', () => {
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
   });
 
+  it('keeps resources below the chats and available when the chat list is empty', () => {
+    const view = mountWith([session({ id: 'boot-one', title: 'From the bootstrap read' })], 'idle');
+    const chat = screen.getByRole('button', { name: /From the bootstrap read/ });
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    expect(chat.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View routines' })).toBeVisible();
+    view.unmount();
+    mountWith([], 'idle');
+    expect(screen.getByRole('button', { name: 'This machine' })).toBeVisible();
+  });
+
   it('shows the loading skeleton only while there is nothing to draw', () => {
     const { container } = mountWith([], 'loading');
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();

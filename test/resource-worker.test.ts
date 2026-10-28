@@ -8,6 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeResourceWorker, validateResourceBindings, type ResourceBinding, type ResourceWorkerTask } from '../src/core/resources/worker.js';
 import type { ResourcePool, ResourceWorker } from '../src/core/resources/pool-policy.js';
+import * as verification from '../src/core/run/verify-commands.js';
 
 let fixtureRoot: string;
 let cleanups: Array<() => Promise<void>>;
@@ -36,11 +37,13 @@ function claudeEvents(patch: Record<string, unknown> = {}) {
     result: 'fixture completed', usage: { input_tokens: 12, output_tokens: 4,
       cache_creation_input_tokens: 6, cache_read_input_tokens: 8 }, ...patch }];
 }
-function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0): ResourceBinding {
+function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0,
+  version = '2.1.309 (Claude Code)', versionExitCode = 0): ResourceBinding {
   const script = join(fixtureRoot, `worker-${Math.random().toString(16).slice(2)}.cjs`);
   const transcript = typeof rows === 'string' ? rows : rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
   writeFileSync(script, [
     'const fs=require("node:fs");const chunks=[];',
+    `if(process.argv.at(-1)==="--version"){console.log(${JSON.stringify(version)});process.exit(${versionExitCode});}`,
     'process.stdin.on("data",chunk=>chunks.push(chunk));',
     'process.stdin.on("end",()=>{',
     `fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'invocation.json'))},JSON.stringify({argv:process.argv.slice(2),`,
@@ -129,6 +132,65 @@ describe('resource worker exact enrollment', () => {
 });
 
 describe('resource native worker terminal and accounting evidence', () => {
+  it.each([
+    [{ timedOut: true }, 'timed-out', 'worker-timed-out'],
+    [{ cancelled: true }, 'cancelled', 'worker-cancelled'],
+    [{ error: 'termination authority lost: fixture' }, 'uncertain', 'worker-termination-uncertain'],
+    [{ error: 'termination deadline elapsed with process-group exit unconfirmed' }, 'uncertain', 'worker-termination-uncertain'],
+  ] as const)('settles a failed version probe without dispatching a task %#', async (patch, status, reason) => {
+    const run = vi.spyOn(verification, 'runVerifySubprocessAsync').mockResolvedValue({
+      stdout: '', stderr: '', exitCode: 1, timedOut: false, cancelled: false, signal: null, ...patch,
+    });
+    expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents()), task()))
+      .toEqual({ status, reason, output: '', inputTokens: null, outputTokens: null });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]![0].at(-1)).toBe('--version');
+    expect(run.mock.calls[0]![1]).not.toHaveProperty('input');
+  });
+  it('preserves uncertain probe ownership even when the caller stops', async () => {
+    const controller = new AbortController();
+    const run = vi.spyOn(verification, 'runVerifySubprocessAsync').mockImplementation(async () => {
+      controller.abort();
+      return { stdout: '', stderr: '', exitCode: 1, timedOut: false, cancelled: true, signal: null,
+        error: 'termination authority lost: fixture' };
+    });
+    expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents()), task(), controller.signal))
+      .toMatchObject({ status: 'uncertain', reason: 'worker-termination-uncertain' });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it.each(['2.1.308 (Claude Code)', '2.1.309-rc.1 (Claude Code)'])(
+    'refuses Claude %s before task execution', async version => {
+      const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), task());
+      expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-outdated',
+        output: '', inputTokens: null, outputTokens: null });
+      expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+    });
+  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.309 (Claude Code)', 1]] as const)(
+    'refuses unverified Claude version output %# before task execution', async (version, exitCode) => {
+      const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version, exitCode), task());
+      expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-unverified',
+        output: '', inputTokens: null, outputTokens: null });
+      expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+    });
+  it.each(['2.1.309 (Claude Code)', '2.1.310 (Claude Code)'])(
+    'admits Claude %s and sends the task only to the execution invocation', async version => {
+      const request = task();
+      expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), request))
+        .toMatchObject({ status: 'completed', reason: 'worker-completed' });
+      expect(invocation().prompt).toBe(request.prompt);
+      expect(invocation().argv).not.toContain('--version');
+    });
+  it('rechecks the enrolled wrapper on each task after a CLI downgrade', async () => {
+    const binding = nativeFixture(claudeEvents());
+    if (binding.kind !== 'native-cli') throw new Error('Fixture type');
+    expect(await executeResourceWorker(worker('claude'), binding, task())).toMatchObject({ status: 'completed' });
+    const script = binding.command[1]!;
+    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.309 (Claude Code)', '2.1.308 (Claude Code)'));
+    rmSync(join(fixtureRoot, 'invocation.json'));
+    expect(await executeResourceWorker(worker('claude'), binding, task()))
+      .toMatchObject({ status: 'failed', reason: 'worker-cli-version-outdated' });
+    expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+  });
   it('uses exact Codex sandbox/stdin arguments and omits ambient credential and loader variables', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'dummy-not-a-secret'); vi.stubEnv('ANTHROPIC_API_KEY', 'dummy-not-a-secret');
     vi.stubEnv('NODE_OPTIONS', '--require /fixture/not-used'); vi.stubEnv('CODEX_HOME', '/fixture/not-used');
