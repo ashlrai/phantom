@@ -1,5 +1,6 @@
 // M122: Fleet oversight snapshot export — buildOversightSnapshot + exportOversight.
 
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -210,7 +211,7 @@ export async function exportOversight(cfg: PulseExportCfg): Promise<boolean> {
   try {
     if (!cfg.pulse?.enabled) return false;
 
-    const pat = process.env['ASHLR_PULSE_PAT'];
+    const pat = readEnvironmentCredential('ASHLR_PULSE_PAT');
     if (!pat) {
       console.log('[ashlr-fleet] oversight export: ASHLR_PULSE_PAT not set — skipping (set it to enable oversight→pulse)');
       return false;

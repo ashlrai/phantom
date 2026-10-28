@@ -162,23 +162,13 @@ describe('saveRun / loadRun / listRuns — persistence round-trip', () => {
 
   it('saveRun then loadRun returns the same state', () => {
     const state = makeState('round-trip');
-    saveRun(state);
-    const loaded = loadRun(state.id);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.id).toBe(state.id);
-    expect(loaded!.goal).toBe('test goal');
-  });
-
-  it('saveRun persists the full state shape', () => {
-    const state = makeState('full-shape');
     state.status = 'done';
     state.result = 'Final answer.';
     state.usage = { tokensIn: 100, tokensOut: 50, steps: 3, estCostUsd: 0 };
     saveRun(state);
     const loaded = loadRun(state.id);
-    expect(loaded!.status).toBe('done');
-    expect(loaded!.result).toBe('Final answer.');
-    expect(loaded!.usage.tokensIn).toBe(100);
+    expect(loaded).not.toBeNull();
+    expect(loaded).toMatchObject(state);
   });
 
   it('saveRun fills metadata-only causal learning fields without copying raw run text into summaries', () => {
@@ -293,17 +283,6 @@ describe('saveRun / loadRun / listRuns — persistence round-trip', () => {
     });
   });
 
-  it('listRuns includes saved runs (by unique id)', () => {
-    const a = makeState('list-a');
-    const b = makeState('list-b');
-    saveRun(a);
-    saveRun(b);
-    const runs = listRuns();
-    const ids = runs.map(r => r.id);
-    expect(ids).toContain(a.id);
-    expect(ids).toContain(b.id);
-  });
-
   it('listRuns returns newest first (by createdAt)', () => {
     const older = makeState('newest-old');
     older.createdAt = '2024-01-01T00:00:00.000Z';
@@ -316,6 +295,8 @@ describe('saveRun / loadRun / listRuns — persistence round-trip', () => {
     const olderIdx = runs.findIndex(r => r.id === older.id);
     const newerIdx = runs.findIndex(r => r.id === newer.id);
     expect(newerIdx).toBeLessThan(olderIdx);
+    expect(newerIdx).toBeGreaterThanOrEqual(0);
+    expect(olderIdx).toBeGreaterThanOrEqual(0);
   });
 
   it('saveRun is idempotent — second save overwrites first', () => {
