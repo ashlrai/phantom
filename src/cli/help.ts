@@ -563,6 +563,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'enroll add <repo> [--locus-firm]', desc: 'Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).', topic: 'autonomy' },
   { cmd: 'enroll remove <repo>',         desc: 'Remove a repo from the enrollment registry.', topic: 'autonomy' },
   { cmd: 'enroll kill on|off',           desc: 'Toggle the global autonomous kill switch.', topic: 'autonomy' },
+  { cmd: 'queue add|claim|done|block|list|import|export', desc: 'Phantom job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
   { cmd: 'backlog',                      desc: 'Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
