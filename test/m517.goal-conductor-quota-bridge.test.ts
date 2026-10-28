@@ -250,7 +250,7 @@ describe('M517 provider-contact claim boundary', () => {
   it.each([
     [{ tokensIn: 1, tokensOut: 1 }, undefined],
     [{ tokensIn: 1, tokensOut: 5_000 }, true],
-  ])('refuses unknown or out-of-bound signed planner usage before execution', async (usage, usageKnown) => {
+  ])('refuses unknown or out-of-bound signed planner usage %j before execution', async (usage, usageKnown) => {
     const providerQuota: ProviderInferenceQuotaSession = {
       attemptId: `goal-attempt-${'e'.repeat(64)}`,
       claimNext: vi.fn(() => 'opaque-ticket'),

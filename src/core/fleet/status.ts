@@ -1,3 +1,5 @@
+import { readPoolBudgets } from './pool-budget-store.js';
+import type { PoolBudgetSnapshot } from './pool-budget.js';
 /**
  * M49: fleet control plane + observability — read-only aggregation.
  *
@@ -1511,6 +1513,8 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** Advisory per-pool observations, independent of dispatch authority. */
+  budgets?: PoolBudgetSnapshot;
   /** ISO timestamp this snapshot was generated. */
   generatedAt: string;
   /** Canonical build-produced identity. Optional for legacy serialized snapshots. */
@@ -3266,6 +3270,7 @@ export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
 
   const status: FleetStatus = {
     generatedAt,
+    budgets: await readPoolBudgets(undefined, new Date(generatedAt)),
     buildIdentity: readBuildIdentity(),
     daemon,
     backends,

@@ -1,3 +1,4 @@
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 import { assertLocusJobDispatch, getLocusJobEnv, withLocusJobChildEnv } from '../integrations/locus-job-env.js';
 import { selectedOutcomeAdmissionCurrent } from '../run/outcome-admission.js';
 /**
@@ -1162,7 +1163,7 @@ function spawnBackgroundWorker(swarmId: string): Promise<boolean> {
 }
 
 async function signalBackgroundHandoffReady(swarmId: string): Promise<boolean> {
-  const handoffToken = process.env['ASHLR_BACKGROUND_HANDOFF_TOKEN'];
+  const handoffToken = readEnvironmentCredential('ASHLR_BACKGROUND_HANDOFF_TOKEN');
   delete process.env['ASHLR_BACKGROUND_HANDOFF_TOKEN'];
   if (!handoffToken || typeof process.send !== 'function' || process.connected !== true) return false;
   return new Promise((resolve) => {

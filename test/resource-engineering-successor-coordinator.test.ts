@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonical, digest } from '../src/core/universe/artifacts.js';
 import { createResourceEngineeringSuccessorCoordinator, parseResourceEngineeringSuccessorProposal,
   validateResourceEngineeringSuccessorCoordinatorConfig } from '../src/core/resources/engineering-successor-coordinator.js';
@@ -18,7 +18,9 @@ import * as locks from '../src/core/fleet/local-store-lock.js';
 
 const roots: string[] = [];
 const owners: ReturnType<typeof createResourceEngineeringSuccessorCoordinator>[] = [];
-afterEach(async () => { await Promise.allSettled(owners.splice(0).map(owner => owner.close())); vi.restoreAllMocks();
+// Virtualize coordinator polling while retaining real clocks and private storage.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); });
+afterEach(async () => { await Promise.allSettled(owners.splice(0).map(owner => owner.close())); vi.useRealTimers(); vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const hash = (value: unknown) => digest(canonical(value));
 const config: ResourceEngineeringSuccessorCoordinatorConfig = { schemaVersion: 1, supervisionId: 'fleet', profileId: 'fixed', allowedWorkerIds: ['worker'],
@@ -81,8 +83,12 @@ function fixture() {
     return Object.fromEntries(readdirSync(path).sort().map(name => [name, readFileSync(join(path, name), 'utf8')])); };
   return { options, root, source, state, attempts, status, run, provider, prepare, create, files, stop: (value: boolean) => { stopped = value; } };
 }
-const until = (owner: ReturnType<typeof createResourceEngineeringSuccessorCoordinator>, state: string) =>
-  vi.waitFor(() => expect(owner.snapshot().entries[0]?.state).toBe(state), { timeout: 5000, interval: 20 });
+const until = async (owner: ReturnType<typeof createResourceEngineeringSuccessorCoordinator>, state: string) => {
+  // Settle the current poll before repeating native snapshot proofs. The
+  // fixture holds each requested state; transient states use separate waiters.
+  await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+  await vi.waitFor(() => expect(owner.snapshot().entries[0]?.state).toBe(state), { timeout: 5000, interval: 20 });
+};
 
 describe('bounded engineering successor coordinator', () => {
   it.each(['proposal-workers-ineligible', 'proposal-admission-unavailable'] as const)(
@@ -129,7 +135,7 @@ describe('bounded engineering successor coordinator', () => {
       : mode === 'close' ? { state: 'closed', reason: null }
       : { state: 'held', reason: mode === 'signal' ? 'signal-aborted' : 'execution-guard-refused' };
     await vi.waitFor(() => expect(reports.at(-1)).toMatchObject(expected));
-    const count = reports.length; await new Promise(resolve => setTimeout(resolve, 150));
+    const count = reports.length; await vi.advanceTimersByTimeAsync(150);
     expect(reports).toHaveLength(count); expect(f.files()).toEqual(initialized);
     expect(f.run).not.toHaveBeenCalled(); expect(f.prepare).not.toHaveBeenCalled(); expect(f.options.supervision.admit).not.toHaveBeenCalled();
   });
@@ -187,13 +193,13 @@ describe('bounded engineering successor coordinator', () => {
     expect(f.prepare).not.toHaveBeenCalled(); expect(f.options.supervision.admit).not.toHaveBeenCalled();
     expect(source).not.toHaveBeenCalled();
     expect(f.status.mock.calls.some(args => args[4]?.length === 0 && args[5]?.includes('worker'))).toBe(true);
-    held = false; await until(owner, 'admitted'); await new Promise(resolve => setTimeout(resolve, 150));
+    held = false; await until(owner, 'admitted'); await vi.advanceTimersByTimeAsync(150);
     expect(f.run).toHaveBeenCalledTimes(1); expect(f.provider).toHaveBeenCalledTimes(1);
     expect(f.prepare).toHaveBeenCalledTimes(1); expect(f.options.supervision.admit).toHaveBeenCalledTimes(1);
     expect(Object.keys(f.files()).filter(name => name.startsWith('intent-'))).toHaveLength(1);
     expect(f.state.admission!.remainingEnrollments).toBe(1); expect(owner.snapshot().deadlineAt).toBe(deadline);
     expect(f.state.deadlineAt).toBe(deadline); await owner.close();
-    const restarted = f.create(); restarted.start(); await new Promise(resolve => setTimeout(resolve, 150));
+    const restarted = f.create(); restarted.start(); await vi.advanceTimersByTimeAsync(150);
     expect(f.run).toHaveBeenCalledTimes(1); expect(restarted.snapshot().deadlineAt).toBe(deadline);
   });
   it('does not spend a successor slot on an eligible worker outside the proposal allowlist', async () => {
@@ -246,7 +252,7 @@ describe('bounded engineering successor coordinator', () => {
     const status = f.status.getMockImplementation()!;
     f.status.mockImplementation((...args) => { const result = status(...args); if (stage === 'planner') hold(); return result; });
     const owner = f.create(); const initialized = f.files(); owner.start();
-    await vi.waitFor(() => expect(read).toHaveBeenCalled()); await new Promise(resolve => setTimeout(resolve, 120));
+    await vi.waitFor(() => expect(read).toHaveBeenCalled()); await vi.advanceTimersByTimeAsync(120);
     expect(f.files()).toEqual(initialized); expect(owner.snapshot().entries).toEqual([]);
     expect(source).not.toHaveBeenCalled();
     expect(f.run).not.toHaveBeenCalled(); expect(f.prepare).not.toHaveBeenCalled(); expect(f.options.supervision.admit).not.toHaveBeenCalled();
@@ -258,7 +264,7 @@ describe('bounded engineering successor coordinator', () => {
     const owner = f.create(); expect(reports.map(row => row.state)).toEqual(['idle']);
     owner.start(); owner.start();
     await vi.waitFor(() => expect(reports.at(-1)).toMatchObject({ state: 'held', reason: 'execution-guard-refused' }));
-    const count = reports.length; await new Promise(resolve => setTimeout(resolve, 220)); expect(reports).toHaveLength(count);
+    const count = reports.length; await vi.advanceTimersByTimeAsync(220); expect(reports).toHaveLength(count);
     f.stop(false); await vi.waitFor(() => expect(reports.at(-1)?.state).toBe('running'));
     await owner.close(); await owner.close();
     expect(reports.map(row => row.state)).toEqual(['idle', 'running', 'held', 'running', 'closing', 'closed']);
@@ -272,7 +278,7 @@ describe('bounded engineering successor coordinator', () => {
     const f = fixture(); const reports: EngineeringCoordinatorLifecycleReport[] = []; f.options.onLifecycle = row => reports.push(row);
     const owner = f.create(); f.state.configDigest = '0'.repeat(64); owner.start();
     await vi.waitFor(() => expect(reports.at(-1)).toMatchObject({ state: 'faulted', reason: 'coordinator-loop-failed' }));
-    const count = reports.length; await new Promise(resolve => setTimeout(resolve, 150)); expect(reports).toHaveLength(count);
+    const count = reports.length; await vi.advanceTimersByTimeAsync(150); expect(reports).toHaveLength(count);
     expect(f.state.paused).toBe(false); expect(f.state.entries).toHaveLength(1); expect(f.run).not.toHaveBeenCalled();
     expect(JSON.stringify(reports)).not.toContain(f.root); expect(JSON.stringify(reports)).not.toContain(f.source.context);
     await owner.close(); expect(reports.at(-1)).toMatchObject({ state: 'closed', reason: null });
@@ -294,15 +300,15 @@ describe('bounded engineering successor coordinator', () => {
   it('ignores an asynchronously rejected observer without an unhandled rejection', async () => {
     const f = fixture(); f.state.entries = []; let calls = 0;
     f.options.onLifecycle = async () => { calls++; throw new Error('PRIVATE_ASYNC_OBSERVER_FAILURE'); };
-    const owner = f.create(); owner.start(); await new Promise(resolve => setTimeout(resolve, 120)); await owner.close();
-    await new Promise(resolve => setTimeout(resolve, 0)); expect(calls).toBe(4); expect(f.run).not.toHaveBeenCalled();
+    const owner = f.create(); owner.start(); await vi.advanceTimersByTimeAsync(120); await owner.close();
+    await vi.advanceTimersByTimeAsync(0); expect(calls).toBe(4); expect(f.run).not.toHaveBeenCalled();
   });
   it('reports signal abort distinctly from generic authority refusal', async () => {
     const f = fixture(); const reports: EngineeringCoordinatorLifecycleReport[] = []; const abort = new AbortController();
     f.options.signal = abort.signal; f.options.onLifecycle = row => reports.push(row); f.state.entries = [];
     const owner = f.create(); owner.start(); abort.abort();
     await vi.waitFor(() => expect(reports.at(-1)).toMatchObject({ state: 'held', reason: 'signal-aborted' }));
-    const count = reports.length; await new Promise(resolve => setTimeout(resolve, 100)); expect(reports).toHaveLength(count);
+    const count = reports.length; await vi.advanceTimersByTimeAsync(100); expect(reports).toHaveLength(count);
     expect(f.run).not.toHaveBeenCalled(); await owner.close(); expect(reports.at(-1)?.state).toBe('closed');
   });
   it.each(['uncertain', 'release'] as const)('reports %s close failure with a fixed reason', async kind => {
@@ -322,7 +328,7 @@ describe('bounded engineering successor coordinator', () => {
     expect(JSON.parse(f.run.mock.calls[0]![0].task.prompt).source).toEqual(f.source);
     expect(JSON.stringify(owner.snapshot())).not.toContain(f.source.context);
     const saved = f.files(); const deadline = owner.snapshot().deadlineAt; await owner.close();
-    const restarted = f.create(); restarted.start(); await new Promise(resolve => setTimeout(resolve, 150));
+    const restarted = f.create(); restarted.start(); await vi.advanceTimersByTimeAsync(150);
     expect(restarted.snapshot().deadlineAt).toBe(deadline); expect(f.files()).toEqual(saved); expect(f.run).toHaveBeenCalledTimes(1);
   });
   it.each(['pause', 'stop'])('records completed proposal facts after %s but does not prepare until resumed', async mode => {
@@ -335,7 +341,7 @@ describe('bounded engineering successor coordinator', () => {
     const f = fixture(); const original = f.run.getMockImplementation()!;
     f.run.mockImplementation(async options => { const result = await original(options); f.source.commit = 'f'.repeat(40); return result; });
     const owner = f.create(); owner.start(); await until(owner, 'proposed'); expect(f.prepare).not.toHaveBeenCalled();
-    await owner.close(); const restarted = f.create(); restarted.start(); await new Promise(resolve => setTimeout(resolve, 150));
+    await owner.close(); const restarted = f.create(); restarted.start(); await vi.advanceTimersByTimeAsync(150);
     expect(f.run).toHaveBeenCalledTimes(1); expect(f.prepare).not.toHaveBeenCalled();
   });
   it('holds a lost proposal-result publication after restart instead of charging twice', async () => {
@@ -344,7 +350,7 @@ describe('bounded engineering successor coordinator', () => {
       if ((args[1] as { kind?: string }).kind === 'result') return 'failed'; return original(...args);
     });
     const owner = f.create(); owner.start(); await vi.waitFor(() => expect(f.attempts).toHaveLength(1)); await owner.close(); write.mockRestore();
-    const restarted = f.create(); restarted.start(); await new Promise(resolve => setTimeout(resolve, 150));
+    const restarted = f.create(); restarted.start(); await vi.advanceTimersByTimeAsync(150);
     expect(restarted.snapshot().entries[0]).toMatchObject({ state: 'held', reason: 'proposal-output-unresolved' });
     expect(f.run).toHaveBeenCalledTimes(1); expect(f.prepare).not.toHaveBeenCalled();
   });
@@ -440,7 +446,7 @@ describe('bounded engineering successor coordinator', () => {
       const response = await original(options); return { ...response, output: mode === 'missing-output' ? null : '{"action":"stop"}' };
     });
     const owner = f.create(); owner.start(); await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    await new Promise(resolve => setTimeout(resolve, 250)); expect(f.run).toHaveBeenCalledTimes(1); expect(f.prepare).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(250); expect(f.run).toHaveBeenCalledTimes(1); expect(f.prepare).not.toHaveBeenCalled();
     expect(owner.snapshot().entries[0]?.state).toBe('held');
   });
   it('records stop as a terminal proposal with no successor', async () => {
@@ -456,13 +462,13 @@ describe('bounded engineering successor coordinator', () => {
   });
   it('does not renew an expired deadline or create a proposal after restart', async () => {
     const f = fixture(); f.state.deadlineAt = new Date(Date.now() - 1000).toISOString(); f.state.state = 'timed-out';
-    const owner = f.create(); owner.start(); await new Promise(resolve => setTimeout(resolve, 100));
+    const owner = f.create(); owner.start(); await vi.advanceTimersByTimeAsync(100);
     expect(owner.snapshot().state).toBe('timed-out'); expect(f.run).not.toHaveBeenCalled(); expect(owner.snapshot().entries).toEqual([]);
   });
   it('rejects altered receipt evidence before reusing a retained proposal', async () => {
     const f = fixture(); f.prepare.mockRejectedValue(Error('preparation held')); const owner = f.create(); owner.start();
     await until(owner, 'proposed'); await owner.close(); f.attempts[0]!.outputDigest = '0'.repeat(64); f.prepare.mockClear();
-    const restarted = f.create(); restarted.start(); await new Promise(resolve => setTimeout(resolve, 150));
+    const restarted = f.create(); restarted.start(); await vi.advanceTimersByTimeAsync(150);
     expect(f.run).toHaveBeenCalledTimes(1); expect(f.prepare).not.toHaveBeenCalled();
   });
   it('rejects drifted immutable intent before any restarted effect', async () => {

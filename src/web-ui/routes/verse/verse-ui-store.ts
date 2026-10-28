@@ -91,6 +91,7 @@ export const VERSE_SECTIONS: readonly VerseSectionEntry[] = [
   { id: 'wiki', label: 'Repo wiki', module: 'WikiSection', placement: 'tray' },
   { id: 'playbooks', label: 'Playbooks', module: 'PlaybooksSection', placement: 'tray' },
   { id: 'automations', label: 'Automations', module: 'AutomationsSection', placement: 'tray' },
+  { id: 'ops', label: 'Ops', module: 'OpsSection', placement: 'tray' },
 ];
 
 export const RAIL_SECTIONS: readonly VerseSectionEntry[] = VERSE_SECTIONS.filter((s) => s.placement === 'rail');

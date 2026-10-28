@@ -23,7 +23,7 @@ verified locally (clean-HOME full suite), pushed once. Read-only/advisory + neve
 - Test: `m67.security-panel` (12).
 
 ## M68 — ashlr-md rendering (`integrations/markdown.ts`)
-- `ashlrMdInstalled` / `openInAshlrMd` (`mdopen <file>`, detached) /
+- `ashlrMdInstalled` / `openInAshlrMd` (`mdopen <file>`, bounded; ok only on exit 0, stderr via a temp file so a launcher mdopen leaves running cannot hold the call) /
   `renderToTempMarkdown` (unique temp name) / `presentMarkdown` — the seam for
   `ashlr inbox`/`digest` to show proposals/digests in the beautiful viewer;
   degrades to terminal when ashlr-md is absent.
