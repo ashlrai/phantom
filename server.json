@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ashlrai/phantom",
+  "title": "Phantom",
+  "description": "Phantom's local stdio gateway aggregates MCP servers and exposes engineering workbench tools.",
+  "version": "3.29.15",
+  "websiteUrl": "https://phm.dev",
+  "repository": {
+    "url": "https://github.com/ashlrai/phantom",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@ashlr/phantom",
+      "version": "3.29.15",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "valueHint": "subcommand",
+          "description": "Starts the stdio aggregation gateway. The phm and ashlr binaries share the same entrypoint."
+        }
+      ]
+    }
+  ]
+}

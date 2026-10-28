@@ -84,6 +84,11 @@ export function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(host.toLowerCase());
 }
 
+/** Pin localhost to a loopback literal so local endpoints never need DNS. */
+export function pinLoopbackHost(host: string): string {
+  return host.toLowerCase() === 'localhost' ? '127.0.0.1' : host;
+}
+
 /**
  * Validate a local inference base URL. Loopback passes. Anything else needs
  * `allowRemote === true` and https, and then carries a warning.
@@ -135,6 +140,8 @@ export function validateLocalBaseUrl(raw: unknown, opts: { allowRemote?: unknown
     if (opts.allowRemote !== true) return refuse('remote-not-allowed');
     if (scheme !== 'https') return refuse('remote-requires-https');
   }
+  // Preserve the validated scheme, port and path while avoiding name resolution.
+  parsed.hostname = pinLoopbackHost(host);
   return { ok: true, baseUrl: `${parsed.origin}${trimmed}`, host, loopback, warning: loopback ? null : 'remote-local-inference' };
 }
 

@@ -1,3 +1,4 @@
+import { TemplateGallery } from '../templates/TemplateGallery.js';
 /**
  * routes/verse/agents/NewAgentDialog.tsx — "New agent" in one action (⌘N on
  * the board) and "Same task on several seats" (⇧⌘N): pick the repo, the
@@ -230,6 +231,8 @@ export function NewAgentDialog({ open, multi, projects, seats, initialRoot, busy
           />
         </div>
         <Input label="Title (optional)" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={prompt ? titleFromPrompt(prompt) : 'From the prompt'} disabled={busy} />
+
+        <TemplateGallery title={title} prompt={prompt} disabled={busy} onApply={template => { setTitle(template.title); setPrompt(template.prompt); }} />
 
         <details className={styles.advancedOptions}>
           <summary>Options</summary>
