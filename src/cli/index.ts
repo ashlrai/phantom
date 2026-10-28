@@ -2135,6 +2135,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'queue': {
+        const { cmdQueue } = await import('./queue.js');
+        process.exitCode = await cmdQueue(rest);
+        break;
+      }
+
       case 'telemetry': {
         const cmdTelemetry = await loadTelemetryCmd();
         process.exitCode = await cmdTelemetry(rest);
