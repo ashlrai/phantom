@@ -1874,7 +1874,9 @@ clear it or remove a surviving lease merely to make a status look healthy.
   setting holds every automatic merge. A green Vercel preview alone does not
   count as code verification.
 - Phantom reads those checks again on the PR's current head immediately before
-  its SHA-pinned squash merge. Each named check must appear exactly once and
+  its SHA-pinned merge-queue enqueue. The queue and Cross-model review check
+  described below are required too; queued workspaces stay intact until GitHub
+  confirms they merged. Each named check must appear exactly once and
   have succeeded. GitHub branch protection should require the same checks;
   a check name by itself does not authenticate which GitHub App reported it.
 - Repositories without live code CI should leave auto-merge off. The current
@@ -1965,3 +1967,23 @@ gate ordinary dispatch.
 Single-producer spend accounting uses the admitted concrete engine, rather than trusting a
 subscription-like tier on a custom engine. An unaccounted interrupted zero-dollar batch or unexpected execution identity
 keeps its journal armed for reconciliation.
+
+### Split agent workspace
+
+In a chat, select **Split** to opt into `agentWorkspace`: the conversation
+stays beside a grid of Terminal, Browser, Computer use and Changes. The choice
+is saved per chat in local storage, alongside the dock's existing persisted
+sizes. Select Split again to return to the standard dock. Narrow windows use the existing
+sheet/tab layout. Computer use reports native desktop control status; the
+window's existing consent and stop controls continue to govern app access.
+
+The branch bar's **Enqueue to merge queue** action sends the PR head you saw
+in one click. It stays disabled until checks pass, GitHub reports no conflicts,
+and the exact-head GitHub check named **Cross-model review** succeeds. That
+check must be supplied by the repository's independent review integration;
+missing, ambiguous or unsuccessful checks never count as review evidence.
+The server re-reads the head and checks, requires an active `merge_queue`
+branch rule, then calls `gh pr merge --auto --match-head-commit <sha>`.
+It never selects a direct merge strategy or uses an admin override. A successful
+enqueue is reported as enqueued, rather than as a completed merge. Repositories
+without an enforced merge queue cannot enqueue from this control.

@@ -247,7 +247,7 @@ export function MergeDialog({ open, pin, live, onClose, onSubmit, error, busy }:
       open={open}
       onClose={onClose}
       titleId={titleId}
-      title={`Merge #${pin.number}?`}
+      title={`Enqueue #${pin.number}?`}
       description={pin.title}
       initialFocusRef={confirmRef}
     >
@@ -261,12 +261,12 @@ export function MergeDialog({ open, pin, live, onClose, onSubmit, error, busy }:
       >
         <Facts>
           <Fact>
-            Squash-merges <Branch name={pin.headRef || null} /> into <Branch name={pin.baseRef || null} /> on GitHub.
+            Enqueues <Branch name={pin.headRef || null} /> into <Branch name={pin.baseRef || null} /> in GitHub’s merge queue.
           </Fact>
           <Fact tone={head.verified ? 'neutral' : 'warning'}>
             Head <code className={styles.ref}>{head.sha}</code>, {head.detail}
           </Fact>
-          <Fact>Only this head merges: GitHub re-checks it first, so if a commit landed after it, nothing merges. Admin overrides are never used.</Fact>
+          <Fact>Only this head is enqueued: GitHub re-checks it first, so if a commit landed after it, nothing merges. Admin overrides are never used.</Fact>
           {blocked !== null ? <Fact tone="warning">{blocked}</Fact> : null}
         </Facts>
         <ErrorLine error={error} />
@@ -275,7 +275,7 @@ export function MergeDialog({ open, pin, live, onClose, onSubmit, error, busy }:
             Cancel
           </Button>
           <Button ref={confirmRef} type="submit" variant="primary" busy={busy} disabled={blocked !== null}>
-            Merge #{pin.number}
+            Enqueue #{pin.number}
           </Button>
         </div>
       </form>

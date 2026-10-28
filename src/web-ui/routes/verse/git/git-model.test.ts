@@ -38,7 +38,7 @@ describe('primaryAction', () => {
     ['push (new branch)', { suggested: 'push' as const, upstream: null }, 'Push', 'Publish feat/branch-bar to origin.'],
     ['push (ahead)', { suggested: 'push' as const, ahead: 2 }, 'Push', 'Push 2 commits on feat/branch-bar to origin/feat/branch-bar.'],
     ['create PR', { suggested: 'create-pr' as const }, 'Create PR', 'Open a pull request from feat/branch-bar into main.'],
-    ['merge', { suggested: 'merge' as const, pr: pr() }, 'Merge', 'Squash-merge #463 into main. Checks passed.'],
+    ['merge', { suggested: 'merge' as const, pr: pr() }, 'Review enqueue…', 'Enqueue #463 into main. Checks passed.'],
     ['view', { suggested: 'view-pr' as const, pr: pr({ state: 'merged' }) }, 'View PR', 'Open #463 on GitHub.'],
   ])('%s', (_l, over, label, disclosure) => {
     const a = primaryAction(status(over));

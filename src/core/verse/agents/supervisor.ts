@@ -189,6 +189,22 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
   }
   rememberChecks(agent.id, read, now);
   const pr = read.detail.pr;
+  async function finishMerged() {
+    if (!pr) return;
+    agent = (await note(store, agent.id, `Merged PR #${pr.number}. Archiving the workspace.`)) ?? agent;
+    try {
+      const config = agent.workspace ? (await readWorkspaceConfig(agent.workspace.rootPath)).config : null;
+      agent = await archiveAgent(ad, agent, 'merged', config);
+      agent = (await note(store, agent.id, `Merged PR #${pr.number} and archived the workspace (worktree and branch removed; a snapshot is kept).`)) ?? agent;
+    } catch (err) {
+      agent = (await note(store, agent.id, `Merged PR #${pr.number}, but archiving failed: ${describe(err)}`)) ?? agent;
+    }
+    checksCache.delete(agent.id);
+  }
+  if (pr?.state === 'merged' && agent.autoMerge && mergeTried.get(agent.id) === pr.headSha) {
+    await finishMerged();
+    return agent;
+  }
   if (!pr || (pr.state !== 'open' && pr.state !== 'draft')) return agent;
 
   // 4a. Auto-fix: failing CI goes back to the seat that wrote it, once per head.
@@ -223,6 +239,7 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
     if (mergeTried.get(agent.id) === pr.headSha) return agent;
     mergeTried.set(agent.id, pr.headSha);
     let held: string | null;
+    let mergeLanded = false;
     try {
       const requiredChecks = (deps.checksDeps?.requiredAutoMergeChecks ?? (() => requiredAutoMergeChecks(process.env['ASHLR_VERSE_AUTOMERGE_CHECKS'])))();
       // The merge is an outward effect: it runs under the machine-wide outward-mutation fence, so KILL and
@@ -231,7 +248,9 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
       held = await (deps.mutationFence ?? withOutwardMutationFence)(async () => {
         const [killed, paused] = await Promise.all([(deps.checksDeps?.killOn ?? defaultKillOn)(), (deps.checksDeps?.pausedOn ?? defaultPausedOn)()]);
         if (killed || paused) return killed ? 'the kill switch is engaged' : 'Phantom is paused';
-        await (deps.merge ?? ((root, input) => mergePullRequest(root, input, deps.ops)))(agent.workspace!.path, { number: pr.number, headSha: pr.headSha!, requiredChecks });
+        const outcome = await (deps.merge ?? ((root, input) => mergePullRequest(root, input, deps.ops)))(agent.workspace!.path, { number: pr.number, headSha: pr.headSha!, requiredChecks });
+        mergeLanded = outcome !== null && typeof outcome === 'object' && 'pr' in outcome
+          && outcome.pr !== null && typeof outcome.pr === 'object' && 'state' in outcome.pr && outcome.pr.state === 'merged';
         return null;
       });
     } catch (err) {
@@ -242,15 +261,11 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
       mergeTried.delete(agent.id);
       return (await note(store, agent.id, `Auto-merge is holding: ${held}.`)) ?? agent;
     }
-    agent = (await note(store, agent.id, `Merged PR #${pr.number}. Archiving the workspace.`)) ?? agent;
-    try {
-      const config = agent.workspace ? (await readWorkspaceConfig(agent.workspace.rootPath)).config : null;
-      agent = await archiveAgent(ad, agent, 'merged', config);
-      agent = (await note(store, agent.id, `Merged PR #${pr.number} and archived the workspace (worktree and branch removed; a snapshot is kept).`)) ?? agent;
-    } catch (err) {
-      agent = (await note(store, agent.id, `Merged PR #${pr.number}, but archiving failed: ${describe(err)}`)) ?? agent;
+    if (!mergeLanded) {
+      checksCache.delete(agent.id);
+      return (await note(store, agent.id, `Enqueued PR #${pr.number}. Waiting for GitHub to confirm the merge before archiving.`)) ?? agent;
     }
-    checksCache.delete(agent.id);
+    await finishMerged();
     return agent;
   }
   if (agent.autoMerge && !read.detail.mergeVerdict.allowed && read.detail.ci === 'passing') {

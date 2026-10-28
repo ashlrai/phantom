@@ -1328,6 +1328,8 @@ export type VersePrState = 'open' | 'draft' | 'merged' | 'closed';
 export type VersePrChecks = 'passing' | 'failing' | 'pending' | 'none' | 'unknown';
 
 export interface VerseGitPr {
+  /** Exact-head GitHub check `Cross-model review` completed successfully. */
+  crossModelReviewed?: boolean;
   number: number;
   title: string;
   url: string;

@@ -89,7 +89,7 @@ describe('BranchBar', () => {
     expect(chip).toHaveAttribute('href', 'https://github.com/ashlrai/ashlr-hub/pull/463');
     expect(chip).toHaveTextContent('Open');
     expect(chip).toHaveTextContent('9/9 checks passed');
-    expect(screen.getByRole('button', { name: 'Merge' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review enqueue…' })).toBeInTheDocument();
   });
 
   it('says it is checking GitHub instead of guessing', async () => {
@@ -208,21 +208,45 @@ describe('actions', () => {
     expect(await screen.findByText('Opened #464.')).toBeInTheDocument();
   });
 
-  it('merges only the head it showed: the PR’s own SHA goes to the server', async () => {
+  it.each([
+    { checks: 'pending' as const }, { checks: 'failing' as const },
+    { checks: 'none' as const }, { checks: 'unknown' as const },
+    { crossModelReviewed: false }, { crossModelReviewed: undefined },
+    { mergeable: null }, { headSha: null },
+  ])('disables one-click enqueue unless this head is green and cross-model reviewed (%j)', async (over) => {
+    renderBar([status({ suggested: 'merge', pr: pr(over) })]);
+    expect(await screen.findByRole('button', { name: 'Enqueue to merge queue' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review enqueue…', exact: true })).toBeDisabled();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('enqueues the reviewed SHA in one click without claiming it merged', async () => {
     const user = userEvent.setup();
     const head = 'c'.repeat(40);
-    postReply = () => ({ status: 200, json: { ok: true, status: status({ suggested: 'view-pr', pr: pr({ state: 'merged', headSha: head }) }), pr: pr({ state: 'merged', headSha: head }) } });
+    postReply = () => ({ status: 200, json: { ok: true, status: status({ suggested: 'view-pr', pr: pr({ headSha: head }) }), pr: pr({ headSha: head }) } });
+    renderBar([status({ suggested: 'merge', pr: pr({ headSha: head }) })]);
+    await user.click(await screen.findByRole('button', { name: 'Enqueue to merge queue' }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({ url: '/api/verse/git/pr/merge', body: { root: ROOT, number: 463, headSha: head } });
+    expect(await screen.findByText('Enqueued #463 for main.')).toBeInTheDocument();
+    expect(screen.queryByText('Merged ✓')).not.toBeInTheDocument();
+  });
+
+  it('enqueues only the head it showed: the PR’s own SHA goes to the server', async () => {
+    const user = userEvent.setup();
+    const head = 'c'.repeat(40);
+    postReply = () => ({ status: 200, json: { ok: true, status: status({ suggested: 'view-pr', pr: pr({ headSha: head }) }), pr: pr({ headSha: head }) } });
     renderBar([status({ suggested: 'merge', pr: pr({ headSha: head }), headSha: 'd'.repeat(40), prCheckCounts: { total: 4, passed: 4, failed: 0, pending: 0 } })]);
-    await user.click(await screen.findByRole('button', { name: 'Merge' }));
-    const dialog = screen.getByRole('dialog', { name: 'Merge #463?' });
+    await user.click(await screen.findByRole('button', { name: 'Review enqueue…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Enqueue #463?' });
     expect(within(dialog).getByText(/4\/4 checks passed/)).toBeInTheDocument();
     expect(within(dialog).getByText('ccccccc')).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Merge #463' })).toHaveFocus();
+    expect(within(dialog).getByRole('button', { name: 'Enqueue #463' })).toHaveFocus();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({ url: '/api/verse/git/pr/merge', body: { root: ROOT, number: 463, headSha: head } });
-    expect(await screen.findByText('Merged #463 into main.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Merged/ })).toHaveTextContent('Merged ✓');
+    expect(await screen.findByText('Enqueued #463 for main.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open/ })).toHaveTextContent('Open');
   });
 
   // Review 3.10 c16: the dialog used to follow the 10 s poll, so a head that
@@ -233,8 +257,8 @@ describe('actions', () => {
     const confirmed = 'c'.repeat(40);
     let current = status({ suggested: 'merge', pr: pr({ headSha: confirmed }), prCheckCounts: { total: 9, passed: 9, failed: 0, pending: 0 } });
     const { fetchStatus } = renderBar(() => current);
-    await user.click(await screen.findByRole('button', { name: 'Merge' }));
-    const dialog = screen.getByRole('dialog', { name: 'Merge #463?' });
+    await user.click(await screen.findByRole('button', { name: 'Review enqueue…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Enqueue #463?' });
     expect(within(dialog).getByText('ccccccc')).toBeInTheDocument();
 
     // An agent pushes: the next poll reports a new head with checks pending.
@@ -247,7 +271,7 @@ describe('actions', () => {
     // Still the confirmed head, never the new one, and Merge is off.
     expect(within(dialog).getByText('ccccccc')).toBeInTheDocument();
     expect(within(dialog).queryByText('eeeeeee')).toBeNull();
-    const merge = within(dialog).getByRole('button', { name: 'Merge #463' });
+    const merge = within(dialog).getByRole('button', { name: 'Enqueue #463' });
     expect(merge).toBeDisabled();
     await user.click(merge);
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
@@ -293,7 +317,7 @@ describe('at 375px', () => {
     const chip = await screen.findByRole('link', { name: /Pull request #463, verse context orchestration/ });
     expect(chip).not.toHaveTextContent('verse context orchestration');
     expect(screen.getByRole('region', { name: 'Branches' })).toHaveAttribute('data-compact', 'true');
-    expect(screen.getByRole('button', { name: 'Merge' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review enqueue…' })).toBeInTheDocument();
   });
 });
 
@@ -313,11 +337,11 @@ describe('palette git commands', () => {
 
   it('Merge pull request… opens the merge dialog only where the server suggests merge', async () => {
     renderBar([status({ suggested: 'merge', pr: pr(), prCheckCounts: { total: 4, passed: 4, failed: 0, pending: 0 } })]);
-    await screen.findByRole('button', { name: 'Merge' });
+    await screen.findByRole('button', { name: 'Review enqueue…' });
     act(() => {
       runCommand('git.merge-pr', { via: 'palette' });
     });
-    expect(await screen.findByRole('dialog', { name: 'Merge #463?' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Enqueue #463?' })).toBeInTheDocument();
   });
 
   it('says why instead of declining when no row can merge', async () => {

@@ -110,7 +110,7 @@ export function primaryAction(s: GitStatusView): PrimaryAction | null {
       };
     case 'merge':
       return s.pr
-        ? { action: 'merge', label: 'Merge', disclosure: `Squash-merge #${s.pr.number} into ${s.pr.baseRef || base}. Checks passed.` }
+        ? { action: 'merge', label: 'Review enqueue…', disclosure: `Enqueue #${s.pr.number} into ${s.pr.baseRef || base}. Checks passed.` }
         : null;
     case 'view-pr':
       return s.pr ? { action: 'view-pr', label: 'View PR', disclosure: `Open #${s.pr.number} on GitHub.` } : null;
@@ -247,6 +247,7 @@ export function defaultPrTitle(s: GitStatusView): string {
  * that pin verified, and submits the pinned SHA — never the latest poll's.
  */
 export interface PinnedMerge {
+  crossModelReviewed?: boolean;
   number: number;
   title: string;
   headSha: string | null;
@@ -267,6 +268,7 @@ export function pinMerge(s: GitStatusView): PinnedMerge | null {
     headRef: pr.headRef || s.branch || '',
     baseRef: pr.baseRef || s.base || '',
     checks: pr.checks,
+    crossModelReviewed: pr.crossModelReviewed,
     mergeable: pr.mergeable,
     counts: s.prCheckCounts ?? null,
   };
@@ -301,7 +303,7 @@ export function mergeHeadFact(pin: PinnedMerge): { sha: string; detail: string; 
   }
   const conflicts = pin.mergeable === true ? 'no conflicts' : pin.mergeable === false ? 'has conflicts' : 'GitHub has not finished checking for conflicts';
   const detail = `${checks}, ${conflicts}.`;
-  return { sha, detail, text: `Head ${sha}, ${detail}`, verified: pin.checks === 'passing' && pin.mergeable === true && pin.headSha !== null };
+  return { sha, detail, text: `Head ${sha}, ${detail}`, verified: pin.crossModelReviewed === true && pin.checks === 'passing' && pin.mergeable === true && pin.headSha !== null };
 }
 
 /**
@@ -319,6 +321,7 @@ export function mergeDrift(pin: PinnedMerge, live: GitStatusView | null): string
   }
   if (pr.headSha !== pin.headSha) return 'The PR changed since you opened this — new commits landed. Close and reopen to review the new head.';
   if (pr.checks !== 'passing') return 'Checks on this head are no longer passing — close and reopen once they are.';
+  if (pr.crossModelReviewed !== true) return 'Cross-model review has not passed on this head.';
   if (pr.mergeable !== true) return 'GitHub no longer reports this head as mergeable — close and reopen to review.';
   return null;
 }
