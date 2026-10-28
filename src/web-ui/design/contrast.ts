@@ -240,12 +240,6 @@ export function contrastRatio(foreground: string, background: string, backdrop =
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** Convenience for the appearance panel: does this pair clear body-text contrast? */
-export function meetsTextContrast(foreground: string, background: string, backdrop?: string): boolean {
-  const ratio = contrastRatio(foreground, background, backdrop);
-  return ratio !== null && ratio >= 4.5;
-}
-
 /**
  * The accent, resolved to a hex the same way tokens.css derives its ramp
  * (hsl channels + a per-step lightness offset). Used by the appearance panel

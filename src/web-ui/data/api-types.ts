@@ -128,12 +128,6 @@ export interface SourceQuality {
   reason?: string;
 }
 
-/** The envelope every `snapshot` SSE frame carries (see api.ts handleSseEvents). */
-export interface SnapshotEventPayload {
-  dispatchEnabled: boolean;
-  [key: string]: unknown;
-}
-
 /**
  * Ashlr Verse (interactive chat console, routes/verse/**). The contract is
  * frozen in src/core/verse/types.ts — re-exported type-only so the UI can
