@@ -200,24 +200,33 @@ complete -F _ashlr_completions ashlr phm
 `;
 }
 
-export async function cmdCompletions(args: string[]): Promise<number> {
-  const shell = args[0];
-  if (shell === 'zsh') {
-    process.stdout.write(zshScript());
-    return 0;
-  }
-  if (shell === 'bash') {
-    process.stdout.write(bashScript());
-    return 0;
-  }
+function printCompletionsHelp(): void {
   const c = makeColors(isTty());
   console.log('');
   console.log(c.bold('  phm completions') + c.dim(' — shell completion scripts'));
   console.log('');
+  console.log('  ' + c.bold('Usage:'));
+  console.log('');
   console.log(`    ${c.cyan('phm completions zsh')}    ${c.dim('print zsh completion (_ashlr) to stdout')}`);
   console.log(`    ${c.cyan('phm completions bash')}   ${c.dim('print bash completion to stdout')}`);
   console.log('');
-  return shell === undefined || shell === '--help' || shell === '-h' || shell === 'help' ? 0 : 2;
+}
+
+export async function cmdCompletions(args: string[]): Promise<number> {
+  const shell = args[0];
+  // `--help` / `-h` prints usage and never emits a script - even after a shell
+  // word (`completions zsh --help` used to dump the zsh script).
+  const help = args.includes('--help') || args.includes('-h') || shell === 'help' || shell === undefined;
+  if (shell === 'zsh' && !help) {
+    process.stdout.write(zshScript());
+    return 0;
+  }
+  if (shell === 'bash' && !help) {
+    process.stdout.write(bashScript());
+    return 0;
+  }
+  printCompletionsHelp();
+  return help ? 0 : 2;
 }
 
 // ---------------------------------------------------------------------------
