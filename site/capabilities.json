@@ -1,0 +1,47 @@
+{
+  "name": "Phantom",
+  "version": "3.29.15",
+  "description": "Open-source engineering agent workbench: coding-agent chats and workspaces, local model discovery, signed resident autonomy on macOS, and cloud lanes for Claude and Devin.",
+  "homepage": "https://verse.ashlr.ai/",
+  "documentation": "https://github.com/ashlrai/phantom/blob/master/docs/README.md",
+  "repository": "https://github.com/ashlrai/phantom",
+  "license": "MIT",
+  "install": {
+    "package": "@ashlr/phantom",
+    "command": "npm i -g @ashlr/phantom",
+    "open": "phm verse",
+    "verify": "phm --version",
+    "requires": ["node >=22.15.0", "git"],
+    "platforms": ["macOS", "Linux", "Windows"]
+  },
+  "capabilities": [
+    "coding-agent chats and multi-repo workspaces",
+    "fleet outcomes with explicit acceptance criteria",
+    "signed resident autonomy on macOS (dormant until a Touch-ID-signed grant; the default ladder starts in shadow)",
+    "local model discovery through Ollama and llama.cpp",
+    "MCP stdio aggregation gateway and registry management",
+    "cloud lanes for Claude sessions and Devin under explicit budgets",
+    "offline run receipts and benchmark comparison"
+  ],
+  "commands": {
+    "phm verse": "open the workbench console (loopback only, startup token required)",
+    "phm status --json": "machine-readable seat and preflight status",
+    "phm docs --agent --json": "command registry for agents: usage, safety class, JSON shapes",
+    "phm mcp": "MCP aggregation gateway and registry management",
+    "phm authority setup": "resident autonomy setup on macOS under a signed grant",
+    "phm devin connect": "connect the optional Devin cloud lane"
+  },
+  "tools": [
+    "phm CLI (ashlr is a compatible alias)",
+    "loopback web console",
+    "macOS desktop app (locally signed, not notarized)"
+  ],
+  "links": {
+    "llms": "https://verse.ashlr.ai/llms.txt",
+    "llmsFull": "https://verse.ashlr.ai/llms-full.txt",
+    "mcpServer": "https://verse.ashlr.ai/.well-known/mcp/server.json",
+    "sitemap": "https://verse.ashlr.ai/sitemap.xml",
+    "quickstart": "https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md",
+    "agents": "https://github.com/ashlrai/phantom/blob/master/AGENTS.md"
+  }
+}
