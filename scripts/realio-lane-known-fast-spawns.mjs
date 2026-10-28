@@ -17,6 +17,7 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/ecosystem-changelog.test.ts', // 2.02s on 2026-10-26; offline Node-only generator CLI, seven small local fixture reads per invocation
   'test/m81.engine-readiness.test.ts', // 0.04s on 2026-10-10; one bounded loopback fixture and system curl probe
   'test/m396.automerge-canary-classifier.test.ts', // 2.8s
   'test/m49.fleet-status.test.ts', // 2.5s
