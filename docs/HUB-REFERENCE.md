@@ -454,9 +454,28 @@ Supports **Telegram** (recommended) and macOS iMessage. Configure in `cfg.comms`
 ```sh
 ashlr fleet status         # per-backend throughput, queue, proposals, quota, kill state
 ashlr fleet watch          # glanceable monitoring + recent autonomous actions
+phm fleet events --since 2026-10-26T00:00:00Z --json
 ashlr pulse                # rolling activity + spend analytics (1d/7d/30d)
 ashlr audit                # append-only confinement + action audit log
 ```
+
+`fleet events` reads `~/.ashlr/fabric/dispatch-events.log`, or the path supplied
+with `--file <path>`. It accepts lines with an ISO timestamp including a timezone
+(optionally in square brackets), whitespace, an uppercase event kind, and an
+optional free-text payload. Supported kinds are `RESTOCK`, `LAUNCH_FAILED`,
+`LANE_HOLD`, and `PUBLISH_*` with a nonempty uppercase suffix. For example:
+
+```text
+2026-10-26T18:00:00Z RESTOCK pool=codex-personal added=3
+```
+
+`--since` requires an ISO timestamp with a timezone and includes events at that
+instant. Records stay in file order, including when clocks move backwards.
+`--json` returns `{ events, malformedLines, emptyLines, source }`; each event has
+`timestamp`, `kind`, and the uninterpreted `message` payload. Malformed records
+are counted and skipped. A missing file returns `source: "missing"` and an empty
+list; other read failures exit nonzero. The command only reads the log and never
+launches or publishes work.
 
 `fleet status` shows both tick-level **Proposal production** and durable
 **Dispatch yield**. Dispatch yield is read from
