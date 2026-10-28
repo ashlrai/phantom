@@ -167,7 +167,7 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     observedAt: ref.observedAt ?? event.observedAt ?? event.recordedAt }));
   // A commit message is looser evidence than a diff: it retires a fact only when the two facts share a topic word.
   const topic = (event: MemoryFactEvent): Set<string> => terms(event.text.replace(VALUE_TOKEN, ' '));
-  const retired = (event: MemoryFactEvent): boolean => evidence(event).some(ref => view.eligible.some(later => evidence(later).some(newer => {
+  const retired = (event: MemoryFactEvent): boolean => evidence(event).some(ref => view.eligible.some(later => later !== event && evidence(later).some(newer => {
     const how = memoryQuoteRetiredBy(ref, newer);
     if (how === 'message') return [...topic(event)].some(word => topic(later).has(word));
     if (how === 'file-message') {

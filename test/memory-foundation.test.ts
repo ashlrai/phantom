@@ -253,6 +253,10 @@ describe('pure governed memory foundation', () => {
     expect(ids.exclusions).toContainEqual({ eventId: 'ev_old', reason: 'source-changed' });
     const unrelated = cited('ev_log', 20, 'The runner logs every job id.', 'commit:commit 8c41e08', 'runner.py: log every id');
     expect(buildMemoryContextPack(snapshot([timeout, unrelated]), query({ query: 'job timeout seconds' })).receipt.selectedEventIds).toContain('ev_old');
+     // A fact citing both the old line and the commit that replaced it is not retired by its own evidence.
+    const both = { ...raised, eventId: 'ev_both', factId: 'ev_both', subjectKey: 'ev_both', slotKey: 'ev_both',
+      sourceRefs: [timeout.sourceRefs[0], { ...raised.sourceRefs[0], id: 'ev_both_src' }] };
+    expect(buildMemoryContextPack(snapshot([both]), query({ query: 'job timeout seconds' })).receipt.selectedEventIds).toEqual(['ev_both']);
   });
   it('holds back a docs or test-helper number that disagrees with code, unless the question asks about that source', () => {
     const cited = (eventId: string, text: string, locator: string): MemoryFactEvent => event({ eventId, factId: eventId, subjectKey: eventId, text,
