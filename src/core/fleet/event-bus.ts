@@ -36,6 +36,7 @@
  */
 
 import type { AshlrConfig } from '../types.js';
+import { parseHandoff, type HandoffMessage } from './handoff.js';
 
 // ---------------------------------------------------------------------------
 // Event catalogue
@@ -47,10 +48,13 @@ export type FleetBusEventKind =
   | 'merge:shipped'
   | 'regression:detected'
   | 'goal:done'
+  | 'handoff'
   | 'anomaly';
 
 /** Per-kind payload shapes. */
 export interface FleetBusPayloadMap {
+  /** Validated coordination claims; grants no execution or takeover authority. */
+  'handoff': HandoffMessage;
   'proposal:filed': {
     proposalId: string;
     title?: string;
@@ -134,9 +138,13 @@ export async function emit<K extends FleetBusEventKind>(
     const handlers = _registry.get(kind);
     if (!handlers || handlers.size === 0) return;
 
+    // Validate even direct/untyped emitters. Invalid handoffs are dropped by
+    // the outer catch, preserving the bus's never-throws contract. A frozen
+    // snapshot prevents caller or subscriber mutation between async handlers.
+    const delivered = kind === 'handoff' ? parseHandoff(payload) : payload;
     for (const handler of handlers) {
       try {
-        await handler(payload as FleetBusPayloadMap[FleetBusEventKind], cfg);
+        await handler(delivered as FleetBusPayloadMap[FleetBusEventKind], cfg);
       } catch {
         // Handler throws are silently swallowed — fire-and-forget.
       }
