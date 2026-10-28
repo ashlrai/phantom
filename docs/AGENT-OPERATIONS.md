@@ -328,3 +328,17 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 
 For more failure modes and their recovery, see
 [RELIABILITY.md](RELIABILITY.md#failure-modes--recovery).
+
+### Production stack-trace hot patches
+
+Set `PHM_HOT_PATCH_LOG` in the Phantom server's environment to the path of a
+local, regular log file to opt in. With cloud self-improvement enabled, its
+normal discovery pass reads the last 256 KiB and queues up to ten distinct Node.js
+error stacks for the configured repository. It extracts only exception class
+names and relative `src/` or `lib/` stack locations; log messages, absolute paths,
+and function names are not sent to the agent. Configure the log producer to emit
+repository-relative frames. The fix agent is asked to reproduce the failure with
+a regression test and deliver a small draft PR, or report no-change when the
+signal is insufficient. Existing cloud budgets, backlog deduplication, and PR
+review gates apply. Unset the variable to disable intake; already queued items
+remain in the backlog.

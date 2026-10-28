@@ -96,6 +96,25 @@ describe('scheduled auto-discover', () => {
     expect(readUserBacklogItems()).toEqual([]);
   });
 
+  it('queues opted-in production traces once through scheduled discovery', async () => {
+    const log = path.join(home, 'production.log');
+    fs.writeFileSync(log, 'TypeError: private message\n    at src/api.ts:12:4\n');
+    const previous = process.env.PHM_HOT_PATCH_LOG;
+    process.env.PHM_HOT_PATCH_LOG = log;
+    try {
+      updateCloudBudget({ selfImprove: { enabled: true, repo: 'ashlrai/phantom' } });
+      const run = (ms: number) => autoDiscover({ gh: gh(false), now: at(ms), hasNext: () => false });
+      expect((await run(0)).added).toBe(2);
+      const incident = readUserBacklogItems().find((item) => item.id.startsWith('hot-patch-'));
+      expect(incident?.prompt).toContain('src/api.ts:12:4');
+      expect(incident?.prompt).not.toContain('private message');
+      expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS)).added).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.PHM_HOT_PATCH_LOG;
+      else process.env.PHM_HOT_PATCH_LOG = previous;
+    }
+  });
+
   it('refills on its interval, and sooner when the backlog ran dry', async () => {
     updateCloudBudget({ selfImprove: { enabled: true, repo: 'ashlrai/phantom' } });
     let hasNext = true;
