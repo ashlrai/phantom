@@ -18,6 +18,7 @@ that every integration, provider or autonomous effect is active.
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](observability/README.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
