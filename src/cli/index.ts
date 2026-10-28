@@ -750,6 +750,12 @@ const loadJevCmd = lazyCmd(
   'jev command requires a current build of src/cli/jev.ts (3.15 Jev decision layer).',
 );
 
+const loadMetricsCmd = lazyCmd(
+  () => import('./metrics.js'),
+  (m) => m.runMetricsCli as Cmd,
+  'metrics command requires a current build of src/cli/metrics.ts.',
+);
+
 // ─── 3.15 Devin lane ────────────────────────────────────────────────
 const loadDevinCmd = lazyCmd(
   () => import('./devin.js'),
@@ -2471,6 +2477,12 @@ async function main(): Promise<void> {
         // services and every gate they hold; nothing merges from here.
         const cmdPlaybook = await loadPlaybookCmd();
         process.exitCode = await cmdPlaybook(rest);
+        break;
+      }
+
+      case 'metrics': {
+        const cmdMetrics = await loadMetricsCmd();
+        process.exitCode = await cmdMetrics(rest);
         break;
       }
 
