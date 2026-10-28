@@ -2,7 +2,7 @@
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
  * Subcommands:
- *   fleet status [--json]
+ *   fleet status [--json] [--legacy]
  *       Print a READ-ONLY snapshot of the whole fleet: daemon liveness +
  *       today's spend, per-backend recent dispatches + quota, queue size,
  *       proposal counts (pending / frontier-pending / applied), recent
@@ -2286,7 +2286,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
-  status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2307,8 +2307,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
-  // released it. automerge-canary owns its own help and refusals.
-  if (sub !== 'automerge-canary' && (rest.includes('--help') || rest.includes('-h'))) {
+  // released it. automerge-canary and xreview own their own help and refusals.
+  if (sub !== 'automerge-canary' && sub !== 'xreview' && (rest.includes('--help') || rest.includes('-h'))) {
     printFleetHelp();
     return 0;
   }
@@ -2335,6 +2335,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   switch (sub) {
     case 'status':
+      // This baseline's status handler already produces the legacy control-plane
+      // report; accept the explicit selector used by activation-readiness callers.
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
@@ -2351,6 +2353,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     case 'automerge-canary': {
       const { cmdAutoMergeCanary } = await import('./automerge-canary.js');
       return cmdAutoMergeCanary(rest);
+    }
+    case 'xreview': {
+      const { cmdFleetCrossReview } = await import('./cross-review.js');
+      return cmdFleetCrossReview(rest);
     }
     case 'receipt': {
       const { cmdFleetReceipt } = await import('./receipt.js');
@@ -2381,7 +2387,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
-  console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
@@ -2390,6 +2396,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
+  console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);
+  console.log(`                          ${cyan('# cross-model review on another pool + SHA-bound merge decision')}`);
   console.log(`    ashlr fleet evidence doctor <source> [--deep] [--json]`);
   console.log(`                          ${cyan('# bounded read-only ledger diagnosis')}`);
   console.log(`    ashlr fleet scorecard [--window 7d|30d|all] [--by-engine] [--by-repo] [--json]`);

@@ -16,31 +16,45 @@ that every integration, provider or autonomous effect is active.
 
 ## Start here
 
+Grok Bot routine integration: [Grok Bot resource lane](grokbot-lane.md).
+
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](observability/README.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
+| Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
+| Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
+| Review the default-off Mac memory pressure policy | [Memguard rules](MEMGUARD-RULES.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
+| Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](CROSS-REVIEW.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
+| Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](BRIDGE-WORKTREES.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
+| Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
+| Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
+| Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
+| Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
+| Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
 | See what multi-folder workspaces, GitHub and MCP management still need | [Workspaces build contract](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-WORKSPACES.md) |
@@ -50,6 +64,7 @@ that every integration, provider or autonomous effect is active.
 | Hand work to Claude Code cloud sessions or Devin, and triage what they deliver | [Cloud lane — source guide](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD.md) · [Devin — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md) |
 | Understand the standing authority design, and turn autonomy on under a grant that starts in shadow | [Standing authority — source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) · [Current activation state](AUTONOMY-GAP.md#current-activation-state-315) |
 | Find a Verse route family, its gates and wire shapes | [Verse build contract — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console) |
+| Score a built site or repo checkout for agent-facing readiness signals | [Agent readiness scorer (source)](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md) |
 
 The CLI's `universe help`, `resources pool --help` and `runtime help` describe
 the command surface in the exact binary you are running. A source guide may
@@ -99,6 +114,8 @@ resource reserves and acceptance criteria explicit; routine execution can procee
 within them without turning discovery or a passing trial into broader authority.
 
 To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
+
+For the public-source review of contributor instructions across the seven repos, see the [AGENTS.md audit](https://github.com/ashlrai/phantom/blob/master/docs/AGENTS-MD-AUDIT.md) (source).
 
 ## What the evidence means
 

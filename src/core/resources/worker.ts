@@ -9,6 +9,7 @@ import { mergeClaudeResourceObservation } from './provider-observations.js';
 import { validResourceNativeProcessSignal, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { validateResourceBindings, type ResourceBinding } from './worker-bindings.js';
+import { probePoolCliVersion } from './pool-cli-versions.js';
 export { validateResourceBindings } from './worker-bindings.js';
 export type { ResourceBinding } from './worker-bindings.js';
 
@@ -173,6 +174,20 @@ export function workerEnvironment(): NodeJS.ProcessEnv {
 async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBinding, { kind: 'native-cli' }>,
   task: ResourceWorkerTask, signal?: AbortSignal): Promise<ResourceWorkerResult> {
   const dispatchedAt = Date.now();
+  const started = performance.now();
+  if (worker.provider === 'claude') {
+    const version = await probePoolCliVersion('claude', binding.command, {
+      cwd: task.cwd, env: workerEnvironment(), timeoutMs: task.timeoutMs, signal,
+    });
+    if (version.failure === 'termination-uncertain') return empty('worker-termination-uncertain', 'uncertain');
+    if (signal?.aborted || version.failure === 'cancelled') return empty('worker-cancelled', 'cancelled');
+    if (version.failure === 'timed-out') return empty('worker-timed-out', 'timed-out');
+    if (version.status !== 'supported') return empty(version.status === 'outdated'
+      ? 'worker-cli-version-outdated' : 'worker-cli-version-unverified');
+  }
+  const remainingMs = worker.provider === 'claude'
+    ? Math.floor(task.timeoutMs - (performance.now() - started)) : task.timeoutMs;
+  if (remainingMs <= 0) return empty('worker-timed-out', 'timed-out');
   const suffix = worker.provider === 'codex'
     ? ['exec', '--model', worker.model, '--cd', task.cwd, '--sandbox', task.mode,
       '--json', '--ephemeral', '--ignore-user-config', '-']
@@ -181,7 +196,7 @@ async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBi
       task.mode === 'read-only' ? '' : 'Read,Glob,Grep,Edit,Write', '--permission-mode',
       task.mode === 'read-only' ? 'plan' : 'acceptEdits'];
   const processResult = await runVerifySubprocessAsync([...binding.command, ...suffix], {
-    cwd: task.cwd, env: workerEnvironment(), timeoutMs: task.timeoutMs, input: task.prompt, maxOutputChars: MAX_BYTES, signal,
+    cwd: task.cwd, env: workerEnvironment(), timeoutMs: remainingMs, input: task.prompt, maxOutputChars: MAX_BYTES, signal,
   });
   const parsed = processResult.outputTruncated ? empty('worker-output-truncated')
     : worker.provider === 'codex' ? parseCodex(processResult.stdout, worker.model) : parseClaude(processResult.stdout);

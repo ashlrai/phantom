@@ -18,14 +18,14 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'metrics', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
+  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'director', 'best-of-n', 'invent', 'resources', 'usage', 'version', 'help',
@@ -40,7 +40,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
-  'benchmark',
+  'benchmark', 'queue',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.
@@ -55,14 +55,17 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
+  queue: ['report', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
@@ -86,7 +89,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
