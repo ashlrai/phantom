@@ -551,6 +551,12 @@ const loadGoalsCmd = lazyCmd(
 
 // ─── M29 command loaders ────────────────────────────────────────────
 
+const loadMetricsCmd = lazyCmd(
+  () => import('./metrics.js'),
+  (m) => m.cmdMetrics as Cmd,
+  'metrics command unavailable',
+);
+
 const loadDigestCmd = lazyCmd(
   () => import('./digest.js'),
   (m) => m.cmdDigest as Cmd,
@@ -2296,6 +2302,11 @@ async function main(): Promise<void> {
       case 'goals': {
         const cmdGoals = await loadGoalsCmd();
         process.exitCode = await cmdGoals(rest);
+        break;
+      }
+
+      case 'metrics': {
+        process.exitCode = await (await loadMetricsCmd())(rest);
         break;
       }
 
