@@ -15,7 +15,7 @@
  *    gh being available). All other I/O is purely local.
  */
 
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { AshlrConfig } from '../types.js';

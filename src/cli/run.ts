@@ -498,9 +498,22 @@ async function cmdRunShow(id: string, jsonMode: boolean): Promise<number> {
  *
  * Also handles `ashlr run show <id>`.
  */
+const RUN_VALUE_FLAGS = new Set(['--budget', '--max-steps', '--parallel', '--engine', '--model', '--resume']);
+
+/** `--help` / `-h` anywhere, outside a value flag's value. */
+function wantsRunHelp(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (RUN_VALUE_FLAGS.has(arg)) { i++; continue; }
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
 export async function cmdRun(args: string[]): Promise<number> {
-  // Help shortcircuit
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help shortcircuit, anywhere outside a flag value: `run --json -h` used to
+  // start a run whose goal was "-h".
+  if (args[0] === 'help' || wantsRunHelp(args)) {
     printRunHelp();
     return 0;
   }

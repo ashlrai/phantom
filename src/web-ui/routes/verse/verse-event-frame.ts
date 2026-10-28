@@ -14,6 +14,7 @@ const EVENT_TYPES = [
   'turn-started',
   'text-delta',
   'assistant-message',
+  'assistant-status',
   'thinking',
   'tool-use',
   'tool-result',
@@ -61,6 +62,9 @@ const stringFields = (record: Record<string, unknown>, keys: readonly string[]):
  */
 function frameFieldsValid(e: Record<string, unknown>): boolean {
   switch (e.type) {
+    case 'assistant-status':
+      return typeof e.turnId === 'string' && typeof e.text === 'string'
+        && (e.phase === 'acknowledgement' || e.phase === 'result');
     case 'context':
       return count(e.contextTokens) &&
         typeof e.exact === 'boolean' && nullableCount(e.contextWindow) &&

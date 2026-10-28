@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { anthropicVersionHeaders } from './model-catalog.js';
 import type { AshlrConfig, ChatMessage, ChatResult, ModelCallLimits, ProviderClient, ApiBillingSummary } from '../types.js';
 import type { ClaudeApiGrantAdmission, ClaudeApiGrantBinding, ClaudeApiGrantReservation, ReadFreshClaudeApiGrantProof } from '../resources/claude-api-grant-types.js';
 import { claudeApiGrantOriginFor, createClaudeApiGrantAdmission, reserveClaudeApiGrantRequest, markClaudeApiGrantRequestSent, releaseClaudeApiGrantBeforeContact, retainClaudeApiGrantUnknown, settleClaudeApiGrantRequest } from '../resources/claude-api-grant.js';
@@ -227,7 +228,7 @@ export function buildAnthropicMessagesClient(cfg: AshlrConfig, model: string, bi
         const marked = markClaudeApiGrantRequestSent(reservation);
         if (!marked.ok) refuse(marked.reason);
         sent = true;
-        const contacted = fetch(target.endpoint, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: request.body });
+        const contacted = fetch(target.endpoint, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-api-key': key, ...anthropicVersionHeaders('anthropic') }, body: request.body });
         // The notification can throw after contact. Attach rejection handling
         // before invoking it so cleanup never leaves an unhandled fetch promise.
         void contacted.catch(() => {});
