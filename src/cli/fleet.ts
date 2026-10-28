@@ -2287,6 +2287,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  drive:          { allowed: { flags: ['--once', '--json'], values: ['--root', '--bin'] }, usage: 'phm fleet drive [--once] [--root <directory>] [--json]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2334,6 +2335,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'drive': {
+      const { cmdDrive } = await import('./drive.js');
+      return cmdDrive(rest);
+    }
     case 'status':
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
@@ -2382,6 +2387,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log('    phm fleet drive [--once] [--root <directory>] [--json]  # refresh Masbot relay status');
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);

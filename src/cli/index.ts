@@ -2184,6 +2184,17 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'drive': {
+        const { cmdDrive } = await import('./drive.js');
+        process.exitCode = await cmdDrive(rest);
+        break;
+      }
+      case 'metrics': {
+        const { cmdMetrics } = await import('./drive.js');
+        process.exitCode = await cmdMetrics(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
