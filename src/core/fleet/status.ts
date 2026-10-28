@@ -14,6 +14,7 @@
  * only reads what the daemon/quota/inbox/backlog modules already persist.
  */
 
+import { readFleetMetrics, type FleetMetrics, type RouterMetricsFeed } from './metrics-feed.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -1511,6 +1512,8 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** Additive dashboard feed; optional for legacy snapshots. */
+  metrics?: FleetMetrics;
   /** ISO timestamp this snapshot was generated. */
   generatedAt: string;
   /** Canonical build-produced identity. Optional for legacy serialized snapshots. */
@@ -2529,7 +2532,10 @@ function laneQueueSourceQuality(
   };
 }
 
-export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
+export async function buildFleetStatus(
+  cfg: AshlrConfig,
+  deps: { readMetrics?: () => RouterMetricsFeed | null } = {},
+): Promise<FleetStatus> {
   const generatedAt = new Date().toISOString();
   let dispatchLearningEvents: DispatchProductionEvent[] | undefined;
   let initialDispatchRead: ReturnType<typeof readDispatchProductionYieldDetailed> | undefined;
@@ -3265,6 +3271,7 @@ export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
   }
 
   const status: FleetStatus = {
+    metrics: readFleetMetrics(deps.readMetrics),
     generatedAt,
     buildIdentity: readBuildIdentity(),
     daemon,
