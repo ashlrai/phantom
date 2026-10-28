@@ -17,6 +17,7 @@ import type {
   FleetActivitySnapshot,
   FleetStatus,
   Proposal,
+  ApprovalRequest,
   ProposalStatus,
   PublicDaemonObservation,
   RunState,
@@ -274,11 +275,16 @@ export interface InboxDecisionEvidence {
  * or via inboxListQuery's history view) still resolves here as long as its
  * on-disk record hasn't been pruned.
  */
-export function proposalDetailQuery(id: string): QueryDef<Proposal & { decisionEvidence: InboxDecisionEvidence }> {
+export type InboxProposalDetail = Proposal & {
+  decisionEvidence: InboxDecisionEvidence;
+  approvalRequest?: ApprovalRequest | null;
+};
+
+export function proposalDetailQuery(id: string): QueryDef<InboxProposalDetail> {
   return {
     key: `proposal-detail-${id}`,
     fetch: (signal) =>
-      apiGet<Proposal & { decisionEvidence: InboxDecisionEvidence }>(`/api/inbox/${encodeURIComponent(id)}`, signal),
+      apiGet<InboxProposalDetail>(`/api/inbox/${encodeURIComponent(id)}`, signal),
   };
 }
 

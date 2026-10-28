@@ -234,6 +234,23 @@ export type RealizedMergeEvidence =
   | LocalDefaultBranchRealizedMerge
   | GithubHostRealizedMerge;
 
+/** Typed, bounded review projection of an existing inbox proposal. */
+export interface ApprovalRequest {
+  schemaVersion: 1;
+  proposalId: string;
+  /** Opaque revision of the complete review, including the full diff. */
+  revision: string;
+  action: { kind: ProposalKind; description: string; details?: string };
+  scope: { repo: string | null; sandboxId?: string };
+  diffPreview: { text: string; truncated: boolean };
+}
+
+export interface ApprovalDecision {
+  revision: string;
+  decision: 'approve' | 'deny';
+  decidedAt: string;
+}
+
 /**
  * M23: a single PROPOSED outward action awaiting Mason's approval. The inbox is
  * the SINGLE human control plane through which EVERY outward mutation (PR, merge,
@@ -245,6 +262,8 @@ export type RealizedMergeEvidence =
 export interface Proposal {
   /** Stable unique id; also the inbox filename stem (~/.ashlr/inbox/<id>.json). */
   id: string;
+  /** Durable card receipt; approval records consent, never execution evidence. */
+  approvalDecision?: ApprovalDecision;
   /**
    * M109: The user identity that created this proposal (cfg.user?.id ?? cfg.user?.name).
    * Undefined when cfg.user is absent → no behavior change; backward-compatible.
