@@ -4,27 +4,37 @@
  * Each test-ci wrapper owns a private HOME and its Vitest process tree. Keep
  * at most two shards active, each with one worker, so real-I/O fixtures do not
  * contend with two other local shards for their bounded startup windows.
+ *
+ * `--workers=N` instead splits the general files into N shards balanced by the
+ * measured per-file durations in test/helpers/test-durations.json and runs all
+ * N at once (one worker each), then the isolated cases two at a time.
  */
-import { spawn } from 'node:child_process';
-import { lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
+import { assertExactFilters, parseInventory, planShards, readDurations } from './test-shard-plan.mjs';
 
 const runner = fileURLToPath(new URL('./test-ci.mjs', import.meta.url));
 const shards = [1, 2, 3, 4];
 const args = process.argv.slice(2);
 const generalSelector = args.length === 1 ? /^--general-shard=([1-4])\/4$/.exec(args[0]) : null;
 const isolatedOnly = args.length === 1 && args[0] === '--isolated-only';
-if (args.length > 0 && !generalSelector && !isolatedOnly) {
-  console.error('Usage: test-ci-sharded.mjs [--general-shard=N/4 | --isolated-only] (N=1..4)');
+const workersSelector = args.length === 1 ? /^--workers=([1-8])$/.exec(args[0]) : null;
+if (args.length > 0 && !generalSelector && !isolatedOnly && !workersSelector) {
+  console.error('Usage: test-ci-sharded.mjs [--general-shard=N/4 | --isolated-only | --workers=W] (N=1..4, W=1..8)');
   process.exit(2);
 }
 const selectedShard = generalSelector ? Number(generalSelector[1]) : null;
+const balancedWorkers = workersSelector ? Number(workersSelector[1]) : null;
 // Hosted CI may run the isolated suites two at a time. They mostly wait on real
 // child processes, so a pair fits one runner, and each suite still gets its own
 // home and single worker with every bounded deadline unchanged. Locally they
-// stay serial unless asked; any other value is refused.
-const isolatedConcurrencyInput = process.env.ASHLR_TEST_CI_ISOLATED_CONCURRENCY ?? '1';
+// stay serial unless asked or balanced over four or more workers; any other
+// value is refused.
+const isolatedConcurrencyInput = process.env.ASHLR_TEST_CI_ISOLATED_CONCURRENCY ??
+  (balancedWorkers !== null && balancedWorkers >= 4 ? '2' : '1');
 if (isolatedConcurrencyInput !== '1' && isolatedConcurrencyInput !== '2') {
   console.error('ASHLR_TEST_CI_ISOLATED_CONCURRENCY must be 1 or 2.');
   process.exit(2);
@@ -129,7 +139,7 @@ const childEnvironment = {
   ASHLR_ENGINEERING_ADMISSION_PHASE_TIMING: process.env.ASHLR_ENGINEERING_ADMISSION_PHASE_TIMING ?? '1',
   ASHLR_ACCEPTANCE_PHASE_TIMING: process.env.ASHLR_ACCEPTANCE_PHASE_TIMING ?? '1',
 };
-// Isolated acceptance never participates in duration-weighted calibration.
+// Isolated acceptance and balanced shards never use the calibration sequencer.
 const isolatedEnvironment = { ...childEnvironment };
 delete isolatedEnvironment.ASHLR_TEST_CI_WEIGHTED_PARTITION;
 delete isolatedEnvironment.ASHLR_TEST_CI_WEIGHTED_HINTS;
@@ -140,8 +150,8 @@ let failure = 0;
 function stopOthers(except) {
   if (stopping) return;
   stopping = true;
-  for (const [shard, child] of children) {
-    if (shard !== except && child.exitCode === null && !child.killed) child.kill('SIGTERM');
+  for (const [key, child] of children) {
+    if (key !== except && child.exitCode === null && !child.killed) child.kill('SIGTERM');
   }
 }
 
@@ -152,31 +162,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-// A full local run keeps two single-worker shards active. A selected shard runs
-// alone on its machine, so its real-I/O lane gets those same two workers. The
-// unit lane keeps one fork so its event-loop timing budgets see no co-tenant.
-const shardWorkerArgs = selectedShard === null
-  ? ['--maxWorkers=1', '--fileParallelism=false'] : ['--maxWorkers=2'];
-const shardEnvironment = selectedShard === null
-  ? childEnvironment : { ...childEnvironment, ASHLR_VITEST_UNIT_MAX_WORKERS: '1' };
-
-function runShard(shard) { return new Promise((resolve) => {
-  const child = spawn(process.execPath, [runner, `--shard=${shard}/${shards.length}`, ...shardWorkerArgs, '--bail=1', ...exclusions,
-    ...reportArgs(`general-${shard}-of-4.json`)], {
-    cwd: process.cwd(),
-    env: shardEnvironment,
-    stdio: 'inherit',
-  });
-  children.set(shard, child);
-  console.error(`[test-ci:sharded] started ${shard}/${shards.length} (pid ${child.pid ?? 'unavailable'})`);
+/** Run one test-ci wrapper; the first non-zero exit stops every sibling. */
+function launch(key, startLabel, endLabel, runnerArgs, env) { return new Promise((resolve) => {
+  const child = spawn(process.execPath, [runner, ...runnerArgs], { cwd: process.cwd(), env, stdio: 'inherit' });
+  children.set(key, child);
+  console.error(`[test-ci:sharded] started ${startLabel} (pid ${child.pid ?? 'unavailable'})`);
   let settled = false;
   const finish = (code, detail) => {
     if (settled) return;
     settled = true;
-    console.error(`[test-ci:sharded] ${shard}/${shards.length} ${detail}`);
+    console.error(`[test-ci:sharded] ${endLabel} ${detail}`);
     if (code !== 0 && !failure) {
       failure = code;
-      stopOthers(shard);
+      stopOthers(key);
     }
     resolve(code);
   };
@@ -184,19 +182,75 @@ function runShard(shard) { return new Promise((resolve) => {
   child.once('exit', (code, signal) => finish(code ?? 1, signal ? `exited via ${signal}` : `exited ${code}`));
 }); }
 
-// Four smaller deterministic partitions aim to reduce the indivisible final tail.
-// Keep exactly two single-worker wrappers active; every general file still runs
-// once and all isolated suites retain their separate serial homes.
-const expectedShards = isolatedOnly ? [] : selectedShard === null ? shards : [selectedShard];
-const pending = [...expectedShards].reverse();
-const codes = [];
-async function runQueue() {
-  while (pending.length && !failure) {
-    const shard = pending.shift();
-    codes[shard - 1] = await runShard(shard);
+/** Drain `order` with `concurrency` consumers, launching nothing after a failure. */
+async function runPool(order, concurrency, run) {
+  const queue = [...order];
+  const consume = async () => {
+    while (queue.length && !failure) await run(queue.shift());
+  };
+  await Promise.all(Array.from({ length: concurrency }, consume));
+}
+
+/** Every general file Vitest collects, from the live config rather than a glob copy. */
+function collectInventory() {
+  const scratch = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-list-'));
+  try {
+    const output = join(scratch, 'list.json');
+    const listed = spawnSync(process.execPath, [join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs'), 'list',
+      '--filesOnly', `--json=${output}`], {
+      cwd: process.cwd(), encoding: 'utf8', timeout: 180_000,
+      env: { ...isolatedEnvironment, HOME: scratch, USERPROFILE: scratch, ASHLR_HOME: join(scratch, '.ashlr') },
+    });
+    if (listed.status !== 0) throw new Error(`vitest list failed: ${listed.error?.message ?? listed.stderr.trim().slice(-500)}`);
+    return parseInventory(JSON.parse(readFileSync(output, 'utf8')), process.cwd());
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
-await Promise.all([runQueue(), runQueue()]);
+
+let generalLaunches;
+if (balancedWorkers !== null) {
+  let plan;
+  try {
+    const collected = collectInventory();
+    const isolatedFiles = new Set([...isolatedSuites, isolatedAcceptance]);
+    const general = collected.filter((file) => !isolatedFiles.has(file));
+    assertExactFilters(general, collected);
+    plan = planShards(general, readDurations(), balancedWorkers);
+  } catch (error) {
+    console.error(`[test-ci:sharded] cannot plan balanced shards: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  const estimates = plan.shards.map(({ files, estimatedMs }) => `${files.length} files ~${Math.round(estimatedMs / 1000)}s`);
+  console.error(`[test-ci:sharded] balanced ${balancedWorkers} shards by measured duration: ${estimates.join(' | ')}` +
+    (plan.unmeasured.length ? `; ${plan.unmeasured.length} unmeasured files estimated at ${plan.estimateMs}ms` : ''));
+  // Every balanced shard gets its own slot, so all of them start together.
+  generalLaunches = plan.shards.map(({ files }, index) => ({ shard: index + 1, files }));
+} else {
+  // Four smaller deterministic partitions aim to reduce the indivisible final tail.
+  // Keep exactly two single-worker wrappers active; every general file still runs
+  // once and all isolated suites retain their separate serial homes.
+  generalLaunches = (isolatedOnly ? [] : selectedShard === null ? shards : [selectedShard])
+    .map((shard) => ({ shard, files: null })).reverse();
+}
+
+// A full local run keeps two single-worker shards active. A selected shard runs
+// alone on its machine, so its real-I/O lane gets those same two workers. The
+// unit lane keeps one fork so its event-loop timing budgets see no co-tenant.
+const shardWorkerArgs = selectedShard === null
+  ? ['--maxWorkers=1', '--fileParallelism=false'] : ['--maxWorkers=2'];
+const shardEnvironment = balancedWorkers !== null ? isolatedEnvironment : selectedShard === null
+  ? childEnvironment : { ...childEnvironment, ASHLR_VITEST_UNIT_MAX_WORKERS: '1' };
+const shardCount = balancedWorkers ?? shards.length;
+const codes = [];
+const runGeneral = async ({ shard, files }) => {
+  const selector = files === null ? [`--shard=${shard}/${shardCount}`] : files;
+  const report = files === null ? `general-${shard}-of-4.json` : `balanced-${shard}-of-${shardCount}.json`;
+  codes[shard - 1] = await launch(shard, `${shard}/${shardCount}`, `${shard}/${shardCount}`,
+    [...selector, ...shardWorkerArgs, '--bail=1', ...exclusions, ...reportArgs(report)], shardEnvironment);
+};
+await runPool(generalLaunches, balancedWorkers ?? 2, runGeneral);
+const expectedShards = generalLaunches.map(({ shard }) => shard);
 if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
   process.exitCode = failure || 1;
   console.error(`[test-ci:sharded] FAIL (${codes.join(', ')})`);
@@ -207,38 +261,18 @@ if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
   // Each gets a fresh home. The campaign's two cases also get separate homes
   // so one case's process state cannot exhaust the next delivery.
   const isolatedCodes = [];
-  const runIsolated = (index) => new Promise((resolve) => {
+  const runIsolated = async (index) => {
     const { file, filter, label } = isolatedCases[index];
-    const child = spawn(process.execPath, [runner, file, ...(filter ? ['-t', filter] : []), '--maxWorkers=1', '--fileParallelism=false', '--bail=1',
-      ...reportArgs(`isolated-${String(index + 1).padStart(2, '0')}.json`)], {
-      cwd: process.cwd(), env: isolatedEnvironment, stdio: 'inherit',
-    });
-    children.set(`isolated-${label}`, child);
-    console.error(`[test-ci:sharded] started isolated acceptance ${label} (pid ${child.pid ?? 'unavailable'})`);
-    let settled = false;
-    const finish = (code, detail) => {
-      if (settled) return;
-      settled = true;
-      console.error(`[test-ci:sharded] isolated ${label} ${detail}`);
-      isolatedCodes[index] = code;
-      if (code !== 0 && !failure) {
-        failure = code;
-        stopOthers(`isolated-${label}`);
-      }
-      resolve();
-    };
-    child.once('error', (error) => finish(1, `failed to start: ${error.message}`));
-    child.once('exit', (code, signal) => finish(code ?? 1, signal ? `exited via ${signal}` : `exited ${code}`));
-  });
+    isolatedCodes[index] = await launch(`isolated-${label}`, `isolated acceptance ${label}`, `isolated ${label}`,
+      [file, ...(filter ? ['-t', filter] : []), '--maxWorkers=1', '--fileParallelism=false', '--bail=1',
+        ...reportArgs(`isolated-${String(index + 1).padStart(2, '0')}.json`)], isolatedEnvironment);
+  };
   const order = isolatedCases.map((_, index) => index);
   if (isolatedConcurrency > 1) {
     const seconds = ({ file, label }) => isolatedSeconds[label === file ? file : label] ?? 0;
     order.sort((a, b) => seconds(isolatedCases[b]) - seconds(isolatedCases[a]) || a - b);
   }
-  const runIsolatedQueue = async () => {
-    while (order.length && !failure) await runIsolated(order.shift());
-  };
-  await Promise.all(Array.from({ length: isolatedConcurrency }, runIsolatedQueue));
+  await runPool(order, isolatedConcurrency, runIsolated);
   const launched = isolatedCodes.filter((code) => code !== undefined);
   process.exitCode = failure || (launched.length === isolatedCases.length ? 0 : 1);
   const prefix = isolatedOnly ? '' : `${codes.join(', ')}, `;
