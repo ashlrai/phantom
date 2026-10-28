@@ -131,3 +131,5 @@ hashes, artifact digests, provider observations and rollback identities in dated
 release or commissioning evidence instead of duplicating them throughout the
 documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
+
+- [Devin usage source](DEVIN-USAGE-SOURCE.md): read-only resource.v1 ACUs and job wall time.
