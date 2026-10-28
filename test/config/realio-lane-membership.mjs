@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/bridge-worktree.test.ts', // real temp checkouts, symlinks, APFS clones and spawned CLI children.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
