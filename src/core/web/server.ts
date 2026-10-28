@@ -33,6 +33,7 @@ import { isBrowserMcpPath } from '../verse/browser-types.js';
 import { isVerseMcpEndpointPath } from '../verse/verse-mcp-types.js';
 import { closeVerseTerminals } from '../verse/terminal.js';
 import { VERSE_TERMINAL_PATH } from '../verse/workbench-types.js';
+import { PHANTOM_DISCOVERY_PATH, PHANTOM_PING_PATH, phantomManifest } from './phantom-discovery.js';
 
 // ---------------------------------------------------------------------------
 // Host-header allowlist (anti DNS-rebinding)
@@ -175,6 +176,12 @@ export async function startServer(
         Vary: 'Cookie, X-Ashlr-Token, X-Ashlr-Read-Client',
       });
       return;
+    }
+
+    // Discovery shares the existing read authority boundary and is opt-in.
+    if (process.env.ASHLR_PHANTOM_DISCOVERY === '1' && method === 'GET') {
+      if (path === PHANTOM_DISCOVERY_PATH) { sendJson(res, 200, phantomManifest); return; }
+      if (path === PHANTOM_PING_PATH) { sendJson(res, 200, { ok: true }); return; }
     }
 
     // ── 2. API routes ──────────────────────────────────────────────────────

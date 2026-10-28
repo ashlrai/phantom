@@ -18,6 +18,7 @@ that every integration, provider or autonomous effect is active.
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](PHANTOM-DISCOVERY.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
