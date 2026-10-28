@@ -145,6 +145,8 @@ export interface ModelEntry {
    * win the cheapest-first sort would silently route work onto a paid seat.
    */
   seatRouted?: true;
+  /** RADAR-MODELCAPS: provider fields this model rejects, including assistant prefill. */
+  rejectedRequestFeatures?: readonly ('budget_tokens' | 'temperature' | 'top_p' | 'top_k' | 'prefill')[];
   /** Exact historical lookup remains valid; not offered for automatic new work. */
   historical?: true;
   /** Published maximum context, not a claim about the connected account. */
@@ -170,6 +172,8 @@ export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.1-sol';
 export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
 export const CODEX_ASTRA_MODEL_ID = 'gpt-6-astra';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
+/** Cheap Claude subscription tier, tracked by RADAR-MODELCAPS. */
+export const CLAUDE_CHEAP_MODEL_ID = 'claude-haiku-5-5';
 
 export const KNOWN_MODELS: readonly ModelEntry[] = [
   // Concrete current IDs stay distinct from the old aliases used by signed grants.
@@ -212,6 +216,15 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
     minEffort: 4, apiModelId: CODEX_ASTRA_MODEL_ID,
     relativeSpeed: 1, planAllowanceWeight: 5,
+  },
+  // RADAR-MODELCAPS: native seat only until API pricing is independently verified.
+  // Zero means subscription accounting, not a claim of free API access.
+  {
+    id: `claude:${CLAUDE_CHEAP_MODEL_ID}`, engine: 'claude', tier: 'small',
+    costPerMTokIn: 0, costPerMTokOut: 0,
+    capabilities: ['fast', 'general'], minEffort: 1,
+    apiModelId: CLAUDE_CHEAP_MODEL_ID, qualityRank: 1, seatRouted: true,
+    rejectedRequestFeatures: ['budget_tokens', 'temperature', 'top_p', 'top_k', 'prefill'],
   },
   // -- Claude (subscription / token-billed via API) -------------------------
   {

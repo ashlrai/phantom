@@ -90,6 +90,15 @@ events in `~/.ashlr/agent-logs` that carry `modelUsage`.
 | `claude-haiku-4-5-20251001` | 200,000 | 32,000 | any | 200k, compacts at 167,000 | — |
 | any other id | 200,000 (`fallback`) | unknown | — | 200k, compacts at 167,000 | — |
 
+**RADAR-MODELCAPS (2026-10-26):** `claude-haiku-5-5` is the cheap Claude
+subscription tier in the routing catalog. It rejects `budget_tokens`, sampling
+parameters (`temperature`, `top_p`, `top_k`), and assistant prefill. These
+restrictions are recorded as `rejectedRequestFeatures`; they are metadata,
+not a request sanitizer. Native discovery remains the authority for availability
+and context limits. The API billing allowlist remains unchanged pending verified
+pricing. Sonnet 4.5 is absent from current defaults and judge examples; historical
+model identities remain readable for existing telemetry and attestations.
+
 - **Why 1M without `[1m]`.** Claude Code gives 1M to any model whose catalog entry carries
   `native_1m` when it talks to Anthropic first-party, which is exactly how a seat's launcher runs it.
   Adding `[1m]` would be harmless on these ids and a lie on Haiku 4.5 and Opus 4.5, where the CLI would
