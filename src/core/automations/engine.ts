@@ -496,7 +496,7 @@ async function updateQueuedReason(firingId: string, reason: string, ctx: Ctx, ev
     f.reason = reason;
     f.updatedAt = ctx.now().toISOString();
     if (event) record = journalRecord(f, event, f.updatedAt);
-  });
+  }, () => ctx.now().getTime());
   if (record) await appendAutomationJournal([record]);
 }
 
@@ -556,7 +556,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
       }
       Object.assign(f, { state: 'dispatching', attempts: f.attempts + 1, reason: 'Handing to the lane.', updatedAt: ctx.now().toISOString() });
       return { ok: true, firing: { ...f } };
-    });
+    }, () => ctx.now().getTime());
     if (!claim.ok) {
       if (claim.reason) break; // a limit: later firings are held by the same limit
       continue;
@@ -575,7 +575,7 @@ async function drainAutomation(automation: AutomationV1, ctx: Ctx): Promise<Auto
       const event = applyOutcome(f, outcome, ctx.now().toISOString());
       record = journalRecord(f, event, f.updatedAt);
       touched.push({ ...f });
-    });
+    }, () => ctx.now().getTime());
     if (record) await appendAutomationJournal([record]);
     if (outcome.kind === 'deferred') break; // the lane's own gate (budget, seat) will say the same for the next one
   }
@@ -595,7 +595,7 @@ async function trimQueue(automation: AutomationV1, ctx: Ctx): Promise<void> {
       delete state.seen[seenKey(automation.id, f.dedupeKey)];
       journal.push(journalRecord(f, 'dropped', iso));
     }
-  });
+  }, () => ctx.now().getTime());
   await appendAutomationJournal(journal);
 }
 
@@ -640,7 +640,7 @@ async function settle(ctx: Ctx): Promise<number> {
       const settledState: string = f.state;
       journal.push(journalRecord(f, settledState === 'dropped' ? 'dropped' : 'settled', iso));
     }
-  });
+  }, () => ctx.now().getTime());
   await appendAutomationJournal(journal);
   return changed;
 }
@@ -694,7 +694,7 @@ async function tickOnce(deps: AutomationEngineDeps): Promise<AutomationsTickSumm
       collected = { events: [], cursor: { ...cursor, lastPolledAt: now.toISOString(), lastError: 'The trigger check failed; it will retry.' }, sourceKind: automation.trigger.kind };
     }
     summary.polled += 1;
-    await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; });
+    await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; }, () => ctx.now().getTime());
     const res = await intake(automation, candidatesFor(automation, collected.events, collected.sourceKind), ctx, now);
     summary.queued += res.queued.length;
   }
@@ -820,7 +820,7 @@ export async function fireAutomation(id: string, req: AutomationFireRequest = {}
     cursor = collected.cursor;
     candidates = candidatesFor(automation, collected.events, collected.sourceKind);
     if (collected.events.length === 0 && collected.cursor.lastError) {
-      if (!dryRun) await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; });
+      if (!dryRun) await mutateAutomationState((s) => { s.cursors[automation.id] = collected.cursor; }, () => ctx.now().getTime());
       return refuse(collected.cursor.lastError);
     }
   }
@@ -829,7 +829,7 @@ export async function fireAutomation(id: string, req: AutomationFireRequest = {}
 
   if (cursor) {
     const next = cursor;
-    await mutateAutomationState((s) => { s.cursors[automation.id] = next; });
+    await mutateAutomationState((s) => { s.cursors[automation.id] = next; }, () => ctx.now().getTime());
   }
   const res = await intake(automation, candidates, ctx, now);
   const touched = await drainAutomation(automation, ctx);
@@ -934,7 +934,7 @@ export async function reviewFiring(firingId: string, decision: 'approve' | 'reje
     }
     record = journalRecord(f, 'reviewed', iso);
     result = { ok: true, firing: { ...f } };
-  });
+  }, () => ctx.now().getTime());
   if (record) await appendAutomationJournal([record]);
   return result;
 }

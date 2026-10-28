@@ -24,6 +24,8 @@ concurrency:
 jobs:
   verify:
     name: Custody (macOS, Swift)
+    # Mac/win waiver: macOS never runs on pull_request; push to master and dispatch only.
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 20
     steps:
