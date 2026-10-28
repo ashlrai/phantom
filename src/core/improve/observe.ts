@@ -11,7 +11,7 @@
  * into a feature branch has not landed yet. A revert of the revert re-lands
  * the change, and the outcome earns its credit back.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import type { CloudTaskV1 } from '../cloud/types.js';
 import type { LedgerEvent, ProposalOutcome } from './outcomes.js';
 

@@ -6,7 +6,7 @@
  * React context to call useState from, so this can't live in a component).
  */
 
-export type ThemePreference = 'system' | 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark' | 'high-contrast';
 
 const THEME_STORAGE_KEY = 'ashlr.theme.v1';
 
@@ -19,7 +19,7 @@ function applyTheme(pref: ThemePreference): void {
 function loadTheme(): ThemePreference {
   try {
     const v = localStorage.getItem(THEME_STORAGE_KEY);
-    if (v === 'light' || v === 'dark' || v === 'system') return v;
+    if (v === 'light' || v === 'dark' || v === 'system' || v === 'high-contrast') return v;
   } catch {
     /* ignore */
   }
@@ -45,6 +45,7 @@ export function getTheme(): ThemePreference {
 }
 
 export function setTheme(next: ThemePreference): void {
+  if (!['system', 'light', 'dark', 'high-contrast'].includes(next)) return;
   theme = next;
   applyTheme(theme);
   try {
@@ -56,5 +57,5 @@ export function setTheme(next: ThemePreference): void {
 }
 
 export function cycleTheme(): void {
-  setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
+  setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : theme === 'dark' ? 'high-contrast' : 'system');
 }

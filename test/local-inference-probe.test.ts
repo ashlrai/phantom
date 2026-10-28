@@ -3,13 +3,17 @@
  * the doctor check built on it, and the phm handshake capability.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, type RequestListener, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { checkLocalInference } from '../src/core/doctor.js';
 import { modelIdsFromBody, probeLocalInference, type ProbeFetch } from '../src/core/run/local-inference-probe.js';
 import { buildPhmHandshake, PHM_HANDSHAKE_CAPABILITIES } from '../src/cli/handshake.js';
+import { probeEndpoint } from '../src/core/providers.js';
+import { listLocalModels } from '../src/core/run/model-manager.js';
+import type { AshlrConfig } from '../src/core/types.js';
 
 type Call = { url: string; init: RequestInit };
 function fake(status: number, body: string): { calls: Call[]; f: ProbeFetch } {
@@ -161,5 +165,61 @@ describe('probe body cap (stream, abort past 256 KiB)', () => {
   it('a body under the cap still parses', async () => {
     const r = fake(200, JSON.stringify({ models: [{ name: 'qwen3:8b' }] }));
     expect((await probeLocalInference(ollama(), { fetchImpl: r.f })).status).toBe('reachable');
+  });
+});
+
+// Redirect regressions share this suite's existing real-I/O lane.
+describe('local provider redirects', () => {
+  let servers: Server[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+    servers = [];
+  });
+
+  async function serve(handler: RequestListener): Promise<{ base: string; requests: string[] }> {
+    const requests: string[] = [];
+    const server = createServer((req, res) => {
+      requests.push(`${req.method} ${req.url}`);
+      handler(req, res);
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', () => done()));
+    return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests };
+  }
+
+  const redirectAll = (_req: unknown, res: import('node:http').ServerResponse) => {
+    res.writeHead(302, { location: '/must-not-follow' });
+    res.end();
+  };
+
+  describe('probeEndpoint refuses a redirect from a local endpoint', () => {
+    it.each(['ollama', 'lmstudio'])('%s: a 302 reads as unreachable and the target is never fetched', async (id) => {
+      const { base, requests } = await serve(redirectAll);
+      const out = await probeEndpoint(id, base);
+      expect(out.up).toBe(false);
+      expect(out.models).toEqual([]);
+      expect(requests).toHaveLength(1);
+      expect(requests.some((r) => r.includes('must-not-follow'))).toBe(false);
+    });
+  });
+
+  describe('listLocalModels size lookup refuses a redirect', () => {
+    it('a 3xx on the size fetch is not followed and yields no size label', async () => {
+      let tags = 0;
+      const { base, requests } = await serve((req, res) => {
+        if (req.url === '/api/tags' && tags++ === 0) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ models: [{ name: 'qwen:7b', size: 4_000_000_000 }] }));
+          return;
+        }
+        redirectAll(req, res);
+      });
+      const cfg = { models: { ollama: base, lmstudio: 'http://127.0.0.1:1' } } as unknown as AshlrConfig;
+      const models = await listLocalModels(cfg);
+      expect(requests.some((r) => r.includes('must-not-follow'))).toBe(false);
+      expect(models.map((m) => m.name)).toEqual(['qwen:7b']);
+      expect(requests.filter((r) => r === 'GET /api/tags')).toHaveLength(2);
+      for (const m of models) expect(m.sizeLabel).toBeUndefined();
+    });
   });
 });
