@@ -1,0 +1,160 @@
+{
+  "org": "ashlrai",
+  "repos": [
+    "phantom",
+    "phantom-secrets",
+    "locus",
+    "lexicon",
+    "ashlr-md",
+    "ashlr-stack",
+    "ashlr-plugin"
+  ],
+  "max_jobs": 2,
+  "max_per_cli": 1,
+  "min_free_gb": 20,
+  "min_battery_pct": 30,
+  "job_timeout_s": 2700,
+  "verify_timeout_s": 600,
+  "phantom_route": true,
+  "codex": {
+    "accounts": [
+      {
+        "id": "work",
+        "home": "~/.codex",
+        "role": "work",
+        "order": 1,
+        "spend": "hard"
+      },
+      {
+        "id": "personal",
+        "home": "~/.codex-2",
+        "role": "personal",
+        "order": 2,
+        "spend": "overflow"
+      }
+    ]
+  },
+  "devin": {
+    "org_id": ""
+  },
+  "pools": [],
+  "ledger_issue_repo": "ashlrai/phantom",
+  "ledger_issue_title": "router-ledger",
+  "verify": {
+    "host": false
+  },
+  "ledger_mirror": false,
+  "freshness": {
+    "enabled": false,
+    "interval_days": 7,
+    "min_age_days": 3,
+    "codex_probe": true
+  },
+  "grok": {
+    "enabled": false,
+    "metered": true
+  },
+  "local": {
+    "enabled": false,
+    "backend": "omlx",
+    "bin": "omlx",
+    "host": "127.0.0.1:8000",
+    "models": ["mlx-community/Qwen3-8B-4bit"],
+    "allow_pull": false
+  },
+  "tiers": {
+    "frontier": {
+      "codex": "gpt-6-astra",
+      "claude": "fable",
+      "grok": "grok-4.7",
+      "omlx": ""
+    },
+    "workhorse": {
+      "codex": "gpt-6-sol",
+      "claude": "opus",
+      "grok": "grok-4.5",
+      "omlx": ""
+    },
+    "cheap": {
+      "codex": "gpt-6-luna",
+      "claude": "sonnet",
+      "grok": "grok-4.3",
+      "omlx": "mlx-community/Qwen3-8B-4bit"
+    }
+  },
+  "cli": {
+    "codex": {
+      "bin": "codex",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "update": [],
+      "args": [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        "{worktree}",
+        "--ephemeral",
+        "--json",
+        "--output-last-message",
+        "{last_message}",
+        "{model}",
+        "-"
+      ],
+      "probe_args": [
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "{model}",
+        "Reply with ok"
+      ]
+    },
+    "claude": {
+      "bin": "claude",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "auth_args": ["auth", "status"],
+      "update": ["claude", "update"],
+      "args": [
+        "--permission-mode",
+        "acceptEdits",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "{model}",
+        "-p"
+      ]
+    },
+    "grok": {
+      "bin": "grok",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "list_args": ["models"],
+      "update": [],
+      "args": [
+        "--prompt-file",
+        "{prompt_file}",
+        "{model}",
+        "--permission-mode",
+        "acceptEdits",
+        "--sandbox",
+        "workspace",
+        "--output-format",
+        "json",
+        "--no-auto-update",
+        "--cwd",
+        "{worktree}"
+      ]
+    },
+    "omlx": {
+      "bin": "omlx",
+      "model_flag": "--model",
+      "version_args": ["--version"],
+      "list_args": [],
+      "update": [],
+      "args": ["serve"]
+    }
+  }
+}
