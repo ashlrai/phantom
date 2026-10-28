@@ -2153,7 +2153,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }) + '\n');
+    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }, null, 2) + '\n');
     return 0;
   }
 

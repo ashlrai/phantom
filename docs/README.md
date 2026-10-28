@@ -156,4 +156,4 @@ release or commissioning evidence instead of duplicating them throughout the
 documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
 
-- [Local model inventory](MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+- [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
