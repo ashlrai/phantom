@@ -57,27 +57,27 @@ describe('Universe campaign CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    ['run'], ['resume'], ['pause'], ['stop'], ['run', '../escape'], ['status', 'one', 'two'],
-    ['unknown'], ['init'], ['status', '--manifest', 'a.json'], ['status', '--root'],
-    ['status', '--unknown'], ['run', 'one', '--root', '/a', '--root', '/b'],
-    ['init', '--manifest', '/a', '--manifest', '/b'],
-    ['check'], ['check', 'search'], ['check', 'search', '--root', 'relative'],
-    ['check', 'search', '--root', '/'], ['check', 'search', '--root', '/private/store/'],
-    ['check', 'search', '--root', '/private/other/../store'],
-    ['check', 'search', '--root', '/private/store\nunsafe'],
-    ['check', 'search', '--root', '/private/store\u0085unsafe'],
-    ['check', 'search', '--root', `/private/${'x'.repeat(4096)}`],
-    ['check', 'search', '--root', '/private/store', '--resource-runtime', '/private/runtime.json'],
-    ['check', 'search', '--root', '/private/store', '--manifest', '/private/campaign.json'],
-    ['check', 'search', 'another', '--root', '/private/store'],
-    ['check', 'search', '--root', '/private/store', '--root', '/private/another'],
-    ['run', 'search', '--deliver-branch', 'codex/result'],
-    ['run', 'search', '--deliver-base', 'a'.repeat(40)],
-    ['status', 'search', '--deliver-branch', 'codex/result', '--deliver-base', 'a'.repeat(40)],
-    ['run', 'search', '--deliver-branch', 'main', '--deliver-base', 'a'.repeat(40)],
-    ['run', 'search', '--deliver-branch', 'codex/result', '--deliver-base', 'HEAD'],
-    ['run', 'search', '--deliver-branch', 'codex/result', '--deliver-branch', 'codex/second', '--deliver-base', 'a'.repeat(40)],
-  ])('rejects invalid invocation %j before mutation', async (...args) => {
+    [['run']], [['resume']], [['pause']], [['stop']], [['run', '../escape']], [['status', 'one', 'two']],
+    [['unknown']], [['init']], [['status', '--manifest', 'a.json']], [['status', '--root']],
+    [['status', '--unknown']], [['run', 'one', '--root', '/a', '--root', '/b']],
+    [['init', '--manifest', '/a', '--manifest', '/b']],
+    [['check']], [['check', 'search']], [['check', 'search', '--root', 'relative']],
+    [['check', 'search', '--root', '/']], [['check', 'search', '--root', '/private/store/']],
+    [['check', 'search', '--root', '/private/other/../store']],
+    [['check', 'search', '--root', '/private/store\nunsafe']],
+    [['check', 'search', '--root', '/private/store\u0085unsafe']],
+    [['check', 'search', '--root', `/private/${'x'.repeat(4096)}`]],
+    [['check', 'search', '--root', '/private/store', '--resource-runtime', '/private/runtime.json']],
+    [['check', 'search', '--root', '/private/store', '--manifest', '/private/campaign.json']],
+    [['check', 'search', 'another', '--root', '/private/store']],
+    [['check', 'search', '--root', '/private/store', '--root', '/private/another']],
+    [['run', 'search', '--deliver-branch', 'codex/result']],
+    [['run', 'search', '--deliver-base', 'a'.repeat(40)]],
+    [['status', 'search', '--deliver-branch', 'codex/result', '--deliver-base', 'a'.repeat(40)]],
+    [['run', 'search', '--deliver-branch', 'main', '--deliver-base', 'a'.repeat(40)]],
+    [['run', 'search', '--deliver-branch', 'codex/result', '--deliver-base', 'HEAD']],
+    [['run', 'search', '--deliver-branch', 'codex/result', '--deliver-branch', 'codex/second', '--deliver-base', 'a'.repeat(40)]],
+  ])('rejects invalid invocation %j before mutation', async (args) => {
     expect(await cmdUniverseCampaign([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.initUniverseCampaign).not.toHaveBeenCalled();

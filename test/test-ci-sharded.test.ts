@@ -284,12 +284,12 @@ describe('local exhaustive prepublish shards', () => {
   });
 
   it.each([
-    ['--general-shard=0/4'], ['--general-shard=5/4'], ['--general-shard=1/3'], ['--general-shard=01/4'],
-    ['--general-shard=1/4', '--isolated-only'], ['--isolated-only', '--isolated-only'],
-    ['--general-shard=1/4', '--general-shard=2/4'], ['--isolated-only', '-t', 'arbitrary'],
-    ['test/other.test.ts'], ['--shard=1/4'], ['--help'],
-    ['--workers=0'], ['--workers=9'], ['--workers=04'], ['--workers'], ['--workers=4', '--isolated-only'],
-  ])('rejects invalid selectors without launching children: %j', (...args) => {
+    [['--general-shard=0/4']], [['--general-shard=5/4']], [['--general-shard=1/3']], [['--general-shard=01/4']],
+    [['--general-shard=1/4', '--isolated-only']], [['--isolated-only', '--isolated-only']],
+    [['--general-shard=1/4', '--general-shard=2/4']], [['--isolated-only', '-t', 'arbitrary']],
+    [['test/other.test.ts']], [['--shard=1/4']], [['--help']],
+    [['--workers=0']], [['--workers=9']], [['--workers=04']], [['--workers']], [['--workers=4', '--isolated-only']],
+  ])('rejects invalid selectors without launching children: %j', (args) => {
     const result = runFixture('none', {}, args);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(2);
     expect(result.stdout).toBe('');

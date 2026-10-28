@@ -928,7 +928,7 @@ describe('spawnEngine — never throws on failure', () => {
     expect(result.error).not.toContain('taskkill');
   });
 
-  it.each([() => false, () => { throw new Error('private callback error'); }])('refuses a retired or unknown outcome at the exact CLI spawn without launching', async selectedOutcomeAdmission => {
+  it.each([() => false, () => { throw new Error('private callback error'); }])('refuses a retired or unknown outcome at the exact CLI spawn without launching (%#)', async selectedOutcomeAdmission => {
     const { spawn } = await import('node:child_process');
     const result = await spawnEngine({ bin: 'aw', args: ['auto', GOAL] }, makeConfig(), { selectedOutcomeAdmission });
     expect(result).toMatchObject({ ok: false, terminationReason: 'cancelled' });
