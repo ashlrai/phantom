@@ -23,6 +23,8 @@
 # codeowners: CODEOWNERS is the server-side copy of the owner lane
 /CODEOWNERS @masonwyatt23
 /.github/CODEOWNERS @masonwyatt23
+/.gitleaks.toml @masonwyatt23
+/.gitleaksignore @masonwyatt23
 /docs/CODEOWNERS @masonwyatt23
 /.gitlab/CODEOWNERS @masonwyatt23
 # manifest: manifests and lockfiles run code at install time and choose which verify commands run
