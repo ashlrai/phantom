@@ -15,18 +15,21 @@ export const MEMORY_BENCHMARK_FLOORS: {
   /** Agent-write ceilings per set: steps that served a wrong or stale fact, and duplicate facts served. */
   readonly agentWrites: Readonly<Record<'tuning' | 'validation', { readonly stepsWithForbidden: number; readonly duplicateWaste: number }>>;
 } = Object.freeze({
-  caseCount: 539, passed: 402,
-  byDimension: Object.freeze({ retrieval: [262, 186], contradiction: [8, 8], temporal: [10, 10], withdrawal: [8, 8], task: [8, 8], 'agent-writes': [243, 182] } as const),
+  caseCount: 539, passed: 411,
+  byDimension: Object.freeze({ retrieval: [262, 186], contradiction: [8, 8], temporal: [10, 10], withdrawal: [8, 8], task: [8, 8], 'agent-writes': [243, 191] } as const),
   retrievalByDifficulty: Object.freeze({
     lexical: [20, 20], inflected: [20, 20], paraphrase: [20, 18], absent: [6, 3],
     'held-out': [40, 34], 'held-out-absent': [6, 4], unseen: [40, 27], 'unseen-absent': [6, 5],
-    fresh: [40, 25], 'fresh-absent': [12, 2], 'second-fresh': [40, 27], 'second-fresh-absent': [12, 1], 'writes-tuning': [99, 79], 'writes-validation': [144, 103],
+    fresh: [40, 25], 'fresh-absent': [12, 2], 'second-fresh': [40, 27], 'second-fresh-absent': [12, 1], 'writes-tuning': [99, 84], 'writes-validation': [144, 107],
   } as const),
   // Raised with W3/W4 (per-write screening): a W1 contradiction case that used to be refused whole now serves and shows its
   // stale fact (tuning 4 -> 5), and the new cosmetic-edit histories hold 1 and 2 duplicates that were served before the fix too.
   // Cross-key evidence links and source tiers lowered tuning 5 -> 1 and W2+W4 9 -> 7. Validation rose to 18 only because W5
   // (16 contradiction histories, 4 still serving a stale or wrong fact) and W6 (23 source questions, 7) joined the set.
-  agentWrites: Object.freeze({ tuning: { stepsWithForbidden: 1, duplicateWaste: 5 }, validation: { stepsWithForbidden: 18, duplicateWaste: 10 } }),
+  // 18 -> 19 with the #754 scrubber: it stops reading prose such as "Device tokens ... expire" as a credential, so nine
+  // agent-write cases that were refused by mistake now pass, and one validation history (d7) now shows a test-helper
+  // value it used to hide. That is a measurement change, not a regression; the pass floors above rose with it.
+  agentWrites: Object.freeze({ tuning: { stepsWithForbidden: 1, duplicateWaste: 5 }, validation: { stepsWithForbidden: 19, duplicateWaste: 10 } }),
 });
 
 /** Every way the governed arm falls short of the floors; empty when it holds them all. */

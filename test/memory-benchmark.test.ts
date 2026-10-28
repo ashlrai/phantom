@@ -19,7 +19,7 @@ describe('memory quality benchmark', () => {
     expect(cases).toHaveLength(539);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
-    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(63);
+    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(56);
     for (const entry of cases) for (const step of entry.steps) {
       expect(validMemorySnapshot(step.snapshot) && validMemoryPackQuery(step.query)).toBe(!entry.screened);
     }

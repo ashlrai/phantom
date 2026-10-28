@@ -2,7 +2,7 @@
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { buildOpenAICompatibleClient } from '../run/provider-client.js';
+import { buildOpenAICompatibleClient, OpenAICompatServiceTierError } from '../run/provider-client.js';
 import { runVerifySubprocessAsync } from '../run/verify-commands.js';
 import { MAX_RESOURCE_OBSERVATION_AGE_MS, validateResourcePool, type ResourceObservation, type ResourceWorker } from './pool-policy.js';
 import { mergeClaudeResourceObservation } from './provider-observations.js';
@@ -37,6 +37,59 @@ export interface ResourceWorkerResult {
 
 const MAX_BYTES = 1024 * 1024;
 const KILL_POLL_MS = 50;
+
+// ---------------------------------------------------------------------------
+// Per-job provider request picks (the pool's routing side of provider policy)
+// ---------------------------------------------------------------------------
+
+/**
+ * A task deadline long enough that its provider work can outlive a default
+ * in-memory prompt-cache window. Bounded by the task contract, never measured.
+ */
+export const RESOURCE_PROMPT_CACHE_LONG_JOB_MS = 10 * 60_000;
+/**
+ * A prompt large enough that a shared stable prefix is material to the
+ * provider's prompt cache (~8k tokens at 4 chars/token; also the console's
+ * own per-task text ceiling, so anything above it is definitionally large).
+ */
+export const RESOURCE_PROMPT_CACHE_LARGE_PREFIX_BYTES = 32 * 1024;
+/** The extended retention window requested for qualifying jobs. */
+export const RESOURCE_PROMPT_CACHE_EXTENDED_RETENTION = '12h' as const;
+
+/**
+ * The per-job prompt-cache retention pick. The pool has no provider cache
+ * state, so the pick reads only the job's own envelope: a long deadline AND a
+ * large prompt means the job reuses a large stable prefix across its calls,
+ * retries and follow-up work, and a provider-side 12h retention keeps that
+ * prefix warm through the job's lifetime. Any other shape keeps the provider
+ * default (undefined = no request field, byte-identical request).
+ */
+export function resourcePromptCacheRetention(task: Pick<ResourceWorkerTask, 'timeoutMs' | 'prompt'>): '12h' | undefined {
+  return task.timeoutMs >= RESOURCE_PROMPT_CACHE_LONG_JOB_MS &&
+    Buffer.byteLength(task.prompt, 'utf8') >= RESOURCE_PROMPT_CACHE_LARGE_PREFIX_BYTES
+    ? RESOURCE_PROMPT_CACHE_EXTENDED_RETENTION : undefined;
+}
+
+/** The recheck hint when the provider names no retry time for a tier refusal. */
+export const SERVICE_TIER_REFUSAL_DEFAULT_RETRY_MS = 60_000;
+/** The largest recheck hint accepted from a provider retry field. */
+export const SERVICE_TIER_REFUSAL_MAX_RETRY_MS = 3_600_000;
+
+/**
+ * Bounded admission evidence for a service-tier refusal. Health stays 'ready':
+ * the endpoint answered, so this is a capacity recheck hint (the same
+ * 'provider-retry-after' exclusion a flagged quota hint produces), not a
+ * claim that the worker is down. The hint is clamped to at least the default
+ * so a missing or zero hint still yields a bounded recheck, and to at most
+ * the maximum so a hostile hint cannot park a worker.
+ */
+export function resourceServiceTierObservation(workerId: string, retryAfterMs: number | null, nowMs: number): ResourceObservation {
+  const hint = retryAfterMs !== null && Number.isSafeInteger(retryAfterMs) && retryAfterMs > 0
+    ? retryAfterMs : SERVICE_TIER_REFUSAL_DEFAULT_RETRY_MS;
+  const retryMs = Math.min(Math.max(hint, 1), SERVICE_TIER_REFUSAL_MAX_RETRY_MS);
+  return { workerId, observedAt: new Date(nowMs).toISOString(), expiresAt: new Date(nowMs + 60_000).toISOString(),
+    health: 'ready', windows: [], retryAfter: new Date(nowMs + retryMs).toISOString() };
+}
 
 /** Reuse the shared authority source; an unreadable/unknown state is never clear. */
 function resourceKillReason(): 'worker-kill-active' | 'worker-kill-unavailable' | null {
@@ -253,7 +306,9 @@ async function executeLocal(worker: ResourceWorker, binding: Extract<ResourceBin
       // One task, one connection: a pooled idle socket can be closed by the
       // server during this process's synchronous work between tasks.
       { redirect: 'error', timeoutMs: task.timeoutMs, maxRequestBytes: MAX_BYTES, maxResponseBytes: MAX_BYTES,
-        maxOutputTokens: task.maxOutputTokens, freshConnection: true });
+        maxOutputTokens: task.maxOutputTokens, freshConnection: true,
+        // Undefined for ordinary tasks: no request field is added.
+        promptCacheRetention: resourcePromptCacheRetention(task) });
     const response = await client.chat([{ role: 'user', content: task.prompt }], undefined, controller.signal);
     if (response.usageKnown === true && count(response.usage.tokensIn) && count(response.usage.tokensOut) &&
         count(response.usage.tokensIn + response.usage.tokensOut)) {
@@ -267,9 +322,15 @@ async function executeLocal(worker: ResourceWorker, binding: Extract<ResourceBin
     if (outputTokens !== null && outputTokens > task.maxOutputTokens) return { ...base, status: 'failed', reason: 'worker-output-token-limit' };
     if (!response.content.trim()) return { ...base, status: 'failed', reason: 'worker-output-missing' };
     return { ...base, status: 'completed', reason: 'worker-completed' };
-  } catch {
-    return { ...empty(timedOut ? 'worker-timed-out' : controller.signal.aborted ? 'worker-cancelled' : 'worker-transport-failed',
-      timedOut ? 'timed-out' : controller.signal.aborted ? 'cancelled' : 'failed'), inputTokens, outputTokens };
+  } catch (error) {
+    // A classified service-tier refusal is pool capacity evidence, not task
+    // failure: the runtime releases the task back to admission so it reroutes.
+    const tierRefusal = !timedOut && !controller.signal.aborted && error instanceof OpenAICompatServiceTierError
+      ? error : null;
+    return { ...empty(timedOut ? 'worker-timed-out' : controller.signal.aborted ? 'worker-cancelled'
+        : tierRefusal ? 'worker-service-tier-unavailable' : 'worker-transport-failed',
+      timedOut ? 'timed-out' : controller.signal.aborted ? 'cancelled' : 'failed'), inputTokens, outputTokens,
+      ...(tierRefusal ? { observation: resourceServiceTierObservation(worker.id, tierRefusal.retryAfterMs, Date.now()) } : {}) };
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
 }
 

@@ -174,7 +174,7 @@ The same separate agent wrote two more sets, 24 scenarios each: 12 where one age
 
 Still open: a fact whose cited comment is reworded with the same meaning is withheld, and a quote-only comment edit that only drops a period still counts as a change. The three W3 credential misses are false alarms in the shared screening patterns: the clean answers ("minted with `kestrelctl token mint --role admin`", "The Slack bot token is read from SLACK_BOT_TOKEN") are withheld because `token` followed by a word reads as a token value. The other W3 miss is a duplicate. W4's misses were not inspected, to keep it unseen for later rounds. Earlier W1 questions that were refused whole now serve: one of them shows a cross-key contradiction that the refusal used to hide.
 
-`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 1 tuning, 18 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.
+`--check` holds these numbers. It fails on fewer passes in either set, more questions served a wrong or stale fact (ceilings: 1 tuning, 19 validation), more duplicates (5, 10), or any credential-bearing write served. Every other dimension must still leak nothing.
 
 ### Cross-key evidence links
 

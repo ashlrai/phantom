@@ -1939,6 +1939,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autopilot': {
+        const { cmdAutopilot } = await import('./autopilot.js');
+        process.exitCode = await cmdAutopilot(rest);
+        break;
+      }
+
       case 'metrics': {
         const { cmdMetrics } = await import('./metrics.js');
         process.exitCode = await cmdMetrics(rest);

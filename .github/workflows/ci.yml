@@ -9,11 +9,21 @@ on:
     types: [opened, synchronize, reopened]
   merge_group:
   workflow_call:
-  # Daily full suite on master at 06:00 ET (10:00 UTC).
+  # Daily full suite on master at 05:03 ET (09:03 UTC). Staggered from the other
+  # six repos' daily runs so its seven macOS jobs never share the org's macOS
+  # concurrency with them (RQ-DAILY-15).
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "3 9 * * *"
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
+  # The scheduled run rotates the Mac exhaustive work over seven daily slices
+  # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
   workflow_dispatch:
+    inputs:
+      mac_shard:
+        description: Mac exhaustive slice (all = complete set, 0-6 = one daily slice)
+        type: choice
+        default: all
+        options: [all, '0', '1', '2', '3', '4', '5', '6']
 
 permissions:
   contents: read
@@ -82,6 +92,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      mac_slice: ${{ steps.mac.outputs.mac_slice }}
+      mac_general_exclude: ${{ steps.mac.outputs.mac_general_exclude }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,6 +111,12 @@ jobs:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+      - name: Select daily Mac rotation
+        id: mac
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MAC_SHARD_INPUT: ${{ github.event.inputs.mac_shard }}
+        run: node .github/scripts/ci-mac-rotation.mjs plan
 
   site:
     name: Site PR (ecosystem)
@@ -142,7 +160,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -264,7 +282,7 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 25
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}
@@ -534,7 +552,7 @@ jobs:
               test/m466.host-merge-revocation-protocol.test.ts
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 15
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -558,7 +576,7 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 45
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -571,6 +589,8 @@ jobs:
       max-parallel: 4
       matrix:
         shard: [1, 2, 3, 4]
+        # Daily rotation keeps leg 1 only; the complete set excludes nothing.
+        exclude: ${{ fromJSON(needs.classify.outputs.mac_general_exclude || '[]') }}
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
@@ -596,9 +616,11 @@ jobs:
       - name: Build
         run: npm run build
       - name: Test complete Mac general partition
+        if: needs.classify.outputs.mac_slice == ''
         id: lane
         run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}
       - name: Observe advisory Mac impact shadow
+        if: needs.classify.outputs.mac_slice == ''
         id: shadow
         continue-on-error: true
         timeout-minutes: 2
@@ -616,6 +638,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload Mac qualification
+        if: needs.classify.outputs.mac_slice == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ashlr-qualification-mac-general-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -623,6 +646,11 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Test daily Mac rotation slice
+        if: needs.classify.outputs.mac_slice != ''
+        env:
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
+        run: node .github/scripts/ci-mac-rotation.mjs run general
       - name: Clean disposable native launchd fixture
         if: always()
         run: node scripts/cleanup-launchd-test.mjs
@@ -632,7 +660,7 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 30
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -668,9 +696,11 @@ jobs:
       - name: Build
         run: npm run build
       - name: Test complete Mac isolated suites
+        if: needs.classify.outputs.mac_slice == ''
         id: lane
         run: node .github/scripts/ci-qualification-lane.mjs mac-isolated
       - name: Observe advisory Mac impact shadow
+        if: needs.classify.outputs.mac_slice == ''
         id: shadow
         continue-on-error: true
         timeout-minutes: 2
@@ -688,6 +718,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload Mac qualification
+        if: needs.classify.outputs.mac_slice == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ashlr-qualification-mac-isolated-${{ github.run_id }}-${{ github.run_attempt }}
@@ -695,6 +726,11 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Test daily Mac rotation slice
+        if: needs.classify.outputs.mac_slice != ''
+        env:
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
+        run: node .github/scripts/ci-mac-rotation.mjs run isolated
       - name: Clean disposable native launchd fixture
         if: always()
         run: node scripts/cleanup-launchd-test.mjs
@@ -706,7 +742,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -898,7 +934,7 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: "30000"
     steps:
@@ -1006,6 +1042,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
         run: |
           set -euo pipefail
           echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
@@ -1013,13 +1050,17 @@ jobs:
           const needs = JSON.parse(process.env.NEEDS);
           const sha7 = process.env.GITHUB_SHA.slice(0, 7);
           const run = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          const slice = /^[0-6]$/.test(process.env.MAC_SLICE ?? '') ? process.env.MAC_SLICE : 'all';
           let n = 0;
           for (const [job, { result }] of Object.entries(needs)) {
             if (result !== 'failure' && result !== 'cancelled') continue;
             n += 1;
-            console.log(`- READY RQ-FIXUP-PHANTOM-${sha7}-${n} (P0, pool=any, repo=phantom, lead=CI-Efficiency, owner=ci-efficiency, job=${job}, result=${result}, run=${run}, sha=${sha7}): daily full suite job ${job} concluded ${result}; first error is in the run's failed step.`);
+            const mac = job.startsWith('mac-') ? `, mac_shard=${slice}` : '';
+            console.log(`- READY RQ-FIXUP-PHANTOM-${sha7}-${n} (P0, pool=any, repo=phantom, lead=CI-Efficiency, owner=ci-efficiency, job=${job}, result=${result}${mac}, run=${run}, sha=${sha7}): daily full suite job ${job} concluded ${result}; first error is in the run's failed step.`);
           }
           NODE
+          node -e 'const s=process.env.MAC_SLICE;console.log(JSON.stringify({schemaVersion:1,repo:"phantom",run_id:process.env.GITHUB_RUN_ID,sha:process.env.GITHUB_SHA.slice(0,7),event:process.env.GITHUB_EVENT_NAME,mac_shard:/^[0-6]$/.test(s??"")?Number(s):"all",mac_shards:7}))' | perl .github/tests/secret-shape/scrub.pl > mac-shard.json
+          echo "Mac shard: $(cat mac-shard.json)" >> "$GITHUB_STEP_SUMMARY"
           perl .github/tests/secret-shape/scrub.pl < raw.txt > fixup-queue.txt
           echo "fixup_lines=$(wc -l < fixup-queue.txt)"
           cat fixup-queue.txt >> "$GITHUB_STEP_SUMMARY"
@@ -1027,6 +1068,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: phantom-fixup-queue
-          path: fixup-queue.txt
+          path: |
+            fixup-queue.txt
+            mac-shard.json
           if-no-files-found: error
           retention-days: 7
