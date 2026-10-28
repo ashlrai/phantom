@@ -99,3 +99,10 @@ describe('CLI process exit codes', () => {
     expect(r.stderr).toContain('Unknown command: frobnicate');
   });
 });
+
+it('the sweep fixture suite runs through the CLI', () => {
+  const result = spawnSync(process.execPath, ['--test', resolve('test/deletion-sweep.test.mjs')], {
+    cwd: resolve('.'), encoding: 'utf8', timeout: 60_000,
+  });
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
