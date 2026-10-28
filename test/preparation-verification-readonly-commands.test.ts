@@ -65,22 +65,22 @@ describe('closed read-only preparation Git broker', () => {
   });
 
   it.each([
-    ['rev-parse', '--show-toplevel'],
-    ['rev-parse', '--verify', 'refs/heads/codex/upstream'],
-    ['rev-parse', '--verify', `${oid}^{commit}`],
-    ['rev-parse', '--verify', `${oid}^{tree}`],
-    ['rev-parse', '--verify', `${'c'.repeat(64)}^{commit}`],
-    ['rev-parse', '--verify', `${'c'.repeat(64)}^{tree}`],
-    ['symbolic-ref', '-q', 'refs/heads/codex/upstream'],
-    ['show-ref', '--verify', '--quiet', 'refs/heads/codex/upstream'],
-    ['rev-list', '--parents', '-n', '1', oid],
-    ['rev-list', '--parents', '-n', '1', 'c'.repeat(64)],
-    ['for-each-ref', '--format=%(refname)'],
-    ['for-each-ref', '--format=%(refname)', 'refs/heads/codex/template'],
-    ['ls-tree', '-rz', '--full-tree', oid],
-    ['ls-tree', '-rlz', '--full-tree', 'c'.repeat(64)],
-    ['cat-file', 'blob', oid],
-  ])('accepts exact delivery read query %j', (...args) => {
+    [['rev-parse', '--show-toplevel']],
+    [['rev-parse', '--verify', 'refs/heads/codex/upstream']],
+    [['rev-parse', '--verify', `${oid}^{commit}`]],
+    [['rev-parse', '--verify', `${oid}^{tree}`]],
+    [['rev-parse', '--verify', `${'c'.repeat(64)}^{commit}`]],
+    [['rev-parse', '--verify', `${'c'.repeat(64)}^{tree}`]],
+    [['symbolic-ref', '-q', 'refs/heads/codex/upstream']],
+    [['show-ref', '--verify', '--quiet', 'refs/heads/codex/upstream']],
+    [['rev-list', '--parents', '-n', '1', oid]],
+    [['rev-list', '--parents', '-n', '1', 'c'.repeat(64)]],
+    [['for-each-ref', '--format=%(refname)']],
+    [['for-each-ref', '--format=%(refname)', 'refs/heads/codex/template']],
+    [['ls-tree', '-rz', '--full-tree', oid]],
+    [['ls-tree', '-rlz', '--full-tree', 'c'.repeat(64)]],
+    [['cat-file', 'blob', oid]],
+  ])('accepts exact delivery read query %j', (args) => {
     const value = parse(request(args));
     expect(value.file).toBe('/usr/bin/git');
     expect(value.args).toEqual(request(args).args);
@@ -106,24 +106,24 @@ describe('closed read-only preparation Git broker', () => {
   });
 
   it.each([
-    ['update-ref', 'refs/heads/codex/upstream', oid],
-    ['symbolic-ref', 'refs/heads/codex/upstream', 'refs/heads/main'],
-    ['symbolic-ref', '-d', 'refs/heads/codex/upstream'],
-    ['symbolic-ref', '-q', 'refs/heads/codex/upstream', 'refs/heads/main'],
-    ['show-ref', '--verify', '--quiet', '--', 'refs/heads/codex/upstream'],
-    ['for-each-ref', '--format=%(refname)', 'refs/heads/codex/template', 'refs/heads/main'],
-    ['for-each-ref', '--format=%(refname)', '--shell'],
-    ['for-each-ref', '--format=%(contents)', 'refs/heads/codex/template'],
-    ['for-each-ref', '--format=%(refname)', 'refs/heads/*'],
-    ['for-each-ref', '--format=%(refname)', 'refs/tags/tag'],
-    ['hash-object', '-w', '--stdin'], ['mktree', '-z'], ['commit-tree', oid],
-    ['checkout', 'main'], ['fetch', 'origin'], ['worktree', 'add', '/tmp/not-allowed'],
-    ['cat-file', '--filters', oid], ['cat-file', '--batch-command'],
-    ['rev-parse', '--verify', 'HEAD'], ['rev-parse', '--verify', 'refs/tags/tag'],
-    ['rev-list', '--parents', '-n', '2', oid], ['rev-list', '--parents', '-n', '1', 'HEAD'],
-    ['rev-list', '--parents', '-n', '1', `${oid}~1`], ['rev-list', '--parents', '-n', '1', oid, '--all'],
-    ['rev-list', '--parents', '--objects', '-n', '1', oid], ['rev-list', '--parents', '-n', '1'],
-  ])('refuses write/expanded query %j', (...args) => { expect(() => parse(request(args))).toThrow('CANDIDATE_SESSION_FAILED'); });
+    [['update-ref', 'refs/heads/codex/upstream', oid]],
+    [['symbolic-ref', 'refs/heads/codex/upstream', 'refs/heads/main']],
+    [['symbolic-ref', '-d', 'refs/heads/codex/upstream']],
+    [['symbolic-ref', '-q', 'refs/heads/codex/upstream', 'refs/heads/main']],
+    [['show-ref', '--verify', '--quiet', '--', 'refs/heads/codex/upstream']],
+    [['for-each-ref', '--format=%(refname)', 'refs/heads/codex/template', 'refs/heads/main']],
+    [['for-each-ref', '--format=%(refname)', '--shell']],
+    [['for-each-ref', '--format=%(contents)', 'refs/heads/codex/template']],
+    [['for-each-ref', '--format=%(refname)', 'refs/heads/*']],
+    [['for-each-ref', '--format=%(refname)', 'refs/tags/tag']],
+    [['hash-object', '-w', '--stdin']], [['mktree', '-z']], [['commit-tree', oid]],
+    [['checkout', 'main']], [['fetch', 'origin']], [['worktree', 'add', '/tmp/not-allowed']],
+    [['cat-file', '--filters', oid]], [['cat-file', '--batch-command']],
+    [['rev-parse', '--verify', 'HEAD']], [['rev-parse', '--verify', 'refs/tags/tag']],
+    [['rev-list', '--parents', '-n', '2', oid]], [['rev-list', '--parents', '-n', '1', 'HEAD']],
+    [['rev-list', '--parents', '-n', '1', `${oid}~1`]], [['rev-list', '--parents', '-n', '1', oid, '--all']],
+    [['rev-list', '--parents', '--objects', '-n', '1', oid]], [['rev-list', '--parents', '-n', '1']],
+  ])('refuses write/expanded query %j', (args) => { expect(() => parse(request(args))).toThrow('CANDIDATE_SESSION_FAILED'); });
 
   it.each(['refs/heads/', 'refs/heads/../main', 'refs/heads/a.lock', 'refs/heads/a.',
     'refs/heads/a//b', 'refs/heads/a@{1}', 'refs/heads/a\n', 'refs/heads/.hidden', 'refs/heads/a:other'])(
