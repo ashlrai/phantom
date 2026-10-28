@@ -28,6 +28,61 @@ import fs from 'node:fs';
 import { appendHubEntry, hubStorePath } from '../genome/store.js';
 import { readDecisions, readDecisionsDetailed, recordDecision } from './decisions-ledger.js';
 import type { AshlrConfig, DecisionEntry, GenomeEntry } from '../types.js';
+import type { NightlyCause, NightlyJob, NightlyLesson, NightlyPrior, NightlyProposal, NightlyReview } from '../learn/retro/nightly-types.js';
+
+/**
+ * Pure nightly write-back plan. Only finite lessons are emitted; raw comments
+ * cannot become instructions. The caller persists this locally after the
+ * selfImprove gate, without invoking the queue or changing routing policy.
+ */
+export function deriveNightlyImprovements(
+  jobs: readonly NightlyJob[], reviews: readonly NightlyReview[],
+): { priors: NightlyPrior[]; lessons: NightlyLesson[]; proposals: NightlyProposal[] } {
+  const advice: Record<NightlyCause, string> = {
+    verification: 'Run the affected repository checks and resolve failures before requesting review.',
+    scope: 'Keep each change within the requested scope and split unrelated work into separate proposals.',
+    safety: 'Require independent safety evidence and preserve existing permission and secret controls.',
+    review: 'Resolve blocking review findings with independently verifiable evidence before requesting review again.',
+    execution: 'Reproduce the recorded execution failure and verify a focused fix before retrying the job.',
+  };
+  const priors = new Map<string, NightlyPrior>();
+  const lessons = new Map<string, NightlyLesson>();
+  const byJob = new Map(jobs.map((job) => [JSON.stringify([job.repo, job.id]), job]));
+  const addLesson = (job: NightlyJob, cause: NightlyCause, evidence: string): void => {
+    // Length-prefixed JSON tuples avoid delimiter collisions in provider arm IDs.
+    const id = JSON.stringify([job.repo, job.playbook, cause]);
+    const lesson = lessons.get(id) ?? {
+      id, repo: job.repo, playbook: job.playbook, cause, status: 'pending' as const, text: advice[cause], evidence: [],
+    };
+    if (!lesson.evidence.includes(evidence)) lesson.evidence.push(evidence);
+    lessons.set(id, lesson);
+  };
+  for (const job of jobs) {
+    if (job.status !== 'succeeded' && job.status !== 'failed') continue;
+    const key = JSON.stringify([job.repo, job.arm]);
+    const prior = priors.get(key) ?? { repo: job.repo, arm: job.arm, successes: 0, failures: 0, alpha: 1, beta: 1 };
+    if (job.status === 'succeeded') { prior.successes++; prior.alpha++; }
+    else { prior.failures++; prior.beta++; addLesson(job, 'execution', `job:${job.id}`); }
+    priors.set(key, prior);
+  }
+  for (const review of reviews) {
+    const job = byJob.get(JSON.stringify([review.repo, review.jobId]));
+    if (job) addLesson(job, review.cause, `review:${review.id}`);
+  }
+  const orderedLessons = [...lessons.values()].sort((a, b) => a.id.localeCompare(b.id));
+  for (const lesson of orderedLessons) lesson.evidence.sort();
+  return {
+    priors: [...priors.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.arm.localeCompare(b.arm)),
+    lessons: orderedLessons,
+    proposals: orderedLessons.map((lesson) => ({
+      id: `nightly:${lesson.id}`, status: 'proposed', repo: lesson.repo, lessonId: lesson.id,
+      title: `Investigate recurring ${lesson.cause} findings`,
+      prompt: `${lesson.text} Inspect the local evidence references before proposing a change. This proposal grants no execution or publication authority.`,
+      evaluation: 'Add a deterministic regression fixture for the evidenced failure and run affected checks.',
+      metric: 'Fewer matching failures or blocking review findings in subsequent comparable jobs.',
+    })),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Constants
