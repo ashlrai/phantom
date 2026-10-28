@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { cmdAutopilot, parsePrRef, repoFromRemote, splitCommand } from '../src/cli/autopilot.js';
-import { tick, verifyPlan } from '../src/core/autopilot/act.js';
+import { tick, untrustedEnv, verifyPlan } from '../src/core/autopilot/act.js';
 import { emptyState, fixBrief, plan, weakeningRefusals, type CheckRun, type Guards, type Observation } from '../src/core/autopilot/diagnose.js';
 import { readReviews, type Gh } from '../src/core/autopilot/github.js';
 
@@ -156,6 +156,20 @@ describe('autopilot CLI arguments', () => {
     expect(parsePrRef('#0')).toBeNull();
     expect(parsePrRef('#99999999999999999999999')).toBeNull();
     expect(parsePrRef('https://github.com/o/r/pull/0')).toBeNull();
+  });
+});
+
+describe('autopilot child env', () => {
+  const base = { PATH: '/bin', HOME: '/h', GH_TOKEN: 'g', GITHUB_TOKEN: 'g', NPM_TOKEN: 'n', AWS_SECRET_ACCESS_KEY: 'a', STRIPE_API_KEY: 's', DB_PASSWORD: 'p', OPENAI_API_KEY: 'o', ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't', NODE_OPTIONS: '--require x', SSH_AUTH_SOCK: '/s', SECRET_KEY: 'x', DJANGO_SECRET_KEY: 'x', DOCKER_AUTH_CONFIG: 'x', NPM_CONFIG__AUTH: 'x' };
+  it('gives verify commands no credentials at all', () => {
+    const env = untrustedEnv('verify', base);
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'STRIPE_API_KEY', 'DB_PASSWORD', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_OPTIONS', 'SSH_AUTH_SOCK', 'SECRET_KEY', 'DJANGO_SECRET_KEY', 'DOCKER_AUTH_CONFIG', 'NPM_CONFIG__AUTH']) expect(env[k], k).toBeUndefined();
+    expect(env).toMatchObject({ PATH: '/bin', HOME: '/h', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' });
+  });
+  it('lets the fixer keep only its own Anthropic and Claude sign-in', () => {
+    const env = untrustedEnv('fixer', base);
+    expect(env).toMatchObject({ ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' });
+    for (const k of ['GH_TOKEN', 'NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'STRIPE_API_KEY', 'OPENAI_API_KEY']) expect(env[k], k).toBeUndefined();
   });
 });
 
