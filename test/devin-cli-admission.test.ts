@@ -63,6 +63,38 @@ describe.runIf(process.platform !== 'win32')('native Devin execution admission',
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it('backs off failed metadata for ten minutes even with forced refresh, then retries', async () => {
+    let clock = NOW;
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    run.mockRejectedValueOnce(new Error('Fixture metadata unavailable'));
+    const opts = { ...options(run, () => clock), forceRefresh: true };
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).toBeNull();
+    clock = NOW + 600_000 - 1;
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+    clock += 1;
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).not.toBeNull();
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  it('refuses an aborted caller before metadata and leaves a fresh caller able to refresh', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', { ...options(run), signal: controller.signal })).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(run))).not.toBeNull();
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('force-refreshes valid cached evidence and refuses a newly paid catalog', async () => {
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(run))).not.toBeNull();
+    run.mockImplementation(async (_bin, args) => args[0] === 'auth' ? STATUS : catalog('262K context, $2 / 1M Input'));
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', { ...options(run), forceRefresh: true })).toBeNull();
+    expect(run).toHaveBeenCalledTimes(6);
+  });
+
   it.each(['256K context', '256K context, $2 / 1M Input · $8 / 1M Output', 'Free', '256K context, Free, $2 / 1M Input'])('holds unknown/paid/incomplete/contradictory evidence: %s', async meta => {
     expect(await refreshDevinCliExecutionBinding('swe-2-high', options(vi.fn(async (_bin,args) => args[0] === 'auth' ? STATUS : catalog(meta))))).toBeNull();
   });

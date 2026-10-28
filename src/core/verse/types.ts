@@ -620,6 +620,8 @@ export interface VerseSession {
   updatedAt: string;
   status: VerseSessionStatus;
   turnCount: number;
+  /** Latest durable assistant result line; absent on chats from older builds. */
+  lastResult?: string;
   usage: VerseUsage;
   lastError: string | null;
   /**
@@ -725,6 +727,8 @@ export type VerseEvent =
   | { seq: number; at: string; type: 'turn-started'; turnId: string; pid: number | null }
   | { seq: number; at: string; type: 'text-delta'; turnId: string; text: string }
   | { seq: number; at: string; type: 'assistant-message'; turnId: string; text: string }
+  /** Engine-authored lifecycle copy, separate from provider output and native history. */
+  | { seq: number; at: string; type: 'assistant-status'; turnId: string; phase: 'acknowledgement' | 'result'; text: string }
   /**
    * Reasoning the CLI chose to show. V3.10 ADDITIVE optional fields (absent on
    * older records = unknown, never "false"/"0"):

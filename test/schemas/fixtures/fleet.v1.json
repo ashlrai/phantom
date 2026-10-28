@@ -1,0 +1,257 @@
+{
+  "schema": "fleet.v1",
+  "generated_at": "2026-10-26T12:00:00.000Z",
+  "readings": [],
+  "windows": [
+    {
+      "pool": "grok-ultra-weekly",
+      "start": "2026-10-26T00:21:00.000Z",
+      "reset": "2026-11-02T01:21:00.000Z",
+      "reset_every_days": 7,
+      "timezone": "America/New_York"
+    }
+  ],
+  "pools": [
+    {
+      "id": "grok-ultra-weekly",
+      "shared_with": null,
+      "source": "estimate",
+      "used_pct": 36,
+      "remaining_pct": 64,
+      "reading_at": "2026-10-26T03:26:00.000Z",
+      "age_seconds": 30840,
+      "reset_at": "2026-11-02T01:21:00.000Z",
+      "window_start": "2026-10-26T00:21:00.000Z",
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": 6.893491124260355,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [
+        {
+          "at": "2026-10-26T00:21:00.000Z",
+          "used_pct": 0
+        },
+        {
+          "at": "2026-11-02T01:21:00.000Z",
+          "used_pct": 100
+        }
+      ],
+      "planner": []
+    },
+    {
+      "id": "codex-cmp",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    },
+    {
+      "id": "codex-personal",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    },
+    {
+      "id": "claude-max",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    },
+    {
+      "id": "devin",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    },
+    {
+      "id": "grok-build",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    },
+    {
+      "id": "cursor",
+      "shared_with": "grok-ultra-weekly",
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": "2026-11-02T01:21:00.000Z",
+      "window_start": "2026-10-26T00:21:00.000Z",
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": 6.893491124260355,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [
+        {
+          "at": "2026-10-26T00:21:00.000Z",
+          "used_pct": 0
+        },
+        {
+          "at": "2026-11-02T01:21:00.000Z",
+          "used_pct": 100
+        }
+      ],
+      "planner": []
+    },
+    {
+      "id": "omlx",
+      "shared_with": null,
+      "source": "unknown",
+      "used_pct": null,
+      "remaining_pct": null,
+      "reading_at": null,
+      "age_seconds": null,
+      "reset_at": null,
+      "window_start": null,
+      "burn_pct_per_hour": null,
+      "runway_hours": null,
+      "ideal_pct": null,
+      "projected_pct": null,
+      "uncertainty": "unknown",
+      "actual": [],
+      "ideal": [],
+      "planner": []
+    }
+  ],
+  "router": {
+    "source": "unknown",
+    "decisions": null,
+    "regret": null
+  },
+  "agents": null,
+  "repos": [
+    {
+      "repo": "ashlrai/phantom",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/phantom-secrets",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/locus",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/lexicon",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/ashlr-md",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/ashlr-stack",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    },
+    {
+      "repo": "ashlrai/ashlr-plugin",
+      "source": "unknown",
+      "open": null,
+      "merged": null,
+      "complete": false
+    }
+  ],
+  "coordination": {
+    "state": "unknown",
+    "claims": [],
+    "messages": [],
+    "proposals": [],
+    "expiredClaims": null
+  },
+  "sources": {
+    "shared": "unknown",
+    "github": "unknown",
+    "spend": "unknown",
+    "router": "unknown",
+    "planner": "unknown"
+  }
+}

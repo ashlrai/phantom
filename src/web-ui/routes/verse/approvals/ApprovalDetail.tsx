@@ -69,13 +69,14 @@ function latestJudged(decisions: DecisionEntry[]): DecisionEntry | null {
 type PendingAction = 'approve' | 'reject' | null;
 
 export interface ApprovalDetailProps {
+  denyLabel?: string;
   id: string;
   dispatchEnabled: boolean;
   onDispatchDisabled: () => void;
   onDecided: () => void;
 }
 
-export function ApprovalDetail({ id, dispatchEnabled, onDispatchDisabled, onDecided }: ApprovalDetailProps) {
+export function ApprovalDetail({ id, dispatchEnabled, onDispatchDisabled, onDecided, denyLabel = 'Reject' }: ApprovalDetailProps) {
   const query = useQuery(proposalDetailQuery(id));
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [tokenPrompt, setTokenPrompt] = useState(false);
@@ -346,7 +347,7 @@ export function ApprovalDetail({ id, dispatchEnabled, onDispatchDisabled, onDeci
             </p>
           ) : null}
           <button type="button" className={styles.reject} disabled={!canDecide || busy} onClick={() => requestAction('reject')}>
-            Reject
+            {denyLabel}
           </button>
           <button type="button" className={styles.approve} disabled={!canDecide || busy} onClick={() => requestAction('approve')}>
             Approve…

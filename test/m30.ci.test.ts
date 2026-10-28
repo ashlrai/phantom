@@ -370,7 +370,11 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Job> };
     const ci = jobs.ci!;
     const shared = jobs['ci-shared-macos']!;
-    expect(jobs.classify?.outputs).toEqual({ lane: '${{ steps.lane.outputs.lane }}' });
+    expect(jobs.classify?.outputs).toEqual({
+      lane: '${{ steps.lane.outputs.lane }}',
+      mac_slice: '${{ steps.mac.outputs.mac_slice }}',
+      mac_general_exclude: '${{ steps.mac.outputs.mac_general_exclude }}',
+    });
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
@@ -389,9 +393,18 @@ describe('M30 CI workflow', () => {
       const push = id === 'ci' ? '' : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '0 10 * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
+    // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
+    // dispatch run rotates; the complete qualification steps run otherwise.
+    expect(ciYml).toContain("exclude: ${{ fromJSON(needs.classify.outputs.mac_general_exclude || '[]') }}");
+    for (const id of ['mac-general', 'mac-isolated']) {
+      const job = workflowJob(id);
+      expect(job.match(/if: needs\.classify\.outputs\.mac_slice == ''/g)).toHaveLength(3);
+      expect(job).toContain("if: needs.classify.outputs.mac_slice != ''");
+      expect(job).toContain(`run: node .github/scripts/ci-mac-rotation.mjs run ${id === 'mac-general' ? 'general' : 'isolated'}`);
+    }
     expect(ci.strategy!.matrix.include).toHaveLength(7);
     expect(ci.strategy!.matrix.include!.every((row) => row.os !== 'macos-latest')).toBe(true);
     expect(shared.strategy!.matrix.include).toHaveLength(1);

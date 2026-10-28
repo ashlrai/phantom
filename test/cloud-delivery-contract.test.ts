@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { buildCloudPrompt, CLOUD_REPORT_MAX_BLOCK_CHARS, parseCloudReport } from '../src/core/cloud/delivery-contract.js';
+import { buildCloudPrompt, CLOUD_REPORT_MAX_BLOCK_CHARS, CONSTITUTION_PROMPT_RULES_V1, parseCloudReport } from '../src/core/cloud/delivery-contract.js';
 import type { CloudTaskV1 } from '../src/core/cloud/types.js';
 
 const TASK: CloudTaskV1 = {
@@ -21,6 +21,20 @@ const GOOD = JSON.stringify({ status: 'done', summary: 'Fixed it.', testsRun: ['
 
 describe('buildCloudPrompt', () => {
   const prompt = buildCloudPrompt(TASK);
+
+  it('includes the versioned constitution rules in every job prompt', () => {
+    expect(CONSTITUTION_PROMPT_RULES_V1).toMatchInlineSnapshot(`
+      "CONSTITUTION PROMPT RULES v1
+      - Never print secrets, tokens, or environment variable values.
+      - Use Phantom Secrets for secrets; never put secret values in context.
+      - Use Locus for MCP access. If required access is unavailable, report the blocker.
+      - Do not use em dashes."
+    `);
+    for (const rendered of [prompt, buildCloudPrompt(TASK, 'LESSONS', 'PLAYBOOK', 'COMPANIONS')]) {
+      expect(rendered.split(CONSTITUTION_PROMPT_RULES_V1)).toHaveLength(2);
+      expect(rendered.indexOf(CONSTITUTION_PROMPT_RULES_V1)).toBeLessThan(rendered.indexOf('DELIVERY CONTRACT'));
+    }
+  });
 
   it('starts with the task text and carries every contract term', () => {
     expect(prompt.startsWith('Fix the flaky tracker test in test/x.test.ts.\n')).toBe(true);
