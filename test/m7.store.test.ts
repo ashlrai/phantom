@@ -648,8 +648,13 @@ describe('appendHubEntry — append-only, never overwrites', () => {
 // ---------------------------------------------------------------------------
 
 describe('genomeHealth — counts match reality', () => {
+  // These six empty-state shape checks share one real health probe. Seeded
+  // state and never-throws cases below still perform fresh reads and probes.
+  let emptyHealth: ReturnType<typeof genomeHealth> | undefined;
+  const empty = () => emptyHealth ??= genomeHealth(makeConfig());
+
   it('returns totalEntries=0 and hubEntries=0 when genome is empty', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(health.totalEntries).toBe(0);
     expect(health.hubEntries).toBe(0);
   });
@@ -720,12 +725,12 @@ describe('genomeHealth — counts match reality', () => {
   });
 
   it('projects is 0 when no project genome dirs exist', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(health.projects).toBe(0);
   });
 
   it('sizeBytes is 0 when hub.jsonl does not exist', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(health.sizeBytes).toBe(0);
   });
 
@@ -739,7 +744,7 @@ describe('genomeHealth — counts match reality', () => {
   });
 
   it('lastLearnedAt is null when hub is empty', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(health.lastLearnedAt).toBeNull();
   });
 
@@ -754,12 +759,12 @@ describe('genomeHealth — counts match reality', () => {
   });
 
   it('embeddingsAvailable is a boolean', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(typeof health.embeddingsAvailable).toBe('boolean');
   });
 
   it('embeddingsAvailable shape — GenomeHealth fields all present', () => {
-    const health = genomeHealth(makeConfig());
+    const health = empty();
     expect(typeof health.totalEntries).toBe('number');
     expect(typeof health.projects).toBe('number');
     expect(typeof health.hubEntries).toBe('number');
