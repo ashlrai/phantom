@@ -417,7 +417,7 @@ describe('answer accessors', () => {
 
 
 describe('Jev selected outcome admission', () => {
-  it.each([() => false, () => { throw new Error('private scope detail'); }])('refuses before the actual request without a charged call', async selectedOutcomeAdmission => {
+  it.each([() => false, () => { throw new Error('private scope detail'); }])('refuses before the actual request without a charged call (%#)', async selectedOutcomeAdmission => {
     const result = await askTypeSafe(REQUEST, cfg, { endpoint: ENDPOINT, selectedOutcomeAdmission });
     expect(result).toMatchObject({ ok: false, reason: 'admission-refused' }); expect(fetchMock).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('private scope detail');
