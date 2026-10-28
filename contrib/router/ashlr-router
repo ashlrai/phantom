@@ -1,0 +1,2491 @@
+#!/usr/bin/env bash
+# ashlr-router: claim labelled GitHub issues and open one draft PR per job.
+# Model CLIs run with an allowlisted environment. The runner, not the model,
+# commits, pushes, and opens the draft.
+set -euo pipefail
+umask 077
+
+ROUTER_ROOT=""
+ROUTER_LIB=""
+ROUTER_IO=""
+ROUTER_HOME=""
+ROUTER_CONFIG=""
+ROUTER_STATE=""
+ROUTER_VERIFY_WARN=""
+
+router_init() {
+  local src
+  src=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  if [[ -d "$src/lib" ]]; then
+    ROUTER_ROOT=$src
+  else
+    ROUTER_ROOT=$(cd "$src/.." && pwd)
+  fi
+  ROUTER_LIB=$ROUTER_ROOT/lib
+  ROUTER_IO=$ROUTER_LIB/router_io.cjs
+  ROUTER_HOME=${ASHLR_ROUTER_HOME:-$HOME/ashlr-router}
+  ROUTER_CONFIG=${ASHLR_ROUTER_CONFIG:-$ROUTER_HOME/config.json}
+  if [[ ! -f "$ROUTER_CONFIG" ]]; then
+    ROUTER_CONFIG=$ROUTER_ROOT/config.example.json
+  fi
+  ROUTER_STATE=$ROUTER_HOME/state.json
+  # shellcheck source=lib/gate.sh
+  source "$ROUTER_LIB/gate.sh"
+  # shellcheck source=lib/claim.sh
+  source "$ROUTER_LIB/claim.sh"
+  # shellcheck source=lib/model.sh
+  source "$ROUTER_LIB/model.sh"
+  # shellcheck source=lib/route.sh
+  source "$ROUTER_LIB/route.sh"
+  # shellcheck source=lib/env.sh
+  source "$ROUTER_LIB/env.sh"
+  # shellcheck source=lib/ledger.sh
+  source "$ROUTER_LIB/ledger.sh"
+  # shellcheck source=lib/verify.sh
+  source "$ROUTER_LIB/verify.sh"
+  # shellcheck source=lib/git_safety.sh
+  source "$ROUTER_LIB/git_safety.sh"
+  # shellcheck disable=SC1090
+  eval "$(node "$ROUTER_IO" emit-config "$ROUTER_CONFIG")"
+}
+
+router_log() {
+  mkdir -p "$ROUTER_HOME/logs"
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$ROUTER_HOME/logs/router.log" >&2
+}
+
+router_state_get() {
+  node "$ROUTER_IO" get "$ROUTER_STATE" "$1" | tr -d '\n'
+}
+
+router_ensure_state() {
+  mkdir -p "$ROUTER_HOME/logs" "$ROUTER_HOME/tmp" "$ROUTER_HOME/locks" "$ROUTER_HOME/repos" "$ROUTER_HOME/worktrees"
+  if [[ ! -f "$ROUTER_STATE" ]]; then
+    printf '{}\n' | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  fi
+}
+
+# bash 3.2 keeps $$ as the parent inside a background job. exec replaces the
+# command-substitution shell, so sh's PPID is the shell that owns the lock.
+router_self_pid() {
+  exec sh -c 'echo "$PPID"'
+}
+
+router_lock_age() {
+  node -e 'const fs=require("fs"); const s=fs.statSync(process.argv[1]); process.stdout.write(String(Math.max(0, Math.floor(Date.now()/1000)-Math.floor(s.mtimeMs/1000))))' "$1"
+}
+
+router_lock_alive() {
+  local dir=$1
+  local pid age
+  [[ -d "$dir" ]] || return 1
+  pid=$(cat "$dir/pid" 2>/dev/null || true)
+  if [[ -z "$pid" ]]; then
+    age=$(router_lock_age "$dir" 2>/dev/null || printf '999999')
+    [[ "$age" -lt "${ROUTER_LOCK_GRACE_S:-2}" ]]
+    return
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+# The lock directory appears only after its pid file is inside it. mv of a
+# populated temp dir onto a missing name is an atomic rename. If the name
+# already exists, mv nests the temp dir and this rejects that result.
+router_publish_lock() {
+  local tmp=$1
+  local dir=$2
+  local pid=$3
+  local got nested
+  if [[ -e "$dir" ]]; then
+    return 1
+  fi
+  if ! mv "$tmp" "$dir" 2>/dev/null; then
+    return 1
+  fi
+  got=$(cat "$dir/pid" 2>/dev/null || true)
+  if [[ "$got" == "$pid" ]]; then
+    return 0
+  fi
+  nested=$(basename "$tmp")
+  rm -rf "${dir:?}/${nested:?}"
+  return 1
+}
+
+router_acquire_lock() {
+  local dir=$1
+  local pid parent tmp
+  pid=$(router_self_pid)
+  parent=$(dirname "$dir")
+  mkdir -p "$parent"
+  tmp=$(mktemp -d "$parent/.locktmp.XXXXXX")
+  printf '%s\n' "$pid" > "$tmp/pid"
+  if router_publish_lock "$tmp" "$dir" "$pid"; then
+    return 0
+  fi
+  rm -rf "$tmp"
+  if router_lock_alive "$dir"; then
+    return 1
+  fi
+  rm -rf "$dir"
+  tmp=$(mktemp -d "$parent/.locktmp.XXXXXX")
+  printf '%s\n' "$pid" > "$tmp/pid"
+  if router_publish_lock "$tmp" "$dir" "$pid"; then
+    return 0
+  fi
+  rm -rf "$tmp"
+  return 1
+}
+
+router_release_lock() {
+  local dir=$1
+  local pid self
+  [[ -d "$dir" ]] || return 0
+  pid=$(cat "$dir/pid" 2>/dev/null || true)
+  self=$(router_self_pid)
+  if [[ -n "$pid" && "$pid" == "$self" ]]; then
+    rm -rf "$dir"
+  fi
+}
+
+router_job_heartbeat() {
+  local dir=$1
+  tr -d '\n' < "$dir/heartbeat" 2>/dev/null || true
+}
+
+router_lease_fresh() {
+  local dir=$1
+  local hb
+  router_lock_alive "$dir" || return 1
+  hb=$(router_job_heartbeat "$dir")
+  node "$ROUTER_IO" lease-fresh --heartbeat "$hb" --timeout "$ROUTER_TIMEOUT_S"
+}
+
+router_active_jobs() {
+  local dir n=0 entry
+  dir=$ROUTER_HOME/locks/jobs
+  [[ -d "$dir" ]] || { printf '0\n'; return 0; }
+  for entry in "$dir"/*; do
+    [[ -d "$entry" ]] || continue
+    if router_lease_fresh "$entry"; then
+      n=$((n + 1))
+    fi
+  done
+  printf '%s\n' "$n"
+}
+
+router_cli_picked_count() {
+  local cli=$1
+  local n=0 item
+  local IFS=','
+  for item in ${ROUTER_PICKED_CLIS:-}; do
+    if [[ "$item" == "$cli" ]]; then
+      n=$((n + 1))
+    fi
+  done
+  printf '%s\n' "$n"
+}
+
+router_cli_active_count() {
+  local cli=$1
+  local n
+  n=$(router_cli_picked_count "$cli")
+  if router_lock_alive "$ROUTER_HOME/locks/cli-$cli"; then
+    n=$((n + 1))
+  fi
+  printf '%s\n' "$n"
+}
+
+router_cli_at_capacity() {
+  local cli=$1
+  local max n
+  max=${ROUTER_MAX_PER_CLI:-1}
+  [[ "$max" =~ ^[0-9]+$ ]] || max=1
+  n=$(router_cli_active_count "$cli")
+  [[ "$n" -ge "$max" ]]
+}
+
+router_cli_busy() {
+  local cli=$1
+  router_cli_at_capacity "$cli"
+}
+
+router_note_cli_pick() {
+  local cli=$1
+  ROUTER_PICKED_CLIS="${ROUTER_PICKED_CLIS:-},$cli"
+}
+
+router_paused() {
+  [[ -e "$ROUTER_HOME/PAUSE" ]]
+}
+
+router_account_dead() {
+  node "$ROUTER_IO" pool-dead --state "$ROUTER_STATE" --account "$1"
+}
+
+# Asks the Codex CLI whether this home is signed in. The runner does not open,
+# change, or remove Codex auth files or their backups, and it never logs out.
+router_codex_login_ok() {
+  local id=$1
+  local home=$2
+  local bin out rc kind
+  if router_account_dead "$id"; then
+    return 1
+  fi
+  bin=$(router_bin codex)
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    return 1
+  fi
+  set +e
+  out=$(router_exec_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- "$bin" login status 2>&1)
+  rc=$?
+  set -e
+  kind=$(printf '%s\n' "$out" | node "$ROUTER_IO" codex-login --code "$rc" | tr -d '\n')
+  if [[ "$kind" == "in" || "$kind" == "unsupported" ]]; then
+    return 0
+  fi
+  if printf '%s\n' "$out" | node "$ROUTER_IO" auth-failed; then
+    router_mark_account_dead "$id" auth
+  fi
+  return 1
+}
+
+router_mark_account_dead() {
+  local id=$1
+  local reason=$2
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  node "$ROUTER_IO" mark-dead --state "$ROUTER_STATE" --account "$id" --reason "$reason" \
+    --now "$(node "$ROUTER_IO" now | tr -d '\n')"
+  router_log "codex account $id marked dead ($reason); it will not be retried"
+}
+
+router_note_login_needed() {
+  local id=$1
+  case ",${ROUTER_LOGIN_NOTED:-}," in
+    *",$id,"*) return 0 ;;
+  esac
+  ROUTER_LOGIN_NOTED="${ROUTER_LOGIN_NOTED:-},$id"
+  router_log "login needed for codex account $id"
+}
+
+router_note_dead() {
+  local id=$1
+  case ",${ROUTER_DEAD_NOTED:-}," in
+    *",$id,"*) return 0 ;;
+  esac
+  ROUTER_DEAD_NOTED="${ROUTER_DEAD_NOTED:-},$id"
+  router_log "codex account $id is dead; not retrying"
+}
+
+router_account_reserved() {
+  router_lock_alive "$ROUTER_HOME/locks/reserve-codex-$1"
+}
+
+router_reserve_account() {
+  local id=$1
+  router_acquire_lock "$ROUTER_HOME/locks/reserve-codex-$id"
+}
+
+router_release_reserve() {
+  local dir=$ROUTER_HOME/locks/reserve-codex-$1
+  local pid self
+  [[ -d "$dir" ]] || return 0
+  pid=$(cat "$dir/pid" 2>/dev/null || true)
+  self=$(router_self_pid)
+  if [[ -n "$pid" && "$pid" == "$self" ]]; then
+    rm -rf "$dir"
+  fi
+}
+
+router_account_cooled() {
+  local until
+  until=$(router_state_get "cooldowns.codex:$1.until")
+  [[ -n "$until" ]] || return 1
+  node "$ROUTER_IO" cooled --until "$until"
+}
+
+router_account_scores() {
+  local now cool ids id home
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  cool=$(node "$ROUTER_IO" cooldowns-json "$ROUTER_STATE")
+  ids=""
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    if [[ -n "$ids" ]]; then
+      ids="$ids,$id"
+    else
+      ids=$id
+    fi
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  node "$ROUTER_IO" account-headroom "$ROUTER_HOME/ledger.jsonl" --now "$now" --cooldowns "$cool" --accounts "$ids"
+}
+
+router_account_score() {
+  local want=$1
+  local id score
+  while IFS=$'\t' read -r id score; do
+    if [[ "$id" == "$want" ]]; then
+      printf '%s\n' "$score"
+      return 0
+    fi
+  done < <(router_account_scores)
+  printf '1000\n'
+}
+
+# Prints id<TAB>home for the first living Codex account. Work is listed first
+# and is spent even when the personal home has more headroom.
+router_pick_codex_account() {
+  local live=$1
+  local id home score any_login
+  any_login=0
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    if router_account_dead "$id"; then
+      router_note_dead "$id"
+      continue
+    fi
+    if ! router_codex_login_ok "$id" "$home"; then
+      router_note_login_needed "$id"
+      continue
+    fi
+    any_login=1
+    if router_account_cooled "$id"; then
+      continue
+    fi
+    if router_lock_alive "$ROUTER_HOME/locks/cli-codex-$id"; then
+      continue
+    fi
+    if router_account_reserved "$id"; then
+      continue
+    fi
+    score=$(router_account_score "$id")
+    [[ "$score" =~ ^-?[0-9]+$ ]] || continue
+    if [[ "$score" -lt 0 ]]; then
+      continue
+    fi
+    if [[ "$live" == "live" ]]; then
+      router_reserve_account "$id" || continue
+    fi
+    printf '%s\t%s\n' "$id" "$home"
+    return 0
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  if [[ "$any_login" -eq 0 ]]; then
+    printf 'login-needed\n'
+  else
+    printf 'accounts-busy\n'
+  fi
+  return 1
+}
+
+router_codex_block_reason() {
+  local id home any_login any_open cooled_only
+  any_login=0
+  any_open=0
+  cooled_only=1
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    if router_account_dead "$id"; then
+      continue
+    fi
+    if ! router_codex_login_ok "$id" "$home"; then
+      router_note_login_needed "$id"
+      continue
+    fi
+    any_login=1
+    if router_account_cooled "$id"; then
+      continue
+    fi
+    cooled_only=0
+    if router_lock_alive "$ROUTER_HOME/locks/cli-codex-$id"; then
+      continue
+    fi
+    if router_account_reserved "$id"; then
+      continue
+    fi
+    any_open=1
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  if [[ "$any_login" -eq 0 ]]; then
+    printf 'login-needed\n'
+    return 0
+  fi
+  if [[ "$cooled_only" -eq 1 ]]; then
+    printf 'cooled\n'
+    return 0
+  fi
+  if [[ "$any_open" -eq 0 ]]; then
+    printf 'accounts-busy\n'
+    return 0
+  fi
+  printf 'ok\n'
+}
+
+router_sync_pools() {
+  local now fingerprint previous line
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE"
+  fingerprint=$(node "$ROUTER_IO" pools-fingerprint "$ROUTER_STATE" | tr -d '\n')
+  previous=$(router_state_get pools_fingerprint | tr -d '\n')
+  if [[ "$fingerprint" == "$previous" ]]; then
+    return 0
+  fi
+  node "$ROUTER_IO" set-fingerprint "$ROUTER_STATE" --value "$fingerprint"
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  node "$ROUTER_IO" pools-json "$ROUTER_STATE" > "$ROUTER_HOME/tmp/pools-snapshot.json"
+  router_append_job "$ROUTER_HOME/ledger.jsonl" \
+    --ts "$now" --event pools --repo "" --issue 0 --cli "" \
+    --model "" --tier "" --attempt 1 --duration-s 0 --exit 0 \
+    --verify-exit "" --pr-url "" --usage "" --rate-limit "" --reset "" \
+    --remaining "" --metered 0 --warning "" \
+    --pools-file "$ROUTER_HOME/tmp/pools-snapshot.json"
+  if [[ "$ROUTER_LEDGER_MIRROR" == "1" && -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+    line=$(tail -n 1 "$ROUTER_HOME/ledger.jsonl")
+    router_mirror_line "$line" || true
+  fi
+}
+
+router_write_heartbeat() {
+  node "$ROUTER_IO" now | tr -d '\n' > "$1/heartbeat"
+}
+
+router_start_heartbeat() {
+  local dir=$1
+  router_write_heartbeat "$dir"
+  (
+    while true; do
+      node "$ROUTER_IO" now | tr -d '\n' > "$dir/heartbeat"
+      sleep 30
+    done
+  ) &
+  printf '%s\n' "$!" > "$dir/heartbeat.pid"
+}
+
+router_stop_heartbeat() {
+  local dir=$1
+  local pid
+  [[ -d "$dir" ]] || return 0
+  pid=$(cat "$dir/heartbeat.pid" 2>/dev/null || true)
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+}
+
+router_job_cleanup() {
+  if [[ -n "${ROUTER_JOB_LOCK:-}" ]]; then
+    router_stop_heartbeat "$ROUTER_JOB_LOCK"
+    router_release_lock "$ROUTER_JOB_LOCK"
+  fi
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]]; then
+    router_release_lock "$ROUTER_LOCK_ACCOUNT"
+  fi
+  if [[ -n "${ROUTER_LOCK_CLI:-}" ]]; then
+    router_release_lock "$ROUTER_LOCK_CLI"
+  fi
+  if [[ -n "${ROUTER_ACCOUNT:-}" ]]; then
+    router_release_reserve "$ROUTER_ACCOUNT"
+  fi
+}
+
+router_expire_job_lock() {
+  local dir=$1
+  local repo number clone wt cli account patch stamp slug pid note
+  if [[ ! -f "$dir/meta.json" ]]; then
+    router_log "expired lease $(basename "$dir") has no job metadata; removed the lock"
+    router_stop_heartbeat "$dir"
+    rm -rf "$dir"
+    return 0
+  fi
+  repo=$(node "$ROUTER_IO" json-get "$dir/meta.json" repo | tr -d '\n')
+  number=$(node "$ROUTER_IO" json-get "$dir/meta.json" issue | tr -d '\n')
+  clone=$(node "$ROUTER_IO" json-get "$dir/meta.json" clone | tr -d '\n')
+  wt=$(node "$ROUTER_IO" json-get "$dir/meta.json" worktree | tr -d '\n')
+  cli=$(node "$ROUTER_IO" json-get "$dir/meta.json" cli | tr -d '\n')
+  account=$(node "$ROUTER_IO" json-get "$dir/meta.json" account | tr -d '\n')
+  if router_lock_alive "$dir"; then
+    pid=$(cat "$dir/pid" 2>/dev/null || true)
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+  router_stop_heartbeat "$dir"
+  patch=""
+  if [[ -n "$wt" && -d "$wt" ]] && router_worktree_dirty "$wt"; then
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    slug=${repo//\//-}
+    patch=$ROUTER_HOME/ledger-${slug}-${number}-${stamp}.patch
+    router_write_patch "$wt" "$patch"
+    router_log "saved uncommitted work to $patch"
+  fi
+  if [[ -n "$clone" && -n "$wt" && -d "$clone/.git" ]]; then
+    router_remove_worktree "$clone" "$wt" || true
+  fi
+  if [[ -n "$repo" && "$number" =~ ^[0-9]+$ ]]; then
+    note=$ROUTER_HOME/tmp/requeue-$number.txt
+    {
+      printf 'ashlr-router lease expired (no heartbeat within the timeout). Removed route:claimed and requeued this issue.\n'
+      printf 'CLI: %s\n' "${cli:-unknown}"
+      if [[ -n "$account" ]]; then
+        printf 'Account: %s\n' "$account"
+      fi
+      if [[ -n "$patch" ]]; then
+        printf 'Saved uncommitted work to %s.\n' "$patch"
+      fi
+    } > "$note"
+    if router_comment_file "$repo" "$number" "$note" && router_drop_claim "$repo" "$number"; then
+      router_log "requeued $repo#$number after an expired lease"
+    else
+      router_log "requeue failed for $repo#$number; the lock stays for the next tick"
+      return 0
+    fi
+  fi
+  rm -rf "$dir"
+}
+
+router_recover_leases() {
+  local dir hb pid_alive
+  [[ -d "$ROUTER_HOME/locks/jobs" ]] || return 0
+  for dir in "$ROUTER_HOME/locks/jobs"/*; do
+    [[ -d "$dir" ]] || continue
+    if router_lock_alive "$dir"; then
+      pid_alive=1
+    else
+      pid_alive=0
+    fi
+    hb=$(router_job_heartbeat "$dir")
+    if node "$ROUTER_IO" lease-expired --heartbeat "$hb" --timeout "$ROUTER_TIMEOUT_S" --pid-alive "$pid_alive"; then
+      router_log "lease expired for $(basename "$dir")"
+      router_expire_job_lock "$dir"
+    fi
+  done
+}
+
+router_issue_key() {
+  printf '%s-%s\n' "${1//\//-}" "$2"
+}
+
+router_check_gates() {
+  local mode=$1
+  local pause=0 free_kb battery power pct active min_free
+  if [[ -e "$ROUTER_HOME/PAUSE" ]]; then
+    pause=1
+  fi
+  free_kb=$(router_df_available_kb "$HOME")
+  battery=$(router_battery_line)
+  power=${battery%% *}
+  pct=${battery#* }
+  if [[ "$mode" == "dry" ]]; then
+    active=0
+  else
+    active=$(router_active_jobs)
+  fi
+  min_free=$((ROUTER_MIN_FREE_GB * 1024 * 1024))
+  router_gate_reason "$pause" "$free_kb" "$min_free" "$power" "$pct" "$ROUTER_MIN_BATT" "$active" "$ROUTER_MAX_JOBS" 0
+}
+
+router_bin() {
+  case "$1" in
+    codex) printf '%s\n' "$ROUTER_BIN_CODEX" ;;
+    claude) printf '%s\n' "$ROUTER_BIN_CLAUDE" ;;
+    grok) printf '%s\n' "$ROUTER_BIN_GROK" ;;
+    omlx) printf '%s\n' "$ROUTER_BIN_OMLX" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+router_model_is_local() {
+  local want=$1
+  local have
+  local IFS=','
+  [[ -n "$want" ]] || return 1
+  for have in ${ROUTER_LOCAL_MODELS:-}; do
+    if [[ "$have" == "$want" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+router_cooled() {
+  local until
+  until=$(router_state_get "cooldowns.$1.until")
+  [[ -n "$until" ]] || return 1
+  node "$ROUTER_IO" cooled --until "$until"
+}
+
+router_backed_off() {
+  local until
+  until=$(router_state_get "timeouts.$1")
+  [[ -n "$until" ]] || return 1
+  node "$ROUTER_IO" cooled --until "$until"
+}
+
+router_capture_version() {
+  local cli=$1
+  local bin out
+  bin=$(router_bin "$cli")
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    printf '\n'
+    return 0
+  fi
+  set +e
+  out=$(router_exec_clean "$bin" --version 2>&1)
+  set -e
+  printf '%s' "$out" | node "$ROUTER_IO" version-of
+}
+
+router_store_version() {
+  local cli=$1
+  local before=$2
+  local after=$3
+  local action=$4
+  local rc=$5
+  local now metered payload
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  if [[ "$cli" == "grok" ]]; then
+    metered=1
+  else
+    metered=0
+  fi
+  payload=$(CLI="$cli" BEFORE="$before" AFTER="$after" AT="$now" node -e '
+    const payload = { versions: {} };
+    payload.versions[process.env.CLI] = {
+      before: process.env.BEFORE || "",
+      after: process.env.AFTER || "",
+      version: process.env.AFTER || process.env.BEFORE || "",
+      at: process.env.AT
+    };
+    process.stdout.write(JSON.stringify(payload));
+  ')
+  printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  router_append_job "$ROUTER_HOME/ledger.jsonl" \
+    --ts "$now" --event freshness --repo "" --issue 0 --cli "$cli" \
+    --model "" --tier "" --attempt 1 --duration-s 0 --exit "$rc" \
+    --verify-exit "" --pr-url "" --usage "" --rate-limit "" --reset "" \
+    --remaining "" --metered "$metered" --version "${after:-$before}" \
+    --version-before "$before" --version-after "$after" --warning "$action"
+}
+
+router_read_nul() {
+  ROUTER_ARGV=()
+  local part
+  while IFS= read -r -d '' part; do
+    ROUTER_ARGV+=("$part")
+  done
+}
+
+router_update_cli() {
+  local cli=$1
+  local before after remote rc
+  before=$(router_capture_version "$cli" | tr -d '\n')
+  router_log "freshness $cli before=$before"
+  if [[ "$ROUTER_FRESHNESS_ENABLED" != "1" ]]; then
+    router_log "freshness disabled; recorded $cli version"
+    router_store_version "$cli" "$before" "$before" "report-only" 0
+    return 0
+  fi
+  if [[ "$cli" == "grok" ]]; then
+    router_log "grok version recorded; no documented non-interactive updater is run"
+    router_store_version "$cli" "$before" "$before" "report-only" 0
+    return 0
+  fi
+  if [[ "$cli" != "codex" ]]; then
+    router_log "$cli updater skipped; release age cannot be proven"
+    router_store_version "$cli" "$before" "$before" "report-only" 0
+    return 0
+  fi
+  set +e
+  remote=$(router_exec_clean npm view @openai/codex time --json 2>/dev/null)
+  set -e
+  remote=$(printf '%s' "$remote" | node "$ROUTER_IO" aged-release --days "${ROUTER_FRESHNESS_MIN_AGE_DAYS:-3}" --now "$(date +%s)" || true)
+  remote=$(printf '%s' "$remote" | tr -d '\n')
+  if [[ -z "$remote" ]]; then
+    router_log "no codex release is ${ROUTER_FRESHNESS_MIN_AGE_DAYS:-3} days old; not updating"
+    router_store_version "$cli" "$before" "$before" "too-new" 0
+    return 0
+  fi
+  if [[ -n "$before" ]] && ! node "$ROUTER_IO" semver-lt "$before" "$remote"; then
+    router_log "codex $before is current enough ($remote)"
+    router_store_version "$cli" "$before" "$before" "current" 0
+    return 0
+  fi
+  router_log "updating codex ${before:-unknown} -> $remote"
+  set +e
+  router_exec_clean npm i -g "@openai/codex@${remote}"
+  rc=$?
+  set -e
+  after=$(router_capture_version "$cli" | tr -d '\n')
+  if [[ "$rc" -ne 0 ]]; then
+    router_log "$cli update failed (exit $rc); jobs are not blocked"
+  else
+    router_log "freshness $cli after=$after"
+  fi
+  router_store_version "$cli" "$before" "$after" "update" "$rc"
+  return 0
+}
+
+router_probe_claude() {
+  local bin out rc available reason now payload
+  bin=$(router_bin claude)
+  available=false
+  reason="not installed"
+  if command -v "$bin" >/dev/null 2>&1; then
+    set +e
+    out=$(router_exec_clean "$bin" auth status 2>&1)
+    rc=$?
+    set -e
+    if printf '%s' "$out" | node "$ROUTER_IO" claude-available --code "$rc"; then
+      available=true
+      reason=""
+    else
+      reason="auth status failed"
+    fi
+  fi
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  payload=$(AVAIL="$available" REASON="$reason" AT="$now" node -e '
+    process.stdout.write(JSON.stringify({ models: { claude: {
+      available: process.env.AVAIL === "true",
+      reason: process.env.REASON || "",
+      listed: ["fable", "opus", "sonnet"],
+      listed_known: true,
+      checked_at: process.env.AT
+    }}}));
+  ')
+  printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  if [[ "$available" == "true" ]]; then
+    router_log "claude is logged in"
+  else
+    router_log "claude unavailable ($reason); routing around it"
+  fi
+}
+
+router_claude_ok() {
+  local live=$1
+  local avail
+  avail=$(router_state_get models.claude.available)
+  if [[ "$avail" == "true" ]]; then
+    return 0
+  fi
+  if [[ "$avail" == "false" ]]; then
+    return 1
+  fi
+  if [[ "$live" != "live" ]]; then
+    return 0
+  fi
+  router_probe_claude
+  avail=$(router_state_get models.claude.available)
+  [[ "$avail" == "true" ]]
+}
+
+# Classifies the installed grok CLI. The command output is not logged.
+# A SuperGrok plan name, with no XAI_API_KEY line, is a subscription login.
+# Text that says the CLI is using XAI_API_KEY is metered. Only the class word
+# is written to the log.
+router_classify_grok() {
+  local bin out class now
+  bin=$(router_bin grok)
+  class=missing
+  out=""
+  if command -v "$bin" >/dev/null 2>&1; then
+    set +e
+    out=$(router_exec_clean "$bin" models 2>&1)
+    set -e
+    class=$(printf '%s\n' "$out" | node "$ROUTER_IO" grok-auth | tr -d '\n')
+  fi
+  unset out
+  case "$class" in
+    subscription|metered|out|unknown|missing) ;;
+    *) class=unknown ;;
+  esac
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  node "$ROUTER_IO" record-grok-auth --state "$ROUTER_STATE" --class "$class" --now "$now"
+  router_log "grok auth ${class}"
+}
+
+router_probe_grok_list() {
+  router_classify_grok
+}
+
+router_probe_omlx_list() {
+  local now payload out names
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  if [[ "$ROUTER_LOCAL_ENABLED" != "1" ]]; then
+    payload=$(AT="$now" node -e '
+      process.stdout.write(JSON.stringify({ models: { omlx: {
+        enabled: false, listed: [], listed_known: false, checked_at: process.env.AT
+      }}}));
+    ')
+    printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+    return 0
+  fi
+  if ! node "$ROUTER_IO" loopback-ok "$ROUTER_LOCAL_HOST"; then
+    router_log "refusing non-loopback omlx host"
+    return 0
+  fi
+  set +e
+  out=$(curl -fsS --max-time 10 "http://${ROUTER_LOCAL_HOST}/v1/models" 2>/dev/null)
+  set -e
+  names=$(printf '%s\n' "$out" | node "$ROUTER_IO" omlx-names | awk 'NF{printf "%s%s", sep, $0; sep=","}')
+  unset out
+  payload=$(NAMES="$names" AT="$now" node -e '
+    const listed = (process.env.NAMES || "").split(",").filter(Boolean);
+    process.stdout.write(JSON.stringify({ models: { omlx: {
+      enabled: true, listed, listed_known: true, checked_at: process.env.AT
+    }}}));
+  ')
+  printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  router_log "omlx models: ${names:-none}"
+}
+
+router_codex_home() {
+  local want=$1
+  local id home
+  while IFS=$'\t' read -r id home; do
+    if [[ "$id" == "$want" ]]; then
+      printf '%s\n' "$home"
+      return 0
+    fi
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  return 1
+}
+
+router_codex_alt_home() {
+  local alt
+  alt=$(router_codex_home personal 2>/dev/null | tr -d '\n' || true)
+  if [[ -z "$alt" ]]; then
+    alt="${HOME}/.codex-2"
+  fi
+  printf '%s' "$alt"
+}
+
+router_probe_codex() {
+  local cache listed_csv known now model out rc ok bad payload argv_file
+  local id home probe_home probe_id
+  probe_home=""
+  probe_id=""
+  listed_csv=""
+  known=false
+  ok=""
+  bad=""
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    if router_account_dead "$id"; then
+      router_note_dead "$id"
+      continue
+    fi
+    if router_codex_login_ok "$id" "$home"; then
+      router_log "codex account $id logged in"
+      if [[ -z "$probe_home" ]]; then
+        probe_home=$home
+        probe_id=$id
+      fi
+    else
+      router_note_login_needed "$id"
+    fi
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  if [[ "$ROUTER_CODEX_PROBE" != "1" ]]; then
+    router_log "codex exec probe disabled"
+    return 0
+  fi
+  if [[ -z "$probe_home" ]]; then
+    router_log "codex probe skipped; login needed"
+    return 0
+  fi
+  cache=$probe_home/models_cache.json
+  router_log "codex probe uses account $probe_id"
+  if [[ -f "$cache" ]]; then
+    listed_csv=$(node "$ROUTER_IO" codex-models "$cache" | awk 'NF{printf "%s%s", sep, $0; sep=","}')
+    known=true
+  fi
+  while IFS= read -r model; do
+    [[ -n "$model" ]] || continue
+    router_log "probing codex model $model"
+    argv_file=$ROUTER_HOME/tmp/probe-argv
+    node "$ROUTER_IO" probe-argv --config "$ROUTER_CONFIG" --model "$model" > "$argv_file"
+    router_read_nul < "$argv_file"
+    set +e
+    out=$(router_exec_clean "CODEX_HOME=${probe_home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- node "$ROUTER_IO" run-timeout 90 -- "${ROUTER_ARGV[@]}" 2>&1)
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]] && ! printf '%s' "$out" | node "$ROUTER_IO" rejects-model; then
+      ok="${ok},${model}"
+      router_log "codex probe accepted $model"
+    else
+      bad="${bad},${model}"
+      router_log "codex probe rejected $model"
+      if printf '%s\n' "$out" | node "$ROUTER_IO" auth-failed; then
+        router_mark_account_dead "$probe_id" auth
+        router_log "codex probe auth failed on $probe_id; not retrying that pool"
+        break
+      fi
+      if printf '%s' "$out" | node "$ROUTER_IO" parse-usage --now "$(date +%s)" | node -e '
+        let text = "";
+        process.stdin.on("data", (chunk) => { text += chunk; });
+        process.stdin.on("end", () => { process.exit(JSON.parse(text).limited ? 0 : 1); });
+      '; then
+        router_log "codex probe hit a rate limit; stopping probes"
+        break
+      fi
+    fi
+  done <<EOF
+$(node "$ROUTER_IO" configured-models --config "$ROUTER_CONFIG" --cli codex)
+EOF
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  payload=$(LISTED="$listed_csv" OK="$ok" BAD="$bad" KNOWN="$known" AT="$now" node -e '
+    const split = (value) => (value || "").split(",").filter(Boolean);
+    process.stdout.write(JSON.stringify({ models: { codex: {
+      listed: split(process.env.LISTED),
+      probed_ok: split(process.env.OK),
+      probed_bad: split(process.env.BAD),
+      listed_known: process.env.KNOWN === "true",
+      checked_at: process.env.AT
+    }}}));
+  ')
+  printf '%s\n' "$payload" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+}
+
+router_record_versions() {
+  local cli ver
+  for cli in codex claude grok; do
+    ver=$(router_capture_version "$cli" | tr -d '\n')
+    router_store_version "$cli" "$ver" "$ver" "record" 0
+    router_log "recorded $cli version ${ver:-missing}"
+  done
+}
+
+router_probe_all() {
+  local mode=$1
+  local now
+  router_ensure_state
+  router_record_versions || router_log "version record failed; jobs are not blocked"
+  if [[ "$mode" == "update" && "$ROUTER_FRESHNESS_ENABLED" == "1" ]]; then
+    router_update_cli codex || router_log "codex update step failed; jobs are not blocked"
+    router_update_cli claude || router_log "claude update step failed; jobs are not blocked"
+    router_update_cli grok || router_log "grok version step failed; jobs are not blocked"
+  fi
+  router_probe_claude || router_log "claude probe failed; jobs are not blocked"
+  router_probe_grok_list || router_log "grok probe failed; jobs are not blocked"
+  router_probe_omlx_list || router_log "omlx probe failed; jobs are not blocked"
+  router_probe_devin || router_log "devin probe failed; jobs are not blocked"
+  router_probe_codex || router_log "codex probe failed; jobs are not blocked"
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  printf '{"freshness":{"last_check":"%s"}}\n' "$now" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+}
+
+router_weekly() {
+  local active last
+  active=$(router_active_jobs)
+  if [[ "$active" != "0" ]]; then
+    router_log "skip freshness; a job is active"
+    return 0
+  fi
+  if [[ "$ROUTER_FRESHNESS_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  last=$(router_state_get freshness.last_check)
+  if ! node "$ROUTER_IO" freshness-due --last "$last" --days "$ROUTER_FRESHNESS_DAYS"; then
+    return 0
+  fi
+  router_log "weekly CLI freshness"
+  router_probe_all update || router_log "freshness failed; jobs are not blocked"
+}
+
+router_cli_block_reason() {
+  local cli=$1
+  local tier=$2
+  local live=$3
+  local installed
+  if router_cli_at_capacity "$cli"; then
+    printf 'busy\n'
+    return 0
+  fi
+  case "$cli" in
+    grok)
+      if [[ "$(router_state_get models.grok.auth | tr -d '\n')" != "subscription" ]]; then
+        printf 'grok-metered\n'
+        return 0
+      fi
+      ;;
+    devin)
+      if [[ "$(router_state_get models.devin.can_launch | tr -d '\n')" != "true" ]]; then
+        printf 'devin-unavailable\n'
+        return 0
+      fi
+      ;;
+    claude)
+      if ! router_claude_ok "$live"; then
+        printf 'claude-unavailable\n'
+        return 0
+      fi
+      ;;
+    omlx)
+      if [[ "$tier" != "cheap" ]]; then
+        printf 'local-not-cheap\n'
+        return 0
+      fi
+      if [[ "$ROUTER_LOCAL_ENABLED" != "1" ]]; then
+        printf 'local-disabled\n'
+        return 0
+      fi
+      installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.omlx.listed | tr -d '\n')
+      if ! router_pick_local_model "$installed" >/dev/null; then
+        printf 'local-model-missing\n'
+        return 0
+      fi
+      ;;
+    codex)
+      router_codex_block_reason
+      return 0
+      ;;
+  esac
+  if router_cooled "$cli"; then
+    printf 'cooled\n'
+    return 0
+  fi
+  if router_cli_busy "$cli"; then
+    printf 'busy\n'
+    return 0
+  fi
+  printf 'ok\n'
+}
+
+router_preferred_codex_score() {
+  local id home score
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    router_account_dead "$id" && continue
+    router_codex_login_ok "$id" "$home" || continue
+    router_account_cooled "$id" && continue
+    router_lock_alive "$ROUTER_HOME/locks/cli-codex-$id" && continue
+    router_account_reserved "$id" && continue
+    score=$(router_account_score "$id")
+    [[ "$score" =~ ^[0-9]+$ ]] || continue
+    printf '%s\n' "$score"
+    return 0
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  printf '%s\n' "-1"
+}
+
+router_headroom_text() {
+  local now cool raw best cli score adjusted
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  cool=$(node "$ROUTER_IO" cooldowns-json "$ROUTER_STATE")
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  raw=$(node "$ROUTER_IO" headroom "$ROUTER_HOME/ledger.jsonl" --now "$now" --cooldowns "$cool" --clis "codex,claude,devin,grok,omlx")
+  best=$(router_preferred_codex_score)
+  adjusted=""
+  while IFS=$'\t' read -r cli score; do
+    [[ -n "$cli" ]] || continue
+    if [[ "$cli" == "codex" && "$best" =~ ^-?[0-9]+$ ]]; then
+      score=$best
+    fi
+    adjusted="${adjusted}${cli}"$'\t'"${score}"$'\n'
+  done <<EOF
+$raw
+EOF
+  printf '%s' "$adjusted" | node "$ROUTER_IO" budget-scores --state "$ROUTER_STATE" --now "$(date +%s)"
+}
+
+router_pick_any() {
+  local tier=$1
+  local live=$2
+  local rotation scores cli score why pick next
+  local -a pairs
+  rotation=$(router_state_get rotation)
+  [[ "$rotation" =~ ^[0-9]+$ ]] || rotation=0
+  pairs=()
+  scores=$(router_headroom_text || true)
+  while IFS=$'\t' read -r cli score; do
+    [[ -n "$cli" ]] || continue
+    why=$(router_cli_block_reason "$cli" "$tier" "$live")
+    [[ "$why" == "ok" ]] || continue
+    [[ "$score" =~ ^-?[0-9]+$ ]] || continue
+    pairs+=("$cli" "$score")
+  done <<EOF
+$scores
+EOF
+  if [[ ${#pairs[@]} -eq 0 ]]; then
+    return 1
+  fi
+  pick=$(router_pick_from_scores "$rotation" "${pairs[@]}") || return 1
+  if [[ "$live" == "live" ]]; then
+    next=$((rotation + 1))
+    printf '{"rotation":%s}\n' "$next" | node "$ROUTER_IO" patch-state "$ROUTER_STATE"
+  fi
+  printf '%s\n' "$pick"
+}
+
+router_model_for() {
+  local cli=$1
+  local requested=$2
+  local tier=$3
+  local installed chosen configured listed bad known
+  if [[ "$cli" == "omlx" ]]; then
+    installed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" models.omlx.listed | tr -d '\n')
+    if [[ -n "$requested" ]] && router_model_is_local "$requested"; then
+      case ",${installed}," in
+        *",${requested},"*)
+          printf '%s\t\n' "$requested"
+          return 0
+          ;;
+      esac
+      printf '-\tomlx model %s is not installed\n' "$requested"
+      return 0
+    fi
+    chosen=$(router_pick_local_model "$installed" || true)
+    if [[ -n "$chosen" ]]; then
+      printf '%s\t\n' "$chosen"
+    else
+      printf '-\tno installed local model\n'
+    fi
+    return 0
+  fi
+  configured=$(router_tier_model "$tier" "$cli")
+  listed=$(node "$ROUTER_IO" csv "$ROUTER_STATE" "models.${cli}.listed" | tr -d '\n')
+  bad=$(node "$ROUTER_IO" csv "$ROUTER_STATE" "models.${cli}.probed_bad" | tr -d '\n')
+  known=$(router_state_get "models.${cli}.listed_known")
+  router_resolve_model "$requested" "$configured" "$listed" "$bad" "$known"
+}
+
+router_phantom_pick() {
+  local repo=$1
+  local number=$2
+  local body_file=$3
+  local tier=$4
+  local labels=$5
+  local help out
+  [[ "$ROUTER_PHANTOM_ROUTE" == "1" ]] || return 1
+  command -v phantom >/dev/null 2>&1 || return 1
+  help=$(phantom route --help 2>&1 || true)
+  case "$help" in
+    *--json*) ;;
+    *) return 1 ;;
+  esac
+  if ! out=$(phantom route --json --repo "$repo" --issue "$number" --tier "$tier" --labels "$labels" < "$body_file" 2>/dev/null); then
+    return 1
+  fi
+  printf '%s' "$out" | node "$ROUTER_IO" validate-route
+}
+
+router_decide() {
+  local route=$1
+  local tier=$2
+  local requested=$3
+  local repo=$4
+  local number=$5
+  local body_file=$6
+  local labels=$7
+  local live=$8
+  local cli="" why phantom_line rest pmodel ptier resolved warn account picked
+  if [[ "$route" == "any" && -n "$requested" ]] && router_model_is_local "$requested"; then
+    if [[ "$ROUTER_LOCAL_ENABLED" == "1" ]]; then
+      tier=cheap
+    fi
+  fi
+  if [[ "$route" == "any" ]]; then
+    if phantom_line=$(router_phantom_pick "$repo" "$number" "$body_file" "$tier" "$labels"); then
+      cli=${phantom_line%%$'\t'*}
+      rest=${phantom_line#*$'\t'}
+      pmodel=${rest%%$'\t'*}
+      ptier=${rest#*$'\t'}
+      ptier=$(printf '%s' "$ptier" | tr -d '\n')
+      if [[ -n "$ptier" ]]; then
+        tier=$ptier
+      fi
+      if [[ -n "$pmodel" ]]; then
+        requested=$pmodel
+      fi
+      why=$(router_cli_block_reason "$cli" "$tier" "$live")
+      if [[ "$why" != "ok" ]]; then
+        router_log "phantom picked $cli but it is $why"
+        cli=""
+      fi
+    fi
+  fi
+  if [[ -z "$cli" && "$route" != "any" ]]; then
+    why=$(router_cli_block_reason "$route" "$tier" "$live")
+    if [[ "$why" != "ok" ]]; then
+      printf 'skip\t%s\n' "$why"
+      return 0
+    fi
+    cli=$route
+  fi
+  if [[ -z "$cli" ]]; then
+    if ! cli=$(router_pick_any "$tier" "$live"); then
+      printf 'skip\tno-cli\n'
+      return 0
+    fi
+  fi
+  account=""
+  if [[ "$cli" == "codex" ]]; then
+    if ! picked=$(router_pick_codex_account "$live"); then
+      printf 'skip\t%s\n' "$picked"
+      return 0
+    fi
+    account=${picked%%$'\t'*}
+    account=$(printf '%s' "$account" | tr -d '\n')
+  fi
+  IFS=$'\t' read -r resolved warn <<EOF
+$(router_model_for "$cli" "$requested" "$tier")
+EOF
+  printf 'use\t%s\t%s\t%s\t%s\t%s\n' "$cli" "$tier" "$resolved" "$warn" "$account"
+}
+
+router_collect_issues() {
+  local repo full label out combined line
+  combined=$ROUTER_HOME/tmp/issues-$$
+  : > "$combined"
+  local IFS=','
+  for repo in $ROUTER_REPOS; do
+    full="$ROUTER_ORG/$repo"
+    for label in route:codex route:claude route:grok route:devin route:any; do
+      out=$ROUTER_HOME/tmp/list-$$-$repo-$label
+      if gh issue list --repo "$full" --state open --label "$label" --limit 30 \
+        --json number,title,body,labels >"$out" 2>>"$ROUTER_HOME/logs/gh.err"; then
+        node "$ROUTER_IO" issues-to-lines <"$out" | while IFS= read -r line; do
+          [[ -n "$line" ]] || continue
+          printf '%s\t%s\n' "$full" "$line"
+        done >> "$combined"
+      else
+        router_log "issue list failed for $full label $label"
+      fi
+      rm -f "$out"
+    done
+  done
+  awk -F '\t' 'NF && !seen[$1 FS $2]++' "$combined"
+  rm -f "$combined"
+}
+
+router_claim_issue() {
+  local repo=$1
+  local number=$2
+  local cli=$3
+  local account=${4:-}
+  local who=$cli
+  if [[ -n "$account" ]]; then
+    who="$cli account $account"
+  fi
+  gh label create route:claimed --repo "$repo" --color 5319e7 \
+    --description "Claimed by ashlr-router" >/dev/null 2>&1 || true
+  gh issue edit "$number" --repo "$repo" --add-label route:claimed
+  gh issue comment "$number" --repo "$repo" --body "$(router_claim_comment "$who")"
+}
+
+router_drop_claim() {
+  local repo=$1
+  local number=$2
+  gh issue edit "$number" --repo "$repo" --remove-label route:claimed
+}
+
+router_comment_file() {
+  local repo=$1
+  local number=$2
+  local file=$3
+  gh issue comment "$number" --repo "$repo" --body-file "$file"
+}
+
+router_mirror_line() {
+  local line=$1
+  local list num url body public
+  if [[ "$ROUTER_LEDGER_MIRROR" != "1" ]]; then
+    return 0
+  fi
+  public=$(printf '%s\n' "$line" | node "$ROUTER_IO" ledger-public)
+  body=$ROUTER_HOME/tmp/mirror-$$.json
+  printf '%s\n' "$public" > "$body"
+  list=$(gh issue list --repo "$ROUTER_LEDGER_REPO" --state open --limit 20 \
+    --search "in:title ${ROUTER_LEDGER_TITLE}" --json number,title 2>/dev/null || printf '[]')
+  num=$(printf '%s' "$list" | node "$ROUTER_IO" exact-title --title "$ROUTER_LEDGER_TITLE" | tr -d '\n')
+  if [[ -z "$num" ]]; then
+    url=$(gh issue create --repo "$ROUTER_LEDGER_REPO" --title "$ROUTER_LEDGER_TITLE" \
+      --body "Mirror of the ashlr-router ledger. One comment per ledger line.")
+    num=$(printf '%s' "$url" | node "$ROUTER_IO" issue-number | tr -d '\n')
+  fi
+  if [[ -z "$num" ]]; then
+    router_log "ledger mirror failed; router-ledger issue was not found"
+    rm -f "$body"
+    return 0
+  fi
+  gh issue comment "$num" --repo "$ROUTER_LEDGER_REPO" --body-file "$body" || \
+    router_log "ledger mirror comment failed"
+  rm -f "$body"
+}
+
+router_write_prompt() {
+  local dest=$1
+  local repo=$2
+  local number=$3
+  local title=$4
+  local body_file=$5
+  {
+    cat "$ROUTER_LIB/preamble.txt"
+    printf '\nRepository: %s\nIssue: %s\nTitle: %s\n\n' "$repo" "$number" "$title"
+    cat "$body_file"
+    printf '\n'
+  } > "$dest"
+}
+
+router_reap_model_group() {
+  local file=$1
+  local pgid i
+  [[ -n "$file" && -f "$file" ]] || return 0
+  pgid=$(tr -d '\n' < "$file")
+  rm -f "$file"
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 0
+  kill -TERM -- "-${pgid}" 2>/dev/null || true
+  i=0
+  while [[ "$i" -lt 20 ]]; do
+    if ! kill -0 -- "-${pgid}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -KILL -- "-${pgid}" 2>/dev/null || true
+  i=0
+  while [[ "$i" -lt 20 ]]; do
+    if ! kill -0 -- "-${pgid}" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+
+router_invoke_cli() {
+  local cli=$1
+  local model=$2
+  local wt=$3
+  local prompt=$4
+  local out=$5
+  local err=$6
+  local argv_file prompt_text rc arg pgid_file
+  local -a args
+  pgid_file=$ROUTER_HOME/tmp/model-pgid-$$
+  ROUTER_MODEL_PGID_FILE=$pgid_file
+  if [[ "$cli" == "omlx" ]]; then
+    if ! node "$ROUTER_IO" loopback-ok "$ROUTER_LOCAL_HOST"; then
+      printf 'refusing non-loopback omlx host\n' > "$err"
+      return 1
+    fi
+    if [[ -z "$model" || "$model" == "-" ]]; then
+      printf 'refusing omlx without an installed model\n' > "$err"
+      return 1
+    fi
+  fi
+  argv_file=$ROUTER_HOME/tmp/argv-$$
+  node "$ROUTER_IO" argv --config "$ROUTER_CONFIG" --cli "$cli" --model "$model" \
+    --worktree "$wt" --last "${out}.last" --prompt "$prompt" > "$argv_file"
+  router_read_nul < "$argv_file"
+  args=("${ROUTER_ARGV[@]}")
+  if [[ ${#args[@]} -eq 0 ]]; then
+    printf 'empty CLI argv\n' > "$err"
+    return 1
+  fi
+  for arg in "${args[@]}"; do
+    if [[ "$arg" == "logout" ]]; then
+      printf 'refusing logout\n' > "$err"
+      return 1
+    fi
+  done
+  mkdir -p "$(dirname "$out")"
+  set +e
+  if [[ "$cli" == "omlx" ]]; then
+    prompt_text=$(cat "$prompt")
+    printf '%s' "$prompt_text" | router_exec_clean \
+      node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- \
+      node "$ROUTER_IO" omlx-complete --host "$ROUTER_LOCAL_HOST" --model "$model" \
+      >"$out" 2>"$err"
+    rc=$?
+  elif [[ "$cli" == "codex" && -n "${ROUTER_CODEX_HOME_RUN:-}" ]]; then
+    router_exec_clean "CODEX_HOME=${ROUTER_CODEX_HOME_RUN}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- \
+      node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
+      <"$prompt" >"$out" 2>"$err"
+    rc=$?
+  else
+    router_exec_clean node "$ROUTER_IO" run-timeout --pgid-file "$pgid_file" "$ROUTER_TIMEOUT_S" -- "${args[@]}" \
+      <"$prompt" >"$out" 2>"$err"
+    rc=$?
+  fi
+  router_reap_model_group "$pgid_file"
+  # Leave errexit to the caller. Restoring it here would abort on a non-zero CLI.
+  return "$rc"
+}
+
+router_failover_codex() {
+  local current picked id home
+  current=${ROUTER_ACCOUNT:-}
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]]; then
+    router_release_lock "$ROUTER_LOCK_ACCOUNT"
+    ROUTER_LOCK_ACCOUNT=""
+  fi
+  if [[ -n "$current" ]]; then
+    router_release_reserve "$current"
+  fi
+  if ! picked=$(router_pick_codex_account live); then
+    return 1
+  fi
+  id=${picked%%$'\t'*}
+  home=${picked#*$'\t'}
+  home=$(printf '%s' "$home" | tr -d '\n')
+  if [[ "$id" == "$current" ]]; then
+    router_release_reserve "$id"
+    return 1
+  fi
+  if ! router_acquire_lock "$ROUTER_HOME/locks/cli-codex-$id"; then
+    router_release_reserve "$id"
+    return 1
+  fi
+  router_release_reserve "$id"
+  ROUTER_ACCOUNT=$id
+  ROUTER_CODEX_HOME_RUN=$home
+  ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$id
+  router_log "failover to codex account $id"
+  return 0
+}
+
+router_apply_local_diff() {
+  local wt=$1
+  local combined=$2
+  local diff_file
+  diff_file=$ROUTER_HOME/tmp/omlx-$$.diff
+  node "$ROUTER_IO" extract-diff < "$combined" > "$diff_file"
+  if [[ ! -s "$diff_file" ]]; then
+    router_log "omlx produced no unified diff"
+    return 1
+  fi
+  git -C "$wt" apply --check "$diff_file"
+  git -C "$wt" apply "$diff_file"
+}
+
+router_usage_fields() {
+  local combined=$1
+  local now_epoch json
+  now_epoch=$(date +%s)
+  json=$(node "$ROUTER_IO" parse-usage --now "$now_epoch" < "$combined")
+  ROUTER_LIMITED=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.limited?"1":"0")' "$json")
+  ROUTER_RESET=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.reset||"")' "$json")
+  ROUTER_REMAINING=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.remaining==null?"":String(o.remaining))' "$json")
+  ROUTER_OUTCOME=$(node -e 'const o=JSON.parse(process.argv[1]); process.stdout.write(o.outcome||"")' "$json")
+}
+
+router_set_cooldown() {
+  local cli=$1
+  local reset=$2
+  [[ -n "$reset" ]] || return 0
+  node "$ROUTER_IO" set-cooldown "$ROUTER_STATE" --cli "$cli" --until "$reset" --reason rate-limit
+  router_log "cooldown $cli until $reset"
+}
+
+router_mark_timeout() {
+  local key=$1
+  local until
+  until=$(node -e 'process.stdout.write(new Date(Date.now()+3600*1000).toISOString().replace(/\.\d{3}Z$/,"Z"))')
+  node "$ROUTER_IO" set-timeout "$ROUTER_STATE" --key "$key" --until "$until"
+  printf '%s\n' "$until"
+}
+
+router_prepare_worktree() {
+  local repo=$1
+  local cli=$2
+  local number=$3
+  local name clone base branch wt
+  name=${repo#*/}
+  clone=$ROUTER_HOME/repos/$name
+  branch="router/${cli}/${number}"
+  wt=$ROUTER_HOME/worktrees/$name/${cli}-${number}
+  mkdir -p "$ROUTER_HOME/repos" "$(dirname "$wt")"
+  if [[ ! -d "$clone/.git" ]]; then
+    gh repo clone "$repo" "$clone"
+  fi
+  git -C "$clone" fetch origin
+  base=$(gh repo view "$repo" --json defaultBranchRef | node "$ROUTER_IO" default-branch | tr -d '\n')
+  if [[ -d "$wt" ]]; then
+    router_log "reusing worktree $wt"
+  elif git -C "$clone" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$clone" worktree add "$wt" "$branch"
+  else
+    git -C "$clone" worktree add -b "$branch" "$wt" "origin/$base"
+  fi
+  ROUTER_CLONE=$clone
+  ROUTER_BASE=$base
+  ROUTER_BRANCH=$branch
+  ROUTER_WT=$wt
+}
+
+router_open_pr_url() {
+  local repo=$1
+  local branch=$2
+  local existing url
+  existing=$(gh pr list --repo "$repo" --head "$branch" --state open --json url,state 2>/dev/null || printf '[]')
+  url=$(printf '%s' "$existing" | node "$ROUTER_IO" open-pr | tr -d '\n')
+  printf '%s\n' "$url"
+}
+
+router_devin_org() {
+  local org
+  org=${DEVIN_ORG_ID:-${ROUTER_DEVIN_ORG:-}}
+  printf '%s' "$org" | tr -d '\n\r'
+}
+
+router_probe_devin() {
+  local org out view remaining launch now
+  org=$(router_devin_org)
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  now=$(node "$ROUTER_IO" now | tr -d '\n')
+  remaining=""
+  launch=0
+  if ! node "$ROUTER_IO" devin-org --value "$org"; then
+    router_log "devin skipped; DEVIN_ORG_ID is unset or invalid"
+  elif ! command -v ashlr >/dev/null 2>&1; then
+    router_log "devin skipped; ashlr is not installed"
+  else
+    set +e
+    out=$(router_exec_devin ashlr devin status --json 2>/dev/null)
+    set -e
+    view=$(printf '%s' "$out" | node "$ROUTER_IO" devin-view --org "$org" | tr -d '\r')
+    unset out
+    case "$view" in
+      ok$'\t'*)
+        remaining=$(printf '%s' "$view" | awk -F '\t' '{ print $2 }')
+        launch=1
+        router_log "devin ready"
+        ;;
+      *)
+        router_log "devin unavailable"
+        ;;
+    esac
+  fi
+  node "$ROUTER_IO" record-devin --state "$ROUTER_STATE" --remaining "$remaining" \
+    --launch "$launch" --now "$now"
+}
+
+router_run_devin_job() {
+  local repo=$1
+  local number=$2
+  local title=$6
+  local body_file=$7
+  local name lock_job prompt out parsed pr_url session now_iso pools_file rc
+  name=${repo#*/}
+  lock_job=$ROUTER_HOME/locks/jobs/${repo//\//-}-$number
+  ROUTER_ACCOUNT=""
+  ROUTER_JOB_LOCK=$lock_job
+  ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-devin
+  ROUTER_LOCK_ACCOUNT=""
+  trap router_job_cleanup RETURN
+  if ! router_acquire_lock "$ROUTER_LOCK_CLI"; then
+    router_log "cli devin is busy; leaving the claim on $repo#$number"
+    return 0
+  fi
+  if ! router_acquire_lock "$lock_job"; then
+    router_log "job lock busy for $repo#$number"
+    return 0
+  fi
+  router_start_heartbeat "$lock_job"
+  node "$ROUTER_IO" write-meta --file "$lock_job/meta.json" --repo "$repo" --issue "$number" \
+    --clone "" --worktree "" --cli devin --account ""
+  prompt=$ROUTER_HOME/tmp/prompt-${name}-${number}-devin.txt
+  router_write_prompt "$prompt" "$repo" "$number" "$title" "$body_file"
+  set +e
+  out=$(router_exec_devin ashlr devin launch "$(cat "$prompt")" --repo "$repo" --title "$title" --json 2>/dev/null)
+  rc=$?
+  set -e
+  parsed=$(printf '%s' "$out" | node "$ROUTER_IO" devin-launch | tr -d '\r')
+  unset out
+  pr_url=""
+  session=""
+  if [[ "$rc" -eq 0 && "$parsed" == ok$'\t'* ]]; then
+    pr_url=$(printf '%s' "$parsed" | awk -F '\t' '{ print $2 }')
+    session=$(printf '%s' "$parsed" | awk -F '\t' '{ print $3 }')
+    rc=0
+  else
+    rc=1
+    pr_url=""
+    session=""
+  fi
+  now_iso=$(node "$ROUTER_IO" now | tr -d '\n')
+  pools_file=$ROUTER_HOME/tmp/pools-${name}-${number}-devin.json
+  node "$ROUTER_IO" pools-json "$ROUTER_STATE" > "$pools_file"
+  if [[ "$rc" -eq 0 ]]; then
+    printf 'ashlr-router launched Devin for this issue. Devin delivers its own draft pull request.\n' \
+      > "$ROUTER_HOME/tmp/devin-$number.txt"
+    if [[ -n "$session" ]]; then
+      printf 'Session: %s\n' "$session" >> "$ROUTER_HOME/tmp/devin-$number.txt"
+    fi
+  else
+    printf 'ashlr-router could not launch Devin. The claim stays.\n' \
+      > "$ROUTER_HOME/tmp/devin-$number.txt"
+  fi
+  router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/devin-$number.txt" || true
+  router_append_job "$ROUTER_HOME/ledger.jsonl" \
+    --ts "$now_iso" --event job --repo "$repo" --issue "$number" --cli devin \
+    --model "" --tier workhorse --attempt 1 --duration-s 0 --exit "$rc" \
+    --verify-exit "" --pr-url "$pr_url" --usage "" --rate-limit "" --reset "" \
+    --remaining "" --metered 0 --warning "$session" --account "" --billing acu \
+    --pools-file "$pools_file"
+  if [[ "$ROUTER_LEDGER_MIRROR" == "1" && -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+    router_mirror_line "$(tail -n 1 "$ROUTER_HOME/ledger.jsonl")" || true
+  fi
+}
+
+router_run_job() {
+  local repo=$1
+  local number=$2
+  local cli=$3
+  local tier=$4
+  local requested=$5
+  local title=$6
+  local body_file=$7
+  local warning=$8
+  local account=${9:-}
+  local held lock_job name prompt attempt cur_tier cur_request resolved warn_line
+  local rc verify_rc started ended out err combined model_note metered rate
+  local no_changes push_failed pr_url subject attempt_log existing key
+  local timeout_until next_cli model_recorded now_iso duration next_tier
+  local failover_used tier_retried retry_attempt rc_pr billing pools_file cool_key picked_live
+  if router_paused; then
+    router_log "pause; not launching $repo#$number"
+    return 0
+  fi
+  if [[ "$cli" == "devin" ]]; then
+    router_run_devin_job "$@"
+    return $?
+  fi
+  held=$cli
+  failover_used=0
+  tier_retried=0
+  name=${repo#*/}
+  lock_job=$ROUTER_HOME/locks/jobs/${repo//\//-}-$number
+  ROUTER_ACCOUNT=$account
+  ROUTER_JOB_LOCK=$lock_job
+  ROUTER_CODEX_HOME_RUN=""
+  if [[ "$cli" == "codex" ]]; then
+    if [[ -z "$account" ]]; then
+      router_log "codex job $repo#$number has no account"
+      return 0
+    fi
+    node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+    if router_account_dead "$account"; then
+      router_note_dead "$account"
+      if ! picked_live=$(router_pick_codex_account live); then
+        router_log "no living codex account for $repo#$number"
+        return 0
+      fi
+      account=${picked_live%%$'\t'*}
+      account=$(printf '%s' "$account" | tr -d '\n')
+      ROUTER_ACCOUNT=$account
+    fi
+    ROUTER_CODEX_HOME_RUN=$(router_codex_home "$account" | tr -d '\n')
+    ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-codex
+    ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$account
+  else
+    ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-$cli
+    ROUTER_LOCK_ACCOUNT=""
+  fi
+  trap router_job_cleanup RETURN
+  if ! router_acquire_lock "$ROUTER_LOCK_CLI"; then
+    router_log "cli $held is busy; leaving the claim on $repo#$number"
+    return 0
+  fi
+  if [[ -n "${ROUTER_LOCK_ACCOUNT:-}" ]] && ! router_acquire_lock "$ROUTER_LOCK_ACCOUNT"; then
+    router_log "codex account $account is busy; leaving the claim on $repo#$number"
+    return 0
+  fi
+  router_release_reserve "$account"
+  if ! router_acquire_lock "$lock_job"; then
+    router_log "job lock busy for $repo#$number"
+    return 0
+  fi
+  router_start_heartbeat "$lock_job"
+  ROUTER_BRANCH="router/${cli}/${number}"
+  existing=$(router_open_pr_url "$repo" "$ROUTER_BRANCH")
+  if [[ -n "$existing" ]]; then
+    router_log "open draft already exists for $ROUTER_BRANCH ($existing)"
+    return 0
+  fi
+  router_prepare_worktree "$repo" "$cli" "$number"
+  ROUTER_BASE_SHA=$(git -C "$ROUTER_WT" rev-parse HEAD)
+  node "$ROUTER_IO" write-meta --file "$lock_job/meta.json" --repo "$repo" --issue "$number" \
+    --clone "$ROUTER_CLONE" --worktree "$ROUTER_WT" --cli "$cli" --account "$account"
+  prompt=$ROUTER_HOME/tmp/prompt-${name}-${number}-${cli}.txt
+  router_write_prompt "$prompt" "$repo" "$number" "$title" "$body_file"
+  attempt=1
+  cur_tier=$tier
+  cur_request=$requested
+  attempt_log=$ROUTER_HOME/tmp/attempts-${name}-${number}-$$.jsonl
+  : > "$attempt_log"
+  verify_rc=0
+  rc=0
+  no_changes=0
+  push_failed=0
+  pr_url=""
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  while [[ "$attempt" -le 3 ]]; do
+    IFS=$'\t' read -r resolved warn_line <<EOF
+$(router_model_for "$cli" "$cur_request" "$cur_tier")
+EOF
+    if [[ -n "$warn_line" ]]; then
+      router_log "$repo#$number $warn_line"
+      warning=$warn_line
+    fi
+    out=$ROUTER_HOME/logs/job-${cli}-${number}-a${attempt}.out
+    err=$ROUTER_HOME/logs/job-${cli}-${number}-a${attempt}.err
+    started=$(date +%s)
+    if [[ "$cli" == "omlx" && ( -z "$resolved" || "$resolved" == "-" ) ]]; then
+      rc=1
+      printf '%s\n' "$warn_line" > "$err"
+    else
+      set +e
+      router_invoke_cli "$cli" "$resolved" "$ROUTER_WT" "$prompt" "$out" "$err"
+      rc=$?
+      set -e
+    fi
+    combined=$ROUTER_HOME/tmp/combined-${name}-${number}-a${attempt}.txt
+    cat "$out" "$err" > "$combined" 2>/dev/null || true
+    if [[ "$rc" -ne 0 && "$rc" -ne 124 && "$resolved" != "-" ]] && printf '%s' "$(cat "$combined")" | node "$ROUTER_IO" rejects-model; then
+      router_log "model ${resolved} rejected at runtime; retrying with the CLI default"
+      warning="runtime rejected ${resolved}; using CLI default"
+      set +e
+      router_invoke_cli "$cli" "-" "$ROUTER_WT" "$prompt" "$out" "$err"
+      rc=$?
+      set -e
+      cat "$out" "$err" > "$combined" 2>/dev/null || true
+      resolved="-"
+    fi
+    ended=$(date +%s)
+    router_usage_fields "$combined"
+    if [[ "$ROUTER_LIMITED" == "1" ]]; then
+      rate="rate limit"
+      if [[ "$cli" == "codex" && -n "${ROUTER_ACCOUNT:-}" ]]; then
+        cool_key="codex:${ROUTER_ACCOUNT}"
+      else
+        cool_key=$cli
+      fi
+      router_set_cooldown "$cool_key" "$ROUTER_RESET"
+    else
+      rate=""
+    fi
+    if [[ "$cli" == "omlx" && "$rc" -eq 0 ]]; then
+      if ! router_apply_local_diff "$ROUTER_WT" "$combined"; then
+        rc=1
+      fi
+    fi
+    verify_rc=""
+    if [[ "$rc" -eq 0 ]]; then
+      if router_verify "$ROUTER_WT"; then
+        verify_rc=0
+      else
+        verify_rc=1
+      fi
+      if [[ -n "$ROUTER_VERIFY_WARN" ]]; then
+        router_log "$repo#$number $ROUTER_VERIFY_WARN"
+      fi
+    fi
+    if [[ "$resolved" == "-" ]]; then
+      model_recorded=""
+    else
+      model_recorded=$resolved
+    fi
+    now_iso=$(node "$ROUTER_IO" now | tr -d '\n')
+    ROUTER_AUTH=0
+    if [[ "$cli" == "codex" && -n "${ROUTER_ACCOUNT:-}" ]]; then
+      if printf '%s\n' "$(cat "$combined" 2>/dev/null || true)" | node "$ROUTER_IO" auth-failed; then
+        ROUTER_AUTH=1
+        router_mark_account_dead "$ROUTER_ACCOUNT" auth
+        warning="auth failed on ${ROUTER_ACCOUNT}; marked dead"
+      fi
+      node "$ROUTER_IO" record-quota --state "$ROUTER_STATE" --account "$ROUTER_ACCOUNT" \
+        --remaining "$ROUTER_REMAINING" --reset "$ROUTER_RESET" --limited "$ROUTER_LIMITED" \
+        --now "$now_iso"
+      node "$ROUTER_IO" write-meta --file "$lock_job/meta.json" --repo "$repo" --issue "$number" \
+        --clone "$ROUTER_CLONE" --worktree "$ROUTER_WT" --cli "$cli" --account "$ROUTER_ACCOUNT"
+    fi
+    pools_file=$ROUTER_HOME/tmp/pools-${name}-${number}-a${attempt}.json
+    node "$ROUTER_IO" pools-json "$ROUTER_STATE" > "$pools_file"
+    billing=$(node "$ROUTER_IO" billing-for --state "$ROUTER_STATE" --cli "$cli" --now "$(date +%s)" | tr -d '\n')
+    if [[ "$billing" == "metered" || "$cli" == "grok" ]]; then
+      metered=1
+    else
+      metered=0
+    fi
+    model_note=$requested
+    duration=$((ended - started))
+    router_append_job "$attempt_log" \
+      --ts "$now_iso" --event job --repo "$repo" --issue "$number" --cli "$cli" \
+      --model "$model_recorded" --model-requested "$model_note" --tier "$cur_tier" \
+      --attempt "$attempt" --duration-s "$duration" --exit "$rc" \
+      --verify-exit "$verify_rc" --pr-url "" --rate-limit "$rate" --reset "$ROUTER_RESET" \
+      --remaining "$ROUTER_REMAINING" --outcome "${ROUTER_OUTCOME:-}" --metered "$metered" \
+      --warning "$warning" --account "${ROUTER_ACCOUNT:-}" --pool "${ROUTER_ACCOUNT:-$cli}" --billing "$billing" \
+      --pools-file "$pools_file"
+    if [[ "$rc" -eq 124 ]]; then
+      break
+    fi
+    if [[ "$ROUTER_AUTH" == "1" && "$cli" == "codex" && "$failover_used" -eq 0 ]]; then
+      if router_failover_codex; then
+        failover_used=1
+        account=$ROUTER_ACCOUNT
+        attempt=$((attempt + 1))
+        continue
+      fi
+      break
+    fi
+    if [[ "$ROUTER_LIMITED" == "1" && "$cli" == "codex" && "$failover_used" -eq 0 ]]; then
+      if router_failover_codex; then
+        failover_used=1
+        account=$ROUTER_ACCOUNT
+        attempt=$((attempt + 1))
+        continue
+      fi
+      break
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+      break
+    fi
+    if [[ "$tier_retried" -eq 0 ]]; then
+      retry_attempt=1
+    else
+      retry_attempt=2
+    fi
+    next_tier=$(router_retry_tier "$verify_rc" "$cur_tier" "$retry_attempt")
+    if [[ -z "$next_tier" ]]; then
+      break
+    fi
+    router_log "verification failed on $cur_tier; retrying $next_tier"
+    tier_retried=1
+    cur_tier=$next_tier
+    cur_request=""
+    if [[ "$cli" == "omlx" ]]; then
+      next_cli=$(router_pick_any "$cur_tier" live || true)
+      if [[ -z "$next_cli" || "$next_cli" == "omlx" ]]; then
+        router_log "no cloud CLI available for the higher tier"
+        break
+      fi
+      router_release_lock "$ROUTER_LOCK_CLI"
+      held=$next_cli
+      cli=$next_cli
+      ROUTER_LOCK_CLI=$ROUTER_HOME/locks/cli-$held
+      if ! router_acquire_lock "$ROUTER_LOCK_CLI"; then
+        router_log "retry CLI $held is busy"
+        ROUTER_LOCK_CLI=""
+        break
+      fi
+      if [[ "$cli" == "codex" ]]; then
+        if ! picked_live=$(router_pick_codex_account live); then
+          router_log "no living codex account for the higher tier"
+          break
+        fi
+        account=${picked_live%%$'\t'*}
+        account=$(printf '%s' "$account" | tr -d '\n')
+        ROUTER_ACCOUNT=$account
+        ROUTER_CODEX_HOME_RUN=$(router_codex_home "$account" | tr -d '\n')
+        ROUTER_LOCK_ACCOUNT=$ROUTER_HOME/locks/cli-codex-$account
+        if ! router_acquire_lock "$ROUTER_LOCK_ACCOUNT"; then
+          router_release_reserve "$account"
+          router_log "codex account $account is busy"
+          break
+        fi
+        router_release_reserve "$account"
+      fi
+    fi
+    attempt=$((attempt + 1))
+  done
+  key=$(router_issue_key "$repo" "$number" | tr -d '\n')
+  if [[ "$rc" -eq 124 ]]; then
+    timeout_until=$(router_mark_timeout "$key")
+    printf 'ashlr-router timed out after %ss on %s and dropped the claim. Backoff until %s.\n' \
+      "$ROUTER_TIMEOUT_S" "$cli" "$timeout_until" > "$ROUTER_HOME/tmp/timeout-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/timeout-$number.txt" || true
+    router_drop_claim "$repo" "$number" || true
+    node "$ROUTER_IO" replay-ledger "$attempt_log" "$ROUTER_HOME/ledger.jsonl" --pr-url "" | while IFS= read -r line; do
+      router_mirror_line "$line" || true
+    done
+    router_remove_worktree "$ROUTER_CLONE" "$ROUTER_WT" || true
+    return 0
+  fi
+  subject=$(printf '%s' "$title" | tr '\n\r' '  ' | cut -c 1-80)
+  set +e
+  router_commit_and_push "$ROUTER_WT" "$repo" "$ROUTER_BRANCH" "$ROUTER_BASE" "$cli" "$subject" "$number" "$cur_tier" "$verify_rc" "$warning"
+  rc_pr=$?
+  set -e
+  if [[ "$rc_pr" -eq 2 ]]; then
+    no_changes=1
+    printf 'ashlr-router: %s exited %s and made no file changes.\n' "$cli" "$rc" \
+      > "$ROUTER_HOME/tmp/nochange-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/nochange-$number.txt" || true
+  elif [[ "$rc_pr" -ne 0 ]]; then
+    push_failed=1
+    pr_url=""
+  else
+    pr_url=$ROUTER_PR_URL
+  fi
+  if [[ "$ROUTER_LIMITED" == "1" ]]; then
+    router_drop_claim "$repo" "$number" || true
+  fi
+  node "$ROUTER_IO" replay-ledger "$attempt_log" "$ROUTER_HOME/ledger.jsonl" --pr-url "$pr_url" | while IFS= read -r line; do
+    router_mirror_line "$line" || true
+  done
+  if [[ "$no_changes" -eq 0 && "$push_failed" -eq 0 ]]; then
+    router_remove_worktree "$ROUTER_CLONE" "$ROUTER_WT" || true
+  elif [[ "$no_changes" -eq 1 ]]; then
+    router_remove_worktree "$ROUTER_CLONE" "$ROUTER_WT" || true
+  else
+    router_log "left worktree in place after a git or PR failure: $ROUTER_WT"
+  fi
+}
+
+router_fork_login() {
+  local login
+  login=$(gh api user --jq .login 2>/dev/null || true)
+  login=$(printf '%s' "$login" | tr -d '\n\r ')
+  case "$login" in
+    ""|*[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  printf '%s\n' "$login"
+}
+
+router_refuse_paths() {
+  local repo=$1
+  local number=$2
+  local denied=$3
+  local count
+  count=$(printf '%s\n' "$denied" | grep -c '[^[:space:]]' || true)
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  router_log "refusing job; protected path"
+  printf 'ashlr-router refused this job. Denied paths: %s. Nothing was pushed.\n' \
+    "$count" > "$ROUTER_HOME/tmp/refused-$number.txt"
+  router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+}
+
+router_range_base() {
+  local sha=${ROUTER_BASE_SHA:-}
+  if [[ ! "$sha" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "$sha"
+}
+
+router_commit_and_push() {
+  local wt=$1
+  local repo=$2
+  local branch=$3
+  local base=$4
+  local cli=$5
+  local subject=$6
+  local number=$7
+  local tier=$8
+  local verify_rc=$9
+  local warning=${10:-}
+  local denied path any login name url prbody rc_pr base_sha made head_sha checked
+  ROUTER_PR_URL=""
+  router_reap_model_group "${ROUTER_MODEL_PGID_FILE:-}"
+  if ! base_sha=$(router_range_base); then
+    router_log "refusing job; base commit is missing"
+    printf 'ashlr-router refused this job. The base commit is missing. Nothing was pushed.\n' \
+      > "$ROUTER_HOME/tmp/refused-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+    return 1
+  fi
+  head_sha=$(git -C "$wt" rev-parse HEAD)
+  if [[ "$head_sha" != "$base_sha" ]]; then
+    router_log "refusing job; model commit"
+    printf 'ashlr-router refused this job. The model made a commit. Nothing was pushed.\n' \
+      > "$ROUTER_HOME/tmp/refused-$number.txt"
+    router_comment_file "$repo" "$number" "$ROUTER_HOME/tmp/refused-$number.txt" || true
+    return 1
+  fi
+  made=0
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    git -C "$wt" reset -q || true
+    return 1
+  fi
+  if ! node "$ROUTER_IO" branch-ok "$branch"; then
+    router_log "refusing branch ${branch}; nothing was pushed"
+    return 1
+  fi
+  any=0
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" ]] || continue
+    any=1
+    git -C "$wt" add -- "$path"
+  done < <(node "$ROUTER_IO" stage-list --worktree "$wt")
+  if [[ "$any" -eq 0 ]]; then
+    return 2
+  fi
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    git -C "$wt" reset -q || true
+    return 1
+  fi
+  if git -C "$wt" diff --cached --quiet; then
+    return 2
+  fi
+  if ! git -C "$wt" -c core.hooksPath=/dev/null commit --no-verify -m "router(${cli}): ${subject}" -m "Refs #${number}"; then
+    router_log "commit failed for $repo#$number"
+    return 1
+  fi
+  made=1
+  if ! denied=$(node "$ROUTER_IO" range-check --worktree "$wt" --base "$base_sha"); then
+    router_refuse_paths "$repo" "$number" "$denied"
+    if [[ "$made" -eq 1 ]]; then
+      git -C "$wt" reset -q --mixed HEAD~1 || true
+    fi
+    return 1
+  fi
+  checked=$(git -C "$wt" rev-parse HEAD)
+  if ! login=$(router_fork_login); then
+    router_log "fork login unavailable; refusing to push to the base repository"
+    return 1
+  fi
+  name=${repo#*/}
+  case "$name" in
+    ""|*[!A-Za-z0-9._-]*)
+      router_log "refusing repository name for a fork push"
+      return 1
+      ;;
+  esac
+  gh repo fork "$repo" --clone=false >/dev/null 2>&1 \
+    || router_log "fork ensure returned non-zero; the push target stays the fork"
+  url="https://github.com/${login}/${name}.git"
+  if ! git -C "$wt" -c core.hooksPath=/dev/null -c "credential.helper=!gh auth git-credential" \
+    push --no-verify "$url" "${checked}:refs/heads/${branch}"; then
+    router_log "fork push failed for ${branch}; the base repository was not pushed"
+    return 1
+  fi
+  prbody=$ROUTER_HOME/tmp/pr-$number.md
+  {
+    printf 'Draft opened by ashlr-router.\n\n'
+    printf 'CLI: %s\nTier: %s\nVerification exit: %s\n' "$cli" "$tier" "${verify_rc:-}"
+    if [[ -n "$warning" ]]; then
+      printf 'Warning: %s\n' "$warning"
+    fi
+    printf '\nThe branch is on the fork. The base repository was not pushed.\n'
+    printf '\nFixes #%s\n' "$number"
+  } > "$prbody"
+  set +e
+  ROUTER_PR_URL=$(gh pr create --repo "$repo" --draft --head "${login}:${branch}" --base "$base" \
+    --title "router(${cli}): ${subject}" --body-file "$prbody")
+  rc_pr=$?
+  set -e
+  if [[ "$rc_pr" -ne 0 ]]; then
+    router_log "pr create failed for $repo#$number"
+    ROUTER_PR_URL=""
+    return 1
+  fi
+  ROUTER_PR_URL=$(printf '%s\n' "$ROUTER_PR_URL" | grep -Eo 'https://[^ ]+' | head -n 1 || true)
+  return 0
+}
+
+router_print_plan() {
+  local repo=$1
+  local number=$2
+  local route=$3
+  local decision=$4
+  local kind rest cli tier model warn account home
+  kind=${decision%%$'\t'*}
+  if [[ "$kind" == "skip" ]]; then
+    printf 'plan repo=%s issue=%s route=%s skip=%s\n' "$repo" "$number" "$route" "${decision#skip$'\t'}"
+    return 0
+  fi
+  rest=${decision#*$'\t'}
+  cli=${rest%%$'\t'*}
+  rest=${rest#*$'\t'}
+  tier=${rest%%$'\t'*}
+  rest=${rest#*$'\t'}
+  model=${rest%%$'\t'*}
+  rest=${rest#*$'\t'}
+  warn=${rest%%$'\t'*}
+  account=${rest#*$'\t'}
+  printf 'plan repo=%s issue=%s route=%s cli=%s tier=%s model=%s account=%s branch=router/%s/%s\n' \
+    "$repo" "$number" "$route" "$cli" "$tier" "$model" "$account" "$cli" "$number"
+  if [[ -n "$warn" ]]; then
+    printf 'warning %s\n' "$warn"
+  fi
+  router_read_nul < <(node "$ROUTER_IO" argv --config "$ROUTER_CONFIG" --cli "$cli" \
+    --model "$model" --worktree "$ROUTER_HOME/worktrees/example" \
+    --last "$ROUTER_HOME/tmp/last" --prompt "$ROUTER_HOME/tmp/prompt")
+  if [[ "$cli" == "omlx" ]]; then
+    printf 'omlx chat http://%s/v1/chat/completions model=%s\n' "$ROUTER_LOCAL_HOST" "$model"
+  elif [[ "$cli" == "devin" ]]; then
+    printf 'env -i PATH HOME USER LANG TERM TMPDIR DEVIN_API_KEY DEVIN_ORG_ID ashlr devin launch --repo %s --title <title> --json\n' "$repo"
+  elif [[ "$cli" == "codex" && -n "$account" ]]; then
+    home=$(router_codex_home "$account" | tr -d '\n')
+    router_format_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" "${ROUTER_ARGV[@]}"
+  else
+    router_format_clean "${ROUTER_ARGV[@]}"
+  fi
+}
+
+router_each_issue() {
+  local live=$1
+  local line repo number labels title_b64 body_b64 title body route
+  local label_model label_tier body_model body_tier requested tier
+  local body_file decision key
+  while IFS=$'\t' read -r repo number labels title_b64 body_b64; do
+    [[ "$number" =~ ^[0-9]+$ ]] || continue
+    route=$(router_route_from_labels "$labels")
+    if [[ "$route" == skip* ]]; then
+      printf 'plan repo=%s issue=%s skip=%s\n' "$repo" "$number" "${route#skip$'\t'}"
+      continue
+    fi
+    key=$(router_issue_key "$repo" "$number" | tr -d '\n')
+    if router_backed_off "$key"; then
+      printf 'plan repo=%s issue=%s route=%s skip=timeout-backoff\n' "$repo" "$number" "$route"
+      continue
+    fi
+    title=$(node "$ROUTER_IO" b64dec "$title_b64")
+    body=$(node "$ROUTER_IO" b64dec "$body_b64")
+    IFS=$'\t' read -r label_model label_tier <<EOF
+$(router_label_directive "$labels")
+EOF
+    IFS=$'\t' read -r body_model body_tier <<EOF
+$(router_body_directive "$body")
+EOF
+    IFS=$'\t' read -r requested tier <<EOF
+$(router_merge_directive "$label_model" "$label_tier" "$body_model" "$body_tier")
+EOF
+    tier=$(router_effective_tier "$tier")
+    body_file=$ROUTER_HOME/tmp/body-${repo//\//-}-$number
+    printf '%s\n' "$body" > "$body_file"
+    decision=$(router_decide "$route" "$tier" "$requested" "$repo" "$number" "$body_file" "$labels" "$live")
+    if [[ "$live" == "dry" ]]; then
+      router_print_plan "$repo" "$number" "$route" "$decision"
+      continue
+    fi
+    if [[ "$decision" == skip* ]]; then
+      router_log "skip $repo#$number ${decision#skip$'\t'}"
+      continue
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$number" "$decision" "$requested" "$title" "$body_file"
+  done
+}
+
+router_release_own_reserves() {
+  local dir id
+  for dir in "$ROUTER_HOME/locks"/reserve-codex-*; do
+    [[ -d "$dir" ]] || continue
+    id=${dir##*/reserve-codex-}
+    router_release_reserve "$id"
+  done
+}
+
+router_launch_from_file() {
+  local file=$1
+  local line repo number rest kind cli tier model warn account requested title body_file
+  local -a pids
+  local pid
+  pids=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if router_paused; then
+      router_log "pause; not launching a selected job"
+      break
+    fi
+    repo=${line%%$'\t'*}
+    rest=${line#*$'\t'}
+    number=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    kind=${rest%%$'\t'*}
+    [[ "$kind" == "use" ]] || continue
+    rest=${rest#*$'\t'}
+    cli=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    tier=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    model=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    warn=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    account=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    requested=${rest%%$'\t'*}
+    rest=${rest#*$'\t'}
+    title=${rest%%$'\t'*}
+    body_file=${rest#*$'\t'}
+    if ! router_claim_issue "$repo" "$number" "$cli" "$account"; then
+      router_log "claim failed for $repo#$number"
+      router_release_reserve "$account"
+      continue
+    fi
+    router_run_job "$repo" "$number" "$cli" "$tier" "$requested" "$title" "$body_file" "$warn" "$account" &
+    pids+=("$!")
+  done < "$file"
+  if [[ ${#pids[@]} -gt 0 ]]; then
+    for pid in "${pids[@]}"; do
+      wait "$pid" || router_log "job pid $pid failed"
+    done
+  fi
+  router_release_own_reserves
+}
+
+router_queue_jobs() {
+  local live=$1
+  local out line repo number labels title_b64 body_b64 title body route
+  local label_model label_tier body_model body_tier requested tier body_file decision
+  local active slots picked key kind rest account
+  local sel=$ROUTER_HOME/locks/select
+  out=$ROUTER_HOME/tmp/queue-$$
+  : > "$out"
+  ROUTER_PICKED_CLIS=""
+  if router_paused; then
+    router_log "pause; not selecting jobs"
+    return 0
+  fi
+  if ! router_acquire_lock "$sel"; then
+    router_log "another selection is running"
+    return 0
+  fi
+  active=$(router_active_jobs)
+  slots=$((ROUTER_MAX_JOBS - active))
+  picked=0
+  if [[ "$slots" -le 0 ]]; then
+    router_release_lock "$sel"
+    router_log "skip jobs"
+    return 0
+  fi
+  while IFS=$'\t' read -r repo number labels title_b64 body_b64; do
+    [[ "$picked" -lt "$slots" ]] || break
+    if router_paused; then
+      router_log "pause; stopping selection"
+      break
+    fi
+    [[ "$number" =~ ^[0-9]+$ ]] || continue
+    route=$(router_route_from_labels "$labels")
+    if [[ "$route" == skip* ]]; then
+      continue
+    fi
+    key=$(router_issue_key "$repo" "$number" | tr -d '\n')
+    if router_backed_off "$key"; then
+      router_log "skip $repo#$number timeout-backoff"
+      continue
+    fi
+    title=$(node "$ROUTER_IO" b64dec "$title_b64")
+    body=$(node "$ROUTER_IO" b64dec "$body_b64")
+    IFS=$'\t' read -r label_model label_tier <<EOF
+$(router_label_directive "$labels")
+EOF
+    IFS=$'\t' read -r body_model body_tier <<EOF
+$(router_body_directive "$body")
+EOF
+    IFS=$'\t' read -r requested tier <<EOF
+$(router_merge_directive "$label_model" "$label_tier" "$body_model" "$body_tier")
+EOF
+    tier=$(router_effective_tier "$tier")
+    body_file=$ROUTER_HOME/tmp/body-${repo//\//-}-$number
+    printf '%s\n' "$body" > "$body_file"
+    decision=$(router_decide "$route" "$tier" "$requested" "$repo" "$number" "$body_file" "$labels" live)
+    kind=${decision%%$'\t'*}
+    if [[ "$kind" != "use" ]]; then
+      router_log "skip $repo#$number ${decision#skip$'\t'}"
+      continue
+    fi
+    rest=${decision#*$'\t'}
+    kind=${rest%%$'\t'*}
+    if router_cli_at_capacity "$kind"; then
+      router_log "skip $repo#$number cli-cap $kind"
+      if [[ "$kind" == "codex" ]]; then
+        account=${rest##*$'\t'}
+        router_release_reserve "$account"
+      fi
+      continue
+    fi
+    router_note_cli_pick "$kind"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$number" "$decision" "$requested" "$title" "$body_file" >> "$out"
+    picked=$((picked + 1))
+  done < <(router_collect_issues)
+  router_release_lock "$sel"
+  if [[ "$picked" -eq 0 ]]; then
+    router_log "no queued issues"
+    return 0
+  fi
+  router_launch_from_file "$out"
+}
+
+cmd_dry() {
+  local gate line
+  router_init
+  router_ensure_state
+  gate=$(router_check_gates dry)
+  if [[ "$gate" != "ok" ]]; then
+    printf 'skip %s\n' "$gate"
+    return 0
+  fi
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+  done < <(router_each_issue dry)
+}
+
+cmd_run() {
+  local gate
+  if [[ "${1:-}" == "--dry-run" ]]; then
+    cmd_dry
+    return 0
+  fi
+  router_init
+  router_ensure_state
+  router_recover_leases || router_log "lease recovery failed"
+  router_sync_pools || router_log "pool mirror failed"
+  gate=$(router_check_gates live)
+  if [[ "$gate" != "ok" ]]; then
+    router_log "skip $gate"
+    return 0
+  fi
+  router_weekly || router_log "freshness failed; jobs are not blocked"
+  router_classify_grok || router_log "grok auth check failed; jobs are not blocked"
+  router_probe_devin || router_log "devin check failed; jobs are not blocked"
+  gate=$(router_check_gates live)
+  if [[ "$gate" != "ok" ]]; then
+    router_log "skip $gate"
+    return 0
+  fi
+  router_queue_jobs live
+}
+
+cmd_status() {
+  local kb battery entry pid any cool versions id home
+  router_init
+  printf 'home: %s\n' "$ROUTER_HOME"
+  if [[ -e "$ROUTER_HOME/PAUSE" ]]; then
+    printf 'pause: yes\n'
+  else
+    printf 'pause: no\n'
+  fi
+  kb=$(router_df_available_kb "$HOME")
+  printf 'disk_free_gb: %s\n' "$(node "$ROUTER_IO" gb "$kb" | tr -d '\n')"
+  battery=$(router_battery_line)
+  printf 'battery: %s\n' "$battery"
+  printf 'jobs:\n'
+  any=0
+  if [[ -d "$ROUTER_HOME/locks/jobs" ]]; then
+    for entry in "$ROUTER_HOME/locks/jobs"/*; do
+      [[ -d "$entry" ]] || continue
+      if router_lock_alive "$entry"; then
+        pid=$(cat "$entry/pid")
+        printf '  %s pid=%s\n' "$(basename "$entry")" "$pid"
+        any=1
+      fi
+    done
+  fi
+  if [[ "$any" -eq 0 ]]; then
+    printf '  (none)\n'
+  fi
+  printf 'accounts:\n'
+  while IFS=$'\t' read -r id home; do
+    [[ -n "$id" ]] || continue
+    if router_account_dead "$id"; then
+      printf '  codex %s dead\n' "$id"
+    elif router_codex_login_ok "$id" "$home"; then
+      printf '  codex %s logged-in\n' "$id"
+    else
+      printf '  codex %s login needed\n' "$id"
+    fi
+  done < <(node "$ROUTER_IO" codex-accounts --config "$ROUTER_CONFIG")
+  printf 'pools:\n'
+  if [[ -f "$ROUTER_STATE" ]]; then
+    node "$ROUTER_IO" pools-json "$ROUTER_STATE"
+    printf '\n'
+  else
+    printf '  (none)\n'
+  fi
+  printf 'cooldowns:\n'
+  if [[ -f "$ROUTER_STATE" ]]; then
+    cool=$(node "$ROUTER_IO" cooldowns-json "$ROUTER_STATE")
+  else
+    cool="{}"
+  fi
+  if [[ "$cool" == "{}" ]]; then
+    printf '  (none)\n'
+  else
+    printf '  %s\n' "$cool"
+  fi
+  printf 'versions:\n'
+  if [[ -f "$ROUTER_STATE" ]]; then
+    versions=$(router_state_get versions)
+  else
+    versions=""
+  fi
+  if [[ -z "$versions" || "$versions" == "{}" ]]; then
+    printf '  (none)\n'
+  else
+    printf '  %s\n' "$versions"
+  fi
+  printf 'ledger:\n'
+  if [[ -f "$ROUTER_HOME/ledger.jsonl" ]]; then
+    node "$ROUTER_IO" last-ledger "$ROUTER_HOME/ledger.jsonl" 10
+  fi
+}
+
+cmd_keepalive() {
+  local home alt bin out rc
+  router_init
+  router_ensure_state
+  node "$ROUTER_IO" ensure-pools --config "$ROUTER_CONFIG" --state "$ROUTER_STATE" >/dev/null
+  home="${HOME}/.codex"
+  alt=$(router_codex_alt_home)
+  bin=$(router_bin codex)
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    router_log "keepalive failure"
+    return 0
+  fi
+  set +e
+  out=$(router_exec_clean "CODEX_HOME=${home}" "CODEX_HOME_ALT=${alt}" -- \
+    "$bin" exec --sandbox read-only --skip-git-repo-check --ephemeral "Reply with ok" 2>&1)
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    unset out
+    router_log "keepalive success"
+    return 0
+  fi
+  if printf '%s\n' "$out" | node "$ROUTER_IO" auth-failed; then
+    router_mark_account_dead work auth
+  fi
+  unset out
+  router_log "keepalive failure"
+}
+
+cmd_probe() {
+  local mode=record
+  router_init
+  if [[ "${1:-}" == "--update" ]]; then
+    mode=update
+  fi
+  router_probe_all "$mode"
+}
+
+cmd_help() {
+  cat <<'EOF'
+usage: ashlr-router <run|dry-run|status|probe|keepalive> [options]
+
+  run              claim queued issues and open draft PRs
+  run --dry-run    print the plan and do not claim or run a CLI
+  dry-run          same as run --dry-run
+  status           jobs, cooldowns, disk, battery, last 10 ledger lines
+  probe            record CLI versions and models
+  probe --update   also run weekly updaters when freshness is enabled
+  probe --record-only
+                   record versions and models, do not update CLIs
+  keepalive        one read-only Codex call under ~/.codex
+
+A file named PAUSE in the router home skips a real run. The queue has no quiet hours.
+EOF
+}
+
+main() {
+  local cmd=${1:-run}
+  case "$cmd" in
+    run) shift || true; cmd_run "${1:-}" ;;
+    dry-run) cmd_dry ;;
+    status) cmd_status ;;
+    probe) shift || true; cmd_probe "${1:-}" ;;
+    keepalive) cmd_keepalive ;;
+    help|-h|--help) cmd_help ;;
+    *)
+      cmd_help >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
