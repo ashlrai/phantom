@@ -104,6 +104,17 @@ export function AutomationsIcon(props: IconProps) {
   );
 }
 
+/** Ops: a board with three columns, the command center's card wall. */
+export function OpsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2" y="2.5" width="3.5" height="10" rx="1" />
+      <rect x="6.25" y="2.5" width="3.5" height="6.5" rx="1" />
+      <rect x="10.5" y="2.5" width="3.5" height="8.5" rx="1" />
+    </Icon>
+  );
+}
+
 /** Every section's glyph: the rail's, plus the tray's. */
 export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconProps>>> = {
   command: RAIL_ICON.command!,
@@ -118,6 +129,7 @@ export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconPro
   wiki: WikiIcon,
   playbooks: PlaybooksIcon,
   automations: AutomationsIcon,
+  ops: OpsIcon,
 };
 
 /**
