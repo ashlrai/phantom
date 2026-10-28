@@ -17,6 +17,10 @@ confirm metric names with that spec before connecting a production exporter.
 | `phantom_cycle_queue_wait_seconds` | Queue admission to worker start, excluding worker execution |
 | `phantom_cycle_ci_duration_seconds` | CI run start to terminal completion, excluding CI queue wait |
 
+| Gauge (unitless, [0,1]) | Observation |
+| --- | --- |
+| `phantom_router_lane_reward` | Mean routing reward per `policy` label (`static` or `bandit`), as reported by `phm queue bandit` replays or a live router-bandit export |
+
 All three histograms must carry `repo` and `pool` labels with consistent values;
 the stage histogram supplies the filter choices. Attribute CI observations to
 the originating work item's pool. Emit standard `_bucket`, `_sum` and `_count`
@@ -35,7 +39,15 @@ Queries apply `rate` before summing histogram buckets, preserving counter reset
 handling, and retain `le` for percentile estimation. Stage panels also retain
 `stage`; queue and CI panels aggregate across selected repositories and pools.
 Percentiles describe the combined observation population, not averages of
-per-worker percentiles. Grafana's `$__rate_interval` adapts the rolling sample
+per-worker percentiles. The lane-reward gauge carries `repo` and `pool`
+labels from the outcome records it summarizes plus a `policy` label bounded
+to `static` (the logged router's measured reward) and `bandit` (the
+Thompson-sampling replay's counterfactual estimate). Emit the replay's
+`before.meanReward` as `policy="static"` and `after.meanReward` as
+`policy="bandit"`; absent or null means remain missing, never zero. See
+[docs/BANDIT-ROUTER.md](../BANDIT-ROUTER.md) for the reward formula, the
+rejection-sampling estimator behind `after`, and the honest limits of the
+estimate. Grafana's `$__rate_interval` adapts the rolling sample
 window to the datasource scrape interval and zoom level. A point is a rolling
 window estimate, not the percentile of the entire selected seven days.
 

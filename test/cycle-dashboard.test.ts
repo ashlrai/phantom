@@ -17,7 +17,7 @@ describe('cycle dashboard schema and metric contract', () => {
       __inputs: [{ name: 'DS_PROMETHEUS', type: 'datasource', pluginId: 'prometheus' }],
       annotations: { list: [] },
     });
-    expect(dashboard.panels).toHaveLength(4);
+    expect(dashboard.panels).toHaveLength(5);
   });
 
   it('offers consistent repository and pool filters without embedding deployment identities', () => {
@@ -59,6 +59,24 @@ describe('cycle dashboard schema and metric contract', () => {
       });
     }
     // No transformations that could replace unknowns with zeros or average tails.
+    expect(panel.transformations ?? []).toEqual([]);
+  });
+
+  it('shows the bandit vs static lane-reward before/after panel', () => {
+    const panel = dashboard.panels[4];
+    expect(panel).toMatchObject({
+      id: 5, title: 'Lane reward · bandit vs static', type: 'timeseries', datasource,
+      gridPos: { h: 9, w: 24, x: 0, y: 18 },
+      fieldConfig: {
+        defaults: { unit: 'none', min: 0, max: 1, noValue: 'No observations', custom: { spanNulls: false } },
+        overrides: [],
+      },
+    });
+    expect(panel.targets).toEqual([{
+      refId: 'A', datasource, editorMode: 'code', range: true,
+      expr: 'avg by (policy) (phantom_router_lane_reward{repo=~"$repo", pool=~"$pool"})',
+      legendFormat: '{{policy}}',
+    }]);
     expect(panel.transformations ?? []).toEqual([]);
   });
 });
