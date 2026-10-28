@@ -307,6 +307,7 @@
 /test/devin-fleet-launcher-315.test.ts @masonwyatt23
 /test/devin-intake-315.test.ts @masonwyatt23
 /test/devin-lane-315.test.ts @masonwyatt23
+/test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
 /test/engines-custody-record.test.ts @masonwyatt23
@@ -814,6 +815,7 @@
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
+/test/redact-known.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23
