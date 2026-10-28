@@ -24,11 +24,11 @@ let tmpHome: string;
 
 function workSourcesFromTypeContract(): string[] {
   const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'core', 'types.ts'),
+    path.join(__dirname, '..', 'src', 'core', 'types', 'backlog.ts'),
     'utf8',
   );
   const match = source.match(/export type WorkSource = ([^;]+);/);
-  if (!match) throw new Error('WorkSource union not found in src/core/types.ts');
+  if (!match) throw new Error('WorkSource union not found in src/core/types/backlog.ts');
   return Array.from(match[1]!.matchAll(/'([^']+)'/g), (m) => m[1]!).sort();
 }
 
