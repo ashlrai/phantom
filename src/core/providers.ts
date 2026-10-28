@@ -16,6 +16,28 @@ import type { AshlrConfig, ProviderEndpoint, ProviderRegistry } from './types.js
 // having to restate the URL in a second place.
 import { resolveLlamaServerOrigin } from './local-runtime/llama/config.js';
 
+/** Support advertised by a backend, never permission or a readiness claim. */
+export interface ProviderCapabilities {
+  /** Emits incremental normalized events; individual text responses may arrive whole. */
+  readonly streaming: boolean;
+  /** Can continue an existing native conversation on a later turn. */
+  readonly resume: boolean;
+  /** The provider supplies a conversation id after launch; callers must not mint one. */
+  readonly providerAssignedSessionId: boolean;
+}
+
+/**
+ * Provider-neutral turn boundary. Implementations build invocations and parse
+ * events; the caller still owns execution, containment, credentials and tools.
+ * Type parameters let each runtime retain its existing session/event contract.
+ */
+export interface ProviderBackend<Session, Launch, Invocation, Parser> {
+  readonly id: string;
+  readonly capabilities: ProviderCapabilities;
+  buildLaunch(session: Session, text: string, launch: Launch): Invocation;
+  createParser(turnId: string): Parser;
+}
+
 // ---------------------------------------------------------------------------
 // Loopback-only reading of OLLAMA_HOST for the two code paths that talk to a
 // local Ollama with fixed addresses (the knowledge index builder, which sends
@@ -100,6 +122,19 @@ export function localOllamaBase(
  */
 export const LLAMA_SERVER_PROVIDER_ID = 'llama-server';
 
+interface LocalProviderDefinition {
+  readonly probePath: string;
+  readonly baseUrl: (cfg: AshlrConfig) => string | undefined;
+}
+
+// Insertion order is also the fallback preference when the chain has no live entry.
+const LOCAL_PROVIDERS = new Map<string, LocalProviderDefinition>([
+  ['lmstudio', { probePath: '/v1/models', baseUrl: (cfg) => cfg.models.lmstudio }],
+  ['ollama', { probePath: '/api/tags', baseUrl: (cfg) => cfg.models.ollama }],
+  // Always resolved, even without an explicit URL: the supervised runtime owns its origin.
+  [LLAMA_SERVER_PROVIDER_ID, { probePath: '/v1/models', baseUrl: resolveLlamaServerOrigin }],
+]);
+
 /**
  * Ensure a base URL has the expected path suffix.
  * e.g. ensurePath('http://localhost:1234', '/v1/models') -> 'http://localhost:1234/v1/models'
@@ -127,7 +162,8 @@ function parseLmStudioModels(body: unknown): string[] {
   }
   const data = (body as { data: unknown[] }).data;
   return data
-    .filter((m): m is { id: string } => typeof (m as Record<string, unknown>)['id'] === 'string')
+    .filter((m): m is { id: string } =>
+      typeof m === 'object' && m !== null && typeof (m as Record<string, unknown>)['id'] === 'string')
     .map((m) => m.id);
 }
 
@@ -146,7 +182,8 @@ function parseOllamaModels(body: unknown): string[] {
   const models = (body as { models: unknown[] }).models;
   return models
     .filter(
-      (m): m is { name: string } => typeof (m as Record<string, unknown>)['name'] === 'string',
+      (m): m is { name: string } =>
+        typeof m === 'object' && m !== null && typeof (m as Record<string, unknown>)['name'] === 'string',
     )
     .map((m) => m.name);
 }
@@ -170,24 +207,24 @@ function parseModels(url: string, body: unknown): string[] {
 // Extend as new cloud providers are added to providerChain.
 // ---------------------------------------------------------------------------
 
-const CLOUD_PROVIDER_ENV: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  cohere: 'COHERE_API_KEY',
-  groq: 'GROQ_API_KEY',
-  nvidia_nim: 'NVIDIA_NIM_API_KEY',
-  moonshot: 'MOONSHOT_API_KEY',
-  kimi: 'MOONSHOT_API_KEY',
-  hermes_api: 'HERMES_API_KEY',
-};
+const CLOUD_PROVIDER_ENV = new Map([
+  ['anthropic', 'ANTHROPIC_API_KEY'],
+  ['openai', 'OPENAI_API_KEY'],
+  ['gemini', 'GEMINI_API_KEY'],
+  ['cohere', 'COHERE_API_KEY'],
+  ['groq', 'GROQ_API_KEY'],
+  ['nvidia_nim', 'NVIDIA_NIM_API_KEY'],
+  ['moonshot', 'MOONSHOT_API_KEY'],
+  ['kimi', 'MOONSHOT_API_KEY'],
+  ['hermes_api', 'HERMES_API_KEY'],
+]);
 
 /**
  * Returns true if a cloud provider's API key is present in process.env.
  * Unknown cloud providers default to false (not considered up).
  */
 function cloudProviderUp(id: string): boolean {
-  const envVar = CLOUD_PROVIDER_ENV[id.toLowerCase()];
+  const envVar = CLOUD_PROVIDER_ENV.get(id.toLowerCase());
   if (!envVar) return false;
   const val = process.env[envVar];
   return typeof val === 'string' && val.trim().length > 0;
@@ -207,18 +244,8 @@ function cloudProviderUp(id: string): boolean {
  * Never throws — returns up:false with an error string on any failure.
  */
 export async function probeEndpoint(id: string, url: string): Promise<ProviderEndpoint> {
-  // Determine the canonical probe URL
-  let probeUrl: string;
-  if (id === 'lmstudio') {
-    probeUrl = ensurePath(url, '/v1/models');
-  } else if (id === 'ollama') {
-    probeUrl = ensurePath(url, '/api/tags');
-  } else if (id === LLAMA_SERVER_PROVIDER_ID) {
-    // llama-server serves the OpenAI shape, same as LM Studio.
-    probeUrl = ensurePath(url, '/v1/models');
-  } else {
-    probeUrl = url;
-  }
+  const definition = LOCAL_PROVIDERS.get(id);
+  const probeUrl = definition ? ensurePath(url, definition.probePath) : url;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
@@ -278,7 +305,7 @@ export async function probeEndpoint(id: string, url: string): Promise<ProviderEn
 /**
  * Build the full ProviderRegistry from the current config.
  *
- * - Probes cfg.models.lmstudio and cfg.models.ollama in parallel.
+ * - Probes configured local endpoints and the supervised llama-server in parallel.
  * - Walks cfg.models.providerChain in order to find the first up provider.
  * - Cloud providers (e.g. 'anthropic') count as up if their env key exists.
  * - Local providers not in the config (unknown ids) are skipped gracefully.
@@ -286,27 +313,14 @@ export async function probeEndpoint(id: string, url: string): Promise<ProviderEn
 export async function getProviderRegistry(cfg: AshlrConfig): Promise<ProviderRegistry> {
   const chain = cfg.models.providerChain;
 
-  // Probe the two known local endpoints in parallel.
-  // Guard: if a provider URL is absent from the config, skip probing rather
-  // than passing undefined to probeEndpoint (which calls base.replace() and
-  // would throw "Cannot read properties of undefined (reading 'replace')").
+  // Resolve and probe each local backend in parallel. Absent optional endpoints
+  // stay visible as unconfigured; llama-server always has a resolved origin.
   const skipped = (id: string): ProviderEndpoint => ({ id, url: '', up: false, models: [], error: 'not configured' });
-  const [lmResult, ollamaResult, llamaResult] = await Promise.all([
-    cfg.models.lmstudio ? probeEndpoint('lmstudio', cfg.models.lmstudio) : Promise.resolve(skipped('lmstudio')),
-    cfg.models.ollama   ? probeEndpoint('ollama',   cfg.models.ollama)   : Promise.resolve(skipped('ollama')),
-    // Always probed, never "not configured": the local fleet's serving runtime
-    // has a resolvable endpoint whether or not anyone wrote one down, and a
-    // fleet runtime that is silently absent from this registry is precisely
-    // the failure this surface exists to make visible.
-    probeEndpoint(LLAMA_SERVER_PROVIDER_ID, resolveLlamaServerOrigin(cfg)),
-  ]);
-
-  // Build a lookup map for the probed local endpoints
-  const localEndpoints: Record<string, ProviderEndpoint> = {
-    lmstudio: lmResult,
-    ollama: ollamaResult,
-    [LLAMA_SERVER_PROVIDER_ID]: llamaResult,
-  };
+  const results = await Promise.all([...LOCAL_PROVIDERS].map(async ([id, definition]) => {
+    const baseUrl = definition.baseUrl(cfg);
+    return baseUrl ? probeEndpoint(id, baseUrl) : skipped(id);
+  }));
+  const localEndpoints = new Map(results.map((endpoint) => [endpoint.id, endpoint]));
 
   // Assemble the providers list in chain order where possible,
   // appending any probed endpoints not present in the chain.
@@ -317,16 +331,15 @@ export async function getProviderRegistry(cfg: AshlrConfig): Promise<ProviderReg
     if (seenIds.has(providerId)) continue;
     seenIds.add(providerId);
 
-    if (localEndpoints[providerId] !== undefined) {
-      providers.push(localEndpoints[providerId]);
-    }
+    const endpoint = localEndpoints.get(providerId);
+    if (endpoint) providers.push(endpoint);
     // Cloud providers are not added as ProviderEndpoint entries
     // (they have no local URL to probe) — they participate only in
     // activeProvider resolution below.
   }
 
   // Add any probed local endpoints that were not in the chain
-  for (const [id, endpoint] of Object.entries(localEndpoints)) {
+  for (const [id, endpoint] of localEndpoints) {
     if (!seenIds.has(id)) {
       seenIds.add(id);
       providers.push(endpoint);
@@ -336,7 +349,7 @@ export async function getProviderRegistry(cfg: AshlrConfig): Promise<ProviderReg
   // Resolve activeProvider: first entry in chain that is considered "up"
   let activeProvider: string | null = null;
   for (const providerId of chain) {
-    const local = localEndpoints[providerId];
+    const local = localEndpoints.get(providerId);
     if (local !== undefined) {
       if (local.up) {
         activeProvider = providerId;
