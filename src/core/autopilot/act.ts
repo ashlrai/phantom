@@ -44,6 +44,7 @@ import { isAbsolute, join } from 'node:path';
 import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
 import { detectVerifyCommands } from '../run/verify-commands.js';
+import { AUTONOMOUS_UNSET_ENV } from '../sandbox/autonomous-env.js';
 
 import { ashlrHome } from '../cloud/store.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -433,14 +434,21 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
 
 /**
  * Env for the fixer and verify commands: no GitHub tokens, no SSH agent, an
- * empty gh config dir, no global/system git config (so no credential helper)
- * and no prompting. Reduces what untrusted code can push with; not a jail.
+ * empty gh config dir, no global/system git config (so no credential helper),
+ * no prompting, and no other credential-shaped variables. Verify runs the PR's
+ * own code, so it gets no model credentials either; the fixer keeps only the
+ * Anthropic and Claude variables its CLI signs in with. Reduces what untrusted
+ * code can push or read with; not a jail.
  */
-function untrustedEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+export function untrustedEnv(role: 'fixer' | 'verify', base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base };
+  const fixerAuth = (k: string) => role === 'fixer' && /^(ANTHROPIC_|CLAUDE_)/.test(k);
   for (const k of Object.keys(env)) {
-    if (/^(GH_|GITHUB_|GIT_CONFIG|GIT_ASKPASS|SSH_ASKPASS)/.test(k) || /TOKEN$/.test(k) && /GIT|GH/.test(k)) delete env[k];
+    if (fixerAuth(k)) continue;
+    if (/^(GH_|GITHUB_|GIT_CONFIG|GIT_ASKPASS|SSH_ASKPASS|AWS_|AZURE_|GOOGLE_APPLICATION_CREDENTIALS$)/.test(k) || /TOKEN$/.test(k) && /GIT|GH/.test(k)) delete env[k];
+    else if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|SECRET_KEY|AUTH_CONFIG|(^|_)AUTH|CREDENTIALS?)$/i.test(k)) delete env[k];
   }
+  for (const k of AUTONOMOUS_UNSET_ENV) if (!fixerAuth(k)) delete env[k];
   delete env['SSH_AUTH_SOCK'];
   env['GH_CONFIG_DIR'] = mkdtempSync(join(tmpdir(), 'phm-autopilot-gh-'));
   env['GIT_CONFIG_GLOBAL'] = '/dev/null';
@@ -452,7 +460,7 @@ function untrustedEnv(): NodeJS.ProcessEnv {
 
 async function runFixer(opts: TickOptions, cwd: string, brief: string, run: Run): Promise<string> {
   const [cmd, ...args] = opts.fixer!;
-  const r = await run(cmd!, args, { cwd, input: brief, timeoutMs: opts.fixerTimeoutMs ?? 30 * 60_000, env: untrustedEnv() });
+  const r = await run(cmd!, args, { cwd, input: brief, timeoutMs: opts.fixerTimeoutMs ?? 30 * 60_000, env: untrustedEnv('fixer') });
   const said = (r.stdout.trim().split('\n').filter(Boolean).pop() ?? '').slice(0, 300);
   return `fixer exited ${r.code}${said ? `: ${scrubSecrets(said)}` : ''}`;
 }
@@ -484,7 +492,7 @@ async function verify(plan: VerifyPlan, worktree: string, run: Run, changed: rea
   for (const step of steps) {
     const [cmd, ...args] = step.cmd;
     const cwd = step.cwd && !isAbsolute(step.cwd) && !step.cwd.split('/').includes('..') ? join(worktree, step.cwd) : worktree;
-    const r = await run(cmd!, args, { cwd, timeoutMs: step.timeoutMs ?? 20 * 60_000, env: untrustedEnv() });
+    const r = await run(cmd!, args, { cwd, timeoutMs: step.timeoutMs ?? 20 * 60_000, env: untrustedEnv('verify') });
     if (r.code !== 0) {
       const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').filter(Boolean).slice(-3).join(' | ');
       return `verify \`${step.cmd.join(' ')}\` exited ${r.code}: ${scrubSecrets(tail).slice(0, 400)}`;
