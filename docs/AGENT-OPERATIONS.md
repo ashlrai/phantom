@@ -547,3 +547,16 @@ not present in this repository. Their consumer contract is to embed the same
 `budgets` object from `phm budget show --json`; this change does not create or
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
+
+### CLI startup timing
+
+Set `PHM_STARTUP_TIMING=1` to emit JSON diagnostic records on stderr while
+keeping command output on stdout unchanged. For example:
+`PHM_STARTUP_TIMING=1 phm --version`.
+The `ready` record measures elapsed process time through static entry-point
+initialization (including Node bootstrap). The `import` records measure loading
+and evaluation of lazy command handlers and the deferred indexing, tidy,
+status, picker and editor modules; cached imports may take almost no time.
+These are elapsed import durations, including transitive dependencies, rather
+than exclusive CPU time per module. Diagnostics contain module labels and
+milliseconds, never command arguments or configuration values.

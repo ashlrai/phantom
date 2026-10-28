@@ -10,7 +10,7 @@ import { stripAnsi } from '../src/cli/ui.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const fixtures: string[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true }); });
-function run(args: string[], mode: 'block' | 'dispatch' | 'throw' | 'import-failure' = 'dispatch') {
+function run(args: string[], mode: 'block' | 'dispatch' | 'throw' | 'import-failure' = 'dispatch', timing = '0') {
   const home = mkdtempSync(join(tmpdir(), 'phantom-cli-lazy-')); fixtures.push(home);
   const observer = join(home, 'observe.mjs');
   const selectedModule = args[0] === 'setup' ? 'setup.ts' : 'doctor-init.ts';
@@ -32,6 +32,10 @@ registerHooks({
   },
   load(url, context, nextLoad) {
   const name = url.split('/').at(-1);
+  if (${JSON.stringify(args.includes('--version'))} &&
+      ['index-engine.ts', 'tidy.ts', 'picker.ts', 'open.ts', 'status.ts', 'doctor-init.ts', 'setup.ts', 'run.ts', 'mcp.ts'].includes(name)) {
+    throw Error('Unrelated module loaded for version: ' + url);
+  }
   if (name !== 'doctor-init.ts' && name !== 'setup.ts') {
     if (!url.endsWith('.ts')) return nextLoad(url, context);
     return { format: 'module', shortCircuit: true, source: ts.transpileModule(
@@ -51,7 +55,7 @@ registerHooks({
 }});`);
   return spawnSync(process.execPath, ['--import', observer, 'src/cli/index.ts', ...args], {
     cwd: root, encoding: 'utf8', timeout: 20_000,
-    env: { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr'), NO_COLOR: '1', FORCE_COLOR: '0' },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr'), ASHLR_VERSION: '', PHM_STARTUP_TIMING: timing, NO_COLOR: '1', FORCE_COLOR: '0' },
   });
 }
 
@@ -78,5 +82,29 @@ describe('CLI loads onboarding only for the selected command', () => {
     expect(result.error).toBeUndefined(); expect(result.status).toBe(1); expect(result.stdout).toBe('');
     expect(stripAnsi(result.stderr)).toBe('error: fixture handler failure\n');
     expect(result.stderr).not.toContain('module not yet built');
+  });
+});
+
+describe('CLI cold start', () => {
+  it('prints only the version without evaluating lazy modules', () => {
+    const result = run(['--version'], 'block');
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(result.stderr).toBe('');
+  });
+
+  it('reports opt-in startup and import timings on stderr, preserving stdout', () => {
+    const result = run(['--version'], 'block', '1');
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    const events = result.stderr.trim().split('\n').map(line => JSON.parse(line));
+    expect(events[0]).toMatchObject({ scope: 'phm-startup', event: 'ready', module: 'cli' });
+    expect(events.some(event => event.event === 'import' && event.module === 'node:module')).toBe(true);
+    for (const event of events) {
+      expect(Number.isFinite(event.durationMs)).toBe(true);
+      expect(event.durationMs).toBeGreaterThanOrEqual(0);
+    }
   });
 });
