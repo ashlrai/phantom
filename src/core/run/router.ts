@@ -44,6 +44,7 @@ import {
   resolveSelectedEngineModel,
   type ModelEntry,
   type ModelCapability,
+  type ModelRoutingTier,
 } from './model-catalog.js';
 import { withinLimit } from '../fleet/quota.js';
 import { subscriptionAllows } from '../fleet/subscription-usage.js';
@@ -58,6 +59,7 @@ import {
   sortEnginesByScore,
   operationalProducerScoresForRouting,
   selectCostAwareModel,
+  codexModelForTier,
   type EngineScoreMap,
 } from './learned-router.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
@@ -279,6 +281,47 @@ function isTrivialItem(item: WorkItem): boolean {
   return effort <= 1 && score <= 3;
 }
 
+/** Queue tiers select a model within an admitted engine, never an engine tier. */
+function explicitModelTier(item: WorkItem): ModelRoutingTier | null {
+  const tiers = new Set<ModelRoutingTier>();
+  for (const tag of item.tags ?? []) {
+    const match = /^tier[:=](fast|mid|computer|work|frontier)$/i.exec(tag.trim());
+    if (match) tiers.add(match[1].toLowerCase() as ModelRoutingTier);
+  }
+  // Conflicting tags do not silently downgrade a frontier/work request.
+  for (const tier of ['frontier', 'work', 'computer', 'mid', 'fast'] as const) {
+    if (tiers.has(tier)) return tier;
+  }
+  return null;
+}
+
+export function modelTierForTask(item: WorkItem): ModelRoutingTier {
+  const explicit = explicitModelTier(item);
+  if (explicit) return explicit;
+  const tags = new Set((item.tags ?? []).map(tag => tag.trim().toLowerCase()));
+  if (['computer', 'computer-use', 'gui', 'browser-use'].some(tag => tags.has(tag)) ||
+      /\b(computer[ -]use|GUI|browser automation)\b/i.test(item.title)) return 'computer';
+  if (item.source === 'doc' || item.source === 'test' ||
+      ['verify', 'test', 'fixup', 'pr-body', 'docs', 'triage'].some(tag => tags.has(tag)) ||
+      /^(?:\[?FIXUP\b|verify\b|run (?:the )?(?:tests?|verification)\b|triage\b|(?:write|draft|update) (?:the )?(?:PR|pull request) (?:body|description)\b)/i.test(item.title)) {
+    return 'fast';
+  }
+  if ((item.source as string) === 'escalation' || isHardItem(item)) return 'work';
+  if (isTrivialItem(item)) return 'fast';
+  // Ordinary implementation remains Sol; mid is an explicit queue choice.
+  return 'work';
+}
+
+function codexDefaultForTask(item: WorkItem, cfg: AshlrConfig): TaskRouteDecision {
+  const custom = cfg.foundry?.engines?.codex;
+  const model = custom
+    ? resolveSelectedEngineModel({ engine: 'codex', spec: resolveEngineSpec('codex', cfg) })
+    : codexModelForTier(modelTierForTask(item));
+  return { engine: 'codex', model,
+    catalogEntry: KNOWN_MODELS.find(entry => entry.id === `codex:${model}`) ?? null,
+    reason: custom ? 'Configured Codex engine default.' : `Codex ${modelTierForTask(item)} model default.` };
+}
+
 /** Capability required by a WorkItem's source type. */
 function capabilityForSource(source: string): ModelCapability | null {
   switch (source) {
@@ -429,10 +472,16 @@ function learnedEntryForEngine(
   excludes: ReadonlySet<string>,
   scores: EngineScoreMap | null,
   minShipRate: number,
+  modelTier: ModelRoutingTier,
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
   const candidates = KNOWN_MODELS.filter((entry) =>
     !entry.historical && entry.engine === engine &&
+    // Work promotion needs a complete TERRA-AB-1 comparison, which legacy
+    // producer scores cannot attest. Preserve work/frontier until that proof
+    // can pass the existing operational learning authority gate.
+    (engine !== 'codex' || (modelTier !== 'work' && modelTier !== 'frontier') ||
+      entry.apiModelId === codexModelForTier(modelTier)) &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
   return selectCostAwareModel(candidates, scores, { minShipRate });
@@ -460,10 +509,12 @@ export function modelForSelectedEngine(item: WorkItem, engine: EngineId, cfg: As
         (engine === 'claude' || engine === 'codex') ? 5 : effort;
       const entry = learnedEntryForEngine(engine, capabilityForSource(item.source), effortCap,
         claude5ExcludeIds(cfg), operationalProducerScoresForRouting(item.source),
-        typeof learnedConfig.minShipRate === 'number' ? learnedConfig.minShipRate : 0.6);
+        typeof learnedConfig.minShipRate === 'number' ? learnedConfig.minShipRate : 0.6,
+        modelTierForTask(item));
       if (entry) return { engine, model: decisionModelFor(entry), catalogEntry: entry,
         reason: 'M323 qualified learned model for the selected engine.' };
     }
+    if (engine === 'codex') return codexDefaultForTask(item, cfg);
     const model = resolveSelectedEngineModel({ engine, spec: resolveEngineSpec(engine, cfg) });
     return { engine, model, catalogEntry: model ? KNOWN_MODELS.find(entry => entry.engine === engine &&
       (entry.id === `${engine}:${model}` || entry.apiModelId === model)) ?? null : null,
@@ -633,13 +684,14 @@ function routeTaskUnenforced(
       effortCap: number,
       overrideReason: string,
     ): TaskRouteDecision | null => {
-      const learned = learnedEntryForEngine(engine, capability, effortCap, c5Excludes, producerScores, minShipRate);
+      const learned = learnedEntryForEngine(engine, capability, effortCap, c5Excludes, producerScores, minShipRate,
+        modelTierForTask(item));
       if (!learned) return null;
       return {
         engine,
         model: decisionModelFor(learned),
         catalogEntry: learned,
-        reason: `${overrideReason} (M323 learned: ship-rate ≥ ${minShipRate}, cheapest)`,
+        reason: `${overrideReason} (M323 learned: ship-rate >= ${minShipRate}, cost-aware)`,
       };
     };
 
@@ -671,6 +723,10 @@ function routeTaskUnenforced(
       // is on and this engine has a sampled model clearing the ship-rate bar.
       const learnedPick = tryLearnedModel(engine, capability, effort, overrideReason);
       if (learnedPick) return learnedPick;
+      if (engine === 'codex') {
+        const decision = codexDefaultForTask(item, cfg);
+        return { ...decision, reason: `${overrideReason} (${decision.reason})` };
+      }
       const entry = pickForEngine(engine, capability, preferCheap && !preferQuality, effort, {
         preferStrong: preferQuality,
         excludeIds: c5Excludes,
@@ -710,6 +766,13 @@ function routeTaskUnenforced(
 
     // ── Strategy ─────────────────────────────────────────────────────────
 
+    // An explicit model tier is a queue hint, subordinate to existing engine
+    // availability, quota, subscription and local-only checks.
+    if (explicitModelTier(item)) {
+      const explicit = tryEngine('codex', cap, `Explicit model tier ${modelTierForTask(item)}`);
+      if (explicit) return explicit;
+    }
+
     // M164: QUALITY-POLICY SUBSTANTIVE FAST-PATH
     // When routingPolicy === 'quality' AND the item is substantive (high-value
     // source, high effort/score, or large localizedScope), route immediately to
@@ -745,6 +808,10 @@ function routeTaskUnenforced(
         // M323: learned cost-aware pick first (flag-gated; null ⇒ static).
         const learnedPick = tryLearnedModel(engine, capability, 5, reason);
         if (learnedPick) return learnedPick;
+        if (engine === 'codex') {
+          const decision = codexDefaultForTask(item, cfg);
+          return { ...decision, reason: `${reason} (${decision.reason})` };
+        }
         // Use effort=5 to bypass minEffort filtering — we always want the strongest
         // model. M321: preferStrong sorts by qualityRank so the quality fast-path
         // reaches Fable 5 (when claude5.fable is on) over the cheaper Sonnet 5.

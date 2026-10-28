@@ -39,3 +39,6 @@ undefined/
 .ashlr/
 *.launchd.err.log
 *.launchd.out.log
+
+# Sanitized operator usage readings for bridge handoff
+!/usage-readings.log
