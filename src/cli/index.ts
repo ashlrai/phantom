@@ -1871,6 +1871,31 @@ async function main(): Promise<void> {
   const cmd  = argv[0] ?? 'help';
   const rest = argv.slice(1);
 
+  // These legacy commands parse their own arguments after loading the index.
+  // Handle help and invalid options before any configuration or index access.
+  const legacyUsage: Record<string, { usage: string; flags: string[]; maxOperands?: number }> = {
+    index: { usage: 'phm index [--refresh]', flags: ['--refresh'], maxOperands: 0 },
+    go: { usage: 'phm go [query] [--open] [--cd]', flags: ['--open', '--cd'] },
+    status: { usage: 'phm status [--json]', flags: ['--json'], maxOperands: 0 },
+    ls: { usage: 'phm ls [category]', flags: [], maxOperands: 1 },
+    open: { usage: 'phm open [query]', flags: [] },
+    tidy: { usage: 'phm tidy [--apply] [--json]', flags: ['--apply', '--json'], maxOperands: 0 },
+  };
+  const legacy = Object.hasOwn(legacyUsage, cmd) ? legacyUsage[cmd] : undefined;
+  if (legacy) {
+    if (rest.includes('--help') || rest.includes('-h')) {
+      console.log(`Usage: ${legacy.usage}`);
+      return;
+    }
+    const operands = rest.filter((arg) => !arg.startsWith('-'));
+    if (rest.some((arg) => arg.startsWith('-') && !legacy.flags.includes(arg)) ||
+        (legacy.maxOperands !== undefined && operands.length > legacy.maxOperands)) {
+      console.error(`Usage: ${legacy.usage}`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   try {
     switch (cmd) {
       case 'index':
@@ -2138,6 +2163,12 @@ async function main(): Promise<void> {
       case 'telemetry': {
         const cmdTelemetry = await loadTelemetryCmd();
         process.exitCode = await cmdTelemetry(rest);
+        break;
+      }
+
+      case 'worktrees': {
+        const { cmdWorktrees } = await import('./worktrees.js');
+        process.exitCode = cmdWorktrees(rest);
         break;
       }
 

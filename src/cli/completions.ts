@@ -51,6 +51,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'playbook',
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
+  'worktrees',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -86,8 +87,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'events',
   ],
+  worktrees: ['report'],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   wiki: ['build', 'status', 'show', 'ask'],
