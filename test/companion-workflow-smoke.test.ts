@@ -270,6 +270,16 @@ createInterface({ input: process.stdin }).on('line', line => {
     expect(smoke.GATEWAY_SERVERS.map((server: { tool: string }) => server.tool)).toEqual(['phantom-secrets__phantom_list_secrets', 'locus__locus_whoami', 'ashlr-md__open_file']);
   });
 
+  it('reads the last JSON object from noisy ecosystem stdout and scrubs the failure snippet', async () => {
+    expect(smoke.lastJsonObject('note: upgrading\n{"added":["locus"],"available":[{"name":"x","registered":true}]}\n')).toEqual({ added: ['locus'], available: [{ name: 'x', registered: true }] });
+    expect(smoke.lastJsonObject('{"a":1}\nnot json')).toBeNull();
+    expect(smoke.lastJsonObject('{')).toBeNull();
+    const head = await smoke.scrubbedHead('token sk-smoke-NEVER-IN-AGENT-ENV-0123456789abcdef ghp_abcdefghijklmnopqrstuvwxyz0123456789 ' + 'x'.repeat(400));
+    expect(head).not.toContain('sk-smoke-NEVER');
+    expect(head).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(head.length).toBeLessThanOrEqual(202);
+  });
+
   it('wires Stack to the Phantom Secrets vault and checks its env diff through CLI and MCP', async () => {
     const bin = join(dir, 'vault-bins');
     mkdirSync(bin, { recursive: true });
