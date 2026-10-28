@@ -14,6 +14,7 @@
  * Never throws. Never fabricates a limit number.
  */
 
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 import type { AshlrConfig } from '../types.js';
 import { collectUsageEvents } from './usage-source.js';
 import { modelToProviderKey } from './rollup.js';
@@ -277,8 +278,8 @@ async function fetchOpenAIUsage(apiKey: string): Promise<ProviderLimitEntry> {
 // ---------------------------------------------------------------------------
 
 async function buildProviders(): Promise<ProviderLimitEntry[]> {
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'] ?? '';
-  const openaiKey    = process.env['OPENAI_API_KEY']    ?? '';
+  const anthropicKey = readEnvironmentCredential('ANTHROPIC_API_KEY') ?? '';
+  const openaiKey    = readEnvironmentCredential('OPENAI_API_KEY')    ?? '';
 
   const entries: Promise<ProviderLimitEntry>[] = [];
 

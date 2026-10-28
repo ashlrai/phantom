@@ -3,7 +3,7 @@
  * draft PRs. Merging remains on the existing protected approval path. It
  * never pushes to the default branch, never uses --admin and never tags/deploys.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { mkdirSync, mkdtempSync, writeFileSync, lstatSync, realpathSync, rmdirSync,
   openSync, closeSync, fstatSync, readFileSync, constants, type Stats } from 'node:fs';
 import { join } from 'node:path';

@@ -34,6 +34,7 @@
  * Never throws — all errors silently degrade to {ok:false} / [].
  */
 
+import { readEnvironmentCredential } from './secrets.js';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -149,7 +150,7 @@ function saveOffset(offset: number): void {
  * NEVER log the returned value.
  */
 function resolveToken(cfg: AshlrConfig): string | undefined {
-  return cfg.comms?.telegram?.botToken ?? process.env['TELEGRAM_BOT_TOKEN'];
+  return cfg.comms?.telegram?.botToken ?? readEnvironmentCredential('TELEGRAM_BOT_TOKEN');
 }
 
 function resolveChatId(cfg: AshlrConfig): string | undefined {
