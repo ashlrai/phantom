@@ -43,7 +43,7 @@
  *
  * NODE-ONLY.
  */
-import { spawn } from 'node:child_process';
+import { credentialSpawn as spawn } from '../integrations/secrets.js';
 import { existsSync } from 'node:fs';
 import { open as openFile, stat as statFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path';

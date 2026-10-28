@@ -8,6 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeResourceWorker, validateResourceBindings, type ResourceBinding, type ResourceWorkerTask } from '../src/core/resources/worker.js';
 import type { ResourcePool, ResourceWorker } from '../src/core/resources/pool-policy.js';
+import * as verification from '../src/core/run/verify-commands.js';
 
 let fixtureRoot: string;
 let cleanups: Array<() => Promise<void>>;
@@ -36,11 +37,13 @@ function claudeEvents(patch: Record<string, unknown> = {}) {
     result: 'fixture completed', usage: { input_tokens: 12, output_tokens: 4,
       cache_creation_input_tokens: 6, cache_read_input_tokens: 8 }, ...patch }];
 }
-function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0): ResourceBinding {
+function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0,
+  version = '2.1.309 (Claude Code)', versionExitCode = 0): ResourceBinding {
   const script = join(fixtureRoot, `worker-${Math.random().toString(16).slice(2)}.cjs`);
   const transcript = typeof rows === 'string' ? rows : rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
   writeFileSync(script, [
     'const fs=require("node:fs");const chunks=[];',
+    `if(process.argv.at(-1)==="--version"){console.log(${JSON.stringify(version)});process.exit(${versionExitCode});}`,
     'process.stdin.on("data",chunk=>chunks.push(chunk));',
     'process.stdin.on("end",()=>{',
     `fs.writeFileSync(${JSON.stringify(join(fixtureRoot, 'invocation.json'))},JSON.stringify({argv:process.argv.slice(2),`,
@@ -129,6 +132,65 @@ describe('resource worker exact enrollment', () => {
 });
 
 describe('resource native worker terminal and accounting evidence', () => {
+  it.each([
+    [{ timedOut: true }, 'timed-out', 'worker-timed-out'],
+    [{ cancelled: true }, 'cancelled', 'worker-cancelled'],
+    [{ error: 'termination authority lost: fixture' }, 'uncertain', 'worker-termination-uncertain'],
+    [{ error: 'termination deadline elapsed with process-group exit unconfirmed' }, 'uncertain', 'worker-termination-uncertain'],
+  ] as const)('settles a failed version probe without dispatching a task %#', async (patch, status, reason) => {
+    const run = vi.spyOn(verification, 'runVerifySubprocessAsync').mockResolvedValue({
+      stdout: '', stderr: '', exitCode: 1, timedOut: false, cancelled: false, signal: null, ...patch,
+    });
+    expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents()), task()))
+      .toEqual({ status, reason, output: '', inputTokens: null, outputTokens: null });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]![0].at(-1)).toBe('--version');
+    expect(run.mock.calls[0]![1]).not.toHaveProperty('input');
+  });
+  it('preserves uncertain probe ownership even when the caller stops', async () => {
+    const controller = new AbortController();
+    const run = vi.spyOn(verification, 'runVerifySubprocessAsync').mockImplementation(async () => {
+      controller.abort();
+      return { stdout: '', stderr: '', exitCode: 1, timedOut: false, cancelled: true, signal: null,
+        error: 'termination authority lost: fixture' };
+    });
+    expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents()), task(), controller.signal))
+      .toMatchObject({ status: 'uncertain', reason: 'worker-termination-uncertain' });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it.each(['2.1.308 (Claude Code)', '2.1.309-rc.1 (Claude Code)'])(
+    'refuses Claude %s before task execution', async version => {
+      const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), task());
+      expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-outdated',
+        output: '', inputTokens: null, outputTokens: null });
+      expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+    });
+  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.309 (Claude Code)', 1]] as const)(
+    'refuses unverified Claude version output %# before task execution', async (version, exitCode) => {
+      const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version, exitCode), task());
+      expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-unverified',
+        output: '', inputTokens: null, outputTokens: null });
+      expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+    });
+  it.each(['2.1.309 (Claude Code)', '2.1.310 (Claude Code)'])(
+    'admits Claude %s and sends the task only to the execution invocation', async version => {
+      const request = task();
+      expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), request))
+        .toMatchObject({ status: 'completed', reason: 'worker-completed' });
+      expect(invocation().prompt).toBe(request.prompt);
+      expect(invocation().argv).not.toContain('--version');
+    });
+  it('rechecks the enrolled wrapper on each task after a CLI downgrade', async () => {
+    const binding = nativeFixture(claudeEvents());
+    if (binding.kind !== 'native-cli') throw new Error('Fixture type');
+    expect(await executeResourceWorker(worker('claude'), binding, task())).toMatchObject({ status: 'completed' });
+    const script = binding.command[1]!;
+    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.309 (Claude Code)', '2.1.308 (Claude Code)'));
+    rmSync(join(fixtureRoot, 'invocation.json'));
+    expect(await executeResourceWorker(worker('claude'), binding, task()))
+      .toMatchObject({ status: 'failed', reason: 'worker-cli-version-outdated' });
+    expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+  });
   it('uses exact Codex sandbox/stdin arguments and omits ambient credential and loader variables', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'dummy-not-a-secret'); vi.stubEnv('ANTHROPIC_API_KEY', 'dummy-not-a-secret');
     vi.stubEnv('NODE_OPTIONS', '--require /fixture/not-used'); vi.stubEnv('CODEX_HOME', '/fixture/not-used');
@@ -478,5 +540,65 @@ describe('resource local-chat worker transport', () => {
     const result = await executeResourceWorker(worker('local'), fixture.binding, task({ timeoutMs: 500 }));
     expect(result).toMatchObject({ status: 'timed-out', reason: 'worker-timed-out', inputTokens: 12, outputTokens: 4 });
     expect(fixture.requests).toHaveLength(1);
+  });
+
+  it('requests extended prompt-cache retention only for a long job with a large prompt', async () => {
+    const qualifying = await endpoint((res) => res.end(JSON.stringify(completion())));
+    expect(await executeResourceWorker(worker('local'), qualifying.binding,
+      task({ timeoutMs: 600_000, prompt: 'x'.repeat(40_000) }))).toMatchObject({ status: 'completed' });
+    expect(qualifying.requests).toHaveLength(1);
+    expect(qualifying.requests[0]?.body).toMatchObject({ prompt_cache_retention: '12h' });
+    for (const patch of [
+      { timeoutMs: 599_999, prompt: 'x'.repeat(40_000) },
+      { timeoutMs: 600_000, prompt: 'x'.repeat(32_767) },
+      {},
+    ] as const) {
+      const ordinary = await endpoint((res) => res.end(JSON.stringify(completion())));
+      expect(await executeResourceWorker(worker('local'), ordinary.binding, task(patch))).toMatchObject({ status: 'completed' });
+      expect(ordinary.requests[0]?.body).not.toHaveProperty('prompt_cache_retention');
+    }
+  });
+
+  it.each([
+    [400, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', param: 'service_tier' } }],
+    [400, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', code: 'invalid_service_tier' } }],
+    [429, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } }],
+    [503, { error: { message: 'PRIVATE_TIER_DETAIL', type: 'service_tier_unavailable' } }],
+  ])('maps a structured service-tier refusal to unavailable pool capacity %#', async (status, payload) => {
+    const fixture = await endpoint((res) => { res.statusCode = status; res.end(JSON.stringify(payload)); });
+    const result = await executeResourceWorker(worker('local'), fixture.binding, task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-service-tier-unavailable',
+      inputTokens: null, outputTokens: null, observation: { workerId: 'worker-a', health: 'ready', windows: [] } });
+    expect(fixture.requests).toHaveLength(1);
+    const observed = result.observation!;
+    expect(Date.parse(observed.expiresAt)).toBeGreaterThan(Date.parse(observed.observedAt));
+    expect(observed.retryAfter === null || Date.parse(observed.retryAfter) > Date.parse(observed.observedAt)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_TIER_DETAIL');
+  });
+
+  it.each([
+    [400, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'invalid_request_error', param: 'messages' } }],
+    [503, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'server_error' } }],
+    [429, { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'rate_limit_error', code: 'rate_limit_exceeded' } }],
+  ])('keeps ordinary provider errors on worker-transport-failed %#', async (status, payload) => {
+    const fixture = await endpoint((res) => { res.statusCode = status; res.end(JSON.stringify(payload)); });
+    const result = await executeResourceWorker(worker('local'), fixture.binding, task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-transport-failed', inputTokens: null, outputTokens: null });
+    expect(result.observation).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_VENDOR_ERROR');
+  });
+
+  it('bounds a provider retry hint on a service-tier refusal and defaults one when absent', async () => {
+    const hinted = await endpoint((res) => { res.statusCode = 429; res.setHeader('retry-after', '120');
+      res.end(JSON.stringify({ error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } })); });
+    const result = await executeResourceWorker(worker('local'), hinted.binding, task());
+    const observation = result.observation!;
+    const delta = Date.parse(observation.retryAfter!) - Date.parse(observation.observedAt);
+    expect(delta).toBeGreaterThanOrEqual(119_000); expect(delta).toBeLessThanOrEqual(121_000);
+    const defaulted = await endpoint((res) => { res.statusCode = 503;
+      res.end(JSON.stringify({ error: { type: 'service_tier_unavailable' } })); });
+    const second = await executeResourceWorker(worker('local'), defaulted.binding, task());
+    const fallback = Date.parse(second.observation!.retryAfter!) - Date.parse(second.observation!.observedAt);
+    expect(fallback).toBeGreaterThanOrEqual(60_000); expect(fallback).toBeLessThanOrEqual(61_000);
   });
 });

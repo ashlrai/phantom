@@ -233,9 +233,7 @@ export function deriveNotifications(input: DeriveInputs): AppNotification[] {
   return out;
 }
 
-/** Sort worst-first, then most-recent-first within a severity band —
- * matches SEVERITY_ORDER so the list reads top-to-bottom as "most urgent
- * first" the same way everywhere it's rendered. */
+/** Sort worst-first, then most-recent-first within a severity band. */
 export function sortNotifications(items: AppNotification[]): AppNotification[] {
   const rank: Record<NotificationSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   return [...items].sort((a, b) => {

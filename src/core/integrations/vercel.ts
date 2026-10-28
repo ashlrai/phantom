@@ -12,7 +12,7 @@
  *  - Bounded timeouts so a slow/hung CLI never blocks the caller.
  */
 
-import { spawnSync } from 'node:child_process';
+import { credentialSpawnSync as spawnSync } from './secrets.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { VercelStatus } from '../types.js';

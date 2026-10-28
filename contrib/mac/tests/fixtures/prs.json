@@ -1,0 +1,5 @@
+{
+  "https://github.com/ashlrai/phantom/pull/101": {"state":"MERGED","mergedAt":"2026-10-25T19:00:00Z","closedAt":"2026-10-25T19:00:00Z","isCrossRepository":true,"headRepositoryOwner":{"login":"contributor"}},
+  "https://github.com/ashlrai/locus/pull/102": {"state":"MERGED","mergedAt":"2026-10-25T20:00:00Z","closedAt":"2026-10-25T20:00:00Z","mergeCommit":{"oid":"squashed-commit-not-head"}},
+  "https://github.com/ashlrai/phantom/pull/103": {"state":"CLOSED","mergedAt":null,"closedAt":"2026-10-25T21:00:00Z"}
+}

@@ -199,6 +199,58 @@ describe('public registry processing', () => {
       expect(read).toHaveBeenCalledTimes(3);
     } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
+  it('caps registry backoff at five seconds and logs every attempt without changing tarball requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-test-'));
+    const metadata = {name: accepted.name, version: accepted.version, dist: {tarball: `https://registry.npmjs.org/@ashlr/phantom/-/phantom-${accepted.version}.tgz`, integrity: accepted.integrity, attestations: {provenance: {predicateType: 'https://slsa.dev/provenance/v1'}}}};
+    vi.useFakeTimers();
+    const started = Date.now();
+    const times: number[] = [];
+    const responses = [new Error('network unavailable'), new Response('', {status: 404}),
+      new Response('', {status: 429}), new Response('', {status: 503}), Response.json(metadata), new Response(bytes)];
+    const read = vi.fn().mockImplementation(async () => {
+      times.push(Date.now() - started);
+      const response = responses.shift();
+      if (response instanceof Error) throw response;
+      return response;
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', read);
+    try {
+      const pending = reconcileRegistry(accepted, dir);
+      await vi.runAllTimersAsync(); await pending;
+      expect(times).toEqual([0, 2000, 6000, 11000, 16000, 16000]);
+      expect(log.mock.calls).toEqual(['unavailable', 404, 429, 503, 200].map((status, index) =>
+        [`Registry verification attempt ${index + 1}: elapsed=${times[index]}ms HTTP status=${status}`]));
+      for (const [url, options] of read.mock.calls.slice(0, -1)) {
+        expect(url).toBe(`https://registry.npmjs.org/@ashlr%2Fphantom/${accepted.version}`);
+        expect(options).toEqual({redirect: 'error', signal: expect.any(AbortSignal), headers: {'Cache-Control': 'no-cache'}});
+      }
+      const [url, options] = read.mock.calls.at(-1)!;
+      expect(String(url)).toBe(metadata.dist.tarball);
+      expect(options).toEqual({redirect: 'error', signal: expect.any(AbortSignal)});
+      expect(JSON.parse(readFileSync(join(dir, 'registry-metadata.json'), 'utf8'))).toEqual(metadata);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('keeps the fifteen-minute registry deadline with capped waits and logs the final failure', async () => {
+    vi.useFakeTimers();
+    const started = Date.now();
+    const times: number[] = [];
+    const read = vi.fn().mockImplementation(async () => {
+      times.push(Date.now() - started);
+      return new Response('', {status: 404});
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', read);
+    try {
+      const rejected = expect(reconcileRegistry(accepted, 'unused')).rejects.toThrow('Public registry is still processing or unavailable');
+      await vi.runAllTimersAsync(); await rejected;
+      expect(times).toEqual([0, 2000, 6000, ...Array.from({length: 178}, (_, index) => 11000 + index * 5000), 900000]);
+      expect(log).toHaveBeenCalledTimes(times.length);
+      expect(log).toHaveBeenLastCalledWith(`Registry verification attempt ${times.length}: elapsed=900000ms HTTP status=404`);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals();}
+  });
   it('holds corrupt metadata immediately rather than waiting for eventual consistency', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-test-'));
     vi.useFakeTimers();

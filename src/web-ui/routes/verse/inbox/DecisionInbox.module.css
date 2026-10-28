@@ -1,0 +1,5 @@
+.inbox { max-width: 72rem; margin: 0 auto; padding: 1.5rem; }
+.list { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.list li { display: grid; gap: .5rem; overflow-wrap: anywhere; }
+.list button { text-align: left; padding: .75rem; cursor: pointer; }
+.list span { color: var(--text-secondary); font-size: .875rem; }
