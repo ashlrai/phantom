@@ -198,7 +198,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
 | `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
-| `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, direction report, engine readiness and quality metrics |
+| `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
@@ -482,3 +482,25 @@ not present in this repository. Their consumer contract is to embed the same
 `budgets` object from `phm budget show --json`; this change does not create or
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
+
+## Engineering lanes console
+
+`phm fleet lanes [--json] [--queue-dir <abs>]` prints the `fleet.lanes.v1`
+projection — one row per router lane (pool) with credit left, ready-queue
+depth, live jobs and merges per hour — and the same projection is served on
+the loopback console at `GET /api/fleet/lanes` and rendered in the Fleet
+view. It is strictly read-only: bounded file reads, no writes, no spawned
+readers, no provider calls, no secrets.
+
+Inputs are the existing readers' artifacts. From the router queue directory
+(`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
+(merge transitions in the trailing hour), and `usage-readings.log`. Credit
+comes from the pool-budget ledger; a queue-local `budgets/` directory or the
+usage journal fill pools the ledger has not observed.
+
+Every input degrades independently: a missing file reports `missing`, a
+corrupt one `degraded`, and the affected cells come back null/`unknown` rather
+than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
+directory covering every source.

@@ -1873,6 +1873,18 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/lanes ─────────────────────────────────────────────
+    // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
+    // credit left, queue depth, live jobs and merges/hour per router lane,
+    // from the host queue dir (ready.tsv/queue.v1.json/jobs.jsonl) and the
+    // local usage readers. READ-ONLY bounded fs reads; never throws on
+    // absent/degraded inputs; same no-auth read class as /api/fleet.
+    if (path === '/api/fleet/lanes' && method === 'GET') {
+      const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
+      sendJson(res, 200, await getFleetLaneSnapshot());
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
