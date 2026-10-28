@@ -2302,6 +2302,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'sweep': {
+        const { cmdSweep } = await import('./sweep.js');
+        process.exitCode = await cmdSweep(rest);
+        break;
+      }
+
       case 'digest': {
         const cmdDigest = await loadDigestCmd();
         process.exitCode = await cmdDigest(rest);
