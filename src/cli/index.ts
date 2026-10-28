@@ -2159,6 +2159,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'queue': {
+        const { cmdQueue } = await import('./queue.js');
+        process.exitCode = await cmdQueue(rest);
+        break;
+      }
+
       case 'backlog': {
         const cmdBacklog = await loadBacklogCmd();
         process.exitCode = await cmdBacklog(rest);
