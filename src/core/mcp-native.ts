@@ -171,28 +171,28 @@ interface NativeToolImpl extends NativeToolDef {
 
 const TOOLS: NativeToolImpl[] = [
   {
-    name: 'phm_proactive_agents_list', description: 'Read a page of configured personal-agent profile summaries and operation readiness. Profiles do not prove a connected adapter or authorize spending.',
+    name: 'phm_proactive_agents_list', description: 'List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending.',
     inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
   },
   {
-    name: 'phm_proactive_agents_create', description: 'Save private agent metadata with its provider/account/agent identity, declared capabilities and local assignment preferences. Saving does not establish a connected adapter, autonomous dispatch or spending authority.',
+    name: 'phm_proactive_agents_create', description: 'Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending.',
     inputSchema: { type: 'object', properties: { profile: PROACTIVE_PROFILE_INPUT_SCHEMA }, required: ['profile'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).createProactiveProfile(args),
   },
   {
-    name: 'phm_proactive_agents_update', description: 'Edit configured personal-agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot be changed.',
+    name: 'phm_proactive_agents_update', description: 'Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, patch: PROACTIVE_PROFILE_PATCH_SCHEMA }, required: ['id', 'patch'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).updateProactiveProfile(args),
   },
   {
-    name: 'phm_proactive_agents_delete', description: 'Remove a local configured personal-agent profile using its current expectedVersion. This does not delete a provider agent or account.',
+    name: 'phm_proactive_agents_delete', description: 'Remove a local agent profile using its current expectedVersion. Does not delete the provider agent or account.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, expectedVersion: { type: 'number' } }, required: ['id', 'expectedVersion'], additionalProperties: false },
     safety: 'append', handler: async args => (await import('./proactive/tools.js')).deleteProactiveProfile(args),
   },
   {
     name: 'phm_task_context',
-    description: 'Read private evidence for one saved Phantom outcome task, including source references, event/observation times, conflicts and missing history. Uses exact current task and repository scope; does not import an inbox or dispatch work.',
+    description: 'Read private evidence, sources, times, conflicts and missing history for an exact saved outcome task and repo. Does not import an inbox or dispatch work.',
     inputSchema: { type: 'object', properties: {
       outcomeId: { type: 'string' }, taskId: { type: 'string', description: 'The stable task ID returned by the saved outcome.' },
       asOf: { type: 'string', description: 'Optional event-time view with an explicit timezone offset.' },
@@ -209,42 +209,42 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
-    name: 'phm_team_register', description: 'Register this agent (Claude Code, Codex, Grok Bot, Meta Muse, OpenAI dot, Devin, local) on the local team bus with its capabilities. Identity only; grants no authority.',
+    name: 'phm_team_register', description: 'Register an agent and its capabilities on the local team bus. Identity only; grants no authority.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_register, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamRegister(args),
   },
   {
-    name: 'phm_team_publish', description: 'Post a team message or a presence/status heartbeat to the local team bus. Credential-shaped text is refused.',
+    name: 'phm_team_publish', description: 'Post a team message or presence heartbeat. Credential-shaped text is refused.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_publish, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamPublish(args),
   },
   {
-    name: 'phm_team_view', description: 'Read the team view: members and presence, active repo/branch/path claims, handoffs, pending approvals and recent messages.',
+    name: 'phm_team_view', description: 'Read team members, presence, claims, handoffs, approvals and recent messages.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_view, safety: 'read',
     handler: async args => (await import('./teams/tools.js')).teamView(args),
   },
   {
-    name: 'phm_team_claim', description: 'Acquire or release a lease on a repo, branch or path so humans and agent fleets do not collide. Returns conflicts instead of overriding another holder.',
+    name: 'phm_team_claim', description: 'Acquire or release a repo, branch or path lease. Conflicts do not override another holder.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_claim, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamClaim(args),
   },
   {
-    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff between agents and humans. Consequential actions (push-main, deploy, release, merge, rotate-secret, external-message, delete, spend) wait for human owner/admin approval before anyone can accept.',
+    name: 'phm_team_handoff', description: 'Request, accept, complete or decline a handoff. Push-main, deploy, release, merge, rotate-secret, external-message, delete and spend require human owner/admin approval before acceptance.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_handoff, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamHandoff(args),
   },
   {
-    name: 'phm_team_context_add', description: 'Add scoped shared context (owner personal/company/client:<name>, project, person) with required provenance. Credential-shaped values are refused; reference secrets as phm_<name>.',
+    name: 'phm_team_context_add', description: 'Add shared context scoped by owner (personal/company/client:<name>), project and person, with provenance. Credential-shaped values are refused; use phm_<name> references.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_add, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamContextAdd(args),
   },
   {
-    name: 'phm_team_context_get', description: 'Retrieve a compact, cited context pack for a query under a token budget. Scope-filtered: client context never crosses clients and personal context stays personal.',
+    name: 'phm_team_context_get', description: 'Retrieve cited context within a token budget. Client and personal scopes remain isolated.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_get, safety: 'read',
     handler: async args => (await import('./teams/tools.js')).teamContextGet(args),
   },
   {
-    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged Phantom website revision. Returns queued, already-recorded, or held (nothing queued) when publication is not commissioned or no valid standing grant exists; queued is not published. The host verifies signed scope, source, build and production aliases independently. Does not change settings or obtain credentials.',
+    name: 'ashlr_website_publish', description: 'Request publication of the exact normally merged website revision. Returns queued, already-recorded or held; queued is not published. Commissioning and a valid standing grant are required. The host verifies signed scope, source, build and production aliases. Does not change settings or obtain credentials.',
     inputSchema: { type: 'object', properties: { profile: { type: 'string', enum: ['phantom-public-web'] }, expectedMerge: { type: 'string', pattern: '^[a-f0-9]{40}$', description: 'Full 40-character lowercase SHA of the merged revision.' } }, required: ['profile','expectedMerge'], additionalProperties: false },
     safety: 'append', handler: async (args) => (await import('./website/host-release.js')).requestWebsitePublication(args),
   },
