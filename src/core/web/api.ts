@@ -42,6 +42,7 @@
  *    (tracked by server.ts).
  */
 
+import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -2245,6 +2246,10 @@ export async function handleApi(
         path,
         method,
       );
+    }
+
+    if (path === '/api/verse/feedback') {
+      return handleFrictionFeedback(ctx, req, res);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
