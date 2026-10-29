@@ -9,6 +9,7 @@ const roots: string[] = [];
 const paths = [
   'package.json', 'package-lock.json', 'desktop/package.json',
   'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/Cargo.lock',
+  'server.json',
   'CHANGELOG.md', '.github/workflows/release.yml',
   'desktop/README.md',
   'README.md', 'docs/QUICKSTART.md',
@@ -32,6 +33,9 @@ function fixture() {
     { label: 'main', url: 'http://127.0.0.1:7777/verse/?v=3.27.0&keep=yes#anchor' },
     { label: 'launch', url: 'index.html' },
   ] }, bundle: { shortDescription: 'Phantom — workbench' } });
+  putJson('server.json', { name: 'io.github.ashlrai/phantom', version: '3.27.0', packages: [
+    { registryType: 'npm', identifier: '@ashlr/phantom', version: '3.27.0', runtimeHint: 'npx' },
+  ] });
   writeFileSync(join(root, 'desktop/src-tauri/Cargo.toml'), '[package]\nname = "ashlr-desktop"\nversion = "3.27.0" # own version\n\n[dependencies]\nunrelated = "3.27.0"\n');
   writeFileSync(join(root, 'desktop/src-tauri/Cargo.lock'), '# Locked dependencies\nversion = 4\n\n[[package]]\nname = "unrelated"\nversion = "3.27.0"\nchecksum = "preserve-me"\n\n[[package]]\nname = "ashlr-desktop"\nversion = "3.27.0"\ndependencies = ["unrelated"]\n');
   writeFileSync(join(root, 'CHANGELOG.md'), '## [3.27.0] — historical published release\n');
@@ -66,12 +70,13 @@ describe('candidate version synchronization', () => {
     const before = paths.map((path) => read(root, path));
     const check = syncCandidateVersion(root, '3.28.0', { check: true });
     expect(check.matches).toBe(false);
-    expect(check.changed).toHaveLength(9);
+    expect(check.changed).toHaveLength(10);
     expect(paths.map((path) => read(root, path))).toEqual(before);
-    expect(syncCandidateVersion(root, '3.28.0').changed).toHaveLength(9);
-    for (const path of ['package.json', 'package-lock.json', 'desktop/package.json', 'desktop/src-tauri/tauri.conf.json']) {
+    expect(syncCandidateVersion(root, '3.28.0').changed).toHaveLength(10);
+    for (const path of ['package.json', 'package-lock.json', 'desktop/package.json', 'desktop/src-tauri/tauri.conf.json', 'server.json']) {
       expect(json(root, path).version).toBe('3.28.0');
     }
+    expect(json(root, 'server.json').packages[0].version).toBe('3.28.0');
     expect(json(root, 'package-lock.json').packages[''].version).toBe('3.28.0');
     expect(json(root, 'package-lock.json').packages['node_modules/unrelated']).toEqual({ version: '3.27.0', integrity: 'preserve-me' });
     expect(json(root, 'package.json').dependencies.unrelated).toBe('3.27.0');
@@ -83,8 +88,8 @@ describe('candidate version synchronization', () => {
     expect(read(root, 'desktop/src-tauri/Cargo.toml')).toContain('unrelated = "3.27.0"');
     expect(read(root, 'desktop/src-tauri/Cargo.lock')).toContain('name = "unrelated"\nversion = "3.27.0"\nchecksum = "preserve-me"');
     expect(read(root, 'desktop/src-tauri/Cargo.lock')).toContain('name = "ashlr-desktop"\nversion = "3.28.0"');
-    expect(read(root, 'CHANGELOG.md')).toBe(before[6]);
-    expect(read(root, '.github/workflows/release.yml')).toBe(before[7]);
+    expect(read(root, 'CHANGELOG.md')).toBe(before[7]);
+    expect(read(root, '.github/workflows/release.yml')).toBe(before[8]);
     expect(read(root, 'desktop/README.md')).toContain('This source tree targets version 3.28.0;');
     expect(read(root, 'desktop/README.md')).toContain('The published 3.27.0 release is historical.');
     for (const path of ['README.md', 'docs/QUICKSTART.md']) {
@@ -133,6 +138,22 @@ describe('candidate version synchronization', () => {
       writeFileSync(join(root, path), `${JSON.stringify(value, null, 2)}\n`);
       const before = paths.map((file) => read(root, file));
       expect(() => syncCandidateVersion(root, '3.28.0')).toThrow();
+      expect(paths.map((file) => read(root, file))).toEqual(before);
+    }
+  });
+
+  it('refuses an MCP registry manifest that is not the Phantom npm package, without editing', () => {
+    for (const mutate of [
+      (manifest: { name: string }) => { manifest.name = 'io.github.someone/else'; },
+      (manifest: { packages: { identifier: string }[] }) => { manifest.packages[0].identifier = '@someone/else'; },
+      (manifest: { packages: { registryType: string }[] }) => { manifest.packages[0].registryType = 'oci'; },
+    ]) {
+      const root = fixture();
+      const manifest = json(root, 'server.json');
+      mutate(manifest);
+      writeFileSync(join(root, 'server.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      const before = paths.map((file) => read(root, file));
+      expect(() => syncCandidateVersion(root, '3.28.0')).toThrow(/MCP registry manifest/);
       expect(paths.map((file) => read(root, file))).toEqual(before);
     }
   });
