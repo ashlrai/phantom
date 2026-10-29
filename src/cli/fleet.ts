@@ -2,7 +2,7 @@
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
  * Subcommands:
- *   fleet status [--json]
+ *   fleet status [--json] [--legacy]
  *       Print a READ-ONLY snapshot of the whole fleet: daemon liveness +
  *       today's spend, per-backend recent dispatches + quota, queue size,
  *       proposal counts (pending / frontier-pending / applied), recent
@@ -22,7 +22,8 @@
  *       Release the kill switch (setKill(false)). Idempotent.
  *
  * Pause/resume mutate only the kill-switch sentinel. The nested shadow canary
- * command owns its separate metadata-only controller store; status remains read-only.
+ * command owns its separate metadata-only controller store. `queue` owns the
+ * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
 import { readFileSync } from 'node:fs';
@@ -1681,7 +1682,7 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(status) + '\n');
     return 0;
   }
 
@@ -1709,7 +1710,7 @@ async function cmdFleetDirection(args: string[]): Promise<number> {
     const { buildResourceStrategyReport } = await import('../core/autonomy/resource-strategy.js');
     const report = await buildResourceStrategyReport(cfg);
     if (jsonMode) {
-      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      process.stdout.write(JSON.stringify(report) + '\n');
       return 0;
     }
     console.log('');
@@ -1801,7 +1802,7 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
   // ── JSON mode ────────────────────────────────────────────────────────────
   if (jsonMode) {
     process.stdout.write(
-      JSON.stringify({ fleet: fleetStatus, recentActions, recentErrors }, null, 2) + '\n',
+      JSON.stringify({ fleet: fleetStatus, recentActions, recentErrors }) + '\n',
     );
     return 0;
   }
@@ -2010,7 +2011,7 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
   const results = fleetReadiness(cfg ?? undefined);
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(results, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(results) + '\n');
     return 0;
   }
 
@@ -2152,7 +2153,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ ...metrics, selfEvaluation }) + '\n');
     return 0;
   }
 
@@ -2286,7 +2287,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
-  status:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet status [--json]' },
+  status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2298,6 +2299,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'queue') {
+    const { cmdRouterQueue } = await import('./router-queue.js');
+    return cmdRouterQueue(args.slice(1));
+  }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
@@ -2307,8 +2312,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
-  // released it. automerge-canary owns its own help and refusals.
-  if (sub !== 'automerge-canary' && (rest.includes('--help') || rest.includes('-h'))) {
+  // released it. automerge-canary and xreview own their own help and refusals.
+  if (sub !== 'automerge-canary' && sub !== 'xreview' && (rest.includes('--help') || rest.includes('-h'))) {
     printFleetHelp();
     return 0;
   }
@@ -2335,6 +2340,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   switch (sub) {
     case 'status':
+      // This baseline's status handler already produces the legacy control-plane
+      // report; accept the explicit selector used by activation-readiness callers.
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
@@ -2351,6 +2358,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     case 'automerge-canary': {
       const { cmdAutoMergeCanary } = await import('./automerge-canary.js');
       return cmdAutoMergeCanary(rest);
+    }
+    case 'xreview': {
+      const { cmdFleetCrossReview } = await import('./cross-review.js');
+      return cmdFleetCrossReview(rest);
     }
     case 'receipt': {
       const { cmdFleetReceipt } = await import('./receipt.js');
@@ -2381,15 +2392,19 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
-  console.log(`    ashlr fleet status [--json]   ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
+  console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
+  console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);
+  console.log(`                          ${cyan('# cross-model review on another pool + SHA-bound merge decision')}`);
   console.log(`    ashlr fleet evidence doctor <source> [--deep] [--json]`);
   console.log(`                          ${cyan('# bounded read-only ledger diagnosis')}`);
   console.log(`    ashlr fleet scorecard [--window 7d|30d|all] [--by-engine] [--by-repo] [--json]`);
@@ -2425,7 +2440,7 @@ async function cmdFleetEvidence(args: string[]): Promise<number> {
   }
   const result = diagnoseFleetEvidence(source, { deep: flags.includes('--deep') });
   if (jsonMode) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
     console.log('');
     console.log(bold(`  ${result.source} evidence`));
@@ -2475,7 +2490,7 @@ async function cmdFleetOversight(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(snapshot, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(snapshot) + '\n');
     return 0;
   }
 
@@ -2571,7 +2586,7 @@ async function cmdFleetJudgeTraces(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ traces, stats }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ traces, stats }) + '\n');
     return 0;
   }
 
@@ -2688,7 +2703,7 @@ async function cmdFleetJudgeHealth(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(report) + '\n');
     return 0;
   }
 
@@ -2890,7 +2905,7 @@ async function cmdFleetOptimizePrompt(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(result) + '\n');
     return 0;
   }
 

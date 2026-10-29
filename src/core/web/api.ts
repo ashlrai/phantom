@@ -21,6 +21,7 @@
  *   GET /api/autonomy/evidence -> list autonomy evidence packs (metadata only)
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
+ *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -42,6 +43,7 @@
  *    (tracked by server.ts).
  */
 
+import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -98,6 +100,7 @@ import { readUniverseOverview } from '../universe/index.js';
 import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
+import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
@@ -1302,7 +1305,23 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === HOST_SUMMARY_PATH) {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+      } else {
+        sendJson(res, 200, await buildHostSummary(cfg, req.socket));
+      }
+      return true;
+    }
+
     // ── GET /api/snapshot ───────────────────────────────────────────────────
+    if (path === '/api/resource' && method === 'GET') {
+      const { readResourceView } = await import('../fabric/resource-view-store.js');
+      sendJson(res, 200, await readResourceView());
+      return true;
+    }
+
     if (path === '/api/snapshot' && method === 'GET') {
       const snapshot = await buildCachedSnapshot(cfg, ctx.readProjections);
       // Read authority after the potentially slow snapshot build so the
@@ -2245,6 +2264,10 @@ export async function handleApi(
         path,
         method,
       );
+    }
+
+    if (path === '/api/verse/feedback') {
+      return handleFrictionFeedback(ctx, req, res);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────

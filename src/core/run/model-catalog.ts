@@ -15,6 +15,33 @@
 
 import type { EngineId } from '../types.js';
 
+/**
+ * HTTP API version, independent of the Anthropic SDK major version.
+ * Migration: https://platform.claude.com/docs/en/api/migration-2026-10-21
+ * Messages using this version must omit temperature, top_p and top_k.
+ */
+export const ANTHROPIC_API_VERSION = '2026-10-21';
+
+/**
+ * Protocol compatibility does not imply support for Anthropic's version contract.
+ * Local runtimes do not negotiate that contract, so they omit the header.
+ */
+export const PROVIDER_API_CAPABILITIES = Object.freeze({
+  anthropic: Object.freeze({ anthropicVersionHeader: true }),
+  'llama-server': Object.freeze({ anthropicVersionHeader: false }),
+  ollama: Object.freeze({ anthropicVersionHeader: false }),
+});
+
+/** Relays to Anthropic retain its provider identity; unknown providers opt out. */
+export function anthropicVersionHeaders(provider: string): Record<string, string> {
+  const capabilities = Object.hasOwn(PROVIDER_API_CAPABILITIES, provider)
+    ? PROVIDER_API_CAPABILITIES[provider as keyof typeof PROVIDER_API_CAPABILITIES]
+    : undefined;
+  return capabilities?.anthropicVersionHeader === true
+    ? { 'anthropic-version': ANTHROPIC_API_VERSION }
+    : {};
+}
+
 /** Resolve identity for an already selected engine, without ranking catalog priors. */
 export function resolveSelectedEngineModel(input: {
   engine: string;
@@ -152,7 +179,18 @@ export interface ModelEntry {
   toolApi?: 'responses';
   /** Exact historical lookup remains valid; not offered for automatic new work. */
   historical?: true;
+  /** Published maximum context, not a claim about the connected account. */
+  contextWindowTokens?: number;
+  /** Provider reasoning settings, distinct from a WorkItem's effort estimate. */
+  reasoningEfforts?: readonly ('none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max')[];
+  /** Relative task speed estimate, normalized to Sol = 1. */
+  relativeSpeed?: number;
+  /** Relative plan consumption prior, not measured allowance or admission. */
+  planAllowanceWeight?: number;
 }
+
+/** Model selection only. These never change engine admission or authority tiers. */
+export type ModelRoutingTier = 'fast' | 'mid' | 'computer' | 'work' | 'frontier';
 
 // ---------------------------------------------------------------------------
 // The catalog
@@ -161,6 +199,8 @@ export interface ModelEntry {
 /** Current native defaults, verified against installed catalogs on 2026-10-09. */
 export const DEFAULT_CLAUDE_MODEL_ID = 'claude-opus-5-5';
 export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.1-sol';
+export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
+export const CODEX_ASTRA_MODEL_ID = 'gpt-6-astra';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 
 export const KNOWN_MODELS: readonly ModelEntry[] = [
@@ -184,6 +224,35 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     costPerMTokIn: 2, costPerMTokOut: 10,
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
     minEffort: 2, apiModelId: DEFAULT_CODEX_MODEL_ID,
+    relativeSpeed: 1, planAllowanceWeight: 1,
+  },
+  {
+    // https://openai.com/index/introducing-gpt-6-1-terra/
+    // API prices are published. Speed is workload-dependent; allowance is a
+    // conservative policy prior, never a replacement for subscriptionAllows.
+    id: `codex:${CODEX_TERRA_MODEL_ID}`, engine: 'codex', tier: 'mid',
+    costPerMTokIn: 1, costPerMTokOut: 5,
+    capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 1, apiModelId: CODEX_TERRA_MODEL_ID,
+    contextWindowTokens: 1_050_000,
+    reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+    relativeSpeed: 3, planAllowanceWeight: 0.5,
+  },
+  {
+    id: `codex:${CODEX_ASTRA_MODEL_ID}`, engine: 'codex', tier: 'large',
+    costPerMTokIn: 10, costPerMTokOut: 50,
+    capabilities: ['general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 4, apiModelId: CODEX_ASTRA_MODEL_ID,
+    relativeSpeed: 1, planAllowanceWeight: 5,
+  },
+  // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
+  // Pricing is a routing estimate, not account admission or spending authority.
+  {
+    id: 'claude:claude-haiku-5-5', engine: 'claude', tier: 'small',
+    // Conservative >100k prompt rate; shorter prompts cost $0.10/$0.50.
+    costPerMTokIn: 0.5, costPerMTokOut: 2.5,
+    capabilities: ['fast', 'general', 'long-context'],
+    minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
   },
   {
     id: 'codex:gpt-6.1-terra', engine: 'codex', tier: 'mid',

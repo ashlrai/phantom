@@ -30,7 +30,7 @@ export function Topbar({ onOpenPalette }: { onOpenPalette: () => void }) {
           </span>
         )}
         <button type="button" className={styles.themeBtn} onClick={cycleTheme} aria-label={`Theme: ${theme}`}>
-          {theme === 'system' ? '🖥️' : theme === 'light' ? '☀️' : '🌙'}
+          {theme === 'system' ? '🖥️' : theme === 'light' ? '☀️' : theme === 'dark' ? '🌙' : '◐'}
         </button>
       </div>
       <NotificationCenter />
