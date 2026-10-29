@@ -3,7 +3,7 @@
 # Phantom
 
 <!-- fresh:begin version-badge -->
-[![Source version 3.29.15](https://img.shields.io/badge/source-3.29.15-blue)](https://github.com/ashlrai/phantom)
+[![Source version 3.30.0](https://img.shields.io/badge/source-3.30.0-blue)](https://github.com/ashlrai/phantom)
 <!-- fresh:end -->
 
 **Give agents the work. Keep the evidence.**
@@ -29,7 +29,7 @@
 
 Canonical Phantom releases use `@ashlr/phantom` from `ashlrai/phantom`.
 Install the canonical package's promoted release.
-This source tree targets version 3.29.15; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
 
 ```sh
 node --version                  # must print v22.15.0 or newer; npm only warns on older Node
