@@ -353,7 +353,7 @@ describe('engineering HTTP capability boundary', () => {
     const handle = await start({ engineeringFile: undefined }); expect(handle.scope.engineeringSupported).toBeUndefined();
     expect((await post(handle)).status).toBe(403); expect(owner.create).not.toHaveBeenCalled();
   });
-  it.each([{ execute: false, workspace: undefined, projectsFile: undefined }, { projectsFile: undefined }])('refuses enrollment without explicit execution and projects', async (patch) => {
+  it.each([{ execute: false, workspace: undefined, projectsFile: undefined }, { projectsFile: undefined }])('refuses enrollment without explicit execution and projects (%#)', async (patch) => {
     await expect(start(patch)).rejects.toThrow(); expect(owner.create).not.toHaveBeenCalled();
   });
   it('awaits engineering close and makes new requests unavailable immediately', async () => {

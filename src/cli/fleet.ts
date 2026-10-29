@@ -28,7 +28,8 @@
  *       Release the kill switch (setKill(false)). Idempotent.
  *
  * Pause/resume mutate only the kill-switch sentinel. The nested shadow canary
- * command owns its separate metadata-only controller store; status remains read-only.
+ * command owns its separate metadata-only controller store. `queue` owns the
+ * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
 import { readFileSync } from 'node:fs';
@@ -2420,6 +2421,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'queue') {
+    const { cmdRouterQueue } = await import('./router-queue.js');
+    return cmdRouterQueue(args.slice(1));
+  }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
@@ -2521,6 +2526,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
+  console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
   console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);

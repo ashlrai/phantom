@@ -59,17 +59,17 @@ afterEach(() => {
 
 describe('explicit resource pool CLI parsing and admission', () => {
   it.each([
-    [], ['other'], ['status'], ['run', ...scope], ['status', ...scope, '--task', files.task],
-    ['status', ...scope, '--output', '/private/fixture/output'], ['status', ...scope, '--root', '/private/other'],
-    ['status', ...scope, '--json', '--json'], ['status', ...scope, '--unknown'], ['status', ...scope, 'extra'],
-    ['status', ...scope, '--'], ['status', ...scope, '--help'], ['status', '--help', '--json'],
-    ['status', '--root=somewhere'], ['status', ...scope, '--bindings'],
-    ['run', ...scope, '--task', files.task, '--output'], ['run', ...scope, '--task', files.task, '--output', 'relative'],
-    ['run', ...scope, '--task', files.task, '--output', '/'], ['status', '--root', '/', ...scope.slice(2)],
-    ['status', '--root', '~/.ashlr', ...scope.slice(2)], ['status', '--root', '/private/..', ...scope.slice(2)],
-    ['status', '--root', '/private/x\n', ...scope.slice(2)], ['status', '--root', '/private/x\u0085', ...scope.slice(2)],
-    ['status', '--root', `/${'é'.repeat(2048)}`, ...scope.slice(2)], Array.from({ length: 21 }, () => '--json'),
-  ])('rejects %j before runtime import, file read or dispatch', async (...args) => {
+    [[]], [['other']], [['status']], [['run', ...scope]], [['status', ...scope, '--task', files.task]],
+    [['status', ...scope, '--output', '/private/fixture/output']], [['status', ...scope, '--root', '/private/other']],
+    [['status', ...scope, '--json', '--json']], [['status', ...scope, '--unknown']], [['status', ...scope, 'extra']],
+    [['status', ...scope, '--']], [['status', ...scope, '--help']], [['status', '--help', '--json']],
+    [['status', '--root=somewhere']], [['status', ...scope, '--bindings']],
+    [['run', ...scope, '--task', files.task, '--output']], [['run', ...scope, '--task', files.task, '--output', 'relative']],
+    [['run', ...scope, '--task', files.task, '--output', '/']], [['status', '--root', '/', ...scope.slice(2)]],
+    [['status', '--root', '~/.ashlr', ...scope.slice(2)]], [['status', '--root', '/private/..', ...scope.slice(2)]],
+    [['status', '--root', '/private/x\n', ...scope.slice(2)]], [['status', '--root', '/private/x\u0085', ...scope.slice(2)]],
+    [['status', '--root', `/${'é'.repeat(2048)}`, ...scope.slice(2)]], [Array.from({ length: 21 }, () => '--json')],
+  ])('rejects %j before runtime import, file read or dispatch', async (args) => {
     const imports = backend.imported.mock.calls.length;
     expect(await cmdResourcePool(args)).toBe(2); expect(backend.imported).toHaveBeenCalledTimes(imports);
     expect(backend.read).not.toHaveBeenCalled(); expect(backend.run).not.toHaveBeenCalled();
@@ -237,8 +237,8 @@ describe('foreground resource task result, output and cancellation', () => {
     expect(backend.run).not.toHaveBeenCalled();
   });
 
-  it.each([['credits', '--help'], ['credits', '--json'], ['--unknown'], ['--json', '--json']])(
-    'rejects unsupported top-level arguments %j without account discovery', async (...args) => {
+  it.each([[['credits', '--help']], [['credits', '--json']], [['--unknown']], [['--json', '--json']]])(
+    'rejects unsupported top-level arguments %j without account discovery', async (args) => {
       const { cmdResources } = await import('../src/cli/resources.js');
       expect(await cmdResources(args)).toBe(2);
       expect(backend.config).not.toHaveBeenCalled();
@@ -263,15 +263,15 @@ describe('owner-supplied quota export normalization CLI', () => {
   }
 
   it.each([
-    ['observe'], ['observe', '--help', '--json'], ['observe', '--pool', 'relative'],
-    ['observe', '--pool', files.pool, '--worker', 'unknown', '--provider', 'local', '--input', nativeFile, '--captured-at', capturedAt],
-    ['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'codex', '--input', nativeFile],
-    ['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'codex', '--input', nativeFile, '--captured-at', capturedAt],
-    ['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'claude', '--input', nativeFile, '--captured-at', capturedAt, '--bucket', 'codex'],
-    [...observe(), '--bucket', 'codex'], [...observe(), '--bucket', 'b', '--bucket', 'c', '--bucket', 'd', '--bucket', 'e'],
-    [...observe(), '--root', root], [...observe(), '--output', '/private/fixture/extra'], [...observe(), '--json', '--json'],
-    [...observe(), '--captured-at', capturedAt],
-  ])('rejects invalid observe options %j before runtime import or reads', async (...args) => {
+    [['observe']], [['observe', '--help', '--json']], [['observe', '--pool', 'relative']],
+    [['observe', '--pool', files.pool, '--worker', 'unknown', '--provider', 'local', '--input', nativeFile, '--captured-at', capturedAt]],
+    [['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'codex', '--input', nativeFile]],
+    [['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'codex', '--input', nativeFile, '--captured-at', capturedAt]],
+    [['observe', '--pool', files.pool, '--worker', 'codex-a', '--provider', 'claude', '--input', nativeFile, '--captured-at', capturedAt, '--bucket', 'codex']],
+    [[...observe(), '--bucket', 'codex']], [[...observe(), '--bucket', 'b', '--bucket', 'c', '--bucket', 'd', '--bucket', 'e']],
+    [[...observe(), '--root', root]], [[...observe(), '--output', '/private/fixture/extra']], [[...observe(), '--json', '--json']],
+    [[...observe(), '--captured-at', capturedAt]],
+  ])('rejects invalid observe options %j before runtime import or reads', async (args) => {
     const imported = backend.imported.mock.calls.length;
     expect(await cmdResourcePool(args)).toBe(2); expect(backend.imported).toHaveBeenCalledTimes(imported);
     expect(backend.read).not.toHaveBeenCalled(); expect(backend.run).not.toHaveBeenCalled();

@@ -41,10 +41,10 @@ describe('Universe CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    ['run'], ['run', '../escape'], ['run', 'one', 'two'], ['unknown'],
-    ['status', '--wat'], ['status', '--root'], ['init'],
-    ['status', '--manifest', 'a.json'], ['demo', '--root', '/a', '--root', '/b'],
-  ])('rejects invalid invocation %j before executing', async (...args) => {
+    [['run']], [['run', '../escape']], [['run', 'one', 'two']], [['unknown']],
+    [['status', '--wat']], [['status', '--root']], [['init']],
+    [['status', '--manifest', 'a.json']], [['demo', '--root', '/a', '--root', '/b']],
+  ])('rejects invalid invocation %j before executing', async (args) => {
     expect(await cmdUniverse([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.initUniverse).not.toHaveBeenCalled();

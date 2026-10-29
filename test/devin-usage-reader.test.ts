@@ -68,7 +68,7 @@ describe('custodied Devin usage worker', () => {
   it('uses five minutes for invalid retry-after', async () => {
     expect((await worker({ status: 429, retry: 'invalid' })).value.retryAt).toBe(NOW + DEVIN_USAGE_TTL_MS);
   });
-  it.each([null, {}, { items: 'bad' }, { items: [{ after: 1, before: 'bad' }] }])('rejects malformed cycles', async body => {
+  it.each([null, {}, { items: 'bad' }, { items: [{ after: 1, before: 'bad' }] }])('rejects malformed cycles (row %#)', async body => {
     expect((await worker({ bodies: [body] })).value.reason).toBe('malformed-body');
   });
   it('does not infer a reset from a historical cycle', async () => {
