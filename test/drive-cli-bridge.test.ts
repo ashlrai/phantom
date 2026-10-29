@@ -119,6 +119,9 @@ describe('drive bridge transport', () => {
     await bridge.reservePublish('lease', 'job');
     await bridge.finishPublish('lease', 'job', 'unknown');
     expect(JSON.parse(command.mock.calls.at(-1)![1][1]!)).toEqual({ protocol: 'phm-drive/v1', lease: 'lease', job: 'job', outcome: 'unknown' });
+    await bridge.report('lease', 'RQ-VERIFY-PR1088');
+    expect(JSON.parse(command.mock.calls.at(-1)![1][1]!)).toEqual({ protocol: 'phm-drive/v1', lease: 'lease', job: 'RQ-VERIFY-PR1088' });
+    expect(command.mock.calls.at(-1)![1][0]).toBe('report');
     await bridge.reservePublish('lease', 'job');
     await bridge.release('lease');
     await expect(bridge.publish('/owned/publish.sh', 'job', 'lease')).rejects.toThrow('no durable reservation');

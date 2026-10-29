@@ -105,6 +105,9 @@ export class ScriptDriveBridge implements DriveBridge {
     this.publications.delete(`${lease}/${job}`);
     await this.acknowledge('finish-publish', { lease, job, outcome });
   }
+  report(lease: string, job: string): Promise<void> {
+    return this.acknowledge('report', { lease, job });
+  }
   writeStatus(lease: string, report: DriveReport): Promise<void> {
     return this.acknowledge('write-status', { lease, report });
   }
