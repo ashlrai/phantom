@@ -1,6 +1,8 @@
 /**
  * core/verse/process-registry.ts — which vendor CLI processes this Verse
- * server launched, so the NEXT server can reap the ones a crash left behind.
+ * server launched. Session children now carry an active parent-death watchdog;
+ * the disk registry remains the identity-checked fallback for older launches
+ * and terminal shells when the NEXT server starts.
  *
  *   <root>/running.json   (default root ~/.ashlr/verse; 0600, atomic rewrite)
  *   { "v": 1, "entries": [ { kind?, sessionId, turnId, pid, pgid, markers,
@@ -44,11 +46,150 @@
  * server is dead); a clean start reads an empty file and spawns nothing.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import { writePrivateFileAtomically } from './session-store.js';
+
+/** Live children owned by this Phantom process, grouped by invocation/session. */
+const sessionChildren = new Map<string, Set<number>>();
+const failedBootstraps = new WeakSet<ChildProcess>();
+
+export function sessionChildPids(sessionId: string): readonly number[] {
+  return [...(sessionChildren.get(sessionId) ?? [])];
+}
+
+/** A launched bootstrap is not evidence that its executable actually started. */
+export function sessionChildStarted(child: ChildProcess): boolean {
+  return child.pid !== undefined && !failedBootstraps.has(child);
+}
+
+// exec preserves the vendor PID, status, signals and Verse MCP parent lookup.
+// The watchdog remains INSIDE the owned group, pinning its identity even after
+// the leader exits. EOF on fd 3 means Phantom exited or released this child.
+// No saved PID becomes authority to signal an unrelated process. A fixed shell
+// runs only this literal program; command/arguments are always positional data.
+const SESSION_CHILD_BOOTSTRAP = String.raw`
+fail() { printf '{"spawnError":"%s"}\n' "$1" >&3; exit 127; }
+case "$1" in
+  */*)
+    [ -e "$1" ] || fail ENOENT
+    [ -f "$1" ] && [ -x "$1" ] || fail EACCES
+    ;;
+  *) command -v "$1" >/dev/null 2>&1 || fail ENOENT ;;
+esac
+leader=$$
+# Set before fork: even a watchdog not yet scheduled survives graceful signals.
+trap '' TERM INT HUP
+(
+  IFS= read -r discarded <&3 || :
+  kill -TERM -"$leader" 2>/dev/null || :
+  /bin/sleep 0.25
+  # This watchdog still anchors the original group, including after leader exit.
+  kill -KILL -"$leader" 2>/dev/null
+) </dev/null >/dev/null 2>&1 &
+printf '{"watchdogPid":%s}\n' "$!" >&3 || exit 127
+trap - TERM INT HUP
+# Shells add/change these keys. Restore the caller's exact environment through
+# env, then discard all bootstrap state. Other env values never become argv.
+[ -z "$ASHLR_CHILD_SHLVL" ] || set -- "$ASHLR_CHILD_SHLVL" "$@"
+[ -z "$ASHLR_CHILD_PWD" ] || set -- "$ASHLR_CHILD_PWD" "$@"
+[ -z "$ASHLR_CHILD_UNDERSCORE" ] || set -- "$ASHLR_CHILD_UNDERSCORE" "$@"
+unset ASHLR_CHILD_SHLVL ASHLR_CHILD_PWD ASHLR_CHILD_UNDERSCORE
+exec 3>&-
+exec /usr/bin/env -u SHLVL -u PWD -u _ -- "$@"
+`;
+
+/**
+ * Launch a POSIX session child with a pre-exec orphan guard. The watchdog is
+ * ready before the command runs, so parent death during startup is covered.
+ * Windows retains the native spawn contract; POSIX groups are unavailable there.
+ */
+export function spawnSessionChild(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+  sessionId: string,
+  spawnImpl: typeof spawn = spawn,
+): ChildProcess {
+  // env treats any name=value operand as an assignment, even after --. Never
+  // let an unusual executable name turn its arguments into a different command.
+  if (process.platform !== 'win32' && command.includes('=')) {
+    throw Object.assign(new Error('Executable names containing = are unsupported by the session supervisor'), { code: 'EINVAL' });
+  }
+  if (process.platform !== 'win32' && Array.isArray(options.stdio) && options.stdio.length > 3) {
+    throw new Error('Session supervisor reserves descriptor 3 for parent-death detection');
+  }
+  const env = { ...(options.env ?? process.env) };
+  // Reserved bootstrap state must always come from this invocation.
+  for (const key of ['ASHLR_CHILD_SHLVL', 'ASHLR_CHILD_PWD', 'ASHLR_CHILD_UNDERSCORE']) delete env[key];
+  const stdio = Array.isArray(options.stdio) ? [options.stdio[0] ?? 'pipe', options.stdio[1] ?? 'pipe', options.stdio[2] ?? 'pipe']
+    : Array(3).fill(options.stdio ?? 'pipe');
+  const child = process.platform === 'win32' ? spawnImpl(command, [...args], options) : spawnImpl(
+    '/bin/sh',
+    ['-p', '-c', SESSION_CHILD_BOOTSTRAP, 'phantom-session-child', command, ...args],
+    {
+      ...options,
+      detached: true,
+      shell: false,
+      env: {
+        ...env,
+        ...(env['SHLVL'] === undefined ? {} : { ASHLR_CHILD_SHLVL: `SHLVL=${env['SHLVL']}` }),
+        ...(env['PWD'] === undefined ? {} : { ASHLR_CHILD_PWD: `PWD=${env['PWD']}` }),
+        ...(env['_'] === undefined ? {} : { ASHLR_CHILD_UNDERSCORE: `_=${env['_']}` }),
+      },
+      stdio: [...stdio, 'pipe'],
+    },
+  );
+  const pids = sessionChildren.get(sessionId) ?? new Set<number>();
+  const owned = new Set<number>();
+  function track(pid: number): void {
+    pids.add(pid);
+    owned.add(pid);
+    sessionChildren.set(sessionId, pids);
+  }
+  // Bootstrap failures retain Node's errno-based ChildProcess error contract.
+  // Only PIDs/errno cross this pipe, never arguments or environment values.
+  let messages = '';
+  child.stdio?.[3]?.on('error', () => child.stdio?.[3]?.destroy());
+  child.stdio?.[3]?.on('data', (chunk: Buffer) => {
+    messages += chunk.toString('utf8');
+    let newline: number;
+    while ((newline = messages.indexOf('\n')) >= 0) {
+      const line = messages.slice(0, newline);
+      messages = messages.slice(newline + 1);
+      try {
+        const message = JSON.parse(line) as { spawnError?: string; watchdogPid?: number };
+        if (Number.isSafeInteger(message.watchdogPid) && message.watchdogPid! > 1) track(message.watchdogPid!);
+        if (message.spawnError && /^[A-Z0-9_]+$/.test(message.spawnError)) {
+          failedBootstraps.add(child);
+          child.emit('error', Object.assign(new Error(`spawn failed: ${message.spawnError}`), { code: message.spawnError }));
+        }
+      } catch { /* no valid bootstrap message */ }
+    }
+  });
+  const pid = child.pid;
+  if (pid !== undefined) {
+    track(pid);
+    // The watchdog owns fd 3 after exec. Release it on leader exit, including
+    // when inherited stdout writers would otherwise delay ChildProcess.close.
+    child.once('exit', () => {
+      const pipe = child.stdio?.[3];
+      // Half-close so queued startup errors/PID messages still drain before
+      // close; a destroy here can discard the errno of a fast failed exec.
+      if (pipe && 'end' in pipe && typeof pipe.end === 'function') pipe.end();
+    });
+    child.once('close', forget);
+    child.once('error', forget);
+    child.stdio?.[3]?.once('close', forget);
+    function forget(): void {
+      for (const ownedPid of owned) pids.delete(ownedPid);
+      if (pids.size === 0) sessionChildren.delete(sessionId);
+    }
+  }
+  return child;
+}
 
 export const VERSE_RUNNING_FILE = 'running.json';
 /** `ps -o lstart` has one-second resolution; a spawn is matched within this window. */

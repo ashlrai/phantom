@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { outputContractShape } from './output-contract-shape.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const homes: string[] = [];
@@ -38,6 +39,8 @@ describe('CLI: phm status --json', () => {
     const data = JSON.parse(result.stdout) as Record<string, unknown> & {
       summary: Record<string, number>; roots: Array<{ path: string; exists: boolean }>;
     };
+    expect(result.stdout).toBe(JSON.stringify(data) + '\n');
+    expect(outputContractShape(data)).toMatchSnapshot();
     expect(data.schemaVersion).toBe(1);
     expect(data.summary).toEqual({ tracked: 0, clean: 0, dirty: 0, offSync: 0, stale: 0, staleDays: 30 });
     expect(data.dirty).toEqual([]);

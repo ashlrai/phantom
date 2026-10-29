@@ -1,0 +1,23 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [
+    {
+      "id": "engine-account:codex/work",
+      "kind": "engine-account",
+      "engine": "codex",
+      "accountId": "work",
+      "seatIds": [
+        "work",
+        "work"
+      ]
+    }
+  ],
+  "edges": [],
+  "issues": []
+}

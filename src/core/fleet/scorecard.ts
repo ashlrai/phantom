@@ -49,6 +49,10 @@
  * kept OFF the HTTP event loop that way.
  */
 
+import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { isMemoryJobRecord, type MemoryJobRecord } from '../memory/job-accounting.js';
 import { listProposalsDetailed } from '../inbox/store.js';
 import {
   authenticatedRealizedMergeOf,
@@ -215,6 +219,7 @@ export interface FleetScorecard {
   byEngine: ScorecardEngineSplit[];
   /** Capability axis — separate from production velocity. See module doc. */
   capability: ScorecardCapability;
+  memory?: ScorecardMemoryImpact;
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +670,67 @@ function buildCapabilitySection(): ScorecardCapability {
   }
 }
 
+export interface ScorecardMemoryImpact {
+  sourceQuality: ScorecardSourceQuality;
+  jobs: number | null;
+  rssGbHours: number | null;
+  impact: number | null;
+  impactPerGbHour: number | null;
+}
+
+/** IMPACT-SCORE memory efficiency: authenticated realized merges per decimal
+ * GB-hour across all recorded jobs, including unsuccessful attempts. jobId must
+ * be the proposal ID to receive impact credit; telemetry cannot create credit.
+ */
+export function computeMemoryImpact(
+  records: readonly MemoryJobRecord[],
+  realizedIds: ReadonlySet<string>,
+): ScorecardMemoryImpact {
+  const unknown: ScorecardMemoryImpact = {
+    sourceQuality: { sourceState: 'degraded', complete: false, reasons: ['incomplete-job-memory'] },
+    jobs: null, rssGbHours: null, impact: null, impactPerGbHour: null,
+  };
+  const ids = new Set<string>();
+  let rssGbHours = 0;
+  let impact = 0;
+  for (const record of records) {
+    if (!isMemoryJobRecord(record) || ids.has(record.jobId) || record.memory.observedMs <= 0) return unknown;
+    ids.add(record.jobId);
+    rssGbHours += record.memory.rssGbHours;
+    if (!Number.isFinite(rssGbHours)) return unknown;
+    if (realizedIds.has(record.jobId)) impact++;
+  }
+  return {
+    sourceQuality: { sourceState: 'healthy', complete: true, reasons: [] },
+    jobs: records.length, rssGbHours, impact,
+    impactPerGbHour: rssGbHours > 0 ? impact / rssGbHours : null,
+  };
+}
+
+function buildMemoryImpact(sinceMs: number, nowMs: number, realizedIds: ReadonlySet<string>, impactKnown: boolean): ScorecardMemoryImpact {
+  const unknown = (sourceState: 'missing' | 'degraded', reason: string): ScorecardMemoryImpact => ({
+    sourceQuality: { sourceState, complete: false, reasons: [reason] },
+    jobs: null, rssGbHours: null, impact: null, impactPerGbHour: null,
+  });
+  if (!impactKnown) return unknown('degraded', 'impact-evidence-unavailable');
+  try {
+    const path = join(process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'), 'jobs.jsonl');
+    if (statSync(path).size > 16 * 1024 * 1024) return unknown('degraded', 'job-history-too-large');
+    const records: MemoryJobRecord[] = [];
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const record: unknown = JSON.parse(line);
+      if (!isMemoryJobRecord(record)) return unknown('degraded', 'invalid-or-legacy-job-memory');
+      const finished = Date.parse(record.finishedAt);
+      if (finished >= sinceMs && finished <= nowMs) records.push(record);
+    }
+    return computeMemoryImpact(records, realizedIds);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? unknown('missing', 'job-history-missing') : unknown('degraded', 'job-history-unreadable');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public: computeFleetScorecard()
 // ---------------------------------------------------------------------------
@@ -672,7 +738,7 @@ function buildCapabilitySection(): ScorecardCapability {
 /**
  * Compute the fleet self-evaluation scorecard for the requested trailing
  * window. Reads the proposal store, the decisions ledger, and persisted eval
- * reports — nothing else. Never throws.
+ * reports and optional local job memory telemetry. Never throws.
  */
 export function computeFleetScorecard(window: ScorecardWindow): FleetScorecard {
   const generatedAt = new Date().toISOString();
@@ -729,6 +795,7 @@ export function computeFleetScorecard(window: ScorecardWindow): FleetScorecard {
     learning,
     byEngine,
     capability,
+    memory: buildMemoryImpact(sinceMs, nowMs, realizedIds, mergesOk && identityComplete),
   };
 }
 

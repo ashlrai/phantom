@@ -11,6 +11,7 @@
  * crisp nextSteps guidance.
  */
 
+import { readEnvironmentCredential } from './integrations/secrets.js';
 import { existsSync, mkdirSync, symlinkSync, readlinkSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -561,7 +562,7 @@ export async function stepPulse(cfg: AshlrConfig): Promise<OnboardStep> {
   try {
     const pulseEnabled = cfg.pulse?.enabled === true;
     const pulseEndpoint = cfg.pulse?.endpoint ?? 'http://localhost:3000';
-    const patPresent = Boolean(process.env['ASHLR_PULSE_PAT']);
+    const patPresent = Boolean(readEnvironmentCredential('ASHLR_PULSE_PAT'));
 
     if (!pulseEnabled) {
       return step(
