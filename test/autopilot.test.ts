@@ -57,10 +57,6 @@ describe('autopilot plan', () => {
     const o = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: '##[error]The hosted runner lost communication with the server.' } });
     expect(plan(o, guards, emptyState())).toMatchObject({ action: 'rerun' });
     expect(plan(o, guards, { ...emptyState(), reruns: [`${HEAD}:test`] })).toMatchObject({ action: 'stop' });
-    const moved = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: 'Candidate tree differs from the original GitHub event tree\n##[error]Process completed with exit code 1.' } });
-    expect(plan(moved, guards, emptyState())).toMatchObject({ action: 'rerun' });
-    const stamped = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: '2026-10-15T04:40:00.0000000Z Error: Candidate tree differs from the original GitHub event tree' } });
-    expect(plan(stamped, guards, emptyState())).toMatchObject({ action: 'rerun' });
     // A test that prints the phrase mid-line keeps its failure its own.
     const printed = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: '  expected "Candidate tree differs from the original GitHub event tree" to equal ""' } });
     expect(plan(printed, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
@@ -68,8 +64,31 @@ describe('autopilot plan', () => {
     const ownLine = '2026-10-15T04:40:00.0000000Z Candidate tree differs from the original GitHub event tree';
     const inTest = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: ownLine }, failedSteps: { 1: ['Run tests'] } });
     expect(plan(inTest, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
+  });
+
+  it('merges the base when the event merge tree moved, once per head and base', () => {
+    // The frozen event revision makes a re-run useless: only a fresh head binds.
+    const moved = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: 'Candidate tree differs from the original GitHub event tree\n##[error]Process completed with exit code 1.' } });
+    expect(plan(moved, guards, emptyState())).toMatchObject({ action: 'merge-base', reason: expect.stringContaining('event merge tree moved') });
+    const stamped = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure')], logs: { 1: '2026-10-15T04:40:00.0000000Z Error: Candidate tree differs from the original GitHub event tree' } });
+    expect(plan(stamped, guards, emptyState())).toMatchObject({ action: 'merge-base' });
+    // No 'behind' report is needed: a red required check can mask the state as blocked or unstable.
+    expect(plan(moved, guards, { ...emptyState(), attempts: { [`merge-base:${HEAD}:${BASE}`]: 1 } })).toMatchObject({ action: 'stop' });
+    expect(plan(moved, guards, { ...emptyState(), actedHeads: [HEAD] })).toMatchObject({ action: 'wait' });
+    expect(plan(moved, guards, { ...emptyState(), pushes: 6 })).toMatchObject({ action: 'stop' });
+    // The phrase on its own line still requires the source binding step to be the failure.
+    const ownLine = '2026-10-15T04:40:00.0000000Z Candidate tree differs from the original GitHub event tree';
     const inBinding = obs({ headChecks: [run(1, 'test', 'failure')], logs: { 1: ownLine }, failedSteps: { 1: ['Bind candidate source'] } });
-    expect(plan(inBinding, guards, emptyState())).toMatchObject({ action: 'rerun' });
+    expect(plan(inBinding, guards, emptyState())).toMatchObject({ action: 'merge-base' });
+    // A real failure on the same head is fixed first; its push renews the event anyway.
+    const both = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure'), run(2, 'test', 'failure')],
+      logs: { 1: 'Candidate tree differs from the original GitHub event tree', 2: 'FAIL test/a.test.ts\nAssertionError' } });
+    expect(plan(both, guards, emptyState())).toMatchObject({ action: 'fix-ci' });
+    // A moved-tree alongside unrelated non-own failures is reported, not merged or rerun.
+    const mixed = obs({ headChecks: [run(1, 'Classify PR site lane', 'failure'), run(2, 'lint', 'failure')],
+      baseChecks: [run(10, 'lint', 'failure')],
+      logs: { 1: 'Candidate tree differs from the original GitHub event tree', 2: 'FAIL base broke' } });
+    expect(plan(mixed, guards, emptyState())).toMatchObject({ action: 'stop' });
   });
 
   it('merges the base on conflict before anything else, at most once per head and base', () => {
