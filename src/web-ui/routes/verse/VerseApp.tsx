@@ -43,6 +43,7 @@
  * arrive as VERSE_ANCHOR_EVENT and are revealed by shell/reveal-anchor.ts
  * (listened for by shell/anchor-requests.ts).
  */
+import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
@@ -527,6 +528,7 @@ export function VerseApp() {
           })}
         </ul>
         <div className={styles.railFoot}>
+          <FrictionFeedback surface={ui.section} className={styles.railButton} />
           <Tooltip label="Needs you" shortcut={shortcut('needs-you.open')} placement="right" disabled={expanded || compact}>
             <button
               type="button"

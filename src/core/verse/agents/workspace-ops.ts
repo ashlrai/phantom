@@ -32,10 +32,10 @@ import {
   defaultGitRunner,
   resolveGitRoot,
   withRepoLock,
-  type GitOpsOptions,
   type GitRunner,
 } from '../git-ops.js';
-import { createWorktree, isValidWorktreeName, worktreeRepoSegment, worktreesHome } from '../worktrees.js';
+import { assertWorktreeDiskSpace, reuseWorktreeNodeModules } from '../../worktree-disk.js';
+import { createWorktree, isValidWorktreeName, worktreeRepoSegment, worktreesHome, type WorktreeOptions } from '../worktrees.js';
 import { VERSE_WORKTREE_BRANCH_PREFIX } from '../workbench-types.js';
 import { isSafeCopyPath } from './workspace-config.js';
 import type { AgentArchiveRecord, AgentWorkspaceRecord } from './types.js';
@@ -46,7 +46,7 @@ export const ARCHIVE_REF_PREFIX = 'refs/ashlr/verse-archive/';
 /** Identity for snapshot commits (a machine commit, not the operator's authorship). */
 const SNAPSHOT_IDENTITY = ['-c', 'user.name=Phantom', '-c', 'user.email=verse@ashlr.invalid'] as const;
 
-export interface WorkspaceOpsOptions extends GitOpsOptions {
+export interface WorkspaceOpsOptions extends WorktreeOptions {
   /** Test seam: does this path exist (async)? */
   probePath?: (path: string) => Promise<boolean>;
 }
@@ -55,8 +55,9 @@ async function defaultPathExists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw new GitOpError('VERSE_GIT_REFUSED', 'The workspace path could not be inspected. It was retained.');
   }
 }
 
@@ -70,6 +71,12 @@ async function gitOk(run: GitRunner, cwd: string, args: readonly string[], what:
     throw new GitOpError(res.timedOut ? 'VERSE_GIT_TIMEOUT' : 'VERSE_GIT_FAILED', `${what} failed.`);
   }
   return res.stdout.trim();
+}
+
+/** Dependencies must remain ignored so snapshots never ingest an installation. */
+async function reuseDependencies(root: string, path: string, opts: WorkspaceOpsOptions): Promise<void> {
+  const ignored = await runnerOf(opts)('git', ['check-ignore', '-q', '--', 'node_modules/'], { cwd: path });
+  if (ignored.code === 0) await reuseWorktreeNodeModules(root, path, opts.disk);
 }
 
 export interface CreatedWorkspace {
@@ -110,6 +117,7 @@ export async function createAgentWorkspace(
   const { probePath: _probe, ...worktreeOpts } = opts;
   const created = await createWorktree(gitRoot, name, worktreeOpts);
   const baseSha = await run('git', ['rev-parse', 'HEAD'], { cwd: created.path });
+  await reuseDependencies(gitRoot, created.path, opts);
 
   const copied: string[] = [];
   const skipped: string[] = [];
@@ -200,6 +208,9 @@ export async function archiveWorkspace(
   let branchDeleted = false;
   await withRepoLock(ws.rootPath, async () => {
     snap = await snapshotWorkspace(ws, opts);
+    if (!snap && await (opts.probePath ?? defaultPathExists)(ws.path)) {
+      throw new GitOpError('VERSE_GIT_REFUSED', 'The workspace snapshot could not be verified. The workspace was retained.');
+    }
     const removed = await run('git', ['worktree', 'remove', '--force', ws.path], { cwd: ws.rootPath });
     // A worktree already deleted by hand is not a failure: its stale registration is pruned below.
     if (removed.code !== 0 && (await (opts.probePath ?? defaultPathExists)(ws.path))) {
@@ -240,7 +251,9 @@ export async function restoreWorkspace(
     const snapOk = await run('git', ['cat-file', '-e', `${archive.sha}^{commit}`], { cwd: ws.rootPath });
     if (snapOk.code !== 0) throw new GitOpError('VERSE_GIT_REFUSED', 'The snapshot is no longer in this repository, so the workspace cannot be restored.');
     const branchExists = (await run('git', ['show-ref', '--verify', '--quiet', `refs/heads/${ws.branch}`], { cwd: ws.rootPath })).code === 0;
+    await assertWorktreeDiskSpace(dirname(ws.path), opts.disk);
     await mkdir(dirname(ws.path), { recursive: true, mode: 0o700 });
+    await assertWorktreeDiskSpace(dirname(ws.path), opts.disk);
     const args = branchExists
       ? ['worktree', 'add', ws.path, ws.branch]
       : ['worktree', 'add', '-b', ws.branch, ws.path, archive.headSha!];
@@ -250,6 +263,7 @@ export async function restoreWorkspace(
       await gitOk(run, ws.path, ['checkout', archive.sha!, '--', '.'], 'Laying the snapshot back');
       await gitOk(run, ws.path, ['reset', '-q'], 'Unstaging the restored changes');
     }
+    await reuseDependencies(ws.rootPath, ws.path, opts);
   }, opts);
 }
 

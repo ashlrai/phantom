@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Drive the coding-agent CLIs and accounts you already use: Claude Code, Codex, Grok, Devin and local models. One workbench, pinned profiles, real usage readings.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://verse.ashlr.ai/use-cases/own-accounts">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://verse.ashlr.ai/use-cases/own-accounts">
+<meta property="og:title" content="Bring your own agent accounts · Phantom">
+<meta property="og:site_name" content="Phantom">
+<meta property="og:description" content="One workbench for the coding-agent CLIs and accounts you already use. Pinned profiles, real usage readings, loopback console.">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<meta property="og:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:title" content="Bring your own agent accounts · Phantom">
+<meta name="twitter:description" content="One workbench for the coding-agent CLIs and accounts you already use. Pinned profiles, real usage readings, loopback console.">
+<meta name="twitter:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": "https://verse.ashlr.ai/use-cases/own-accounts#webpage",
+  "url": "https://verse.ashlr.ai/use-cases/own-accounts",
+  "name": "Bring your own agent accounts · Phantom",
+  "description": "One workbench for the coding-agent CLIs and accounts you already use. Pinned profiles, real usage readings, loopback console.",
+  "isPartOf": { "@id": "https://verse.ashlr.ai/#website" },
+  "about": { "@id": "https://verse.ashlr.ai/#application" }
+}
+</script>
+<title>Bring your own agent accounts · Phantom use cases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
+<style>
+:root{--bg:#EDF0F4;--surface:#FFFFFF;--surface-2:#F5F8FA;--ink:#0F1822;--muted:#58657A;--faint:#5F6C80;--line:#D3DBE4;--line-soft:#E3E9EF;--accent:hsl(245 72% 50%);--accent-dim:hsl(245 72% 94%);--live:#0E6F78;--live-dim:#D2E6E8;--warn:#8A6100;--f-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;--f-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;--step--1:0.8125rem;--step-0:1rem;--step-1:1.1875rem;--step-2:1.5rem;--step-3:2.125rem;--gutter:clamp(20px,5vw,64px);--max:1160px}
+@media (prefers-color-scheme:dark){:root{--bg:#0C121A;--surface:#121A24;--surface-2:#17212C;--ink:#E7EDF4;--muted:#93A1B4;--faint:#7B8EA4;--line:#22303F;--line-soft:#1B2734;--accent:hsl(245 72% 66%);--accent-dim:hsl(245 40% 20%);--live:#44CBD8;--live-dim:#0F3239;--warn:#E0A93B}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:var(--step-0);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin-inline:auto;padding-inline:var(--gutter)}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-0.02em}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.skip-link{position:fixed;z-index:30;top:-100px;left:var(--gutter);padding:10px 14px;background:var(--ink);color:var(--surface);border-radius:3px;font-weight:600;text-decoration:none}
+.skip-link:focus{top:max(12px,env(safe-area-inset-top))}
+main,section{scroll-margin-top:72px}
+.masthead{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft)}
+.masthead .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:14px}
+.brand{white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:var(--step-1);letter-spacing:-0.03em;color:var(--ink);text-decoration:none}
+.brand .sub{color:var(--faint);font-weight:500}
+.masthead nav{display:flex;gap:18px;font-size:var(--step--1);flex-wrap:wrap}
+.masthead nav a{color:var(--muted);text-decoration:none}
+.masthead nav a:hover{color:var(--ink)}
+.masthead nav a[aria-current]{color:var(--ink);font-weight:600}
+@media (max-width:860px){.masthead nav{display:none}}
+.hero{padding-block:clamp(40px,6vw,72px) clamp(24px,4vw,40px)}
+.hero h1{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.04;font-weight:700;max-width:20ch;margin-block:16px 18px}
+.hero .lede{font-size:var(--step-1);color:var(--muted);max-width:64ch;margin:0}
+.eyebrow{font-family:var(--f-mono);font-size:var(--step--1);letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);margin:0}
+.eyebrow a{color:var(--faint);text-decoration:none}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;align-items:center}
+.btn{font-weight:600;font-size:var(--step-0);padding:11px 20px;border-radius:3px;text-decoration:none;border:1px solid transparent;display:inline-block}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn-ghost{border-color:var(--line);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--muted)}
+section{padding-block:clamp(40px,6vw,72px);border-top:1px solid var(--line-soft)}
+.sec-head{max-width:66ch;margin-bottom:30px}
+.sec-head h2{font-size:var(--step-3);margin-block:10px 12px;line-height:1.12}
+.sec-head p{color:var(--muted);margin:0}
+.claims{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.claim{border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:18px 20px;display:grid;gap:8px;align-content:start}
+.claim h3{font-size:var(--step-1)}
+.claim p{margin:0;color:var(--muted);font-size:var(--step--1);line-height:1.6}
+.src{font-family:var(--f-mono);font-size:.75rem;color:var(--faint);margin:0;line-height:1.5}
+.claim .src{border-top:1px solid var(--line-soft);padding-top:9px;margin-top:2px}
+.src a{color:var(--accent)}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:560px;background:var(--surface);border:1px solid var(--line)}
+caption{caption-side:bottom;text-align:left;padding-top:12px;font-size:var(--step--1);color:var(--faint);font-family:var(--f-mono)}
+th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+thead th{font-family:var(--f-mono);font-size:var(--step--1);font-weight:500;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);border-bottom:1px solid var(--line)}
+td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right}
+th.num{text-align:right}
+tbody tr:last-child td,tbody tr:last-child th{border-bottom:none}
+code{font-family:var(--f-mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--line-soft);padding:1px 5px;border-radius:2px}
+pre{margin:0;padding:14px 16px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:3px;font-family:var(--f-mono);font-size:var(--step--1);line-height:1.7}
+.status{display:flex;flex-wrap:wrap;gap:8px 18px;font-family:var(--f-mono);font-size:var(--step--1);color:var(--muted);border:1px solid var(--line-soft);background:var(--surface);border-radius:3px;padding:10px 14px}
+.status b{color:var(--ink);font-weight:500}
+.related{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.related a{display:grid;gap:6px;border:1px solid var(--line);border-radius:4px;background:var(--surface);padding:16px 18px;text-decoration:none;color:var(--ink)}
+.related a:hover{border-color:var(--accent)}
+.related .t{font-family:var(--f-display);font-weight:700;font-size:var(--step-0)}
+.related .d{font-size:var(--step--1);color:var(--muted);line-height:1.5}
+footer{border-top:1px solid var(--line-soft);padding-block:32px 44px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;justify-content:space-between;align-items:baseline}
+footer p{margin:0;color:var(--faint);font-size:var(--step--1);font-family:var(--f-mono)}
+footer a{color:var(--muted);text-decoration:none;font-size:var(--step--1)}
+footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img class="mark" src="/assets/phantom-mark.svg" width="24" height="24" alt="" />Phantom&nbsp;<span class="sub">by AshlrAI</span></a>
+    <nav aria-label="Site">
+      <a href="/">Product</a>
+      <a href="/use-cases/own-accounts" aria-current="page">Own accounts</a>
+      <a href="/use-cases/local-models">Local models</a>
+      <a href="/use-cases/signed-autonomy">Signed autonomy</a>
+      <a href="/use-cases/review-agent-work">Review work</a>
+      <a href="/compare/agent-clis">Compare</a>
+      <a href="/ecosystem">Ecosystem</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content" tabindex="-1">
+  <div class="wrap hero">
+    <p class="eyebrow">Phantom &middot; use cases</p>
+    <h1>Every agent seat you already pay for, in one workbench.</h1>
+    <p class="lede">
+      Phantom drives the coding-agent CLIs and accounts you already use: Claude Code, Codex,
+      Grok, Devin and local models. You sign in through each vendor's own tooling; Phantom keeps
+      the chats, changes, checkpoints and usage readings in one place. Nothing here replaces the
+      vendor CLI: each turn still spawns the real binary under the account you chose.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="/#install-verse">Install Phantom</a>
+      <a class="btn btn-ghost" href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">Read the quickstart</a>
+    </div>
+  </div>
+
+  <section aria-labelledby="seats-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Your accounts, kept separate</p>
+        <h2 id="seats-title">One console. No shared session, no fixed roster.</h2>
+        <p>Each seat is one account driven by its own CLI, pinned to a private profile so a turn
+        never borrows another account's session or settings. Every claim below names the source
+        it comes from.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>A seat is an account plus its CLI</h3>
+          <p>Each turn spawns one vendor CLI process (<code>claude -p</code>, <code>codex exec</code>, <code>grok -p</code>) in the project directory, streams normalized events and exits. The conversation is resumed by id, so its memory stays the vendor's own.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md, &ldquo;How a turn actually runs&rdquo;</a></p>
+        </div>
+        <div class="claim">
+          <h3>Profiles stay pinned per account</h3>
+          <p>Phantom prepares a private profile directory per account and signs in through the vendor's own login, so two accounts at the same provider never share cookies, config or quota.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>No fixed seat cap</h3>
+          <p>There is no plan tier limiting how many accounts you connect. Provider quotas and your hardware govern how much runs at once.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/RESOURCE-POOLS.md">docs/RESOURCE-POOLS.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>The console stays on loopback</h3>
+          <p><code>phm verse</code> binds to 127.0.0.1, prints a read token for the browser and asks for a separate mutation token before your first chat or other change.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md#open-verse">docs/QUICKSTART.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Sandboxing matches the platform</h3>
+          <p>Agent work is confined with <code>sandbox-exec</code> on macOS and <code>bwrap</code> or <code>firejail</code> on Linux; Windows uses per-account profile isolation and env-only isolation.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md">docs/ARCHITECTURE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Usage readings keep their qualifiers</h3>
+          <p>Account windows, resets and balances come from each provider's own report. Missing or unqualified evidence stays unknown rather than being guessed.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/RESET-AWARE-SCHEDULING.md">docs/RESET-AWARE-SCHEDULING.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>The context meter reads the real window</h3>
+          <p>Context windows and compaction points come from the pinned CLI binaries, each seat's own model catalog and the CLIs' reports at runtime, not a marketing table.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md">docs/VERSE-CONTEXT.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Devin is a separate seat with its own budget</h3>
+          <p>The CLI seat defaults to Cognition SWE-2 High; cloud sessions are a separate ACU-capped path. The API key is asked for at a hidden prompt and stored in the macOS Keychain.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md">docs/DEVIN.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/src/core/devin/types.ts">src/core/devin/types.ts</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="budgets-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Defaults you can read in source</p>
+        <h2 id="budgets-title">Lane budgets are constants, not promises.</h2>
+        <p>Cloud and Devin defaults ship in the repository. They are settings you can change, not
+        measurements of your usage.</p>
+      </div>
+      <div class="claim">
+        <div class="tbl-scroll">
+          <table>
+            <caption>Compiled defaults from the named source files. Settings, not measurements.</caption>
+            <thead><tr><th scope="col">Lane</th><th scope="col">Default budget</th><th scope="col">Concurrency</th><th scope="col">Daily cap</th><th scope="col">Reserve</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Claude cloud sessions</th><td class="num">$250 credits total, &asymp;$3 per session</td><td class="num">4 at once</td><td class="num">20 sessions a day</td><td class="num">$40 self-improve reserve</td></tr>
+              <tr><th scope="row">Devin cloud sessions</th><td class="num">50 ACU total, 10 ACU per session</td><td class="num">2 at once</td><td class="num">30 ACU and 10 sessions a day</td><td class="num">10 ACU reserve</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="src">Sources: <a href="https://github.com/ashlrai/phantom/blob/master/src/core/cloud/types.ts">DEFAULT_CLOUD_BUDGET in src/core/cloud/types.ts</a>, <a href="https://github.com/ashlrai/phantom/blob/master/src/core/devin/types.ts">DEFAULT_DEVIN_BUDGET in src/core/devin/types.ts</a></p>
+      </div>
+      <p class="status" role="note" style="margin-top:22px"><span><b>Honest boundary:</b> this page adds no signup, forms or tracking. Seats you do not configure stay absent, and an account whose usage cannot be read is ineligible for reset-aware autonomy rather than guessed.</span></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="try-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Try it</p>
+        <h2 id="try-title">Install, open the console, prepare one profile.</h2>
+      </div>
+      <pre>npm i -g @ashlr/phantom
+phm verse
+ashlr resources profile prepare --provider claude \
+  --directory ~/.ashlr/native-profiles/claude-a \
+  --executable /path/to/claude</pre>
+      <p class="src" style="margin-top:12px">Commands as documented: <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">docs/QUICKSTART.md</a></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="more-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Keep going</p>
+        <h2 id="more-title">Related guides</h2>
+      </div>
+      <div class="related">
+        <a href="/use-cases/local-models"><span class="t">Coding agents on local models</span><span class="d">Discovery through Ollama, dispatch on llama-server, measured numbers.</span></a>
+        <a href="/use-cases/signed-autonomy"><span class="t">Autonomy inside a signed scope</span><span class="d">A Touch ID grant, an eight-stage ladder, the same gates for every merge.</span></a>
+        <a href="/use-cases/review-agent-work"><span class="t">Review every agent change</span><span class="d">Per-turn checkpoints, per-hunk accept and reject, recorded decisions.</span></a>
+        <a href="/compare/agent-clis"><span class="t">Phantom or the CLIs directly</span><span class="d">What each vendor CLI already does, and what a workbench adds.</span></a>
+        <a href="/#install-verse"><span class="t">Install Phantom</span><span class="d">Node 22.15+, one global package, console on loopback.</span></a>
+        <a href="/ecosystem"><span class="t">The ecosystem</span><span class="d">Six public Ashlr repositories with dated GitHub history.</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Phantom &middot; by AshlrAI</p>
+    <span><a href="/">Product</a> &middot; <a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">User guide</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
+  </div>
+</footer>
+</body>
+</html>
