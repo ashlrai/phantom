@@ -2461,6 +2461,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'usage': {
+      const { cmdFleetUsage } = await import('./fleet-usage.js');
+      return cmdFleetUsage(rest);
+    }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
@@ -2516,6 +2520,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
+  console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
