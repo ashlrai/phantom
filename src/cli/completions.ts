@@ -29,7 +29,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime',
+  'skills', 'universe', 'runtime', 'graph',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'local-runtime',
@@ -58,6 +58,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
   sweep: ['report'],
+  graph: ['nodes', 'edges', 'status', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
