@@ -2409,6 +2409,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
+  drive:          { allowed: { flags: ['--once', '--json'], values: ['--root'] }, usage: 'phm fleet drive [--once] [--root <directory>] [--json]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   lanes:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet lanes [--json] [--queue-dir <abs>]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
@@ -2461,6 +2462,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'drive': {
+      const { cmdDriveReport } = await import('./drive-routines.js');
+      return cmdDriveReport(rest);
+    }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
@@ -2517,6 +2522,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
+  console.log('    phm fleet drive [--once] [--root <directory>] [--json]  # refresh Masbot relay status');
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);

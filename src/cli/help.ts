@@ -70,6 +70,24 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
   },
   {
+    usage: 'phm drive report [--once] [--root <directory>] [--json]',
+    description: 'Refresh the local Masbot relay status from driver snapshots and the fleet digest. No model calls or message delivery. Exit 1 if inputs cannot be read.',
+    safety: 'append',
+    jsonShape: 'DriveReport plus fleet digest; schemaVersion 1',
+  },
+  {
+    usage: 'phm drive levers [--root <directory>] [--json]',
+    description: 'Read the top three actionable levers from local driver status and jobs. No writes or model calls.',
+    safety: 'read',
+    jsonShape: '{levers:[{id,count,action}]}',
+  },
+  {
+    usage: 'phm drive jobs --bin <absolute-phm-path> [--root <absolute-directory>]',
+    description: 'Print restockable Mac launchd job definitions. Does not install or activate them.',
+    safety: 'read',
+    jsonShape: '[{label,plist}]',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
