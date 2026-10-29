@@ -1,0 +1,19 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [
+    {
+      "id": "mcp:locus",
+      "kind": "mcp",
+      "serverId": "locus",
+      "command": "fixture-only"
+    }
+  ],
+  "edges": [],
+  "issues": []
+}

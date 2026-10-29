@@ -1,0 +1,82 @@
+# Orphaned merge_group run reaper.
+#
+# Each merge queue entry owns a gh-readonly-queue/<base>/pr-N-<sha> ref. When an
+# entry leaves the queue (merged, removed or invalidated) GitHub deletes that
+# ref, but runs already queued for it keep waiting for runners. This job cancels
+# a merge_group run ONLY when its head ref no longer exists, re-checked
+# immediately before the cancel. It never cancels a run whose merge group is
+# still in the queue, never fails, and its job name is not a required check.
+name: Merge Queue Reaper
+
+on:
+  merge_group:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-queue-reaper-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reap-orphaned-merge-group-runs:
+    name: reap-orphaned-merge-group-runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Cancel merge_group runs whose queue ref is gone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # HTTP status of the queue ref lookup. Prints 000 on network error.
+          # Only an explicit 404 means the queue entry is gone; 200, 403, 5xx,
+          # 000 or anything else keeps the run.
+          # The token goes to curl on stdin (-H @-), never on its command line,
+          # so it cannot show up in the process list.
+          ref_status() {
+            printf 'Authorization: Bearer %s\n' "${GH_TOKEN}" |
+            curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+              -H @- \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/git/ref/heads/$1" 2>/dev/null || true
+          }
+          for status in queued in_progress; do
+            gh api --paginate "repos/${REPO}/actions/runs?event=merge_group&status=${status}&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .head_branch] | @tsv' || true
+          done | while IFS=$'\t' read -r run_id head_branch; do
+            [ -n "${run_id}" ] || continue
+            [ "${run_id}" = "${SELF_RUN_ID}" ] && continue
+            if ! [[ "${head_branch}" =~ ^gh-readonly-queue/[A-Za-z0-9._/-]+$ ]]; then
+              echo "skip ${run_id}: head ref is not a merge queue ref"
+              continue
+            fi
+            # No path traversal segment may reach the refs API.
+            if [[ "${head_branch}" == *..* ]]; then
+              echo "skip ${run_id}: head ref contains '..'"
+              continue
+            fi
+            first="$(ref_status "${head_branch}")"
+            if [ "${first}" != "404" ]; then
+              echo "keep ${run_id}: ref check returned ${first:-none}"
+              continue
+            fi
+            # Re-check immediately before cancel; both checks must be an explicit 404.
+            second="$(ref_status "${head_branch}")"
+            if [ "${second}" != "404" ]; then
+              echo "keep ${run_id}: ref re-check returned ${second:-none}"
+              continue
+            fi
+            echo "cancel ${run_id}: queue ref ${head_branch} returned 404 twice"
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/cancel" --silent || true
+          done
+          exit 0

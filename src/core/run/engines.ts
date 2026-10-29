@@ -46,6 +46,7 @@ import {
 import { attachStallMonitor } from './run-monitor.js';
 import type { TerminationReason } from './run-monitor.js';
 import { recordClaudeRateLimitEventLine } from '../fabric/claude-rate-limit-event.js';
+import { spawnSessionChild } from '../verse/process-registry.js';
 // LOCAL-ONLY last-resort gate. spawnEngine is the ONE funnel every CLI-agent
 // subprocess in the hub passes through — orchestrator, fleet manager, director,
 // strategist, goal-loop and sandboxed-engine all land here — so gating it is
@@ -370,6 +371,8 @@ export function phantomWrap(cmd: EngineCommand, _cfg: AshlrConfig): EngineComman
 // ---------------------------------------------------------------------------
 
 export interface SpawnEngineOptions {
+  /** Session owning this invocation's child and orphan watchdog. */
+  sessionId?: string;
   /** Source-owned bounded prompt/request; absent preserves closed stdin. */
   stdin?: string;
   /** Native profiles retain their host-selected Claude/Codex protocol identity. */
@@ -960,13 +963,13 @@ async function spawnEngineInner(
       resolve(cancelledEngineResult());
       return;
     }
-    const child = spawn(spawnBin, spawnArgs, {
+    const child = spawnSessionChild(spawnBin, spawnArgs, {
       cwd: effective.cwd,
       env: childEnv,
       // pipe stdout + stderr for line reading; stdin closed (no input).
       stdio: [opts?.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       ...(ownsProcessGroup ? { detached: true } : {}),
-    });
+    }, opts?.sessionId ?? 'engine', spawn);
     child.once('spawn', () => { try { opts?.onSpawn?.(); } catch { /* metadata never grants authority */ } });
 
     // A detached POSIX child is its process-group leader, so its invocation-local
@@ -990,6 +993,7 @@ async function spawnEngineInner(
       // and unref the ChildProcess so those inherited descriptors cannot keep the
       // daemon alive after this invocation's bounded settlement deadline.
       child.stdin?.destroy();
+      child.stdio?.[3]?.destroy();
       child.stdout?.removeAllListeners();
       child.stderr?.removeAllListeners();
       if (typeof child.stdout?.destroy === 'function') child.stdout.destroy();
