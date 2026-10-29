@@ -1,0 +1,92 @@
+[
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": null,
+    "station": "work",
+    "pool": "codex-cmp",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:00:00.000Z",
+    "exit_ts": null
+  },
+  {
+    "job_id": "RQ-QUEUE-2",
+    "pr": null,
+    "station": "work",
+    "pool": "claude",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:00:30.000Z",
+    "exit_ts": null
+  },
+  {
+    "job_id": "RQ-QUEUE-2",
+    "pr": null,
+    "station": "work",
+    "pool": "claude",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:00:30.000Z",
+    "exit_ts": "2026-10-26T12:01:30.000Z"
+  },
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": 912,
+    "station": "work",
+    "pool": "codex-cmp",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:00:00.000Z",
+    "exit_ts": "2026-10-26T12:02:00.000Z"
+  },
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": 912,
+    "station": "review",
+    "pool": "claude",
+    "tier": "review",
+    "enter_ts": "2026-10-26T12:02:00.000Z",
+    "exit_ts": null
+  },
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": 912,
+    "station": "review",
+    "pool": "claude",
+    "tier": "review",
+    "enter_ts": "2026-10-26T12:02:00.000Z",
+    "exit_ts": "2026-10-26T12:03:00.000Z"
+  },
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": 912,
+    "station": "work",
+    "pool": "codex-cmp",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:03:00.000Z",
+    "exit_ts": null
+  },
+  {
+    "job_id": "RQ-QUEUE-1",
+    "pr": 912,
+    "station": "work",
+    "pool": "codex-cmp",
+    "tier": "work",
+    "enter_ts": "2026-10-26T12:03:00.000Z",
+    "exit_ts": "2026-10-26T12:04:00.000Z"
+  },
+  {
+    "job_id": "RQ-QUEUE-2",
+    "pr": null,
+    "station": "review",
+    "pool": "codex-cmp",
+    "tier": "review",
+    "enter_ts": "2026-10-26T12:04:00.000Z",
+    "exit_ts": null
+  },
+  {
+    "job_id": "RQ-QUEUE-2",
+    "pr": 913,
+    "station": "review",
+    "pool": "codex-cmp",
+    "tier": "review",
+    "enter_ts": "2026-10-26T12:04:00.000Z",
+    "exit_ts": "2026-10-26T12:05:00.000Z"
+  }
+]

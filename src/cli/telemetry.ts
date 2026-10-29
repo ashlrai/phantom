@@ -6,6 +6,7 @@
  *            value), active sink mode, local telemetry dir + JSONL file count.
  *   test     Emit a single synthetic metadata-only span via getSink and report
  *            the TelemetryEmitResult.
+ *   queue-replay <file>  Validate and emit queue.v1 boundary fixtures.
  *
  * Flags:
  *   --json   Emit machine-readable JSON on stdout.
@@ -166,11 +167,12 @@ function govLevelColor(level: 'ok' | 'warn' | 'over'): (s: string) => string {
 // ---------------------------------------------------------------------------
 
 /**
- * `ashlr telemetry [status|test] [--json]`
+ * `ashlr telemetry [status|test|queue-replay <file>] [--json]`
  *
  * Returns a process exit code: 0 = ok, 1 = error.
  */
 export async function cmdTelemetry(args: string[]): Promise<number> {
+  if (args[0] === 'queue-replay') return replayQueueEvents(args.slice(1));
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printTelemetryHelp();
     return 0;
@@ -345,6 +347,40 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Validate the entire bounded fixture before sending any boundary events. */
+async function replayQueueEvents(args: string[]): Promise<number> {
+  const json = args.includes('--json');
+  const paths = args.filter(arg => arg !== '--json');
+  const report = (result: { ok: boolean; detail: string; events?: number; sink?: string }, code: number): number => {
+    process.stdout.write((json ? JSON.stringify(result) : result.detail) + '\n');
+    return code;
+  };
+  if (paths.length !== 1 || paths[0]!.startsWith('-')) {
+    return report({ ok: false, detail: 'usage: telemetry queue-replay <fixture.json> [--json]' }, 2);
+  }
+  try {
+    const { readPrivateFileCapped } = await import('../core/verse/preferences.js');
+    const { parseQueueEventV1 } = await import('../core/observability/queue-events.js');
+    const { getQueueSink } = await import('../core/observability/telemetry-sink.js');
+    const file = readPrivateFileCapped(paths[0]!, 256 * 1024);
+    if (!file || file.truncated) return report({ ok: false, detail: 'queue fixture unavailable or exceeds 256 KiB' }, 2);
+    const raw: unknown = JSON.parse(file.text);
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 1_000) {
+      return report({ ok: false, detail: 'queue fixture must contain 1–1000 events' }, 2);
+    }
+    const events = raw.map(parseQueueEventV1);
+    if (events.some(event => event === null)) return report({ ok: false, detail: 'invalid queue.v1 fixture' }, 2);
+    const cfg = await loadConfig();
+    // A configured remote with unavailable credentials must report failure,
+    // rather than disguising a local fallback as remote delivery.
+    const result = await getQueueSink(cfg, false).emit(events.filter(event => event !== null));
+    return report({ ...result, events: events.length }, result.ok ? 0 : 1);
+  } catch {
+    // JSON/config/transport errors may contain sensitive input: fixed output only.
+    return report({ ok: false, detail: 'queue fixture replay failed' }, 1);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
@@ -353,7 +389,7 @@ function printTelemetryHelp(): void {
   const { bold, dim, cyan } = makeColors(isTty());
 
   console.log('');
-  console.log(bold('  ashlr telemetry') + dim(' — M19 telemetry status and test'));
+  console.log(bold('  ashlr telemetry') + dim(' — telemetry status, test and queue replay'));
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
@@ -363,6 +399,7 @@ function printTelemetryHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['queue-replay <file>', 'Validate and emit a queue.v1 JSON fixture through the existing sink'],
     ['status (default)', 'Show endpoint + PAT configured (booleans only — values never printed),'],
     ['',                 'active sink mode (local/otlp), local telemetry dir + file count,'],
     ['',                 'and spend governance summary.'],

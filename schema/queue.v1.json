@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:phantom:queue.v1",
+  "title": "queue.v1 station observation",
+  "description": "PostHog event name queue.v1. Null exit_ts denotes entry; exit repeats the original enter_ts. Events are observational and grant no queue authority.",
+  "$comment": "Runtime validation also enforces real canonical UTC dates and exit_ts >= enter_ts, which JSON Schema cannot compare across properties.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "pr", "station", "pool", "tier", "enter_ts", "exit_ts"],
+  "properties": {
+    "job_id": { "$ref": "#/$defs/identifier" },
+    "pr": { "type": ["integer", "null"], "minimum": 1, "maximum": 9007199254740991 },
+    "station": { "$ref": "#/$defs/identifier" },
+    "pool": { "$ref": "#/$defs/identifier" },
+    "tier": { "$ref": "#/$defs/identifier" },
+    "enter_ts": { "$ref": "#/$defs/timestamp" },
+    "exit_ts": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$" }
+  }
+}

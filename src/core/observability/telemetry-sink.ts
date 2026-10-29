@@ -30,7 +30,9 @@ import { randomUUID } from 'node:crypto';
 import { resolveProviderKey } from '../integrations/secrets.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig, GenAiSpan, TelemetryEmitResult } from '../types.js';
-import { buildGenAiTrace } from './otlp.js';
+import { buildGenAiTrace, buildQueueTrace } from './otlp.js';
+import type { OtlpTrace } from './otlp.js';
+import type { QueueEventV1 } from './queue-events.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,6 +79,17 @@ export interface TelemetrySink {
   emit(spans: GenAiSpan[]): Promise<TelemetryEmitResult>;
 }
 
+export interface QueueTelemetrySink {
+  /** Events must pass parseQueueEventV1 at the producer boundary. */
+  emit(events: readonly QueueEventV1[]): Promise<TelemetryEmitResult>;
+}
+
+/** Reuse the existing analytics selection, credentials and bounded transport. */
+export function getQueueSink(cfg: AshlrConfig, allowPhantomProbe = true): QueueTelemetrySink {
+  const sink = selectSink(cfg, allowPhantomProbe);
+  return { emit: events => sink.emitQueue(events) };
+}
+
 // ---------------------------------------------------------------------------
 // Public: getSink
 // ---------------------------------------------------------------------------
@@ -91,6 +104,10 @@ export interface TelemetrySink {
  * storage unless the existing environment credential is currently usable.
  */
 export function getSink(cfg: AshlrConfig, allowPhantomProbe = true): TelemetrySink {
+  return selectSink(cfg, allowPhantomProbe);
+}
+
+function selectSink(cfg: AshlrConfig, allowPhantomProbe: boolean): LocalFileSink | OtlpHttpSink {
   if (cfg.telemetry?.pulse) {
     // On the emit path (probe off): select OTLP whenever an endpoint is set and
     // let OtlpHttpSink resolve the PAT async; if none, emit() is a logged no-op.
@@ -112,6 +129,22 @@ export function getSink(cfg: AshlrConfig, allowPhantomProbe = true): TelemetrySi
  * What `ashlr pulse` already aggregates locally.
  */
 class LocalFileSink implements TelemetrySink {
+  async emitQueue(events: readonly QueueEventV1[]): Promise<TelemetryEmitResult> {
+    if (events.length === 0) return { sink: 'local', ok: true, detail: 'no events' };
+    try {
+      const dir = localTelemetryDir();
+      mkdirSync(dir, { recursive: true });
+      // Keep queue records out of usage-span files consumed by Pulse rollups.
+      const file = join(dir, `queue-${new Date().toISOString().slice(0, 10)}.jsonl`);
+      const lines = events.map(({ job_id, pr, station, pool, tier, enter_ts, exit_ts }) =>
+        JSON.stringify({ event: 'queue.v1', properties: { job_id, pr, station, pool, tier, enter_ts, exit_ts } }));
+      appendFileSync(file, lines.join('\n') + '\n', 'utf8');
+      return { sink: 'local', ok: true, detail: `appended ${events.length} queue event(s)` };
+    } catch {
+      return { sink: 'local', ok: false, detail: 'queue telemetry write failed' };
+    }
+  }
+
   async emit(spans: GenAiSpan[]): Promise<TelemetryEmitResult> {
     if (spans.length === 0) {
       return { sink: 'local', ok: true, detail: 'no spans' };
@@ -149,6 +182,14 @@ class OtlpHttpSink implements TelemetrySink {
   constructor(private readonly cfg: AshlrConfig) {}
 
   async emit(spans: GenAiSpan[]): Promise<TelemetryEmitResult> {
+    return this.postTrace(spans.length, () => buildGenAiTrace(spans));
+  }
+
+  async emitQueue(events: readonly QueueEventV1[]): Promise<TelemetryEmitResult> {
+    return this.postTrace(events.length, () => buildQueueTrace(events));
+  }
+
+  private async postTrace(count: number, build: () => OtlpTrace): Promise<TelemetryEmitResult> {
     const endpoint = this.cfg.telemetry?.pulse;
     if (!endpoint) {
       return { sink: 'otlp', ok: false, detail: 'no endpoint configured' };
@@ -160,12 +201,12 @@ class OtlpHttpSink implements TelemetrySink {
       return { sink: 'otlp', ok: false, detail: 'PAT unavailable' };
     }
 
-    if (spans.length === 0) {
+    if (count === 0) {
       return { sink: 'otlp', ok: true, detail: 'no spans' };
     }
 
     try {
-      const body = JSON.stringify(buildGenAiTrace(spans));
+      const body = JSON.stringify(build());
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), OTLP_FETCH_TIMEOUT_MS);
@@ -174,6 +215,7 @@ class OtlpHttpSink implements TelemetrySink {
       try {
         res = await fetch(endpoint, {
           method: 'POST',
+          redirect: 'error',
           headers: {
             'Content-Type': 'application/json',
             // PAT only in the Authorization header — never logged, never in detail.
@@ -195,7 +237,8 @@ class OtlpHttpSink implements TelemetrySink {
       return { sink: 'otlp', ok: false, detail };
     } catch (err) {
       const isAbort = err instanceof Error && err.name === 'AbortError';
-      const detail = isAbort ? 'request timed out' : err instanceof Error ? err.message : String(err);
+      // Transport exceptions can include request headers. Never echo them.
+      const detail = isAbort ? 'request timed out' : 'telemetry request failed';
       process.stderr.write(`[ashlr telemetry] OtlpHttpSink error: ${detail}\n`);
       return { sink: 'otlp', ok: false, detail };
     }
