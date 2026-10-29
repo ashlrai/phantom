@@ -42,6 +42,60 @@ export OPENAI_COMPAT_BASE_URL=http://127.0.0.1:8000/v1
 export OPENAI_COMPAT_API_KEY=local    # placeholder, not a secret
 ```
 
+### Memory-safe oMLX 0.7.2+ local tier
+
+Generate a reviewable configuration with `npx tsx scripts/plan-omlx.ts request.json`.
+This command prints JSON only. It never installs, upgrades, starts a server or
+writes host configuration. Masbot performs the Mac upgrade after merge under
+memguard, then applies the reviewed settings with oMLX stopped.
+
+The request contains `version`, `memguard` and `models`. Example structure
+(the timestamp must be replaced with a fresh memguard observation):
+
+```json
+{
+  "version": "0.7.2",
+  "memguard": {
+    "totalBytes": 107374182400,
+    "freeBytes": 75161927680,
+    "headroomBytes": 53687091200,
+    "capturedAtMs": 0
+  },
+  "models": [
+    { "id": "coder", "engine": "mlx", "budgetBytes": 8589934592 },
+    { "id": "reviewer", "engine": "mlx", "budgetBytes": 8589934592, "longContext": true },
+    { "id": "planner", "engine": "splash", "budgetBytes": 12884901888 }
+  ]
+}
+```
+
+Capture memguard with oMLX stopped. `headroomBytes` means its additional
+allocation allowance; `freeBytes` means currently available system RAM. The
+snapshot must be no older than 30 seconds. The ceiling is the smaller of
+memguard headroom and free RAM minus 30% of total RAM, rounded down to MiB.
+Every model budget must include weights, draft weights, KV, scratch and process
+overhead. The sum of all planned simultaneous models must fit the ceiling.
+This is a configuration admission check; fake-model tests do not measure real
+model memory. Memguard must remain active during operation as other apps change
+memory availability. Recompute after a significant change in host pressure.
+
+Merge `settings` into the oMLX data root's `settings.json` and merge
+`modelSettings.models` into `model_settings.json` (version 1). Preserve unrelated
+settings. The output pins the listener to `127.0.0.1`, keeps the prefill guard
+on, and sets a custom process ceiling. Remove conflicting host/environment/CLI
+overrides and verify the effective listener and memory ceiling before use.
+Only planned models may run within this allowance.
+
+MLX models use Affine8 KV by default and Affine4 when `longContext` is true.
+Splash uses an explicit `splash_max_memory_gb` and `int8` KV. Because its cap is
+global, multiple Splash models receive the smallest planned Splash allocation,
+which can underutilize a larger allocation. A Splash long-context request is
+refused: oMLX 0.7.2 supports only int8/bf16 for Splash. Use MLX for 4-bit jobs.
+See the pinned upstream [model settings](https://github.com/jundot/omlx/blob/v0.7.2/omlx/model_settings.py),
+[global settings](https://github.com/jundot/omlx/blob/v0.7.2/omlx/settings.py) and
+[Splash integration](https://github.com/jundot/omlx/blob/v0.7.2/docs/Splash.md).
+Revalidate these fields when adopting a newer oMLX version.
+
 ## mlx-lm.server
 
 `mlx_lm.server` serves an OpenAI-like API on `localhost:8080`. Its own docs say it "is not recommended for production as it only implements basic security checks" ([SERVER.md](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md)). Treat it as a dev tool, loopback only. To use it, point `OPENAI_COMPAT_BASE_URL` at `http://127.0.0.1:8080/v1`.

@@ -94,7 +94,7 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedModelsArgs {
-  subcommand: 'list' | 'pull' | 'start';
+  subcommand: 'list' | 'pull' | 'start' | 'inventory';
   pullName?: string;
   json: boolean;
   yes: boolean;
@@ -139,10 +139,13 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
       return result;
     }
     result.pullName = name;
+  } else if (sub === 'inventory') {
+    result.subcommand = 'inventory';
+    if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models inventory [--json]';
   } else if (sub === 'start') {
     result.subcommand = 'start';
   } else {
-    result.usageError = `unknown subcommand: ${sub}. Use list, pull <name>, or start.`;
+    result.usageError = `unknown subcommand: ${sub}. Use list, inventory, pull <name>, or start.`;
   }
 
   return result;
@@ -509,6 +512,7 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['inventory', 'Measure opt-in loopback models and write fleet.json resources.models.'],
     ['(none) / list',    'List all local models across Ollama and LM Studio.'],
     ['pull <name>',      'Pull a model by name via `ollama pull` (confirms first; large download).'],
     ['start',            'Best-effort start a locally-installed Ollama daemon.'],
@@ -578,6 +582,18 @@ export async function cmdModels(args: string[]): Promise<number> {
     process.stderr.write(`${C.red}error:${C.reset} ${parsed.usageError}\n`);
     process.stderr.write(`Run ${C.cyan}ashlr models --help${C.reset} for usage.\n`);
     return 2;
+  }
+
+  if (parsed.subcommand === 'inventory') {
+    try {
+      const { runModelInventory } = await import('../core/resources/model-inventory.js');
+      const result = await runModelInventory();
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      return result.unavailableEngines.length || result.models.some(row => row.status !== 'measured') ? 1 : 0;
+    } catch {
+      process.stderr.write('Model inventory refused or unavailable. Check opt-in configuration, idle engines and memguard admission.\n');
+      return 1;
+    }
   }
 
   // Load model-manager (lazy; degrades if M15 core not yet built)

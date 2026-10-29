@@ -94,7 +94,7 @@ describe('closed selected-source full-program TypeScript compiler', () => {
       if (kind === 'ancestor') { project.files.push({ path: 'src', text: '' }); project.files.sort((a, b) => a.path.localeCompare(b.path)); }
       expect(verifyPreparationTypes(project, source).passed).toBe(false);
     });
-  it.each([null, 1, '\ud800', 'x'.repeat(MAX_PREPARATION_TYPECHECK_CANDIDATE_BYTES + 1)])('refuses invalid bounded candidate', candidate => {
+  it.each([null, 1, '\ud800', 'x'.repeat(MAX_PREPARATION_TYPECHECK_CANDIDATE_BYTES + 1)])('refuses invalid bounded candidate (%#)', candidate => {
     expect(verifyPreparationTypes(fixture(), candidate)).toMatchObject({ passed: false, code: 'PREPARATION_TYPES_INVALID_CANDIDATE' });
   });
 });

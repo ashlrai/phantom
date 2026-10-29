@@ -22,7 +22,7 @@ describe('Grok weekly pool reader', () => {
     ['<section>API weekly 68% used <time datetime="2026-11-02T01:21:00Z"></time></section>', null],
     ['<section>Grok Ultra Weekly Cursor 68% used 40% used <time datetime="2026-11-02T01:21:00Z"></time></section>', null],
     ['<section>Grok Ultra Weekly Cursor 68% used</section>', null],
-  ])('extracts only unambiguous rendered weekly pool data', (html, expected) => {
+  ])('extracts only unambiguous rendered weekly pool data (row %#)', (html, expected) => {
     const dom = new JSDOM(html, { runScripts: 'outside-only' });
     // jsdom does not implement rendered innerText.
     for (const el of dom.window.document.querySelectorAll('section')) {
