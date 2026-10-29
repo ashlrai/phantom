@@ -25,7 +25,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
+  'roadmap', 'stack', 'ecosystem', 'today', 'home', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',

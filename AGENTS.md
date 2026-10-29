@@ -36,3 +36,11 @@ This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`
 - Keep backend tests in `test/` and web component tests beside their components. Add regression coverage for changed behavior; never weaken a test or security control to pass a check.
 - Do not read or print real credentials, environment dumps, or secret values. Use Phantom Secrets references and Locus for scoped account access; see [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
 - Report the exact commands run, failures and remaining limitations. Keep documentation commands aligned with [package.json](package.json); the [AGENTS.md audit](docs/AGENTS-MD-AUDIT.md) records public-source gaps across the seven repos.
+
+## Onboarding the ecosystem (agents)
+
+1. Call MCP `ashlr_ecosystem_status` (or `ashlr ecosystem status --json`). If `ready` is true, start work.
+2. Otherwise call `ashlr_ecosystem_up` (or `ashlr ecosystem up --json --no-clone` if you must not clone). It clones, enrolls and enables the steward schedule.
+3. If `steps[].grant` is `waiting-on-you`, stop and tell the human to run `nextCommand` (`ashlr ecosystem up`) in their own terminal. Never try to sign, edit or work around the standing grant.
+4. Apply each `repos[].fixes[].command` only if it is within your grant; CI-gate and ruleset fixes are reserved for the human.
+See docs/ECOSYSTEM-ONBOARDING.md.

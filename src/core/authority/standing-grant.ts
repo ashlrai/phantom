@@ -649,6 +649,10 @@ const DEFAULT_REPO_PLAN: Readonly<Record<string, PlannedRepo>> = Object.freeze({
   'ashlr-pulse': { enter: '3b', mergeFrom: '3b', risk: 'medium', needsVerify: true, perDay: 12 },
   locus: { enter: '3c', mergeFrom: '3c', risk: 'low', perDay: 12 },
   'phantom-secrets': { enter: '3c', mergeFrom: '3c', risk: 'low', perDay: 12 },
+  // `ashlr ecosystem up` core-fleet repos (docs/ECOSYSTEM-ONBOARDING.md).
+  lexicon: { enter: '3c', mergeFrom: '3c', risk: 'low', perDay: 12 },
+  'ashlr-stack': { enter: '3c', mergeFrom: '3c', risk: 'low', perDay: 8 },
+  'ashlr-md': { enter: '3c', mergeFrom: '3c', risk: 'low', perDay: 8 },
   measurably: { enter: '3d', mergeFrom: '3d', risk: 'low', perDay: 4 },
   'ashlr-cortex': { enter: '3d', mergeFrom: '3d', risk: 'low', needsVerify: true, perDay: 4 },
   'ashlr-hub': { enter: '3d', mergeFrom: '3d', risk: 'medium', perDay: 12 },

@@ -254,6 +254,44 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('./website/host-release.js')).websiteStatus(),
   },
   {
+    name: 'ashlr_home',
+    description: 'Daily home dashboard (same as `ashlr home --json` and the console Home page): PRs merged across the ecosystem, spend (USD, tokens, agent seconds), value per dollar/token/second, runs in progress, and what needs the human with the exact command. Read-only.',
+    inputSchema: { type: 'object', properties: { hours: { type: 'number', minimum: 1, maximum: 168 } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { buildHomeDashboard } = await import('./home/dashboard.js');
+      const { realHomeSources } = await import('./home/dashboard-sources.js');
+      const h = typeof args['hours'] === 'number' && args['hours'] >= 1 && args['hours'] <= 168 ? Math.floor(args['hours']) : 24;
+      return buildHomeDashboard(realHomeSources(), { windowHours: h });
+    },
+  },
+  {
+    name: 'ashlr_ecosystem_status',
+    description: 'Ashlr ecosystem onboarding readiness: per repo (phantom, phantom-secrets, lexicon, locus, ashlr-stack, ashlr-md, ashlr-plugin) whether it is on disk, enrolled, auto-merge on, CI-gated and in the standing grant, plus the exact fix commands and the one next command. Read-only.',
+    inputSchema: { type: 'object', properties: { workspace: { type: 'string', description: 'Workspace root (default $ASHLR_ECOSYSTEM_ROOT or ~/ashlr).' } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { runEcosystemUp } = await import('./ecosystem/onboard.js');
+      const { realEcosystemDeps } = await import('./ecosystem/onboard-deps.js');
+      return runEcosystemUp(await realEcosystemDeps({ withGrant: false }), { statusOnly: true, ...(typeof args['workspace'] === 'string' ? { workspace: args['workspace'] } : {}) });
+    },
+  },
+  {
+    name: 'ashlr_ecosystem_up',
+    description: 'Onboard the Ashlr ecosystem for autonomous work: clone missing ecosystem repos into the workspace, enroll them, and turn on the steward schedule. Idempotent. It never signs the standing grant (that needs the human and Touch ID): when the grant is missing it returns grant=waiting-on-you and nextCommand `ashlr ecosystem up` for the human to run. Pass dryRun:true to plan only.',
+    inputSchema: { type: 'object', properties: { workspace: { type: 'string' }, dryRun: { type: 'boolean' }, noClone: { type: 'boolean' }, noSchedule: { type: 'boolean' } }, additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { runEcosystemUp } = await import('./ecosystem/onboard.js');
+      const { realEcosystemDeps } = await import('./ecosystem/onboard-deps.js');
+      return runEcosystemUp(await realEcosystemDeps({ withGrant: false }), {
+        allowGrant: false,
+        dryRun: args['dryRun'] === true, noClone: args['noClone'] === true, noSchedule: args['noSchedule'] === true,
+        ...(typeof args['workspace'] === 'string' ? { workspace: args['workspace'] } : {}),
+      });
+    },
+  },
+  {
     name: 'ashlr_orient',
     description:
       'Session-start orientation: genome memory hits, repo health, top backlog items, ' +
