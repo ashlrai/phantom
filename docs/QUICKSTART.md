@@ -124,6 +124,25 @@ To give Claude Code, Codex or Cursor the tools of Phantom Secrets, Locus and
 Ashlr MD through one MCP connection, see
 [One connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
 
+### Troubleshoot account setup and return to the tour
+
+- If no account appears, open **Apps & Accounts** under the gear. Sign in to
+  the supported provider's own CLI, or start Ollama for local models. For
+  separate native accounts, follow [seat commissioning](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity);
+  preparing a profile alone does not sign in or enroll it.
+- If a seat is signed out, choose **Reconnect** where offered and finish the
+  provider's sign-in in Terminal. Opening sign-in from Phantom is supported on
+  macOS; otherwise use the provider's own CLI. Choose **Check again** where
+  offered to refresh health. For a spent or unavailable seat, inspect its
+  reported reason and reset in **Resources**; a connection does not guarantee
+  available quota or permission to run.
+- If you closed or skipped the tour, open **Settings → Onboarding** and choose
+  **Replay**. Closing the tour card folds it back to its chip; **Skip setup**
+  or the chip's × dismisses it. Opening Settings does not complete the tour.
+- If the workbench itself is closed, run `phm verse` to open it again. Keep
+  the printed tokens private. See [Automatic work](AUTOMATIC-OUTCOMES.md) for
+  readiness and recovery, and [the Phantom guide](VERSE.md) for the interface.
+
 ### Make your first useful turn
 
 1. Choose **Work with me**, open **New chat** and choose a scratch project or
