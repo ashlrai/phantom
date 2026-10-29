@@ -57,6 +57,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   the promote gate's metric runs in the verification sandbox under a standing
   grant.
 
+### Removed
+- Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
+
 ### Fixed
 - Scrub stops flagging prose, code references and public digests as secrets.
 - Automations dedupe prunes against the wall clock (master was red), and the
