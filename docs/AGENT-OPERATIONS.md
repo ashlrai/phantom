@@ -595,3 +595,18 @@ Every input degrades independently: a missing file reports `missing`, a
 corrupt one `degraded`, and the affected cells come back null/`unknown` rather
 than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
 directory covering every source.
+
+Proposal apply cleanup and crash-leftover reaping use plain `git worktree remove`,
+which also reclaims ignored build directories such as `node_modules` and `target`. Dirty or locked
+checkouts remain available for recovery. To retain an inbox checkout for a
+FIXUP, put its absolute path in the JSON array at
+`~/.ashlr/kept-worktrees.json`. Exact paths and their filesystem aliases match;
+entries are not glob patterns. A missing file means no pins, while a malformed,
+unreadable or symlinked file stops inbox reaping. These pins apply to proposal
+apply cleanup and the crash-leftover reaper; sandbox and merge terminal cleanup
+have separate retention controls.
+
+The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
+excluding pinned checkouts and symlink targets. It does not delete files or
+measure shared repository objects. A bounded or failed scan reports an unknown
+total; reported logical bytes are not a promise of physical disk space freed.
