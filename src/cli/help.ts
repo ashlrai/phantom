@@ -58,6 +58,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'resource.v1; missing or stale inputs have null measurements and unknown status',
   },
   {
+    usage: 'ashlr fleet queue merged|read|complete <job-id> [--json]',
+    description: 'Trusted bridge router handoff: merged reads verified metadata from stdin; read emits untrusted model prompts and audits queue changes; complete acknowledges work. Requires an operator-owned seven-repo allowlist.',
+    safety: 'append',
+    jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -685,6 +691,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
+  { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail (newest-first); filter by action/result/since (read-only).', topic: 'observability' },

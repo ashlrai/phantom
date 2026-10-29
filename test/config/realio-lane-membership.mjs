@@ -65,6 +65,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
   'test/cli-unknown-option.test.ts', // fresh Node/tsx CLI subprocesses per verb, each with its own temp HOME and failing tool shims on PATH
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
+  'test/integration/locus-credential-boundary.test.ts', // spawns the real built CLI under a fake Locus pin per case with a 30s child budget; measured 5.3s slowest test vs the unit lane's 5s timeout
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/mcp-conformance-2026-07-28.test.ts', // real fixture subprocesses plus spawned tsx `phm mcp` children over newline-delimited stdio
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
