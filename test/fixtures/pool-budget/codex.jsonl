@@ -1,0 +1,1 @@
+{"type":"event_msg","timestamp":"2026-10-25T10:00:00Z","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":50,"window_minutes":300,"resets_at":1792929600},"secondary":{"used_percent":100,"window_minutes":10080,"resets_at":1792929600},"credits":{"balance":"42.5","unlimited":false}},"text":"discard-this-private-transcript"}}

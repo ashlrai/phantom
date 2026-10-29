@@ -52,8 +52,8 @@ describe('phm companions first-run CLI', () => {
     expect(JSON.parse(output.stdout.join('')).companions[2]).toMatchObject({ installed: true, path: binary, status: 'known-interface' });
   });
 
-  it.each([['--unknown'], ['--root'], ['--root', 'relative'], ['--lexicon-bin', './lexicon'], ['install']])(
-    'rejects invalid usage %j without discovery', async (...args: string[]) => {
+  it.each([[['--unknown']], [['--root']], [['--root', 'relative']], [['--lexicon-bin', './lexicon']], [['install']]])(
+    'rejects invalid usage %j without discovery', async (args: string[]) => {
       const output = capture();
       expect(await cmdCompanions(args)).toBe(2);
       expect(output.stdout).toEqual([]);

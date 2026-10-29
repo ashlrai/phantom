@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ReadSessionRevocations } from './read-session-revocations.js';
+import { scrubSecrets } from '../util/scrub.js';
 
 const HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
@@ -118,8 +119,11 @@ export function sendJson(
     'X-Content-Type-Options': 'nosniff',
     ...headers,
   });
+  // Scrub BEFORE the 512 bound: an error string embedding a credential must
+  // lose the whole token, not just its tail (a sliced prefix is still a
+  // partial credential). Static messages pass through unchanged.
   const publicBody = body && typeof body === 'object' && 'error' in body
-    ? { ...body, error: String((body as { error: unknown }).error).slice(0, 512) }
+    ? { ...body, error: scrubSecrets(String((body as { error: unknown }).error)).slice(0, 512) }
     : body;
   res.end(JSON.stringify(publicBody));
 }
