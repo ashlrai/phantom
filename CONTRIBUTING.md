@@ -60,6 +60,7 @@ To install the CLI while developing:
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
+| `node scripts/docs-autosync.mjs` | Regenerate every source-derived reference doc (`docs/cli.md`, `docs/CLI-REFERENCE.md`, `docs/CONFIG-REFERENCE.md`); `--check` compares without writing, `--list` prints the managed paths |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
