@@ -37,14 +37,19 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
-succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
-unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
-deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request that is ready
-for review. A draft pull request skips those until it is marked ready, which
-starts a full run; a draft cannot merge, so open drafts while iterating
-and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
+**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
+the secret-shape scan, lane classification, and — unless the change is
+docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+required check and fails unless exactly that selection ran and every full lane
+was skipped. No pull request or merge-queue commit may occupy a macOS or
+Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+(`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
+native-broker lanes, and the Windows service authority run only in the daily
+scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
+or on the reusable release call — where the caller's push event still defers
+the macOS and Windows-service legs to the daily run while the `ci` matrix,
+including its Windows portability legs, stays the release's native gate
+(`.github/workflows/ci.yml`).
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
@@ -266,7 +271,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
 | `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
-| `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, direction report, engine readiness and quality metrics |
+| `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
@@ -550,3 +555,25 @@ not present in this repository. Their consumer contract is to embed the same
 `budgets` object from `phm budget show --json`; this change does not create or
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
+
+## Engineering lanes console
+
+`phm fleet lanes [--json] [--queue-dir <abs>]` prints the `fleet.lanes.v1`
+projection — one row per router lane (pool) with credit left, ready-queue
+depth, live jobs and merges per hour — and the same projection is served on
+the loopback console at `GET /api/fleet/lanes` and rendered in the Fleet
+view. It is strictly read-only: bounded file reads, no writes, no spawned
+readers, no provider calls, no secrets.
+
+Inputs are the existing readers' artifacts. From the router queue directory
+(`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
+(merge transitions in the trailing hour), and `usage-readings.log`. Credit
+comes from the pool-budget ledger; a queue-local `budgets/` directory or the
+usage journal fill pools the ledger has not observed.
+
+Every input degrades independently: a missing file reports `missing`, a
+corrupt one `degraded`, and the affected cells come back null/`unknown` rather
+than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
+directory covering every source.

@@ -78,4 +78,8 @@ export const KNOWN_FAST_SPAWN_FILES = [
   // request on stdin — no git, no network, no waiting on another process's
   // output. 0.08s for the one test that spawns (2026-09-24).
   'test/scorecard-history-sea-310.test.ts', // <0.1s
+  // Marker false positive rather than a measured-cheap spawn — the
+  // `execSync("ls")`/`spawn` hits are string fixtures inside the it.each table
+  // fed to the added-content scanner; the file spawns nothing itself.
+  'test/cross-review.test.ts', // <0.1s
 ];

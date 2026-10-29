@@ -335,10 +335,14 @@ router_account_score() {
 # and is spent even when the personal home has more headroom.
 router_pick_codex_account() {
   local live=$1
+  local skip=${2:-}
   local id home score any_login
   any_login=0
   while IFS=$'\t' read -r id home; do
     [[ -n "$id" ]] || continue
+    if [[ -n "$skip" && "$id" == "$skip" ]]; then
+      continue
+    fi
     if router_account_dead "$id"; then
       router_note_dead "$id"
       continue
@@ -902,7 +906,7 @@ router_probe_codex() {
     node "$ROUTER_IO" probe-argv --config "$ROUTER_CONFIG" --model "$model" > "$argv_file"
     router_read_nul < "$argv_file"
     set +e
-    out=$(router_exec_clean "CODEX_HOME=${probe_home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- node "$ROUTER_IO" run-timeout 90 -- "${ROUTER_ARGV[@]}" 2>&1)
+    out=$(router_exec_clean "CODEX_HOME=${probe_home}" "CODEX_HOME_ALT=$(router_codex_alt_home)" -- node "$ROUTER_IO" run-timeout 90 -- "${ROUTER_ARGV[@]}" 2>&1 </dev/null)
     rc=$?
     set -e
     if [[ "$rc" -eq 0 ]] && ! printf '%s' "$out" | node "$ROUTER_IO" rejects-model; then
@@ -1420,16 +1424,12 @@ router_failover_codex() {
   if [[ -n "$current" ]]; then
     router_release_reserve "$current"
   fi
-  if ! picked=$(router_pick_codex_account live); then
+  if ! picked=$(router_pick_codex_account live "$current"); then
     return 1
   fi
   id=${picked%%$'\t'*}
   home=${picked#*$'\t'}
   home=$(printf '%s' "$home" | tr -d '\n')
-  if [[ "$id" == "$current" ]]; then
-    router_release_reserve "$id"
-    return 1
-  fi
   if ! router_acquire_lock "$ROUTER_HOME/locks/cli-codex-$id"; then
     router_release_reserve "$id"
     return 1
@@ -1741,8 +1741,9 @@ EOF
     combined=$ROUTER_HOME/tmp/combined-${name}-${number}-a${attempt}.txt
     cat "$out" "$err" > "$combined" 2>/dev/null || true
     if [[ "$rc" -ne 0 && "$rc" -ne 124 && "$resolved" != "-" ]] && printf '%s' "$(cat "$combined")" | node "$ROUTER_IO" rejects-model; then
-      router_log "model ${resolved} rejected at runtime; retrying with the CLI default"
+      router_log "model ${resolved} rejected at runtime; dropping it and retrying with the CLI default"
       warning="runtime rejected ${resolved}; using CLI default"
+      node "$ROUTER_IO" record-model-reject --state "$ROUTER_STATE" --cli "$cli" --model "$resolved" || true
       set +e
       router_invoke_cli "$cli" "-" "$ROUTER_WT" "$prompt" "$out" "$err"
       rc=$?
@@ -1786,11 +1787,16 @@ EOF
     fi
     now_iso=$(node "$ROUTER_IO" now | tr -d '\n')
     ROUTER_AUTH=0
+    ROUTER_REJECTED=0
     if [[ "$cli" == "codex" && -n "${ROUTER_ACCOUNT:-}" ]]; then
       if printf '%s\n' "$(cat "$combined" 2>/dev/null || true)" | node "$ROUTER_IO" auth-failed; then
         ROUTER_AUTH=1
         router_mark_account_dead "$ROUTER_ACCOUNT" auth
         warning="auth failed on ${ROUTER_ACCOUNT}; marked dead"
+      fi
+      if [[ "$rc" -ne 0 && "$rc" -ne 124 ]] \
+        && printf '%s' "$(cat "$combined" 2>/dev/null || true)" | node "$ROUTER_IO" rejects-model; then
+        ROUTER_REJECTED=1
       fi
       node "$ROUTER_IO" record-quota --state "$ROUTER_STATE" --account "$ROUTER_ACCOUNT" \
         --remaining "$ROUTER_REMAINING" --reset "$ROUTER_RESET" --limited "$ROUTER_LIMITED" \
@@ -1829,6 +1835,16 @@ EOF
       break
     fi
     if [[ "$ROUTER_LIMITED" == "1" && "$cli" == "codex" && "$failover_used" -eq 0 ]]; then
+      if router_failover_codex; then
+        failover_used=1
+        account=$ROUTER_ACCOUNT
+        attempt=$((attempt + 1))
+        continue
+      fi
+      break
+    fi
+    if [[ "$ROUTER_REJECTED" == "1" && "$cli" == "codex" && "$failover_used" -eq 0 ]]; then
+      router_log "codex account ${ROUTER_ACCOUNT} rejected the model; rerouting to the next pool"
       if router_failover_codex; then
         failover_used=1
         account=$ROUTER_ACCOUNT

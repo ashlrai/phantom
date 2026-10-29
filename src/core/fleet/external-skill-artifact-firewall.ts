@@ -97,13 +97,6 @@ export type ExternalSkillArtifactClassV1 =
 export type ExternalSkillArtifactKindV1 = 'directory' | 'file' | 'symlink';
 export type ExternalSkillArtifactModeV1 = '040000' | '100644' | '100755' | '120000';
 
-export interface ExternalSkillArtifactFirewallInputV1 {
-  firstBundleBytes: Uint8Array;
-  secondBundleBytes: Uint8Array;
-  firstMarkerBytes: Uint8Array;
-  secondMarkerBytes: Uint8Array;
-}
-
 export interface ExternalSkillArtifactClassCountV1 {
   artifactClass: ExternalSkillArtifactClassV1;
   count: number;
