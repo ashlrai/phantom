@@ -24,6 +24,7 @@
  * Pause/resume mutate only the kill-switch sentinel. The nested shadow canary
  * command owns its separate metadata-only controller store. `queue` owns the
  * separate untrusted router handoff and its read audit; status remains read-only.
+ * `fleet loop` refreshes the loop.v1 snapshot in fleet.json and optional aggregate telemetry.
  */
 
 import { readFileSync } from 'node:fs';
@@ -2294,6 +2295,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   doctor:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet doctor [--json]' },
   scorecard:      { allowed: { flags: ['--json', '--by-engine', '--by-repo'], values: ['--window'] }, usage: 'ashlr fleet scorecard [--window 7d|30d|all] [--by-engine] [--by-repo] [--json]' },
   oversight:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet oversight [--json]' },
+  loop:           { allowed: { flags: ['--json'] }, usage: 'phm fleet loop [--json]' },
   'judge-traces': { allowed: { flags: ['--json', '--outcome-only'], values: ['--limit', '--proposal'] }, usage: 'ashlr fleet judge-traces [--limit N] [--proposal <id>] [--outcome-only] [--json]' },
   'judge-health': { allowed: { flags: ['--json', '--degradation'] }, usage: 'ashlr fleet judge-health [--degradation] [--json]' },
 };
@@ -2339,6 +2341,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'loop': {
+      const { cmdFleetLoop } = await import('./fleet-loop.js');
+      return cmdFleetLoop(rest);
+    }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
@@ -2393,6 +2399,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    phm fleet loop [--json]      ${cyan('# refresh development-loop metrics in fleet.json (loop.v1)')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
