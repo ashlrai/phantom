@@ -10,12 +10,12 @@
  * This provides fast feedback alongside hosted CI, not full release-admission
  * evidence. See docs/RELEASING-LOCALLY.md for the complete release checks.
  *
- * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
- * GATE_BUILD_ASSET_SCRIPTS), web typecheck, eslint (cached), the real-io lane guard, the
- * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs),
- * the docs check. Then the web build + first-paint budget. Phase B runs the
- * focused backend and web suites in parallel; a full gate runs them serially
- * so load-sensitive UI timing assertions measure the UI rather than backend work.
+ * Phase A (parallel): root build (tsc, then the authority surface and static-asset copy from
+ * `npm run build` — see GATE_BUILD_ASSET_SCRIPTS), web typecheck, eslint (cached), the real-io
+ * lane guard, the Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the docs check.
+ * Then the web build + first-paint budget. Phase B runs the focused backend and web suites in
+ * parallel; a full gate runs them serially so load-sensitive UI timing assertions measure the
+ * UI rather than backend work.
  *
  * Which tests run. The default mode selects tests through vitest's own import graph — the
  * same mechanism as `vitest --changed <ref>` — but hands vitest the changed-file list
@@ -351,16 +351,19 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 /**
  * The `npm run build` steps (package.json `scripts.build`, each `node <script>`) the gate's build
- * runs after tsc. tsc emits only .js/.d.ts, so without the asset copy dist/core/web/public/ is
- * never written and every test that reads a copied asset (test/activation-readiness-package
- * reads dist/core/web/public/app.js) fails in a fresh worktree. Only the fast steps: the copy
- * is a millisecond cpSync. The rest of `npm run build` stays out of Phase A on purpose — the
- * vite build is the first-paint step's job (into a scratch dir), and the esbuild/inventory/
- * identity steps cost seconds for outputs no gate-selected test reads. test/gate.test.ts
- * asserts every entry is still a step of `npm run build`, so this reuses that script, never
- * forks it.
+ * runs after tsc, in build order. tsc emits only .js/.d.ts, so without these a fresh worktree
+ * has no:
+ *   - dist/authority-surface.json (scripts/authority-surface.mjs, ~1 s): the manual-publication
+ *     verifier in scripts/hosted-build-artifact.mjs refuses to load its own compiled parsers
+ *     unless the compiled closure matches it (test/desktop-artifact-installer.test.ts);
+ *   - dist/core/web/public/ (scripts/copy-assets.mjs, a millisecond cpSync): test/activation-
+ *     readiness-package reads dist/core/web/public/app.js.
+ * The rest of `npm run build` stays out of Phase A on purpose — the vite build is the
+ * first-paint step's job (into a scratch dir), and the esbuild/inventory/identity steps cost
+ * seconds for outputs no gate-selected test reads. test/gate.test.ts asserts every entry is
+ * still a step of `npm run build`, in order, so this reuses that script, never forks it.
  */
-export const GATE_BUILD_ASSET_SCRIPTS = Object.freeze(['scripts/copy-assets.mjs']);
+export const GATE_BUILD_ASSET_SCRIPTS = Object.freeze(['scripts/authority-surface.mjs', 'scripts/copy-assets.mjs']);
 
 /** The build step's commands, in order: tsc, then each asset script. Pure. */
 export function buildCommands({ nodeBin, tscBin, tsBuildInfoFile }) {
