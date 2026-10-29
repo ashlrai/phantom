@@ -1717,21 +1717,21 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
-  if (wantsHelp(args)) {
-    printCoreUsage('config', 'Read/write config values; no args prints a summary.', [
-      ['phm config get <key>', 'read a dot-path value (sensitive leaves print <redacted>)'],
-      ['phm config set <key> <value>', 'write a scalar; use --json <value> for structured keys'],
-      ['phm config path', 'print the config file path'],
-      ['phm config effective [--json]', 'read-only effective autonomy/daemon/foundry/backend settings'],
-    ]);
-    return;
-  }
   const subCmd = args[0];
+  const CONFIG_USAGE =
+    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
 
   // `config set <key> --help` (or `set --help <value>`) used to store "--help"
   // as the value or the key. Refuse with the usage line before any config IO.
   if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
     die('Usage: ashlr config set <key> <value>', 2);
+  }
+
+  if (wantsHelp(args) || subCmd === 'help') {
+    console.log(CONFIG_USAGE);
+    console.log('  (no args) or path  print the config file path');
+    console.log('  list               print a summary of the config');
+    return;
   }
 
   if (subCmd === 'effective') {
@@ -1752,14 +1752,6 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
-  const CONFIG_USAGE =
-    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
-  if (subCmd === '--help' || subCmd === '-h' || subCmd === 'help') {
-    console.log(CONFIG_USAGE);
-    console.log('  (no args) or path  print the config file path');
-    console.log('  list               print a summary of the config');
-    return;
-  }
   // A typo such as `config gt roots` used to print the summary and exit 0.
   if (subCmd && !['path', 'list', 'show', 'get', 'set'].includes(subCmd)) {
     die(`Unknown config subcommand: ${subCmd}\n${CONFIG_USAGE}`, 2);
