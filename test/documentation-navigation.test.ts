@@ -20,6 +20,18 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 describe('operator documentation navigation', () => {
   const swarmResearch = 'docs/research/agent-swarms-rsi.md';
 
+  it('keeps the Grok Bot proposal and its resource-lane distinction navigable', () => {
+    const root = process.cwd();
+    const proposal = readFileSync(join(root, 'docs/GROK-BOT-BUS.md'), 'utf8');
+    expect(proposal).toContain('separate future proposal');
+    expect(proposal).toContain('explicitly refuses coding and research');
+    expect(proposal).toContain('Delivery is uncertain');
+    expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toContain('docs/GROK-BOT-BUS.md');
+    expect(readFileSync(join(root, 'docs/GROK-BOT-COMPANION.md'), 'utf8')).toContain('(GROK-BOT-BUS.md)');
+    expect(checkDocumentation({ root, entrypoints: ['docs/GROK-BOT-BUS.md', 'docs/GROK-BOT-COMPANION.md'] }))
+      .toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+  });
+
   it('resolves the swarm research implementation references in the source checkout', () => {
     const result = checkDocumentation({ root: process.cwd(), entrypoints: [swarmResearch] });
     expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });

@@ -101,6 +101,10 @@ turning one Bot's recollection into authority.
 
 ## A possible future Phantom connector
 
+The proposed producer-lane design is described in [Grok Bot on the bus](GROK-BOT-BUS.md).
+The separate [resource lane](grokbot-lane.md) has a narrower task scope and is
+not yet connected to a live Secrets route or daemon caller.
+
 The webhook above is a supported **one-way dispatch** path, not a Bot
 conversation, completion, or usage API. Grok Bot also supports plugins and the
 user's Cursor MCP policy can admit a custom MCP server. That is an **incoming
