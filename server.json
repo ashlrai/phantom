@@ -3,7 +3,7 @@
   "name": "io.github.ashlrai/phantom",
   "title": "Phantom",
   "description": "Phantom's local stdio gateway aggregates MCP servers and exposes engineering workbench tools.",
-  "version": "3.29.15",
+  "version": "3.30.0",
   "websiteUrl": "https://phm.dev",
   "repository": {
     "url": "https://github.com/ashlrai/phantom",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@ashlr/phantom",
-      "version": "3.29.15",
+      "version": "3.30.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
