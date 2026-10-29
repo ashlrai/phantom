@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { credentialSpawn as spawn } from '../integrations/secrets.js';
 import type { AshlrConfig, VisualGroundingEvidence } from '../types.js';
 import {
   locateVisualTargets,

@@ -14,6 +14,7 @@
 
 import type { VerseEngine, VerseEvent, VerseSession, VerseTurnLaunch } from '../types.js';
 import type { VerseSeatLaunch } from '../session-engine.js';
+import type { ProviderBackend, ProviderCapabilities } from '../../providers.js';
 import { claudeAdapter } from './claude.js';
 import { codexAdapter } from './codex.js';
 import { grokAdapter } from './grok.js';
@@ -82,20 +83,36 @@ export { turnAttachmentDirs, turnAttachmentImages, type VerseTurnExtras } from '
 /** V3.9 — live telemetry poll interval for adapters that implement `pollTelemetry`. */
 export const VERSE_TELEMETRY_POLL_MS = 2_000;
 
+export interface VerseBackend extends VerseAdapter,
+  ProviderBackend<VerseSession, VerseSeatLaunch, VerseTurnLaunch, VerseTurnParser> {
+  /** Preserve adapter identity for existing consumers (local shares Claude's adapter). */
+  readonly adapter: VerseAdapter;
+}
+
+function defineBackend(
+  id: VerseEngine,
+  adapter: VerseAdapter,
+  capabilities: ProviderCapabilities,
+): VerseBackend {
+  return Object.freeze({ ...adapter, adapter, id, capabilities: Object.freeze({ ...capabilities }) });
+}
+
+// Exhaustive over VerseEngine, including the existing Grok backend. Capabilities
+// describe the wire contract, independent of account, tool access or readiness.
+const BACKENDS: Readonly<Record<VerseEngine, VerseBackend>> = Object.freeze({
+  claude: defineBackend('claude', claudeAdapter, { streaming: true, resume: true, providerAssignedSessionId: false }),
+  codex: defineBackend('codex', codexAdapter, { streaming: true, resume: true, providerAssignedSessionId: true }),
+  devin: defineBackend('devin', devinAdapter, { streaming: true, resume: true, providerAssignedSessionId: true }),
+  local: defineBackend('local', claudeAdapter, { streaming: true, resume: true, providerAssignedSessionId: false }),
+  grok: defineBackend('grok', grokAdapter, { streaming: true, resume: true, providerAssignedSessionId: false }),
+});
+
+export function backendFor(engine: VerseEngine): VerseBackend {
+  if (!Object.hasOwn(BACKENDS, engine)) throw new Error(`unknown verse engine: ${String(engine)}`);
+  return BACKENDS[engine];
+}
+
+/** Compatibility seam for existing callers and injected adapters. */
 export function adapterFor(engine: VerseEngine): VerseAdapter {
-  switch (engine) {
-    case 'claude':
-    case 'local':
-      return claudeAdapter;
-    case 'codex':
-      return codexAdapter;
-    case 'grok':
-      return grokAdapter;
-    case 'devin':
-      return devinAdapter;
-    default: {
-      const never: never = engine;
-      throw new Error(`unknown verse engine: ${String(never)}`);
-    }
-  }
+  return backendFor(engine).adapter;
 }
