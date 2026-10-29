@@ -1,0 +1,38 @@
+{
+  "version": "0.5.0",
+  "ready": true,
+  "status": "ready",
+  "mcp_registered": {
+    "claude": true,
+    "cursor": false,
+    "codex": false
+  },
+  "doctor": {
+    "version": "0.5.0",
+    "home": "/contract/locus",
+    "seal_ok": true,
+    "bindings": 1,
+    "verdict": "SAFE",
+    "ok": true
+  },
+  "commands": {
+    "enter": "locus enter contract",
+    "whoami": "locus whoami"
+  },
+  "exit_code": 0,
+  "status_oneline": "contract:synthetic",
+  "home": "/contract/locus",
+  "required_servers": [
+    "locus",
+    "phantom"
+  ],
+  "mcp_command": "locus-mcp",
+  "pin": {
+    "alias": "contract",
+    "tenant": "synthetic",
+    "binding_id": "fixture",
+    "expires_at": "2099-01-01T00:00:00Z",
+    "seal_ok": true,
+    "expired": false
+  }
+}

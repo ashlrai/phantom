@@ -33,20 +33,20 @@ describe('Universe graph CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    [], ['calendar', 'extra'], ['CALENDAR'], ['../escape'], ['a'.repeat(65)],
-    ['calendar', '--unknown'], ['calendar', '--root'], ['calendar', '--root', '--json'],
-    ['calendar', '--root', '/one', '--root', '/two'], ['calendar', '--root', '\0'],
-    ['calendar', '--node'], ['calendar', '--node', ''], ['calendar', '--node', ' '],
-    ['calendar', '--node', ' trial:example'], ['calendar', '--node', 'n'.repeat(4_097)],
-    ['calendar', '--node', 'first', '--node', 'second'], ['calendar', '--node', 'a\nb'],
-    ['calendar', '--node', 'a\x85b'], ['calendar', '--node', '-h'],
-    ['calendar', '--direction', 'ancestors'], ['calendar', '--depth', '1'],
-    ['calendar', '--node', 'trial:example', '--direction', 'both'],
-    ['calendar', '--node', 'trial:example', '--direction', 'ancestors', '--direction', 'descendants'],
-    ['calendar', '--node', 'trial:example', '--depth', '1', '--depth', '2'],
-    ['calendar', '--json'], ['calendar', '--help', '-h'],
-    ['calendar', '--help', '--unknown'], ['calendar', '--help', '--depth', '2'],
-  ])('rejects invalid invocation %j before reading any evidence', async (...args) => {
+    [[]], [['calendar', 'extra']], [['CALENDAR']], [['../escape']], [['a'.repeat(65)]],
+    [['calendar', '--unknown']], [['calendar', '--root']], [['calendar', '--root', '--json']],
+    [['calendar', '--root', '/one', '--root', '/two']], [['calendar', '--root', '\0']],
+    [['calendar', '--node']], [['calendar', '--node', '']], [['calendar', '--node', ' ']],
+    [['calendar', '--node', ' trial:example']], [['calendar', '--node', 'n'.repeat(4_097)]],
+    [['calendar', '--node', 'first', '--node', 'second']], [['calendar', '--node', 'a\nb']],
+    [['calendar', '--node', 'a\x85b']], [['calendar', '--node', '-h']],
+    [['calendar', '--direction', 'ancestors']], [['calendar', '--depth', '1']],
+    [['calendar', '--node', 'trial:example', '--direction', 'both']],
+    [['calendar', '--node', 'trial:example', '--direction', 'ancestors', '--direction', 'descendants']],
+    [['calendar', '--node', 'trial:example', '--depth', '1', '--depth', '2']],
+    [['calendar', '--json']], [['calendar', '--help', '-h']],
+    [['calendar', '--help', '--unknown']], [['calendar', '--help', '--depth', '2']],
+  ])('rejects invalid invocation %j before reading any evidence', async (args) => {
     expect(await cmdUniverseGraph([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.readUniverseGraph).not.toHaveBeenCalled();

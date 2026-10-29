@@ -51,7 +51,7 @@ export function color256(n: number): string {
 }
 
 function clampByte(v: number | undefined): number {
-  return Math.max(0, Math.min(255, Number.isFinite(v) ? Math.round(v!) : 0));
+  return Math.max(0, Math.min(255, typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0));
 }
 
 /** Apply one SGR parameter list to `style` (mutates a copy; returns it). */

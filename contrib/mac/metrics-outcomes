@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Reconcile published job PRs against GitHub's authoritative PR state."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+PR_URL = re.compile(r'https://github\.com/[^/\s]+/[^/\s]+/pull/[1-9][0-9]*/?\Z')
+
+
+def records(text):
+    result = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if not isinstance(row, dict):
+            raise ValueError(f'ledger line {number} must be an object')
+        result.append(row)
+    return result
+
+
+def identity(row):
+    job = row.get('jobId', row.get('job', row.get('id')))
+    url = row.get('prUrl', row.get('pr'))
+    if not isinstance(job, str) or not job or not isinstance(url, str):
+        raise ValueError('outcome requires a string jobId/job/id and prUrl/pr')
+    if not PR_URL.fullmatch(url):
+        raise ValueError('outcome PR must be a github.com pull request URL')
+    return job, url.rstrip('/')
+
+
+def state(row):
+    return row.get('outcome', row.get('status'))
+
+
+def github_pr(url):
+    # Explicit base-repository URL works for fork heads and all merge methods.
+    completed = subprocess.run(
+        ['gh', 'pr', 'view', url, '--json', 'state,mergedAt,closedAt'],
+        capture_output=True, text=True, timeout=60, check=False)
+    if completed.returncode:
+        # Do not echo gh output: credential helpers may emit sensitive details.
+        raise ValueError('gh pr view failed')
+    return json.loads(completed.stdout)
+
+
+def terminal(pr):
+    if not isinstance(pr, dict):
+        raise ValueError('GitHub response must be an object')
+    value = pr.get('state')
+    field = 'mergedAt' if value == 'MERGED' else 'closedAt'
+    if value == 'OPEN':
+        return None
+    if value not in ('MERGED', 'CLOSED'):
+        raise ValueError('unrecognized GitHub PR state')
+    timestamp = pr.get(field)
+    if not isinstance(timestamp, str):
+        raise ValueError(f'terminal PR requires {field}')
+    parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('GitHub timestamp requires a timezone')
+    return value, timestamp
+
+
+def reconcile(path, lookup=github_pr):
+    """Append one terminal outcome per job and PR; never infer merges from git."""
+    path = Path(path)
+    appended = 0
+    errors = 0
+    # All reconciler instances share this lock, including across GitHub lookups.
+    with path.with_name(path.name + '.reconcile.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = records(path.read_text())
+        published = {}
+        for row in rows:
+            if state(row) == 'PUBLISHED':
+                published[identity(row)] = row
+        cache = {}
+        for key, row in published.items():
+            # Re-read before each append to preserve outcomes from other writers.
+            current = path.read_text()
+            latest = records(current)
+            done = {identity(r) for r in latest if state(r) in ('MERGED', 'CLOSED')}
+            if key in done:
+                continue
+            try:
+                if key[1] not in cache:
+                    cache[key[1]] = terminal(lookup(key[1]))
+                resolved = cache[key[1]]
+                if resolved is None:
+                    continue
+                outcome, timestamp = resolved
+                event = dict(row)
+                # Preserve the producer's field convention and routing metadata.
+                event['outcome' if 'outcome' in row else 'status'] = outcome
+                event['ts'] = timestamp
+                event['mergedAt' if outcome == 'MERGED' else 'closedAt'] = timestamp
+                event['reconciledAt'] = datetime.now(timezone.utc).isoformat()
+                event['source'] = 'metrics-outcomes-reconciler'
+                with path.open('a') as ledger:
+                    ledger.write(('\n' if current and not current.endswith('\n') else '')
+                                 + json.dumps(event, separators=(',', ':')) + '\n')
+                    ledger.flush()
+                    os.fsync(ledger.fileno())
+                appended += 1
+            except (ValueError, subprocess.TimeoutExpired):
+                errors += 1
+                print('PR reconciliation failed; retry on the next run', file=sys.stderr)
+    return appended, errors
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['reconcile'])
+    parser.add_argument('--jobs', required=True, type=Path, help='existing jobs.jsonl ledger')
+    args = parser.parse_args()
+    try:
+        appended, errors = reconcile(args.jobs)
+    except (OSError, ValueError):
+        print('Cannot reconcile: ledger unavailable or malformed', file=sys.stderr)
+        return 1
+    print(json.dumps({'appended': appended, 'errors': errors}))
+    return 1 if errors else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -81,6 +81,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { classifyVerseCliError, pinnedClaudeVersion } from './adapters/claude.js';
 import {
   adapterFor as defaultAdapterFor,
+  backendFor,
   VERSE_TELEMETRY_POLL_MS,
   type VerseAdapter,
   type VerseAdapterTurnContext,
@@ -104,6 +105,8 @@ import { isPersistedManagerEvent, readStoredManagerEvents } from './manager-conv
 import {
   argvMarkers,
   createProcessRegistry,
+  spawnSessionChild,
+  sessionChildStarted,
   type ProcessRegistryOptions,
   type VerseProcessRegistry,
 } from './process-registry.js';
@@ -138,6 +141,7 @@ import {
   type VerseWindowSource,
 } from './types.js';
 import { appendVerseLog, type VerseLogLevel } from './verse-log.js';
+import { statusLine, turnAcknowledgement, turnResult } from './turn-status.js';
 import {
   createAttachmentStore,
   expandHomeMentions,
@@ -682,10 +686,6 @@ const DEFAULT_WATCHDOG_MS = 3 * 60_000;
  */
 export const VERSE_DEVIN_CLOUD_TURN_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
-/** Engines whose vendor names the conversation (codex thread id, Devin task / ACP session): no pre-minted id. */
-function vendorNamesConversation(engine: VerseEngine): boolean {
-  return engine === 'codex' || engine === 'devin';
-}
 const DEFAULT_WATCHDOG_POLL_MS = 30_000;
 
 /**
@@ -1130,6 +1130,8 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   const log = opts.log ?? ((level: VerseLogLevel, message: string): void => { appendVerseLog(level, message, { root }); });
   const store: VerseSessionStore = createVerseSessionStore(root);
   const running = new Map<string, RunningTurn>();
+  // One bounded summary per accepted turn, independent of subscriptions or focus.
+  const turnStatuses = new Map<string, { turnId: string; task: string; answer: string; streaming: boolean; cancelled: boolean }>();
   const turnHooks = opts.turnHooks ?? null;
   /**
    * Turns admitted but waiting on `turnHooks.beforeTurn` (the checkpoint) —
@@ -1464,15 +1466,43 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       emitTransient(id, event);
       return null;
     }
+    const status = turnStatuses.get(id);
+    if (event.type === 'turn-done' && status?.turnId === event.turnId) {
+      const session = store.get(id);
+      if (!session) return null;
+      const result = emit(id, {
+        type: 'assistant-status', turnId: event.turnId, phase: 'result',
+        text: turnResult(status.task, scrubSecrets(status.answer), event.ok ? 'ok' : status.cancelled ? 'cancelled' : 'failed'),
+      });
+      // A subscriber may delete the chat. Never recreate its log or claim a
+      // durable result when the append failed.
+      if (!result || store.get(id) !== session) {
+        turnStatuses.delete(id);
+        return null;
+      }
+      if (result.type === 'assistant-status') session.lastResult = result.text;
+    }
     let stored: VerseEvent;
     try {
       stored = store.appendEvent(id, event, nowIso());
     } catch (err) {
       onStorageFailure(id, err, event);
+      if (event.type === 'turn-done') turnStatuses.delete(id);
       return null;
+    }
+    if (status && 'turnId' in event && event.turnId === status.turnId) {
+      if (event.type === 'assistant-message') {
+        status.answer = event.text.slice(0, 2048);
+        status.streaming = false;
+      } else if (event.type === 'text-delta') {
+        if (!status.streaming) status.answer = '';
+        status.answer = (status.answer + event.text).slice(0, 2048);
+        status.streaming = true;
+      } else if (event.type === 'cancelled') status.cancelled = true;
     }
     fanOut(id, stored);
     if (reasoningTap) tapReasoning(id, stored);
+    if (event.type === 'turn-done') turnStatuses.delete(id);
     return stored;
   }
 
@@ -1550,6 +1580,9 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
    * escape from a child-process `close` handler as an uncaught exception.
    */
   function save(session: VerseSession): VerseSession {
+    // Event subscribers run synchronously and may delete a chat during its
+    // close-out. A later save must never bring that deleted record back.
+    if (store.get(session.id) !== session) return session;
     session.updatedAt = nowIso();
     try {
       store.save(session);
@@ -1608,12 +1641,20 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   function reconcileInterrupted(session: VerseSession): void {
     let orphanTurnId: string | null = null;
     let engaged = false;
-    for (const event of store.readEvents(session.id)) {
+    const events = store.readEvents(session.id);
+    for (const event of events) {
       if (event.type === 'user-message' || event.type === 'turn-started') {
         if (event.turnId !== orphanTurnId) engaged = false;
         orphanTurnId = event.turnId;
       } else if ((event.type === 'turn-done' || event.type === 'cancelled') && event.turnId === orphanTurnId) orphanTurnId = null;
       else if (orphanTurnId !== null && event.turnId === orphanTurnId && ENGAGED_EVENTS.has(event.type)) engaged = true;
+    }
+    if (orphanTurnId) {
+      const ask = events.find(event => event.type === 'user-message' && event.turnId === orphanTurnId);
+      turnStatuses.set(session.id, {
+        turnId: orphanTurnId, task: statusLine(scrubSecrets(ask?.type === 'user-message' ? ask.text : session.title), 100),
+        answer: '', streaming: false, cancelled: false,
+      });
     }
     emit(session.id, { type: 'error', turnId: orphanTurnId, message: INTERRUPTED_MESSAGE });
     if (orphanTurnId) {
@@ -2069,7 +2110,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     // was cancelled part-way can still have compacted. Skipped only when the
     // process never existed (async spawn failure, no pid): it wrote nothing,
     // and a file read then could only find some OTHER run's records.
-    if (turn.child.pid !== undefined) runTelemetryHook(id, turn, 'afterTurn');
+    if (sessionChildStarted(turn.child)) runTelemetryHook(id, turn, 'afterTurn');
 
     const session = store.get(id);
     if (!session) {
@@ -2146,9 +2187,14 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     if (nativeFromOutput && !session.nativeSessionId) session.nativeSessionId = nativeFromOutput;
     // Count the turn once the CLI engaged: a resumed conversation exists on
     // the vendor side even when the turn was cancelled part-way.
+    const storageError = storageFailed.has(id);
+    if (storageError) {
+      ok = false;
+      lastError = session.lastError;
+    }
     if (ok || turn.sawOutput) session.turnCount += 1;
-    session.status = ok || stopped ? 'idle' : 'error';
-    session.lastError = ok || stopped ? null : (lastError ?? session.lastError ?? 'turn failed');
+    session.status = ok || (stopped && !storageError) ? 'idle' : 'error';
+    session.lastError = ok || (stopped && !storageError) ? null : (lastError ?? session.lastError ?? 'turn failed');
     // V3.10: the model changed while this turn ran — its budget is derived
     // now, after the old model's last reading, so the meter shows the model
     // the NEXT turn runs.
@@ -2157,7 +2203,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     compactLog(id);
 
     detachChild(turn);
-    afterTurn(id, turn.turnId, ok ? 'ok' : stopped ? 'cancelled' : 'failed', Math.max(0, Date.now() - turn.startedAt));
+    afterTurn(id, turn.turnId, ok ? 'ok' : stopped && !storageError ? 'cancelled' : 'failed', Math.max(0, Date.now() - turn.startedAt));
   }
 
   /**
@@ -2213,7 +2259,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
           // No note: a bare new session still beats a dead chat.
         }
       }
-      const nativeSessionId = vendorNamesConversation(session.engine) ? null : randomUUID();
+      const nativeSessionId = backendFor(session.engine).capabilities.providerAssignedSessionId ? null : randomUUID();
       const fresh: VerseSession = { ...cloneSession(session), nativeSessionId, turnCount: 0 };
       const turnLaunch = adapterFor(session.engine).buildLaunch(fresh, text, turn.seatLaunch);
       const lost = code === 'native-thread-missing'
@@ -2243,6 +2289,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   }
 
   function detachChild(turn: RunningTurn): void {
+    turn.child.stdio?.[3]?.destroy();
     turn.child.removeAllListeners();
     turn.child.on('error', () => { /* late errors after settlement are noise */ });
     turn.child.stdout?.removeAllListeners();
@@ -2342,6 +2389,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         // Never an unhandled rejection: a throw here is logged, and a turn that
         // could not start is not left busy forever.
         if (gating.get(id) === gate) gating.delete(id);
+        if (turnStatuses.get(id)?.turnId === turnId) turnStatuses.delete(id);
         log('error', `session ${id}: turn could not start after its checkpoint (${err instanceof Error ? err.name : 'error'})`);
       });
       return;
@@ -2356,12 +2404,12 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
 
     let child: ChildProcess;
     try {
-      child = spawn(bin, args, {
+      child = spawnSessionChild(bin, args, {
         cwd: launch.cwd,
         env,
         stdio: [launch.stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         ...(detached ? { detached: true } : {}),
-      });
+      }, id, spawn);
     } catch (err) {
       // Never `err.message`: Node's text names the launcher path.
       const message = describeSpawnFailure(`failed to start ${session.engine}`, err);
@@ -2468,7 +2516,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       // Async spawn failures (ENOENT) carry the launcher path in err.message; keep the errno only.
       emit(id, { type: 'error', turnId, message: describeSpawnFailure(`${session.engine} process error`, err) });
       // Spawn failures (ENOENT) never fire 'close' with a code; settle now.
-      if (child.pid === undefined) finalize(id, turn, null);
+      if (!sessionChildStarted(child)) finalize(id, turn, null);
     });
 
     child.on('close', (code) => {
@@ -2578,7 +2626,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   }
 
   function isBusy(id: string): boolean {
-    return running.has(id) || gating.has(id);
+    return running.has(id) || gating.has(id) || turnStatuses.has(id);
   }
 
   /** A turn still waiting on its checkpoint closes as stopped instead of starting (send-now, Stop). */
@@ -2676,47 +2724,68 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     const turnId = randomUUID();
     if (session.turnCount === 0 && session.title === DEFAULT_TITLE) session.title = autoTitle(text);
     storageFailed.delete(id);
+    turnStatuses.set(id, { turnId, task: statusLine(scrubSecrets(text), 100), answer: '', streaming: false, cancelled: false });
     const userMessage = emit(id, { type: 'user-message', turnId, text, ...(chip ? { playbook: chip } : {}) });
     if (!userMessage) {
       // The log cannot be written (onStorageFailure already recorded it):
       // a turn nobody can ever see must not spend.
+      turnStatuses.delete(id);
       throw new Error('verse session log could not be written');
+    }
+    if (store.get(id) !== session) {
+      turnStatuses.delete(id);
+      throw new VerseError('VERSE_SESSION_NOT_FOUND', 'session was deleted');
+    }
+    if (!emit(id, { type: 'assistant-status', turnId, phase: 'acknowledgement', text: turnAcknowledgement(scrubSecrets(text)) })) {
+      turnStatuses.delete(id);
+      throw new Error('verse session acknowledgement could not be written');
+    }
+    if (store.get(id) !== session) {
+      turnStatuses.delete(id);
+      throw new VerseError('VERSE_SESSION_NOT_FOUND', 'session was deleted');
     }
     session.status = 'running';
     session.lastError = null;
     save(session);
 
-    // V3.10 attachments: the operator's text is logged exactly as typed; the
-    // CLI gets the same text with this chat's attachment tokens resolved to
-    // absolute paths, plus the ONE directory they live in (never granted when
-    // the message names no attachment). A recovery re-sends the resolved text.
-    const resolved = resolveAttachmentRefs(text, attachments.dirFor(id));
-    resolved.text = expandHomeMentions(resolved.text, verseSessionRoots(session));
-    const extras: VerseTurnExtras = { attachmentDirs: resolved.dirs, attachmentImages: resolved.files.filter(isImageAttachment) };
-    const turnSeatLaunch: VerseSeatLaunch = resolved.files.length > 0 ? { ...launch, ...extras } : launch;
-    const adapter = adapterFor(session.engine);
-    const cliText = playbook && !adapter.resolvesPlaybooks?.(session, launch)
-      ? appendPlaybookBlock(resolved.text, playbook.block)
-      : resolved.text;
-
-    let turnLaunch: VerseTurnLaunch;
+    // A throw before the turn starts must not leave the chat busy forever:
+    // clear this turn's status so the next send can recover it.
     try {
-      turnLaunch = adapter.buildLaunch(session, cliText, turnSeatLaunch);
+      // V3.10 attachments: the operator's text is logged exactly as typed; the
+      // CLI gets the same text with this chat's attachment tokens resolved to
+      // absolute paths, plus the ONE directory they live in (never granted when
+      // the message names no attachment). A recovery re-sends the resolved text.
+      const resolved = resolveAttachmentRefs(text, attachments.dirFor(id));
+      resolved.text = expandHomeMentions(resolved.text, verseSessionRoots(session));
+      const extras: VerseTurnExtras = { attachmentDirs: resolved.dirs, attachmentImages: resolved.files.filter(isImageAttachment) };
+      const turnSeatLaunch: VerseSeatLaunch = resolved.files.length > 0 ? { ...launch, ...extras } : launch;
+      const adapter = adapterFor(session.engine);
+      const cliText = playbook && !adapter.resolvesPlaybooks?.(session, launch)
+        ? appendPlaybookBlock(resolved.text, playbook.block)
+        : resolved.text;
+
+      let turnLaunch: VerseTurnLaunch;
+      try {
+        turnLaunch = adapter.buildLaunch(session, cliText, turnSeatLaunch);
+      } catch (err) {
+        const message = redact(err instanceof Error ? err.message : String(err), redactionsFor(launch, null));
+        emit(id, { type: 'error', turnId, message });
+        emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: session.nativeSessionId, durationMs: 0 });
+        session.status = 'error';
+        session.lastError = message;
+        save(session);
+        afterTurn(id, turnId, 'failed', 0);
+        return { turnId, session: cloneSession(session) };
+      }
+      startTurn(session, turnId, turnSeatLaunch, turnLaunch, redactionsFor(turnSeatLaunch, turnLaunch), {
+        text: cliText,
+        userSeq: userMessage.seq,
+        isRecovery: false,
+      });
     } catch (err) {
-      const message = redact(err instanceof Error ? err.message : String(err), redactionsFor(launch, null));
-      emit(id, { type: 'error', turnId, message });
-      emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: session.nativeSessionId, durationMs: 0 });
-      session.status = 'error';
-      session.lastError = message;
-      save(session);
-      afterTurn(id, turnId, 'failed', 0);
-      return { turnId, session: cloneSession(session) };
+      if (turnStatuses.get(id)?.turnId === turnId) turnStatuses.delete(id);
+      throw err;
     }
-    startTurn(session, turnId, turnSeatLaunch, turnLaunch, redactionsFor(turnSeatLaunch, turnLaunch), {
-      text: cliText,
-      userSeq: userMessage.seq,
-      isRecovery: false,
-    });
     return { turnId, session: cloneSession(store.get(id) ?? session) };
   }
 
@@ -2861,7 +2930,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         accountId: seat.accountId,
         seatId: seat.id,
         model,
-        nativeSessionId: vendorNamesConversation(engine) ? null : randomUUID(),
+        nativeSessionId: backendFor(engine).capabilities.providerAssignedSessionId ? null : randomUUID(),
         createdAt: at,
         updatedAt: at,
         status: 'idle',
@@ -3118,6 +3187,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         finalize(id, turn, null);
       }
       listeners.delete(id);
+      turnStatuses.delete(id);
       store.remove(id);
       listingKeys.delete(id);
       // V3.10: the chat's private attachments and queued follow-ups go with it.
