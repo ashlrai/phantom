@@ -547,3 +547,32 @@ not present in this repository. Their consumer contract is to embed the same
 `budgets` object from `phm budget show --json`; this change does not create or
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
+
+## Dispatch pacing plan
+
+`phm budget plan --json` returns `{ "plan": ... }` with schema
+`fleet.budget-plan.v1`. It projects the ledger into a per-pool dispatch
+pacing decision so each pool lands near its `targetUsedPercent` (98) at its
+own reset. It is advisory like the ledger it reads: dispatchd owns real
+concurrency and applies these decisions as direction, not authority.
+
+```sh
+phm budget plan --json
+```
+
+Each pool decision carries `lane`, `weeklyOpen`, `creditsOpen`,
+`resetAt`, `hoursToReset`, `targetBurnPerHour`, `observedBurnPerHour`,
+`paceRatio`, `concurrency`, `maxConcurrency` and `reasons`. The open lane is
+what dispatch may charge now: `weekly` while observed weekly allowance
+remains, `credits` only after the weekly lane is observed exhausted (credits
+drain only after weekly, never while weekly remains, is unobserved, or has
+just reset), `metered` for Devin ACUs, `capacity` for local oMLX, and `held`
+for Claude. `targetBurnPerHour` is the unspent allowance above the landing
+margin spread over the hours left before reset; `observedBurnPerHour` is the
+ledger's last-two burn, falling back to the trailing 12-hour rate. Dispatch
+raises a pool's concurrency when observed burn is under pace and lowers it
+when over, within a 10% tolerance band. `grok-ultra` is the scarce
+orchestration pool: its `maxConcurrency` is 1 regardless of pace. Held pools
+pause, exhausted pools pause, and an unavailable ledger holds every pool.
+The core projector is `projectPoolBudgetPlan` in
+`src/core/fleet/pool-budget-plan.ts`.

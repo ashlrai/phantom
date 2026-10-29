@@ -52,6 +52,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ budgets: PoolBudgetSnapshot }',
   },
   {
+    usage: 'phm budget plan [--json]',
+    description: 'Dispatch pacing plan per pool: open lane (weekly always before credits), target burn to land near the target at reset, concurrency direction and reasons. Advisory for dispatchd.',
+    safety: 'read',
+    jsonShape: '{ plan: PoolBudgetPlan } (fleet.budget-plan.v1)',
+  },
+  {
     usage: 'phm resource --json [--directory <fleet-directory>]',
     description: 'Refresh the shared resource projection in fleet.json from recorded usage and machine telemetry; no provider calls or dispatch.',
     safety: 'append',
@@ -689,7 +695,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
-  { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
+  { cmd: 'budget <show|plan|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, project the dispatch pacing plan (weekly before credits, raise/lower concurrency to land near the reset target), or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },

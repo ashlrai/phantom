@@ -58,6 +58,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
   sweep: ['report'],
+  budget: ['show', 'plan', 'add'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],

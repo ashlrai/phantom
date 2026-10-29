@@ -52,6 +52,20 @@ describe('immutable budget storage and CLI', () => {
     expect(await cmdBudget(['show', '--json'])).toBe(0);
     expect(log).toHaveBeenCalledTimes(1);
   });
+  it('CLI plan emits the pacing decisions without touching the ledger', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdBudget(['add', 'codex-cmp', '--bucket', 'weeklyPct', '--remaining', '60', '--reset-at', '2099-01-01T00:00:00Z', '--json'])).toBe(0);
+    log.mockClear();
+    expect(await cmdBudget(['plan', '--json'])).toBe(0);
+    expect(log).toHaveBeenCalledTimes(1);
+    const plan = JSON.parse(log.mock.calls[0]![0] as string).plan;
+    expect(plan.schema).toBe('fleet.budget-plan.v1');
+    expect(plan.decisions['codex-cmp']).toMatchObject({ lane: 'weekly', weeklyOpen: true, creditsOpen: false, concurrency: 'raise' });
+    expect(plan.decisions['codex-cmp'].reasons.length).toBeGreaterThan(0);
+    expect(plan.decisions['grok-ultra'].maxConcurrency).toBe(1);
+    expect(plan.decisions.claude).toMatchObject({ lane: 'held', concurrency: 'pause' });
+    expect(await readdir(directory)).toHaveLength(1);
+  });
   it('CLI imports only parsed log observations', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const input = join(state.home, 'provider.log');
@@ -67,7 +81,7 @@ describe('immutable budget storage and CLI', () => {
     ['add', 'codex-cmp', '--bucket', 'credits', '--remaining', ''],
     ['add', 'codex-cmp', '--source', 'cli', '--input', 'missing-private-file'],
     ['show', '--remaining', '1'], ['add', 'claude', '--bucket', 'credits', '--remaining', '2'],
-    ['show', '--wat'],
+    ['show', '--wat'], ['plan', '--remaining', '1'], ['plan', 'extra'],
   ])('rejects invalid command %j without exposing input', async (...args) => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(await cmdBudget([...args, '--json'])).toBe(2);
