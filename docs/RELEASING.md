@@ -27,7 +27,9 @@ qualification before returning a published version; a candidate version bump
 does not become a publication claim. See the
 [GitHub release records](https://github.com/ashlrai/phantom/releases) and
 [npm version records](https://www.npmjs.com/package/@ashlr/phantom?activeTab=versions)
-for exact distributions.
+for exact distributions. This commissioned workflow is the one sanctioned npm
+release path; every earlier script, shim, flag and manual lane is retired or
+preserved only as immutable historical evidence.
 
 The artifact installer remains a separate maintenance operation. Existing legacy
 local-production policy receipts do not admit the canonical profile. Public
@@ -37,7 +39,7 @@ receipts and procedures unchanged; its instructions are not the current lane.
 ## Keep candidate metadata consistent
 
 Run `npm run version:sync -- X.Y.Z` in the source checkout, then
-`npm run check:version`. The helper updates explicit source metadata in nine files
+`npm run check:version`. The helper updates explicit source metadata in ten files
 and validates every field before writing. Dependency versions and release
 history remain unchanged. A candidate bump does not update published website,
 registry or installed-app status.
@@ -120,6 +122,8 @@ the current commissioned workflow.
 
 The archived [observation-only canary](RELEASING-HISTORICAL.md#signed-observation-only-canary)
 and [maintainer PR verification notes](RELEASING-HISTORICAL.md#verify-an-existing-maintainer-pr)
-retain their original limitations. They do not replace canonical release
+retain their original limitations. The canary runner and receipt verifier are
+retired and removed from `scripts/`; the archived procedure is evidence only,
+not a runnable lane. None of the archive replaces canonical release
 admission. Use [Authority](AUTHORITY.md) and the installed CLI help for current
 maintainer verification and account/Stop requirements.
