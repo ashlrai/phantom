@@ -10,9 +10,9 @@
 >
 > Complete exact-source hosted CI, independent Audit and trusted attestation
 > remain prerequisites. Native desktop finalization, signed asset publication,
-> installation and resident activation are separate steps. The frozen
-> `release.yml` and `promote.yml` procedures in the archive describe the historical
-> 3.3.2 lane; they are not the current publisher. Publication does not activate
+> installation and resident activation are separate steps. The retired
+> `release.yml` and `promote.yml` workflows (removed 2026-10-26; the archive keeps
+> their procedures) describe the historical 3.3.2 lane; they are not the current publisher. Publication does not activate
 > provider credentials, spending permissions or resident autonomy.
 
 <a id="current-canonical-source-candidate"></a>

@@ -254,7 +254,6 @@ describe('M30 CI workflow', () => {
   it('runs whole release and source contracts once before the producer build', () => {
     expect(pkg.scripts?.['check:release']).toBe([
       'npm run test:ci -- --maxWorkers=1 --fileParallelism=false',
-      'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
@@ -262,7 +261,6 @@ describe('M30 CI workflow', () => {
       'test/authority-tier1-closure-310b.test.ts',
       'test/sidecar-literal-imports-315.test.ts',
       'test/m93.service-authority-docs.test.ts',
-      'test/m479.release-workflow-policy.test.ts',
       'test/m522.production-promotion-docs.test.ts',
       'test/m468.release-desktop-workflow-policy.test.ts',
       'test/authority-codeowners-310b.test.ts',
@@ -900,7 +898,6 @@ describe('M30 CI workflow', () => {
     expect([...declaredFiles].sort()).toEqual([
       ...expectedFiles,
       'test/authority-codeowners-310b.test.ts',
-      'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
@@ -909,7 +906,6 @@ describe('M30 CI workflow', () => {
       'test/sidecar-literal-imports-315.test.ts',
       ...Array<string>(4).fill('test/m342.dispatch-production-ledger.test.ts'),
       'test/m93.service-authority-docs.test.ts',
-      'test/m479.release-workflow-policy.test.ts',
       'test/m522.production-promotion-docs.test.ts',
       'test/m468.release-desktop-workflow-policy.test.ts',
       'test/authority-codeowners-310b.test.ts',

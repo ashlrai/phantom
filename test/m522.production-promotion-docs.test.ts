@@ -22,7 +22,7 @@ describe('M522 — production-promotion operator boundary', () => {
     expect(currentNote).toMatch(/Initial or changed publisher bindings still require npm owner authentication/u);
     expect(currentNote).toMatch(/exact-source hosted CI, independent Audit and trusted attestation remain prerequisites/u);
     expect(currentNote).toMatch(/Native desktop finalization, signed asset publication, installation and resident activation are separate steps/u);
-    expect(currentNote).toMatch(/`release.yml` and `promote.yml`[^.]*historical 3\.3\.2 lane; they are not the current publisher/u);
+    expect(currentNote).toMatch(/`release.yml` and `promote.yml` workflows \(removed 2026-10-26[^)]*\) describe the historical 3\.3\.2 lane; they are not the current publisher/u);
     expect(currentNote).toMatch(/Publication does not activate provider credentials, spending permissions or resident autonomy/u);
     const currentRelease = releaseDocs.split('> **Verified distribution state')[0]!;
     expect(currentRelease.replace(/\s+/g, ' ')).toMatch(/candidate version bump does not become a publication claim/u);

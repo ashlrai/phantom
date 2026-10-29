@@ -56,8 +56,9 @@ provides unattended `@ashlr/phantom` publication after npm owner commissioning.
 The binding is commissioned for `ashlrai/phantom`. Its recorded 3.28.0 publication
 passed public-byte/provenance checks, isolated CLI acceptance and stable-tag readback in
 [run 37910835113, attempt 2](https://github.com/ashlrai/phantom/actions/runs/37910835113/attempts/2).
-A workflow file alone is not commissioning or publication evidence. The frozen
-historical `release.yml` remains separate. Desktop installation, website
+A workflow file alone is not commissioning or publication evidence. The historical
+3.3.2 `release.yml`, `promote.yml` and `finalize-github-release.yml` workflows
+were retired on 2026-10-26; `publish-canonical-npm.yml` is the single release path. Desktop installation, website
 commissioning and each provider's activation have their own evidence.
 
 For a new or changed publisher binding, configure npm package settings for

@@ -242,6 +242,8 @@ export const TIER1_TEST_STEMS: readonly string[] = Object.freeze([
   'pool-commissioning',
   'best-of-n', 'subscription-usage', 'leader-seat', 'reserve-breach',
   // Governed-client gateway suites (#880): where a provider key may be sent.
+  // The live npm publisher and its ported release-path suites.
+  'canonical-npm-publisher', 'release-publisher',
   'gateway-target', 'gateway-anthropic-client', 'gateway-openai-agents-client', 'gateway-audit-marker', 'gateway-config-load',
 ]);
 
@@ -317,6 +319,8 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/hosted-build-artifact.mjs',
       // These coordinate the owned native app, current release and rollback links.
       'scripts/ship-local.mjs', 'scripts/local-app-transaction.mjs', 'scripts/install-desktop-artifacts.mjs',
+      // The single live npm release path (publish-canonical-npm.yml) admits, publishes and promotes with this.
+      'scripts/canonical-npm-publisher.mjs',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],
