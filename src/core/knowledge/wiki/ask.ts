@@ -375,8 +375,3 @@ export async function askWiki(opts: AskWikiOptions): Promise<WikiAskResult> {
     return emptyResult(question, 'The question could not be answered because the wiki could not be read.');
   }
 }
-
-/** Convenience for callers holding a key (the Verse route). */
-export function repoKeyFor(repo: string): string {
-  return wikiKey(repo);
-}

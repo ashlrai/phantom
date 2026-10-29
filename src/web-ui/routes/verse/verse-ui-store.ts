@@ -552,16 +552,8 @@ export function setVerseSidebarCollapsed(collapsed: boolean): void {
   patch({ sidebarCollapsed: collapsed });
 }
 
-export function toggleVerseSidebar(): void {
-  patch({ sidebarCollapsed: !state.sidebarCollapsed });
-}
-
 export function setVerseResourcesOpen(open: boolean): void {
   patch({ resourcesOpen: open });
-}
-
-export function setVerseResourcesWidth(width: number): void {
-  patch({ resourcesWidth: clampWidth(width, VERSE_RESOURCES) });
 }
 
 /** The palette ran a catalog action: remember it for the empty-query list. */
@@ -696,8 +688,6 @@ export function rememberVerseSeat(projectPath: string, seat: VerseSeatMemory): v
     /* best-effort */
   }
 }
-
-export const VERSE_SEAT_STORAGE_KEY = SEAT_STORAGE_KEY;
 
 // ---------------------------------------------------------------------------
 // Dismissed context advice, per session (NOT persisted)

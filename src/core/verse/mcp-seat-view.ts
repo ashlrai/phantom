@@ -57,7 +57,7 @@ import { dirname, join, relative, isAbsolute, sep } from 'node:path';
 import { discoverMcpServers, discoverMcpServersAsync, redactEnv } from '../mcp-registry.js';
 import type { McpServerSpec } from '../types.js';
 import type { VerseEngine } from './types.js';
-import { readVerseAccountIdentities, type VerseAccountIdentity, type VerseAccountProvider } from './accounts.js';
+import type { VerseAccountProvider } from './accounts.js';
 import { readVerseMcpScope, readVerseMcpScopeAsync, type VerseMcpScope } from './mcp-scope.js';
 
 // ---------------------------------------------------------------------------
@@ -499,9 +499,4 @@ function snapshotFrom(
   }
 
   return { sampledAt: new Date().toISOString(), seats, machine, scope, notes };
-}
-
-/** Account identities, re-exported so a caller needs one import for the view. */
-export function verseMcpAccountIdentities(accountsRoot: string): VerseAccountIdentity[] {
-  return readVerseAccountIdentities(accountsRoot);
 }

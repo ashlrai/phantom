@@ -951,6 +951,3 @@ export const tools: VerseMcpTool[] = [
 export function toolsForScopes(scopes: { act: boolean; script: boolean }): VerseMcpTool[] {
   return tools.filter((t) => t.scope === 'browser' || (t.scope === 'browser_act' && scopes.act) || (t.scope === 'browser_script' && scopes.script));
 }
-
-/** Test seam. */
-export const __test = { observe, classify, decide, resolveTarget, FAILURES };

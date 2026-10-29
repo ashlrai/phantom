@@ -956,8 +956,3 @@ export function getCheckpointService(): CheckpointService {
   if (!singleton) singleton = createCheckpointService();
   return singleton;
 }
-
-/** Test hook: install a service (or null for a fresh default on next use). */
-export function setCheckpointServiceForTest(next: CheckpointService | null): void {
-  singleton = next;
-}

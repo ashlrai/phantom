@@ -8,7 +8,7 @@
  */
 
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { VerifyCommand, VerifyCommandProfile } from './verify-commands.js';
 
@@ -1055,22 +1055,4 @@ function describeNoVerifyCommandReason(
   if (projects.length === 0) return `no recognized project manifests or ${VERIFY_CONTRACT_FILE}`;
   const kinds = [...new Set(projects.map((project) => project.kind))].sort();
   return `detected ${kinds.join(', ')} project(s), but no verify command is configured`;
-}
-
-export function summarizeRepoExecutionProfile(profile: RepoExecutionProfile): {
-  projectCount: number;
-  verifyCommandCount: number;
-  packageManagers: RepoPackageManager[];
-} {
-  return {
-    projectCount: profile.projects.length,
-    verifyCommandCount: profile.verifyCommands.length,
-    packageManagers: [...new Set(profile.projects.map((project) => project.packageManager))],
-  };
-}
-
-export function repoLabelForCommand(repoRoot: string, vc: VerifyCommand): string {
-  if (!vc.cwd) return basename(repoRoot);
-  const rel = relative(resolve(repoRoot), resolve(vc.cwd));
-  return rel && !rel.startsWith('..') ? `${basename(repoRoot)}/${rel}` : basename(repoRoot);
 }

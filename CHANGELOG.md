@@ -100,6 +100,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
   lookups refuse redirects instead of contacting another endpoint.
 
+### Removed
+- Unused internal exports and their private helpers, including the internal `GenomeCapture` type. The `WIRE_CONTRACT_KEYS` compile-time guard remains. No CLI command, flag or config key changes.
+
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
   value-free custody record with a fixed reason code, including when Phantom is

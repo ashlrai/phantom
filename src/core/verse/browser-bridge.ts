@@ -617,7 +617,3 @@ export function resetBrowserBridgeForTest(): void {
   chats.clear();
   clock = Date.now;
 }
-
-export function setBrowserBridgeClockForTest(next: (() => number) | null): void {
-  clock = next ?? Date.now;
-}

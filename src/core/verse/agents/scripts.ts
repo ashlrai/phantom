@@ -192,7 +192,3 @@ export function getScriptLauncher(): ScriptLauncher {
   if (!launcher) launcher = createScriptLauncher();
   return launcher;
 }
-
-export function setScriptLauncherForTest(next: ScriptLauncher | null): void {
-  launcher = next;
-}

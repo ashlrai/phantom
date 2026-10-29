@@ -42,11 +42,6 @@ function boundedInteger(value: unknown, max = MAX_BUDGET_VALUE): number | undefi
   return Math.min(Math.floor(value), max);
 }
 
-function boundedRatio(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  return Math.max(0, Math.min(1, Math.round(value * 1_000) / 1_000));
-}
-
 function normalizeMemoryMode(value: unknown): DelegationMemoryMode {
   return typeof value === 'string' && MEMORY_MODES.includes(value as DelegationMemoryMode)
     ? value as DelegationMemoryMode
@@ -342,8 +337,4 @@ export function scopeFromWorkItem(
     objective: item.title,
     resultContract: { kind: 'proposal', requireDiff: true, requireProposal: true },
   });
-}
-
-export function clampContextRatio(value: unknown): number | undefined {
-  return boundedRatio(value);
 }

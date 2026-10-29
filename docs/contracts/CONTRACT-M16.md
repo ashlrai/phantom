@@ -5,18 +5,13 @@ against these EXACT signatures. Each agent edits ONLY its file(s). Reuse the
 existing M7 modules (`core/genome/store.ts`, `core/genome/recall.ts`). No new
 runtime deps. No git commit. Preserve all existing behavior + 1504 tests.
 
-## Types (already added to `src/core/types.ts` — do NOT redefine)
+## Types (shared core types — do NOT redefine)
+
+> Oct 2026: the `GenomeCapture` interface was removed from the shared core types
+> (no code referenced it; captures are built inline in `core/genome/capture.ts`).
+> The capture fields (goal, project, summary, tags, outcome, source) are unchanged.
 
 ```ts
-interface GenomeCapture {
-  goal: string;
-  project: string | null;
-  summary: string;
-  tags: string[];
-  outcome: 'done' | 'aborted' | 'failed';
-  source: 'run' | 'swarm' | 'teach';
-}
-
 interface Playbook {
   goal: string;
   entries: RecallHit[];   // from M7
@@ -66,7 +61,7 @@ export function summarizeForGenome(input: { goal: string; result?: string; tasks
 - `captureFromRun` / `captureFromSwarm`: FIRE-AND-FORGET. MUST NOT throw, MUST
   NOT block or slow the caller (wrap all work in try/catch; swallow errors;
   return immediately — do any async append without awaiting in the hot path).
-  No-op when `cfg.genome?.autoCapture === false`. Build a `GenomeCapture`
+  No-op when `cfg.genome?.autoCapture === false`. Build a capture record
   (source `'run'` / `'swarm'`), derive `summary` via `summarizeForGenome`, set
   `tags` to include the project (when known), the status/outcome, and the
   engine (run) — all lowercased, deduped. DEDUPE-AWARE: skip the append when a
