@@ -35,3 +35,33 @@ the fixture suite:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
 ```
+
+# PR titles for the bridge publisher
+
+`contrib/mac/pr-title.sh` prints one `type(scope): summary` line at or under 72
+characters for a job's pull request, or the job id when no better source
+resolves. It never contacts GitHub and never fails after argument validation.
+Set `PHANTOM_ROOT` to this checkout. In the external `~/.ashlr-runs/bin/publish.sh`,
+keep the job id in the PR body (the existing `Automated bridge job \`$J\`` line)
+and replace the literal `--title` argument with:
+
+```bash
+title=$(bash "$PHANTOM_ROOT/contrib/mac/pr-title.sh" "$J" "$R/$J.job-line" "$R/$J.diff")
+gh pr create --repo "$REPO" --head "masonwyatt23:$BR" --base "$DEF" --title "$title" --body-file "$R/$J.body.md"
+```
+
+`$R/$J.job-line` is the router queue line the publisher already reads;
+`$R/$J.diff` is optional — write `git diff "$BASE" "$TREE"` there before the
+title call to let a loopback-only local model summarize the diff instead
+(`PR_TITLE_MODEL`/`PR_TITLE_MODEL_URL` configure the endpoint; the model answer
+is sanitized to one printable line and any error falls back to the router-line
+title, then to the job id). The helper's own extraction drops the `JOB (meta):`
+envelope and a leading `VISION` marker, keeps the first task sentence, infers a
+conventional type, and scopes from `repo=`. Host deployment of the changed
+`publish.sh` stays an owner step under the security pin.
+
+Verification:
+
+```sh
+HOME=$(mktemp -d) npx vitest run test/pr-title.test.ts test/publish-sh-title.test.ts
+```
