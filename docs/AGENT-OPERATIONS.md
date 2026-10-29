@@ -388,25 +388,56 @@ Source snapshots have this shape (repositories may be an approved subset):
       "id": "search:test:pagination", "source": "test",
       "title": "Cover empty search pages", "detail": "Add a regression case.",
       "value": 4, "effort": 2
+    }],
+    "branchRules": [{
+      "type": "required_status_checks",
+      "parameters": {"required_status_checks": [{"context": "Merge Gate"}]}
+    }],
+    "prs": [{
+      "number": 1234, "title": "bridge(RQ-X): fix parser",
+      "url": "https://github.com/ashlrai/repo-0/pull/1234",
+      "headSha": "0123456789abcdef",
+      "checks": [
+        {"name": "Merge Gate", "conclusion": "failure", "status": "completed"},
+        {"name": "Vercel", "conclusion": "failure", "status": "completed"}
+      ],
+      "firstError": "error TS2345: typecheck failed in src/parser.ts"
     }]
   }]
 }
 ```
 
 `vision`, `issues` and `scans` are required; use empty text/arrays for a known
-empty source. Collectors must surface failed or incomplete discovery themselves,
-never replace unknown evidence with empty arrays. VISION accepts explicit
-unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced code; narrative and
-completed tasks do not generate jobs. Issues require a unique positive number,
-`open`/`closed` state, title and body (empty body allowed); closed issues are
-excluded. Scans accept the existing `WorkItem` fields shown above (extra fields
-are ignored), with a unique ID, a backlog source and integer value/effort 1–5.
-Ranking reuses portfolio value/effort and source weighting, with stable ID order
-for ties. VISION uses value 5/effort 2 and goal weighting; issues use 3/2.
+empty source. `prs` and `branchRules` are optional; a repository without them
+generates no pull-request FIXUPs. Collectors must surface failed or incomplete
+discovery themselves, never replace unknown evidence with empty arrays. VISION
+accepts explicit unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced
+code; narrative and completed tasks do not generate jobs. Issues require a
+unique positive number, `open`/`closed` state, title and body (empty body
+allowed); closed issues are excluded. Scans accept the existing `WorkItem`
+fields shown above (extra fields are ignored), with a unique ID, a backlog
+source and integer value/effort 1–5. Ranking reuses portfolio value/effort and
+source weighting, with stable ID order for ties. VISION uses value 5/effort 2
+and goal weighting; issues use 3/2.
+
+`branchRules` carries the raw response of the branch rules API
+(`gh api repos/<owner>/<repo>/rules/branches/<branch>`); the planner reads the
+required check contexts from its `required_status_checks` rule itself — the set
+is never hardcoded. `prs` lists open pull requests with their head-check
+outcomes; each entry needs a unique positive `number` and a `checks` array of
+`name`/`conclusion`/`status` triples, and may carry `title`, `url`, `headSha`
+and `firstError` (the failing required check's first error line, already
+scrubbed). A completed check whose conclusion is not `success`, `neutral` or
+`skipped` counts as failing. When at least one failing check is required, one
+`fixup` job is emitted naming the check and the first error line; a PR whose
+failing checks are all non-required (for example only Vercel or SonarCloud Code
+Analysis) emits nothing — those FIXUPs historically produced empty runs — and
+the stderr `rq-plan` record counts them under `skippedNonRequired`. A
+`headSha` distinguishes objectives so a repushed head can be repaired again.
 
 stdout contains **only new jobs as JSON Lines** with fields `v:1`, `id`, `repo`,
-`status:"READY"`, `source` (`vision`, `issue`, `scan`), `sourceId`, `title` and
-`prompt`. The queue uses that same row schema, with status one of `READY`,
+`status:"READY"`, `source` (`vision`, `issue`, `scan`, `fixup`), `sourceId`,
+`title` and `prompt`. The queue uses that same row schema, with status one of `READY`,
 `RUNNING`, `BLOCKED`, `DONE`, `FAILED`, `CANCELLED`; initialize it as an empty
 file. Despite its `.md` name, `router-queue.md` contains JSON Lines, without
 Markdown fences or headings. Escaped prompt newlines remain within one row.

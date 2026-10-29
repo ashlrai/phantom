@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdBacklog } from '../src/cli/backlog.js';
-import { formatRqQueue, parseRqConfig, parseRqQueue, planRqBacklog, RQ_MAX_FILE_BYTES, rqDigest, rqQueueDiff, type RqJob } from '../src/core/portfolio/rq-backlog.js';
+import { formatRqQueue, parseRqConfig, parseRqQueue, planRqBacklog, requiredChecksOf, RQ_MAX_FILE_BYTES, rqDigest, rqQueueDiff, type RqJob } from '../src/core/portfolio/rq-backlog.js';
 
 const allowedRepos = Array.from({ length: 7 }, (_, index) => `ashlrai/repo-${index}`);
 const config = { v: 1, activeSlots: 2, allowedRepos };
@@ -109,6 +109,121 @@ describe('RQ backlog capacity and source discovery', () => {
     const input = sources(1);
     input.repositories.push({ ...input.repositories[0]!, repo: allowedRepos[1]! });
     expect(planRqBacklog(config, input, '').jobs).toHaveLength(2);
+  });
+});
+
+describe('queuegen PR FIXUP generation', () => {
+  // The branch rules API response shape: `gh api repos/{repo}/rules/branches/{branch}`.
+  const rules = (...contexts: string[]) => [{ type: 'required_status_checks', parameters: { required_status_checks: contexts.map((context) => ({ context })) } }];
+  const check = (name: string, conclusion: string | null, status = 'completed') => ({ name, conclusion, status });
+  const pr = (number: number, checks: ReturnType<typeof check>[], firstError?: string) =>
+    ({ number, title: `bridge(RQ-X-${number})`, url: `https://github.com/${repository}/pull/${number}`, headSha: `head${number}`, checks, firstError });
+  const withRules = (input: ReturnType<typeof sources>, contexts: string[], prs: ReturnType<typeof pr>[]) => {
+    const row = input.repositories[0] as Record<string, unknown>;
+    row['branchRules'] = rules(...contexts);
+    row['prs'] = prs;
+    return input;
+  };
+  const fixups = (input: unknown) => planRqBacklog(config, input, '').jobs.filter((job) => job.source === 'fixup');
+
+  it('emits no line for a PR whose only failing check is Vercel', () => {
+    const input = withRules(sources(0), ['Merge Gate'], [pr(101, [check('Vercel', 'failure')])]);
+    const plan = planRqBacklog(config, input, '');
+    expect(plan.jobs).toEqual([]);
+    expect(formatRqQueue(plan.jobs)).toBe('');
+    expect(plan.skippedNonRequired).toBe(1);
+  });
+
+  it('emits no line when only non-required checks fail (SonarCloud Code Analysis, Vercel)', () => {
+    const input = withRules(sources(0), ['Merge Gate'], [
+      pr(101, [check('Vercel', 'failure'), check('SonarCloud Code Analysis', 'failure'), check('Merge Gate', 'success')]),
+    ]);
+    expect(planRqBacklog(config, input, '').jobs).toEqual([]);
+    expect(planRqBacklog(config, input, '').skippedNonRequired).toBe(1);
+  });
+
+  it('emits one line naming the failing check and first error line for a red Merge Gate', () => {
+    const input = withRules(sources(0), ['Merge Gate'], [
+      pr(102, [check('Merge Gate', 'failure'), check('Vercel', 'failure')], 'error TS2345: typecheck failed in src/core/foo.ts'),
+    ]);
+    const plan = planRqBacklog(config, input, '');
+    expect(plan.jobs).toHaveLength(1);
+    const lines = formatRqQueue(plan.jobs).trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const row = JSON.parse(lines[0]!);
+    expect(row.status).toBe('READY');
+    expect(row.source).toBe('fixup');
+    expect(row.repo).toBe(repository);
+    expect(row.title).toContain('Merge Gate');
+    expect(row.title).toContain('error TS2345: typecheck failed in src/core/foo.ts');
+    expect(row.title).toContain('PR #102');
+    expect(row.prompt).toContain('Merge Gate');
+    expect(row.prompt).toContain('error TS2345: typecheck failed in src/core/foo.ts');
+    expect(row.prompt).toContain('Vercel');
+  });
+
+  it('emits nothing for green or pending-only PRs', () => {
+    const input = withRules(sources(0), ['Merge Gate'], [
+      pr(103, [check('Merge Gate', 'success'), check('Vercel', 'success')]),
+      pr(104, [check('Merge Gate', null, 'in_progress')]),
+    ]);
+    const plan = planRqBacklog(config, input, '');
+    expect(plan.jobs).toEqual([]);
+    expect(plan.skippedNonRequired).toBe(0);
+  });
+
+  it('suppresses FIXUPs when no branch rules snapshot proves a check required', () => {
+    const input = withRules(sources(0), [], [pr(105, [check('Merge Gate', 'failure')])]);
+    expect(planRqBacklog(config, input, '').jobs).toEqual([]);
+    expect(planRqBacklog(config, input, '').skippedNonRequired).toBe(1);
+    const bare = sources(0);
+    (bare.repositories[0] as Record<string, unknown>)['prs'] = [pr(105, [check('Merge Gate', 'failure')])];
+    expect(planRqBacklog(config, bare, '').jobs).toEqual([]);
+  });
+
+  it('applies each repo\'s own required set (Merge Gate, CI Gate, Check (Linux))', () => {
+    const input = sources(0);
+    for (const repo of [allowedRepos[1]!, allowedRepos[2]!]) {
+      input.repositories.push({ ...(input.repositories[0] as object), repo } as typeof input.repositories[0]);
+    }
+    (input.repositories[0] as Record<string, unknown>)['branchRules'] = rules('Merge Gate');
+    (input.repositories[0] as Record<string, unknown>)['prs'] = [pr(106, [check('CI Gate', 'failure'), check('Vercel', 'failure')])];
+    (input.repositories[1] as Record<string, unknown>)['branchRules'] = rules('CI Gate');
+    (input.repositories[1] as Record<string, unknown>)['prs'] = [pr(107, [check('CI Gate', 'failure')], 'npm ERR! ci gate: tests failed')];
+    (input.repositories[2] as Record<string, unknown>)['branchRules'] = rules('Check (Linux)');
+    (input.repositories[2] as Record<string, unknown>)['prs'] = [pr(108, [check('CI Gate', 'failure')])];
+    const jobs = fixups(input);
+    // repo-0: only non-required failed (CI Gate not required there) → dropped.
+    // repo-1: CI Gate required → emitted. repo-2: CI Gate not required → dropped.
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.repo).toBe(allowedRepos[1]!);
+    expect(jobs[0]!.title).toContain('CI Gate');
+    expect(jobs[0]!.title).toContain('npm ERR! ci gate: tests failed');
+    expect(planRqBacklog(config, input, '').skippedNonRequired).toBe(2);
+  });
+
+  it('dedupes emitted FIXUPs against queue history and re-emits on a new head', () => {
+    const input = withRules(sources(0), ['Merge Gate'], [pr(109, [check('Merge Gate', 'failure')])]);
+    const first = planRqBacklog(config, input, '').jobs;
+    expect(first).toHaveLength(1);
+    expect(planRqBacklog(config, input, formatRqQueue(first)).jobs).toEqual([]);
+    const repushed = withRules(sources(0), ['Merge Gate'], [{ ...pr(109, [check('Merge Gate', 'failure')]), headSha: 'new-head' }]);
+    expect(planRqBacklog(config, repushed, formatRqQueue(first)).jobs).toHaveLength(1);
+  });
+});
+
+describe('requiredChecksOf branch rules extraction', () => {
+  it('reads contexts only from the required_status_checks rule', () => {
+    const api = [
+      { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate', integration_id: 1 }, { context: 'Vercel' }] } },
+      { type: 'pull_request', parameters: { required_approving_review_count: 1 } },
+      { type: 'non_fast_forward' },
+    ];
+    expect([...requiredChecksOf(api)].sort()).toEqual(['Merge Gate', 'Vercel']);
+    expect(requiredChecksOf([]).size).toBe(0);
+    expect(requiredChecksOf([{ type: 'required_status_checks' }]).size).toBe(0);
+    expect(requiredChecksOf('not-an-array').size).toBe(0);
+    expect(requiredChecksOf([{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: '' }, { context: 'x'.repeat(201) }, 'oops'] } }]).size).toBe(0);
   });
 });
 
