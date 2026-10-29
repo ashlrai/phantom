@@ -22,6 +22,7 @@ either name.
 | Type check (backend + web) | `npm run typecheck` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
+| Fast unit lane with per-file timing | `npm run test:fast` (report: `.ashlr-gate/test-fast-durations.json`) |
 | Backend tests with isolated homes and a runtime cap | `npm run test:ci -- <files>` |
 | Web console tests | `npm run test:web` |
 | Safety invariant suites | `npm run test:invariants` |
@@ -44,6 +45,8 @@ deferred to post-merge; they always run on master pushes. `Mac exhaustive
 for review. A draft pull request skips those until it is marked ready, which
 starts a full run; a draft cannot merge, so open drafts while iterating
 and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
+
+**Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
