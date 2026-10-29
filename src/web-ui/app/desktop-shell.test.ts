@@ -72,6 +72,7 @@ describe('isDesktopShell', () => {
 describe('resolveTheme', () => {
   it('passes an explicit preference straight through', () => {
     expect(resolveTheme('dark')).toBe('dark');
+    expect(resolveTheme('high-contrast')).toBe('dark');
     expect(resolveTheme('light')).toBe('light');
   });
 

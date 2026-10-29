@@ -211,6 +211,7 @@ export function registerShellCommandHandlers(): () => void {
     ['section.wiki', 'wiki'],
     ['section.playbooks', 'playbooks'],
     ['section.automations', 'automations'],
+    ['section.ops', 'ops'],
   ];
   const offs = [
     ...surfaces.map(([id, section]) => registerCommandHandler(id, () => setVerseSection(section))),

@@ -406,7 +406,7 @@ describe('loadConfigReadOnlyStrict — autonomous activation reads', () => {
     ['{malformed', 'not valid JSON'],
     ['[]', 'must contain a JSON object'],
     ['null', 'must contain a JSON object'],
-  ])('refuses an invalid existing config without changing it', (bytes, expected) => {
+  ])('refuses an invalid existing config %j without changing it', (bytes, expected) => {
     const ashlrDir = join(tmpHome, '.ashlr');
     const cfgPath = join(ashlrDir, 'config.json');
     mkdirSync(ashlrDir, { recursive: true });

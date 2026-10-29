@@ -13,6 +13,7 @@
  *    unit tests never need real binaries on PATH.
  */
 
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -179,8 +180,8 @@ function probeCodexAuth(): 'logged-in' | 'logged-out' | 'unknown' {
  *   'none'       — no credential signal found
  */
 function probeClaudeCredential(): 'env-token' | 'file-creds' | 'none' {
-  if (process.env['CLAUDE_CODE_OAUTH_TOKEN']?.trim()) return 'env-token';
-  if (process.env['ANTHROPIC_AUTH_TOKEN']?.trim()) return 'env-token';
+  if (readEnvironmentCredential('CLAUDE_CODE_OAUTH_TOKEN')?.trim()) return 'env-token';
+  if (readEnvironmentCredential('ANTHROPIC_AUTH_TOKEN')?.trim()) return 'env-token';
   // ~/.claude/credentials.json is the canonical file claude CLI writes
   const creds = join(homedir(), '.claude', 'credentials.json');
   if (existsSync(creds)) return 'file-creds';
