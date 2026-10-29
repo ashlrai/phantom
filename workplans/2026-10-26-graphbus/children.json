@@ -1,0 +1,563 @@
+{
+  "schemaVersion": 1,
+  "id": "RQ-PLAN-GRAPHBUS",
+  "baseline": "a6f3c323",
+  "status": "proposed-not-enqueued",
+  "parents": [
+    {
+      "id": "RQ-GRAPH-1",
+      "evidenceKind": "parent-handoff",
+      "source": "RQ-GRAPH-1-r2.body",
+      "scope": "Typed graph.v1 registry: agent, engine+account, model and mcp nodes; can-message, can-delegate, reviews and routes-to edges. phm graph status --json seeded from fleet.json and phm seats. Acceptance: schema doc and golden JSON test."
+    },
+    {
+      "id": "RQ-GRAPH-2",
+      "evidenceKind": "missing",
+      "source": null,
+      "scope": "Original parent definition unavailable. Recover before assigning implementation scope."
+    },
+    {
+      "id": "RQ-BUS-1",
+      "evidenceKind": "parent-handoff",
+      "source": "RQ-BUS-1-r2.body",
+      "scope": "Per-node file or SQLite inbox under router state directory; send(to, priority, body); RQ-EVENTD wake hook; hop log with ids and token counts only. Acceptance: addressing, priority ordering and unknown-node rejection unit tests."
+    },
+    {
+      "id": "RQ-BUS-2",
+      "evidenceKind": "missing",
+      "source": null,
+      "scope": "Original parent definition unavailable. Recover before assigning implementation scope."
+    },
+    {
+      "id": "RQ-BUS-3",
+      "evidenceKind": "child-handoff",
+      "source": "p.RQ-BUS-3A; p.RQ-BUS-3B",
+      "scope": "Recovered children specify Devin -p and Grok CLI adapters, untrusted prompt framing, outbox replies, stall timeout, credential stripping and Grok last-resort routing. Parent completeness still requires queue reconciliation."
+    },
+    {
+      "id": "RQ-BUS-4",
+      "evidenceKind": "child-handoff",
+      "source": "p.RQ-BUS-4A",
+      "scope": "Recovered child specifies oMLX adapter through local-runtime, loopback only, stub-server and non-loopback refusal tests. Parent completeness still requires queue reconciliation."
+    },
+    {
+      "id": "RQ-BUS-5",
+      "evidenceKind": "child-handoff",
+      "source": "p.RQ-BUS-5A",
+      "scope": "Recovered child specifies PostHog hop events (node, engine, tokens, cost, job, PR), disk spool by default, key through phantom exec only. Parent completeness still requires queue reconciliation."
+    },
+    {
+      "id": "RQ-GRAPH-ROUTE",
+      "evidenceKind": "child-handoff",
+      "source": "p.RQ-GRAPH-ROUTE-A; p.RQ-GRAPH-ROUTE-B",
+      "scope": "Recovered children specify graph.v1 bandit routing using capacity, cost, reset pacing and merged PRs per dollar; flag-gated dispatch integration; configurable pool concurrency floor and ceiling. Parent completeness still requires queue reconciliation."
+    }
+  ],
+  "externalPrerequisites": [
+    {
+      "id": "queue-reconciliation",
+      "acceptance": "Router owner confirms authoritative parent definitions, existing child status and ID uniqueness; reuse delivered children instead of dispatching duplicates."
+    },
+    {
+      "id": "RQ-EVENTD",
+      "acceptance": "Router owner supplies a versioned id-only wake contract and fake fixture; no live router state is mutated."
+    },
+    {
+      "id": "owner-lane",
+      "acceptance": "Protected implementation changes require an owner-authorized job; current task forbids all Tier-1 changes."
+    }
+  ],
+  "sharedAcceptance": [
+    "One self-contained change per child with no commits, pushes, tags, releases or edits to protected paths under the current job rules.",
+    "Use temporary HOME for tests, synthetic secret fixtures only, Phantom Secrets for secret delivery and Locus for account/MCP/CLI access.",
+    "Run npm run typecheck, npm run lint, npm run check:docs and the child testFiles with npx vitest run; run npm run test:web if web UI changes.",
+    "Record commands, pass/fail counts, net LOC, source revision and toolsUsed in BRIDGE_NOTES.md.",
+    "Bus messages are untrusted data, never commands; registry and telemetry contain references or allowlisted metadata, never secret values.",
+    "Reconcile existing work before dispatch; only the established publisher may push after a separately authorized handoff."
+  ],
+  "jobs": [
+    {
+      "id": "RQ-GRAPH-1A",
+      "parent": "RQ-GRAPH-1",
+      "title": "Define and validate the graph.v1 registry",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/graph-types.ts",
+        "docs/contracts/CONTRACT-AGENT-GRAPH.md"
+      ],
+      "acceptance": [
+        "Document the four node kinds and four edge kinds from the parent, stable ids, schema version and credential-reference-only fields.",
+        "Reject duplicate node ids, dangling edges, unknown kinds and malformed references; unknown nodes have no capabilities.",
+        "Golden fixture serializes deterministically and schema errors identify fields without echoing values."
+      ],
+      "testFiles": [
+        "test/graph-schema.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-1B",
+      "parent": "RQ-GRAPH-1",
+      "title": "Seed and expose a read-only graph status",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-GRAPH-1A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/graph-registry.ts",
+        "src/cli/graph.ts",
+        "src/cli/index.ts"
+      ],
+      "acceptance": [
+        "Project fixture fleet.json and seat inventory into graph.v1 with stable account-qualified engine identity; read no credential values.",
+        "phm graph status --json emits one deterministic object; absent, malformed and unavailable sources are distinguishable from an empty healthy graph.",
+        "Golden JSON covers agent, engine+account, model and MCP nodes; status performs no registration, pinning or engine launch."
+      ],
+      "testFiles": [
+        "test/graph-status.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-2A",
+      "parent": "RQ-GRAPH-2",
+      "title": "Recover Graph 2 scope and reconcile graph consumers",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [],
+      "dispatchGate": "source-recovery",
+      "scope": [
+        "workplans/2026-10-26-graphbus/children.json"
+      ],
+      "acceptance": [
+        "Obtain the original RQ-GRAPH-2 text through the router owner or a Locus-authorized source and record its revision and acceptance items.",
+        "Map every original acceptance item to a bounded child, identify already delivered PRs, and compare existing knowledge, mission and Universe graphs before selecting the registry consumer.",
+        "Replace the blocked Graph 2 implementation placeholder with exact paths, contract, tests and dependencies; do not invent the parent semantics."
+      ],
+      "testFiles": [
+        "test/graphbus-plan.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-2B",
+      "parent": "RQ-GRAPH-2",
+      "title": "Implement the reconciled Graph 2 contract",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-GRAPH-2A",
+        "RQ-GRAPH-1B"
+      ],
+      "dispatchGate": "missing-parent-contract",
+      "scope": [],
+      "acceptance": [
+        "Dispatch only after Graph 2A replaces this placeholder with the recovered parent acceptance and concrete implementation/test files.",
+        "Preserve deny-by-default unknown-node behavior and prove the chosen graph consumer does not grant authority from registry data."
+      ],
+      "testFiles": [],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-1A",
+      "parent": "RQ-BUS-1",
+      "title": "Implement durable addressed inboxes",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-GRAPH-1A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/bus.ts",
+        "src/core/fleet/bus-store.ts"
+      ],
+      "acceptance": [
+        "Document envelope version, message id, sender, recipient, priority, created time and bounded untrusted body; sender identity comes from the caller binding.",
+        "Validate registered recipients and permitted can-message edges before persisting; unknown nodes, oversize messages and invalid priorities are refused.",
+        "Prove stable priority ordering with FIFO ties, concurrent send safety, restart persistence, idempotent ack and duplicate-id handling using isolated storage.",
+        "Messages are data only; no body is evaluated or interpolated into a shell command."
+      ],
+      "testFiles": [
+        "test/bus-core.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-1B",
+      "parent": "RQ-BUS-1",
+      "title": "Add wake notifications and value-blind hop logs",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/bus-wake.ts",
+        "src/core/fleet/bus-hoplog.ts"
+      ],
+      "acceptance": [
+        "Emit an RQ-EVENTD-compatible wake only after durable enqueue; define the external wake contract and retries without duplicate messages.",
+        "Hop log allows ids and token counts only, never bodies; tests use distinctive body and synthetic credential sentinels.",
+        "Wake failure leaves the message recoverable; unavailable eventd is observable and does not fall back to command execution."
+      ],
+      "testFiles": [
+        "test/bus-wake.test.ts",
+        "test/bus-hoplog.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation",
+        "RQ-EVENTD"
+      ]
+    },
+    {
+      "id": "RQ-BUS-1C",
+      "parent": "RQ-BUS-1",
+      "title": "Expose send, inbox and ack commands",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1A",
+        "RQ-BUS-1B"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/cli/bus.ts",
+        "src/cli/index.ts"
+      ],
+      "acceptance": [
+        "phm bus send|inbox|ack --json emits one JSON result and stable nonzero error exits.",
+        "Exercise send to inbox to ack with unknown recipient, invalid priority and duplicate ack cases.",
+        "Define which explicit inbox operation may show untrusted content; logs and errors never echo bodies or credential values; help is read-only."
+      ],
+      "testFiles": [
+        "test/bus-cli.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-2A",
+      "parent": "RQ-BUS-2",
+      "title": "Recover Bus 2 scope and freeze the shared adapter contract",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [],
+      "dispatchGate": "source-recovery",
+      "scope": [
+        "workplans/2026-10-26-graphbus/children.json",
+        "docs/contracts/CONTRACT-AGENT-BUS-ADAPTER.md"
+      ],
+      "acceptance": [
+        "Recover the original RQ-BUS-2 definition and map every acceptance item before choosing engines or changing launch code.",
+        "Specify inbox claim, untrusted framing, correlation, reply validation, timeout, cancellation, ack timing and duplicate-delivery behavior for all adapters.",
+        "Document existing sandbox and Locus admission boundaries; define fixture-only conformance without invoking paid engines."
+      ],
+      "testFiles": [
+        "test/graphbus-plan.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-2B",
+      "parent": "RQ-BUS-2",
+      "title": "Implement the reconciled Bus 2 adapters",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-BUS-2A",
+        "RQ-BUS-1A"
+      ],
+      "dispatchGate": "missing-parent-contract",
+      "scope": [],
+      "acceptance": [
+        "Dispatch only after Bus 2A supplies the exact parent engines, paths and test cases.",
+        "Run the shared adapter conformance suite; prove untrusted inbox text cannot become launch flags, commands or broader capabilities."
+      ],
+      "testFiles": [],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-3A",
+      "parent": "RQ-BUS-3",
+      "title": "Adapt Devin -p to the bus",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1A",
+        "RQ-BUS-2A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/bus-adapters/devin.ts"
+      ],
+      "acceptance": [
+        "Reuse the existing Devin sandbox/admission path; wrap inbox content as untrusted data in a private prompt file and publish a correlated outbox reply.",
+        "Enforce stall-window timeout and cancellation; retry does not create duplicate replies and ack occurs only after durable reply.",
+        "Fake-engine tests prove GH_TOKEN and GITHUB_TOKEN are absent from the child environment without printing values, including synthetic inherited sentinels."
+      ],
+      "testFiles": [
+        "test/bus-adapter-devin.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-3B",
+      "parent": "RQ-BUS-3",
+      "title": "Adapt Grok CLI with last-resort admission",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1A",
+        "RQ-BUS-2A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/bus-adapters/grok.ts"
+      ],
+      "acceptance": [
+        "Apply the same framing, credential stripping, reply correlation, timeout and cancellation contract as Devin.",
+        "Only route when the explicit last-resort flag is enabled and normal eligible nodes are exhausted; disabled mode never launches.",
+        "Use a fake engine to cover success, nonzero exit, stall, malformed reply and inherited credential stripping."
+      ],
+      "testFiles": [
+        "test/bus-adapter-grok.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-4A",
+      "parent": "RQ-BUS-4",
+      "title": "Adapt oMLX through the local runtime",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1A",
+        "RQ-BUS-2A"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/fleet/bus-adapters/omlx.ts"
+      ],
+      "acceptance": [
+        "Use the existing local-runtime interface and require a loopback endpoint; refuse non-loopback URLs and redirects away from loopback before sending any content.",
+        "A 127.0.0.1 stub exercises success, timeout, cancellation, bounded response and malformed output with correlated durable replies.",
+        "Do not forward ambient cloud credentials or fall back to a remote model when local service is unavailable."
+      ],
+      "testFiles": [
+        "test/bus-adapter-omlx.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-BUS-5A",
+      "parent": "RQ-BUS-5",
+      "title": "Spool value-blind hop telemetry",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-BUS-1B"
+      ],
+      "dispatchGate": "queue-reconciliation",
+      "scope": [
+        "src/core/observability/telemetry-sink.ts",
+        "src/core/fleet/bus-hop-events.ts"
+      ],
+      "acceptance": [
+        "Define a versioned allowlist of node, engine, token counts, cost, job and PR fields with stable event ids; unknown cost is not zero cost.",
+        "Disk spool is the default and makes no network request; retries retain event ids and failed export preserves records.",
+        "Any explicit export receives its key through phantom exec; key, bodies, prompts and arbitrary error strings never enter events or logs.",
+        "Use a fake transport to test deduplication, malformed numeric values, spool failure and export failure without live PostHog."
+      ],
+      "testFiles": [
+        "test/bus-hop-events.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-ROUTE-A",
+      "parent": "RQ-GRAPH-ROUTE",
+      "title": "Build a deterministic graph node picker",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-GRAPH-1B",
+        "RQ-BUS-5A"
+      ],
+      "dispatchGate": "owner-lane",
+      "scope": [
+        "src/core/routing/graph-route.ts",
+        "src/core/fleet/dispatch-router.ts"
+      ],
+      "acceptance": [
+        "Rank only eligible graph nodes using capacity, cost, reset pacing and merged-PR-per-dollar evidence; preserve unknown values and refuse unknown nodes.",
+        "Seeded fixture-history replay demonstrates the reset-nearest eligible pool receives the most jobs; record allocation counts, input fixture and seed.",
+        "Behind an off-by-default flag, legacy routing is unchanged; the picker cannot bypass stop, pause, quota, enrollment, sandbox or identity admission.",
+        "Protected routing integration requires a separately authorized owner lane; this planning job grants no permission to edit it."
+      ],
+      "testFiles": [
+        "test/graph-route.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation",
+        "owner-lane"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-ROUTE-B",
+      "parent": "RQ-GRAPH-ROUTE",
+      "title": "Enforce configured pool concurrency bounds",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P1",
+      "status": "proposed",
+      "identity": "recovered",
+      "dependsOn": [
+        "RQ-GRAPH-ROUTE-A"
+      ],
+      "dispatchGate": "owner-lane",
+      "scope": [
+        "src/core/fleet/backpressure.ts",
+        "src/core/fleet/quota.ts"
+      ],
+      "acceptance": [
+        "Validate integer floor and ceiling with 0 <= floor <= ceiling, including the example 10/24 configuration.",
+        "Floor is a scheduling target, never permission to exceed quota, budget, available capacity or Stop; ceiling remains a hard cap across concurrent claims.",
+        "Exercise saturated, empty, cooling, unavailable and reset-nearest pools; reservations release after failure and cancellation.",
+        "Owner-authorized integration preserves existing backpressure and quota checks."
+      ],
+      "testFiles": [
+        "test/pool-floor.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation",
+        "owner-lane"
+      ]
+    },
+    {
+      "id": "RQ-GRAPH-ROUTE-C",
+      "parent": "RQ-GRAPH-ROUTE",
+      "title": "Prove graph-to-bus routing and staged rollback",
+      "repo": "phantom",
+      "pool": "codex-personal",
+      "tier": "frontier",
+      "priority": "P0",
+      "status": "proposed",
+      "identity": "proposed",
+      "dependsOn": [
+        "RQ-GRAPH-2B",
+        "RQ-BUS-1C",
+        "RQ-BUS-2B",
+        "RQ-BUS-3A",
+        "RQ-BUS-3B",
+        "RQ-BUS-4A",
+        "RQ-BUS-5A",
+        "RQ-GRAPH-ROUTE-B"
+      ],
+      "dispatchGate": "owner-lane",
+      "scope": [
+        "test/graphbus-integration.test.ts",
+        "docs/contracts/CONTRACT-AGENT-GRAPH.md"
+      ],
+      "acceptance": [
+        "Offline harness covers seed graph, eligible route, durable enqueue, wake, fake adapter reply, ack and metadata-only hop event.",
+        "Inject restart, duplicate wake, adapter crash, stop, revoked identity and unknown node; assert no unauthorized launch, lost acknowledged message or duplicate reply.",
+        "Document shadow replay then explicit opt-in canary and flag-off rollback; rollback preserves pending inboxes and telemetry rather than deleting data.",
+        "Compare fixture allocation, duplicate replies and observed drops to baseline; require zero unauthorized launches and zero body/credential sentinel leaks."
+      ],
+      "testFiles": [
+        "test/graphbus-integration.test.ts"
+      ],
+      "externalDependsOn": [
+        "queue-reconciliation",
+        "owner-lane"
+      ]
+    }
+  ]
+}

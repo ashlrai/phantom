@@ -20,7 +20,11 @@
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport, getDefaultEnvironment, type StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import type { ChildProcess } from 'node:child_process';
+import { Writable } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -41,8 +45,102 @@ import { listNativeTools, isNativeTool, callNativeTool } from './mcp-native.js';
 import { listFirmResources, listFirmResourceTemplates, readFirmResource } from './mcp-firm-resources.js';
 import { hasSecretLikeArgv, redactedCommand } from './mcp-argv-safety.js';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
+import { spawnSessionChild } from './verse/process-registry.js';
+
+/** SDK-compatible stdio with session-owned process groups and parent-death cleanup. */
+export class SessionStdioClientTransport extends StdioClientTransport {
+  private sessionProcess: ChildProcess | null = null;
+  private readonly sessionBuffer: ReadBuffer;
+  private closing: Promise<void> | null = null;
+  private started = false;
+  private closed = false;
+
+  constructor(private readonly sessionParams: StdioServerParameters, private readonly owningSessionId = 'mcp') {
+    super(sessionParams);
+    this.sessionBuffer = new ReadBuffer({ maxBufferSize: sessionParams.maxBufferSize });
+  }
+
+  override get pid(): number | null { return this.sessionProcess?.pid ?? null; }
+
+  override async start(): Promise<void> {
+    if (this.started || this.closed) throw new Error('SessionStdioClientTransport already started or closed');
+    this.started = true;
+    const child = spawnSessionChild(this.sessionParams.command, this.sessionParams.args ?? [], {
+      env: { ...getDefaultEnvironment(), ...this.sessionParams.env },
+      cwd: this.sessionParams.cwd,
+      stdio: ['pipe', 'pipe', this.sessionParams.stderr ?? 'inherit'],
+      shell: false,
+      windowsHide: process.platform === 'win32',
+    }, this.owningSessionId);
+    this.sessionProcess = child;
+    const stderr = super.stderr;
+    if (stderr instanceof Writable && child.stderr) child.stderr.pipe(stderr);
+    child.once('close', () => {
+      this.sessionProcess = null;
+      this.sessionBuffer.clear();
+      this.onclose?.();
+    });
+    child.stdin?.on('error', (error: Error) => this.onerror?.(error));
+    child.stdout?.on('error', (error: Error) => this.onerror?.(error));
+    child.stdout?.on('data', (chunk: Buffer) => {
+      try {
+        this.sessionBuffer.append(chunk);
+        for (;;) {
+          const message = this.sessionBuffer.readMessage();
+          if (message === null) break;
+          this.onmessage?.(message);
+        }
+      } catch (error) {
+        this.onerror?.(error instanceof Error ? error : new Error(String(error)));
+        void this.close();
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.on('error', (error: Error) => { reject(error); this.onerror?.(error); });
+    });
+  }
+
+  override async send(message: JSONRPCMessage): Promise<void> {
+    const stdin = this.sessionProcess?.stdin;
+    if (!stdin || this.closing) throw new Error('Not connected');
+    await new Promise<void>((resolve, reject) => {
+      stdin.write(serializeMessage(message), (error) => error ? reject(error) : resolve());
+    });
+  }
+
+  override close(): Promise<void> {
+    this.closed = true;
+    this.closing ??= this.closeSession();
+    return this.closing;
+  }
+
+  private async closeSession(): Promise<void> {
+    const child = this.sessionProcess;
+    if (!child) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<void>((resolve) => child.once('close', resolve));
+    child.stdin?.end();
+    // Only Phantom holds the other end of this descriptor. Closing it asks the
+    // watchdog to reap the entire owned group, including stubborn descendants.
+    child.stdio[3]?.destroy();
+    try {
+      await Promise.race([closed, new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+    this.sessionBuffer.clear();
+  }
+}
 
 /**
  * Phantom's package version for MCP serverInfo/clientInfo, so clients and
@@ -280,18 +378,28 @@ function safeChildBase(): NodeJS.ProcessEnv {
 /**
  * True when a spec resolves to THIS aggregation gateway — i.e. running it as a
  * downstream would recurse (`ashlr mcp install` writes exactly such an entry:
- * name "ashlr", command <bin>/ashlr, args ['mcp']). We detect it structurally
- * (no path resolution needed): the canonical installed entry is `args`
- * containing 'mcp' AND the command basename being `ashlr`, OR the conventional
- * name 'ashlr' paired with an 'mcp' arg. Skipping these prevents an unbounded
- * fan-out of nested gateways.
+ * name "ashlr", command <bin>/ashlr, args ['mcp']). Recognize installed aliases
+ * and Node wrappers without resolving user-controlled executable paths. The
+ * legacy `phantom` name and executable belong to Phantom Secrets, so neither
+ * alone identifies this gateway. Inherited markers cover opaque wrappers.
  */
 export function isSelfGateway(spec: McpServerSpec): boolean {
-  const hasMcpArg = spec.args.includes('mcp');
-  if (!hasMcpArg) return false;
-  // basename of the command (handles absolute paths like /…/bin/ashlr)
-  const base = spec.command.split('/').pop() ?? spec.command;
-  return base === 'ashlr' || spec.name === 'ashlr';
+  const mcpIndex = spec.args.indexOf('mcp');
+  if (mcpIndex < 0) return false;
+  const executableName = (value: string): string =>
+    (value.split(/[\\/]/).pop() ?? value).replace(/\.(?:cmd|exe)$/i, '').toLowerCase();
+  const gatewayNames = new Set(['ashlr', 'phm']);
+  if (gatewayNames.has(spec.name.toLowerCase())) return true;
+  const command = executableName(spec.command);
+  if (command === 'ashlr' || command === 'phm') return true;
+  // `node /path/bin/phm mcp` must be excluded just like `phm mcp`.
+  return (command === 'node' || command === 'bun' || command === 'tsx')
+    && spec.args.slice(0, mcpIndex).some((arg) => {
+      const name = executableName(arg);
+      return name === 'ashlr' || name === 'phm'
+        || resolve(arg) === fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url))
+        || resolve(arg) === fileURLToPath(new URL('../../src/cli/index.ts', import.meta.url));
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -343,21 +451,23 @@ function safeErrorMessage(err: unknown): string {
  * Throws on failure (caller wraps).
  */
 async function connectDownstream(spec: McpServerSpec, timeoutMs: number, cfg?: ReturnType<typeof loadConfig>, capturedEnv?: Record<string, string>): Promise<Client> {
+  // Probes do not pass through startGateway's registry filter.
+  if (isSelfGateway(spec)) throw new Error('MCP gateway self-spawn refused: would recurse');
   if (hasSecretLikeArgv(spec.args)) {
     throw new Error(
       `unsafe MCP argv refused for "${spec.name}": ${redactedCommand(spec.command, spec.args)} ` +
       '(move credentials to env, Phantom, or a wrapper/config file)',
     );
   }
-  const transport = new StdioClientTransport({
+  const transport = new SessionStdioClientTransport({
     command: spec.command,
     args: spec.args,
     // Persistent recovery reuses the exact captured startup environment. One-off
     // job probes validate the final configured override against their snapshot.
-    env: capturedEnv ? { ...capturedEnv } : downstreamEnv(spec, cfg),
+    env: { ...(capturedEnv ?? downstreamEnv(spec, cfg)), [GATEWAY_ENV_MARKER]: '1' },
     // Surface child stderr to our stderr for debugging; never pollutes stdio JSON-RPC.
     stderr: 'inherit',
-  });
+  }, `mcp:${spec.name}`);
 
   const client = new Client(
     { name: 'ashlr-gateway', version: gatewayVersion() },
@@ -514,6 +624,11 @@ export async function startGateway(
   registry: McpRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<void> {
+  // This also catches aliases and opaque executable wrappers that structural
+  // registry filtering cannot recognize. Check before any downstream starts.
+  if (process.env[GATEWAY_ENV_MARKER] !== undefined) {
+    throw new Error('Nested MCP gateway refused: inherited gateway marker would recurse');
+  }
   refuseSharedJobGateway();
   let gatewayCfg: ReturnType<typeof loadConfig> | undefined;
   try { gatewayCfg = loadConfig(); } catch { /* non-fatal; retain narrow child env */ }
