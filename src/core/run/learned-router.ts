@@ -56,8 +56,10 @@ import { engineTierOf as _engineTierOf } from './sandboxed-engine.js';
 import { engineInstalled } from './engines.js';
 import {
   canonicalModelTag, CODEX_TERRA_MODEL_ID, CODEX_ASTRA_MODEL_ID,
-  DEFAULT_CODEX_MODEL_ID, KNOWN_MODELS, type ModelEntry, type ModelRoutingTier,
+  resolveSelectedEngineModel, DEFAULT_CODEX_MODEL_ID, KNOWN_MODELS, type ModelEntry, type ModelRoutingTier,
 } from './model-catalog.js';
+import { resolveEngineSpec } from './engine-registry.js';
+import type { TaskRouteDecision } from './router.js';
 import { completeReportedTokens } from './token-evidence.js';
 import {
   currentAuthoritativeDispatchProductionLearningLabel,
@@ -83,6 +85,7 @@ export type {
   CascadeRunEntry,
   EscalationSignal,
   TaskResult,
+  TaskRouteDecision,
 } from './router.js';
 export {
   shouldEscalate,
@@ -202,6 +205,75 @@ export function codexArmPriors(
 /** Default model only; availability, quota, local-only and config remain caller gates. */
 export function codexModelForTier(tier: ModelRoutingTier): string {
   return codexArmPriors(tier)[0]!.model;
+}
+
+
+// ---------------------------------------------------------------------------
+// Codex-tier routing helpers (moved from router.ts to co-locate with
+// KNOWN_MODELS). These are re-exported so router.ts can import them here
+// without a separate model-catalog dependency.
+// ---------------------------------------------------------------------------
+
+/** Frontier difficulty thresholds (mirror fleet/router.ts so they stay in sync). */
+const FRONTIER_EFFORT_THRESHOLD = 4;
+const FRONTIER_SCORE_THRESHOLD = 8;
+
+/** True when a WorkItem is "hard" by effort/score/source. */
+function isHardItem(item: WorkItem): boolean {
+  if ((item.source as string) === 'escalation') return true;
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const score = typeof item.score === 'number' ? item.score : 3;
+  return effort >= FRONTIER_EFFORT_THRESHOLD || score >= FRONTIER_SCORE_THRESHOLD;
+}
+
+/** True when a WorkItem is trivial (effort 1, score ≤ 3). */
+function isTrivialItem(item: WorkItem): boolean {
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const score = typeof item.score === 'number' ? item.score : 3;
+  return effort <= 1 && score <= 3;
+}
+
+/** Queue tiers select a model within an admitted engine, never an engine tier. */
+export function explicitModelTier(item: WorkItem): ModelRoutingTier | null {
+  const tiers = new Set<ModelRoutingTier>();
+  for (const tag of item.tags ?? []) {
+    const match = /^tier[:=](fast|mid|computer|work|frontier)$/i.exec(tag.trim());
+    if (match) tiers.add(match[1].toLowerCase() as ModelRoutingTier);
+  }
+  // Conflicting tags do not silently downgrade a frontier/work request.
+  for (const tier of ['frontier', 'work', 'computer', 'mid', 'fast'] as const) {
+    if (tiers.has(tier)) return tier;
+  }
+  return null;
+}
+
+/** Infer the model routing tier for a WorkItem. */
+export function modelTierForTask(item: WorkItem): ModelRoutingTier {
+  const explicit = explicitModelTier(item);
+  if (explicit) return explicit;
+  const tags = new Set((item.tags ?? []).map(tag => tag.trim().toLowerCase()));
+  if (['computer', 'computer-use', 'gui', 'browser-use'].some(tag => tags.has(tag)) ||
+      /\b(computer[ -]use|GUI|browser automation)\b/i.test(item.title)) return 'computer';
+  if (item.source === 'doc' || item.source === 'test' ||
+      ['verify', 'test', 'fixup', 'pr-body', 'docs', 'triage'].some(tag => tags.has(tag)) ||
+      /^(?:\[?FIXUP\b|verify\b|run (?:the )?(?:tests?|verification)\b|triage\b|(?:write|draft|update) (?:the )?(?:PR|pull request) (?:body|description)\b)/i.test(item.title)) {
+    return 'fast';
+  }
+  if ((item.source as string) === 'escalation' || isHardItem(item)) return 'work';
+  if (isTrivialItem(item)) return 'fast';
+  // Ordinary implementation remains Sol; mid is an explicit queue choice.
+  return 'work';
+}
+
+/** Codex model default for a task, respecting custom engine config. */
+export function codexDefaultForTask(item: WorkItem, cfg: AshlrConfig): TaskRouteDecision {
+  const custom = cfg.foundry?.engines?.codex;
+  const model = custom
+    ? resolveSelectedEngineModel({ engine: 'codex', spec: resolveEngineSpec('codex', cfg) })
+    : codexModelForTier(modelTierForTask(item));
+  return { engine: 'codex', model,
+    catalogEntry: KNOWN_MODELS.find(entry => entry.id === `codex:${model}`) ?? null,
+    reason: custom ? 'Configured Codex engine default.' : `Codex ${modelTierForTask(item)} model default.` };
 }
 
 // ---------------------------------------------------------------------------
