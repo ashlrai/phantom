@@ -1,0 +1,12 @@
+{
+  "mode": "dry_run",
+  "outcome": null,
+  "phantom_names": {
+    "reason": "no_phantom_project",
+    "status": "unavailable"
+  },
+  "plan": {
+    "fixes": [],
+    "report_only": []
+  }
+}

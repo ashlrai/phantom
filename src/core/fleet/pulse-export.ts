@@ -32,6 +32,7 @@
  *   - No-op when cfg.pulse?.enabled is false.
  */
 
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 import { basename } from 'node:path';
 import { loadDaemonState } from '../daemon/state.js';
 import { listProposalsDetailed } from '../inbox/store.js';
@@ -357,7 +358,7 @@ export async function exportToPulse(
   try {
     if (!cfg.pulse?.enabled) return false;
 
-    const pat = process.env['ASHLR_PULSE_PAT'];
+    const pat = readEnvironmentCredential('ASHLR_PULSE_PAT');
     if (!pat) {
       console.log('[ashlr-fleet] pulse export: ASHLR_PULSE_PAT not set — skipping (set it to enable fleet→pulse telemetry)');
       return false;
@@ -416,7 +417,7 @@ export async function postProbeSpan(cfg: PulseExportCfg): Promise<{
     return { ok: false, status: null, label: '⚠ not configured (set cfg.pulse.enabled + ASHLR_PULSE_PAT)', exitCode: 2 };
   }
 
-  const pat = process.env['ASHLR_PULSE_PAT'];
+  const pat = readEnvironmentCredential('ASHLR_PULSE_PAT');
   if (!pat) {
     return { ok: false, status: null, label: '⚠ not configured (set cfg.pulse.enabled + ASHLR_PULSE_PAT)', exitCode: 2 };
   }

@@ -376,7 +376,8 @@ describe('sendTurn — claude via account launcher', () => {
     const events = await untilTurnDone(engine, created.id);
     const types = events.map((e) => e.type);
     expect(types[0]).toBe('user-message');
-    expect(types[1]).toBe('turn-started');
+    expect(events[1]).toMatchObject({ type: 'assistant-status', phase: 'acknowledgement', turnId });
+    expect(types[2]).toBe('turn-started');
     expect(types).toContain('text-delta');
     expect(types).toContain('assistant-message');
     expect(types).toContain('usage');
@@ -737,8 +738,9 @@ process.exit(1);
     try {
       const events = restarted.getEvents(created.id);
       const types = events.map((e) => e.type);
-      expect(types.slice(-2)).toEqual(['error', 'turn-done']);
-      expect(events[events.length - 2]).toMatchObject({ type: 'error', turnId: 'orphan-turn', message: 'turn interrupted: server restarted' });
+      expect(types.slice(-3)).toEqual(['error', 'assistant-status', 'turn-done']);
+      expect(events[events.length - 3]).toMatchObject({ type: 'error', turnId: 'orphan-turn', message: 'turn interrupted: server restarted' });
+      expect(events[events.length - 2]).toMatchObject({ type: 'assistant-status', phase: 'result', turnId: 'orphan-turn' });
       expect(events[events.length - 1]).toMatchObject({ type: 'turn-done', turnId: 'orphan-turn', ok: false });
       const after = restarted.getSession(created.id)!;
       expect(after.status).toBe('error');

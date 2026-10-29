@@ -5,7 +5,7 @@
  *  1. LOCAL-ONLY: embeddings run against local Ollama only. Never send chunks
  *     to a cloud endpoint — this file has no allowCloud path at all.
  *  2. READ-ONLY: never mutates any enrolled repo. Writes go to knowledgeDir()
- *     only (~/.ashlr/knowledge/<repo-hash>/).
+ *     only (~/.ashlr/knowledge/<repo-hash>/ or knowledge/agents/ for memory).
  *  3. ENROLLMENT-SCOPED: default repo set is listEnrolled() (DEFAULT EMPTY →
  *     returns {repos:0, chunks:0}; never scans arbitrary paths).
  *  4. BOUNDED: caps file count, total bytes read, and wall-clock time per repo;
@@ -13,7 +13,8 @@
  *  5. NO SECRETS: skips .env* / *.pem / *.key / *.p12 files outright; scrubs
  *     secret-shaped tokens from chunk text before storing or embedding.
  *  6. INCREMENTAL: re-indexes only files whose mtime > last index timestamp.
- *     Never throws — all errors are silently swallowed per the contract.
+ *     Indexing never throws — errors are swallowed per the index contract.
+ *     Explicit agent-memory reads/writes throw on unsafe or failed storage.
  */
 
 import fs from 'node:fs';
@@ -189,6 +190,121 @@ export function scrubSecrets(text: string): string {
 /** Root on-disk directory for the knowledge index: ~/.ashlr/knowledge */
 export function knowledgeDir(): string {
   return path.join(homedir(), '.ashlr', 'knowledge');
+}
+
+/** A caller-selected agent namespace, never inferred from chat text. */
+export interface AgentMemory {
+  readonly agentId: string;
+  readonly text: string;
+  readonly updatedAt: string;
+}
+
+/** UTF-8 bytes, before JSON escaping. Replacement is whole-document, last writer wins. */
+export const MAX_AGENT_MEMORY_BYTES = 64 * 1024;
+
+function validateAgentId(agentId: string): void {
+  if (typeof agentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(agentId) ||
+      scrubSecrets(agentId) !== agentId) {
+    throw new Error('Invalid agent memory identity');
+  }
+}
+
+function validateMemoryText(text: string): void {
+  if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > MAX_AGENT_MEMORY_BYTES) {
+    throw new Error('Agent memory must be text of at most 65536 UTF-8 bytes');
+  }
+  // Reject rather than silently changing a user's remembered instructions.
+  // Reuse BOTH the shared provider patterns and the stricter knowledge corpus.
+  if (scrubSecrets(text) !== text) {
+    throw new Error('Agent memory contains a secret pattern; use a Phantom Secrets reference');
+  }
+}
+
+function agentMemoryPath(agentId: string, create: boolean): string | null {
+  validateAgentId(agentId);
+  const root = path.join(homedir(), '.ashlr');
+  const dirs = [root, knowledgeDir(), path.join(knowledgeDir(), 'agents')];
+  for (const dir of dirs) {
+    if (create) {
+      try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+    }
+    try {
+      // Never follow a redirected store into another agent's or user's files.
+      if (!fs.lstatSync(dir).isDirectory()) throw new Error('Unsafe agent memory directory');
+    } catch (error) {
+      if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+  const id = crypto.createHash('sha256').update(agentId).digest('hex');
+  return path.join(dirs[2]!, `${id}.json`);
+}
+
+/**
+ * Read local memory for exactly one agent. Missing memory returns null; corrupt,
+ * secret-bearing or inaccessible storage throws without echoing stored text.
+ * No enrollment, source scan, model call, or cross-agent fallback occurs.
+ * The caller must authorize the agent identity before exposing this API remotely.
+ */
+export function readAgentMemory(agentId: string): AgentMemory | null {
+  validateAgentId(agentId);
+  let fd: number | undefined;
+  try {
+    const file = agentMemoryPath(agentId, false);
+    if (file === null) return null;
+    // lstat also covers platforms without O_NOFOLLOW.
+    try {
+      if (!fs.lstatSync(file).isFile()) throw new Error('Unsafe agent memory file');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_AGENT_MEMORY_BYTES * 6 + 1024) {
+      throw new Error('Invalid agent memory file');
+    }
+    const raw = Buffer.alloc(stat.size + 1);
+    let size = 0;
+    while (size < raw.length) {
+      const count = fs.readSync(fd, raw, size, raw.length - size, size);
+      if (count === 0) break;
+      size += count;
+    }
+    if (size !== stat.size) throw new Error('Agent memory changed during read');
+    const value: unknown = JSON.parse(raw.subarray(0, size).toString('utf8'));
+    if (typeof value !== 'object' || value === null) throw new Error('Invalid agent memory');
+    const record = value as Record<string, unknown>;
+    if (record['version'] !== 1 || record['agentId'] !== agentId ||
+        typeof record['text'] !== 'string' || typeof record['updatedAt'] !== 'string' ||
+        !Number.isFinite(Date.parse(record['updatedAt']))) throw new Error('Invalid agent memory');
+    validateMemoryText(record['text']);
+    return { agentId, text: record['text'], updatedAt: record['updatedAt'] };
+  } catch {
+    throw new Error('Unable to read agent memory safely');
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Replace one agent's local memory atomically (0600). Validate before any I/O;
+ * rejected writes preserve existing memory. Empty text explicitly clears it.
+ * Failures throw a value-blind error; they are never reported as a saved memory.
+ */
+export function writeAgentMemory(agentId: string, text: string): AgentMemory {
+  validateAgentId(agentId);
+  validateMemoryText(text);
+  const memory: AgentMemory = { agentId, text, updatedAt: new Date().toISOString() };
+  try {
+    const file = agentMemoryPath(agentId, true)!;
+    writePrivateFileAtomically(path.dirname(file), file, JSON.stringify({ version: 1, ...memory }));
+  } catch {
+    throw new Error('Unable to write agent memory safely');
+  }
+  return memory;
 }
 
 /**

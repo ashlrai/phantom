@@ -1,18 +1,87 @@
 /**
  * The cross-tool smoke harness (scripts/companion-workflow-smoke.mjs) must
  * classify real seams correctly. Fake stdio MCP servers stand in for the
- * companion binaries; the real ones are exercised by running the script.
+ * companion binaries. RQ-INT-3 additionally calls the reviewed real Lexicon
+ * package through Phantom's CLI gateway (public npm access on a cold run).
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { COMPANION_RELEASES } from '../src/core/companion-inventory.js';
 
 // @ts-expect-error -- plain ESM script without type declarations
 import * as smoke from '../scripts/companion-workflow-smoke.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'phm-smoke-test-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// RQ-INT-3: exercise the released producer, not a lookalike server. This lives
+// in the existing real-I/O lane and needs no credentials or optional CI flag.
+// A cold run requires the public npm registry; installation is isolated and
+// lifecycle scripts are disabled. The gateway itself starts an offline file.
+describe('Phantom CLI → reviewed Lexicon MCP', () => {
+  it('discovers and calls normalization through the gateway and forwards validation errors', async () => {
+    const home = join(dir, 'lexicon-roundtrip');
+    mkdirSync(home, { recursive: true });
+    const env = smoke.smokeEnv(home) as Record<string, string>;
+    const prefix = join(home, 'producer');
+    const release = COMPANION_RELEASES.find(item => item.id === 'lexicon')!;
+    await promisify(execFile)(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'install', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund',
+      '--registry=https://registry.npmjs.org', `@ashlr/lexicon@${release.version}`,
+    ], { cwd: home, env, timeout: 90_000, maxBuffer: 1024 * 1024 });
+    const server = join(prefix, 'node_modules', '@ashlr', 'lexicon', 'dist', 'mcp', 'server.js');
+    const vocabulary = join(home, 'lexicon.yaml');
+    writeFileSync(vocabulary, 'version: 1\nterms:\n  - canonical: QueueWidget\n    aliases: [queue widgit]\n');
+    writeFileSync(join(home, '.mcp.json'), JSON.stringify({ mcpServers: {
+      lexicon: { command: process.execPath, args: [server], env: {
+        LEXICON_PATH: vocabulary, LEXICON_CWD: home,
+      } },
+    } }));
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', import.meta.resolve('tsx'), join(process.cwd(), 'src', 'cli', 'index.ts'), 'mcp'],
+      cwd: home, env, stderr: 'pipe',
+    });
+    let diagnostics = '';
+    transport.stderr?.on('data', chunk => { diagnostics += String(chunk); });
+    const client = new Client({ name: 'phantom-lexicon-integration', version: '1.0.0' });
+    try {
+      await client.connect(transport);
+      const { tools } = await client.listTools();
+      expect(tools.find(tool => tool.name === 'lexicon__normalize_transcript')?.inputSchema)
+        .toMatchObject({ type: 'object', required: ['text'] });
+      const result = await client.callTool({ name: 'lexicon__normalize_transcript', arguments: {
+        text: 'Build the queue widgit today.',
+      } });
+      expect(result.isError).not.toBe(true);
+      const content = result.content as { type: string; text: string }[];
+      expect(content[0]?.type).toBe('text');
+      expect(JSON.parse(content[0]!.text)).toMatchObject({
+        output: 'Build the QueueWidget today.', changed: true,
+        replacements: [expect.objectContaining({ canonical: 'QueueWidget' })],
+      });
+      const dryRun = await client.callTool({ name: 'lexicon__normalize_transcript', arguments: {
+        text: 'Build the queue widgit today.', dryRun: true,
+      } });
+      expect(JSON.parse((dryRun.content as { text: string }[])[0]!.text)).toMatchObject({
+        output: 'Build the queue widgit today.', changed: false,
+      });
+      const invalid = await client.callTool({ name: 'lexicon__normalize_transcript', arguments: { text: 42 } });
+      expect(invalid.isError).toBe(true);
+      expect(diagnostics).not.toContain('queue widgit');
+      expect(diagnostics).not.toContain('QueueWidget');
+    } finally {
+      await client.close();
+      await transport.close();
+    }
+  }, 120_000);
+});
 
 function fakeServer(name: string, { tools, answer, noise = false }: { tools: string[]; answer?: string; noise?: boolean }): string {
   const path = join(dir, `${name}.mjs`);
