@@ -137,6 +137,7 @@ function shortClaudeLabel(label: string): string {
  * `pre_tokens` observed on real compactions.
  */
 function claudeOption(spec: ClaudeModelSpec, cliVersion: string | null): VerseModelOption {
+  const cached = readModelCapabilities()?.models.find((row) => row.id === spec.id);
   const window = spec.contextWindow;
   const expansive: VerseContextBudget | null = spec.native1m
     ? { contextWindow: window, autoCompactAt: claudeAutoCompactAt(window, spec.maxOutputTokens, null) }
@@ -150,6 +151,7 @@ function claudeOption(spec: ClaudeModelSpec, cliVersion: string | null): VerseMo
   return {
     id: spec.id,
     label: spec.label,
+    ...(cached ? { providerCapabilities: cached } : {}),
     contextWindow: window,
     autoCompactAt: claudeAutoCompactAt(window, spec.maxOutputTokens, standardCap),
     ...(expansive ? { expansive } : {}),
@@ -689,8 +691,93 @@ export function legacyModelOptionFallback(
   model: string,
   snapshot: VerseModelOption | null,
 ): VerseModelOption | null {
-  if (snapshot && hasCatalogBudgets(snapshot)) return snapshot;
+  if (snapshot && hasCatalogBudgets(snapshot)) {
+    if (engine !== 'claude') return snapshot;
+    const id = canonicalModelId(snapshot.id).replace(/\[1m\]$/i, '');
+    const providerCapabilities = readModelCapabilities()?.models.find(row => row.id === id);
+    if (!providerCapabilities && snapshot.providerCapabilities === undefined) return snapshot;
+    return { ...snapshot, providerCapabilities };
+  }
   const known = documentedOption(engine, snapshot?.id ?? model);
   if (!known) return snapshot;
   return { ...known, id: snapshot?.id ?? model, label: snapshot?.label ?? known.label, unavailableReason: null };
+}
+
+
+/** Public provider metadata only. Missing capability fields remain unknown. */
+export interface CachedModelCapabilities {
+  id: string;
+  line: string | null;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  thinking: Partial<Record<'supported' | 'adaptive' | 'enabled' | 'disabled' | 'between_tools', boolean>>;
+  serverTools: Partial<Record<'supported' | 'web_search' | 'code_execution', boolean>>;
+}
+
+export interface ModelCapabilitiesCache {
+  schema: 1;
+  provider: 'anthropic';
+  fetchedAt: number;
+  models: CachedModelCapabilities[];
+}
+
+export const MODEL_CAPABILITIES_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function modelCapabilitiesPath(): string {
+  return join(homedir(), '.ashlr', 'cache', 'model-capabilities.json');
+}
+
+/** Project only documented public fields, never persist a raw API response. */
+export function parseModelCapabilitiesResponse(raw: unknown): CachedModelCapabilities[] | null {
+  if (!isRecord(raw) || !Array.isArray(raw['data']) || raw['data'].length > 1000) return null;
+  const result: CachedModelCapabilities[] = [];
+  const seen = new Set<string>();
+  for (const item of raw['data']) {
+    if (!isRecord(item) || typeof item['id'] !== 'string' || !MODEL_ID_RE.test(item['id']) || seen.has(item['id'])) return null;
+    seen.add(item['id']);
+    const caps = isRecord(item['capabilities']) ? item['capabilities'] : {};
+    const thinking = isRecord(caps['thinking']) ? caps['thinking'] : {};
+    const types = isRecord(thinking['types']) ? thinking['types'] : {};
+    const tools = isRecord(caps['server_tools']) ? caps['server_tools'] : {};
+    const support = (value: unknown): boolean | undefined =>
+      isRecord(value) && typeof value['supported'] === 'boolean' ? value['supported'] : undefined;
+    const thought: CachedModelCapabilities['thinking'] = {};
+    if (typeof thinking['supported'] === 'boolean') thought.supported = thinking['supported'];
+    for (const key of ['adaptive', 'enabled', 'disabled', 'between_tools'] as const) {
+      const value = support(types[key]);
+      if (value !== undefined) thought[key] = value;
+    }
+    const serverTools: CachedModelCapabilities['serverTools'] = {};
+    if (typeof tools['supported'] === 'boolean') serverTools.supported = tools['supported'];
+    for (const key of ['web_search', 'code_execution'] as const) {
+      const value = support(tools[key]);
+      if (value !== undefined) serverTools[key] = value;
+    }
+    result.push({ id: item['id'], line: typeof item['line'] === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(item['line']) ? item['line'] : null,
+      maxInputTokens: positiveInt(item['max_input_tokens']), maxOutputTokens: positiveInt(item['max_tokens']),
+      thinking: thought, serverTools });
+  }
+  return result.length ? result : null;
+}
+
+function parseCapabilitiesCache(raw: unknown): ModelCapabilitiesCache | null {
+  if (!isRecord(raw) || raw['schema'] !== 1 || raw['provider'] !== 'anthropic'
+    || typeof raw['fetchedAt'] !== 'number' || !Number.isFinite(raw['fetchedAt']) || !Array.isArray(raw['models'])) return null;
+  // Re-project persisted fields through the same allowlist as the wire response.
+  const models = parseModelCapabilitiesResponse({ data: raw['models'].map((row: unknown) => {
+    if (!isRecord(row)) return null;
+    const thinking = isRecord(row['thinking']) ? row['thinking'] : {};
+    const server = isRecord(row['serverTools']) ? row['serverTools'] : {};
+    return { id: row['id'], line: row['line'], max_input_tokens: row['maxInputTokens'], max_tokens: row['maxOutputTokens'],
+      capabilities: { thinking: { supported: thinking['supported'], types: Object.fromEntries(
+        ['adaptive', 'enabled', 'disabled', 'between_tools'].map(key => [key, { supported: thinking[key] }])) },
+      server_tools: { supported: server['supported'], web_search: { supported: server['web_search'] }, code_execution: { supported: server['code_execution'] } } } };
+  }) });
+  return models ? { schema: 1, provider: 'anthropic', fetchedAt: raw['fetchedAt'], models } : null;
+}
+
+/** No network on routing or adapter paths. Expired, future, malformed files fall back. */
+export function readModelCapabilities(path = modelCapabilitiesPath(), now = Date.now()): ModelCapabilitiesCache | null {
+  const cache = readCachedFile(path, VERSE_CATALOG_MAX_BYTES, 'model-capabilities', parseCapabilitiesCache);
+  return cache && now >= cache.fetchedAt && now - cache.fetchedAt < MODEL_CAPABILITIES_TTL_MS ? cache : null;
 }

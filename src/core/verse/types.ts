@@ -160,6 +160,8 @@ export interface VerseContextBudget {
 }
 
 export interface VerseModelOption {
+  /** API metadata is advisory and does not establish native seat access or CLI budgets. */
+  providerCapabilities?: import('./model-windows.js').CachedModelCapabilities;
   id: string;
   label: string;
   /** Standard-mode window the CLI measures against (codex: the 95% effective window). */

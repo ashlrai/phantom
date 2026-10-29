@@ -6,14 +6,15 @@
  * Native account discovery supplies live variants, availability and context;
  * this catalog alone never authorizes provider contact or spending.
  *
- * PURE — no I/O, no side effects. All routing logic in run/router.ts uses this
- * catalog; fleet/router.ts references it for model selection.
+ * Selection reads a bounded local provider metadata cache, never the network.
+ * Static entries remain the fallback and define engine admission and ranking.
  *
  * MODEL IDS use a `<engine>:<model-tag>` convention so they are unambiguous
  * across engines. Local models use `local-coder:<ollama-tag>`.
  */
 
 import type { EngineId } from '../types.js';
+import { readModelCapabilities, type CachedModelCapabilities } from '../verse/model-windows.js';
 
 /**
  * HTTP API version, independent of the Anthropic SDK major version.
@@ -128,6 +129,7 @@ export const GROK_CLI_FAST_MODEL = 'grok-4.7-build-fast';
 // ---------------------------------------------------------------------------
 
 export interface ModelEntry {
+  providerCapabilities?: CachedModelCapabilities;
   /** Unique catalog id: `<engine>:<model-tag>`. */
   id: string;
   /** The fleet engine this model runs on. */
@@ -541,11 +543,27 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Cached public facts overlay exact known identities; defaults still control admission and ranking. */
+export function routingModelEntries(): ModelEntry[] {
+  const metadata = readModelCapabilities();
+  return KNOWN_MODELS.map((entry): ModelEntry => {
+    if (!['claude', 'claude-cli', 'claude-api', 'anthropic'].includes(entry.engine)) return entry;
+    const id = entry.apiModelId ?? entry.id.slice(entry.id.indexOf(':') + 1);
+    const cached = metadata?.models.find(row => row.id === id);
+    if (!cached) return entry;
+    const capabilities = entry.capabilities.filter(cap =>
+      !(cap === 'reasoning' && cached.thinking.supported === false)
+      && !(cap === 'long-context' && cached.maxInputTokens !== null && cached.maxInputTokens < 100_000));
+    if (cached.thinking.supported === true && !capabilities.includes('reasoning')) capabilities.push('reasoning');
+    return { ...entry, capabilities, providerCapabilities: cached };
+  });
+}
+
 /**
  * Current automatic entries for a specific engine. KNOWN_MODELS also preserves historical lookups.
  */
 export function catalogFor(engine: EngineId | string): ModelEntry[] {
-  return KNOWN_MODELS.filter((m) => !m.historical && m.engine === (engine as EngineId));
+  return routingModelEntries().filter((m) => !m.historical && m.engine === (engine as EngineId));
 }
 
 /**
@@ -583,7 +601,7 @@ export function pickModel(opts: {
   excludeIds?: ReadonlySet<string>;
 }): ModelEntry | null {
   const excluded = opts.excludeIds ?? CLAUDE5_CATALOG_IDS;
-  let pool = KNOWN_MODELS.filter((m) => {
+  let pool = routingModelEntries().filter((m) => {
     if (m.historical || excluded.has(m.id)) return false;
     if (opts.engine && m.engine !== (opts.engine as EngineId)) return false;
     // V3.10: a seat-routed entry is reachable only by naming its engine.
