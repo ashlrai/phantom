@@ -171,6 +171,9 @@ function govLevelColor(level: 'ok' | 'warn' | 'over'): (s: string) => string {
  * Returns a process exit code: 0 = ok, 1 = error.
  */
 export async function cmdTelemetry(args: string[]): Promise<number> {
+  if (args[0] === 'queue') {
+    return (await import('./telemetry-queue.js')).cmdRouterQueue(args.slice(1));
+  }
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printTelemetryHelp();
     return 0;
@@ -363,6 +366,7 @@ function printTelemetryHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['queue', 'Observe router queue job stations; use queue --help for input contracts.'],
     ['status (default)', 'Show endpoint + PAT configured (booleans only — values never printed),'],
     ['',                 'active sink mode (local/otlp), local telemetry dir + file count,'],
     ['',                 'and spend governance summary.'],
