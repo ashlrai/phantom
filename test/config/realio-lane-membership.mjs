@@ -43,6 +43,9 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/autopilot.test.ts', // Real temp git origin/clone/worktree, fixer and verify subprocesses, and a real push.
+  'test/slowest-tests.test.ts', // Real Node subprocesses exercise file/stdin input, output and CLI exit codes.
+  'test/model-inventory-files.test.ts', // Real temporary fleet files, atomic inventory lock and rename preservation.
   'test/resource-quota-launch-handoff.test.ts', // Real inert collector/exec children, durable private journals and owned process-group teardown.
   'test/daemon-lock-reclaim-reused-pid.test.ts', // real spawned child stands in for a reused daemon pid; real /bin/ps start-time probe.
 
@@ -62,6 +65,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
   'test/cli-unknown-option.test.ts', // fresh Node/tsx CLI subprocesses per verb, each with its own temp HOME and failing tool shims on PATH
   'test/locus-job-env.test.ts', // actual inert Node children and central engine dispatch prove concurrent sealed-job environment isolation
+  'test/integration/locus-credential-boundary.test.ts', // spawns the real built CLI under a fake Locus pin per case with a 30s child budget; measured 5.3s slowest test vs the unit lane's 5s timeout
   'test/mcp-gateway-recovery-probe.test.ts', // real MCP SDK subprocess initialization/list/close against a disposable inert local protocol fixture
   'test/anthropic-messages-client.test.ts', // actual loopback HTTP requests and durable private API reservations
   'test/usage-api-body-stall.test.ts', // actual loopback HTTP server that sends headers and then stalls the body
@@ -81,6 +85,7 @@ export const REAL_IO_TEST_FILES = [
   'test/remote-gateway-auth.test.ts', // real loopback gateway and Mac-only Unix socket pairing ceremony
   'test/remote-admin-race.test.ts', // real owned Unix socket child killed to reproduce stale-admin startup races
   'test/remote-gateway-http.test.ts', // real loopback Hub and gateway servers, Access assertion and SSE lifecycle
+  'test/api-error-no-echo.test.ts', // one real loopback web server per test sweeping the /api error paths
   'test/builtin-activity-pgid-reuse.test.ts', // private activity journals with synthetic identity reuse probes
   'test/builtin-activity-settlement-witness.test.ts', // private journals and one real owned subprocess
   'test/resource-quota-cleanup-diagnostics.test.ts', // private real collector leases with inert failure witnesses
@@ -607,4 +612,5 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-terminal-mux-315.test.ts', // binds a real loopback HTTP server for the multiplexed stream, history, settings and assist routes
   'test/verse-terminal-agents-routes-315.test.ts', // binds a real loopback HTTP server and runs the generated agent hook script (/bin/sh + curl) against it
   'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
+  'test/site-seo.test.ts', // spawns real git (log/ls-files/status) to bound sitemap lastmod dates against commit dates
 ];
