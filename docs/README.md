@@ -61,10 +61,11 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
-| Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed](METRICS-ROUTER-FEED.md) |
+| Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
+| Roll up coding pool tokens and cost by task class and merged PR | [Router cost feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/router/README.md) |
 | Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
