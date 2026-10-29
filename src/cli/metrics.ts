@@ -8,15 +8,18 @@ import { renderDashboard } from '../core/metrics/dashboard.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/preferences.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
+import { cmdMetricsTemplates } from './metrics-templates.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|ingest --jobs <jobs.jsonl> --status <status.json>> [--json]
+const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|ingest --jobs <jobs.jsonl> --status <status.json>|templates [--stdin]> [--json]
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
+phm metrics templates ranks router job families; --stdin accepts a version 1 snapshot.
 No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
 Exit 0: report or help. Exit 2: invalid arguments or refused input.`;
 
 interface CliIo {
   out: (line: string) => void;
   err: (line: string) => void;
+  readInput?: () => Promise<string>;
 }
 
 function cmdIngest(args: string[], io: CliIo): number {
@@ -40,7 +43,14 @@ function cmdIngest(args: string[], io: CliIo): number {
   }
 }
 
-export function cmdMetrics(argv: string[], io: CliIo = { out: console.log, err: console.error }): number {
+export function cmdMetrics(argv: string[], io: CliIo = { out: console.log, err: console.error }): number | Promise<number> {
+  const firstCommand = argv.findIndex(arg => arg !== '--json');
+  if (argv[firstCommand] === 'templates') {
+    return cmdMetricsTemplates(['templates', ...argv.slice(0, firstCommand), ...argv.slice(firstCommand + 1)], {
+      ...(io.readInput ? { readInput: io.readInput } : {}),
+      write: text => io.out(text.trimEnd()),
+    });
+  }
   if (argv.includes('--help') || argv.includes('-h')) { io.out(USAGE); return 0; }
   const json = argv.includes('--json');
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');
