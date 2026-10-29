@@ -1,20 +1,54 @@
 # site/
 
-The Phantom by AshlrAI landing page and ecosystem page at **verse.ashlr.ai**.
+The Phantom by AshlrAI landing page, ecosystem page and use-case guides at **verse.ashlr.ai**.
 The domain, CLI, package and installation names stay compatible; see
 [the product naming guide](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-BRAND.md).
 
-Two standalone HTML pages (`index.html` and `ecosystem.html`). No source build,
+Standalone HTML pages: `index.html`, `ecosystem.html`, four use-case pages
+under `use-cases/` and one comparison page under `compare/`. No source build,
 runtime dependencies, or framework; Vercel's root configuration skips package
 installation and serves this directory as static files. The ecosystem chart uses
 the checked-in `assets/star-history.js` snapshot
 and works when opened from disk. It never embeds a GitHub credential.
-`robots.txt` and `sitemap.xml` list the two public canonical pages for crawlers.
+`robots.txt` and `sitemap.xml` list the public canonical pages for crawlers.
 
 ```sh
 open site/index.html
 open site/ecosystem.html
 ```
+
+## Use-case and comparison pages
+
+The pages under `use-cases/` and `compare/` answer one search intent each with
+the same rule this README keeps for the landing page: every factual claim links
+its source. A claim is a `<div class="claim">` block, and it must end with a
+`<p class="src">` naming the doc, benchmark, source file or public page it
+comes from. Repo links use
+`https://github.com/ashlrai/phantom/blob/master/<path>` so a reader opens the
+exact source; statements about other vendors appear only with a linked public
+page, else they are omitted. `test/site-seo.test.ts` fails a claim without a
+source, a repo link that resolves to a missing file or dead Markdown anchor, a
+page without exactly one absolute canonical, a stale or fabricated sitemap
+`lastmod`, a dead internal link or fragment, and any em or en dash in these
+pages. It also checks that each intent page links to install, the docs and a
+sibling guide.
+
+New pages keep the landing page's font stack loaded without blocking first
+paint (`media="print" onload` plus a `noscript` copy) and reserve every image
+and scene dimension, so layout does not shift when assets arrive.
+
+When site pages are added, removed or edited, regenerate the sitemap rather
+than editing it by hand:
+
+```sh
+node scripts/build-site-sitemap.mjs          # rewrites site/sitemap.xml
+node scripts/build-site-sitemap.mjs --check  # verify only, for review
+```
+
+The generator reads each page's own canonical URL and takes `lastmod` from the
+last git commit touching the file (today, UTC, while a change is still
+uncommitted). That keeps `lastmod` truthful: it tracks actual page updates,
+never a fabricated fresh date.
 
 Refresh the chart snapshot before publishing changes to the ecosystem page:
 
@@ -31,6 +65,36 @@ and prints its UTC snapshot date. A static snapshot may age: each project links
 to GitHub for its current count. Adding another repository requires a deliberate
 edit to the generator, page controls, and project copy.
 
+## Generated facts (freshness)
+
+Version strings, install commands, provider model lists and the declared
+companion MCP server list on these pages are generated blocks between
+`<!-- fresh:begin NAME -->` and `<!-- fresh:end -->` markers. Regenerate them
+after a release, a CLI rename, a documented-model change or a `.mcp.json`
+edit:
+
+```sh
+node scripts/site-freshness.mjs           # rewrite managed blocks in place
+node scripts/site-freshness.mjs --check   # read-only; exits 1 on drift
+```
+
+`test/site-freshness.test.ts` runs the drift check, and the generator also
+validates every `ashlr`/`phm` command line inside `<pre>` and `<code>`
+elements against the real CLI dispatch, verbs and flags, so a stale page
+fails the test suite. Facts come from `package.json` (name, bins, Node
+floor), `CHANGELOG.md` (latest dated release, which feeds the JSON-LD
+`softwareVersion` and the release line), `src/cli/index.ts` plus
+`src/cli/completions.ts` (commands and verbs),
+`src/core/verse/model-windows.ts` (documented model lists) and `.mcp.json`
+(declared companion MCP servers).
+
+The page's published software metadata tracks the latest dated changelog
+release, not the package.json candidate: `scripts/sync-candidate-version.mjs`
+must not update this page's install target or software metadata before
+release verification. Historical version references (the 3.14-3.25 feature
+milestones and the dated 3.24.3 demo captures) are source facts about those
+releases and stay hand-written. If a measurement changes, change the page.
+
 ## Deploying
 
 Vercel deploys `site/` to `verse.ashlr.ai` from `master`. Any static host
@@ -45,7 +109,7 @@ or release changes, and uncertain diffs use the full matrix. Every master push
 and reusable release verification also uses the full matrix; a site PR result
 is never release qualification.
 
-Before merging a change, check both pages at a phone width: neither page may
+Before merging a change, check the pages at a phone width: none may
 scroll sideways at 390 px (tables and code blocks scroll inside their own boxes).
 The hero tabs are explanatory, not a live dispatch surface; check click and
 arrow-key switching, visible panel focus, and the copy-command feedback in a

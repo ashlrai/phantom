@@ -8,7 +8,7 @@ const canonicalVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const files = [
   'package.json', 'package-lock.json', 'desktop/package.json',
   'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml',
-  'desktop/src-tauri/Cargo.lock',
+  'desktop/src-tauri/Cargo.lock', 'server.json',
   'desktop/README.md',
   'README.md', 'docs/QUICKSTART.md',
 ];
@@ -52,8 +52,13 @@ export function syncCandidateVersion(root, version, { check = false } = {}) {
   const lock = JSON.parse(sources.get('package-lock.json'));
   const desktop = JSON.parse(sources.get('desktop/package.json'));
   const tauri = JSON.parse(sources.get('desktop/src-tauri/tauri.conf.json'));
+  const registry = JSON.parse(sources.get('server.json'));
   if (pkg.name !== '@ashlr/phantom' || lock.name !== pkg.name || lock.packages?.['']?.name !== pkg.name || desktop.name !== 'ashlr-desktop') {
     throw new Error('Candidate package identities do not match Phantom');
+  }
+  const registryPackages = registry.packages?.filter((entry) => entry.registryType === 'npm');
+  if (registry.name !== 'io.github.ashlrai/phantom' || registryPackages?.length !== 1 || registryPackages[0].identifier !== pkg.name) {
+    throw new Error('MCP registry manifest does not match the Phantom npm package');
   }
   const main = tauri.app?.windows?.filter((window) => window.label === 'main');
   if (main?.length !== 1 || typeof main[0].url !== 'string') throw new Error('Expected exactly one main desktop URL');
@@ -78,6 +83,9 @@ export function syncCandidateVersion(root, version, { check = false } = {}) {
   replacements.set('desktop/src-tauri/tauri.conf.json', updatedTauri);
   replacements.set('desktop/src-tauri/Cargo.toml', ownCargoVersion(sources.get('desktop/src-tauri/Cargo.toml'), version, false));
   replacements.set('desktop/src-tauri/Cargo.lock', ownCargoVersion(sources.get('desktop/src-tauri/Cargo.lock'), version, true));
+  let updatedRegistry = jsonVersion(sources.get('server.json'), version, '  ', 'MCP registry manifest');
+  updatedRegistry = jsonVersion(updatedRegistry, version, '      ', 'MCP registry package');
+  replacements.set('server.json', updatedRegistry);
   // Source identity stays true before and after publication; historical releases stay intact.
   for (const file of ['desktop/README.md', 'README.md', 'docs/QUICKSTART.md']) {
     replacements.set(file, replaceOne(sources.get(file),

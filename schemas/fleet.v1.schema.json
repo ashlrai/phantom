@@ -1,0 +1,373 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schemas/fleet.v1.schema.json",
+  "title": "Phantom coding fleet v1",
+  "description": "Read-only snapshot. Null means unknown. Cursor shares Grok Ultra capacity. Money is not inferred from pool units.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "readings",
+    "windows",
+    "pools",
+    "router",
+    "agents",
+    "repos",
+    "coordination",
+    "sources"
+  ],
+  "properties": {
+    "schema": {"const": "fleet.v1"},
+    "generated_at": {"$ref": "#/definitions/dateTime"},
+    "readings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pool", "used_pct", "at", "source", "age_seconds"],
+        "properties": {
+          "pool": {"$ref": "#/definitions/poolId"},
+          "used_pct": {"type": "number", "minimum": 0, "maximum": 100},
+          "at": {"$ref": "#/definitions/dateTime"},
+          "source": {"const": "manual"},
+          "age_seconds": {"type": "number", "minimum": 0}
+        }
+      },
+      "maxItems": 1000
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pool", "start", "reset", "reset_every_days", "timezone"],
+        "properties": {
+          "pool": {"$ref": "#/definitions/poolId"},
+          "start": {"$ref": "#/definitions/dateTime"},
+          "reset": {"$ref": "#/definitions/dateTime"},
+          "reset_every_days": {"$ref": "#/definitions/nullableNonnegative"},
+          "timezone": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+        }
+      },
+      "maxItems": 1000
+    },
+    "pools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "shared_with",
+          "source",
+          "used_pct",
+          "remaining_pct",
+          "reading_at",
+          "age_seconds",
+          "reset_at",
+          "window_start",
+          "burn_pct_per_hour",
+          "runway_hours",
+          "ideal_pct",
+          "projected_pct",
+          "uncertainty",
+          "actual",
+          "ideal",
+          "planner"
+        ],
+        "properties": {
+          "id": {"$ref": "#/definitions/poolId"},
+          "shared_with": {"anyOf": [{"$ref": "#/definitions/poolId"}, {"type": "null"}]},
+          "source": {"enum": ["manual", "estimate", "unknown"]},
+          "used_pct": {"$ref": "#/definitions/nullableNonnegative"},
+          "remaining_pct": {"$ref": "#/definitions/nullableNonnegative"},
+          "reading_at": {"$ref": "#/definitions/nullableDateTime"},
+          "age_seconds": {"$ref": "#/definitions/nullableNonnegative"},
+          "reset_at": {"$ref": "#/definitions/nullableDateTime"},
+          "window_start": {"$ref": "#/definitions/nullableDateTime"},
+          "burn_pct_per_hour": {"$ref": "#/definitions/nullableNonnegative"},
+          "runway_hours": {"$ref": "#/definitions/nullableNonnegative"},
+          "ideal_pct": {"$ref": "#/definitions/nullableNonnegative"},
+          "projected_pct": {"$ref": "#/definitions/nullableNonnegative"},
+          "uncertainty": {"enum": ["linear estimate; future usage unknown", "unknown"]},
+          "actual": {"type": "array", "items": {"$ref": "#/definitions/point"}, "maxItems": 1000},
+          "ideal": {"type": "array", "items": {"$ref": "#/definitions/point"}, "maxItems": 1000},
+          "planner": {"type": "array", "items": {"$ref": "#/definitions/point"}, "maxItems": 1000}
+        }
+      },
+      "maxItems": 8,
+      "minItems": 8
+    },
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "decisions", "regret"],
+      "properties": {
+        "source": {"$ref": "#/definitions/sourceState"},
+        "decisions": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "ts",
+                  "jobId",
+                  "jobType",
+                  "poolId",
+                  "consumer",
+                  "policyId",
+                  "canary",
+                  "propensity",
+                  "solver",
+                  "fallback",
+                  "grantsMergeAuthority",
+                  "netValue"
+                ],
+                "properties": {
+                  "ts": {"$ref": "#/definitions/scalar"},
+                  "jobId": {"$ref": "#/definitions/scalar"},
+                  "jobType": {"$ref": "#/definitions/scalar"},
+                  "poolId": {"$ref": "#/definitions/scalar"},
+                  "consumer": {"$ref": "#/definitions/scalar"},
+                  "policyId": {"$ref": "#/definitions/scalar"},
+                  "canary": {"$ref": "#/definitions/scalar"},
+                  "propensity": {"$ref": "#/definitions/scalar"},
+                  "solver": {"$ref": "#/definitions/scalar"},
+                  "fallback": {"$ref": "#/definitions/scalar"},
+                  "grantsMergeAuthority": {"const": false},
+                  "netValue": {"$ref": "#/definitions/scalar"}
+                }
+              },
+              "maxItems": 1000
+            },
+            {"type": "null"}
+          ]
+        },
+        "regret": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "jobId",
+                  "jobType",
+                  "chosenPool",
+                  "chosenConsumer",
+                  "betterPool",
+                  "betterConsumer",
+                  "chosenValue",
+                  "betterValue",
+                  "regret"
+                ],
+                "properties": {
+                  "jobId": {"$ref": "#/definitions/scalar"},
+                  "jobType": {"$ref": "#/definitions/scalar"},
+                  "chosenPool": {"$ref": "#/definitions/scalar"},
+                  "chosenConsumer": {"$ref": "#/definitions/scalar"},
+                  "betterPool": {"$ref": "#/definitions/scalar"},
+                  "betterConsumer": {"$ref": "#/definitions/scalar"},
+                  "chosenValue": {"$ref": "#/definitions/scalar"},
+                  "betterValue": {"$ref": "#/definitions/scalar"},
+                  "regret": {"$ref": "#/definitions/scalar"}
+                }
+              },
+              "maxItems": 1000
+            },
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "agents": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agent", "repo", "task", "claim_id", "expires_at"],
+            "properties": {
+              "agent": {"type": "string"},
+              "repo": {"type": "string"},
+              "task": {"type": "string"},
+              "claim_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+              "expires_at": {"$ref": "#/definitions/nullableDateTime"}
+            }
+          },
+          "maxItems": 1000
+        },
+        {"type": "null"}
+      ]
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "source", "open", "merged", "complete"],
+        "properties": {
+          "repo": {
+            "enum": [
+              "ashlrai/phantom",
+              "ashlrai/phantom-secrets",
+              "ashlrai/locus",
+              "ashlrai/lexicon",
+              "ashlrai/ashlr-md",
+              "ashlrai/ashlr-stack",
+              "ashlrai/ashlr-plugin"
+            ]
+          },
+          "source": {"$ref": "#/definitions/sourceState"},
+          "open": {
+            "anyOf": [
+              {"type": "array", "items": {"$ref": "#/definitions/pullRequest"}, "maxItems": 1000},
+              {"type": "null"}
+            ]
+          },
+          "merged": {
+            "anyOf": [
+              {"type": "array", "items": {"$ref": "#/definitions/pullRequest"}, "maxItems": 1000},
+              {"type": "null"}
+            ]
+          },
+          "complete": {"type": "boolean"}
+        }
+      },
+      "maxItems": 7,
+      "minItems": 7
+    },
+    "coordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "claims", "messages", "proposals", "expiredClaims"],
+      "properties": {
+        "state": {"$ref": "#/definitions/sourceState"},
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "repo", "task", "agent", "claimedAt", "expiresAt"],
+            "properties": {
+              "id": {"type": "string"},
+              "repo": {"type": "string"},
+              "task": {"type": "string"},
+              "agent": {"type": "string"},
+              "claimedAt": {"type": "string"},
+              "expiresAt": {"type": "string"}
+            }
+          },
+          "maxItems": 1000
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "from", "to", "body", "at", "expiresAt"],
+            "properties": {
+              "id": {"type": "string"},
+              "from": {"type": "string"},
+              "to": {"type": "string"},
+              "body": {"type": "string"},
+              "at": {"type": "string"},
+              "expiresAt": {"type": "string"}
+            }
+          },
+          "maxItems": 1000
+        },
+        "proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "repo", "task", "to", "at", "expiresAt"],
+            "properties": {
+              "id": {"type": "string"},
+              "repo": {"type": "string"},
+              "task": {"type": "string"},
+              "to": {"type": "string"},
+              "at": {"type": "string"},
+              "expiresAt": {"type": "string"}
+            }
+          },
+          "maxItems": 1000
+        },
+        "expiredClaims": {"$ref": "#/definitions/nullableNonnegative"}
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shared", "github", "spend", "router", "planner"],
+      "properties": {
+        "shared": {"$ref": "#/definitions/sourceState"},
+        "github": {"$ref": "#/definitions/sourceState"},
+        "spend": {"$ref": "#/definitions/sourceState"},
+        "router": {"$ref": "#/definitions/sourceState"},
+        "planner": {"$ref": "#/definitions/sourceState"}
+      }
+    }
+  },
+  "definitions": {
+    "poolId": {
+      "enum": [
+        "grok-ultra-weekly",
+        "codex-cmp",
+        "codex-personal",
+        "claude-max",
+        "devin",
+        "grok-build",
+        "cursor",
+        "omlx"
+      ]
+    },
+    "sourceState": {"enum": ["known", "partial", "unknown"]},
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "used_pct"],
+      "properties": {"at": {"$ref": "#/definitions/dateTime"}, "used_pct": {"type": "number", "minimum": 0}}
+    },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "state", "title", "url", "ci", "cost"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["open", "merged"]},
+        "title": {"type": "string"},
+        "url": {"type": "string", "pattern": "^https://github\\.com/ashlrai/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$"},
+        "ci": {"enum": ["passed", "failed", "pending", "unknown"]},
+        "cost": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["pool", "value", "unit"],
+                "properties": {
+                  "pool": {"$ref": "#/definitions/poolId"},
+                  "value": {"type": "number", "minimum": 0},
+                  "unit": {"const": "pool-unit"}
+                }
+              },
+              "maxItems": 1000
+            },
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "nullableNonnegative": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+    "nullableDateTime": {"anyOf": [{"$ref": "#/definitions/dateTime"}, {"type": "null"}]},
+    "scalar": {"type": ["string", "number", "boolean", "null"]},
+    "dateTime": {"type": "string", "format": "date-time"}
+  }
+}

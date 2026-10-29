@@ -340,6 +340,11 @@ function buildSegment(
         reasoningStream = null;
         items.push({ kind: 'assistant', key: `a-${e.seq}`, turnId: e.turnId, at: e.at, text: e.text, streaming: false });
         break;
+      case 'assistant-status':
+        // Lifecycle copy cannot supersede a provider's unfinished text stream.
+        flushPending();
+        items.push({ kind: 'assistant', key: `status-${e.seq}`, turnId: e.turnId, at: e.at, text: e.text, streaming: false });
+        break;
       case 'thinking': {
         const streamed = pending?.turnId === e.turnId ? pending : null;
         const streamIndex = items.length;

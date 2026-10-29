@@ -116,6 +116,7 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'openai-agents sessions': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents inspect': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
+  'config set editor --help': '`config set` refuses a help flag in either operand with its usage line (exit 2) instead of storing it',
 };
 
 /**
@@ -131,7 +132,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'ls -h': 'exit 1: builds the index, then treats -h as a category',
   open: 'exit 1: builds the index, then "Nothing selected."',
   tidy: 'exit 0: runs the Desktop tidy plan ("Nothing to tidy.")',
-  config: 'exit 0: prints the config',
   'config get': 'exit 1: looks the flag up as a config key',
   'config path': 'exit 0: prints the config path',
   'config effective': 'exit 0: prints the effective config snapshot (read-only)',
@@ -140,7 +140,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
   'mcp doctor': 'exit 0: probes MCP servers',
   'mcp ecosystem': 'exit 0: scans PATH for ecosystem MCP servers',
   'mcp run': 'exit 13: starts the MCP aggregation gateway on stdio',
-  'run show': 'exit 1: looks the flag up as a run id',
   runs: 'exit 0: lists past runs',
   'completions zsh': 'exit 0: prints the zsh completion script',
   'completions bash': 'exit 0: prints the bash completion script',
@@ -162,6 +161,32 @@ const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {
  * verb). Pinned because they were real incidents, not to replace enumeration.
  */
 const PINNED_NESTED: string[][] = [['gh', 'pr', 'create']];
+
+/**
+ * Full argv with the help flag after operands or other flags, which the
+ * `<cmd> [verb] <flag>` enumeration never produces. Each one used to act:
+ * deploy, self-update, start a run, write the genome, scaffold or enable a
+ * plugin, launch a playbook session or open an editor, or rewrite the config.
+ */
+const PINNED_ARGV: string[][] = [
+  ['ship', '--deploy', 'gh', '--confirm', '--help'],
+  ['ship', '--json', '-h'],
+  ['update', '--yes', '--help'],
+  ['upgrade', '--json', '-h'],
+  ['run', '--json', '-h'],
+  ['run', '--allow-cloud', '--help'],
+  ['learn', '--json', '-h'],
+  ['genome', 'learn', '--json', '-h'],
+  ['recall', '--json', '-h'],
+  ['plugins', 'init', 'zz-plugin', '--help'],
+  ['plugins', 'init', '--help', 'zz-plugin'],
+  ['plugins', 'enable', 'zz-plugin', '--yes', '-h'],
+  ['playbook', 'run', 'add-tests-for-module', '-h'],
+  ['playbook', 'new', 'zz-playbook', '-h'],
+  ['playbook', 'edit', 'add-tests-for-module', '--help'],
+  ['config', 'set', 'editor', '--help'],
+  ['website', 'pause', 'zz-operand', '--help'],
+];
 
 // ---------------------------------------------------------------------------
 // CLI entry: fresh dist/ when available, otherwise the source through tsx
@@ -228,6 +253,7 @@ function enumerate(): { cases: HelpCase[]; verbs: Map<string, string[]> } {
     const cases = bases.flatMap((base) => FLAGS.map((flag) => ({
       key: [...base, flag].join(' '), base: base.join(' '), argv: [...base, flag], cmd: base[0]!,
     })));
+    for (const argv of PINNED_ARGV) cases.push({ key: argv.join(' '), base: argv.join(' '), argv, cmd: argv[0]! });
     return { cases, verbs };
   } finally {
     rmSync(home, { recursive: true, force: true });

@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,6 +44,7 @@ import {
 } from '../src/core/verse/git-ops.js';
 import { createWorktree, isValidWorktreeName, worktreeRepoSegment } from '../src/core/verse/worktrees.js';
 import { VERSE_GIT_PATCH_MAX_BYTES, type VerseGitPr } from '../src/core/verse/workbench-types.js';
+import { DEFAULT_WORKTREE_FREE_BYTES, type WorktreeDiskOptions } from '../src/core/worktree-disk.js';
 
 // ===========================================================================
 // A scripted repository
@@ -712,6 +714,12 @@ describe('guards', () => {
 // ===========================================================================
 
 describe('createWorktree', () => {
+  // Physical disk refusals are covered by the fake-fs disk suites. These
+  // lifecycle fixtures must not depend on free space left by concurrent jobs.
+  const disk: WorktreeDiskOptions = {
+    minFreeBytes: DEFAULT_WORKTREE_FREE_BYTES,
+    fs: { ...fs, statfs: (async () => ({ bsize: 1n, bavail: BigInt(DEFAULT_WORKTREE_FREE_BYTES) })) as typeof fs.statfs },
+  };
   let home: string;
   let savedHome: string | undefined;
   beforeEach(() => {
@@ -727,7 +735,7 @@ describe('createWorktree', () => {
   it('adds ~/.ashlr-worktrees/<repo>/<name> on verse/<name>, from HEAD', async () => {
     const f = fakeGit(scenario());
     const made: string[] = [];
-    const out = await createWorktree(REPO, 'fix-login', { ...f.opts, pathExists: () => false, makeDir: async (p) => { made.push(p); } });
+    const out = await createWorktree(REPO, 'fix-login', { ...f.opts, disk, pathExists: () => false, makeDir: async (p) => { made.push(p); } });
     expect(out).toEqual({ path: join(home, '.ashlr-worktrees', 'ashlr-hub', 'fix-login'), branch: 'verse/fix-login' });
     expect(made).toEqual([join(home, '.ashlr-worktrees', 'ashlr-hub')]);
     const add = f.calls.find((c) => bare(c.args)[0] === 'worktree')!;
@@ -736,10 +744,10 @@ describe('createWorktree', () => {
 
   it('refuses an existing directory or branch, and a bad name', async () => {
     const f = fakeGit(scenario());
-    await expect(createWorktree(REPO, 'x', { ...f.opts, pathExists: () => true, makeDir: async () => {} })).rejects.toThrow('already exists');
+    await expect(createWorktree(REPO, 'x', { ...f.opts, disk, pathExists: () => true, makeDir: async () => {} })).rejects.toThrow('already exists');
     const taken = fakeGit(scenario({ refs: new Set(['origin/main', 'refs/heads/verse/x']) }));
-    await expect(createWorktree(REPO, 'x', { ...taken.opts, pathExists: () => false, makeDir: async () => {} })).rejects.toThrow('verse/x already exists');
-    await expect(createWorktree(REPO, '../escape', f.opts)).rejects.toMatchObject({ code: 'VERSE_INVALID' });
+    await expect(createWorktree(REPO, 'x', { ...taken.opts, disk, pathExists: () => false, makeDir: async () => {} })).rejects.toThrow('verse/x already exists');
+    await expect(createWorktree(REPO, '../escape', { ...f.opts, disk })).rejects.toMatchObject({ code: 'VERSE_INVALID' });
     expect(isValidWorktreeName('a'.repeat(64))).toBe(false);
     expect(isValidWorktreeName('fix.lock')).toBe(false);
     expect(worktreeRepoSegment('/x/..hidden repo')).toBe('hidden-repo');
