@@ -62,6 +62,8 @@ export async function cmdDrive(args: string[], dependencies?: DriveDependencies)
     bridge,
     paused: async () => await driveControlPresent(options.pauseFile) || await driveControlPresent(join(homedir(), '.ashlr', 'KILL')),
     publish: (job: string, lease: string) => bridge.publish(options.publisher, job, lease),
+    // One value-free line per ops step; stderr keeps the stdout report JSON-clean.
+    opsLog: (line: string) => console.error(line),
   };
   const controller = new AbortController();
   const stop = (): void => { controller.abort(); };

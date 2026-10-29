@@ -46,16 +46,44 @@ accepted as the publisher basename.
 
 1. Acquire exclusive shared dispatch ownership. A busy or unavailable owner
    returns a hold without reaping, publishing, launching or writing status.
-2. Reap through the existing runner, recording durable completion evidence.
-3. For each successful FINISHED job, reserve publication durably, invoke
+2. Run the ops tick (`src/core/drive/ops-tick.ts`): the routine Mac-pool
+   operations that used to be scheduled as Grok-turn work now run as
+   deterministic steps inside the tick and spend no turn. In order:
+   `restock` (host queue rows becoming launchable), `reap` (the existing
+   bridge reap — still proceeds under memory pressure and never starts a
+   worker), `metrics-export` (the value-free `metrics.v1` projection),
+   `fixfwd-triage` (required-context PR check triage) and `dashboard-rollup`
+   (the value-free fleet summary). Each step logs exactly one value-free
+   `drive-ops <step> <outcome>` line through the ops log sink (stderr in the
+   CLI; stdout stays the JSON report). `reap` is load-bearing — its failure
+   fails the tick like the direct call it replaced; the other steps are
+   advisory and log `failed`, `skipped` (no host port wired) or `held`
+   (tick aborted) without holding production.
+3. Apply the weekly budget governor when `weeklyGrokUsedPercent` is wired:
+   at or above the 85 percent weekly-pool watermark, READY jobs in the
+   `grok-*` pools below P0 are held from the plan (`report.governorHeld`);
+   P0 work and non-Grok pools are never held. An unreadable reading fails
+   closed (`unknown` ⇒ paused) — unknown usage is not headroom.
+4. For each successful FINISHED job, reserve publication durably, invoke
    `phantom exec -- /absolute/path/publish.sh <bridge-supplied arguments>`,
    then record its outcome. No direct Git or GitHub push exists in the driver.
-4. Read current queue and capacity. Fill below-floor pools first, then remaining
+5. Read current queue and capacity. Fill below-floor pools first, then remaining
    capacity by descending priority and queue order. Re-read before every launch.
-5. Recheck PAUSE and ask the bridge to atomically verify READY, completed
+6. Recheck PAUSE and ask the bridge to atomically verify READY, completed
    dependencies, claim ownership and capacity before launching the existing
    runner with #1014 heavy-step admission wired into its commands.
-6. Write native status through the bridge and release ownership in `finally`.
+7. Write native status through the bridge and release ownership in `finally`.
+
+### fixfwd triage contexts
+
+`triageFixForward` judges a PR head by its REQUIRED contexts only. Advisory
+checks — the non-required SonarCloud, CodeQL and Vercel contexts the Mac
+pools report — are ignored whatever their conclusion: a red advisory run
+never opens fix-forward work and a green one never counts toward green.
+`required: null` (protection unreadable) yields `unknown`; the tick neither
+claims green nor guesses a repair. A red required context yields
+`fix-forward`, pending required contexts yield `pending`, and all-green
+required contexts (or none required) yield `green`.
 
 Memory PAUSE blocks launch but permits reap and completion publication. The
 default PAUSE convention is `~/.ashlr-runs/PAUSE`, configurable with
@@ -266,5 +294,5 @@ Unit acceptance uses a fake pool runner and does not exercise a paid worker,
 live publisher, real auth store or active fleet. Run it with an isolated HOME:
 
 ```sh
-HOME=$(mktemp -d) npx vitest run test/drive-supervisor.test.ts test/drive-cli-bridge.test.ts
+HOME=$(mktemp -d) npx vitest run test/drive-supervisor.test.ts test/drive-cli-bridge.test.ts test/drive-ops-tick.test.ts
 ```
