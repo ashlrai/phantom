@@ -77,7 +77,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
-  telemetry: ['status', 'test'],
+  telemetry: ['status', 'test', 'queue-replay'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh', 'plan'],
