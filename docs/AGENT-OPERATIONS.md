@@ -290,6 +290,28 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
+### Metrics levers
+
+`phm metrics levers --json` returns a versioned report with the top three
+opportunity proxies from the activity rollup and fleet digest. Use
+`--window 7d` (default) or `--window 30d`; omit `--json` for a ranked list.
+The command reads local metadata without model calls or writes.
+
+Scores are opportunity indices from 0 to 100, not predicted gains:
+
+| Lever | Score basis | Limitation |
+| --- | --- | --- |
+| Lane imbalance | (largest minus smallest active project session count) / attributed sessions | Projects are not execution lanes; needs two active projects. |
+| Template merge rate | 1 minus window witnessed merges / window proposals, clamped to [0, 1] | Fleet flow is not a template cohort; the digest excludes pending from proposals, and merges can belong to older proposals. |
+| Wait time | Live pending / (live pending + window merges + window declines) | Mixed live/window backlog share is not elapsed wait duration. |
+| Empty jobs | Sessions in projects with zero window commits / attributed sessions | Research or uncommitted work can be useful; this does not prove empty jobs. |
+
+Every reason names the proxy limitation. Missing samples and incomplete or
+legacy proposal read quality yield `score: null` and `evidence: "unavailable"`.
+Known scores sort first, descending, rounded to two decimals. Ties use the table
+order, including unavailable entries, so the report always contains three rows.
+Use the reasons to investigate before changing routing or templates.
+
 ### Stop and pause
 
 | Control | Effect |
