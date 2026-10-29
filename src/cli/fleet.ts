@@ -102,6 +102,12 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.memory) {
+    const memory = s.memory;
+    lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);
+    lines.push(`  free: ${memory.freeMemoryPercent === null ? 'unknown' : `${memory.freeMemoryPercent}%`}; swap used: ${memory.swapUsedBytes === null ? 'unknown' : `${memory.swapUsedBytes} bytes`}`);
+    lines.push(`  admission waits: ${memory.admissionWaitsByPool === null ? 'unknown' : JSON.stringify(memory.admissionWaitsByPool)}`);
+  }
   if (s.buildIdentity) {
     const version = s.buildIdentity.packageVersion ?? 'unknown';
     const revision = s.buildIdentity.revision?.slice(0, 12) ?? 'unknown';
