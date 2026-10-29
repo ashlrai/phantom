@@ -37,36 +37,36 @@ describe('local runtime CLI', () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
   it.each([
-    ['unknown'], ['status'], ['status', '/private/fixture/store'], ['status', '--store'], ['status', '--store', 'relative'],
-    ['status', '--store', '/private/x\n'], ['status', '--store', '/private/x\u0085'], ['status', '--store', '/private/x\0'],
-    ['status', '--store', '/private/x', '--store', '/private/y'], ['status', '--store=/private/x'],
-    ['status', '--store', '/private/x', '--unknown'], ['status', '--store', '/private/x', '--json', '--json'],
-    ['status', '--store', '/private/x', '--artifact', '/private/y'], ['status', '--store', '/private/x', '--', 'universe', 'help'],
-    ['help', '--store', '/private/x'], ['--help', '--json'], ['rollback'],
-    ['install', '--store', '/private/x'], ['install', '--store', '/private/x', '--artifact', 'relative'],
-    [...installArgs, '--sha256', 'a'.repeat(64)], [...installArgs, '--unknown'], [...installArgs, 'extra'],
-    [...installArgs.slice(0, 5), '--sha256', 'A'.repeat(64), '--revision', 'b'.repeat(40), '--version', '3.4.0'],
-    [...installArgs.slice(0, 5), '--sha256', 'a'.repeat(63), '--revision', 'b'.repeat(40), '--version', '3.4.0'],
-    [...installArgs.slice(0, 7), '--revision', 'b'.repeat(39), '--version', '3.4.0'],
-    [...installArgs.slice(0, 9), '--version', 'x'.repeat(129)],
-    ['run', '--store', '/private/x'], ['run', '--store', '/private/x', '--'],
-    ['run', '--store', '/private/x', '--', 'serve', '--root', '/private/u'],
-    ['run', '--store', '/private/x', '--', 'update', '--root', '/private/u'],
-    ['run', '--store', '/private/x', '--', 'runtime', 'status', '--root', '/private/u'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--root'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--root', 'relative'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--root', '/private/a', '--root', '/private/b'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--', '--root', '/private/a'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--root=/private/a'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--help', '--root', '/private/a'],
-    ['run', '--store', '/private/x', '--', 'universe', 'help', '--root', '/private/a'],
-    ['run', '--store', '/private/x', '--', 'universe', 'campaign', 'help', '--unknown'],
-    ['run', '--store', '/private/x', '--', 'universe', 'status', '--root', '/private/a\n'],
-    ['run', '--store', '/private/x', '--', 'universe', 'console'],
-    ['run', '--store', '/private/x', '--', 'universe', 'console', '--root', 'relative'],
-    ['run', '--store', '/private/x', '--', 'universe', 'console', '--help', '--root', '/private/u'],
-  ])('rejects invalid arguments %j before reads, writes, or launch', async (...args) => {
+    [['unknown']], [['status']], [['status', '/private/fixture/store']], [['status', '--store']], [['status', '--store', 'relative']],
+    [['status', '--store', '/private/x\n']], [['status', '--store', '/private/x\u0085']], [['status', '--store', '/private/x\0']],
+    [['status', '--store', '/private/x', '--store', '/private/y']], [['status', '--store=/private/x']],
+    [['status', '--store', '/private/x', '--unknown']], [['status', '--store', '/private/x', '--json', '--json']],
+    [['status', '--store', '/private/x', '--artifact', '/private/y']], [['status', '--store', '/private/x', '--', 'universe', 'help']],
+    [['help', '--store', '/private/x']], [['--help', '--json']], [['rollback']],
+    [['install', '--store', '/private/x']], [['install', '--store', '/private/x', '--artifact', 'relative']],
+    [[...installArgs, '--sha256', 'a'.repeat(64)]], [[...installArgs, '--unknown']], [[...installArgs, 'extra']],
+    [[...installArgs.slice(0, 5), '--sha256', 'A'.repeat(64), '--revision', 'b'.repeat(40), '--version', '3.4.0']],
+    [[...installArgs.slice(0, 5), '--sha256', 'a'.repeat(63), '--revision', 'b'.repeat(40), '--version', '3.4.0']],
+    [[...installArgs.slice(0, 7), '--revision', 'b'.repeat(39), '--version', '3.4.0']],
+    [[...installArgs.slice(0, 9), '--version', 'x'.repeat(129)]],
+    [['run', '--store', '/private/x']], [['run', '--store', '/private/x', '--']],
+    [['run', '--store', '/private/x', '--', 'serve', '--root', '/private/u']],
+    [['run', '--store', '/private/x', '--', 'update', '--root', '/private/u']],
+    [['run', '--store', '/private/x', '--', 'runtime', 'status', '--root', '/private/u']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--root']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--root', 'relative']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--root', '/private/a', '--root', '/private/b']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--', '--root', '/private/a']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--root=/private/a']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--help', '--root', '/private/a']],
+    [['run', '--store', '/private/x', '--', 'universe', 'help', '--root', '/private/a']],
+    [['run', '--store', '/private/x', '--', 'universe', 'campaign', 'help', '--unknown']],
+    [['run', '--store', '/private/x', '--', 'universe', 'status', '--root', '/private/a\n']],
+    [['run', '--store', '/private/x', '--', 'universe', 'console']],
+    [['run', '--store', '/private/x', '--', 'universe', 'console', '--root', 'relative']],
+    [['run', '--store', '/private/x', '--', 'universe', 'console', '--help', '--root', '/private/u']],
+  ])('rejects invalid arguments %j before reads, writes, or launch', async (args) => {
     expect(await cmdRuntime(args)).toBe(2);
     for (const fn of Object.values(core)) expect(fn).not.toHaveBeenCalled();
     expect(childProcess.spawn).not.toHaveBeenCalled();
@@ -136,11 +136,11 @@ describe('local runtime CLI', () => {
     handle.emit('close', 7, null); expect(await running).toBe(7); expect(output).not.toHaveBeenCalled();
   });
 
-  it.each([['help'], ['--help'], ['status', '--help'], ['campaign', 'help'], ['portfolio', '--help'], ['console', '--help'], ['console', '-h'],
-    ['controller', '--help'], ['controller', '-h'], ['controller', 'help'], ['integration', '--help'], ['integration', '-h'], ['integration', 'help'],
-    ['resources', '--help'], ['resources', '-h'], ['campaign', 'supervise', '--help'], ['campaign', 'supervise', '-h'],
-    ['campaign', 'check', '--help'], ['campaign', 'check', '-h'],
-  ])('forwards unambiguous Universe help %j without a default root', async (...args) => {
+  it.each([[['help']], [['--help']], [['status', '--help']], [['campaign', 'help']], [['portfolio', '--help']], [['console', '--help']], [['console', '-h']],
+    [['controller', '--help']], [['controller', '-h']], [['controller', 'help']], [['integration', '--help']], [['integration', '-h']], [['integration', 'help']],
+    [['resources', '--help']], [['resources', '-h']], [['campaign', 'supervise', '--help']], [['campaign', 'supervise', '-h']],
+    [['campaign', 'check', '--help']], [['campaign', 'check', '-h']],
+  ])('forwards unambiguous Universe help %j without a default root', async (args) => {
     const handle = child(); childProcess.spawn.mockReturnValue(handle);
     const running = cmdRuntime(['run', '--store', '/private/fixture/store', '--', 'universe', ...args]);
     handle.emit('close', 0, null); expect(await running).toBe(0);
@@ -148,10 +148,10 @@ describe('local runtime CLI', () => {
   });
 
   it.each([
-    ['--resource-runtime', '/private/fixture/runtime.json'],
-    ['--resource-runtime', '/private/fixture/runtime.json', '--json'],
-    ['--json', '--resource-runtime', "/private/fixture owner's/runtime.json"],
-  ])('forwards exact rootless read-only resource check options %j through the verified runtime', async (...options) => {
+    [['--resource-runtime', '/private/fixture/runtime.json']],
+    [['--resource-runtime', '/private/fixture/runtime.json', '--json']],
+    [['--json', '--resource-runtime', "/private/fixture owner's/runtime.json"]],
+  ])('forwards exact rootless read-only resource check options %j through the verified runtime', async (options) => {
     const handle = child(); childProcess.spawn.mockReturnValue(handle);
     const forwarded = ['universe', 'resources', 'check', ...options];
     const running = cmdRuntime(['run', '--store', '/private/fixture/store', '--', ...forwarded]);
@@ -164,33 +164,33 @@ describe('local runtime CLI', () => {
   });
 
   it.each([
-    [], ['--json'], ['--resource-runtime'], ['--resource-runtime', 'relative'], ['--resource-runtime', '/'],
-    ['--resource-runtime', '/private/../runtime.json'], ['--resource-runtime', '/private//runtime.json'],
-    ['--resource-runtime', '/private/runtime.json/'], ['--resource-runtime', `/private/${'é'.repeat(2050)}`],
-    ['--resource-runtime', '/private/runtime.json', '--resource-runtime', '/private/other.json'],
-    ['--resource-runtime', '/private/runtime.json', '--json', '--json'],
-    ['--resource-runtime', '/private/runtime.json', '--root', '/private/universe'],
-    ['--root', '/private/universe', '--resource-runtime', '/private/runtime.json'],
-    ['--resource-runtime', '/private/runtime.json', '--help'], ['--help'], ['help'],
-    ['--resource-runtime', '/private/runtime.json', '--unknown'], ['--resource-runtime=/private/runtime.json'],
-    ['--resource-runtime', '/private/runtime.json', 'run'], ['--resource-runtime', '--json'],
-    ['--resource-runtime', '/private/runtime.json', '--', 'help'],
-  ])('rejects ambiguous rootless resource-check options %j before resolution', async (...options) => {
+    [[]], [['--json']], [['--resource-runtime']], [['--resource-runtime', 'relative']], [['--resource-runtime', '/']],
+    [['--resource-runtime', '/private/../runtime.json']], [['--resource-runtime', '/private//runtime.json']],
+    [['--resource-runtime', '/private/runtime.json/']], [['--resource-runtime', `/private/${'é'.repeat(2050)}`]],
+    [['--resource-runtime', '/private/runtime.json', '--resource-runtime', '/private/other.json']],
+    [['--resource-runtime', '/private/runtime.json', '--json', '--json']],
+    [['--resource-runtime', '/private/runtime.json', '--root', '/private/universe']],
+    [['--root', '/private/universe', '--resource-runtime', '/private/runtime.json']],
+    [['--resource-runtime', '/private/runtime.json', '--help']], [['--help']], [['help']],
+    [['--resource-runtime', '/private/runtime.json', '--unknown']], [['--resource-runtime=/private/runtime.json']],
+    [['--resource-runtime', '/private/runtime.json', 'run']], [['--resource-runtime', '--json']],
+    [['--resource-runtime', '/private/runtime.json', '--', 'help']],
+  ])('rejects ambiguous rootless resource-check options %j before resolution', async (options) => {
     expect(await cmdRuntime(['run', '--store', '/private/fixture/store', '--', 'universe', 'resources', 'check', ...options])).toBe(2);
     for (const fn of Object.values(core)) expect(fn).not.toHaveBeenCalled();
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['controller', '--help', '--root', '/private/universe'], ['controller', 'help', '--root', '/private/universe'],
-    ['integration', 'help', '--root', '/private/universe'], ['resources', '--help', '--resource-runtime', '/private/runtime.json'],
-    ['resources', 'check', '--help'], ['resources', 'help'],
-    ['campaign', 'supervise', '--help', '--root', '/private/universe'], ['campaign', 'check', '--help', '--json'],
-    ['campaign', 'check', 'help'], ['campaign', 'supervise', 'help'],
-    ['controller', 'run', '--manifest', '/private/portfolio.json'],
-    ['campaign', 'supervise', 'task-a', '--max-duration-ms', '1000'],
-    ['resources', 'run', '--resource-runtime', '/private/runtime.json'],
-  ])('keeps mixed help and rootless execution outside the exception %j', async (...forwarded) => {
+    [['controller', '--help', '--root', '/private/universe']], [['controller', 'help', '--root', '/private/universe']],
+    [['integration', 'help', '--root', '/private/universe']], [['resources', '--help', '--resource-runtime', '/private/runtime.json']],
+    [['resources', 'check', '--help']], [['resources', 'help']],
+    [['campaign', 'supervise', '--help', '--root', '/private/universe']], [['campaign', 'check', '--help', '--json']],
+    [['campaign', 'check', 'help']], [['campaign', 'supervise', 'help']],
+    [['controller', 'run', '--manifest', '/private/portfolio.json']],
+    [['campaign', 'supervise', 'task-a', '--max-duration-ms', '1000']],
+    [['resources', 'run', '--resource-runtime', '/private/runtime.json']],
+  ])('keeps mixed help and rootless execution outside the exception %j', async (forwarded) => {
     expect(await cmdRuntime(['run', '--store', '/private/fixture/store', '--', 'universe', ...forwarded])).toBe(2);
     for (const fn of Object.values(core)) expect(fn).not.toHaveBeenCalled();
     expect(childProcess.spawn).not.toHaveBeenCalled();

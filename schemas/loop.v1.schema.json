@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schemas/loop.v1.schema.json",
+  "title": "Phantom conductor cycle v1",
+  "description": "Telemetry envelope for one ConductorCycleSummary. This observation grants no execution or merge authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "summary"],
+  "properties": {
+    "schema": { "const": "loop.v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goalsAdvanced", "milestonesAdvanced", "proposalsFiled", "goalsDone",
+        "daemonFallback", "killSwitchTripped", "goalActivity"
+      ],
+      "properties": {
+        "goalsAdvanced": { "$ref": "#/definitions/count" },
+        "milestonesAdvanced": { "$ref": "#/definitions/count" },
+        "proposalsFiled": { "$ref": "#/definitions/count" },
+        "goalsDone": { "$ref": "#/definitions/count" },
+        "daemonFallback": { "type": "boolean" },
+        "killSwitchTripped": { "type": "boolean" },
+        "activationRefused": { "type": "boolean" },
+        "activationRefusalReason": { "type": "string" },
+        "activationPermitId": { "type": "string" },
+        "staleLanesRecovered": { "$ref": "#/definitions/count" },
+        "goalActivity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "goalId", "objective", "fractionDone", "milestoneTitle",
+              "proposalFiled", "goalCompleted"
+            ],
+            "properties": {
+              "goalId": { "type": "string", "minLength": 1 },
+              "objective": { "type": "string" },
+              "fractionDone": { "type": "number", "minimum": 0, "maximum": 1 },
+              "milestoneTitle": { "type": "string" },
+              "proposalFiled": { "type": "boolean" },
+              "goalCompleted": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "count": { "type": "integer", "minimum": 0 }
+  }
+}
