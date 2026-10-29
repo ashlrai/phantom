@@ -39,7 +39,7 @@ receipts and procedures unchanged; its instructions are not the current lane.
 ## Keep candidate metadata consistent
 
 Run `npm run version:sync -- X.Y.Z` in the source checkout, then
-`npm run check:version`. The helper updates explicit source metadata in nine files
+`npm run check:version`. The helper updates explicit source metadata in ten files
 and validates every field before writing. Dependency versions and release
 history remain unchanged. A candidate bump does not update published website,
 registry or installed-app status.
