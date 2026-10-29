@@ -15,6 +15,7 @@ import { getPhantomStatus } from './phantom.js';
 import { receiptStatus } from './receipt/receipt-store.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
+import { checkPoolCliVersions } from './resources/pool-cli-doctor.js';
 import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
@@ -22,6 +23,7 @@ import {
   locusAvailable,
   resolveLocusEnforceMode,
 } from './integrations/locus.js';
+import { companionExecutableState } from './companion-inventory.js';
 // H7 — 5 NEW read-only probes share the SAME read-only readiness facets that
 // `ashlr preflight` uses, from the shared readiness module (single source of
 // truth; no drift). See docs/contracts/CONTRACT-H7.md (BUILD ITEM 2). These
@@ -610,6 +612,23 @@ export function checkReceiptVerify(
  */
 export function checkLocus(): DoctorCheck {
   try {
+    // A bootstrap launcher (the npm locus-cli shim runs `cargo install` on any
+    // invocation, even a probe) is never executed: locusAvailable() and
+    // locusAgentReport() would both spawn it, so it is refused up front.
+    // integrations/locus.ts is owner-lane, so the classifier lives in
+    // companion-inventory beside `phm companions`.
+    if (companionExecutableState('locus') === 'unsupported-launcher') {
+      const enforce = resolveLocusEnforceMode() === 'enforce';
+      return check(
+        'locus',
+        'Locus identity plane',
+        enforce ? 'fail' : 'warn',
+        enforce
+          ? 'locus on PATH is an unsupported bootstrap launcher (not run) (required: LOCUS_ENFORCE=enforce)'
+          : 'locus on PATH is an unsupported bootstrap launcher (not run) (optional identity plane)',
+        'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)',
+      );
+    }
     if (!locusAvailable()) {
       const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
@@ -619,7 +638,7 @@ export function checkLocus(): DoctorCheck {
         enforce
           ? 'locus not found on PATH (required: LOCUS_ENFORCE=enforce)'
           : 'locus not found on PATH (optional identity plane)',
-        'Install: cargo install --git https://github.com/ashlrai/locus --package locus-cli --locked  (or brew install ashlrai/tap/locus)',
+        'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
 
@@ -1398,6 +1417,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
 
   // --- Synchronous checks ---
   checks.push(checkNodeVersion());
+  checks.push(...await checkPoolCliVersions());
   checks.push(checkGit());
   checks.push(checkLocalBin());
   checks.push(checkAshlrInstalled());

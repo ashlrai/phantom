@@ -177,6 +177,14 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 // ---------------------------------------------------------------------------
 
 export async function cmdUsage(args: string[]): Promise<number> {
+  if (args[0] === 'validate') {
+    if (args.length !== 2 || !args[1] || args[1].startsWith('-')) {
+      console.error('Usage: phm usage validate <file>');
+      return 2;
+    }
+    const { validateUsageFile } = await import('./usage-validate.js');
+    return validateUsageFile(args[1]);
+  }
   let jsonMode = false;
 
   for (const arg of args) {
@@ -234,6 +242,7 @@ function printUsage(): void {
   console.log(b('  ashlr usage') + d(' [--json]'));
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
+  console.log('  phm usage validate <file> checks usage-reading.v1 JSONL records.');
   console.log('');
   console.log('  ' + b('Options:'));
   console.log(`    ${c('--json')}   Print raw JSON instead of the table`);

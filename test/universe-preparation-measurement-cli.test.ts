@@ -91,11 +91,11 @@ describe('read-only preparation measurement CLI', () => {
   });
 
   it.each([
-    [], ['--json'], ['report.json'], ['--input'], ['--input', '--json'], ['--input', 'relative.json'], ['--input', '/'],
-    ['--input', '/fixture/../report.json'], ['--input', '/fixture/\nreport'], ['--input', `/${'x'.repeat(4096)}`],
-    ['--input', input, '--input', input], ['--input', input, '--json', '--json'], ['--input', input, '--root', '/private'],
-    ['--input', input, 'extra'], ['--input=report.json'], ['--help', '--unknown'], ['--help', '--input', input],
-  ])('rejects invalid arguments before file I/O: %j', async (...args) => {
+    [[]], [['--json']], [['report.json']], [['--input']], [['--input', '--json']], [['--input', 'relative.json']], [['--input', '/']],
+    [['--input', '/fixture/../report.json']], [['--input', '/fixture/\nreport']], [['--input', `/${'x'.repeat(4096)}`]],
+    [['--input', input, '--input', input]], [['--input', input, '--json', '--json']], [['--input', input, '--root', '/private']],
+    [['--input', input, 'extra']], [['--input=report.json']], [['--help', '--unknown']], [['--help', '--input', input]],
+  ])('rejects invalid arguments before file I/O: %j', async (args) => {
     expect(await cmdUniversePreparationMeasurement(args)).toBe(2);
     for (const mock of Object.values(io)) expect(mock).not.toHaveBeenCalled();
   });
@@ -198,7 +198,7 @@ describe('read-only preparation measurement CLI', () => {
     expect(io.closeSync).toHaveBeenCalledExactlyOnceWith(7);
   });
 
-  it.each([Buffer.from('{'), Buffer.from([0xc3, 0x28]), Buffer.from('{"passed":true,"score":1}')])('rejects malformed report bytes', async value => {
+  it.each([Buffer.from('{'), Buffer.from([0xc3, 0x28]), Buffer.from('{"passed":true,"score":1}')])('rejects malformed report bytes (%#)', async value => {
     bytes = value;
     expect(await cmdUniversePreparationMeasurement(['--input', input, '--json'])).toBe(1);
     expect(JSON.parse(output.mock.calls[0]![0] as string).error).toBe('REPORT_UNAVAILABLE');

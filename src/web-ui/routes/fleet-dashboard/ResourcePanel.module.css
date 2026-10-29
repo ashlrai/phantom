@@ -1,0 +1,17 @@
+.panel { border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); padding: var(--space-4); min-width: 0; }
+.header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.header h2 { font-size: var(--text-sm-size); margin: 0; }
+.header button { color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); cursor: pointer; }
+.scroll { overflow-x: auto; }
+.scroll table { width: 100%; border-collapse: collapse; font-size: var(--text-sm-size); text-align: left; }
+.scroll caption { text-align: left; color: var(--text-secondary); padding-bottom: var(--space-3); }
+.scroll th, .scroll td { padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
+.scroll small { display: block; font-weight: normal; color: var(--text-secondary); }
+.scroll [data-status] { font-weight: var(--font-weight-semibold); }
+.scroll [data-status='green'] { color: var(--status-success-fg); }
+.scroll [data-status='amber'] { color: var(--status-warning-fg); }
+.scroll [data-status='red'] { color: var(--status-danger-fg); }
+.machine { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-4) 0; }
+.machine dt, .note { color: var(--text-secondary); font-size: var(--text-sm-size); }
+.machine dd { margin: var(--space-1) 0 0; }
+.note { margin-bottom: 0; }

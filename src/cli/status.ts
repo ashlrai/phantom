@@ -262,5 +262,5 @@ export async function gatherStatus(
 /** `status --json`: one JSON object on stdout, nothing else. */
 export async function printStatusJson(cfg: AshlrConfig, idx: AshlrIndex, loaders: StatusLoaders): Promise<void> {
   const data = await gatherStatus(cfg, idx, loaders);
-  process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(data) + '\n');
 }
