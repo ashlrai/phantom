@@ -32,6 +32,9 @@
  *  - A lane outside the grant's current rollout stage has zero slots.
  *  - A seat is a PRODUCER only when the grant gives it the `producer` role;
  *    claude-a is judge / Leader only by default.
+ *  - Land-first scheduling (RQ-V4-LAND-FIRST-1): a repo with more than 30
+ *    counted open PRs is saturated — it launches no new feature work, and
+ *    its free slots go to the LAND and FIXUP jobs that shrink the pile.
  *
  * Honesty: `null` = unknown. Every exclusion carries a specific sentence, and
  * a hold always says why and (when a date is known) until when.
@@ -484,6 +487,127 @@ function activeDemotion(
 }
 
 // ---------------------------------------------------------------------------
+// Land-first scheduling (RQ-V4-LAND-FIRST-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Land-first scheduling: a repo with MORE than this many counted open pull
+ * requests is saturated — it launches no new feature work until the pile
+ * drains, and its free slots go to the LAND and FIXUP jobs that shrink it.
+ * Exactly at the limit a repo still launches.
+ */
+export const LAND_FIRST_OPEN_PR_LIMIT = 30;
+
+/** What one work item does to a repo's open-PR pile. */
+export type LandFirstClass = 'land' | 'fixup' | 'feature';
+
+/**
+ * Tags that make an item a LAND job: it merges or lands an open pull
+ * request — work that shrinks the pile instead of adding to it. `land:` and
+ * `merge:` namespaced tags (e.g. `land:pr-42`) count too.
+ */
+const LAND_TAGS: ReadonlySet<string> = new Set(['land', 'land-pr', 'pr-land', 'merge', 'merge-pr']);
+const LAND_TAG_PREFIX = /^(?:land|merge):/;
+
+/**
+ * Tags that make an item a FIXUP job: it repairs work already on a branch or
+ * PR — the vocabulary the fleet already writes (`fleet-source:repair` /
+ * `fleet-source:revert` task tags, the proposal-repair-work.ts self-heal and
+ * capture-recovery tags, run/router.ts's `fixup`). `fixup:` and `repair:`
+ * namespaced tags count too.
+ */
+const FIXUP_TAGS: ReadonlySet<string> = new Set([
+  'fixup',
+  'repair',
+  'self-heal',
+  'proposal-repair',
+  'dispatch-capture-repair',
+  'rejected-capture-recovery',
+  'diagnostic-reslice',
+  'dispatch-no-diff-reslice',
+  'fleet-source:repair',
+  'fleet-source:revert',
+]);
+const FIXUP_TAG_PREFIX = /^(?:fixup|repair):/;
+
+/** An item may also declare its kind by title prefix, like run/router.ts's `[?FIXUP`. */
+const LAND_TITLE = /^\[?land\b/i;
+const FIXUP_TITLE = /^\[?fixup\b/i;
+
+/**
+ * The land-first class of one item. An explicit LAND signal wins over a
+ * FIXUP one — landing is the terminal act the pile is waiting on. Anything
+ * unstated is a `feature` launch: dispatching it opens another PR.
+ */
+export function landFirstClassOf(item: Pick<WorkItem, 'title' | 'tags'>): LandFirstClass {
+  if (LAND_TITLE.test(item.title)) return 'land';
+  let fixup = FIXUP_TITLE.test(item.title);
+  for (const tag of item.tags ?? []) {
+    const t = tag.trim().toLowerCase();
+    if (LAND_TAGS.has(t) || LAND_TAG_PREFIX.test(t)) return 'land';
+    if (FIXUP_TAGS.has(t) || FIXUP_TAG_PREFIX.test(t)) fixup = true;
+  }
+  return fixup ? 'fixup' : 'feature';
+}
+
+/** The repo's counted open PRs (nameWithOwner keys, compared case-insensitively). */
+function openPrsForRepo(openPrsByRepo: Readonly<Record<string, number>>, repo: string): number {
+  const lower = repo.toLowerCase();
+  let open = 0;
+  for (const [key, n] of Object.entries(openPrsByRepo)) {
+    if (typeof n === 'number' && Number.isFinite(n) && key.toLowerCase() === lower) open += n;
+  }
+  return open;
+}
+
+/**
+ * The land-first refusal for one item — a sentence for the `park` hold — or
+ * null when the item may launch. LAND and FIXUP jobs never trip the brake.
+ * `openPrsByRepo` undefined means the caller never counted (the brake is
+ * off); null means counting failed, which fails CLOSED on feature launches —
+ * the same posture backpressure takes when the ledger cannot be read — while
+ * land and fixup jobs still run. Counts only ever understate the pile (a PR
+ * the tick cannot see is not counted), so the brake can fire late, never
+ * early. Pure.
+ */
+export function landFirstRefusal(
+  item: Pick<WorkItem, 'title' | 'tags'>,
+  repo: string,
+  openPrsByRepo: Readonly<Record<string, number>> | null | undefined,
+): string | null {
+  if (openPrsByRepo === undefined || landFirstClassOf(item) !== 'feature') return null;
+  if (openPrsByRepo === null) {
+    return 'Its open pull requests could not be counted, so new feature work waits — land and fixup jobs still take its free slots.';
+  }
+  const open = openPrsForRepo(openPrsByRepo, repo);
+  if (open <= LAND_FIRST_OPEN_PR_LIMIT) return null;
+  return `${repo} already has ${countOf(open, 'open PR')} (land-first limit ${LAND_FIRST_OPEN_PR_LIMIT}); `
+    + 'new feature launches wait until some land or close — only land and fixup jobs take its free slots.';
+}
+
+/**
+ * Dispatch ordering under land-first, as a rank for a stable sort: on a
+ * saturated repo LAND jobs rank 0 and FIXUP jobs 1 — they are the only work
+ * that can take the repo's free slots; every other item ranks 2; a feature
+ * launch on a saturated repo ranks last (3), because routeWorkItem holds it
+ * anyway. Healthy repos keep the scheduler's normal order — every class
+ * ranks 2, so the comparator changes nothing there. Pure.
+ */
+export function landFirstPriority(
+  item: Pick<WorkItem, 'repo' | 'title' | 'tags'>,
+  ctx: Pick<DispatchRouterContext, 'repoOf' | 'openPrsByRepo'>,
+): number {
+  const counts = ctx.openPrsByRepo;
+  if (counts === undefined) return 2;
+  const repo = ctx.repoOf(item.repo);
+  if (repo === null) return 2;
+  const saturated = counts === null || openPrsForRepo(counts, repo) > LAND_FIRST_OPEN_PR_LIMIT;
+  if (!saturated) return 2;
+  const cls = landFirstClassOf(item);
+  return cls === 'land' ? 0 : cls === 'fixup' ? 1 : 3;
+}
+
+// ---------------------------------------------------------------------------
 // The route decision
 // ---------------------------------------------------------------------------
 
@@ -515,6 +639,15 @@ export interface DispatchRouterContext {
    * explicit engine order.
    */
   weights?: Partial<RouterWeights>;
+  /**
+   * Land-first scheduling (RQ-V4-LAND-FIRST-1): counted open pull requests
+   * per repo (nameWithOwner → count), gathered once per tick like every
+   * other input here — the fleet's own ledgered PRs reconciled against
+   * GitHub today. Absent = the caller never counted (the brake is off);
+   * `null` = counting failed (new feature launches fail closed; land and
+   * fixup jobs still run). A repo absent from the map has none counted.
+   */
+  openPrsByRepo?: Readonly<Record<string, number>> | null;
   /** Enrolled path (WorkItem.repo) → GitHub nameWithOwner; null when unknown. */
   repoOf: (repoPath: string) => string | null;
   /** Engine tier (sandboxed-engine engineTierOf), injected so this module stays light. */
@@ -636,6 +769,17 @@ export function routeWorkItem(item: WorkItem, legacy: LegacyRoute, ctx: Dispatch
     return held(legacy, ctx, repo, null, {
       kind: 'park',
       reason: `${repo} is not in the grant's current rollout stage.`,
+      nextEligibleAt: null,
+    });
+  }
+
+  // Land-first scheduling: a saturated repo spends its free slots on the
+  // LAND and FIXUP jobs that drain the pile; a new feature launch waits.
+  const refusal = landFirstRefusal(item, repo, ctx.openPrsByRepo);
+  if (refusal !== null) {
+    return held(legacy, ctx, repo, null, {
+      kind: 'park',
+      reason: refusal,
       nextEligibleAt: null,
     });
   }

@@ -68,7 +68,7 @@ describe('fixed review calibration evaluator', () => {
     expect(Object.isFrozen(RESOURCE_REVIEW_SUITE.cases)).toBe(true);
     expect(RESOURCE_REVIEW_SUITE.digest).toBe('cface499c951f7231a6ae5db493a8125d21accf4d2a4221f9da62ad653d0e576');
   });
-  it.each(['null', '[]', '{}', 'not JSON', '```json\n{}\n```', '{"extra":1}', 'x'.repeat(16_385)])('rejects non-contract output', (output) => {
+  it.each(['null', '[]', '{}', 'not JSON', '```json\n{}\n```', '{"extra":1}', 'x'.repeat(16_385)])('rejects non-contract output (%#)', (output) => {
     expect(evaluateResourceReview('zero-value', output)).toEqual({ passed: false, checksPassed: 0, checksTotal: 4,
       failedChecks: ['zero', 'stringZero', 'empty', 'fix'], reason: 'invalid-json-contract' });
   });
@@ -188,7 +188,7 @@ describe.skipIf(process.platform === 'win32')('resource review benchmark local a
     expect(statSync(output).mode & 0o777).toBe(0o600); expect(log.mock.calls.at(-1)?.[0]).not.toContain('function reading');
     expect(await cmdResourcePool(args)).toBe(1); expect(f.counts().generations).toBe(3);
   });
-  it.each([[], ['--help', '--json'], ['--root', '/'], ['--wat'], ['--json', '--json'], ['--worker', 'bad\n']])('rejects invalid CLI input', async (...args) => {
+  it.each([[[]], [['--help', '--json']], [['--root', '/']], [['--wat']], [['--json', '--json']], [['--worker', 'bad\n']]])('rejects invalid CLI input %j', async (args) => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined); vi.spyOn(console, 'log').mockImplementation(() => undefined);
     expect(await cmdResourcePool(['benchmark', ...args])).toBe(2);
   });
