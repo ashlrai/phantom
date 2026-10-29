@@ -37,6 +37,8 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
+| Look up a `~/.ashlr/config.json` key, its type and constraints | [Config reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CONFIG-REFERENCE.md) |
+| Regenerate every source-derived reference doc after merges | [Docs autosync (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/DOCS-AUTOSYNC.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
 | Inspect station/pool queue rates, wait, WIP and Little’s law drift | [Queue statistics](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-STATS.md) |
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
@@ -79,7 +81,10 @@ the command surface in the exact binary you are running. A source guide may
 describe features not present in an older registry or desktop release.
 
 The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/CLI-REFERENCE.md)
-records the source checkout's overview and full command table.
+records the source checkout's overview and full command table, and the
+generated [config reference](https://github.com/ashlrai/phantom/blob/master/docs/CONFIG-REFERENCE.md) records every key the
+`~/.ashlr/config.json` schema accepts. `node scripts/docs-autosync.mjs`
+refreshes all of them in one step ([details](https://github.com/ashlrai/phantom/blob/master/docs/DOCS-AUTOSYNC.md)).
 
 ## For coding agents
 
