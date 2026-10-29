@@ -435,6 +435,15 @@ work, including against every terminal and in-progress queue status. Keep queue
 history (or equivalent tombstones); removing history permits replay. Existing
 READY capacity counts distinct source identities and titles rather than copied
 rows with different IDs; the bridge owns stale-job reconciliation.
+
+A READY row whose ID belongs to the `REFILL-*-SALVA` or `REFILL-*-TEST` family
+is **parked** until the row's title or prompt names both an absolute
+(multi-segment) worktree path and a `*.test.*` file. These families repeatedly
+produced empty runs from unanchored task text. A parked row is not READY
+capacity and does not suppress refill, but it remains valid queue history and
+still deduplicates its ID, source objective and title — unpin it by editing
+the row to name the concrete worktree and test file, not by appending a
+duplicate. The `rq-plan` record reports the count as `parked`.
 stderr is JSON Lines too: each successful queue read emits `rq-queue-read`,
 with before/after hashes and added/removed/changed row identities, states and
 hashes. Task and diff text never appear in audit logs. Supply `--previous-queue`
