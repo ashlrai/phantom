@@ -65,6 +65,7 @@ describe('completions offer every dispatched verb', () => {
     mcp: ['ecosystem', 'run'],
     models: ['list'],
     notify: ['session'],
+    telemetry: ['queue-replay'],
   };
 
   it.each(Object.entries(expected))('bash completes `phm %s` verbs', async (cmd, verbs) => {
