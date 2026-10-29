@@ -23,6 +23,7 @@
  * cards are left out instead of each repeating "Fleet dark since …".
  */
 import { Suspense, lazy, useId, useState } from 'react';
+import { ResourcePanel } from '../../fleet-dashboard/ResourcePanel.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { IconChevronRight } from '../../../components/primitives/icons.js';
@@ -163,9 +164,10 @@ export function FleetSection() {
         </Button>
         <div id={worldId}>
           {worldOpen ? <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the agent world…</p>}>
-            <FleetWorld read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
+            <FleetWorld agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
           </Suspense> : null}
         </div>
+        <ResourcePanel />
         <div id="fleet-working-runs"><SteerPanel live={live} actions={actions} now={now} /></div>
         <Suspense fallback={<p className={styles.muted}>Loading allowance controls…</p>}>
           <ResetSpendingControl view={budget.data ?? null} nowMs={now} readOnly={actions.readOnly}

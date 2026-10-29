@@ -14,6 +14,7 @@
  * are built, matching the M3/M4 lazy-import pattern.
  */
 
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import type { ActivityRollup, BudgetAlert, CostForecast, GovernanceStatus } from '../core/types.js';
 import type { AshlrConfig } from '../core/types.js';
 import { tokenEvidenceLabel } from '../core/run/token-evidence.js';
@@ -687,7 +688,7 @@ async function cmdPulseExport(args: string[]): Promise<number> {
     return 0;
   }
 
-  const pat = process.env['ASHLR_PULSE_PAT'];
+  const pat = readEnvironmentCredential('ASHLR_PULSE_PAT');
   if (!pat) {
     process.stderr.write(
       `${C.yellow}warning:${C.reset} ASHLR_PULSE_PAT is not set — nothing exported.\n` +

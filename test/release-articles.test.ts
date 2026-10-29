@@ -293,6 +293,10 @@ describe('fresh public facts are data, not saved release authority', () => {
         status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
         ] });
+      // Seconds-fast topology: the scan always runs, the PR-only typecheck skips.
+      for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'success']] as const) {
+        jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion, labels: ['ubuntu-latest'], steps: [] });
+      }
       value['total_count'] = jobs.length;
     }
     return value;

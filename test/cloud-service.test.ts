@@ -298,7 +298,7 @@ describe('launchCloudTask — each launch failure is persisted as failed with a 
     ['unknown', { output: 'Error: something odd happened' }],
     ['no-remote', { gitStderr: "fatal: Remote branch master not found in upstream origin" }],
     ['checkout-failed', { gitStderr: 'fatal: unable to write' }],
-  ] as const)('%s', async (failure, opts) => {
+  ] as const)('%s (%j)', async (failure, opts) => {
     const h = harness(opts);
     const res = await launchCloudTask({ ...REQ, baseBranch: 'master' }, h.deps);
     expect(res.ok).toBe(false);

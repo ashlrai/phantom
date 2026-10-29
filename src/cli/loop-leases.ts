@@ -5,10 +5,12 @@
  * A task's dispatch lease that expired (or was written under a skewed clock)
  * without a settlement blocks that task forever: the conductor refuses to
  * redispatch it because the original dispatch may still be running. This
- * command lists those tasks and clears one only when the lease's owner is
- * PROVABLY not running (owner pid gone, owner pid reused by a later process,
- * or the claim predates the current boot). A possibly-live owner is refused
- * with the reason; there is no override. Every clear attempt is audited.
+ * command lists those tasks with each lease's fencing token and holder (the
+ * token a stale claimant would have to present to settle, the pid that
+ * claimed it), and clears one only when the lease's owner is PROVABLY not
+ * running (owner pid gone, owner pid reused by a later process, or the claim
+ * predates the current boot). A possibly-live owner is refused with the
+ * reason; there is no override. Every clear attempt is audited.
  */
 
 import { makeColors } from './ui.js';
@@ -61,6 +63,8 @@ export async function cmdLoopLeases(args: string[]): Promise<number> {
       leaseState: entry.leaseState,
       claimedAt: entry.lease.claimedAt,
       expiresAt: entry.lease.expiresAt,
+      fencingToken: entry.lease.token,
+      holder: entry.lease.ownerPid === undefined ? null : { pid: entry.lease.ownerPid },
       ownerPid: entry.lease.ownerPid ?? null,
       attempts: entry.task.attempts ?? 0,
     }));
@@ -73,9 +77,11 @@ export async function cmdLoopLeases(args: string[]): Promise<number> {
       return 0;
     }
     for (const row of rows) {
+      const holder = row.holder === null ? 'unrecorded' : `pid ${row.holder.pid}`;
       console.log(
         `  ${row.id}  ${col.dim(row.repo)}\n` +
-        col.dim(`    lease ${row.leaseState} · claimed ${row.claimedAt} · owner pid ${row.ownerPid ?? 'unrecorded'} · attempts ${row.attempts}`),
+        col.dim(`    lease ${row.leaseState} · claimed ${row.claimedAt} · holder ${holder} · attempts ${row.attempts}\n`) +
+        col.dim(`    fencing token ${row.fencingToken}`),
       );
     }
     console.log(col.dim('\n  Clear one with `ashlr loop leases clear <task-id>` (add --dry-run to preview).'));

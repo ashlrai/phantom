@@ -28,6 +28,7 @@ mod e2e;
 pub mod engine;
 pub mod lexicon;
 pub mod model;
+pub mod omlx;
 #[cfg(target_os = "macos")]
 pub mod parakeet;
 pub mod permission;
@@ -164,7 +165,8 @@ impl VoiceHub {
     }
 
     fn whisper_available(&self) -> bool {
-        whisper::find_binary().is_some() && whisper::find_model(&self.app_data).is_some()
+        omlx::OmlxEngine::configured(self.parakeet_dir()).is_some()
+            || (whisper::find_binary().is_some() && whisper::find_model(&self.app_data).is_some())
     }
 
     fn engine_view(&self, inner: &Inner) -> EngineView {
@@ -698,6 +700,11 @@ fn ensure_engine(
         return Ok(()); // loaded by whoever held the lock
     }
     let dir = hub.parakeet_dir();
+    if let Some(engine) = omlx::OmlxEngine::configured(dir.clone()) {
+        hub.set_engine(Some(Box::new(engine)));
+        emit_state(app);
+        return Ok(());
+    }
     if model::is_installed(&dir, &model::PARAKEET_FILES) {
         lock(&hub.inner).model = ModelPhase::Loading;
         emit_state(app);
@@ -834,13 +841,23 @@ fn run_session(
                     continue;
                 }
                 let audio = sink.snapshot();
-                let result = {
+                let (result, engine_changed) = {
                     let mut slot = lock(&hub.engine);
                     match slot.as_mut() {
-                        Some(engine) => stream.partial(&audio, engine.as_mut()),
-                        None => Ok(None),
+                        Some(engine) => {
+                            let result = stream.partial(&audio, engine.as_mut());
+                            let info = Some((engine.id(), engine.label()));
+                            let mut previous = lock(&hub.engine_info);
+                            let changed = *previous != info;
+                            *previous = info;
+                            (result, changed)
+                        }
+                        None => (Ok(None), false),
                     }
                 };
+                if engine_changed {
+                    emit_state(app);
+                }
                 match result {
                     Ok(Some(text)) => {
                         let (mode, cwd) = session_context(&hub, id);
@@ -876,7 +893,11 @@ fn run_session(
                 let (engine_id, result) = {
                     let mut slot = lock(&hub.engine);
                     match slot.as_mut() {
-                        Some(engine) => (engine.id(), stream.finish(&audio, engine.as_mut())),
+                        Some(engine) => {
+                            let result = stream.finish(&audio, engine.as_mut());
+                            *lock(&hub.engine_info) = Some((engine.id(), engine.label()));
+                            (engine.id(), result)
+                        }
                         None => ("none", Err("no engine".to_string())),
                     }
                 };
