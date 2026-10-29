@@ -170,11 +170,11 @@ export async function expandGoalToMilestones(
   _expanded.add(goal.id);
 
   try {
-    // Resolve the frontier strategist client (same resolver as manager.ts).
+    // Resolve the strategist through the shared guarded planning adapters.
     // Dynamic import avoids a circular dep: manager.ts → scanners.ts → here.
     plannerLog('info', 'expanding goal to milestones', { goalId: goal.id, objective: goal.objective.slice(0, 80) });
-    const { resolveFrontierJudgeClient } = await import('../fleet/manager.js');
-    const client = resolveFrontierJudgeClient(cfg as AshlrConfig);
+    const { resolvePlanningClient } = await import('../generative/invent.js');
+    const client = await resolvePlanningClient(cfg as AshlrConfig);
     if (!client) {
       plannerLog('warn', 'skip: no frontier client resolved', { goalId: goal.id });
       return goal; // no client available → leave goal unchanged

@@ -1,5 +1,11 @@
 # Quickstart — end-to-end walk-through
 
+<!-- fresh:begin example-version-pin -->
+```sh
+npx --package=@ashlr/phantom@3.29.13 phm --version
+```
+<!-- fresh:end -->
+
 This guide takes you from a fresh clone to a dry-run preview and an optional
 owner-invoked proposal in five steps. It does not activate a resident or
 unattended fleet.

@@ -292,3 +292,76 @@ export function spansFromSwarm(swarm: SwarmRun): GenAiSpan[] {
   }
   return spans;
 }
+
+/** Metadata retained from untrusted native-client OTLP spans. */
+export interface ReceivedOtelSpan {
+  source: 'claude-code' | 'xai';
+  event: 'api_request' | 'safety_event';
+  usage: Partial<Record<'input_tokens' | 'output_tokens' | 'cache_read_tokens' |
+    'cache_creation_tokens' | 'cache_creation_5m' | 'cache_creation_1h', number>>;
+  costUsd?: number;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+}
+
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** Strict numeric decoding: missing, negative and unsafe values stay unknown. */
+function receivedNumber(value: unknown, integer: boolean): number | undefined {
+  if (typeof value === 'string' && !(integer ? /^\d+$/ : /^\d+(?:\.\d+)?$/).test(value)) return undefined;
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER &&
+    (!integer || Number.isSafeInteger(n)) ? n : undefined;
+}
+
+/**
+ * Decode OTLP/HTTP JSON without forwarding names, resources, ids, arbitrary
+ * attributes or event bodies. Unknown spans are ignored; malformed envelopes
+ * are refused. Cache lifetimes remain separate and are never added twice.
+ */
+export function parseNativeOtelTrace(payload: unknown): ReceivedOtelSpan[] {
+  const resources = record(payload).resourceSpans;
+  if (!Array.isArray(resources)) throw new Error('Invalid OTLP trace envelope');
+  const result: ReceivedOtelSpan[] = [];
+  for (const resource of resources) {
+    for (const scope of list(record(resource).scopeSpans)) {
+      for (const raw of list(record(scope).spans)) {
+        const span = record(raw);
+        const attrs = new Map<string, unknown>();
+        for (const attr of list(span.attributes)) {
+          const a = record(attr);
+          const v = record(a.value);
+          if (typeof a.key === 'string') attrs.set(a.key, v.intValue ?? v.doubleValue ?? v.stringValue);
+        }
+        const safety = span.name === 'claude_code.safety_event' || attrs.get('event.name') === 'safety_event';
+        const claude = safety || span.name === 'claude_code.api_request';
+        const xai = attrs.get('gen_ai.system') === 'xai' || attrs.get('gen_ai.provider.name') === 'xai';
+        if (!claude && !xai) continue;
+        const received: ReceivedOtelSpan = {
+          source: claude ? 'claude-code' : 'xai',
+          event: safety ? 'safety_event' : 'api_request',
+          usage: {},
+        };
+        if (!safety) {
+          for (const key of ['input_tokens', 'output_tokens', 'cache_read_tokens',
+            'cache_creation_tokens', 'cache_creation_5m', 'cache_creation_1h'] as const) {
+            const n = receivedNumber(attrs.get(key) ?? attrs.get(`gen_ai.usage.${key}`), true);
+            if (n !== undefined) received.usage[key] = n;
+          }
+          const ticks = xai ? receivedNumber(attrs.get('cost_in_usd_ticks'), true) : undefined;
+          const cost = ticks !== undefined ? ticks / 10_000_000_000 :
+            receivedNumber(attrs.get('cost_usd') ?? attrs.get('gen_ai.usage.cost_usd'), false);
+          if (cost !== undefined) received.costUsd = cost;
+        }
+        result.push(received);
+      }
+    }
+  }
+  return result;
+}

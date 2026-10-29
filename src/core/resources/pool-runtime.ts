@@ -15,7 +15,8 @@ import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { MAX_RESOURCE_OBSERVATION_WINDOWS, RESOURCE_OBSERVATION_OVERFLOW, planResourceAssignment, validateResourceObservations, validateResourcePool,
   type ResourceAssignmentPlan, type ResourceObservation, type ResourcePool } from './pool-policy.js';
-import { executeResourceWorker, validateResourceBindings, type ResourceBinding, type ResourceWorkerTask, type ResourceWorkerResult } from './worker.js';
+import { executeResourceWorker, resourceServiceTierObservation, validateResourceBindings,
+  type ResourceBinding, type ResourceWorkerTask, type ResourceWorkerResult } from './worker.js';
 import { resourceUsageScopeForProvider, validResourceExecutionDuration, validResourceExecutionMeasurement, type ResourceExecutionMeasurement } from './performance.js';
 import { RESOURCE_NATIVE_PROCESS_SIGNALS, validResourceNativeProcessForReceipt, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
 import { assertResourcePoolCommissioningCustody, commissioningPresent } from './pool-commissioning-custody.js';
@@ -751,6 +752,28 @@ export async function runResourceTask(options: { root: string; pool: ResourcePoo
       timeoutMs: task.timeoutMs, maxOutputTokens: task.maxOutputTokens, mode: task.mode }, signal)
     : { status: 'failed', output: '', inputTokens: null, outputTokens: null, reason: 'worker-dispatch-precondition-failed' };
   const elapsed = performance.now() - executionStarted;
+  if (result.reason === 'worker-service-tier-unavailable') {
+    // The provider refused the requested service tier: pool capacity, not task
+    // failure. Release this task's own never-completed reservation (its durable
+    // identity lives in the caller's queue, not in an attempt row) and persist
+    // the bounded recheck observation so the next plan excludes this worker
+    // until its retry hint elapses or fresher evidence supersedes. Returning no
+    // receipt is the existing "no eligible capacity" path; the caller requeues
+    // the same durable task rather than settling a failure.
+    const releasedPlan = transaction(root, pool, bindings, poolDigest, (state) => {
+      const index = state.attempts.findIndex((row) => row.id === reserved.id);
+      if (index < 0 || canonical(state.attempts[index]) !== canonical(reserved)) {
+        throw new Error('Resource assignment changed before settlement');
+      }
+      state.attempts.splice(index, 1);
+      const observation = result.observation ?? resourceServiceTierObservation(reserved.workerId, null, Date.now());
+      state.observations = mergeResourceObservations(state.observations,
+        qualifyResourceCommissioningObservations(root, state, pool, bindings,
+          validateResourceObservations([observation], pool)).observations);
+      return plan(root, state, pool, bindings, task.allowedWorkerIds, Date.now(), unavailable, quotaUnavailable);
+    });
+    return { receipt: null, plan: releasedPlan, replayed: false, output: null };
+  }
   const finishedAt = new Date(Math.max(Date.now(), Date.parse(reserved.startedAt))).toISOString();
   const knownUsage = count(result.inputTokens) && count(result.outputTokens) && count(result.inputTokens + result.outputTokens);
   const receipt: ResourceTaskReceipt = { ...reserved, status: result.status, finishedAt,

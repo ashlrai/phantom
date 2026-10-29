@@ -142,7 +142,8 @@ async function fetchOllamaModelSizes(ollamaBase: string): Promise<Map<string, st
     let response: Response;
     try {
       const url = ollamaBase.replace(/\/+$/, '') + '/api/tags';
-      response = await fetch(url, { signal: controller.signal });
+      // Never follow a 3xx off the local service (Security #952 L1).
+      response = await fetch(url, { redirect: 'error', signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -353,6 +354,7 @@ async function isOllamaUp(): Promise<boolean> {
       // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       response = await fetch(`${localOllamaBase(process.env, 'http://127.0.0.1:11434')}/api/tags`, {
         method: 'GET',
+        redirect: 'error',
         signal: controller.signal,
       });
     } finally {

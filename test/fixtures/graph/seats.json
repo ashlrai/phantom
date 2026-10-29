@@ -1,0 +1,6 @@
+{
+  "seats": [
+    { "id": "codex-work", "engine": "codex", "accountId": "work", "models": [{ "id": "shared" }] },
+    { "id": "claude-work", "engine": "claude", "accountId": "work", "models": [{ "id": "shared" }] }
+  ]
+}

@@ -1,0 +1,4 @@
+{"job_id":"RQ-QUEUE-1","pr":951,"station":"claimed","pool":"codex-cmp","tier":"work","enter_ts":"2026-10-26T06:00:00Z","exit_ts":"2026-10-26T06:01:00Z","engine":"codex","node":"mac"}
+{"job_id":"RQ-QUEUE-1","pr":951,"station":"publish","pool":"codex-cmp","tier":"work","enter_ts":"2026-10-26T06:01:00Z","exit_ts":"2026-10-26T06:02:30Z","engine":"codex","node":"mac","tokens":1200,"usd":0.04}
+{"job_id":"RQ-QUEUE-1","pr":951,"station":"publish","pool":"codex-cmp","tier":"work","enter_ts":"2026-10-26T06:01:00Z","exit_ts":"2026-10-26T06:02:31Z","engine":"codex","node":"mac"}
+{"job_id":"RQ-QUEUE-1","pr":951,"pool":"codex-cmp","enter_ts":"2026-10-26T06:03:00Z"}
