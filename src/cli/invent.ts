@@ -12,7 +12,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import type { AshlrConfig, WorkItem } from '../core/types.js';
 import { inventWorkItems } from '../core/generative/invent.js';
-import { enqueueBacklogItemsDetailed } from '../core/portfolio/backlog.js';
 
 // ---------------------------------------------------------------------------
 // Config loader (best-effort, never throws)
@@ -93,8 +92,9 @@ async function buildRepoState(repo: string): Promise<string> {
 // Emit to backlog through the shared queue/backlog serialization boundary.
 // ---------------------------------------------------------------------------
 
-function emitToBacklog(items: WorkItem[]): number {
+async function emitToBacklog(items: WorkItem[]): Promise<number> {
   try {
+    const { enqueueBacklogItemsDetailed } = await import('../core/portfolio/backlog.js');
     const result = enqueueBacklogItemsDetailed(items);
     if (!result.ok) throw new Error('backlog persistence lock unavailable');
     return result.enqueued;
@@ -248,7 +248,7 @@ export async function cmdInvent(args: string[]): Promise<number> {
   }
 
   if (emit && items.length > 0) {
-    const filed = emitToBacklog(items);
+    const filed = await emitToBacklog(items);
     console.log(`[invent] filed ${filed} item(s) into backlog.`);
   }
 

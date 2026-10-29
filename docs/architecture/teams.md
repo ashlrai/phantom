@@ -218,7 +218,17 @@ narrow or widen it. Everything else runs without ceremony.
   * never touches anything modified in the last 24 h (active sessions), never
     follows symlinks, only acts inside allowlisted roots, and is a dry run
     unless `--apply`. Plain logs Phantom owns are deleted by retention/quota.
-* Phase 2: scheduled steward tick with threshold alerts, policy in
+* **Daily scheduling (macOS/Linux):** `phm steward schedule` previews a per-user
+  LaunchAgent or systemd timer without writing files. The default time is 03:17
+  local time; `--hour 4` selects 04:17. After reviewing the preview, explicitly
+  choose `--install` to write and activate the job; it remains report-only unless
+  `--apply` is also selected. Install as a regular user with a built CLI
+  (`npm run build` for a source checkout). Output goes to
+  `~/.ashlr/logs/steward.jsonl`. Existing job files and linked config/log paths
+  are refused. Activation failures exit nonzero and print manual recovery
+  commands; verify the job with `launchctl print gui/$(id -u)/ai.ashlr.phm.steward`
+  or `systemctl --user status phm-steward.timer`, as appropriate.
+* Phase 2: threshold alerts, policy in
   `phantom.toml` (`codex_sessions_max_gb`, `log_retention_days`), summary cards
   for archived sessions, team-log snapshot + rotation, stale worktree cleanup,
   context budgeter (stable cached prefix, recall-first compaction, ≤2k-token
