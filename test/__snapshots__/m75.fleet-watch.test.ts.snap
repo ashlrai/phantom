@@ -8,7 +8,9 @@ exports[`cmdFleetWatch JSON mode > returns exit code 0 and emits valid JSON 1`] 
     "recentErrors",
   ],
   "fleetFields": [
+    "metrics",
     "generatedAt",
+    "budgets",
     "buildIdentity",
     "daemon",
     "backends",
