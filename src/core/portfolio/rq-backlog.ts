@@ -161,7 +161,7 @@ function candidates(value: unknown, config: RqConfig): Candidate[] {
     if (typeof vision !== 'string' || vision.length > 128_000) throw new Error('Invalid VISION snapshot');
     let fenced = false;
     let fence = '';
-    for (const [index, line] of vision.split('\n').entries()) {
+    for (const [index, line] of vision.split(/\r?\n/).entries()) {
       const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
       if (marker) {
         const token = marker[1]!;
@@ -234,12 +234,18 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
   // Stable, locale-independent ordering even when snapshots arrive reordered.
   available.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const jobs: RqJob[] = [];
+  // Preserve raw snapshot bytes (including whitespace), and reserve the JSONL
+  // separator the bridge must insert when the existing last row lacks LF.
+  let bytes = Buffer.byteLength(queueText) + (queueText && !queueText.endsWith('\n') ? 1 : 0);
   for (const item of available) {
-    if (ready + jobs.length >= target) break;
+    if (ready + jobs.length >= target || queue.length + jobs.length >= MAX_ROWS) break;
     const objective = objectiveKey(item);
     const title = workKey(item);
     if (ids.has(item.id) || objectives.has(objective) || titles.has(title)) continue;
     const { score: _score, ...job } = item;
+    const size = Buffer.byteLength(formatRqQueue([job]));
+    if (bytes + size > RQ_MAX_FILE_BYTES) break;
+    bytes += size;
     jobs.push(job);
     ids.add(job.id);
     objectives.add(objective);

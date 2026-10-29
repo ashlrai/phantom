@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { constants, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdBacklog } from '../src/cli/backlog.js';
+import { cmdCompletions } from '../src/cli/completions.js';
 import { formatRqQueue, parseRqConfig, parseRqQueue, planRqBacklog, RQ_MAX_FILE_BYTES, rqDigest, rqQueueDiff, type RqJob } from '../src/core/portfolio/rq-backlog.js';
+
+const snapshotHooks = vi.hoisted(() => ({ open: null as typeof import('node:fs/promises').open | null }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: (...args: Parameters<typeof actual.open>) => (snapshotHooks.open ?? actual.open)(...args) };
+});
 
 const allowedRepos = Array.from({ length: 7 }, (_, index) => `ashlrai/repo-${index}`);
 const config = { v: 1, activeSlots: 2, allowedRepos };
@@ -15,7 +22,7 @@ const sources = (count = 20) => ({
 });
 const queue = (count: number): RqJob[] => planRqBacklog(config, sources(), '').jobs.slice(0, count);
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { snapshotHooks.open = null; vi.restoreAllMocks(); });
 
 describe('RQ backlog capacity and source discovery', () => {
   it('refills below 3x to exactly 5x active slots', () => {
@@ -80,6 +87,16 @@ describe('RQ backlog capacity and source discovery', () => {
     expect(planRqBacklog(config, input, '').jobs.map((job) => job.title)).toEqual(['Real task']);
   });
 
+  it('collects the same VISION tasks and line references from LF and CRLF snapshots', () => {
+    const input = sources(0);
+    const vision = '# VISION\n```md\n- [ ] Example only\n```\n- [x] Completed\n- [ ] Restore search\n+ [ ] Fix pagination\n';
+    input.repositories[0]!.vision = vision;
+    const lf = planRqBacklog(config, input, '');
+    expect(lf.jobs).toHaveLength(2);
+    input.repositories[0]!.vision = vision.replaceAll('\n', '\r\n');
+    expect(planRqBacklog(config, input, '')).toEqual(lf);
+  });
+
   it('deduplicates titles across sources and blocks completed/running/failed work', () => {
     const input = sources(1);
     input.repositories[0]!.vision = '- [ ] Resolve defect 1';
@@ -109,6 +126,49 @@ describe('RQ backlog capacity and source discovery', () => {
     const input = sources(1);
     input.repositories.push({ ...input.repositories[0]!, repo: allowedRepos[1]! });
     expect(planRqBacklog(config, input, '').jobs).toHaveLength(2);
+  });
+});
+
+describe('RQ emitted queue limits', () => {
+  const history = (count: number): RqJob[] => Array.from({ length: count }, (_, index) => ({
+    v: 1, id: `history-${index}`, repo: repository, status: 'DONE', source: 'issue',
+    sourceId: String(index + 10_000), title: `Historical task ${index}`, prompt: 'Completed work.',
+  }));
+
+  it.each([19_999, 20_000])('keeps %i historical rows and stops at the 20,000-row limit', (count) => {
+    const before = formatRqQueue(history(count));
+    const plan = planRqBacklog(config, sources(), before);
+    expect(plan.jobs).toHaveLength(20_000 - count);
+    expect(plan.shortfall).toBe(10 - plan.jobs.length);
+    const after = before + formatRqQueue(plan.jobs);
+    expect(parseRqQueue(after, config)).toHaveLength(20_000);
+    expect(planRqBacklog(config, sources(), after).jobs).toEqual([]);
+  });
+
+  it.each(['\n', '\r\n', ''])('counts exact UTF-8 bytes and the append delimiter for a queue ending %j', (ending) => {
+    const input = sources(1);
+    input.repositories[0]!.issues[0]!.body = '修复搜索 😀';
+    const proposal = planRqBacklog(config, input, '').jobs;
+    const output = formatRqQueue(proposal);
+    expect(Buffer.byteLength(output)).toBeGreaterThan(output.length);
+    const row = JSON.stringify(history(1)[0]);
+    const separator = ending ? '' : '\n';
+    const before = row + ' '.repeat(RQ_MAX_FILE_BYTES - Buffer.byteLength(row + ending + separator + output)) + ending;
+    const plan = planRqBacklog(config, input, before);
+    expect(plan.jobs).toEqual(proposal);
+    expect(plan.shortfall).toBe(9);
+    const after = before + separator + formatRqQueue(plan.jobs);
+    expect(Buffer.byteLength(after)).toBe(RQ_MAX_FILE_BYTES);
+    expect(parseRqQueue(after, config)).toHaveLength(2);
+    const tooFull = ' ' + before;
+    const blocked = planRqBacklog(config, input, tooFull);
+    expect(blocked.jobs).toEqual([]);
+    expect(blocked.shortfall).toBe(10);
+  });
+
+  it('reports a shortfall without emitting rows when the queue already occupies 8 MiB', () => {
+    const before = ' '.repeat(RQ_MAX_FILE_BYTES);
+    expect(planRqBacklog(config, sources(), before)).toMatchObject({ jobs: [], shortfall: 10 });
   });
 });
 
@@ -241,6 +301,22 @@ describe('backlog plan CLI', () => {
     expect(run.logs[1].shortfall).toBe(9);
   });
 
+  it('emits appendable partial output and exits 1 at the queue byte limit', async () => {
+    const f = fixture();
+    const historical = formatRqQueue(queue(1).map((job) => ({ ...job, status: 'DONE' as const })));
+    const proposal = planRqBacklog(config, sources(), historical).jobs[0]!;
+    const output = formatRqQueue([proposal]);
+    const before = historical + ' '.repeat(RQ_MAX_FILE_BYTES - Buffer.byteLength(historical + '\n' + output));
+    writeFileSync(f.queuePath, before);
+    const run = await capture(f.args);
+    expect(run).toMatchObject({ code: 1, out: output });
+    expect(run.logs[1]).toMatchObject({ event: 'rq-plan', sha: rqDigest(before), added: 1, shortfall: 9 });
+    const after = before + '\n' + run.out;
+    expect(Buffer.byteLength(after)).toBe(RQ_MAX_FILE_BYTES);
+    expect(parseRqQueue(after, config)).toHaveLength(2);
+    expect(readFileSync(f.queuePath, 'utf8')).toBe(before);
+  });
+
   it('logs a diff for each queue read, including the previous snapshot', async () => {
     const f = fixture();
     const previous = join(f.directory, 'previous.md');
@@ -285,6 +361,40 @@ describe('backlog plan CLI', () => {
     expect((await capture([...f.args.slice(0, -1), f.inputPath])).code).toBe(2);
   });
 
+  it('refuses symlinked snapshots when native no-follow flags are unavailable', async () => {
+    const f = fixture();
+    const target = join(f.directory, 'target.md');
+    writeFileSync(target, '');
+    rmSync(f.queuePath);
+    symlinkSync(target, f.queuePath);
+    const { open } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    snapshotHooks.open = (path, flags, mode) =>
+      open(path, typeof flags === 'number' ? flags & ~(constants.O_NOFOLLOW ?? 0) : flags, mode);
+    const run = await capture(f.args);
+    expect(run).toMatchObject({ code: 2, out: '' });
+    expect(run.logs.at(-1)).toMatchObject({ event: 'rq-plan-error', code: 'invalid-snapshot' });
+  });
+
+  it('refuses a different file opened after inspecting the queue path', async () => {
+    const f = fixture();
+    const replacement = join(f.directory, 'replacement.md');
+    writeFileSync(replacement, '');
+    const { open } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    snapshotHooks.open = (path, flags, mode) =>
+      open(path === f.queuePath ? replacement : path, flags, mode);
+    const run = await capture(f.args);
+    expect(run).toMatchObject({ code: 2, out: '' });
+    expect(run.logs.at(-1)).toMatchObject({ event: 'rq-plan-error', code: 'invalid-snapshot' });
+  });
+
+  it('refuses invalid UTF-8 without producing work or logging private input', async () => {
+    const f = fixture();
+    writeFileSync(f.queuePath, Buffer.from([0xff]));
+    const run = await capture(f.args);
+    expect(run).toMatchObject({ code: 2, out: '' });
+    expect(run.logs).toEqual([{ event: 'rq-plan-error', code: 'invalid-snapshot' }]);
+  });
+
   it.each([[], ['--queue'], ['--config', 'x', '--config', 'y'], ['--json'], ['--queue', '--input']].map((args) => ({ args })))('rejects bad flags $args', async ({ args }) => {
     const run = await capture(['plan', ...args]);
     expect(run.code).toBe(2);
@@ -296,5 +406,14 @@ describe('backlog plan CLI', () => {
     expect(run.code).toBe(0);
     expect(run.out).toContain('--config');
     expect(run.logs).toEqual([]);
+  });
+
+  it.each(['bash', 'zsh'])('offers backlog plan and refresh in %s completions', async (shell) => {
+    let script = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { script += String(chunk); return true; });
+    expect(await cmdCompletions([shell])).toBe(0);
+    const backlog = script.split('\n').find((line) => line.trimStart().startsWith('backlog)'));
+    expect(backlog).toMatch(/\brefresh\b/);
+    expect(backlog).toMatch(/\bplan\b/);
   });
 });

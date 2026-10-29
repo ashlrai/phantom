@@ -396,10 +396,10 @@ Source snapshots have this shape (repositories may be an approved subset):
 `vision`, `issues` and `scans` are required; use empty text/arrays for a known
 empty source. Collectors must surface failed or incomplete discovery themselves,
 never replace unknown evidence with empty arrays. VISION accepts explicit
-unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced code; narrative and
-completed tasks do not generate jobs. Issues require a unique positive number,
-`open`/`closed` state, title and body (empty body allowed); closed issues are
-excluded. Scans accept the existing `WorkItem` fields shown above (extra fields
+unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced code in LF or CRLF
+snapshots; narrative and completed tasks do not generate jobs. Issues require a
+unique positive number, `open`/`closed` state, title and body (empty body allowed);
+closed issues are excluded. Scans accept the existing `WorkItem` fields shown above (extra fields
 are ignored), with a unique ID, a backlog source and integer value/effort 1–5.
 Ranking reuses portfolio value/effort and source weighting, with stable ID order
 for ties. VISION uses value 5/effort 2 and goal weighting; issues use 3/2.
@@ -426,12 +426,16 @@ queue produces a rejection hash record and no work. Invalid UTF-8, oversized,
 missing or symlinked files are refused. File reads are capped at 8 MiB, queue
 rows at 20,000, slots at 1,000, and issues/scans at 1,000 each per repo. Titles
 are capped at 240 characters, issue bodies/scan details at 16,000, VISION at
-128,000, and queue prompts at 20,000.
+128,000, and queue prompts at 20,000. Proposals stop before their application
+would exceed the queue row or byte limit, preserving history and reporting the
+remaining shortfall. Byte accounting includes serialized UTF-8 output and a
+separator when needed: the bridge must insert a newline before appending rows
+to a nonempty queue that does not end in a newline.
 
 Exit 0 means no refill needed or target reached; exit 1 means source exhaustion
-with possibly usable partial rows; exit 2 means bad usage or invalid snapshots
-and no rows. Bridge collectors and the supervisor are separate components;
-this command does not install or activate either.
+or a queue capacity limit with possibly usable partial rows; exit 2 means bad
+usage or invalid snapshots and no rows. Bridge collectors and the supervisor
+are separate components; this command does not install or activate either.
 
 ## 4. Native engines
 
