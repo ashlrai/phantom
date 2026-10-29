@@ -18,6 +18,7 @@ trap cleanup EXIT
 
 export HOME="$tmp/home"
 mkdir -p "$HOME"
+export TMPDIR="$tmp"
 export ASHLR_ROUTER_HOME="$HOME/ashlr-router"
 export ASHLR_ROUTER_CONFIG="$ASHLR_ROUTER_HOME/config.json"
 export ASHLR_TEST_GH_LOG="$tmp/gh.log"
@@ -50,7 +51,11 @@ plant_auth() {
 plant_auth .codex
 plant_auth .codex-2
 auth_digest() {
-  find "$HOME/.codex" "$HOME/.codex-2" -type f -print0 | sort -z | xargs -0 sha256sum
+  if command -v sha256sum >/dev/null 2>&1; then
+    find "$HOME/.codex" "$HOME/.codex-2" -type f -print0 | sort -z | xargs -0 sha256sum
+  else
+    find "$HOME/.codex" "$HOME/.codex-2" -type f -print0 | sort -z | xargs -0 shasum -a 256
+  fi
 }
 before_auth=$(auth_digest)
 
@@ -517,18 +522,22 @@ fi
 
 vdir=$tmp/verify-repo
 mkdir -p "$vdir/node_modules"
-printf '%s\n' '{"scripts":{"test":"true","lint":"true"}}' > "$vdir/package.json"
-cat > "$tmp/bin/npm" <<'EOF'
-#!/usr/bin/env bash
-printf 'HOME=%s\n' "$HOME" >> "${TMPDIR:-/tmp}/npm-verify.txt"
-if [[ -f "$HOME/.codex/auth.json" || -d "$HOME/.config/gh" ]]; then
-  printf 'SAW_CREDENTIAL_DIR\n' >> "${TMPDIR:-/tmp}/npm-verify.txt"
-fi
-env | awk -F= '/TOKEN|KEY/ { print $1 }' >> "${TMPDIR:-/tmp}/npm-verify.txt"
-exit 0
+printf '%s\n' '{"scripts":{"test":"node check-env.cjs","lint":"node check-env.cjs"}}' > "$vdir/package.json"
+# Observe the script that verification actually runs. Its allowlisted PATH
+# may find npm beside node before the stub directory on macOS.
+cat > "$vdir/check-env.cjs" <<'EOF'
+const fs = require('fs');
+const path = require('path');
+const lines = [`HOME=${process.env.HOME}`];
+if (fs.existsSync(path.join(process.env.HOME, '.codex/auth.json')) ||
+    fs.existsSync(path.join(process.env.HOME, '.config/gh'))) {
+  lines.push('SAW_CREDENTIAL_DIR');
+}
+lines.push(...Object.keys(process.env).filter(name => /TOKEN|KEY/.test(name)));
+fs.appendFileSync(path.join(process.env.TMPDIR, 'npm-verify.txt'), lines.join('\n') + '\n');
 EOF
-chmod +x "$tmp/bin/npm"
 rm -f "${TMPDIR:-/tmp}/npm-verify.txt"
+verify_exit_trap=$(trap -p EXIT)
 router_verify "$vdir"
 if [[ -f "${TMPDIR:-/tmp}/npm-verify.txt" ]]; then
   fail 'default host verify ran npm'
@@ -549,7 +558,7 @@ fi
 if [[ -d "$verify_home" ]]; then
   fail 'verify temp HOME was left behind'
 fi
-if ! trap -p EXIT | grep -q cleanup; then
+if [[ "$(trap -p EXIT)" != "$verify_exit_trap" ]]; then
   fail 'verify replaced the EXIT trap'
 fi
 
@@ -635,7 +644,7 @@ fi
 if [[ -f "$empty/pid" ]]; then
   fail 'a fresh empty lock gained a pid'
 fi
-touch -d '10 seconds ago' "$empty"
+node -e 'const fs=require("fs"); const t=new Date(Date.now()-10000); fs.utimesSync(process.argv[1], t, t)' "$empty"
 if router_lock_alive "$empty"; then
   fail 'a stale empty lock stayed alive'
 fi
@@ -735,6 +744,9 @@ printf 'seed\n' > "$ok/README.md"
 git -C "$ok" add README.md
 git -C "$ok" commit -q -m seed
 printf 'change\n' > "$ok/NOTES.txt"
+mkdir -p "$ok/src/new directory"
+printf 'nested change\n' > "$ok/src/new directory/file.txt"
+git -C "$ok" config status.showUntrackedFiles no
 mkdir -p "$ok/.git/hooks"
 printf '#!/bin/sh\nprintf hook-ran >> "%s"\nexit 1\n' "$tmp/hook.log" > "$ok/.git/hooks/pre-commit"
 chmod +x "$ok/.git/hooks/pre-commit"
@@ -794,6 +806,9 @@ if grep -q 'origin' "$tmp/push.log"; then
   fail "push targeted origin: $(cat "$tmp/push.log")"
 fi
 ok_sha=$(git -C "$ok" rev-parse HEAD)
+if [[ "$(git -C "$ok" show 'HEAD:src/new directory/file.txt')" != 'nested change' ]]; then
+  fail 'a hidden untracked nested file was not included in the published commit'
+fi
 if ! grep -q "${ok_sha}:refs/heads/router/codex/100" "$tmp/push.log"; then
   fail "push did not use the checked sha: $(cat "$tmp/push.log")"
 fi

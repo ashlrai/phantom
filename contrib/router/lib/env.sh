@@ -113,14 +113,17 @@ router_exec_clean() {
 
 router_exec_devin() {
   local -a extra
+  local org
   extra=()
   if [[ -n "${DEVIN_API_KEY:-}" ]]; then
     extra+=("DEVIN_API_KEY=${DEVIN_API_KEY}")
   fi
-  if [[ -n "${DEVIN_ORG_ID:-}" ]]; then
-    extra+=("DEVIN_ORG_ID=${DEVIN_ORG_ID}")
+  org=${DEVIN_ORG_ID:-${ROUTER_DEVIN_ORG:-}}
+  if [[ -n "$org" ]]; then
+    extra+=("DEVIN_ORG_ID=${org}")
   fi
-  router_exec_clean "${extra[@]}" -- "$@"
+  # Bash 3.2 treats a plain empty-array expansion as unbound under set -u.
+  router_exec_clean ${extra[@]+"${extra[@]}"} -- "$@"
 }
 
 router_format_clean() {
