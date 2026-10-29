@@ -77,6 +77,8 @@ export const DEVIN_TASK_ID_PATTERN = /^dv_\d{8}T\d{4}_[a-z0-9]{6}$/;
 export const DEVIN_SESSION_ID_PATTERN = /^(?:devin-[A-Za-z0-9_-]{1,120}|[a-f0-9]{32})$/;
 /** Organization ids (docs: "Organization ID (prefix: org-)"). */
 export const DEVIN_ORG_ID_PATTERN = /^org-[A-Za-z0-9_-]{1,120}$/;
+/** Org playbook ids (docs example: `playbook-abc123def456`), sent as SessionCreateRequest.playbook_id. */
+export const DEVIN_PLAYBOOK_ID_PATTERN = /^playbook-[A-Za-z0-9_-]{1,120}$/;
 /** v3 credentials: "All API credentials use the `cog_` prefix format." */
 export const DEVIN_KEY_PATTERN = /^cog_[A-Za-z0-9_-]{8,512}$/;
 
@@ -168,6 +170,13 @@ export interface DevinTaskV1 {
   intake?: CloudIntakeMemo;
   /** 3.15: the playbook version this task runs under (playbooks/); absent = none. */
   playbookRef?: PlaybookRef;
+  /**
+   * The Devin-org playbook attached at launch (SessionCreateRequest.playbook_id,
+   * `playbook-…`), whose source lives in devin/playbooks/. Distinct from
+   * playbookRef: that is a local rendered playbook inlined into the prompt;
+   * this one is referenced by id so the prompt stays short. Absent = none.
+   */
+  playbookId?: string;
   /** Backlog / fleet work item this task came from, if any. */
   backlogItemId: string | null;
   /**
