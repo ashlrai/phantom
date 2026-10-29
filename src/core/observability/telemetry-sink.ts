@@ -1,7 +1,7 @@
 /**
  * core/observability/telemetry-sink.ts — M19 telemetry sink seam.
  *
- * Two implementations:
+ * GenAI span implementations:
  *   LocalFileSink  — default (no endpoint / no PAT). Appends spans as JSONL
  *                    to a daily file under ~/.ashlr/telemetry/. What `ashlr
  *                    pulse` already aggregates locally.
@@ -9,6 +9,8 @@
  *                    both present. Builds an OTLP/HTTP-JSON trace and POSTs
  *                    it to the configured endpoint. Fire-and-forget, bounded
  *                    timeout, never throws/blocks.
+ *   emitBusHopEvent — versioned PostHog hop events, local spool first and
+ *                    explicit network opt-in with an environment-only key.
  *
  * GUARDRAILS:
  *   - PRIVACY: JSONL records and span attributes are METADATA ONLY (model,
@@ -24,7 +26,9 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, appendFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolveProviderKey } from '../integrations/secrets.js';
+import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig, GenAiSpan, TelemetryEmitResult } from '../types.js';
 import { buildGenAiTrace } from './otlp.js';
 
@@ -151,7 +155,7 @@ class OtlpHttpSink implements TelemetrySink {
     }
 
     // Resolve the existing environment credential without subprocesses.
-    const pat = await resolvePatAsync(this.cfg);
+    const pat = resolveProviderKey('ASHLR_PULSE_TOKEN', this.cfg);
     if (!pat) {
       return { sink: 'otlp', ok: false, detail: 'PAT unavailable' };
     }
@@ -199,10 +203,177 @@ class OtlpHttpSink implements TelemetrySink {
 }
 
 // ---------------------------------------------------------------------------
-// Private helpers
+// Bus hop events — RQ-BUS-5A (independent of the M19 span/OTLP contract)
 // ---------------------------------------------------------------------------
 
-/** Existing environment-only PAT. Never consume exec banners/placeholders. */
-async function resolvePatAsync(cfg: AshlrConfig): Promise<string | null> {
-  return resolveProviderKey('ASHLR_PULSE_TOKEN', cfg) ?? null;
+/** Metadata only: identifiers, never goals, prompts, responses or tool args. */
+export interface BusHopInput {
+  node: string;
+  engine: string;
+  /** Unknown counts/cost MUST remain null, rather than becoming measured zero. */
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  job: string;
+  /** Repository-scoped PR number, or null before a PR exists. */
+  pr: number | null;
+}
+
+/** Credential-free PostHog capture envelope, also the on-disk JSONL schema. */
+export interface BusHopEvent {
+  event: 'phantom_bus_hop';
+  timestamp: string;
+  properties: {
+    schema_version: 1;
+    $insert_id: string;
+    $process_person_profile: false;
+    distinct_id: string;
+    node: string;
+    engine: string;
+    tokens_in: number | null;
+    tokens_out: number | null;
+    cost_usd: number | null;
+    job: string;
+    pr: number | null;
+  };
+}
+
+export interface BusHopOptions {
+  /** Explicit opt-in: HTTPS PostHog origin (US, EU or self-hosted), no path/query. */
+  posthogHost?: string;
+}
+
+export interface BusHopEmitResult {
+  ok: boolean;
+  spooled: boolean;
+  delivered: boolean;
+  /** Fixed, value-free diagnostics; never input, credentials or thrown messages. */
+  detail: string;
+}
+
+/**
+ * Canonical schema builder. Unknown runtime fields are deliberately discarded.
+ * Throws a value-free error for invalid metadata; emitBusHopEvent catches it.
+ */
+export function buildBusHopEvent(input: BusHopInput): BusHopEvent {
+  let snapshot: BusHopInput;
+  try {
+    const { node, engine, job, tokensIn, tokensOut, costUsd, pr } = input;
+    snapshot = { node, engine, job, tokensIn, tokensOut, costUsd, pr };
+  } catch {
+    throw new Error('invalid bus hop metadata');
+  }
+  // Snapshot once: getters must not substitute unvalidated values on a reread.
+  const { node, engine, job, tokensIn, tokensOut, costUsd, pr } = snapshot;
+  const identifier = (value: unknown): value is string =>
+    typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$/.test(value) &&
+    scrubSecrets(value) === value && !/(?:phc_|phx_|phm_)[A-Za-z0-9_-]+/.test(value);
+  const count = (value: unknown): boolean => value === null ||
+    (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+  if (!identifier(node) || !identifier(engine) || !identifier(job) ||
+      !count(tokensIn) || !count(tokensOut) ||
+      !(costUsd === null || (typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd >= 0)) ||
+      !(pr === null || (typeof pr === 'number' && Number.isSafeInteger(pr) && pr > 0))) {
+    throw new Error('invalid bus hop metadata');
+  }
+  const event: BusHopEvent = {
+    event: 'phantom_bus_hop',
+    timestamp: new Date().toISOString(),
+    properties: {
+      schema_version: 1,
+      $insert_id: randomUUID(),
+      $process_person_profile: false,
+      distinct_id: node,
+      node,
+      engine,
+      tokens_in: tokensIn,
+      tokens_out: tokensOut,
+      cost_usd: costUsd,
+      job,
+      pr,
+    },
+  };
+  // Even opaque environment credentials must not be copied into metadata.
+  const key = process.env['POSTHOG_API_KEY'];
+  if (key && JSON.stringify(event).includes(key)) throw new Error('invalid bus hop metadata');
+  return event;
+}
+
+/**
+ * Spool first to ~/.ashlr/telemetry/bus-hop-YYYY-MM-DD.jsonl (0700/0600).
+ * A spool failure prevents delivery. The spool is retained even after success;
+ * this is an audit trail, not an automatically replayed delivery queue.
+ *
+ * Network delivery requires posthogHost AND POSTHOG_API_KEY in this process's
+ * environment, supplied by the operator via Phantom Secrets `phantom exec --`.
+ * No key argument, config, file lookup, vault extraction or credential caching.
+ * Unresolved phm_ placeholders stay local: this client cannot extract secrets
+ * from the Secrets child proxy. The key exists only in the transient request
+ * body required by PostHog, never the spool, URL, result or logs.
+ * https://posthog.com/docs/getting-started/install#sending-events
+ */
+export async function emitBusHopEvent(input: BusHopInput, options: BusHopOptions = {}): Promise<BusHopEmitResult> {
+  let event: BusHopEvent;
+  try {
+    event = buildBusHopEvent(input);
+  } catch {
+    return { ok: false, spooled: false, delivered: false, detail: 'invalid bus hop metadata' };
+  }
+  try {
+    const dir = localTelemetryDir();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    appendFileSync(join(dir, `bus-hop-${event.timestamp.slice(0, 10)}.jsonl`),
+      JSON.stringify(event) + '\n', { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    return { ok: false, spooled: false, delivered: false, detail: 'bus hop spool unavailable' };
+  }
+
+  const local = { ok: true, spooled: true, delivered: false };
+  let posthogHost: string | undefined;
+  try {
+    posthogHost = options.posthogHost;
+    if (posthogHost !== undefined && typeof posthogHost !== 'string') throw new Error('invalid host');
+  } catch {
+    return { ok: false, spooled: true, delivered: false, detail: 'invalid PostHog host' };
+  }
+  if (!posthogHost) return { ...local, detail: 'spooled locally' };
+  const key = process.env['POSTHOG_API_KEY'];
+  if (!key || !key.trim() || /^phm_[A-Za-z0-9_-]+$/.test(key.trim())) {
+    return { ...local, detail: 'spooled locally; PostHog credential unavailable' };
+  }
+
+  let endpoint: string;
+  try {
+    const host = new URL(posthogHost);
+    if (host.protocol !== 'https:' || host.username || host.password ||
+        host.pathname !== '/' || host.search || host.hash || posthogHost.includes(key)) {
+      throw new Error('invalid host');
+    }
+    endpoint = new URL('/i/v0/e/', host).href;
+  } catch {
+    return { ok: false, spooled: true, delivered: false, detail: 'invalid PostHog host' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OTLP_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...event, token: key }),
+      redirect: 'error', // Never forward the credential to a redirect target.
+      signal: controller.signal,
+    });
+    // No response content is needed; don't retain a streaming response body.
+    void response.body?.cancel().catch(() => {});
+    return response.ok
+      ? { ok: true, spooled: true, delivered: true, detail: 'delivered to PostHog' }
+      : { ok: false, spooled: true, delivered: false, detail: 'PostHog request rejected' };
+  } catch {
+    // Fetch errors can contain credentials/URLs. Never serialize or log them.
+    return { ok: false, spooled: true, delivered: false,
+      detail: controller.signal.aborted ? 'PostHog request timed out' : 'PostHog request failed' };
+  } finally {
+    clearTimeout(timer);
+  }
 }

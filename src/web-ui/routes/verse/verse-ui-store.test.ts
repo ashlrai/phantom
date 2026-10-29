@@ -59,7 +59,7 @@ beforeEach(() => {
 describe('sections', () => {
   it('puts the six surfaces on the rail in ⌘1–⌘6 order and the rest in the tray', () => {
     expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(['command', 'fleet', 'growth', 'mind', 'chat', 'agents']);
-    expect(TRAY_SECTIONS.map((s) => s.id)).toEqual(['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations']);
+    expect(TRAY_SECTIONS.map((s) => s.id)).toEqual(['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops']);
     for (const entry of VERSE_SECTIONS) expect(entry.module).toMatch(/Section$/);
   });
 

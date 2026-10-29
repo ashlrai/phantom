@@ -1,5 +1,5 @@
 /** Read-only, fixed-origin transport. No enrolled paths, personal identities or artifact downloads. */
-import { execFile } from 'node:child_process';
+import { credentialExecFile as execFile } from '../integrations/secrets.js';
 import { request } from 'node:https';
 import {
   ADOPTION_TARGET, type AdoptionRepository, type AdoptionNpm, type AdoptionTraffic,

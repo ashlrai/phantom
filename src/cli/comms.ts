@@ -20,6 +20,7 @@
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { loadConfig } from '../core/config.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
 import { telegramEnabled } from '../core/integrations/telegram.js';
@@ -214,7 +215,7 @@ async function cmdStatus(): Promise<number> {
 
   if (channel === 'telegram' || isTelegram) {
     console.log(`  chat_id:   ${cfg.comms?.telegram?.chatId ?? '(unset)'}`);
-    console.log(`  bot_token: ${cfg.comms?.telegram?.botToken ? '(set)' : process.env['TELEGRAM_BOT_TOKEN'] ? '(set via env)' : '(unset)'}`);
+    console.log(`  bot_token: ${cfg.comms?.telegram?.botToken ? '(set)' : readEnvironmentCredential('TELEGRAM_BOT_TOKEN') ? '(set via env)' : '(unset)'}`);
   } else {
     console.log(`  handle:    ${cfg.comms?.imessageHandle ?? '(unset)'}`);
     console.log(`  service:   ${cfg.comms?.service ?? 'iMessage'}`);
@@ -650,7 +651,7 @@ async function cmdSetupTelegram(): Promise<number> {
 
   // If a token is set, call getUpdates to discover the chat id
   const cfg = await loadConfig();
-  const token = cfg.comms?.telegram?.botToken ?? process.env['TELEGRAM_BOT_TOKEN'];
+  const token = cfg.comms?.telegram?.botToken ?? readEnvironmentCredential('TELEGRAM_BOT_TOKEN');
 
   if (!token) {
     console.log('No bot token configured yet — complete Step 1 and 2 first.');
