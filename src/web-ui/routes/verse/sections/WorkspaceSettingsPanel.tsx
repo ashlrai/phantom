@@ -3,6 +3,7 @@ import { setFeatureFlag, useFeatureFlag } from '../../../app/desktop-state.js';
 import { Switch } from '../../../components/primitives/Switch.js';
 import { Panel, SettingRow } from './SettingRow.js';
 
+/** Browser-local workspace opt-in; changing it does not request authority. */
 export function WorkspaceSettingsPanel() {
   const enabled = useFeatureFlag('agentWorkspace');
   const id = useId();

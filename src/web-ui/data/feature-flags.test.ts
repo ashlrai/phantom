@@ -13,6 +13,7 @@ beforeEach(() => {
   resetFeatureFlagsForTests();
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   localStorage.clear();
   resetFeatureFlagsForTests();
@@ -73,6 +74,46 @@ describe('UI feature flags', () => {
     expect(getFeatureFlag('agentWorkspace')).toBe(true);
     setFeatureFlag('agentWorkspace', false);
     expect(getFeatureFlag('agentWorkspace')).toBe(false);
+  });
+
+  it('supports a runtime without localStorage', () => {
+    vi.stubGlobal('localStorage', undefined);
+    expect(getFeatureFlag('agentWorkspace')).toBe(false);
+    setFeatureFlag('agentWorkspace', true);
+    expect(getFeatureFlag('agentWorkspace')).toBe(true);
+    setFeatureFlag('agentWorkspace', false);
+    expect(getFeatureFlag('agentWorkspace')).toBe(false);
+  });
+
+  it('keeps toggles usable when accessing localStorage itself throws', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('Storage unavailable', 'SecurityError');
+    });
+    expect(getFeatureFlag('agentWorkspace')).toBe(false);
+    setFeatureFlag('agentWorkspace', true);
+    expect(getFeatureFlag('agentWorkspace')).toBe(true);
+    setFeatureFlag('agentWorkspace', false);
+    expect(getFeatureFlag('agentWorkspace')).toBe(false);
+  });
+
+  it('notifies readers of an in-memory opt-out when persistence fails', () => {
+    localStorage.setItem(FEATURE_FLAGS_STORAGE_KEY, '{"agentWorkspace":true}');
+    expect(getFeatureFlag('agentWorkspace')).toBe(true);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage full', 'QuotaExceededError');
+    });
+    const observed: boolean[] = [];
+    const unsubscribe = subscribeFeatureFlags(() => observed.push(getFeatureFlag('agentWorkspace')));
+    try {
+      setFeatureFlag('agentWorkspace', false);
+      expect(getFeatureFlag('agentWorkspace')).toBe(false);
+      expect(observed).toEqual([false]);
+      // A failed write cannot change the last successfully persisted choice.
+      resetFeatureFlagsForTests();
+      expect(getFeatureFlag('agentWorkspace')).toBe(true);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('drops secret, token and capability fields without logging their values', () => {
