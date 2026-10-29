@@ -1,0 +1,2 @@
+{"v":1,"id":"TEST-review-tests","jobId":"TEST-failure","repo":"ashlrai/phantom","kind":"review-block","body":"Tests failed. Run verification before proposing the change.","updatedAt":"2026-10-25T23:40:00.000Z"}
+{"v":1,"id":"TEST-review-scope","jobId":"TEST-failure","repo":"ashlrai/phantom","kind":"review-block","body":"The scope is too broad. Split the change into smaller tasks.","updatedAt":"2026-10-25T23:45:00.000Z"}

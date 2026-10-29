@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { VerseEvent } from '../../data/api-types.js';
 import { ev, session } from './fixtures.test-support.js';
@@ -339,6 +339,24 @@ describe('Transcript — agentic reading', () => {
     // Plain arrows work once a turn itself has focus.
     await user.keyboard('{ArrowUp}');
     expect(turns[0]).toHaveFocus();
+  });
+
+  it('keeps Alt+arrows in text fields and accepts document keyboard targets', () => {
+    render(<Transcript transcript={buildTranscript([
+      ev(1, 'user-message', { turnId: 't1', text: 'one' }),
+      ev(2, 'assistant-message', { turnId: 't1', text: 'a' }),
+    ])} loaded loadError={null} />);
+    const turn = document.querySelector<HTMLElement>('[data-turn-key]')!;
+    for (const tag of ['input', 'textarea']) {
+      const field = document.createElement(tag);
+      document.body.append(field);
+      field.focus();
+      expect(fireEvent.keyDown(field, { key: 'ArrowDown', altKey: true })).toBe(true);
+      expect(field).toHaveFocus();
+      field.remove();
+    }
+    expect(fireEvent.keyDown(document, { key: 'ArrowDown', altKey: true })).toBe(false);
+    expect(turn).toHaveFocus();
   });
 });
 
