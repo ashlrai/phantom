@@ -76,7 +76,15 @@ describe('CLI verbs refuse unknown options before side effects', () => {
     mkdirSync(home);
     const r = spawnSync(process.execPath, ['--import', 'tsx', resolve('src/cli/index.ts'), ...args], {
       cwd: resolve('.'),
-      env: { ...process.env, HOME: home, NO_COLOR: '1', PATH: `${bin}${delimiter}${process.env['PATH'] ?? ''}` },
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        ASHLR_HOME: join(home, '.ashlr'),
+        PHANTOM_FLEET_PATH: join(home, 'fleet.json'),
+        NO_COLOR: '1',
+        PATH: `${bin}${delimiter}${process.env['PATH'] ?? ''}`,
+      },
       encoding: 'utf8',
       timeout: 30_000,
     });
@@ -113,6 +121,10 @@ describe('CLI verbs refuse unknown options before side effects', () => {
       args: ['fleet', verb, '--definitely-not-a-flag'], flag: '--definitely-not-a-flag',
     })),
     { args: ['fleet', 'scorecard', '--window'], flag: '--window' },
+    { args: ['fleet', 'status', '--legcay', '--json'], flag: '--legcay' },
+    { args: ['fleet', 'status', '--legacy', '--jsn'], flag: '--jsn' },
+    { args: ['fleet', 'watch', '--legacy'], flag: '--legacy' },
+    { args: ['fleet', 'doctor', '--legacy'], flag: '--legacy' },
     { args: ['wiki', 'build', '--all', '--no-modle'], flag: '--no-modle' },
     { args: ['wiki', 'build', 'some-repo', '--pages', '3', '--forse'], flag: '--forse' },
     { args: ['wiki', 'build', '--repo', 'some-repo'], flag: '--repo' },
@@ -183,6 +195,28 @@ describe('CLI verbs refuse unknown options before side effects', () => {
       expect(r.stderr).not.toContain('unknown option');
     });
   }
+
+  for (const flags of [['--legacy', '--json'], ['--json', '--legacy']]) {
+    it(`fleet status ${flags.join(' ')} preserves fail-closed activation readiness`, () => {
+      const r = run(['fleet', 'status', ...flags]);
+      expect(r.error).toBeUndefined();
+      expect(r.status, r.stderr).toBe(0);
+      expect(JSON.parse(r.stdout).daemon.activation).toMatchObject({
+        authority: 'observation-only',
+        commandEligible: false,
+        residentStandingAuthorized: false,
+        installAuthorized: false,
+        repairAuthorized: false,
+      });
+    });
+  }
+
+  it('fleet status --legacy keeps the human-readable control-plane report', () => {
+    const r = run(['fleet', 'status', '--legacy']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain('Fleet status');
+    expect(r.stdout).toContain('observation-only');
+  });
 
   it('improve propose --auto-merge passes the option check and keeps its own refusal', () => {
     const r = run(['improve', 'propose', '--auto-merge', '--json']);
