@@ -18,6 +18,34 @@ function fixture(files: Record<string, string>): string {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('operator documentation navigation', () => {
+  const swarmResearch = 'docs/research/agent-swarms-rsi.md';
+
+  it('resolves the swarm research implementation references in the source checkout', () => {
+    const result = checkDocumentation({ root: process.cwd(), entrypoints: [swarmResearch] });
+    expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+    expect(result.localLinks).toBeGreaterThan(0);
+    expect(result.externalLinks).toBeGreaterThan(0);
+  });
+
+  it('detects a stale implementation reference in the swarm research report', () => {
+    const source = readFileSync(join(process.cwd(), swarmResearch), 'utf8');
+    const target = '../../src/core/swarm/planner.ts';
+    expect(source).toContain(target);
+    const files: Record<string, string> = { [swarmResearch]: source };
+    for (const href of inspectMarkdown(source).links as string[]) {
+      if (href.startsWith('../../src/')) files[join(dirname(swarmResearch), href)] = '// implementation fixture\n';
+    }
+    const root = fixture(files);
+    expect(checkDocumentation({ root, entrypoints: [swarmResearch] }).ok).toBe(true);
+    writeFileSync(join(root, swarmResearch), source.replace(target, '../../src/core/swarm/missing.ts'));
+    const result = checkDocumentation({ root, entrypoints: [swarmResearch] });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: swarmResearch, href: '../../src/core/swarm/missing.ts' }),
+    ]));
+  });
+
   it('checks reference links, nested links, duplicate heading anchors and explicit anchors', () => {
     const root = fixture({
       'README.md': '[Install][guide]\n\n[guide]: docs/guide.md#hello-world-1\n\n- [Named](docs/guide.md#named)\n\n![Image](docs/icon.svg)',
