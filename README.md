@@ -1,151 +1,135 @@
-<a id="ashlr-universe"></a>
-
 # Phantom
 
-<!-- fresh:begin version-badge -->
-[![Source version 3.30.0](https://img.shields.io/badge/source-3.30.0-blue)](https://github.com/ashlrai/phantom)
-<!-- fresh:end -->
+**Phantom runs all engineering and manages resources.**
 
-**Give agents the work. Keep the evidence.**
+The open-source engineering agent workbench, by [AshlrAI](https://ashlr.ai).
+Connect eligible Claude Code, Codex, Grok or Devin accounts, API credits or
+tool-capable local models — then work with agents interactively, or hand the
+fleet an outcome, and review the recorded runs, changes and verification it
+leaves behind.
 
-**The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**
-
-**Work with agents. Let agents work for you. One open-source workbench for your accounts, local models, chats and engineering fleet.**
-
-**[Get Phantom](https://github.com/ashlrai/phantom/releases/latest) · [First-run guide](docs/QUICKSTART.md#open-verse)**
-
-[Install](#install) · [See the workbench](#what-it-is) · [Benchmarks](#benchmarks-and-traces) · [Read the guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md) · [Explore the ecosystem](https://verse.ashlr.ai/ecosystem) · [Star Phantom on GitHub](https://github.com/ashlrai/phantom)
+[Get Phantom](https://github.com/ashlrai/phantom/releases/latest) ·
+[Onboarding](https://phm.dev/connect) ·
+[User guide](docs/VERSE.md) ·
+[Desktop app](#the-desktop-app-macos) ·
+[CLI](#the-cli)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@ashlr/phantom.svg?logo=npm&label=%40ashlr%2Fphantom&color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
-[![npm downloads](https://img.shields.io/npm/dm/@ashlr/phantom.svg?color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.15-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
-[![Phantom ecosystem stars](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fstars.json&style=flat)](https://phm.dev/#eco-stats)
-[![Phantom ecosystem commits](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fcommits.json&style=flat)](https://phm.dev/#eco-stats)
-[![Phantom ecosystem repos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Frepos.json&style=flat)](https://github.com/ashlrai/phantom/blob/master/ecosystem/repos.json)
 
-## Install
-
-Canonical Phantom releases use `@ashlr/phantom` from `ashlrai/phantom`.
-Install the canonical package's promoted release.
-This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
+## Quickstart
 
 ```sh
 node --version                  # must print v22.15.0 or newer; npm only warns on older Node
-npm install -g @ashlr/phantom   # `phm` and compatible `ashlr`; Node.js 22.15+ and Git; macOS, Linux, Windows
-phm --version             # report the installed version
-phm verse                 # start the console at http://127.0.0.1:7777/verse/
+npm install -g @ashlr/phantom   # `phm` and the compatible `ashlr` alias; macOS, Linux and Windows
+phm --version                   # report the installed version
+phm verse                       # serve the console at http://127.0.0.1:7777/verse/
 ```
 
-Current installation uses the promoted npm `latest` release. For a reproducible
-install, select a published version from
-[GitHub releases](https://github.com/ashlrai/phantom/releases/latest) and pin
+`phm verse` prints a **read token** and a **mutation token**; the server
+listens on `127.0.0.1` only, and neither token is written to disk. On an
+Apple silicon Mac, [the desktop app](#the-desktop-app-macos) wraps the same
+console in a native window.
+
+**New to Phantom? [phm.dev/connect](https://phm.dev/connect) is the guided
+onboarding path** — install, your first seat and your first task. The
+[first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground
+inside this repository.
+
+Canonical Phantom releases use `@ashlr/phantom` from `ashlrai/phantom`.
+This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
+Install the promoted npm `latest` release, or pin a published version from
+[GitHub releases](https://github.com/ashlrai/phantom/releases/latest) as
 `@ashlr/phantom@<version>`; the source candidate is not proof of publication.
 
-Find current desktop artifacts at [GitHub releases](https://github.com/ashlrai/phantom/releases/latest):
-the signed `Phantom_<version>_aarch64.app.tar.gz` archive and paired
-[`latest.json`](https://github.com/ashlrai/phantom/releases/latest/download/latest.json),
-rather than a DMG. Match them to the installed CLI version. Qualified releases
-from 3.29.8 support `phm desktop install` for a new Apple silicon Mac installation;
-see [consumer installation](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#consumer-first-install).
-Clean-Mac acceptance remains unverified. Existing installations use the qualified signed-update flow. Maintainer
-artifact installation requires the original qualified bundle and prior
-Stop/drain and Quit; downloading the archive alone is not that installation.
-See [desktop installation](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install). The app is locally signed,
-not Apple Developer ID notarized. The CLI includes the browser console on macOS, Linux and Windows.
-See [desktop installation](#the-desktop-app-macos) or the
-[first-run guide](docs/QUICKSTART.md#open-verse).
+Then, in Phantom:
 
-[phm.dev](https://phm.dev) introduces the Phantom workbench;
-[phm.dev/secrets](https://phm.dev/secrets) introduces Phantom Secrets.
-Use this repository and its qualified releases to install the workbench.
-Website availability does not establish installed fleet or hosted-service readiness.
+1. **Sign in a seat.** A seat is one account and the CLI that drives it,
+   pinned to its own profile — see [Sign in your seats](#sign-in-your-seats).
+   Phantom never asks for or stores a credential; each vendor CLI signs
+   itself in, and a running Ollama adds tool-capable local seats with no
+   sign-in.
+2. **Open a project and chat.** **New chat** picks a seat and a folder;
+   saving a folder as a project never enrolls it for unattended work. The
+   composer takes attachments, `@` files and `/` commands; ⌘K reaches every
+   chat, action and seat, and ⌘J opens Needs you.
+3. **Optionally hand work to the cloud or to Devin.**
+   `phm cloud launch "<task>" --repo owner/name`, or `phm devin connect`
+   once and then `phm devin launch "<task>"` — see
+   [the cloud and Devin lanes](#the-cloud-and-devin-lanes).
+4. **Talk to the Leader.** Open Mind (⌘4), or `phm leader say "focus: …"`;
+   `phm comms setup-telegram` adds a two-way Telegram line.
+5. **Inspect autonomy preparation** with `phm authority setup --dry-run --json`
+   and `phm authority status`. Autonomy ships **dormant** and is macOS-only —
+   see [Autonomy](#autonomy).
 
-![Phantom 3.24.3 Work with me: read-only Demo chat with labeled sample accounts and provider-inactive conversation.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
+An optional local fast lane — `phm local-runtime start --slots 4` plus
+`ASHLR_VERSE_LOCAL_DISPATCH=llama-server` in the workbench environment —
+sends local turns to llama-server; model discovery stays on Ollama.
 
-![Phantom 3.24.3 Work for me: read-only Command overview with labeled Demo accounts and an illustrative Leader memo.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/verse-work-for-me-3.24.3-demo.jpg)
+![Phantom 3.24.3 Work with me: a Demo chat with labeled sample accounts and a provider-inactive conversation.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
 
-*Actual compiled 3.24.3 browser UI with labeled Demo accounts, a sample conversation and an illustrative Leader memo. No provider ran and no fleet was active. Verification, merge and production are separate records; CI is unknown and release/deployment is unrecorded. These screenshots show the browser UI, not native app chrome.*
+![Phantom 3.24.3 Work for me: a Command overview with labeled Demo accounts and an illustrative Leader memo.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/verse-work-for-me-3.24.3-demo.jpg)
 
-![Phantom agent world: an interactive illustration with provider logos and three colorful engineering agents.](https://raw.githubusercontent.com/ashlrai/phantom/master/docs/images/phantom-agent-world-3.24.3-demo.jpg)
-
-*Explore the [interactive agent world](https://verse.ashlr.ai/#phantom-world): subscriptions, API credits, local models and MCP/CLI tools. This illustration does not launch agents.*
-
----
+*Actual compiled 3.24.3 browser UI with labeled Demo accounts, a sample
+conversation and an illustrative Leader memo; the newest checked-in
+screenshots. No provider ran and no fleet was active. Verification, merge
+and production are separate records; CI is unknown and release/deployment is
+unrecorded. These screenshots show the browser UI, not native app chrome.*
 
 ## What it is
 
-**Phantom** brings supported coding agents, accounts and local models into one
-workbench. Connect eligible Claude Code, Codex, Grok or Devin accounts, configure
-an API resource, or use a tool-capable local model. Choose a project and a small,
-checkable task; review the changes and results together.
+**Phantom** brings supported coding agents, accounts and local models into
+one workbench. Connect eligible Claude Code, Codex, Grok or Devin accounts,
+configure an API resource, or use a tool-capable local model. Choose a
+project and a small, checkable task; review the changes and results together.
 
-CLI accounts use the vendor's configured account and billing path. API resources
-have their own metered billing; local inference uses your hardware. A connected
-account does not prove remaining subscription allowance or permission to spend
-purchased credits. Check each resource's readiness and budget before delegating.
+CLI accounts use the vendor's configured account and billing path. API
+resources have their own metered billing; local inference uses your
+hardware. A connected account does not prove remaining subscription
+allowance or permission to spend purchased credits. Check each resource's
+readiness and budget before delegating.
 
 For unattended work, give the fleet an outcome and observable acceptance
-criteria. The **Leader** refines priorities and briefs you in Phantom, Telegram
-or the terminal. The fleet works only in enrolled repositories under your
-current signed standing grant. A shadow stage records what it would merge;
-a judged ladder or eligible elite-direct stage follows the mode you sign.
+criteria. The **Leader** refines priorities and briefs you in Phantom,
+Telegram or the terminal. The fleet works only in enrolled repositories
+under your current signed standing grant. A shadow stage records what it
+would merge; a judged ladder or eligible elite-direct stage follows the
+mode you sign.
 
 It ships as a macOS desktop app and as the `phm` CLI (canonical package
-`@ashlr/phantom`, also available as `ashlr`), which
-serves the same console in a browser on macOS, Linux and Windows. Under the
-console is the Phantom kernel: the CLI, the Universe experiment runtime and
-account-aware resource pools.
+`@ashlr/phantom`, also available as `ashlr`), which serves the same console
+in a browser on macOS, Linux and Windows. Under the console is the Phantom
+kernel: the CLI, the Universe experiment runtime and account-aware resource
+pools.
 
-Phantom was formerly Ashlr Verse. The current source repository is `ashlrai/phantom`;
-the canonical package is `@ashlr/phantom`. `phm` and compatible `ashlr`
-share the same entrypoint. Published 3.25.3 remains `@ashlr/hub`; its existing
-SDK imports, including `@ashlr/hub/universe`, retain their original identity.
-The canonical package provides the same five SDK surfaces under `@ashlr/phantom`.
-Existing manifests, schemas, stores and credentials are not renamed. Published
-3.25.3 uses `Phantom.app`; 3.25.0 retains its historical `Ashlr.app` filename. See [branding and compatibility](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-BRAND.md).
+Phantom was formerly Ashlr Verse. The current source repository is
+`ashlrai/phantom`; the canonical package is `@ashlr/phantom`. `phm` and
+compatible `ashlr` share the same entrypoint. Published 3.25.3 remains
+`@ashlr/hub`; its existing SDK imports, including `@ashlr/hub/universe`,
+retain their original identity. The canonical package provides the same five
+SDK surfaces under `@ashlr/phantom`. Existing manifests, schemas, stores and
+credentials are not renamed. Published 3.25.3 uses `Phantom.app`; 3.25.0
+retains its historical `Ashlr.app` filename. See
+[branding and compatibility](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-BRAND.md).
 
-The user guide is [`docs/VERSE.md`](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md).
-See [Automatic work](docs/AUTOMATIC-OUTCOMES.md) for chat routing, editable outcomes and recovery.
-
-<a id="whats-in-verse-324"></a>
+The user guide is
+[`docs/VERSE.md`](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md).
+See [Automatic work](docs/AUTOMATIC-OUTCOMES.md) for chat routing, editable
+outcomes and recovery.
 
 ### What's in Phantom
 
-Choose **Manager** in a chat’s **Auto seat** menu, or **Enable manager** on a
-saved Fleet outcome, for planning, delegation and review under the fleet’s
+Choose **Manager** in a chat's **Auto seat** menu, or **Enable manager** on
+a saved Fleet outcome, for planning, delegation and review under the fleet's
 current authority. [Read the Manager guide](docs/AUTOMATIC-OUTCOMES.md#one-conversation-with-the-manager).
 
-**See what is running, what was measured and what still needs permission.**
-The desktop can request that the host stay awake during observed local chat and
-resident work; cloud-only sessions do not keep the host awake. Resources show
-Devin's reported organization consumption separately from tracked ACU budgets.
-Growth keeps npm retrievals, GitHub stars, traffic and release downloads in their
-own source windows, with stale and unavailable readings explicit.
-
-**Use allowance before resets** has a global setting and per-account overrides.
-Off disables reset priority and reserve shrinking. On remains subject to signed
-reserve floors, current task fit and verified billing and execution-account
-boundaries. This source includes an account-bound native Claude CLI adapter
-with isolated filesystem tools; installation and live account acceptance are
-separate. Aggressive reset-time reserve shrinking remains held until its
-subscription-only execution boundary is verified. Codex, Grok and Devin have
-no verified no-spillover boundary here. Purchased credits are excluded.
-Grok Bot has an independent weekly allowance; it never inherits Grok Build's
-usage or reset. Local CPU, RAM and recorded task speed are visible in Resources;
-they are descriptive measurements, not yet host-load-aware routing inputs.
-See [resource evidence](docs/RESOURCE-EVIDENCE.md).
-See [reset controls](docs/RESET-AWARE-SCHEDULING.md),
-[desktop power](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#automatic-awake-during-local-work) and
-[Growth measurements](docs/VERSE.md#adoption-fixed-public-project-metadata).
-
 **Work with me** opens your interactive chats: guide the agent, inspect its
-tools and context, review changes and continue on another account or local model.
-**Work for me** opens the fleet: describe a desired result, edit or pause it,
-inspect recorded runs and proposals, and guide the Leader within the authority you sign. Both workspaces
-share accounts and projects, and switching between them does not start work or
-change permission mode. The app restores the workspace you last used.
+tools and context, review changes and continue on another account or local
+model. **Work for me** opens the fleet: describe a desired result, edit or
+pause it, inspect recorded runs and proposals, and guide the Leader within
+the authority you sign. Both workspaces share accounts and projects, and
+switching between them does not start work or change permission mode. The
+app restores the workspace you last used.
 
 | Work with me | Work for me |
 |---|---|
@@ -155,25 +139,17 @@ change permission mode. The app restores the workspace you last used.
 ### How work moves
 
 **Automatic** selects an eligible account and model for a chat. It considers
-task fit, available capacity, your preferences, cost basis and observed latency
-when available. Configured Jev advice
-can inform the choice; it cannot make a blocked resource eligible.
+task fit, available capacity, your preferences, cost basis and observed
+latency when available. Configured Jev advice can inform the choice; it
+cannot make a blocked resource eligible.
 
-**Manager** coordinates delegation and review for an explicit chat or outcome.
-**Leader** sets fleet priorities, refines work and asks for your decisions.
-Roles select an eligible account and fitting model rather than a preferred
-company. Leader planning and conversation support prepared Claude Code, Codex,
-Grok, local models and the included native Devin CLI models. Native roles use
-an account-bound dispatcher; Manager stages use qualified worker adapters.
-Cloud Devin sessions remain a separately accounted ACU lane. Balanced mode
-enables included Codex allowance by default; stored per-account Off settings
-remain respected. Each account's
-model variants share its allowance, so adding a model never creates quota.
-
-Routing retains current account, context, subscription-only billing and signed
-scope evidence. Unknown funding remains unavailable. Native completion traces
-record the selected account/model, wall time and reported tokens when present;
-whole-run throughput is distinct from generation tokens per second.
+**Manager** coordinates delegation and review for an explicit chat or
+outcome. **Leader** sets fleet priorities, refines work and asks for your
+decisions. Roles select an eligible account and fitting model rather than a
+preferred company. Leader planning and conversation support prepared Claude
+Code, Codex, Grok, local models and the included native Devin CLI models.
+Each account's model variants share its allowance, so adding a model never
+creates quota.
 
 ```mermaid
 flowchart LR
@@ -188,84 +164,15 @@ flowchart LR
 ```
 
 Independent ready tasks can use several admitted resources. Serving slots,
-account quotas, workspace isolation, budget reserves and signed authority limit
-concurrency; **Automatic** counts do not mean unlimited parallel work. Devin
-fleet sessions use their separate granted launcher and ACU budget.
-
-Open **Resources** to distinguish chat readiness from fleet readiness and see
-reported usage, reset windows and the specific hold. Inspect a turn's tools,
-context and sources, then its diff and verification results. Reported readings,
-estimates and unknowns stay distinct: a running daemon, completed plan or agent's
-success message alone does not prove your outcome was delivered.
-See [Automatic work](docs/AUTOMATIC-OUTCOMES.md) for routing, recovery and permissions.
-
-**Review** opens the relevant changes, sources, usage, agents or decisions without
-starting another run. Advanced preferences let you choose **No preference limit**
-for goal counts, goal creation, Leader daily runs and Grok lanes. Finish-first is
-an independent choice; changing a preference does not widen signed authority.
-
-Connected resource rows keep a stable order, show cached readings immediately
-when available, with gray **last** meters and original timestamps while live
-readings refresh from shared metadata collection. Expand an account
-for its actual windows, reset times and freshness. Missing readings remain
-unknown. Operator cloud estimates and captured dollar balances have separate
-labels. See [resource evidence](docs/RESOURCE-EVIDENCE.md).
-
-The fleet can prioritize useful work before a qualified account deadline.
-It compares recorded durations for the same engine, model and task kind,
-checks current account headroom, and uses optional Jev advice among eligible
-task/account pairs. Expand Resources or Fleet capacity details to see the deadline, sample coverage,
-estimated fit and last recorded advice. Missing history remains unknown;
-quota percentages are never converted into invented token allowances.
-See [reset-aware scheduling](docs/RESET-AWARE-SCHEDULING.md).
-
-Subscription windows and usage credits are separate. An exhausted Codex
-subscription can still have credits: the sidebar shows current native units,
-spending holds and an estimated dollar value for known personal plans.
-Purchased credit balances do not become reset spend-down targets. Cloud-credit
-estimates and tracked Devin ACUs do not establish an expiration. Expand
-**Credit balances** for separate recorded API promotions, cloud gifts and
-purchased balances, when available. API promotions show their verified expiry
-date and conservative admission cutoff; their separate execution lane stays
-held until billing, credential binding and signed API authority are verified.
-A capture does not authorize spending. See [resource evidence](docs/RESOURCE-EVIDENCE.md#claude-api-promotional-grants).
-
-Expand **Execution feedback** in Fleet for recorded producer outcomes, proposal
-coverage and failure categories. A completed agent run is separate from verified
-or shipped work. Exact failures without proposals become stable retros and
-context for the Leader's existing planning loop. The panel reads shared local
-records in the background; it opens without waiting for a scan or calling a
-model. Select **View timeline** for bound verification, canonical GitHub PRs,
-authenticated merge evidence and recorded post-merge checks. Unknown CI stays
-visible beside local suite results; release and deployment remain unrecorded.
-See [execution feedback](docs/EXECUTION-FEEDBACK.md).
-
-Task fan-out has no fixed six-seat ceiling. Workspace retention defaults to 25;
-`ASHLR_VERSE_AGENT_CAP=none` disables retention-driven automatic archiving, or
-set a positive safe-integer capacity appropriate to your machine. Provider
-quotas, local hardware, available ports and workspace isolation still apply.
-Scheduling and cash-budget preferences no longer have the former preset UI
-ceilings. The panel reports the current 64-item journal capacity per tick;
-remaining work can continue on subsequent ticks.
-The local module map, searchable model roster, efficiency plugin and phone
-gateway remain available in both workflows.
-
-The grant editor lets you review each listed account's enabled state, roles,
-reserve and session ceiling. Set 0% reserve or No session ceiling explicitly
-when appropriate; current usage, budget preferences and provider readiness still
-determine eligibility. Editing a draft does not change the live grant.
-
-An exhausted positive cash allowance keeps eligible resident subscription and
-local work available without inventing dollar headroom. Actual metered or
-unknown-cost work waits; explicit $0 remains the loop's Stop setting.
-
-The read-only `ashlr openai-agents` CLI inspects managed OpenAI Agents session
-metadata with a host-held API key. API access is separate from subscriptions,
-and inventory does not qualify an execution seat. See the
-[Agents integration guide](docs/OPENAI-AGENTS-INTEGRATION.md),
-[Dots companion guide](docs/DOTS-COMPANION.md) and
-[harness evolution plan](docs/AGENT-HARNESS-EVOLUTION.md) for the supported
-commands and next integration steps.
+account quotas, workspace isolation, budget reserves and signed authority
+limit concurrency; **Automatic** counts do not mean unlimited parallel work.
+Open **Resources** to distinguish chat readiness from fleet readiness and
+see reported usage, reset windows and the specific hold; reported readings,
+estimates and unknowns stay distinct: a running daemon, completed plan or
+agent's success message alone does not prove your outcome was delivered.
+See [Automatic work](docs/AUTOMATIC-OUTCOMES.md) for routing, recovery and
+permissions, and [resource evidence](docs/RESOURCE-EVIDENCE.md) for the
+meaning of each reading.
 
 | | What you get | Guide |
 |---|---|---|
@@ -282,19 +189,19 @@ commands and next integration steps.
 **Status, plainly.** Autonomy ships dormant and is macOS-only. It turns on
 after you install the custody helper, sign a grant and start the resident
 daemon. The signed grant defines its stages and repository scope; a shadow
-stage proposes work without merging, while an eligible elite-direct stage can
-land verified changes. A release that changes authority code pauses an existing grant until
-Touch ID reapproval. Check the live grant, switch, Stop state and rollout stage
-with `ashlr authority status`; a source document cannot establish that the
-resident daemon is active on a particular Mac.
+stage proposes work without merging, while an eligible elite-direct stage
+can land verified changes. A release that changes authority code pauses an
+existing grant until Touch ID reapproval. Check the live grant, switch,
+Stop state and rollout stage with `phm authority status`; a source document
+cannot establish that the resident daemon is active on a particular Mac.
+
+Each chat turn has a compact **Tools and context** panel showing reported
+calls, MCP call counts, cited sources and recorded playbook references. The
+local Wiki module map links inferred dependencies to checked source lines
+and reports scan and resolver coverage. Both views use existing local
+evidence without additional model calls.
 
 ---
-
-Each chat turn has a compact **Tools and context** panel showing reported calls,
-MCP call counts, cited sources and recorded playbook references. The local Wiki
-module map links inferred dependencies to checked source lines and reports scan
-and resolver coverage. Both views use existing local evidence without additional
-model calls.
 
 ## The desktop app (macOS)
 
@@ -421,42 +328,6 @@ What differs from the desktop app: the chat dock's Terminal pane needs the
 desktop app's runtime (the browser gets **Open in Terminal.app** instead), and
 the custody helper behind autonomy is macOS-only (a Secure Enclave key and Touch
 ID).
-
----
-
-## Quickstart
-
-1. **Install** the desktop app or the CLI (above), and open Phantom.
-2. **Sign in your seats** (above). Start `ollama serve` for local seats.
-3. **Open a project.** **New chat** (⌘N) picks a seat and a folder; in the
-   desktop app **Choose folder…** opens the native picker. Saving a folder as a
-   project never enrolls it for unattended work.
-4. **Chat.** The composer takes attachments, `@` files and `/` commands, and
-   queues up to 3 turns while one runs. The context meter shows the selected
-   window and compaction point when known; its tooltip identifies reported,
-   catalog or default values. **Continue in a fresh chat** hands off with a
-   note built without a model call. ⌘K reaches every chat, action and seat; ⌘J
-   opens Needs you.
-5. **Optionally run the local fast lane.** `ashlr local-runtime start --slots 4`
-   starts llama-server with batching slots, and
-   `ASHLR_VERSE_LOCAL_DISPATCH=llama-server` in the workbench's environment sends local
-   turns to it. Model discovery stays on Ollama.
-6. **Optionally hand work to the cloud or to Devin.** **New cloud task** on
-   Command, or `ashlr cloud launch "<task>" --repo owner/name`
-   ([cloud lane](#the-cloud-and-devin-lanes)). For Devin, `ashlr devin connect` once,
-   then a **Devin (cloud)** chat, **Run in Devin** from a chat, or
-   `ashlr devin launch "<task>"`.
-7. **Talk to the Leader.** Open Mind (⌘4), or `ashlr leader say "focus: …"`.
-   `ashlr comms setup-telegram` adds a two-way Telegram line.
-8. **Inspect autonomy preparation** with `ashlr authority setup --dry-run --json`
-   and `ashlr authority status`. Guided setup can prepare prerequisites after
-   your explicit actions; once your standing grant is active,
-   `ashlr authority resident start` runs the resident fleet under it.
-   `ashlr authority protect --print` reviews GitHub changes. Updates preserve
-   existing rules, rule options and check App pins; incompatible or unfamiliar
-   top-level policies need review. Before writing, the updater rechecks all
-   selected existing policies and checks each again before its update. These
-   checks reduce the race window; they are not an atomic GitHub transaction.
 
 ---
 

@@ -63,11 +63,11 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
-  queue: ['report', '--help'],
+  queue: ['stats', 'report', 'control', 'help', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
@@ -89,12 +89,13 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   worker: ['setup', 'status'],
   fleet: [
-    'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
+    'status', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
+  ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
   wiki: ['build', 'status', 'show', 'ask'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
@@ -129,7 +130,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
+  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).

@@ -44,6 +44,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
+| Compute queue bottlenecks, capacity overlays and planner backpressure from an explicit snapshot | [Queue controller](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-CONTROL.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
@@ -61,6 +62,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
+| Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed](METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
