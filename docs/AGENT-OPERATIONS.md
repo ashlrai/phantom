@@ -287,6 +287,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
+| `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 

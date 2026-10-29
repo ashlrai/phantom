@@ -2198,6 +2198,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'top': {
+        const { cmdTop } = await import('./top.js');
+        process.exitCode = await cmdTop(rest);
+        break;
+      }
+
       case 'tui':
       case 'dash': {
         const cmdTui = await loadTuiCmd();
