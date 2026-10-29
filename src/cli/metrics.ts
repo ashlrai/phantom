@@ -1,5 +1,6 @@
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { rejectUnknownOptions } from './args.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { readTelemetry, recordEvent, type TelemetryInput } from '../core/metrics/telemetry.js';
@@ -8,8 +9,9 @@ import { renderDashboard } from '../core/metrics/dashboard.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/preferences.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
+import { computeIdleAllowance, type IdleJob, type IdleSnapshot } from '../core/metrics/idle-allowance.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|ingest --jobs <jobs.jsonl> --status <status.json>> [--json]
+const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|ingest --jobs <jobs.jsonl> --status <status.json>|idle --status <snapshot.json> [--status <snapshot.json> ...] --jobs <jobs.jsonl>> [--json]
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
 Exit 0: report or help. Exit 2: invalid arguments or refused input.`;
@@ -17,6 +19,35 @@ Exit 0: report or help. Exit 2: invalid arguments or refused input.`;
 interface CliIo {
   out: (line: string) => void;
   err: (line: string) => void;
+}
+
+function cmdIdle(args: string[], json: boolean, io: CliIo): number {
+  const statuses: string[] = [];
+  let jobsPath: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i];
+    const value = args[++i];
+    if (!value || value.startsWith('-')) { io.err(USAGE); return 2; }
+    if (option === '--status') statuses.push(value);
+    else if (option === '--jobs' && jobsPath === undefined) jobsPath = value;
+    else { io.err(USAGE); return 2; }
+  }
+  if (!statuses.length || !jobsPath) { io.err(USAGE); return 2; }
+  try {
+    const snapshots: IdleSnapshot[] = statuses.flatMap(path => {
+      const data: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      return (Array.isArray(data) ? data : [data]) as IdleSnapshot[];
+    });
+    const jobs = readFileSync(jobsPath, 'utf8').split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line) as IdleJob);
+    const report = computeIdleAllowance(snapshots, jobs);
+    if (json) io.out(JSON.stringify(report, null, 2));
+    else {
+      io.out(`Idle slot-minutes (${report.from} to ${report.to})`);
+      for (const lane of report.lanes) io.out(`${lane.lane}: ${lane.idleSlotMinutes} idle, ${lane.pausedSlotMinutes} paused; reasons: ${JSON.stringify(lane.pausedReasons)}`);
+      for (const job of report.stuckJobs) io.out(`Stuck ${job.id} (${job.lane}): ${job.elapsedMinutes} minutes; median ${job.medianWallMinutes}`);
+    }
+    return 0;
+  } catch { io.err('Unable to read or parse idle metrics input.'); return 1; }
 }
 
 function cmdIngest(args: string[], io: CliIo): number {
@@ -46,6 +77,7 @@ export function cmdMetrics(argv: string[], io: CliIo = { out: console.log, err: 
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');
   if (sub === 'help') { io.out(USAGE); return 0; }
   if (sub === 'ingest') return cmdIngest(rest, io);
+  if (sub === 'idle') return cmdIdle(rest, json, io);
   if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out'] } : {})) { io.err(USAGE); return 2; }
   try {
     switch (sub) {
