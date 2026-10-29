@@ -1,0 +1,13 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [],
+  "edges": [],
+  "issues": [],
+  "command": "fixture-only"
+}

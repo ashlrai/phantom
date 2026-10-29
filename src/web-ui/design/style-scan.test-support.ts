@@ -56,6 +56,9 @@ export const NEW_310_UI_PATHS: readonly string[] = [
   'routes/verse/sections/PlaybooksSection.tsx',
   'routes/verse/automations',
   'routes/verse/sections/AutomationsSection.tsx',
+  // The desktop command center: the Ops tray section's four views.
+  'routes/verse/ops',
+  'routes/verse/sections/OpsSection.tsx',
   'routes/verse/browser',
   'routes/verse/multimodel',
   // Verse on a phone (3.15): every file of it, stylesheets included.

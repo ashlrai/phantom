@@ -4693,16 +4693,19 @@ async function runGoalInternal(
 async function loadGatewayTools(cfg: AshlrConfig): Promise<unknown[]> {
   // Lazy-import MCP SDK to keep startup fast when tools are disabled
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const { SessionStdioClientTransport, GATEWAY_ENV_MARKER } = await import('../mcp-gateway.js');
+  if (process.env[GATEWAY_ENV_MARKER] !== undefined) {
+    throw new Error('MCP gateway self-spawn refused: inherited downstream marker');
+  }
 
   // Resolve the ashlr binary path from the config tools map, or fall back to PATH
   const ashlrBin = cfg.tools?.['ashlr'] ?? 'ashlr';
 
-  const transport = new StdioClientTransport({
+  const transport = new SessionStdioClientTransport({
     command: ashlrBin,
     args: ['mcp'],
     stderr: 'ignore',
-  });
+  }, 'orchestrator-gateway');
 
   const mcpClient = new Client(
     { name: 'ashlr-orchestrator', version: '0.1.0' },
