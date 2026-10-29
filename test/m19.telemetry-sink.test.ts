@@ -23,6 +23,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
+import { parseNativeOtelTrace, type ReceivedOtelSpan } from '../src/core/observability/otlp.js';
+import { startOtlpReceiver } from '../src/core/observability/otlp-receiver.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { requestTokenEvidence } from '../src/core/run/token-evidence.js';
@@ -660,5 +662,129 @@ describe('OtlpHttpSink — real HTTP delivery to local capture server', () => {
     } finally {
       delete process.env['ASHLR_PULSE_TOKEN'];
     }
+  });
+});
+
+function fixture(name: string, attributes: Record<string, string | number> = {}) {
+  return { resourceSpans: [{ resource: { attributes: [{ key: 'private', value: { stringValue: 'PRIVATE_CONTENT' } }] },
+    scopeSpans: [{ spans: [{ name, attributes: Object.entries(attributes).map(([key, value]) => ({
+      key, value: typeof value === 'number' ? { doubleValue: value } : { stringValue: value },
+    })) }] }] }] };
+}
+const claude = fixture('claude_code.api_request', {
+  input_tokens: 12, output_tokens: 9, cache_read_tokens: 80, cache_creation_tokens: 50,
+  cache_creation_5m: '30', cache_creation_1h: '20', cost_usd: 0.12,
+  prompt: 'PRIVATE_CONTENT', 'workspace.host_paths': 'PRIVATE_CONTENT',
+});
+
+let server: http.Server | undefined;
+afterEach(async () => {
+  if (server) {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
+    server = undefined;
+  }
+});
+
+async function listen(onSpans: (spans: ReceivedOtelSpan[]) => void | Promise<void> = () => {}) {
+  server = await startOtlpReceiver({ port: 0, onSpans });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+  expect(address.address).toBe('127.0.0.1');
+  return `http://127.0.0.1:${address.port}/v1/traces`;
+}
+function post(url: string, body: unknown, headers: Record<string, string> = {}) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body) });
+}
+
+describe('native OTLP metadata', () => {
+  it('retains both cache lifetimes without double counting or retaining content', () => {
+    const result = parseNativeOtelTrace(claude);
+    expect(result).toEqual([{ source: 'claude-code', event: 'api_request', usage: {
+      input_tokens: 12, output_tokens: 9, cache_read_tokens: 80, cache_creation_tokens: 50,
+      cache_creation_5m: 30, cache_creation_1h: 20,
+    }, costUsd: 0.12 }]);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_CONTENT');
+  });
+  it('accepts safety events without recording tool details or invented usage', () => {
+    expect(parseNativeOtelTrace(fixture('claude_code.safety_event', {
+      tool_parameters: 'PRIVATE_CONTENT', input_tokens: 50, cost_usd: 1,
+    }))).toEqual([{ source: 'claude-code', event: 'safety_event', usage: {} }]);
+  });
+  it('converts xAI billed ticks to dollars with ticks taking precedence', () => {
+    expect(parseNativeOtelTrace(fixture('chat', { 'gen_ai.system': 'xai',
+      cost_in_usd_ticks: '37756000', cost_usd: 50,
+    }))[0]?.costUsd).toBe(0.0037756);
+    expect(parseNativeOtelTrace(fixture('chat', { 'gen_ai.provider.name': 'xai',
+      cost_in_usd_ticks: 0,
+    }))[0]?.costUsd).toBe(0);
+  });
+  it.each([-1, Infinity, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1, '', '1e3', 'bad', '9007199254740990.9'])('rejects invalid integer usage %s', value => {
+    const payload = fixture('claude_code.api_request', { input_tokens: value, cost_in_usd_ticks: value });
+    expect(parseNativeOtelTrace(payload)[0]?.usage).toEqual({});
+  });
+  it('decodes canonical OTLP intValue attributes across resources and scopes', () => {
+    const span = { name: 'claude_code.api_request', attributes: [
+      { key: 'cache_creation_5m', value: { intValue: '40' } },
+      { key: 'cache_creation_1h', value: { intValue: '0' } },
+    ] };
+    const payload = { resourceSpans: [
+      { scopeSpans: [{ spans: [span] }, { spans: [span] }] },
+      { scopeSpans: [{ spans: [span] }] },
+    ] };
+    const result = parseNativeOtelTrace(payload);
+    expect(result).toHaveLength(3);
+    expect(result.every(item => item.usage.cache_creation_5m === 40 &&
+      item.usage.cache_creation_1h === 0 && item.costUsd === undefined)).toBe(true);
+  });
+  it.each([-1, 0.5, '9007199254740992', 'NaN'])('keeps invalid xAI cost unknown: %s', value => {
+    expect(parseNativeOtelTrace(fixture('chat', {
+      'gen_ai.system': 'xai', cost_in_usd_ticks: value,
+    }))[0]?.costUsd).toBeUndefined();
+  });
+  it('ignores unknown spans and refuses invalid envelopes', () => {
+    expect(parseNativeOtelTrace(fixture('PRIVATE_CONTENT'))).toEqual([]);
+    expect(() => parseNativeOtelTrace(null)).toThrow('Invalid OTLP');
+    expect(parseNativeOtelTrace({ resourceSpans: [null, {}] })).toEqual([]);
+  });
+});
+
+describe('loopback receiver', () => {
+  it.each(['0.0.0.0', '::', '::1', 'localhost', '127.0.0.2', '192.168.1.2', ''])('refuses bind %s', async host => {
+    await expect(startOtlpReceiver({ host, port: 0, onSpans: () => {} })).rejects.toThrow('127.0.0.1');
+  });
+  it('receives fixture spans over HTTP and acknowledges after delivery', async () => {
+    const batches: ReceivedOtelSpan[][] = [];
+    const url = await listen(spans => { batches.push(spans); });
+    const response = await post(url, claude);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({});
+    expect(batches).toEqual([parseNativeOtelTrace(claude)]);
+  });
+  it('refuses malformed, browser, compressed, oversized and unsupported requests', async () => {
+    let deliveries = 0;
+    const url = await listen(() => { deliveries++; });
+    expect((await post(url, '{')).status).toBe(400);
+    expect((await post(url, {})).status).toBe(400);
+    expect((await post(url, claude, { Origin: 'https://example.com' })).status).toBe(403);
+    expect((await post(url, claude, { 'Content-Type': 'application/x-protobuf' })).status).toBe(415);
+    expect((await post(url, claude, { 'Content-Encoding': 'gzip' })).status).toBe(415);
+    expect((await post(url, ' '.repeat(1_048_577))).status).toBe(413);
+    expect((await fetch(url)).status).toBe(405);
+    expect((await post(url + '/other', claude)).status).toBe(404);
+    expect(deliveries).toBe(0);
+  });
+  it('reports callback failure without exposing its error', async () => {
+    const url = await listen(() => { throw new Error('PRIVATE_CONTENT'); });
+    const response = await post(url, claude);
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe('{}');
+  });
+  it('rejects a busy port', async () => {
+    await listen();
+    const address = server!.address();
+    if (!address || typeof address === 'string') throw new Error('Expected TCP');
+    await expect(startOtlpReceiver({ port: address.port, onSpans: () => {} })).rejects.toThrow();
   });
 });

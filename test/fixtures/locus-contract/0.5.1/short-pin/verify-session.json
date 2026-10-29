@@ -1,0 +1,259 @@
+{
+  "kind": "session",
+  "version": "0.5.1",
+  "whoami": {
+    "session_id": "<SESSION_ID>",
+    "binding_alias": "acme",
+    "binding_id": "bnd_acme",
+    "tenant": "acme-corp",
+    "principal": null,
+    "providers": [
+      {
+        "provider": "supabase",
+        "account": "acme-prod",
+        "credential": {
+          "present": true,
+          "source": "environment"
+        },
+        "project_ref": "acme_ref_replace_me",
+        "team_id": null,
+        "account_id": null,
+        "read_only": true,
+        "orgs": []
+      },
+      {
+        "provider": "github",
+        "account": "acme-corp",
+        "credential": {
+          "present": true,
+          "source": "environment"
+        },
+        "project_ref": null,
+        "team_id": null,
+        "account_id": null,
+        "read_only": null,
+        "orgs": [
+          "acme-corp"
+        ],
+        "repos": [
+          "acme-corp/*"
+        ]
+      },
+      {
+        "provider": "vercel",
+        "account": "acme-team",
+        "credential": {
+          "present": true,
+          "source": "environment"
+        },
+        "project_ref": null,
+        "team_id": "team_acme_replace_me",
+        "account_id": null,
+        "read_only": null,
+        "orgs": []
+      }
+    ],
+    "expires_at": "<EXPIRES_AT>",
+    "expires_in_secs": 1,
+    "worker_home": "<WORKER_HOME>",
+    "seal_ok": true,
+    "seal": "<SEAL>",
+    "authority": "local_control",
+    "authority_anchor_ok": true,
+    "backing_type": "active",
+    "backing_path": "<LOCUS_HOME>/sessions/active.json",
+    "frozen": false,
+    "mode": "exclusive"
+  },
+  "doctor": {
+    "version": "0.5.1",
+    "home": "<LOCUS_HOME>",
+    "seal_ok": true,
+    "bindings": 2,
+    "pinned": "acme",
+    "pin": {
+      "alias": "acme",
+      "tenant": "acme-corp",
+      "binding_id": "bnd_acme",
+      "expires_at": "<EXPIRES_AT>",
+      "expires_in_secs": 1,
+      "seal_ok": true,
+      "authority_anchor_verified": true,
+      "client": "cli",
+      "expired": false
+    },
+    "pin_seal_ok": true,
+    "runtime": {
+      "pinned": true,
+      "seal_ok": true,
+      "authority_anchor_ok": true,
+      "backing_ok": true,
+      "backing_type": "active",
+      "backing_path": "<LOCUS_HOME>/sessions/active.json",
+      "authority": "local_control",
+      "binding_present": true,
+      "binding_id_match": true,
+      "tenant_match": true,
+      "providers_match": true,
+      "frozen": false,
+      "expired": false,
+      "session_id": "<SESSION_ID>",
+      "binding_alias": "acme",
+      "binding_id_session": "bnd_acme",
+      "binding_id_file": "bnd_acme",
+      "tenant_session": "acme-corp",
+      "tenant_file": "acme-corp",
+      "providers": [
+        {
+          "provider": "supabase",
+          "account": "acme-prod",
+          "credential": {
+            "present": true,
+            "source": "environment"
+          },
+          "project_ref": "acme_ref_replace_me",
+          "team_id": null,
+          "account_id": null,
+          "read_only": true,
+          "orgs": []
+        },
+        {
+          "provider": "github",
+          "account": "acme-corp",
+          "credential": {
+            "present": true,
+            "source": "environment"
+          },
+          "project_ref": null,
+          "team_id": null,
+          "account_id": null,
+          "read_only": null,
+          "orgs": [
+            "acme-corp"
+          ],
+          "repos": [
+            "acme-corp/*"
+          ]
+        },
+        {
+          "provider": "vercel",
+          "account": "acme-team",
+          "credential": {
+            "present": true,
+            "source": "environment"
+          },
+          "project_ref": null,
+          "team_id": "team_acme_replace_me",
+          "account_id": null,
+          "read_only": null,
+          "orgs": []
+        }
+      ],
+      "issues": [],
+      "ok": true
+    },
+    "approvals": {
+      "dir": "<LOCUS_HOME>/approvals",
+      "exists": true,
+      "writable": true,
+      "total": 0,
+      "pending": 0,
+      "approved_valid": 0,
+      "untrusted_approved": 0,
+      "expired_grants": 0,
+      "denied": 0,
+      "corrupt": 0,
+      "approval_authority": "local_advisory",
+      "authoritative_path_enabled": false,
+      "ok": true
+    },
+    "pending_approvals": 0,
+    "dual_control_waiting": 0,
+    "phantom_on_path": false,
+    "unresolved_phm": [],
+    "autopin": {
+      "path": "<LOCUS_HOME>/config.toml",
+      "present": true,
+      "remote_autopin_enabled": false,
+      "remote_rules": 0,
+      "ok": true,
+      "note": "auto_pin unset (manual pin only)"
+    },
+    "workspace": {
+      "found": false,
+      "valid": true,
+      "allowed_bindings": [],
+      "require_pin": false
+    },
+    "audit": {
+      "path": "<LOCUS_HOME>/audit/events.jsonl",
+      "total": 2,
+      "last": [
+        {
+          "ts": "<TS>",
+          "op": "session.pin",
+          "binding": "acme",
+          "detail": {
+            "cwd": "<CWD>",
+            "mode": "exclusive",
+            "namespaces": [],
+            "session_id": "<SESSION_ID>",
+            "tenant": "acme-corp",
+            "ttl_secs": 600,
+            "ttl_source": "flag"
+          }
+        },
+        {
+          "ts": "<TS>",
+          "op": "session.pin",
+          "binding": "personal",
+          "detail": {
+            "cwd": "<CWD>",
+            "mode": "exclusive",
+            "namespaces": [],
+            "session_id": "<SESSION_ID>",
+            "tenant": "personal",
+            "ttl_secs": 43200,
+            "ttl_source": "max_ttl"
+          }
+        }
+      ],
+      "scope_freeze": 0,
+      "deny": 0
+    },
+    "near_miss_count": 0,
+    "near_miss": {
+      "window_hours": 24,
+      "count": 0,
+      "scope_freeze": 0,
+      "require_approval": 0
+    },
+    "findings": [
+      {
+        "severity": "warn",
+        "code": "phantom_missing",
+        "message": "phantom not on PATH (install Phantom Secrets for Phantom credential references)"
+      },
+      {
+        "severity": "info",
+        "code": "control_capability_persisted",
+        "message": "control capability persisted — same-user processes can run control commands; use locus capability unpersist + shell export for strict posture"
+      }
+    ],
+    "issues": [
+      "phantom not on PATH (install Phantom Secrets for Phantom credential references)",
+      "control capability persisted — same-user processes can run control commands; use locus capability unpersist + shell export for strict posture"
+    ],
+    "verdict": "WARN",
+    "ok": false
+  },
+  "safe_next": {
+    "action": "ready",
+    "agent_tool": "locus_whoami",
+    "message": "Identity plane ready under pin `acme` (tenant `acme-corp`). Proceed with provider tools; do not invent alternate scopes.",
+    "ready": true,
+    "binding": "acme",
+    "tenant": "acme-corp"
+  },
+  "session_ok": false
+}
