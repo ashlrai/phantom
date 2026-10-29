@@ -1,3 +1,5 @@
+import { readEnvironmentCredential } from '../integrations/secrets.js';
+
 /**
  * usage-api.ts — M254 Claude Code OAuth Usage API client.
  *
@@ -68,7 +70,7 @@ export function invalidateUsageApiCache(): void {
 // ---------------------------------------------------------------------------
 
 function resolveOAuthToken(): string | null {
-  const t = process.env['CLAUDE_CODE_OAUTH_TOKEN'] ?? process.env['CLAUDE_BRIDGE_OAUTH_TOKEN'];
+  const t = readEnvironmentCredential('CLAUDE_CODE_OAUTH_TOKEN') ?? readEnvironmentCredential('CLAUDE_BRIDGE_OAUTH_TOKEN');
   return typeof t === 'string' && t.length > 0 ? t : null;
 }
 

@@ -221,6 +221,7 @@ function printBacklogHelp(col: ReturnType<typeof makeColors>): void {
   console.log('');
   console.log(`    ${col.cyan('ashlr backlog')}                   top scored work items (read; loads/builds if missing)`);
   console.log(`    ${col.cyan('ashlr backlog refresh')}           re-scan all enrolled repos and rebuild the backlog`);
+  console.log(`    ${col.cyan('phm backlog plan --help')}         offline READY queue planner for the bridge`);
   console.log(`    ${col.cyan('ashlr backlog --repo <path>')}     filter to a specific enrolled repo`);
   console.log(`    ${col.cyan('ashlr backlog --source <src>')}    filter by source: ${BACKLOG_SOURCE_FILTER_HELP}`);
   console.log(`    ${col.cyan('ashlr backlog --limit <n>')}       show only the top N items`);
@@ -229,6 +230,10 @@ function printBacklogHelp(col: ReturnType<typeof makeColors>): void {
 }
 
 export async function cmdBacklog(args: string[]): Promise<number> {
+  if (args[0] === 'plan') {
+    const { cmdBacklogPlan } = await import('./backlog-plan.js');
+    return cmdBacklogPlan(args.slice(1));
+  }
   const tty = process.stdout.isTTY === true;
   const col = makeColors(tty);
 
@@ -278,6 +283,11 @@ export async function cmdBacklog(args: string[]): Promise<number> {
     } else if (a?.startsWith('-')) {
       console.error(col.red('error: ') + `Unknown flag: ${a}`);
       console.error(col.dim('Usage: ashlr backlog [refresh] [--repo <path>] [--source <src>] [--limit <n>] [--json]'));
+      return 2;
+    } else if (a !== undefined) {
+      // A typo such as `backlog refesh` used to fall through to `list` silently.
+      console.error(col.red('error: ') + `Unknown backlog subcommand: ${a}`);
+      console.error(col.dim('Usage: ashlr backlog [list|refresh] [--repo <path>] [--source <src>] [--limit <n>] [--json]'));
       return 2;
     }
   }

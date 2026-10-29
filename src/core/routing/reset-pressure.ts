@@ -111,3 +111,212 @@ export function opportunityPriority(view: AccountSchedulingView, nowMs: number):
   const fit = forecastFit(view.forecast, view.reset.at, nowMs);
   return fit === 'likely-before-reset' ? 1 + proximity : fit === 'uncertain' ? proximity : 0;
 }
+
+// ---------------------------------------------------------------------------
+// Reset calendar: target burn rate per pool, weekly quota before credits
+// ---------------------------------------------------------------------------
+
+/**
+ * The share of an expiring window the calendar aims to have used at reset.
+ * Landing short of 100 keeps a small margin against the provider's own
+ * rounding and against work started just before the deadline.
+ */
+export const RESET_TARGET_USED_PERCENT = 98;
+
+/**
+ * One pool's reset calendar entry: the instant its current allowance window
+ * resets and the percent of that allowance still unspent. A pool may also
+ * carry a credit balance independent of the window (Codex credits are spent
+ * only after the expiring weekly quota lane). Pure data; the caller supplies
+ * provider readings and resets, never invented values.
+ */
+export interface ResetCalendarPool {
+  pool: string;
+  /** ISO instant the current allowance window resets; null when unknown. */
+  resetAt: string | null;
+  /** Percent of the window allowance still unspent (0-100); null when unknown. */
+  remainingPercent: number | null;
+  /** Spendable credit balance in the pool's own units; absent or 0 means no credits lane. */
+  creditBalance?: number | null;
+}
+
+/** Refuse malformed calendar entries; an unparseable reset is not evidence. */
+export function validResetCalendarPool(value: unknown): value is ResetCalendarPool {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as ResetCalendarPool;
+  if (typeof v.pool !== 'string' || v.pool.trim().length === 0 || v.pool.length > 128) return false;
+  if (v.resetAt !== null && (typeof v.resetAt !== 'string' || !Number.isFinite(Date.parse(v.resetAt)))) return false;
+  if (v.remainingPercent !== null && (typeof v.remainingPercent !== 'number' ||
+    !Number.isFinite(v.remainingPercent) || v.remainingPercent < 0 || v.remainingPercent > 100)) return false;
+  return v.creditBalance === undefined || v.creditBalance === null ||
+    typeof v.creditBalance === 'number' && Number.isFinite(v.creditBalance) && v.creditBalance >= 0;
+}
+
+export interface ResetPaceStatus {
+  pool: string;
+  resetAt: string | null;
+  remainingPercent: number | null;
+  /** Hours from nowMs until reset; null when the reset is unknown or already passed. */
+  hoursToReset: number | null;
+  /**
+   * Allowance percent per hour the pool must burn from now to land at the
+   * target at reset. Null when the reset or the reading is unknown; 0 when
+   * the reading already meets the target.
+   */
+  pacePerHour: number | null;
+}
+
+/**
+ * Required burn rate for one pool: the unspent allowance above the margin,
+ * spread evenly over the time left before reset. A reset in the past makes the
+ * reading stale, not spendable, so the pace stays unknown rather than negative.
+ */
+export function resetPace(pool: ResetCalendarPool, nowMs: number, target = RESET_TARGET_USED_PERCENT): ResetPaceStatus {
+  const resetMs = pool.resetAt === null ? NaN : Date.parse(pool.resetAt);
+  const hoursToReset = Number.isFinite(resetMs) && resetMs > nowMs ? (resetMs - nowMs) / 3_600_000 : null;
+  const remaining = typeof pool.remainingPercent === 'number' && Number.isFinite(pool.remainingPercent)
+    ? Math.max(0, Math.min(100, pool.remainingPercent)) : null;
+  const spendable = remaining === null ? null : Math.max(0, remaining - (100 - target));
+  const pacePerHour = hoursToReset !== null && hoursToReset > 0 && spendable !== null ? spendable / hoursToReset : null;
+  return { pool: pool.pool, resetAt: pool.resetAt, remainingPercent: remaining, hoursToReset, pacePerHour };
+}
+
+export type ResetLaneKind = 'weekly' | 'credits';
+
+/** One spend lane inside a pool, in the order the router should spend it. */
+export interface ResetLane {
+  pool: string;
+  kind: ResetLaneKind;
+  /** Weekly lanes carry the required burn; credits lanes always null. */
+  pacePerHour: number | null;
+  resetAt: string | null;
+  /** Weekly lanes carry the unspent window percent; credits lanes null. */
+  remainingPercent: number | null;
+  /** Credits lanes carry the spendable balance in pool units; weekly lanes null. */
+  creditBalance: number | null;
+}
+
+function compareLaneIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Lane order for spending: every spendable weekly quota lane precedes every
+ * credits lane, because the weekly allowance expires and the balance does
+ * not. Weekly lanes rank by required burn (most behind first), then earlier
+ * reset, then pool id. A weekly lane whose reset already passed is stale
+ * evidence and drops out; one with a known remainder but no usable reset
+ * keeps its lane after the paced ones. Credits lanes rank by balance.
+ */
+export function resetLaneOrder(pools: readonly ResetCalendarPool[], nowMs: number,
+  target = RESET_TARGET_USED_PERCENT): ResetLane[] {
+  const weekly: { lane: ResetLane; pace: number | null }[] = [];
+  const credits: { lane: ResetLane; balance: number }[] = [];
+  for (const pool of pools) {
+    if (!validResetCalendarPool(pool)) continue;
+    const resetMs = pool.resetAt === null ? NaN : Date.parse(pool.resetAt);
+    const resetPassed = Number.isFinite(resetMs) && resetMs <= nowMs;
+    const pace = resetPace(pool, nowMs, target);
+    if (pool.remainingPercent !== null && pool.remainingPercent > 0 && !resetPassed) {
+      weekly.push({
+        lane: { pool: pool.pool, kind: 'weekly', pacePerHour: pace.pacePerHour,
+          resetAt: pool.resetAt, remainingPercent: pace.remainingPercent, creditBalance: null },
+        pace: pace.pacePerHour,
+      });
+    }
+    if (typeof pool.creditBalance === 'number' && pool.creditBalance > 0) {
+      credits.push({ lane: { pool: pool.pool, kind: 'credits', pacePerHour: null,
+        resetAt: null, remainingPercent: null, creditBalance: pool.creditBalance }, balance: pool.creditBalance });
+    }
+  }
+  const resetRank = (lane: ResetLane): number => lane.resetAt === null ? Infinity : Date.parse(lane.resetAt);
+  weekly.sort((a, b) => {
+    const ap = a.pace === null ? Infinity : -a.pace;
+    const bp = b.pace === null ? Infinity : -b.pace;
+    return ap - bp || resetRank(a.lane) - resetRank(b.lane) || compareLaneIds(a.lane.pool, b.lane.pool);
+  });
+  credits.sort((a, b) => b.balance - a.balance || compareLaneIds(a.lane.pool, b.lane.pool));
+  return [...weekly.map((row) => row.lane), ...credits.map((row) => row.lane)];
+}
+
+/** The current window of a wall-clock recurring reset, e.g. weekly Sunday 8:21 PM in a named zone. */
+export interface RecurringResetWindow {
+  startsAt: string;
+  resetAt: string;
+}
+
+/**
+ * Add `days` wall-clock days to `ms` inside `zone`, so a weekly reset stays on
+ * the same local time across daylight-saving changes. Without a zone it is a
+ * fixed day count. Returns NaN when the zone or arithmetic fails.
+ */
+function shiftWallClockDays(ms: number, days: number, zone: string | null): number {
+  if (!zone) return ms + days * 86_400_000;
+  try {
+    const parts = (t: number) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(t).map((p) => [p.type, p.value]));
+    const p = parts(ms);
+    const target = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day) + days,
+      Number(p.hour), Number(p.minute), Number(p.second));
+    let candidate = target;
+    for (let i = 0; i < 3; i++) {
+      const q = parts(candidate);
+      candidate += target - Date.UTC(Number(q.year), Number(q.month) - 1, Number(q.day),
+        Number(q.hour), Number(q.minute), Number(q.second));
+    }
+    return candidate;
+  } catch {
+    return NaN;
+  }
+}
+
+/**
+ * Resolve the window containing `nowMs` for a recurring reset anchored at a
+ * known reset instant (for example the Grok Ultra weekly reset, Sunday 8:21 PM
+ * America/New_York). The anchor itself is a past or future reset; stepping it
+ * by whole wall-clock periods brackets the current window. Returns null when
+ * the inputs are malformed or the window cannot be bracketed.
+ */
+export function recurringResetWindow(anchorIso: string, everyDays: number,
+  timezone: string | null, nowMs: number): RecurringResetWindow | null {
+  let reset = Date.parse(anchorIso);
+  if (!Number.isFinite(reset) || !Number.isFinite(everyDays) || everyDays <= 0 ||
+    everyDays > 366 || !Number.isFinite(nowMs)) return null;
+  let steps = 0;
+  while (steps < 1000) {
+    const previous = shiftWallClockDays(reset, -everyDays, timezone);
+    if (!Number.isFinite(previous) || previous <= nowMs) break;
+    reset = previous;
+    steps++;
+  }
+  while (reset <= nowMs && steps++ < 2000) reset = shiftWallClockDays(reset, everyDays, timezone);
+  const start = shiftWallClockDays(reset, -everyDays, timezone);
+  if (!Number.isFinite(reset) || !Number.isFinite(start) || start >= reset || start > nowMs || reset <= nowMs) return null;
+  return { startsAt: new Date(start).toISOString(), resetAt: new Date(reset).toISOString() };
+}
+
+/**
+ * Bridge a capacity seat into a calendar pool: the remaining percent comes
+ * from the account weekly window (the session window stands in when the
+ * provider reports no long one), the reset from that window's machine reset
+ * or its qualified provenance. Credit balances are not part of the seat
+ * shape; a caller that knows one sets it on the returned entry.
+ */
+export function resetCalendarPoolForSeat(seat: SeatCapacity, nowMs: number): ResetCalendarPool {
+  const rows = seat.windows
+    .map((window) => ({ window, cls: classifyWindow(seat.engine, window, nowMs) }))
+    .filter((row) => row.cls !== 'model' && row.window.usedPercent !== null);
+  const weekly = rows.filter((row) => row.cls === 'weekly');
+  const chosen = (weekly.length > 0 ? weekly : rows)
+    .sort((a, b) => b.window.usedPercent! - a.window.usedPercent!)[0] ?? null;
+  const resetAt = chosen === null ? null : chosen.window.resetsAt ??
+    (chosen.window.resetProvenance && validResetProvenance(chosen.window.resetProvenance)
+      ? chosen.window.resetProvenance.at : null);
+  return {
+    pool: seat.seatId,
+    resetAt,
+    remainingPercent: chosen === null ? null : Math.max(0, 100 - chosen.window.usedPercent!),
+  };
+}

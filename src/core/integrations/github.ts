@@ -11,7 +11,7 @@
  *  - All spawns use spawnSync (no shell) with a tight timeout.
  */
 
-import { spawnSync } from 'node:child_process';
+import { credentialSpawnSync as spawnSync } from './secrets.js';
 import { createHash } from 'node:crypto';
 import type { GithubStatus, ProtectedPrObservedBypass, ProtectedRemoteRepositoryExpectation } from '../types.js';
 import { normalizeProtectedPrObservedBypass, normalizeProtectedRemoteRegistry, PROTECTED_PR_HANDOFF_OPERATION } from '../autonomy/protected-pr-handoff.js';
