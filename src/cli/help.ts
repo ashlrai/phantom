@@ -64,6 +64,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
   {
+    usage: 'phm graph status [--fleet <fleet.json>] [--seats <seats.json>] [--json]',
+    description: 'Read declared fleet relationships and passive seat catalogs. No provider probes or execution authority. Exit 0 complete projection, 1 incomplete, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'RegistryGraph (schema graph.v1): sources, nodes, edges, issues, complete',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -593,6 +599,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
+  { cmd: 'graph status [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
   { cmd: 'fleet automerge-canary status|prepare-shadow|activate-shadow|halt', desc: 'Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.', topic: 'autonomy' },

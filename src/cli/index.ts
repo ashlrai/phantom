@@ -2243,6 +2243,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'graph': {
+        const { cmdGraph } = await import('./graph.js');
+        process.exitCode = await cmdGraph(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
