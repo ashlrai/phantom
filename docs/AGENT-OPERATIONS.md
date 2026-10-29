@@ -147,6 +147,28 @@ receipts require operator reconciliation. Do not reset sidecars to bypass a
 refusal. Review isolation, sensitive-path checks, PAUSE, rate limits, CI/revert
 halts and credentials remain the supervisor's independent gates.
 
+### Checking constitution rule references
+
+Run `phm constitution check` from a repository root, or pass `--root <repo>`.
+It reads `CONSTITUTION.md` and checks text files whose name or containing
+directory includes `prompt` or `template`. Dependencies, generated output,
+hidden directories and test modules are excluded; symlinks are never followed.
+Pass file or directory paths after `check` to select other reference sources.
+Paths are relative to `--root`; repeated files are checked once.
+
+Explicit rule definitions start a Markdown heading or list item, for example
+`## CON-001: Evidence` or `- **RULE-2** Scope`. IDs use uppercase letters and
+optional uppercase hyphenated prefixes, followed by a hyphen and digits.
+Fenced code examples and prose mentions do not define rules. Every occurrence
+of such an ID in a selected prompt or template must match a definition.
+Constitutions without explicit IDs are supported; references still fail when
+their definitions are absent. This command does not assign or rewrite IDs.
+
+`--json` returns `ok`, `ruleCount`, `referenceCount`, `filesChecked` and
+`diagnostics` with file, line, ID and `missing` or `duplicate` kind. Exit codes
+are 0 for valid references, 1 for diagnostics or unreadable input, and 2 for
+bad usage. The check is read-only and requires no credentials.
+
 ## 2. Installing and running Phantom
 
 ```sh
