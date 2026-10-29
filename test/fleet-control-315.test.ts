@@ -24,7 +24,7 @@ import { buildFleetControlState, fleetControlVerdict, type FleetControlInputs } 
 import type { FleetControlDeps } from '../src/core/fleet/fleet-control.js';
 import * as enrollmentPolicy from '../src/core/sandbox/policy.js';
 import { fleetMirrorsDir } from '../src/core/fleet/repo-identity.js';
-import { defaultFleetControlDeps, projectFleetControlTickProgress } from '../src/core/fleet/fleet-control.js';
+import { applyFleetControlAction, readFleetControlQueue, defaultFleetControlDeps, projectFleetControlTickProgress } from '../src/core/fleet/fleet-control.js';
 import type { DaemonLivenessV1 } from '../src/core/daemon/liveness.js';
 import type { DaemonTickProgressRead } from '../src/core/daemon/tick-progress.js';
 import { requestRunCancel, runCancelRequested, RUN_CANCEL_TTL_MS, sweepRunCancelRequests } from '../src/core/fleet/run-cancel.js';
@@ -488,3 +488,103 @@ describe('/api/verse/fleet/control', () => {
     expect((await call('POST', '/api/verse/fleet/control', { action: 'task-edit', taskId, repo: 'ashlrai/fleet-canary', value: 5 }))?.body).toMatchObject({ did: ['Priority set to 5 of 5.', 'Retargeted to ashlrai/fleet-canary.'] });
   });
 });
+
+describe('fleet action ordering and replay', () => {
+  it.each(['expired', 'paused', 'revoked', 'invalid', 'none'] as const)(
+    'keeps both clamps when the grant becomes %s between Start authority reads', async (state) => {
+      const { s, deps } = fakeFleet();
+      s.kill = true;
+      s.paused = true;
+      s.switch = 'off';
+      const read = deps.authority;
+      let reads = 0;
+      deps.authority = async () => {
+        const result = await read();
+        if (++reads > 1) result.grant.state = state;
+        return result;
+      };
+      const result = await applyFleetControlAction({ action: 'start' }, deps);
+      expect(result.needs?.kind).toBe(state === 'expired' || state === 'paused' ? 're-approve' : 'grant');
+      expect(result.did).toEqual(['Switched to Autonomous.']);
+      expect(s.calls).toEqual(['switch']);
+      expect(s).toMatchObject({ kill: true, paused: true });
+      expect(reads).toBe(3);
+      expect(result.state.grant.state).toBe(state);
+    },
+  );
+
+  it('clears Stop before resuming and replays Start without repeating effects', async () => {
+    const { s, deps } = fakeFleet();
+    Object.assign(s, { kill: true, paused: true, switch: 'off' });
+    await applyFleetControlAction({ action: 'start' }, deps);
+    expect(s.calls).toEqual(['switch', 'clear-stop', 'resume']);
+    const replay = await applyFleetControlAction({ action: 'start' }, deps);
+    expect(replay.did).toEqual([]);
+    expect(s.calls).toEqual(['switch', 'clear-stop', 'resume']);
+    expect(replay.state).toMatchObject({ kill: false, paused: false });
+  });
+
+  it('does not resume when clearing Stop fails', async () => {
+    const { s, deps } = fakeFleet();
+    Object.assign(s, { kill: true, paused: true });
+    deps.clearStop = () => ({ ok: false, reason: 'ledger unavailable' });
+    await expect(applyFleetControlAction({ action: 'start' }, deps)).rejects.toMatchObject({ status: 409, code: 'clear-stop-failed' });
+    expect(s.calls).toEqual([]);
+    expect(s.paused).toBe(true);
+  });
+
+  it('does not requeue an interjection when the run cannot be stopped', async () => {
+    const { s, deps } = fakeFleet();
+    deps.cancelRun = () => ({ ok: false, reason: 'unavailable' });
+    await expect(applyFleetControlAction({ action: 'interject', runId: 'run-1', taskId: '11111111-2222-3333-4444-555555555555', note: 'retry' }, deps))
+      .rejects.toMatchObject({ code: 'stop-run-failed' });
+    expect(s.calls).toEqual([]);
+  });
+
+  it('reports deduped follow-ups and checks grants before stopping the run', async () => {
+    const { s, deps } = fakeFleet();
+    deps.enqueueTask = () => ({ ok: true, task: {} as never, deduped: true });
+    const action = { action: 'interject' as const, repo: 'ASHLRAI/FLEET-CANARY', title: 'Retry', note: 'same note', runId: 'run-1' };
+    const result = await applyFleetControlAction(action, deps);
+    expect(result.did).toEqual(['Stopped the run.', 'A follow-up with this note is already queued.']);
+    s.calls.length = 0;
+    deps.grantedRepos = async () => [];
+    await expect(applyFleetControlAction(action, deps)).rejects.toMatchObject({ code: 'repo-not-granted' });
+    expect(s.calls).toEqual([]);
+  });
+
+  it('preserves partial queue diagnostics when goals and target discovery fail', async () => {
+    const { deps } = fakeFleet();
+    deps.tasks = () => ({ ok: false, reason: 'queue unavailable' });
+    deps.goals = async () => { throw new Error('goals unavailable'); };
+    deps.enrolledPaths = async () => { throw new Error('paths unavailable'); };
+    deps.grantedRepos = async () => { throw new Error('repos unavailable'); };
+    expect(await readFleetControlQueue(deps)).toEqual({ v: 1, tasks: [], goals: [], targets: { paths: [], repos: [] }, reason: 'queue unavailable; the goals could not be read' });
+  });
+});
+
+describe('fleet queue ordering', () => {
+  it('filters terminal tasks and orders priority ties by oldest update before limiting to 200', async () => {
+    const { deps } = fakeFleet();
+    const task = queuedTaskFixture();
+    const tasks = Array.from({ length: 201 }, (_, i) => ({ ...task, id: `queued-${i}`, value: 2, updatedAt: `2026-10-${String(i % 28 + 1).padStart(2, '0')}T00:00:00.000Z` }));
+    deps.tasks = () => ({ ok: true, tasks: [
+      ...tasks,
+      { ...task, id: 'finished', status: 'done', value: 5 },
+      { ...task, id: 'parked', status: 'parked', value: 5 },
+      { ...task, id: 'running', status: 'dispatched', value: 4 },
+    ] });
+    const queue = await readFleetControlQueue(deps);
+    expect(queue.reason).toBeNull();
+    expect(queue.tasks).toHaveLength(200);
+    expect(queue.tasks.slice(0, 2).map((t) => t.id)).toEqual(['parked', 'running']);
+    expect(queue.tasks.some((t) => t.id === 'finished')).toBe(false);
+    expect(queue.tasks.slice(2).map((t) => t.updatedAt)).toEqual(tasks.map((t) => t.updatedAt).sort().slice(0, 198));
+  });
+});
+
+function queuedTaskFixture() {
+  const result = enqueueTask({ repo: 'ashlrai/fleet-canary', source: 'manual', title: 'Queue ordering fixture', detail: 'd', difficulty: 'low', value: 2, requestedBy: 'mason' }, { sizeBudget: { files: 4, lines: 150 } });
+  if (!result.ok) throw new Error(result.reason);
+  return result.task;
+}

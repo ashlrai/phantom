@@ -18,6 +18,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  resolveNpmCliLaunch,
+  runTrustedNpmCli,
+} from './helpers/built-release-inventory.js';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
+
 // These cases run REAL `npm pack` + `npm install` into temp dirs, so their
 // runtime is bound by actual package-manager and filesystem work and exceeds
 // 30s whenever the machine is loaded.
@@ -29,10 +35,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // inside the run. A test-harness timeout firing first only hides whether that
 // control passed; it never makes it pass.
 vi.setConfig({ testTimeout: 180_000, hookTimeout: 180_000 });
-import {
-  resolveNpmCliLaunch,
-  runTrustedNpmCli,
-} from '../scripts/build-release-dependency-inventory.mjs';
+requireBuiltDist();
 import {
   buildRuntimeReleaseDependencyInventory,
   observeInstalledRuntimeDependencies,
@@ -63,7 +66,9 @@ function write(path: string, value: string, mode = 0o644): void {
 }
 
 function runNpm(args: string[], cwd?: string) {
-  return runTrustedNpmCli(args, {
+  // Fixture packages are complete local inputs. A missing dependency must fail
+  // from the fresh cache rather than consulting a registry.
+  return runTrustedNpmCli([...args, '--offline'], {
     ...(cwd ? { cwd } : {}),
     encoding: 'utf8',
   });
@@ -317,6 +322,33 @@ describe('release artifact contract v1', () => {
       .toThrow('npm_execpath does not match the trusted Node toolchain');
   });
 
+  it('resolves the same trusted npm without an npm parent process', () => {
+    const inherited = resolveNpmCliLaunch();
+    const standalone = resolveNpmCliLaunch({});
+    try {
+      expect(standalone.command).toBe(inherited.command);
+      expect(standalone.npmCliPath).toBe(inherited.npmCliPath);
+      expect(standalone.npmCli.bytes).toEqual(inherited.npmCli.bytes);
+      expect(standalone.npmRuntimeClosureSha256).toBe(inherited.npmRuntimeClosureSha256);
+    } finally {
+      for (const launch of [inherited, standalone]) {
+        closeSync(launch.npmCli.descriptor);
+        closeSync(launch.packageJson.descriptor);
+      }
+    }
+  });
+
+  it('fails from the isolated empty cache when an install needs registry bytes', () => {
+    const installRoot = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-release-offline-')));
+    tempDirs.push(installRoot);
+    const installed = runNpm([
+      'install', '@fixture/release-contract-unavailable@1.0.0',
+      '--prefix', installRoot, '--ignore-scripts', '--no-audit', '--no-fund',
+    ]);
+    expect(installed.status).not.toBe(0);
+    expect(installed.stderr).toContain('ENOTCACHED');
+  });
+
   it('packs and installs the inventory plus exact bundled dependency bytes without package-lock', () => {
     const release = fixture();
     const packDestination = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-release-pack-')));
@@ -346,7 +378,6 @@ describe('release artifact contract v1', () => {
         installRoot,
         '--ignore-scripts',
         '--omit=dev',
-        '--offline',
         '--no-audit',
         '--no-fund',
       ],
@@ -1003,6 +1034,7 @@ describe('release artifact contract v1', () => {
 
   it.each([
     { name: 'explicit companion inventory guide', guides: ['docs/COMPANIONS.md'], sibling: 'docs/COMPANIONS-PRIVATE.md' },
+    { name: 'explicit memory foundation and evaluation guides', guides: ['docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md'], sibling: 'docs/MEMORY-EVALUATION-PRIVATE.md' },
     { name: 'three explicit Agents guides', guides: ['docs/OPENAI-AGENTS-INTEGRATION.md', 'docs/DOTS-COMPANION.md', 'docs/AGENT-HARNESS-EVOLUTION.md'], sibling: 'docs/OPENAI-AGENTS-PRIVATE.md' },
     { name: 'explicit reset-aware scheduling guide', guides: ['docs/RESET-AWARE-SCHEDULING.md'], sibling: 'docs/RESET-AWARE-PRIVATE.md' },
     { name: 'explicit execution feedback guide', guides: ['docs/EXECUTION-FEEDBACK.md'], sibling: 'docs/EXECUTION-FEEDBACK-PRIVATE.md' },

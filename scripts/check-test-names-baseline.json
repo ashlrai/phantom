@@ -1,0 +1,27 @@
+{
+  "$comment": "Known duplicate test names (describe path + it/test title) reported by `node scripts/check-test-names.mjs`. Every entry lives in a Tier-1 CODEOWNERS file that only the owner may edit; rename the test there and delete the matching entry in the same change (stale entries fail the check). Any duplicate NOT listed here fails the check.",
+  "names": [
+    "H6 · PART A · audit emission never disrupts the caller > enroll/unenroll/setKill return normally (audit swallows its own errors)",
+    "M460 policy assignment receipts > rejects non-finite read limits without projecting healthy zero",
+    "M460 policy assignment receipts > rejects non-finite writer lock limits",
+    "actual Phantom Locus adapter live session contract > refuses partial or empty inherited authority before callbacks",
+    "basic commands > help on \"stop\" prints usage without state or dependency effects",
+    "comms telegram-brand explicit operator command > rejects unsafe/unsupported flags before config or contact: --apply",
+    "durable outcome API > requires a current read session",
+    "fresh native credit projection wins over historical session signals > does not replace a native absent/false/zero reading with a legacy positive balance",
+    "fresh native credit projection wins over historical session signals > withholds credit availability without fresh successful native account evidence",
+    "fresh provider deployment binding > rejects mismatched or stale meta",
+    "fresh provider deployment binding > rejects mismatched or stale team",
+    "fresh provider deployment binding > rejects mismatched or stale url",
+    "general signed firm graph inspection > rejects invalid trace options \"--action\" before reading evidence",
+    "general signed firm graph inspection > rejects invalid trace options \"--limit\" before reading evidence",
+    "general signed firm graph inspection > rejects invalid trace options \"--since\" before reading evidence",
+    "installed desktop-update CLI contract > refuses ambiguity or caller authority \"apply\"",
+    "native Devin execution admission > refuses unqualified native identity",
+    "native profile preparation CLI > rejects malformed scope \"prepare\" before backend call",
+    "one-shot diagnostic capture (mocked execution and storage) > refuses invalid/truncated report while recording settled failure",
+    "private Locus job environments > refuses uncaptured inherited LOCUS_EXECUTOR_CAPABILITY even when malformed or incomplete",
+    "private Locus job environments > refuses uncaptured inherited LOCUS_SESSION_ID even when malformed or incomplete",
+    "real fixed worker process (POSIX source integrity) > refuses malformed/oversized stdin without echoing its bytes"
+  ]
+}

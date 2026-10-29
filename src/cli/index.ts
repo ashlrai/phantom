@@ -505,6 +505,12 @@ const loadDaemonCmd = lazyCmd(
   'daemon command requires src/cli/daemon.ts (M24 module not yet built).',
 );
 
+const loadDriveCmd = lazyCmd(
+  () => import('./drive.js'),
+  (m) => m.cmdDrive as Cmd,
+  'drive command requires src/cli/drive.ts.',
+);
+
 // ─── M25 command loaders ────────────────────────────────────────────
 
 const loadAskCmd = lazyCmd(
@@ -1517,6 +1523,10 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
+  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
+  const md = planMarkdownOpen(chosen.path, cfg);
+  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
+  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -1645,6 +1655,12 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 async function cmdConfig(args: string[]): Promise<void> {
   const subCmd = args[0];
 
+  // `config set <key> --help` (or `set --help <value>`) used to store "--help"
+  // as the value or the key. Refuse with the usage line before any config IO.
+  if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
+    die('Usage: ashlr config set <key> <value>', 2);
+  }
+
   if (subCmd === 'effective') {
     const jsonMode = args.includes('--json');
     const { loadEffectiveConfigSnapshot } = await import('../core/effective-config.js');
@@ -1661,6 +1677,19 @@ async function cmdConfig(args: string[]): Promise<void> {
     }
     console.log('');
     return;
+  }
+
+  const CONFIG_USAGE =
+    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
+  if (subCmd === '--help' || subCmd === '-h' || subCmd === 'help') {
+    console.log(CONFIG_USAGE);
+    console.log('  (no args) or path  print the config file path');
+    console.log('  list               print a summary of the config');
+    return;
+  }
+  // A typo such as `config gt roots` used to print the summary and exit 0.
+  if (subCmd && !['path', 'list', 'show', 'get', 'set'].includes(subCmd)) {
+    die(`Unknown config subcommand: ${subCmd}\n${CONFIG_USAGE}`, 2);
   }
 
   const cfg = loadConfig();
@@ -1759,7 +1788,7 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
-  // No sub-command: print a formatted summary
+  // `config list` (or `show`): print a formatted summary
   console.log('');
   console.log(bold('  ashlr config') + gray(` — ${CONFIG_PATH}`));
   console.log('');
@@ -1869,6 +1898,12 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'router-calibration': {
+        const { cmdRouterCalibration } = await import('./router-calibration.js');
+        process.exitCode = await cmdRouterCalibration(rest);
+        break;
+      }
+
       case 'index':
         cmdIndex(rest);
         break;
@@ -1901,6 +1936,18 @@ async function main(): Promise<void> {
         // Keep onboarding and its provider/service graph off unrelated CLI startup.
         const { cmdDoctor } = await import('./doctor-init.js');
         process.exitCode = await cmdDoctor(rest);
+        break;
+      }
+
+      case 'autopilot': {
+        const { cmdAutopilot } = await import('./autopilot.js');
+        process.exitCode = await cmdAutopilot(rest);
+        break;
+      }
+
+      case 'metrics': {
+        const { cmdMetrics } = await import('./metrics.js');
+        process.exitCode = await cmdMetrics(rest);
         break;
       }
 
@@ -1965,6 +2012,11 @@ async function main(): Promise<void> {
         // prompts OFF vs ON and reports steps/done/tokens.
         const cmdEval = await loadEvalCmd();
         process.exitCode = await cmdEval(rest);
+        break;
+      }
+
+      case 'queue': {
+        process.exitCode = await (await import('./queue.js')).cmdQueue(rest);
         break;
       }
 
@@ -2137,6 +2189,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'worktrees': {
+        const { cmdWorktrees } = await import('./worktrees.js');
+        process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
       case 'sandbox': {
         const cmdSandbox = await loadSandboxCmd();
         process.exitCode = await cmdSandbox(rest);
@@ -2170,6 +2228,11 @@ async function main(): Promise<void> {
       case 'daemon': {
         const cmdDaemon = await loadDaemonCmd();
         process.exitCode = await cmdDaemon(rest);
+        break;
+      }
+
+      case 'drive': {
+        process.exitCode = await (await loadDriveCmd())(rest);
         break;
       }
 
@@ -2292,6 +2355,12 @@ async function main(): Promise<void> {
       case 'goals': {
         const cmdGoals = await loadGoalsCmd();
         process.exitCode = await cmdGoals(rest);
+        break;
+      }
+
+      case 'sweep': {
+        const { cmdSweep } = await import('./sweep.js');
+        process.exitCode = await cmdSweep(rest);
         break;
       }
 
@@ -2501,10 +2570,22 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'resource': {
+        const { cmdResource } = await import('./resource.js');
+        process.exitCode = await cmdResource(rest);
+        break;
+      }
+
       case 'resources': {
         // M253: Resource Control Plane god-view — per-backend availability/used%/cap/resets.
         const cmdResources = await loadResourcesCmd();
         process.exitCode = await cmdResources(rest);
+        break;
+      }
+
+      case 'budget': {
+        const { cmdBudget } = await import('./budget.js');
+        process.exitCode = await cmdBudget(rest);
         break;
       }
 

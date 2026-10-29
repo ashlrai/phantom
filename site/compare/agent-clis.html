@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="An honest comparison of driving each coding-agent CLI directly versus running them inside Phantom, with every vendor statement linked to a public source and every Phantom claim linked to the repository.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://verse.ashlr.ai/compare/agent-clis">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://verse.ashlr.ai/compare/agent-clis">
+<meta property="og:title" content="Phantom compared to driving each agent CLI directly">
+<meta property="og:site_name" content="Phantom">
+<meta property="og:description" content="An honest comparison of driving each coding-agent CLI directly versus running them inside Phantom. Vendor statements link to public sources; Phantom claims link to the repository.">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<meta property="og:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:title" content="Phantom compared to driving each agent CLI directly">
+<meta name="twitter:description" content="An honest comparison of driving each coding-agent CLI directly versus running them inside Phantom.">
+<meta name="twitter:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": "https://verse.ashlr.ai/compare/agent-clis#webpage",
+  "url": "https://verse.ashlr.ai/compare/agent-clis",
+  "name": "Phantom compared to driving each agent CLI directly",
+  "description": "An honest comparison of driving each coding-agent CLI directly versus running them inside Phantom. Vendor statements link to public sources; Phantom claims link to the repository.",
+  "isPartOf": { "@id": "https://verse.ashlr.ai/#website" },
+  "about": { "@id": "https://verse.ashlr.ai/#application" }
+}
+</script>
+<title>Phantom vs. driving each agent CLI directly · Phantom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
+<style>
+:root{--bg:#EDF0F4;--surface:#FFFFFF;--surface-2:#F5F8FA;--ink:#0F1822;--muted:#58657A;--faint:#5F6C80;--line:#D3DBE4;--line-soft:#E3E9EF;--accent:hsl(245 72% 50%);--accent-dim:hsl(245 72% 94%);--live:#0E6F78;--live-dim:#D2E6E8;--warn:#8A6100;--f-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;--f-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;--step--1:0.8125rem;--step-0:1rem;--step-1:1.1875rem;--step-2:1.5rem;--step-3:2.125rem;--gutter:clamp(20px,5vw,64px);--max:1160px}
+@media (prefers-color-scheme:dark){:root{--bg:#0C121A;--surface:#121A24;--surface-2:#17212C;--ink:#E7EDF4;--muted:#93A1B4;--faint:#7B8EA4;--line:#22303F;--line-soft:#1B2734;--accent:hsl(245 72% 66%);--accent-dim:hsl(245 40% 20%);--live:#44CBD8;--live-dim:#0F3239;--warn:#E0A93B}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:var(--step-0);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin-inline:auto;padding-inline:var(--gutter)}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-0.02em}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.skip-link{position:fixed;z-index:30;top:-100px;left:var(--gutter);padding:10px 14px;background:var(--ink);color:var(--surface);border-radius:3px;font-weight:600;text-decoration:none}
+.skip-link:focus{top:max(12px,env(safe-area-inset-top))}
+main,section{scroll-margin-top:72px}
+.masthead{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft)}
+.masthead .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:14px}
+.brand{white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:var(--step-1);letter-spacing:-0.03em;color:var(--ink);text-decoration:none}
+.brand .sub{color:var(--faint);font-weight:500}
+.masthead nav{display:flex;gap:18px;font-size:var(--step--1);flex-wrap:wrap}
+.masthead nav a{color:var(--muted);text-decoration:none}
+.masthead nav a:hover{color:var(--ink)}
+.masthead nav a[aria-current]{color:var(--ink);font-weight:600}
+@media (max-width:860px){.masthead nav{display:none}}
+.hero{padding-block:clamp(40px,6vw,72px) clamp(24px,4vw,40px)}
+.hero h1{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.04;font-weight:700;max-width:20ch;margin-block:16px 18px}
+.hero .lede{font-size:var(--step-1);color:var(--muted);max-width:64ch;margin:0}
+.eyebrow{font-family:var(--f-mono);font-size:var(--step--1);letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);margin:0}
+.eyebrow a{color:var(--faint);text-decoration:none}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;align-items:center}
+.btn{font-weight:600;font-size:var(--step-0);padding:11px 20px;border-radius:3px;text-decoration:none;border:1px solid transparent;display:inline-block}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn-ghost{border-color:var(--line);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--muted)}
+section{padding-block:clamp(40px,6vw,72px);border-top:1px solid var(--line-soft)}
+.sec-head{max-width:66ch;margin-bottom:30px}
+.sec-head h2{font-size:var(--step-3);margin-block:10px 12px;line-height:1.12}
+.sec-head p{color:var(--muted);margin:0}
+.claims{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.claim{border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:18px 20px;display:grid;gap:8px;align-content:start}
+.claim h3{font-size:var(--step-1)}
+.claim p{margin:0;color:var(--muted);font-size:var(--step--1);line-height:1.6}
+.src{font-family:var(--f-mono);font-size:.75rem;color:var(--faint);margin:0;line-height:1.5}
+.claim .src{border-top:1px solid var(--line-soft);padding-top:9px;margin-top:2px}
+.src a{color:var(--accent)}
+code{font-family:var(--f-mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--line-soft);padding:1px 5px;border-radius:2px}
+pre{margin:0;padding:14px 16px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:3px;font-family:var(--f-mono);font-size:var(--step--1);line-height:1.7}
+.related{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.related a{display:grid;gap:6px;border:1px solid var(--line);border-radius:4px;background:var(--surface);padding:16px 18px;text-decoration:none;color:var(--ink)}
+.related a:hover{border-color:var(--accent)}
+.related .t{font-family:var(--f-display);font-weight:700;font-size:var(--step-0)}
+.related .d{font-size:var(--step--1);color:var(--muted);line-height:1.5}
+footer{border-top:1px solid var(--line-soft);padding-block:32px 44px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;justify-content:space-between;align-items:baseline}
+footer p{margin:0;color:var(--faint);font-size:var(--step--1);font-family:var(--f-mono)}
+footer a{color:var(--muted);text-decoration:none;font-size:var(--step--1)}
+footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img class="mark" src="/assets/phantom-mark.svg" width="24" height="24" alt="" />Phantom&nbsp;<span class="sub">by AshlrAI</span></a>
+    <nav aria-label="Site">
+      <a href="/">Product</a>
+      <a href="/use-cases/own-accounts">Own accounts</a>
+      <a href="/use-cases/local-models">Local models</a>
+      <a href="/use-cases/signed-autonomy">Signed autonomy</a>
+      <a href="/use-cases/review-agent-work">Review work</a>
+      <a href="/compare/agent-clis" aria-current="page">Compare</a>
+      <a href="/ecosystem">Ecosystem</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content" tabindex="-1">
+  <div class="wrap hero">
+    <p class="eyebrow">Phantom &middot; comparison</p>
+    <h1>When one workbench beats five terminals.</h1>
+    <p class="lede">
+      The coding-agent CLIs are good at being CLIs. Phantom does not replace them: each turn
+      still spawns the vendor's own binary under the account you chose. What it adds is the
+      layer around them. Vendor statements below link to the vendor's own public pages; Phantom
+      statements link to this repository's docs and source.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="/#install-verse">Install Phantom</a>
+      <a class="btn btn-ghost" href="https://github.com/ashlrai/phantom">Read the source</a>
+    </div>
+  </div>
+
+  <section aria-labelledby="clis-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">What the tools already are</p>
+        <h2 id="clis-title">Credit where it is due.</h2>
+        <p>Each vendor ships its own agent interface with its own update cycle. These statements
+        paraphrase the linked public page; where no public source exists, we say nothing.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>Claude Code</h3>
+          <p>Anthropic's agentic coding tool: reads your codebase, edits files, runs commands, and is available in the terminal, IDE extensions, a desktop app and the browser.</p>
+          <p class="src">Source: <a href="https://code.claude.com/docs/en/overview">Claude Code overview (code.claude.com)</a></p>
+        </div>
+        <div class="claim">
+          <h3>Codex</h3>
+          <p>OpenAI's lightweight coding agent that runs in your terminal, published as open source under the Apache-2.0 license.</p>
+          <p class="src">Source: <a href="https://github.com/openai/codex">github.com/openai/codex</a></p>
+        </div>
+        <div class="claim">
+          <h3>Grok CLI</h3>
+          <p>xAI documents headless CLI scripting for Grok Build (<code>grok -p</code> style non-interactive runs) alongside sandbox limits in its own docs.</p>
+          <p class="src">Source: <a href="https://docs.x.ai/build/cli/headless-scripting">xAI docs, Grok Build scripting</a></p>
+        </div>
+        <div class="claim">
+          <h3>Devin CLI</h3>
+          <p>Cognition's CLI for Devin, powered by the SWE-2 model family; cloud sessions are a separate API-driven product with their own pricing.</p>
+          <p class="src">Source: <a href="https://devin.ai/cli">devin.ai/cli</a>, <a href="https://devin.ai/pricing">devin.ai/pricing</a></p>
+        </div>
+        <div class="claim">
+          <h3>Ollama</h3>
+          <p>Serves an OpenAI-compatible API at <code>localhost:11434/v1</code> for the models you pull, per its own compatibility documentation.</p>
+          <p class="src">Source: <a href="https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx">Ollama OpenAI compatibility</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="adds-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">What a workbench adds</p>
+        <h2 id="adds-title">The layer around the terminals.</h2>
+        <p>Each claim cites the repository file or guide it comes from. Phantom ships no model
+        of its own and keeps the vendor harness intact: the turn still runs the real CLI.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>One console for every seat</h3>
+          <p>Chats, fleet work, resources and evidence in one window. Each turn spawns the vendor CLI process in the project directory and resumes its conversation by id, so the memory stays the vendor's own.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Pinned profiles per account</h3>
+          <p>Multiple accounts at the same provider stay in separate prepared profiles, so seat choice is an explicit decision rather than whichever login the CLI last used.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>A context meter that reads the real window</h3>
+          <p>Windows and compaction points come from the pinned binaries and each seat's catalog, not provider marketing pages. Warnings fire at 80% and 95% of the compaction point.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md">docs/VERSE-CONTEXT.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Reset-aware seat choice</h3>
+          <p>When several seats could do the work, the fleet can prefer an eligible account whose qualified allowance finishes before its deadline. Missing evidence stays unknown.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/RESET-AWARE-SCHEDULING.md">docs/RESET-AWARE-SCHEDULING.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Review as a first-class surface</h3>
+          <p>Per-turn checkpoints, per-file and per-hunk accept and reject, undo and rewind with previews, and a recorded decision log. The raw CLI gives you the diff; the workbench gives you the controls.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md, changes and checkpoints</a></p>
+        </div>
+        <div class="claim">
+          <h3>Optional signed autonomy</h3>
+          <p>On macOS, a Touch-ID-signed standing grant can run fleet work unattended inside its scope: an eight-stage ladder that starts in shadow, fixed merge gates and reversible merges. Dormant until you set it up.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md">docs/STANDING-AUTHORITY.md</a>, <a href="https://github.com/ashlrai/phantom/blob/master/docs/RESIDENT-RUNTIME.md">docs/RESIDENT-RUNTIME.md</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="direct-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">The honest other side</p>
+        <h2 id="direct-title">Drive the CLI directly when it is enough.</h2>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>One seat, one-off work</h3>
+          <p>If you use a single account for a single task, the vendor CLI alone is the shortest path. Phantom's value shows up when seats, projects or fleet work multiply.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">docs/QUICKSTART.md, for what installing adds</a></p>
+        </div>
+        <div class="claim">
+          <h3>Non-interactive pipelines</h3>
+          <p>The same headless invocations Phantom drives (<code>claude -p</code>, <code>codex exec</code>, <code>grok -p</code>) work fine in a CI script without a console. Phantom does not need to sit in that path.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a>, <a href="https://docs.x.ai/build/cli/headless-scripting">xAI docs, Grok Build scripting</a></p>
+        </div>
+        <div class="claim">
+          <h3>Minimal footprint</h3>
+          <p>Phantom is a Node.js 22.15+ install plus the vendor CLIs it drives. If you do not want the console, the checkpoint store or the optional daemon, keep the CLIs and skip it.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">docs/QUICKSTART.md</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="more-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Keep going</p>
+        <h2 id="more-title">Related guides</h2>
+      </div>
+      <div class="related">
+        <a href="/use-cases/own-accounts"><span class="t">Bring your own agent accounts</span><span class="d">Every CLI you already use, pinned to its own profile.</span></a>
+        <a href="/use-cases/local-models"><span class="t">Coding agents on local models</span><span class="d">Discovery through Ollama, dispatch on llama-server, measured numbers.</span></a>
+        <a href="/use-cases/signed-autonomy"><span class="t">Autonomy inside a signed scope</span><span class="d">A Touch ID grant, an eight-stage ladder, the same gates for every merge.</span></a>
+        <a href="/use-cases/review-agent-work"><span class="t">Review every agent change</span><span class="d">Per-turn checkpoints, per-hunk accept and reject, recorded decisions.</span></a>
+        <a href="/#install-verse"><span class="t">Install Phantom</span><span class="d">Node 22.15+, one global package, console on loopback.</span></a>
+        <a href="/ecosystem"><span class="t">The ecosystem</span><span class="d">Six public Ashlr repositories with dated GitHub history.</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Phantom &middot; by AshlrAI</p>
+    <span><a href="/">Product</a> &middot; <a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">User guide</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
+  </div>
+</footer>
+</body>
+</html>

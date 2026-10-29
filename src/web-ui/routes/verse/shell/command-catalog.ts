@@ -189,6 +189,7 @@ export const WORKBENCH_COMMANDS = [
   { id: 'section.wiki', title: 'Open Repo wiki', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['wiki', 'docs', 'architecture', 'deepwiki', 'knowledge'] },
   { id: 'section.playbooks', title: 'Open Playbooks', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['playbook', 'playbooks', 'template', 'macro', 'procedure', 'recipe'] },
   { id: 'section.automations', title: 'Open Automations', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['automations', 'triggers', 'schedule', 'cron', 'webhook', 'issues', 'label', 'red main', 'ci'] },
+  { id: 'section.ops', title: 'Open Ops', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['ops', 'board', 'kanban', 'router', 'lanes', 'releases', 'leaders', 'command center', 'tasks'] },
 
   // ── Navigation ───────────────────────────────────────────────────────────
   { ...bind('palette.open'), title: 'Command palette', group: null, section: 'Navigation' },

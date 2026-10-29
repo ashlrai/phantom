@@ -1,0 +1,44 @@
+{
+  "capabilities": [
+    "workspace-identity-pinning",
+    "credential-bindings",
+    "phm-references",
+    "mcp-server",
+    "agent-setup",
+    "agent-preflight",
+    "doctor-json",
+    "doctor-fix"
+  ],
+  "command": "locus",
+  "edits": [
+    "~/.locus/",
+    ".locus.toml",
+    ".mcp.json",
+    "~/.cursor/mcp.json",
+    "~/.codex/config.toml",
+    "~/.grok/config.toml",
+    "~/.gemini/settings.json"
+  ],
+  "health": {
+    "checks": [
+      {
+        "id": "locus-home",
+        "status": "ok"
+      },
+      {
+        "id": "phantom-on-path",
+        "status": "absent"
+      }
+    ],
+    "status": "ok"
+  },
+  "kind": "ashlr.handshake",
+  "name": "locus",
+  "protocols": {
+    "ashlr.handshake": 1,
+    "phantom.agent.preflight": 1
+  },
+  "receipts": [],
+  "schema_version": 1,
+  "version": "0.5.1"
+}

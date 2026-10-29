@@ -34,6 +34,7 @@ import {
   withRepoLock,
   type GitOpsOptions,
 } from './git-ops.js';
+import { assertWorktreeDiskSpace, WorktreeDiskError, type WorktreeDiskOptions } from '../worktree-disk.js';
 import { VERSE_WORKTREE_BRANCH_PREFIX, type VerseGitWorktreeResponse } from './workbench-types.js';
 
 /** A worktree name: a short slug, safe as both a directory and a branch segment. */
@@ -55,6 +56,7 @@ export function worktreeRepoSegment(gitRoot: string): string {
 }
 
 export interface WorktreeOptions extends GitOpsOptions {
+  disk?: WorktreeDiskOptions;
   /** Test seam: does this path exist? */
   pathExists?: (path: string) => boolean;
   /** Test seam: create the parent directory (mode 0700). */
@@ -88,7 +90,15 @@ export async function createWorktree(root: string, name: string, opts: WorktreeO
     if (head.code !== 0) throw new GitOpError('VERSE_GIT_REFUSED', 'This repository has no commits yet, so there is nothing to start a worktree from.');
     const taken = await run('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: gitRoot });
     if (taken.code === 0) throw new GitOpError('VERSE_GIT_REFUSED', `The branch ${branch} already exists. Pick another name.`);
-    await makeDir(parent);
+    try {
+      await assertWorktreeDiskSpace(parent, opts.disk);
+      await makeDir(parent);
+      // Recheck after mkdir: an existing child mount can use a different volume.
+      await assertWorktreeDiskSpace(parent, opts.disk);
+    } catch (error) {
+      if (error instanceof WorktreeDiskError) throw new GitOpError('VERSE_GIT_REFUSED', error.message);
+      throw error;
+    }
     const added = await run('git', ['worktree', 'add', '-b', branch, path, 'HEAD'], { cwd: gitRoot });
     if (added.code !== 0) {
       throw new GitOpError(added.timedOut ? 'VERSE_GIT_TIMEOUT' : 'VERSE_GIT_FAILED', 'Git could not create the worktree.');
