@@ -637,8 +637,8 @@ repository has its own install instructions, release state and star count.
 
 ## Documentation
 
-The [documentation map](https://github.com/ashlrai/phantom/blob/master/docs/README.md) separates current operation, the North
-Star and source-maintainer references. Start with these canonical guides:
+The [documentation map](https://github.com/ashlrai/phantom/blob/master/docs/README.md) separates current operation, the
+[vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md), and source-maintainer references. Start with these canonical guides:
 
 | Doc | What it covers |
 |-----|----------------|
@@ -653,7 +653,7 @@ Star and source-maintainer references. Start with these canonical guides:
 | [`docs/AUTHORITY.md`](https://github.com/ashlrai/phantom/blob/master/docs/AUTHORITY.md) | The owner's contract: custody, Stop and Revoke, setup, the resident step, residual risks |
 | [`docs/VERSE-CONTEXT.md`](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md) | Context windows, compaction, standard and expansive modes, handoff and shared memory |
 | [`docs/STANDING-AUTHORITY.md`](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) | Touch ID grants, the rollout ladder, merge gates and the ledger |
-| [`docs/NORTH-STAR.md`](https://github.com/ashlrai/phantom/blob/master/docs/NORTH-STAR.md) | Target outcome: verified engineering yield, evolving objectives and independent ecosystem products |
+| [`docs/VISION.md`](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |
 | [`docs/QUICKSTART.md`](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md) | Run the current local kernel, inspect results and choose the correct commissioning path |
 | [`docs/ASHLR-UNIVERSE.md`](https://github.com/ashlrai/phantom/blob/master/docs/ASHLR-UNIVERSE.md) | Experiments, campaigns, portfolio orchestration, evidence graphs and pinned local runtime |
 | [`docs/RESOURCE-POOLS.md`](https://github.com/ashlrai/phantom/blob/master/docs/RESOURCE-POOLS.md) | Native account/local worker commissioning, quotas, foreground queue, fleet map and calibration |
