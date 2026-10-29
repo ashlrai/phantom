@@ -42,6 +42,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
+| Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
