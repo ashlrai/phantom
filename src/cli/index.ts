@@ -1975,6 +1975,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'graph': {
+        const { cmdGraph } = await import('./graph.js');
+        process.exitCode = await cmdGraph(rest);
+        break;
+      }
+
       case 'init': {
         const { cmdInit } = await import('./doctor-init.js');
         process.exitCode = await cmdInit(rest);
