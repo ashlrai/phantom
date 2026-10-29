@@ -67,7 +67,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   benchmark: ['run', '--compare-reports', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'templates'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
