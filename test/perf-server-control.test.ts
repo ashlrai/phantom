@@ -1,10 +1,10 @@
 /**
- * 3.10 server performance (unit A3) — the Verse cockpit's read paths.
+ * 3.10 server performance (unit A3) - the Verse cockpit's read paths.
  *
  *  - /api/verse/control reads a stable config identity (so the shared
  *    fleet-status cache hits), only the fleet/daemon slice, a fingerprinted
- *    pending count, and — with a read-projection worker — a stale-while-
- *    revalidate fleet read that never waits on a busy worker.
+ *    pending count, and a stale-while-revalidate fleet read through a
+ *    read-projection worker that never waits on a busy worker.
  *  - /api/verse/usage-series is served from the rollup cache, refreshed on
  *    the worker.
  *  - GET /runtime and GET /fleet share one live runtime probe.
@@ -13,7 +13,7 @@
  * under that tmp HOME.
  */
 
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -160,6 +160,8 @@ function writeConfig(extra: Record<string, unknown>): void {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
   seen.fleetCfgs.length = 0;
   seen.pendingCalls = 0;
   seen.runtimeCalls = 0;
@@ -196,31 +198,43 @@ describe('GET /api/verse/control', () => {
     const inbox = join(homedir(), '.ashlr', 'inbox');
     mkdirSync(inbox, { recursive: true, mode: 0o700 });
     writeFileSync(join(inbox, 'prop-1.json'), '{}');
+    // Explicit stamps avoid depending on the filesystem's timestamp resolution.
+    utimesSync(inbox, 1_000, 1_000);
     expect(controlApi.cachedPendingCount()).toBe(2);
     expect(controlApi.cachedPendingCount()).toBe(2);
     expect(seen.pendingCalls).toBe(1);
     // The store's own writes: temp file + rename into the directory.
     writeFileSync(join(inbox, '.prop-2.tmp'), '{}');
     renameSync(join(inbox, '.prop-2.tmp'), join(inbox, 'prop-2.json'));
+    utimesSync(inbox, 2_000, 2_000);
     controlApi.cachedPendingCount();
     expect(seen.pendingCalls).toBe(2);
     rmSync(join(inbox, 'prop-2.json'));
+    utimesSync(inbox, 3_000, 3_000);
     controlApi.cachedPendingCount();
     expect(seen.pendingCalls).toBe(3);
   });
 
   it('catches an in-place edit (no directory change) within the full-check window', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
     const start = Date.now();
     const inbox = join(homedir(), '.ashlr', 'inbox');
     mkdirSync(inbox, { recursive: true, mode: 0o700 });
-    writeFileSync(join(inbox, 'prop-1.json'), '{}');
+    const proposal = join(inbox, 'prop-1.json');
+    writeFileSync(proposal, '{"status":"pending"}');
+    utimesSync(proposal, 1_000, 1_000);
+    utimesSync(inbox, 1_000, 1_000);
     controlApi.cachedPendingCount();
     const base = seen.pendingCalls;
-    writeFileSync(join(inbox, 'prop-1.json'), '{"status":"changed"}');
+    // Same size, different file stamp, with the directory stamp held constant.
+    writeFileSync(proposal, '{"status":"changed"}');
+    utimesSync(proposal, 2_000, 2_000);
+    utimesSync(inbox, 1_000, 1_000);
     controlApi.cachedPendingCount();
     expect(seen.pendingCalls).toBe(base); // directory stamp unchanged: fast path
-    vi.setSystemTime(start + 10_001);
+    vi.setSystemTime(start + 9_999);
+    controlApi.cachedPendingCount();
+    expect(seen.pendingCalls).toBe(base);
+    vi.setSystemTime(start + 10_000);
     controlApi.cachedPendingCount();
     expect(seen.pendingCalls).toBe(base + 1);
     // A later check with nothing changed stays cached.
@@ -230,7 +244,6 @@ describe('GET /api/verse/control', () => {
   });
 
   it('reads fleet status through the worker, fresh for 5 s, then stale-while-revalidate', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
     const start = Date.now();
     const reader = fakeReader();
     await controlApi.buildVerseControlSnapshot(cfg(), { dispatchEnabled: false, readProjections: reader });
@@ -271,7 +284,6 @@ describe('GET /api/verse/usage-series', () => {
 
 describe('shared runtime probe', () => {
   it('GET /runtime and GET /fleet share one probe within 3 s', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
     const start = Date.now();
     const runtime = await call('/api/verse/runtime');
     expect(runtime.status).toBe(200);

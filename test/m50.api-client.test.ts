@@ -13,6 +13,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildOllamaClient,
   buildOpenAICompatibleClient,
+  OpenAICompatServiceTierError,
 } from '../src/core/run/provider-client.js';
 import type { ChatMessage } from '../src/core/types.js';
 
@@ -357,6 +358,102 @@ describe('buildOpenAICompatibleClient — request body', () => {
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body['temperature']).toBe(0.7);
+  });
+});
+
+describe('buildOpenAICompatibleClient: service-tier refusals and cache retention', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('sends prompt_cache_retention only when the caller selects it', async () => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify(openAIResponse('ok')), { status: 200 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const retained = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false,
+      undefined, undefined, { promptCacheRetention: '12h' });
+    await retained.chat(makeMessages());
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]![1].body))).toMatchObject({ prompt_cache_retention: '12h' });
+    const plain = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+    await plain.chat(makeMessages());
+    expect(JSON.parse(String(fetchSpy.mock.calls[1]![1].body))).not.toHaveProperty('prompt_cache_retention');
+    const explicit = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false,
+      undefined, undefined, { promptCacheRetention: 'in_memory' });
+    await explicit.chat(makeMessages());
+    expect(JSON.parse(String(fetchSpy.mock.calls[2]![1].body))).toMatchObject({ prompt_cache_retention: 'in_memory' });
+  });
+
+  it.each([
+    { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', param: 'service_tier' } },
+    { error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', code: 'invalid_service_tier' } },
+    { error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } },
+    { error: { message: 'PRIVATE_TIER_DETAIL', type: 'service_tier_unavailable' } },
+    { error: { message: 'PRIVATE_TIER_DETAIL', code: 'service_tier_not_supported' } },
+    { error: { message: 'PRIVATE_TIER_DETAIL', type: 'unsupported_service_tier' } },
+  ])('classifies a structured service-tier marker in one bounded request %#', async (payload) => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(payload), { status: 400 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+    const error = await client.chat(makeMessages()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(OpenAICompatServiceTierError);
+    expect((error as OpenAICompatServiceTierError).retryAfterMs).toBeNull();
+    expect(String((error as Error).message)).toContain('OpenAI-compat HTTP 400');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { error: { message: 'service_tier is broken for this deployment', type: 'invalid_request_error', param: 'messages' } },
+    { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'server_error' } },
+    { error: { message: 'PRIVATE_VENDOR_ERROR', type: 'rate_limit_error', code: 'rate_limit_exceeded' } },
+    { error: 'service_tier_unavailable' },
+  ])('never classifies free text or unrelated markers %#', async (payload) => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify(payload), { status: 503 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+    const error = await client.chat(makeMessages()).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(OpenAICompatServiceTierError);
+    expect(String((error as Error).message)).toContain('503');
+  });
+
+  it('bounds a numeric Retry-After hint and ignores dates or junk', async () => {
+    for (const [header, expected] of [['120', 120_000], ['7200', 3_600_000],
+      ['Wed, 21 Oct 2015 07:28:00 GMT', null], ['not-a-number', null]] as const) {
+      const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+        JSON.stringify({ error: { type: 'service_tier_unavailable' } }),
+        { status: 503, headers: { 'retry-after': header } })));
+      vi.stubGlobal('fetch', fetchSpy);
+      const client = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+      const error = await client.chat(makeMessages()).catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(OpenAICompatServiceTierError);
+      expect((error as OpenAICompatServiceTierError).retryAfterMs).toBe(expected);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not issue a second request when a stream attempt hits a tier refusal', async () => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({ error: { message: 'PRIVATE_TIER_DETAIL', type: 'invalid_request_error', param: 'service_tier' } }),
+      { status: 400 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+    const error = await client.chatStream!(makeMessages(), undefined, () => {}, undefined)
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(OpenAICompatServiceTierError);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('still retries a generic stream failure through the non-stream fallback once', async () => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({ error: { message: 'PRIVATE_VENDOR_ERROR', type: 'server_error' } }), { status: 503 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = buildOpenAICompatibleClient('https://api.example.com/v1', 'key', 'model', false);
+    const error = await client.chatStream!(makeMessages(), undefined, () => {}, undefined)
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(OpenAICompatServiceTierError);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
 

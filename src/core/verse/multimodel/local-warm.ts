@@ -19,6 +19,7 @@
  * Readings are keyed by exact local configuration and retain their measurement time.
  */
 import type { LocalWarmResult } from './types.js';
+import { anthropicVersionHeaders } from '../../run/model-catalog.js';
 import { localSpeedBinding, localSpeedKey, type LocalSpeedBinding } from '../local-throughput.js';
 
 export const LOCAL_WARM_TIMEOUT_MS = 90_000;
@@ -121,7 +122,7 @@ export async function warmLocalModel(
     }
     const res = await fetchImpl(`${base}/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+      headers: { 'Content-Type': 'application/json', ...anthropicVersionHeaders('llama-server') },
       body: JSON.stringify({ model: target.model, max_tokens: 24, messages: [{ role: 'user', content: WARM_PROMPT }] }),
       signal: abort.signal,
     });
