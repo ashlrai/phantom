@@ -25,7 +25,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
+  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'release-train', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
@@ -62,6 +62,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
+  'release-train': ['plan', 'open', 'dispatch', '--dry-run', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['report', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
@@ -91,7 +92,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
@@ -129,7 +130,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
+  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).

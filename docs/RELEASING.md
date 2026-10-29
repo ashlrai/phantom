@@ -93,6 +93,22 @@ validates an isolated installed consumer, then promotes and reads back `latest`.
 Unknown publication state is reconciled through reads rather than replaying
 writes. See [publisher commissioning and dispatch](RELEASING-LOCALLY.md#canonical-npm-trusted-publishing).
 
+The `phm release-train` command automates the daily rhythm around this lane:
+`plan` decides the version bump from conventional commits since the latest
+release, `open` pushes the `release-train/vX.Y.Z` branch and opens the
+version-bump PR, and `dispatch` runs only the canonical publisher workflow.
+Dispatch is off by default: only an operator shell exporting
+`PHANTOM_RELEASE_TRAIN=1` actually calls `gh workflow run`; unset, `dispatch`
+is a dry run that still evaluates every gate and reports the exact argv. The
+four fail-closed gates refuse on any gh error or unparseable result and name
+the refusing gate: the version-bump PR merged at master head, no open P0
+DAILYFIX line or PR for the repo, the latest full-suite master run green, and
+the macOS plus Windows legs green on the bump revision. After the gates the
+CI, attestor, artifact and Audit evidence chain completes the publisher
+inputs and `--ref` pins the dispatch to the exact bump sha, never a branch
+name. The train refuses a red or held main, never pushes tags and never
+touches any other workflow.
+
 Native desktop finalization creates the original signed app archive and paired
 manifest. Use the [artifact installer](../scripts/install-desktop-artifacts.mjs)
 only after its original-asset qualification and required Stop/drain and Quit.
