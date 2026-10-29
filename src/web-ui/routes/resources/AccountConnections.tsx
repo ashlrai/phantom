@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ResourceAccountConnection, ResourceConnectionsSnapshot } from '../../../core/resources/connection-types.js';
 import { StatusBadge } from '../../components/primitives/StatusBadge.js';
 import { resourceTime } from './CapacityBoard.js';
@@ -183,10 +184,28 @@ function AccountRow({ account, sampledAt, historical, ceiling }: {
   </li>;
 }
 
+// Build from allowlisted values only: labels, IDs, reasons and native text can contain private data.
+function diagnosticSummary(connections: ResourceConnectionsSnapshot, historical: boolean): string {
+  const allowed = (value: unknown, values: readonly string[]) =>
+    typeof value === 'string' && values.includes(value) ? value : 'unknown';
+  const lines = ['Account connection diagnostics', `Snapshot: ${historical ? 'historical' : connections.refreshing ? 'checking' : 'latest'}`];
+  connections.accounts.forEach((account, index) => {
+    lines.push(`Account ${index + 1}: ${allowed(account.provider, ['codex', 'claude', 'grok'])}`);
+    lines.push(`  Check: ${allowed(account.state, ['checking', 'observed', 'signed-out', 'unavailable'])}`);
+    lines.push(`  Sign-in: ${allowed(account.authentication, ['signed-in', 'signed-out', 'unknown'])}`);
+    lines.push(`  Health: ${allowed(account.health, ['reachable', 'unknown', 'unavailable'])}`);
+    lines.push(`  Plan: ${planLabel(account.planType)}`);
+    lines.push(`  Transport: ${account.executionSupported === true ? 'available' : account.executionSupported === false ? 'not integrated' : 'unknown'}`);
+    lines.push(`  Quota windows reported: ${account.windows.length}`);
+  });
+  return lines.join('\n');
+}
+
 /** Presentation only: the resource desk owns polling; native login stays outside the browser. */
 export function AccountConnections({ connections, historical = false, ceilingPercent }: {
   connections: ResourceConnectionsSnapshot | null | undefined; historical?: boolean; ceilingPercent?: number | null;
 }) {
+  const [copyStatus, setCopyStatus] = useState('');
   if (!connections) return null;
   const ceiling = !historical && typeof ceilingPercent === 'number' && Number.isSafeInteger(ceilingPercent)
     && ceilingPercent >= 0 && ceilingPercent <= 100 ? ceilingPercent : null;
@@ -194,6 +213,15 @@ export function AccountConnections({ connections, historical = false, ceilingPer
     <header className={styles.heading}><div><h2>Account connections</h2>
       <p>Native sign-in and usage, separate from worker admission.</p></div>
       <span className={styles.refresh}>{historical ? 'Last successful console read' : connections.refreshing ? 'Checking account metadata…' : `Sampled ${resourceTime(connections.sampledAt)}`}</span></header>
+    <button type="button" onClick={async () => {
+      try {
+        await navigator.clipboard.writeText(diagnosticSummary(connections, historical));
+        setCopyStatus('Diagnostic summary copied.');
+      } catch {
+        setCopyStatus('Could not copy the diagnostic summary.');
+      }
+    }}>Copy diagnostic summary</button>
+    <span role="status">{copyStatus}</span>
     {ceiling !== null ? <div className={styles.referenceLegend}><span className={styles.legendTick} aria-hidden="true" />
       <strong>{ceiling}% saved pool reference</strong><span>{100 - ceiling}% personal headroom target</span>
       <span>Comparison only, not account dispatch eligibility.</span></div> : null}
