@@ -125,13 +125,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
  * the contract; delete an entry when its command is fixed. Value: what it does.
  */
 const KNOWN_HELP_ACTS: Record<string, string> = {
-  index: 'exit 0: builds and prints the index',
-  go: 'exit 1: builds the index, then "Nothing selected."',
-  status: 'exit 0: builds the index and prints portfolio status',
-  'ls --help': 'exit 0: builds the index and lists it',
-  'ls -h': 'exit 1: builds the index, then treats -h as a category',
-  open: 'exit 1: builds the index, then "Nothing selected."',
-  tidy: 'exit 0: runs the Desktop tidy plan ("Nothing to tidy.")',
   'config get': 'exit 1: looks the flag up as a config key',
   'config path': 'exit 0: prints the config path',
   'config effective': 'exit 0: prints the effective config snapshot (read-only)',
@@ -148,11 +141,6 @@ const KNOWN_HELP_ACTS: Record<string, string> = {
 
 /** Subset of KNOWN_HELP_ACTS whose `--help` still writes, spawns or connects. Value: the effect. */
 const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {
-  index: 'writes ~/.ashlr/index.json',
-  go: 'writes ~/.ashlr/index.json',
-  status: 'writes ~/.ashlr/index.json',
-  ls: 'writes ~/.ashlr/index.json',
-  open: 'writes ~/.ashlr/index.json',
   'mcp list': 'spawns `which` for every ecosystem binary',
 };
 
