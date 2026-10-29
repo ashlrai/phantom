@@ -177,7 +177,7 @@ describe('strict search-context protocol and history validation', () => {
   it.each([
     ['direction', new String('maximize')], ['direction', { toString: () => 'maximize' }],
     ['status', new String('passed')], ['status', { toString: () => 'passed' }],
-  ])('rejects object-valued enum %s without coercion', (field, invalid) => {
+  ])('rejects object-valued enum %s (%#) without coercion', (field, invalid) => {
     const summary = fixture(); record(summary, 1); const context = build(summary);
     const value = field === 'direction' ? { ...context, metric: { ...context.metric, direction: invalid } } :
       { ...context, previous: { ...context.previous!, status: invalid } };
@@ -187,7 +187,7 @@ describe('strict search-context protocol and history validation', () => {
   it.each([
     ['schemaVersion', 1], ['generation', 0], ['generation', 10002], ['variantId', '../escape'],
     ['universeId', 'UPPER'], ['manifestDigest', 'bad'], ['comparatorDigest', null], ['unexpected', true],
-  ])('rejects invalid top-level %s', (key, value) => {
+  ])('rejects invalid top-level %s (%j)', (key, value) => {
     expect(() => validateUniverseSearchContext({ ...build(fixture()), [key]: value })).toThrow(/Invalid Universe search context/);
   });
 

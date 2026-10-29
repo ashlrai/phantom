@@ -2,6 +2,15 @@
 
 # Quickstart — Phantom
 
+<!-- fresh:begin install-snippet -->
+Latest dated changelog release (verify promoted package availability before installing):
+
+```sh
+npm install -g @ashlr/phantom@3.29.13
+phm --version
+```
+<!-- fresh:end -->
+
 Phantom by AshlrAI is the everyday coding-agent workbench, formerly Ashlr Verse.
 The Universe experiment kernel is a separate, bounded source-checkout path below.
 Installing Phantom, enrolling a repo, starting a resident fleet and publishing
@@ -10,7 +19,7 @@ its work are distinct steps.
 The primary CLI is `phm`; `ashlr` remains compatible. Current source uses
 `@ashlr/phantom` in `ashlrai/phantom`. Find the current qualified release at
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
-This source tree targets version 3.29.15; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
 The verified 3.25.3 compatibility release remains `@ashlr/hub`.
 Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 [the product naming guide](PHANTOM-BRAND.md).
@@ -29,6 +38,7 @@ does not establish installed fleet or hosted-service readiness.
 Install Node.js 22.15+ and Git, then install the canonical package's promoted release:
 
 ```sh
+node --version  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom
 phm --version   # report the installed version
 phm verse
