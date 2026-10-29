@@ -18,17 +18,17 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'metrics', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'sandbox', 'audit',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
+  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'director', 'best-of-n', 'invent', 'resources', 'usage', 'version', 'help',
+  'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
@@ -40,7 +40,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
-  'benchmark',
+  'benchmark', 'queue',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.
@@ -51,22 +51,27 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'playbook',
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
+  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
+  'worktrees', 'drive', 'budget',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
+  queue: ['report', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
-  models: ['list', 'pull', 'start'],
+  models: ['list', 'pull', 'start', 'inventory'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
@@ -75,7 +80,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   telemetry: ['status', 'test'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
-  backlog: ['refresh'],
+  backlog: ['refresh', 'plan'],
   inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
@@ -86,7 +91,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],

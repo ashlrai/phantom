@@ -42,6 +42,7 @@
  *   - Bounded fetch timeouts so a hung server never blocks a tick.
  */
 
+import { readEnvironmentCredential } from './secrets.js';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -185,13 +186,13 @@ function endpointBase(cfg: PulseExporterConfig): string {
 
 /** Resolve the ingest PAT (explicit arg → env). Returns null when absent. */
 function resolvePat(explicit?: string): string | null {
-  const pat = explicit ?? process.env[PAT_ENV];
+  const pat = explicit ?? readEnvironmentCredential(PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
 }
 
 /** Resolve the read-scoped PAT for polling (READ env → ingest PAT → explicit). */
 function resolveReadPat(explicit?: string): string | null {
-  const pat = explicit ?? process.env[READ_PAT_ENV] ?? process.env[PAT_ENV];
+  const pat = explicit ?? readEnvironmentCredential(READ_PAT_ENV) ?? readEnvironmentCredential(PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
 }
 

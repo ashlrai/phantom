@@ -6,11 +6,14 @@ import { VerseMark } from '../rail-icons.js';
 import { runStatus, runTone } from './live-model.js';
 import { workingRuns } from './SteerPanel.js';
 import styles from './fleet-world.module.css';
+import { WorkspaceGraph } from './WorkspaceGraph.js';
+import { workspaceGraph } from './workspace-graph.js';
 
-export default function FleetWorld({ read, refreshing = false, readFailed = false }: {
+export default function FleetWorld({ read, refreshing = false, readFailed = false, agentWorkspace = false }: {
   read: OptionalRead<FleetLiveSnapshotV1> | undefined;
   refreshing?: boolean;
   readFailed?: boolean;
+  agentWorkspace?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
@@ -42,6 +45,7 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
     </div>
     {readFailed ? <p role="status" className={styles.note}>Last recorded snapshot · refresh failed.</p> : null}
     {live.stateReason ? <p className={styles.note}>{live.stateReason}</p> : null}
+    {agentWorkspace ? <WorkspaceGraph graph={workspaceGraph(live)} /> : null}
     <div className={styles.layout}>
       <div className={styles.yard}>
         {repositories.map(repo => <section className={styles.island} key={repo} aria-label={repo}>
