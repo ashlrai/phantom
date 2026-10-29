@@ -37,14 +37,19 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
-succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
-unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
-deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request that is ready
-for review. A draft pull request skips those until it is marked ready, which
-starts a full run; a draft cannot merge, so open drafts while iterating
-and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
+**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
+the secret-shape scan, lane classification, and — unless the change is
+docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+required check and fails unless exactly that selection ran and every full lane
+was skipped. No pull request or merge-queue commit may occupy a macOS or
+Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+(`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
+native-broker lanes, and the Windows service authority run only in the daily
+scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
+or on the reusable release call — where the caller's push event still defers
+the macOS and Windows-service legs to the daily run while the `ci` matrix,
+including its Windows portability legs, stays the release's native gate
+(`.github/workflows/ci.yml`).
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
