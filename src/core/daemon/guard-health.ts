@@ -6,7 +6,10 @@
  */
 
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { probeDaemonLiveness, type DaemonLivenessV1 } from './liveness.js';
+import { readDaemonPause } from './pause.js';
 
 import { evidenceDir } from '../autonomy/evidence-pack.js';
 import { readKillSwitch } from '../sandbox/policy.js';
@@ -263,4 +266,101 @@ export function diagnoseGuardHealth(): GuardHealthDiagnosis {
   } catch (err) {
     return fallbackDiagnosis(generatedAt, err);
   }
+}
+
+export const DAEMON_LOG_STALE_MS = 15 * 60_000;
+
+export interface DaemonHealthClient {
+  id: string;
+  engine: string;
+  model: string | null;
+}
+
+export interface DaemonHealthDeps {
+  nowMs?: number;
+  liveness?: () => DaemonLivenessV1;
+  pause?: () => 'paused' | 'running' | 'unknown';
+  kill?: () => 'active' | 'inactive' | 'unknown';
+  /** null means absent; undefined means unreadable or unsafe metadata. */
+  logMtime?: (name: string) => number | null | undefined;
+  platform?: NodeJS.Platform;
+}
+
+export interface DaemonHealth {
+  schemaVersion: 1;
+  checkedAt: string;
+  alive: boolean | null;
+  pid: number | null;
+  lastTickAt: string | null;
+  lastLogWriteAt: string | null;
+  logAgeMs: number | null;
+  logState: 'fresh' | 'stale' | 'missing' | 'unknown';
+  frontierClientsResolved: DaemonHealthClient[] | null;
+  paused: boolean | null;
+  killed: boolean | null;
+  healthy: boolean;
+  supervisor: {
+    restartRecommended: boolean;
+    reason: 'healthy' | 'dead' | 'log-stale' | 'paused' | 'killed' | 'unknown' | 'logs-missing' | 'frontier-unavailable';
+  };
+}
+
+function readLogMtime(name: string): number | null | undefined {
+  try {
+    // Observe metadata only. Never read daemon log content or provider auth files.
+    const metadata = statSync(join(homedir(), '.ashlr', name));
+    return metadata.isFile() ? metadata.mtimeMs : undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : undefined;
+  }
+}
+
+/** This recommendation grants no activation authority and performs no restart. */
+export function readDaemonHealth(
+  frontierClientsResolved: DaemonHealthClient[] | null,
+  deps: DaemonHealthDeps = {},
+): DaemonHealth {
+  const nowMs = deps.nowMs ?? Date.now();
+  const live = (deps.liveness ?? probeDaemonLiveness)();
+  const pause = (deps.pause ?? (() => readDaemonPause().state))();
+  const kill = (deps.kill ?? (() => readKillSwitch().state))();
+  const logMtime = deps.logMtime ?? readLogMtime;
+  const names = (deps.platform ?? process.platform) === 'darwin'
+    ? ['daemon.launchd.out.log', 'daemon.launchd.err.log']
+    : ['daemon.systemd.log'];
+  const times = names.map(logMtime);
+  const unknown = times.some((time) => time === undefined ||
+    (time !== null && (!Number.isFinite(time) || time < 0 || time > nowMs)));
+  const observed = times.filter((time): time is number => typeof time === 'number' &&
+    Number.isFinite(time) && time >= 0 && time <= nowMs);
+  const latest = observed.length > 0 ? Math.max(...observed) : null;
+  const logAgeMs = latest === null ? null : nowMs - latest;
+  const logState = unknown ? 'unknown' : logAgeMs === null ? 'missing'
+    : logAgeMs > DAEMON_LOG_STALE_MS ? 'stale' : 'fresh';
+  // A dead process may be intentionally stopped. Never recommend a restart
+  // across a pause, Stop, or an unreadable control/liveness observation.
+  const reason: DaemonHealth['supervisor']['reason'] = kill === 'active' ? 'killed'
+    : pause === 'paused' ? 'paused'
+      : kill === 'unknown' || pause === 'unknown' || live.alive === null ? 'unknown'
+        : live.alive === false ? 'dead'
+          : logState === 'stale' ? 'log-stale'
+            : logState === 'missing' ? 'logs-missing'
+              : logState === 'unknown' || frontierClientsResolved === null ? 'unknown'
+                : frontierClientsResolved.length === 0 ? 'frontier-unavailable' : 'healthy';
+  return {
+    schemaVersion: 1,
+    checkedAt: new Date(nowMs).toISOString(),
+    alive: live.alive,
+    pid: live.pid,
+    lastTickAt: live.recorded.lastTickAt,
+    lastLogWriteAt: latest === null ? null : new Date(latest).toISOString(),
+    logAgeMs,
+    logState,
+    frontierClientsResolved,
+    paused: pause === 'unknown' ? null : pause === 'paused',
+    killed: kill === 'unknown' ? null : kill === 'active',
+    healthy: live.alive === true && logState === 'fresh' && pause === 'running' &&
+      kill === 'inactive' && frontierClientsResolved !== null && frontierClientsResolved.length > 0,
+    supervisor: { restartRecommended: reason === 'dead' || reason === 'log-stale', reason },
+  };
 }

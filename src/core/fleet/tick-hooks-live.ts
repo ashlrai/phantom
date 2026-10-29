@@ -149,6 +149,7 @@ import {
   laneStates,
   planLanes,
   grokDispatchBatchCapacity,
+  landFirstPriority,
   planFanoutReserve,
   planStandingBestOfN,
   grantHasDevinProducer,
@@ -1929,6 +1930,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           lanes,
           laneEngines: laneEngines.engines,
           demotions,
+          // Land-first scheduling reads the same reconciled open-PR counts
+          // backpressure computed for this tick (null when they could not be
+          // counted — feature launches then fail closed there too).
+          openPrsByRepo: openPrs,
           // The λ weights used to reach only best-of-N (bonThreshold); the
           // seat ranking now reads them too (routing/router.ts seatScore).
           weights: routing,
@@ -2140,6 +2145,11 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           const advice = Number(b.id === current.advisedPair.taskId)-Number(a.id === current.advisedPair.taskId);
           if (advice) return advice;
         }
+        // Land-first: LAND and FIXUP jobs on a saturated repo take its free
+        // slots before any other work; a feature launch there sorts last (it
+        // is held at route time anyway). Healthy repos all rank 2 here.
+        const landFirst = landFirstPriority(a, current.router) - landFirstPriority(b, current.router);
+        if (landFirst) return landFirst;
         const priority = (id:string) => Object.values(current.itemScheduling.get(id) ?? {}).reduce((best,view)=>Math.max(best,opportunityPriority(view,current.nowMs)),0);
         return priority(b.id)-priority(a.id);
       }).map((item) => item.id);
