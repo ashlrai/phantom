@@ -1,13 +1,17 @@
 import { createReadStream } from 'node:fs';
 import { addBudgetReadings, readPoolBudgets } from '../core/fleet/pool-budget-store.js';
 import { BUDGET_POOLS, parseBudgetOutput, validateBudgetReading, type BudgetPool } from '../core/fleet/pool-budget.js';
+import { projectPoolBudgetPlan } from '../core/fleet/pool-budget-plan.js';
 
 const HELP = `Usage:
   phm budget show [--json]
+  phm budget plan [--json]
   phm budget add <pool> --bucket weeklyPct|credits|acus|capacity --remaining N [--reset-at UTC] [--at UTC] [--json]
   phm budget add <pool> --source cli|log --input <file|-> [--at UTC] [--json]
 Manual observations override automatic observations until their reset. No reset means a persistent override.
 Automatic input is parsed locally; raw output is never stored. '-' reads standard input.
+Plan projects the dispatch pacing plan: open lane (weekly before credits), target burn, concurrency
+direction and reasons per pool, so each pool lands near its target at reset. Advisory; dispatchd decides.
 `;
 async function readInput(path: string): Promise<string> {
   const stream = path === '-' ? process.stdin : createReadStream(path);
@@ -37,8 +41,8 @@ export async function cmdBudget(args: string[]): Promise<number> {
       options.set(arg, value);
     }
     const [command = 'show', pool] = positional;
-    if (command === 'show') {
-      if (positional.length > 1 || options.size) throw new Error('show accepts only --json');
+    if (command === 'show' || command === 'plan') {
+      if (positional.length > 1 || options.size) throw new Error(`${command} accepts only --json`);
     } else if (command === 'add') {
       if (positional.length !== 2 || !BUDGET_POOLS.includes(pool as BudgetPool)) throw new Error('add requires a supported pool');
       const source = options.get('--source') ?? 'manual';
@@ -53,8 +57,20 @@ export async function cmdBudget(args: string[]): Promise<number> {
         const output = await readInput(input);
         await addBudgetReadings(parseBudgetOutput(pool as BudgetPool, source, output, timestamp));
       } else throw new Error('Invalid budget source');
-    } else throw new Error('Expected budget add or show');
+    } else throw new Error('Expected budget add, show or plan');
     const budgets = await readPoolBudgets();
+    if (command === 'plan') {
+      const plan = projectPoolBudgetPlan(budgets);
+      if (json) console.log(JSON.stringify({ plan }));
+      else {
+        console.log(`Pool budget plan (${plan.sourceState}) target=${plan.targetUsedPercent}%`);
+        for (const [name, d] of Object.entries(plan.decisions)) {
+          console.log(`${name} [${d.lane}] ${d.concurrency}${d.maxConcurrency === null ? '' : ` cap=${d.maxConcurrency}`} ` +
+            `target=${d.targetBurnPerHour ?? 'unknown'}/h observed=${d.observedBurnPerHour ?? 'unknown'}/h | ${d.reasons.join(' ')}`);
+        }
+      }
+      return plan.sourceState === 'healthy' ? 0 : 1;
+    }
     if (json) console.log(JSON.stringify({ budgets }));
     else {
       console.log(`Pool budgets (${budgets.sourceState})`);
