@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Dependency preparation for trusted Mac bridge checkouts (not OS sandboxes). */
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, statfs, symlink } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -121,13 +121,21 @@ export async function prepareDependencies({ source, target, cloneTimeoutMs = 500
     if (published) await rm(destination, { recursive: true, force: true });
     throw error;
   } finally {
-    if (stage) await rm(stage, { recursive: true, force: true });
-    await rm(lock, { recursive: true });
+    // Attempt both cleanups even if one fails, without masking the operation's outcome.
+    if (stage) await rm(stage, { recursive: true, force: true }).catch(() => {});
+    await rm(lock, { recursive: true, force: true }).catch(() => {});
   }
   return { method, durationMs: Math.round(performance.now() - started) };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = () => {
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isMain()) {
   const args = process.argv.slice(2);
   const requireClone = args[0] === '--require-clone';
   if (requireClone) args.shift();
