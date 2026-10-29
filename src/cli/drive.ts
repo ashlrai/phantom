@@ -8,6 +8,8 @@ const HELP = `Usage: phm drive [--once] [--dry-run] [--tick <seconds>]
                  [--bridge <absolute-path>] [--publisher <absolute-path/publish.sh>]
                  [--pause-file <absolute-path>]
 
+Use phm drive report, phm drive levers, or phm drive jobs for local reporting.
+
 Supervise the host queue through the phm-drive/v1 bridge. Default tick: 30s.
 --once --dry-run reads and plans only. No reaping, launch, publishing or writes.
 Live operation requires a host bridge implementing shared dispatchd ownership,
@@ -53,6 +55,11 @@ export async function driveControlPresent(path: string): Promise<boolean> {
 }
 
 export async function cmdDrive(args: string[], dependencies?: DriveDependencies): Promise<number> {
+  if (args[0] === 'report' || args[0] === 'jobs' || args[0] === 'levers') {
+    const { cmdDriveReport, cmdDriveLevers } = await import('./drive-routines.js');
+    return args[0] === 'levers' ? cmdDriveLevers(args.slice(1)) :
+      cmdDriveReport(args[0] === 'jobs' ? args : args.slice(1));
+  }
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(HELP); return 0; }
   let options: DriveOptions;
   try { options = parseDriveOptions(args); }
