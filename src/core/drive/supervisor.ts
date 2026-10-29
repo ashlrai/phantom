@@ -1,3 +1,8 @@
+import {
+  dashboardRollup, evaluateWeeklyGovernor, governorAllows, runOpsTick,
+  type DashboardRollupV1, type OpsPorts, type OpsTickResult, type WeeklyGovernorDecision, type WeeklyGovernorState,
+} from './ops-tick.js';
+
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
 export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN';
 export interface DriveJob {
@@ -27,6 +32,14 @@ export interface DriveReport {
   published: string[];
   publicationUnknown: string[];
   held: string | null;
+  /** Per-step outcome of the dispatchd ops tick; absent on dry-run/held ticks. */
+  ops?: OpsTickResult;
+  /** Weekly Grok-pool governor verdict when a reading source is wired. */
+  governor?: WeeklyGovernorState;
+  /** READY jobs the governor held this tick (non-P0 Grok-turn work above the watermark). */
+  governorHeld?: string[];
+  /** The value-free dashboard row the ops tick's dashboard-rollup step staged. */
+  dashboard?: DashboardRollupV1;
 }
 
 /**
@@ -52,6 +65,22 @@ export interface DriveDependencies {
   /** Only the existing publish.sh may implement this callback in the CLI. */
   publish(job: string, lease: string): Promise<void>;
   now?(): Date;
+  /**
+   * Advisory ops steps run inside the tick under the shared lease — restock,
+   * metrics export, fixfwd triage and dashboard rollup. `reap` is supplied by
+   * the supervisor (the existing bridge reap); unprovided ports log `skipped`.
+   */
+  ops?: Omit<OpsPorts, 'reap'>;
+  /** One value-free `drive-ops …` line per ops step and governor verdict. */
+  opsLog?(line: string): void;
+  /**
+   * Weekly Grok-pool used-percent reading (0–100, null = unknown). Presence
+   * enables the weekly budget governor; an unreadable or throwing reading
+   * fails closed and pauses non-P0 Grok-turn work.
+   */
+  weeklyGrokUsedPercent?(): Promise<number | null>;
+  /** Pool ids treated as Grok-turn lanes; defaults to the grok-* budget pools. */
+  grokPools?: readonly string[];
 }
 
 const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN']);
@@ -95,13 +124,13 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
 const active = (job: DriveJob): boolean => job.state === 'RUNNING' || job.state === 'STARTING';
 
 /** Floor deficits get first choice; priority and queue order break ties. */
-export function planDrive(snapshot: DriveSnapshot): string[] {
+export function planDrive(snapshot: DriveSnapshot, opts?: { hold?: (job: DriveJob) => boolean }): string[] {
   snapshot = parseDriveSnapshot(snapshot);
   if (snapshot.paused || snapshot.admission !== 'open') return [];
   const counts = new Map(snapshot.pools.map(pool => [pool.id, snapshot.jobs.filter(job => job.pool === pool.id && active(job)).length]));
   const pools = new Map(snapshot.pools.map(pool => [pool.id, pool]));
   let total = snapshot.jobs.filter(active).length;
-  const ready = snapshot.jobs.filter(job => job.state === 'READY');
+  const ready = snapshot.jobs.filter(job => job.state === 'READY' && !(opts?.hold?.(job) ?? false));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
     const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling);
@@ -134,17 +163,44 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
     report.held = state.paused ? 'paused' : state.admission !== 'open' ? `admission-${state.admission}` : null;
     return state;
   };
+  let governor: WeeklyGovernorDecision | null = null;
+  const readGovernor = async (): Promise<WeeklyGovernorDecision | null> => {
+    if (!deps.weeklyGrokUsedPercent) return null;
+    let reading: number | null = null;
+    try { reading = await deps.weeklyGrokUsedPercent(); } catch { reading = null; }
+    const decision = evaluateWeeklyGovernor(reading);
+    report.governor = decision.state;
+    deps.opsLog?.(`drive-ops governor ${decision.state}`);
+    return decision;
+  };
+  const hold = (job: DriveJob): boolean =>
+    governor !== null && governor.nonP0Paused && !governorAllows(job, governor, deps.grokPools);
   try {
     if (options.signal?.aborted) { report.held = 'stopping'; return report; }
     if (dryRun) {
-      report.planned = planDrive(await snapshot());
+      governor = await readGovernor();
+      const state = await snapshot();
+      report.planned = planDrive(state, { hold });
+      if (governor?.nonP0Paused) report.governorHeld = state.jobs.filter(job => job.state === 'READY' && hold(job)).map(job => job.id);
       return report;
     }
     lease = await bridge.acquire();
     if (!lease) { report.held = 'ownership-busy'; return report; }
     if (options.signal?.aborted) { report.held = 'stopping'; return report; }
+    governor = await readGovernor();
+    // The ops tick carries reap plus the steps that used to spend Grok turns.
     // Reaping still proceeds under memory pressure; it never starts a worker.
-    await bridge.reap(lease);
+    // dashboard-rollup defaults to a value-free row staged on the report;
+    // a host port may replace it with its own dashboard write.
+    report.ops = await runOpsTick({
+      dashboardRollup: async ctx => {
+        report.dashboard = dashboardRollup({
+          snapshot: await snapshot(), governor: ctx.governor ?? 'off', ops: ctx.steps,
+        });
+      },
+      ...deps.ops,
+      reap: ctx => bridge.reap(ctx.lease),
+    }, { lease, log: deps.opsLog ?? (() => {}), signal: options.signal, governor: governor?.state ?? undefined });
     let state = await snapshot();
     for (const job of state.jobs) {
       if (options.signal?.aborted) break;
@@ -160,13 +216,14 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
       else report.publicationUnknown.push(job.id);
     }
     state = await snapshot();
-    report.planned = planDrive(state);
+    report.planned = planDrive(state, { hold });
+    if (governor?.nonP0Paused) report.governorHeld = state.jobs.filter(job => job.state === 'READY' && hold(job)).map(job => job.id);
     const launchBudget = report.planned.length;
     const attempted = new Set<string>();
     while (attempted.size < launchBudget && !options.signal?.aborted) {
       // Fresh snapshots account for external pool users and changed ceilings.
       state = await snapshot();
-      const next = planDrive(state).find(job => !attempted.has(job));
+      const next = planDrive(state, { hold }).find(job => !attempted.has(job));
       if (!next) break;
       attempted.add(next);
       if (await deps.paused()) { report.paused = true; report.held = 'paused'; break; }
