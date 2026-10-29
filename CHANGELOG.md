@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- fresh:begin version-table -->
+| Version source | Version |
+| --- | --- |
+| Source package | 3.30.0 |
+| Latest dated changelog release (2026-10-12) | 3.29.13 |
+<!-- fresh:end -->
+
 All notable changes to Phantom are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -9,7 +16,89 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.0] — Unreleased
+
+### Added
+- `phm autopilot` drives Phantom's own pull requests toward green: it fixes CI,
+  answers review, updates the merge base and stops when the PR is not ours.
+  Operator credentials stay out of fixer and verify children.
+- Land the reviewed memory foundation behind a benchmark gate, with an optional
+  local meaning signal measured on the same benchmark.
+- Lessons show what each lesson cites and inject only the lessons about the
+  task. A lessons holdout and outcome-ranked scoring gate self-improvement
+  promotion on measured evidence, and lessons whose source PRs were reverted
+  are withheld.
+- Add a `localInference` config block for loopback-only OpenAI-compatible
+  providers (Ollama, oMLX, mlx-lm): no placeholder or OAuth keys are sent to
+  local URLs, doctor and status probe `GET /models` with a bounded streamed
+  body, `phm --ashlr-handshake` reports the handshake, and `OLLAMA_HOST` is
+  honored on loopback in the knowledge indexer and model-manager probe.
+- Lay the governed-client gateway: the `gateways` config block is validated at
+  load, a target validator checks destinations, and governed clients can be
+  routed through an opted-in gateway.
+- Fleet gains a canary enforce ladder state machine — enforce stays
+  unreachable while host cancellation is unproven — plus a read-only Shadow
+  Report (`automerge-canary report [--json]`) that reads the spawn custody
+  ledger.
+- The router spends work across Codex, then Devin, SuperGrok and oMLX, and a
+  queue.v1 `fleet_hop` emitter records station exits.
+- Ashlr MD becomes the out-of-box Markdown opener and registers its native
+  `mdopener-mcp` in `mcp ecosystem`; Gemini CLI joins `wire` as a status-only
+  target; lexicon and locus are enrolled as core-fleet repos; the Ashlr.AI
+  Plugin can read the project's repo sessions and confined runs.
+- First run on any machine gets portable default roots and `--json` on
+  `onboard`, `enroll add`, `mcp ecosystem` and `docs`; `phm init` builds the
+  repo index; `phm upgrade` runs `phm update`; `wire status` prints a
+  read-only report.
+- Ecosystem stars and commits are aggregated daily, artifact installs record
+  their installation time, `phm status` counts repositories with no commits,
+  and cloud sessions claim the companion tools they called.
+- The self-improvement gate and PR autopilot become Tier-1 owned paths, and
+  the promote gate's metric runs in the verification sandbox under a standing
+  grant.
+
+### Fixed
+- Scrub stops flagging prose, code references and public digests as secrets.
+- Automations dedupe prunes against the wall clock (master was red), and the
+  daily full-run drift — CLI registry, docs links, spawn-gate assertion and
+  web typecheck — is cleared.
+- The fleet post-merge watch stays open while CI is still running, and
+  stale git lock files surface in doctor and at daemon start.
+- Recover cleanly from killed or crashed agents: crash-orphaned runs are
+  labeled stale in `phm runs`, scratch dirs and apply worktrees are reclaimed,
+  sandbox locks are held only for worktree registration, and the fabric run
+  cache is bounded with crash-safe rewrites.
+- Reap zombie-only process groups and stale keep-alive worker sockets, and
+  clear environment-dependent and CI cold-start flakes.
+- Close per-agent auto-merge gaps — self-repo detection, exact-diff gate,
+  Stop/Pause and merge-prompt injection — and pin the local auto-merge to the
+  staged commit while keeping protected paths out of it. The trust-root PR
+  opens through the GitHub API instead of a local checkout.
+- `--help` never acts, `--json` stays machine-readable on refusals, and
+  unknown options are refused before side effects across the CLI and MCP
+  gateway (unknown gateway tools answer `-32602`).
+- Detect ashlr-plugin installs including Claude Code marketplace layouts and
+  detect Claude Code, Codex and Cursor from their CLI on PATH. `devin connect`
+  refuses off macOS before asking for the key.
+- Drop the desktop updater's zip feature, clearing RUSTSEC-2026-0367,
+  RUSTSEC-2026-0368 and RUSTSEC-2026-0369.
+- Treat renaming a test out of the suite as deleting it, and refuse cloud
+  Land on test tampering rather than only showing the chip.
+- The desktop app stops repainting the window per streamed token or waking
+  the page for chat pulses; cold load, long chats and first ⌘K are faster,
+  derived turns survive switching chats, and typing stays smooth with
+  hundreds of chats.
+
+### Performance
+- The web console re-renders only the live turn's block of the transcript per
+  streamed token.
+
 ## [3.29.15] — Unreleased
+
+### Fixed
+- Local inference URLs and local Ollama defaults pin `localhost` to
+  `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
+  lookups refuse redirects instead of contacting another endpoint.
 
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
@@ -65,6 +154,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Create improvement proposals in unique owned worktrees, withhold private or
   unverified GitHub evidence, and scrub public titles consistently. Proposals
   remain drafts; automatic merging requires the existing protected process.
+
+### Deprecated
+- `npm run release:canary` and the signed observation-only release canary are
+  retired: `scripts/run-signed-release-canary.mjs` and
+  `scripts/verify-signed-release-canary-receipt.mjs` are removed, so the
+  `release:canary` manifest alias now fails until owner-lane cleanup removes
+  it and the frozen `v3.3.2` `release.yml`/`promote.yml` workflows. The
+  commissioned `publish-canonical-npm.yml` trusted-publishing workflow is the
+  one sanctioned npm release path.
+- The manual `npm pack`/`npm publish` release instructions formerly in
+  `docs/RELEASING-LOCALLY.md` are retired; publish only through the
+  commissioned canonical publisher and reconcile uncertain registry state by
+  reads, never replayed writes. The legacy `verify:local-production` gate
+  remains in-tree as evidence only and admits no canonical package.
 
 ## [3.29.14] — Unreleased
 

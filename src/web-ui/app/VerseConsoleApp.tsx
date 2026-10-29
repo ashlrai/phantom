@@ -106,7 +106,15 @@ function preloadSessionGate(): void {
   void importSessionGate().catch(() => undefined);
 }
 
+const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js').then((m) => ({ default: m.DecisionInbox })));
+
 export function VerseConsoleApp() {
+  const [inboxOpen, setInboxOpen] = useState(() => window.location.hash === '#/inbox');
+  useEffect(() => {
+    const update = () => setInboxOpen(window.location.hash === '#/inbox');
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
   const phase = useAuthPhase();
   const [surface, setSurface] = useState(false);
   useEffect(() => {
@@ -143,7 +151,14 @@ export function VerseConsoleApp() {
   return (
     <ToastProvider>
       <SkipToContent />
-      <div className={styles.shell}><VerseApp /></div>
+      <div className={styles.shell}>
+        {inboxOpen ? (
+          <main id="main-content" tabIndex={-1} className={styles.inbox}>
+            <a href="#">Back to workspace</a>
+            <Suspense fallback={<p role="status">Loading inbox…</p>}><DecisionInbox /></Suspense>
+          </main>
+        ) : <VerseApp />}
+      </div>
     </ToastProvider>
   );
 }

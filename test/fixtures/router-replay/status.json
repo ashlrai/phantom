@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "snapshots": {
+    "normal": {
+      "capacities": [
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            {
+              "id": "codex_codex_primary",
+              "usedPercent": 20,
+              "resetsAt": "2026-10-26T16:00:00.000Z",
+              "resetDescription": null,
+              "limitReached": false
+            }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T12:00:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "spent": {
+      "capacities": [
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            {
+              "id": "codex_codex_primary",
+              "usedPercent": 100,
+              "resetsAt": "2026-10-26T16:00:00.000Z",
+              "resetDescription": null,
+              "limitReached": false
+            }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T12:00:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "unknown": {
+      "capacities": [
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            {
+              "id": "codex_codex_primary",
+              "usedPercent": null,
+              "resetsAt": "2026-10-26T16:00:00.000Z",
+              "resetDescription": null,
+              "limitReached": false
+            }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T12:00:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "stale": {
+      "capacities": [
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            {
+              "id": "codex_codex_primary",
+              "usedPercent": 20,
+              "resetsAt": "2026-10-26T16:00:00.000Z",
+              "resetDescription": null,
+              "limitReached": false
+            }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-25T12:00:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "tie": {
+      "capacities": [
+        {
+          "seatId": "local:second",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "interactive": {
+      "capacities": [
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            {
+              "id": "codex_codex_primary",
+              "usedPercent": 85,
+              "resetsAt": "2026-10-26T16:00:00.000Z",
+              "resetDescription": null,
+              "limitReached": false
+            }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T12:00:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {
+          "codex-personal": {
+            "seatId": "codex-personal",
+            "enabled": true,
+            "reservePercent": 20
+          }
+        },
+        "updatedAt": "2026-10-26T12:00:00.000Z"
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    }
+  }
+}

@@ -50,9 +50,10 @@ export type WorkbenchSurfaceId = (typeof WORKBENCH_SURFACES)[number];
  * than as a sixth rail slot: it is a reference you open, not a surface you watch.
  * Playbooks (3.15) join it for the same reason: a library you open and edit.
  * Automations (3.15) sit here too: standing instructions you set up and check
- * on, not a live surface.
+ * on, not a live surface. Ops is the desktop command center: the board, the
+ * router's choices, releases and the leaders' channel, watched not worked.
  */
-export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations'] as const;
+export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops'] as const;
 export type WorkbenchTraySectionId = (typeof WORKBENCH_TRAY_SECTIONS)[number];
 
 export type WorkbenchSectionId = WorkbenchSurfaceId | WorkbenchTraySectionId;
@@ -1764,6 +1765,13 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     module: 'src/core/verse/proactive-agents-api.ts',
     handler: 'handleProactiveAgentsApi',
     prefixes: ['/api/verse/proactive-agents'],
+  },
+  {
+    id: 'ops',
+    owner: 'desktop-command',
+    module: 'src/core/verse/ops-api.ts',
+    handler: 'handleOpsApi',
+    prefixes: ['/api/verse/ops'],
   },
 ] as const satisfies readonly {
   id: string;

@@ -266,10 +266,21 @@ export function auditGithub({ repository, revision, runId, runAttempt, artifactI
   assert.equal(run.id, runId); assert.equal(run.run_attempt, runAttempt); assert.equal(run.repository?.full_name, repository);
   assert.equal(run.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
   assert.equal(run.head_sha, revision); assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
-  assert.ok(['push', 'pull_request', 'workflow_dispatch'].includes(run.event), 'unexpected CI event');
+  // Every event the CI workflow fires; each is either the checked-out revision
+  // itself or a GitHub merge that must name it as a parent (verified below).
+  assert.ok(['push', 'pull_request', 'workflow_dispatch', 'merge_group', 'schedule', 'workflow_call'].includes(run.event), 'unexpected CI event');
   const commit = read(`${base}/git/commits/${eventSha}`); assert.equal(commit.sha, eventSha);
   const candidate = read(`${base}/git/commits/${revision}`); assert.equal(candidate.sha, revision);
-  assert.equal(commit.tree?.sha, candidate.tree?.sha, 'event merge tree differs from candidate');
+  // The event revision binds the candidate when their trees are identical
+  // (push, dispatch, or a merge-group head, which the run checks out itself).
+  // On pull_request the event revision is GitHub's synthetic merge: a BEHIND
+  // head gives it a newer base tree than the candidate's, so the binding is
+  // the merge's head-side parent instead — GitHub must have merged exactly
+  // this candidate revision. A merge that contains a different head is the
+  // genuinely moved event the binding exists to refuse.
+  assert.ok(commit.tree?.sha === candidate.tree?.sha ||
+    (Array.isArray(commit.parents) && commit.parents.slice(1).some((parent) => parent?.sha === revision)),
+    'event tree does not bind the candidate');
   const artifact = read(`${base}/actions/artifacts/${artifactId}`);
   assert.equal(artifact.id, artifactId); assert.equal(artifact.name, artifactName); assert.equal(artifact.expired, false);
   assert.equal(artifact.workflow_run?.id, runId); assert.equal(artifact.workflow_run?.head_sha, revision);

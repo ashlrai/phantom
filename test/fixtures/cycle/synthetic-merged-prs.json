@@ -1,0 +1,159 @@
+{
+  "fixture_kind": "synthetic; not recorded gh output",
+  "repositories": {
+    "phantom": [
+      {
+        "number": 42,
+        "createdAt": "2026-10-26T00:00:00.000Z",
+        "mergedAt": "2026-10-26T00:10:00.000Z",
+        "updatedAt": "2026-10-26T00:11:00.000Z",
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2026-10-26T00:03:00.000Z",
+              "updatedAt": "2026-10-26T00:03:00.000Z",
+              "body": "LGTM",
+              "author": {
+                "login": "masonwyatt23"
+              },
+              "authorAssociation": "OWNER"
+            },
+            {
+              "__typename": "AddedToMergeQueueEvent",
+              "createdAt": "2026-10-26T00:06:00.000Z"
+            }
+          ]
+        },
+        "checkSuites": {
+          "nodes": [
+            {
+              "id": "synthetic-suite-42",
+              "createdAt": "2026-10-26T00:01:00.000Z",
+              "app": {
+                "slug": "github-actions"
+              },
+              "checkRuns": {
+                "nodes": [
+                  {
+                    "name": "required",
+                    "isRequired": true,
+                    "startedAt": "2026-10-26T00:01:00.000Z",
+                    "completedAt": "2026-10-26T00:05:00.000Z",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "phantom-secrets": [],
+    "locus": [
+      {
+        "number": 44,
+        "createdAt": "2026-10-26T00:00:00.000Z",
+        "mergedAt": "2026-10-26T00:10:00.000Z",
+        "updatedAt": "2026-10-26T00:11:00.000Z",
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2026-10-26T00:03:00.000Z",
+              "updatedAt": "2026-10-26T00:03:00.000Z",
+              "body": "LGTM",
+              "author": {
+                "login": "masonwyatt23"
+              },
+              "authorAssociation": "OWNER"
+            },
+            {
+              "__typename": "AddedToMergeQueueEvent",
+              "createdAt": "2026-10-26T00:06:00.000Z"
+            }
+          ]
+        },
+        "checkSuites": {
+          "nodes": [
+            {
+              "id": "synthetic-suite-44",
+              "createdAt": "2026-10-26T00:01:00.000Z",
+              "app": {
+                "slug": "github-actions"
+              },
+              "checkRuns": {
+                "nodes": [
+                  {
+                    "name": "required",
+                    "isRequired": true,
+                    "startedAt": "2026-10-26T00:01:00.000Z",
+                    "completedAt": "2026-10-26T00:05:00.000Z",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "lexicon": [],
+    "ashlr-md": [
+      {
+        "number": 43,
+        "createdAt": "2026-10-26T00:00:00.000Z",
+        "mergedAt": "2026-10-26T00:10:00.000Z",
+        "updatedAt": "2026-10-26T00:11:00.000Z",
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "IssueComment",
+              "createdAt": "2026-10-26T00:03:00.000Z",
+              "updatedAt": "2026-10-26T00:03:00.000Z",
+              "body": "LGTM",
+              "author": {
+                "login": "masonwyatt23"
+              },
+              "authorAssociation": "OWNER"
+            },
+            {
+              "__typename": "AddedToMergeQueueEvent",
+              "createdAt": "2026-10-26T00:06:00.000Z"
+            }
+          ]
+        },
+        "checkSuites": {
+          "nodes": [
+            {
+              "id": "synthetic-suite-43",
+              "createdAt": "2026-10-26T00:01:00.000Z",
+              "app": {
+                "slug": "github-actions"
+              },
+              "checkRuns": {
+                "nodes": [
+                  {
+                    "name": "required",
+                    "isRequired": true,
+                    "startedAt": "2026-10-26T00:01:00.000Z",
+                    "completedAt": "2026-10-26T00:05:00.000Z",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "ashlr-stack": [],
+    "ashlr-plugin": []
+  }
+}

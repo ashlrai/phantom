@@ -2,6 +2,10 @@
 
 # Phantom
 
+<!-- fresh:begin version-badge -->
+[![Source version 3.30.0](https://img.shields.io/badge/source-3.30.0-blue)](https://github.com/ashlrai/phantom)
+<!-- fresh:end -->
+
 **Give agents the work. Keep the evidence.**
 
 **The engineering agent workbench · by [AshlrAI](https://ashlr.ai).**
@@ -17,14 +21,18 @@
 [![npm downloads](https://img.shields.io/npm/dm/@ashlr/phantom.svg?color=cb3837)](https://www.npmjs.com/package/@ashlr/phantom)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.15-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Phantom ecosystem stars](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fstars.json&style=flat)](https://phm.dev/#eco-stats)
+[![Phantom ecosystem commits](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Fcommits.json&style=flat)](https://phm.dev/#eco-stats)
+[![Phantom ecosystem repos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fashlrai%2Fphantom%2Fecosystem-stats%2Frepos.json&style=flat)](https://github.com/ashlrai/phantom/blob/master/ecosystem/repos.json)
 
 ## Install
 
 Canonical Phantom releases use `@ashlr/phantom` from `ashlrai/phantom`.
 Install the canonical package's promoted release.
-This source tree targets version 3.29.15; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
 
 ```sh
+node --version                  # must print v22.15.0 or newer; npm only warns on older Node
 npm install -g @ashlr/phantom   # `phm` and compatible `ashlr`; Node.js 22.15+ and Git; macOS, Linux, Windows
 phm --version             # report the installed version
 phm verse                 # start the console at http://127.0.0.1:7777/verse/

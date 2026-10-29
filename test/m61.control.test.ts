@@ -27,7 +27,8 @@ import { recordDispatchProduction } from '../src/core/fleet/dispatch-production-
 function baseConfig(): AshlrConfig {
   return {
     version: 1,
-    roots: ['/tmp'],
+    // Scan only test-owned projects, never other suites' temporary repositories.
+    roots: [join(tmpHome, 'projects')],
     editor: 'cursor',
     staleDays: 30,
     categories: {},
@@ -54,6 +55,7 @@ let prevAshlrHome: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'ashlr-m61-'));
+  mkdirSync(join(tmpHome, 'projects'));
   prevHome = process.env.HOME;
   prevUserProfile = process.env.USERPROFILE;
   prevAshlrHome = process.env.ASHLR_HOME;
@@ -81,8 +83,13 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('buildControlSnapshot — full shape (M61)', () => {
+  // Shape assertions consume one read-only snapshot of an empty isolated home.
+  // State/configuration cases below still build their own snapshots.
+  let emptySnapshot: ReturnType<typeof buildControlSnapshot> | undefined;
+  const snapshot = () => emptySnapshot ??= buildControlSnapshot(baseConfig());
+
   it('returns all top-level keys on an empty ~/.ashlr', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
 
     // Top-level keys present
     expect(snap).toHaveProperty('ts');
@@ -96,13 +103,13 @@ describe('buildControlSnapshot — full shape (M61)', () => {
   });
 
   it('ts is a valid ISO string', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(typeof snap.ts).toBe('string');
     expect(Date.parse(snap.ts)).not.toBeNaN();
   });
 
   it('models section has activeProvider and providers array', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(snap.models).toHaveProperty('activeProvider');
     expect(snap.models.providers).toBeInstanceOf(Array);
     // providers may be empty (CI has no Ollama/LM Studio) — but shape must exist
@@ -115,7 +122,7 @@ describe('buildControlSnapshot — full shape (M61)', () => {
   });
 
   it('fleet section has all FleetStatus keys', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(snap.fleet).toHaveProperty('generatedAt');
     expect(snap.fleet).toHaveProperty('buildIdentity');
     expect(snap.fleet).toHaveProperty('daemon');
@@ -152,7 +159,7 @@ describe('buildControlSnapshot — full shape (M61)', () => {
   });
 
   it('daemon section has running/pid/lastTickAt/todaySpentUsd and active direction fields', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(typeof snap.daemon.running).toBe('boolean');
     expect(snap.daemon.pid === null || typeof snap.daemon.pid === 'number').toBe(true);
     expect(snap.daemon.lastTickAt === null || typeof snap.daemon.lastTickAt === 'string').toBe(true);
@@ -165,7 +172,7 @@ describe('buildControlSnapshot — full shape (M61)', () => {
   });
 
   it('usage section has required keys and window=7d', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(snap.usage.window).toBe('7d');
     expect(typeof snap.usage.totalTokens).toBe('number');
     expect(typeof snap.usage.totalCostUsd).toBe('number');
@@ -174,7 +181,7 @@ describe('buildControlSnapshot — full shape (M61)', () => {
   });
 
   it('logs is an array, items have ts/kind/msg', async () => {
-    const snap = await buildControlSnapshot(baseConfig());
+    const snap = await snapshot();
     expect(snap.logs).toBeInstanceOf(Array);
     for (const entry of snap.logs) {
       expect(typeof entry.ts).toBe('string');

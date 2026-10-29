@@ -15,8 +15,6 @@ import type { SourceQuality } from '../../data/api-types.js';
 
 export type NotificationSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
-export const SEVERITY_ORDER: NotificationSeverity[] = ['critical', 'high', 'medium', 'low', 'info'];
-
 export function severityToTone(severity: NotificationSeverity): Tone {
   switch (severity) {
     case 'critical':

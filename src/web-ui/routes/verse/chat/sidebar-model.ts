@@ -55,7 +55,7 @@ export type RowStatus =
 export interface SidebarRow {
   session: VerseSession;
   status: RowStatus;
-  /** The running chat's muted second line; null when it is not running or nothing is known. */
+  /** Running activity or the unread chat's durable result; null when unknown. */
   live: { text: string; startedAt: string | null } | null;
   pinned: boolean;
   archived: boolean;
@@ -169,7 +169,8 @@ export function buildSidebar(input: SidebarInput): SidebarModel {
         : unread > 0
           ? { kind: 'unread', newTurns: unread }
           : { kind: 'time', at: session.updatedAt };
-    const text = isRunning ? liveLine(activityRow?.live ?? null) : null;
+    const text = isRunning ? liveLine(activityRow?.live ?? null)
+      : status.kind === 'unread' && typeof session.lastResult === 'string' ? session.lastResult : null;
     rows.set(session.id, {
       session,
       status,
