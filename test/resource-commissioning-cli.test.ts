@@ -110,14 +110,14 @@ describe('explicit resource commissioning CLI', () => {
     expect(await cmdUniverse(['resources', 'check', '--resource-runtime', runtime, '--json'])).toBe(1);
   });
   it.each([
-    [], ['check'], ['check', '--resource-runtime'], ['check', '--resource-runtime', 'relative'],
-    ['check', '--resource-runtime', '/'], ['check', '--resource-runtime', '/private/../a'],
-    ['check', '--resource-runtime', '/private/x\n'], ['check', '--resource-runtime', '/private/x\u0085'],
-    ['check', '--resource-runtime', runtime, '--json', '--json'],
-    ['check', '--resource-runtime', runtime, '--resource-runtime', runtime],
-    ['check', '--resource-runtime', runtime, '--root', '/private/u'], ['check', '--resource-runtime', runtime, '--run'],
-    ['check', '--help'], ['--help', '--json'], ['check', '--resource-runtime', `/${'é'.repeat(2048)}`],
-  ])('rejects invalid runtime syntax %j before reads', async (...args) => {
+    [[]], [['check']], [['check', '--resource-runtime']], [['check', '--resource-runtime', 'relative']],
+    [['check', '--resource-runtime', '/']], [['check', '--resource-runtime', '/private/../a']],
+    [['check', '--resource-runtime', '/private/x\n']], [['check', '--resource-runtime', '/private/x\u0085']],
+    [['check', '--resource-runtime', runtime, '--json', '--json']],
+    [['check', '--resource-runtime', runtime, '--resource-runtime', runtime]],
+    [['check', '--resource-runtime', runtime, '--root', '/private/u']], [['check', '--resource-runtime', runtime, '--run']],
+    [['check', '--help']], [['--help', '--json']], [['check', '--resource-runtime', `/${'é'.repeat(2048)}`]],
+  ])('rejects invalid runtime syntax %j before reads', async (args) => {
     expect(await cmdUniverse(['resources', ...args, '--json'])).toBe(2);
     expect(backend.check).not.toHaveBeenCalled(); expect(backend.read).not.toHaveBeenCalled();
   });
@@ -147,9 +147,9 @@ describe('explicit resource commissioning CLI', () => {
     expect(backend.read).not.toHaveBeenCalled(); expect(backend.launcher).not.toHaveBeenCalled();
   });
   it.each([
-    ['--provider', 'other'], ['--command', 'relative'], ['--cwd', '/'], ['--json', '--json'],
-    ['--login'], ['--help'], ['--provider', 'codex'],
-  ])('rejects malformed/duplicate launcher flags %j', async (...extra) => {
+    [['--provider', 'other']], [['--command', 'relative']], [['--cwd', '/']], [['--json', '--json']],
+    [['--login']], [['--help']], [['--provider', 'codex']],
+  ])('rejects malformed/duplicate launcher flags %j', async (extra) => {
     expect(await cmdResources([...launcherArgs, ...extra])).toBe(2);
     expect(backend.read).not.toHaveBeenCalled(); expect(backend.launcher).not.toHaveBeenCalled();
   });

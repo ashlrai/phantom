@@ -12,26 +12,17 @@
  * tray and Apps. They are drawn here, not in the shared set, because they
  * name Verse surfaces — a console page borrowing "Fleet" would be a lie.
  *
- * Five icons stay drawn here because the shared set has no equivalent and
- * they are Verse-specific chrome, not general console vocabulary:
- * `PanelIcon` / `SidebarIcon` (the two pane toggles, which must read as
- * mirror images of each other), `RailToggleIcon` (the rail's own expand /
- * collapse control, which has to read as the same family as those two),
- * `VerseMark` (the brand mark in the rail head, which is 32px and never takes
- * a color state; drawn in rail-icons.tsx with the other rail glyphs) and `McpIcon` (a plug — the shared set has no connector
- * glyph, and every candidate in it already means another rail section).
+ * `PanelIcon` / `SidebarIcon` stay drawn here as mirror-image pane toggles,
+ * alongside `ReturnKeyIcon` for keyboard legends. The brand's `VerseMark`
+ * lives in rail-icons.tsx with the other rail glyphs.
  */
 import {
   IconChevronDown,
   IconChevronRight,
-  IconCpu,
   IconGauge,
-  IconInbox,
-  IconMoon,
   IconPlus,
   IconSearch,
   IconSliders,
-  IconTrash,
   type IconProps,
 } from '../../components/primitives/icons.js';
 import { Icon, RAIL_ICON } from './rail-icons.js';
@@ -104,6 +95,17 @@ export function AutomationsIcon(props: IconProps) {
   );
 }
 
+/** Ops: a board with three columns, the command center's card wall. */
+export function OpsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2" y="2.5" width="3.5" height="10" rx="1" />
+      <rect x="6.25" y="2.5" width="3.5" height="6.5" rx="1" />
+      <rect x="10.5" y="2.5" width="3.5" height="8.5" rx="1" />
+    </Icon>
+  );
+}
+
 /** Every section's glyph: the rail's, plus the tray's. */
 export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconProps>>> = {
   command: RAIL_ICON.command!,
@@ -118,6 +120,7 @@ export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconPro
   wiki: WikiIcon,
   playbooks: PlaybooksIcon,
   automations: AutomationsIcon,
+  ops: OpsIcon,
 };
 
 /**
@@ -125,15 +128,10 @@ export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconPro
  * and composer already import — keeping them means this reconciliation
  * touched no call site.
  */
-export const AutonomyIcon = IconCpu;
-export const ApprovalsIcon = IconInbox;
 export const SearchIcon = IconSearch;
 export const PlusIcon = IconPlus;
-export const TrashIcon = IconTrash;
 export const ArrowDownIcon = IconChevronDown;
 export const ChevronIcon = IconChevronRight;
-/** The rail's theme quick-toggle. One glyph for the control, not per-theme. */
-export const ThemeIcon = IconMoon;
 
 export function PanelIcon(props: IconProps) {
   return <Icon {...props}><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="M10 3v10" /></Icon>;
@@ -154,39 +152,6 @@ export function ReturnKeyIcon(props: IconProps) {
   return (
     <Icon width="1em" height="1em" style={{ display: 'inline-block', verticalAlign: '-0.125em' }} {...props}>
       <path d="M13 3.5v5a2 2 0 0 1-2 2H3.5" /><path d="M6 8 3.5 10.5 6 13" />
-    </Icon>
-  );
-}
-
-/**
- * The rail's own expand/collapse control: the same framed panel as the two
- * pane toggles above, plus a chevron saying which way it is about to move.
- * ONE glyph that rotates rather than two drawings, so the control reads as a
- * single thing in two states — and so the state is carried by direction, the
- * one property a user can read without having memorised the other icon.
- */
-export function RailToggleIcon({ expanded = false, ...props }: IconProps & { expanded?: boolean }) {
-  return (
-    <Icon {...props}>
-      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-      <path d="M6 3v10" />
-      {expanded ? <path d="M11.2 6.4 9.6 8l1.6 1.6" /> : <path d="M9.4 6.4 11 8l-1.6 1.6" />}
-    </Icon>
-  );
-}
-
-/**
- * MCP — a plug in a socket. Drawn here rather than aliased: the shared set's
- * nearest candidates (`IconCpu`, `IconSliders`, `IconKey`) are already the
- * Autonomy, Settings and credential glyphs, and two rail items that read as
- * the same picture is worse than one more 16px drawing.
- */
-export function McpIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M6 1.8v3.2M10 1.8v3.2" />
-      <path d="M3.8 5h8.4v2.6a4.2 4.2 0 0 1-4.2 4.2 4.2 4.2 0 0 1-4.2-4.2V5Z" />
-      <path d="M8 11.8v2.4" />
     </Icon>
   );
 }
