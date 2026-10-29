@@ -66,4 +66,14 @@ describe('queue report', () => {
     expect(await cmdQueue(['report','--events',new URL('./fixtures/queue/missing.json', import.meta.url).pathname])).toBe(1);
     expect(await cmdQueue(['--help'])).toBe(0);
   });
+  it('dispatches stats alongside report and lists both in help', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdQueue(['stats', '--json'])).toBe(0);
+    expect(JSON.parse(out.mock.calls[0]![0] as string).schemaVersion).toBe(1);
+    out.mockClear();
+    expect(await cmdQueue([])).toBe(0);
+    const help = out.mock.calls.flat().join('\n');
+    expect(help).toContain('queue stats');
+    expect(help).toContain('queue report');
+  });
 });
