@@ -111,6 +111,8 @@ export type { PublicDaemonObservation, DaemonSourceQuality } from '../../core/da
  */
 export type { FleetStatus, FleetNextAction, FleetNextActionCommand, FleetAutonomousShipReadinessStatus } from '../../core/fleet/status.js';
 export type { AgentWorkspaceRecentAction } from '../../core/fleet/agent-action-ledger.js';
+/** RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection behind GET /api/fleet/lanes. */
+export type { FleetLaneSnapshot, FleetLaneView, FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 
 /**
  * Structural shape shared by every "we might not actually know this"
