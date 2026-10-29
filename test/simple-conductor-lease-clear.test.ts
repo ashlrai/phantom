@@ -28,6 +28,7 @@ import {
   type LeaseOwnerProbe,
   type TaskSpec,
 } from '../src/core/simple-conductor-task-store.js';
+import { stripAnsi } from '../src/cli/ui.js';
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -253,6 +254,28 @@ describe('ashlr loop leases (CLI wiring)', () => {
     const { code, out } = await runLoop(['leases', '--json']);
     expect(code).toBe(0);
     expect(JSON.parse(out)).toMatchObject({ ok: true, tasks: [{ id: 'stuck', leaseState: 'skewed', ownerPid: 999_999 }] });
+  });
+
+  it('shows the fencing token and holder per lease (text snapshot)', async () => {
+    writeTasks([
+      stuckTask({ ...expired, ownerPid: 4242 }, { id: 'stuck-owned' }),
+      stuckTask(expired, { id: 'stuck-legacy' }),
+    ]);
+    const { code, out } = await runLoop(['leases']);
+    expect(code).toBe(0);
+    expect(stripAnsi(out)).toMatchSnapshot();
+  });
+
+  it('shows the fencing token and holder per lease (JSON snapshot)', async () => {
+    writeTasks([
+      stuckTask({ ...expired, ownerPid: 4242 }, { id: 'stuck-owned' }),
+      stuckTask(expired, { id: 'stuck-legacy' }),
+    ]);
+    const { code, out } = await runLoop(['leases', '--json']);
+    expect(code).toBe(0);
+    const data = JSON.parse(out) as { ok: boolean; tasks: Array<Record<string, unknown>> };
+    expect(data.tasks).toHaveLength(2);
+    expect(data).toMatchSnapshot();
   });
 
   it('refuses to clear a task whose owner is a live process', async () => {

@@ -44,9 +44,15 @@ export function reportWorktrees(root: string, now = Date.now()): WorktreeReport[
     });
 }
 
+const USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
+
 export function cmdWorktrees(args: string[]): number {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(USAGE);
+    return 0;
+  }
   if (args[0] !== 'report') {
-    console.error('Usage: phm worktrees report [--dir <worktrees-dir>] [--json]');
+    console.error(USAGE);
     return 1;
   }
   const options = args.slice(1);

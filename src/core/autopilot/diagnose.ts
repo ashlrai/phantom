@@ -7,7 +7,10 @@
  *
  *   1. closed or merged                → done
  *   2. guardrails (KILL, pause, owner) → stop, said in words
- *   3. merge conflict with the base    → merge-base (merge, never rebase)
+ *   3. the base must join the head     → merge-base (merge, never rebase): a
+ *      merge conflict, a head a strict base calls behind, or a source-binding
+ *      refusal — the event's merge tree moved and only a fresh head renews it
+ *      (a re-run of the frozen event cannot pass)
  *   4. a failure this PR caused        → fix-ci, with the failing log tails
  *   5. review feedback on this head    → address-review
  *   6. checks still running            → wait
@@ -117,7 +120,7 @@ export function emptyState(): AutopilotState {
   return { pushes: 0, attempts: {}, actedHeads: [], reruns: [], handledReviews: [] };
 }
 
-export type FailureCause = 'own' | 'base-red' | 'flaky' | 'infra';
+export type FailureCause = 'own' | 'base-red' | 'flaky' | 'infra' | 'moved-tree';
 export interface Failure { check: CheckRun; cause: FailureCause; why: string; log: string }
 
 export type Plan =
@@ -154,6 +157,9 @@ const INFRA_PATTERNS: RegExp[] = [
  * base or head was pushed meanwhile). It counts only when the step that failed
  * is the source binding, so a test that prints the phrase keeps its failure;
  * when the failed steps are unknown, only a line that starts with it counts.
+ * This is NOT rerun-able infrastructure failure: the event revision is frozen
+ * into the run, so the same run fails again. Its cause is `moved-tree` and
+ * `plan` answers by merging the base, which makes a fresh event bind the head.
  */
 const MOVED_TREE = /^(?:\S+Z\s+)?(?:Error: )?Candidate tree differs from the original GitHub event tree/m;
 const BINDING_STEP = /^Bind candidate source$/;
@@ -193,7 +199,7 @@ export function classifyFailure(check: CheckRun, obs: Pick<Observation, 'headChe
     return { check, cause: 'base-red', why: `${check.name} failed but this PR changes no dependency manifest or lockfile (a new advisory affects the base too)`, log };
   }
   if (check.conclusion === 'startup_failure' || check.conclusion === 'stale') return { check, cause: 'infra', why: `${check.name} never started (${check.conclusion})`, log };
-  if (movedTree(check, log, obs.failedSteps)) return { check, cause: 'infra', why: `${check.name} was refused because the PR's merge tree moved after the event`, log };
+  if (movedTree(check, log, obs.failedSteps)) return { check, cause: 'moved-tree', why: `${check.name} was refused because the PR's merge tree moved after the event`, log };
   const infra = INFRA_PATTERNS.find((p) => p.test(log));
   if (infra) return { check, cause: 'infra', why: `${check.name} failed in the runner, not the code (${infra.source.slice(0, 60)})`, log };
   if (obs.headChecks.some((c) => c.name === check.name && c.id !== check.id && isPassing(c))) {
@@ -271,6 +277,16 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
       return { action: 'stop', reason: `bringing ${pr.baseRef} into this head already failed once; it needs a person` };
     }
     return mutate() ?? { action: 'merge-base', reason: `PR #${pr.number} is behind ${pr.baseRef}, which requires heads to be up to date` };
+  }
+  // A source-binding refusal means the event's merge tree moved away from
+  // this head — the base advanced (a strict base can still report blocked or
+  // unstable here) or the head was rewritten. Re-running the frozen event can
+  // never pass; merging the base produces a head whose fresh event binds.
+  if (failures.length && failures.every((f) => f.cause === 'moved-tree')) {
+    if ((state.attempts[`merge-base:${pr.headSha}:${pr.baseSha}`] ?? 0) >= 1) {
+      return { action: 'stop', reason: `bringing ${pr.baseRef} into this head already failed once; it needs a person` };
+    }
+    return mutate() ?? { action: 'merge-base', reason: `CI refused ${pr.headSha.slice(0, 8)}: its event merge tree moved (${failures.map((f) => f.check.name).join(', ')}); merging ${pr.baseRef} renews the binding` };
   }
   if (pending.length) return { action: 'wait', reason: `${pending.length} check(s) still running: ${pending.slice(0, 4).map((c) => c.name).join(', ')}` };
   if (failures.length) {

@@ -51,6 +51,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'playbook',
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
+  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
+  'worktrees', 'drive', 'budget',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -69,7 +71,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
-  models: ['list', 'pull', 'start'],
+  models: ['list', 'pull', 'start', 'inventory'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
@@ -78,7 +80,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   telemetry: ['status', 'test'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
-  backlog: ['refresh'],
+  backlog: ['refresh', 'plan'],
   inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
