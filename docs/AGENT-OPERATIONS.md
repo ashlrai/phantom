@@ -264,6 +264,8 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `logs/` | supervised local-runtime stdout and stderr |
 | `daemon.launchd.out.log`, `daemon.launchd.err.log` (macOS), `daemon.systemd.log` (Linux) | daemon service output |
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
+| `connect/store.json` | connect request and grant metadata (value-free; secret names only, never values) |
+| `connect/bundles/` | sealed session-copy bundles from `phm connect` (AES-256-GCM; data key vaulted in Phantom Secrets) |
 
 [RELIABILITY.md](RELIABILITY.md#where-state-lives) lists the rest
 (`enrollment.json`, `daemon.json`, `inbox/`, `sandboxes/`, `audit/`).
@@ -289,6 +291,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
+| `phm connect [status\|request\|approve\|deny\|revoke]` | One-approval-per-account sign-in wizard for agents and nodes; requests stay pending until an operator approves |
 
 ### Stop and pause
 
@@ -458,6 +461,44 @@ Exit 0 means no refill needed or target reached; exit 1 means source exhaustion
 with possibly usable partial rows; exit 2 means bad usage or invalid snapshots
 and no rows. Bridge collectors and the supervisor are separate components;
 this command does not install or activate either.
+
+### Sign-in connections (`phm connect`)
+
+`phm connect` is the one-approval-per-account sign-in wizard for agents and
+nodes. It discovers signed-in CLIs and services on this machine (codex,
+claude, gh, devin, grok, gcloud, vercel, supabase and configured MCP servers)
+by running their status commands only; token and session file contents are
+never read for detection.
+
+- `phm connect` / `phm connect wizard` walks each signed-in account, shows an
+  approve card naming account, target node and scopes, and connects it only
+  after an explicit yes. `phm connect discover [--json]` is the read-only
+  probe view.
+- `phm connect status [--json]` is the single screen: what is connected
+  where, pending requests with their `phm connect approve`/`deny` actions,
+  and grants with `phm connect revoke` actions.
+- `phm connect request <service> --node <id>` is the agent-native path: it
+  files a request that stays `pending` until the operator approves it. There
+  is no auto-approval path and no flag that skips approval;
+  `phm connect requests [--json]` lists the queue.
+- `phm connect approve <request-id|service>` shows the approve card and, on
+  an explicit yes, transfers access in strict order: the vendor's own
+  device-code/OAuth login on the target node first (run locally, or handed
+  to the operator as the exact command for a remote node), then a scoped
+  token minted by the vendor CLI and vaulted in Phantom Secrets under a
+  node-scoped name (the value travels on `phantom add <name> --stdin`, never
+  on argv or stdout), and raw session-file copy only as a last resort:
+  each file requires its own approval and the approved bytes are sealed
+  into an AES-256-GCM bundle under `~/.ashlr/connect/bundles/` whose data
+  key is vaulted. `phm connect deny <request-id>` refuses a request;
+  `phm connect revoke <grant-id|service>` removes the vaulted secret by
+  name and any sealed bundle.
+- HARD EXCEPTION: the CMP Codex session (`~/.codex`) is excluded from copy,
+  move and rotation; it can only ever be re-authenticated by the vendor
+  login. `codex` has no session-copy path and any path under `~/.codex` is
+  refused regardless of the service it is attached to.
+- Every request, denial, grant, refusal and revocation writes a value-free
+  audit entry (`phm audit`).
 
 ## 4. Native engines
 

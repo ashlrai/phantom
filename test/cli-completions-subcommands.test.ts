@@ -53,7 +53,8 @@ afterEach(() => {
 describe('completions offer every dispatched verb', () => {
   const expected: Record<string, string[]> = {
     mirror: ['release'],
-    devin: ['seat'],
+    devin: ['seat', 'bus'],
+    connect: ['wizard', 'discover', 'status', 'requests', 'request', 'approve', 'deny', 'revoke', 'help'],
     inbox: ['submit'],
     authority: ['resident'],
     daemon: ['pause', 'resume', 'doctor'],
@@ -76,6 +77,8 @@ describe('completions offer every dispatched verb', () => {
     const text = await script('zsh');
     expect(text).toMatch(/mirror\) _values 'subcommand' [^;]*'release'/);
     expect(text).toMatch(/devin\) _values 'subcommand' [^;]*'seat'/);
+    expect(text).toMatch(/devin\) _values 'subcommand' [^;]*'bus'/);
+    expect(text).toMatch(/connect\) _values 'subcommand' [^;]*'approve'/);
     expect(text).toMatch(/inbox\) _values 'subcommand' [^;]*'submit'/);
   });
 
