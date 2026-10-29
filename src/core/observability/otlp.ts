@@ -172,6 +172,12 @@ export function buildGenAiTrace(spans: GenAiSpan[]): OtlpTrace {
         strAttr('ashlr.provider', s.provider),
         strAttr('ashlr.tier', s.tier),
         strAttr('ashlr.status', s.status),
+        ...(s.memory ? [
+          strAttr('phantom.memory.scope', s.memory.scope),
+          ...(s.memory.peakRssBytes === null ? [] : [intAttr('phantom.memory.peak_rss_bytes', s.memory.peakRssBytes)]),
+          intAttr('phantom.memory.sample_count', s.memory.sampleCount),
+          intAttr('phantom.memguard.pause_events', s.memory.pauseEvents),
+        ] : []),
       ],
     };
   });
