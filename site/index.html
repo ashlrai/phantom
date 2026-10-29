@@ -76,7 +76,8 @@
 <title>Phantom — the engineering agent workbench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
 
 <style>
   :root {
@@ -378,7 +379,8 @@
 
 </style>
 
-<link rel="stylesheet" href="/assets/phantom-world.css">
+<link rel="stylesheet" href="/assets/phantom-world.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/assets/phantom-world.css"></noscript>
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to content</a>
@@ -395,6 +397,7 @@
       <a href="#lanes-cloud">Cloud &amp; Devin</a>
       <a href="#measured">Measured</a>
       <a href="#platforms">Platforms</a>
+      <a href="#guides">Guides</a>
       <a href="/ecosystem">Ecosystem</a>
       <a href="#start">Start</a>
     </nav>
@@ -456,7 +459,7 @@
         <a href="#workbench">Workbench</a><a href="#phone">Phone</a>
         <a href="#knowledge">Wiki &amp; lessons</a>
         <a href="#lanes-cloud">Cloud &amp; Devin</a><a href="#measured">Measured</a>
-        <a href="#platforms">Platforms</a><a href="#start">Start</a>
+        <a href="#platforms">Platforms</a><a href="#guides">Guides</a><a href="#start">Start</a>
         <a href="/ecosystem">Ecosystem</a>
       </div>
     </nav>
@@ -1338,6 +1341,41 @@ ashlr wiki ask "where are standing grants verified?"</pre>
     </div>
   </section>
 
+  <section id="guides">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Guides by intent</p>
+        <h2>Start from the job you need done.</h2>
+        <p>
+          Focused pages for the most common reasons people land here. Each one links every
+          claim to the doc, benchmark or source file it comes from.
+        </p>
+      </div>
+      <div class="two">
+        <div class="note">
+          <h3><a href="/use-cases/own-accounts">Bring your own agent accounts</a></h3>
+          <p>Claude Code, Codex, Grok, Devin and local models in one workbench, each seat pinned to its own profile.</p>
+        </div>
+        <div class="note">
+          <h3><a href="/use-cases/local-models">Coding agents on local models</a></h3>
+          <p>Ollama discovery, opt-in llama-server dispatch and measured numbers with public receipts.</p>
+        </div>
+        <div class="note">
+          <h3><a href="/use-cases/signed-autonomy">Autonomy inside a signed scope</a></h3>
+          <p>A Touch ID grant, an eight-stage ladder and the same merge gates every time, on macOS.</p>
+        </div>
+        <div class="note">
+          <h3><a href="/use-cases/review-agent-work">Review every agent change</a></h3>
+          <p>Per-turn checkpoints, per-hunk accept and reject, and a recorded decision log.</p>
+        </div>
+        <div class="note cool">
+          <h3><a href="/compare/agent-clis">Phantom or the CLIs directly</a></h3>
+          <p>What each vendor CLI already does well, and what a workbench adds around it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="start">
     <div class="wrap">
       <div class="sec-head">
@@ -1461,7 +1499,7 @@ ashlr devin budget --acu 50</pre>
 <footer>
   <div class="wrap">
     <p>Phantom &middot; by AshlrAI</p>
-    <span><a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">User guide</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/LEADER.md">Leader</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md">Devin</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
+    <span><a href="#guides">Guides</a> &middot; <a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">User guide</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/LEADER.md">Leader</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md">Devin</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
   </div>
 </footer>
 <script>

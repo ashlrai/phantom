@@ -62,7 +62,7 @@ describe('usage reader execution envelope', () => {
   it.each([
     null, [], { unknown: '/reader' }, { terra: 'relative-reader' }, { terra: ['/reader', '--credential'] },
     { terra: '/reader\nsecond-command' }, { terra: '/reader\0suffix' },
-  ])('refuses invalid reader mappings', value => {
+  ])('refuses invalid reader mappings (row %#)', value => {
     expect(() => usageReaderCommands(value)).toThrow('Invalid usage reader configuration');
     expect(stubs.execFile).not.toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe('bridge usage CLI', () => {
   it.each([
     [], ['--directory'], ['--directory', 'relative', '--event', '429'],
     ['--event', 'timer'], ['--pool', 'unknown'], ['--unknown', 'value'],
-  ])('rejects malformed CLI options before calling the writer', async args => {
+  ])('rejects malformed CLI options before calling the writer (row %#)', async args => {
     await expect(runUsageSignal(args)).rejects.toThrow();
     expect(stubs.write).not.toHaveBeenCalled(); expect(stubs.execFile).not.toHaveBeenCalled();
   });
