@@ -32,9 +32,10 @@ current tree. This is operational telemetry, not a billing meter.
 the #1014 admission controller. It reads matching pool history when present and
 returns at least the existing fallback, using the maximum observed RSS plus
 swap peaks. Missing, legacy, and malformed rows do not lower that fallback.
-Keep the controller's existing host pressure and safety checks. The #1014
-controller itself is not present in this checkout, so this helper does not
-replace or activate an admission policy.
+Keep the controller's existing host pressure and safety checks. The
+[memory admission controller](MEMORY.md) maintains its own profile history;
+this helper remains available to callers using per-pool job records. It does
+not activate or change the controller policy.
 
 The fleet scorecard exposes `memory.impactPerGbHour`: authenticated realized
 merges whose proposal IDs match recorded job IDs, divided by sampled RSS
