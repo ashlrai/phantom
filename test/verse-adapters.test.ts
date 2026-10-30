@@ -24,6 +24,7 @@ vi.mock('../src/core/verse/local-harness.js', () => ({
 }));
 
 import { adapterFor, type VerseParsedEvent } from '../src/core/verse/adapters/index.js';
+import { nearestResetWindowMs, recheckIntervalMs, CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS, CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS } from '../src/core/verse/adapters/claude.js';
 import { createAnthropicStreamParser, anthropicEnvBaseUrl, runtimeContextWindow } from '../src/core/verse/adapters/claude.js';
 import { createCodexParser } from '../src/core/verse/adapters/codex.js';
 import { claudeAutoCompactAt } from '../src/core/verse/context-math.js';
@@ -56,6 +57,15 @@ const SEAT: VerseSeat = {
   contextWindow: 200_000,
   health: { state: 'unknown', summary: null, windows: [], observedAt: null },
 };
+
+/** Deep copy SEAT for tests to avoid cross-test mutation. */
+function deepCopy(seat: VerseSeat): VerseSeat {
+  return {
+    ...seat,
+    models: seat.models.map((m) => ({ ...m })),
+    health: { ...seat.health, windows: seat.health.windows.map((w) => ({ ...w })) },
+  };
+}
 
 /** A V3.9 catalog option for a 1M-native Claude model (budgets stated). */
 function oneMillionOption(id: string, maxOut = 64_000): VerseModelOption {
@@ -315,7 +325,44 @@ describe('claude adapter — buildLaunch', () => {
     expect(anthropicEnvBaseUrl('http://127.0.0.1:11434/')).toBe('http://127.0.0.1:11434');
     expect(anthropicEnvBaseUrl('http://127.0.0.1:11434')).toBe('http://127.0.0.1:11434');
   });
-});
+
+  // V3.18: retry watchdog env vars
+  it('nearestResetWindowMs computes from windows with resetsAt', () => {
+    const now = Date.now();
+    const w1 = [{ id: 'five_hour', usedPercent: 72, resetsAt: new Date(now + 3_600_000).toISOString() }];
+    expect(nearestResetWindowMs(w1)).toBeGreaterThanOrEqual(3_599_000);
+    // multiple windows: uses nearest
+    const w2 = [
+      { id: 'five_hour', usedPercent: 72, resetsAt: new Date(now + 3_600_000).toISOString() },
+      { id: 'seven_day', usedPercent: 30, resetsAt: new Date(now + 172_800_000).toISOString() },
+    ];
+    expect(nearestResetWindowMs(w2)).toBeGreaterThanOrEqual(3_599_000);
+    // expired windows are skipped
+    const w3 = [
+      { id: 'five_hour', usedPercent: 100, resetsAt: new Date(now - 3600_000).toISOString() },
+      { id: 'seven_day', usedPercent: 30, resetsAt: new Date(now + 7_200_000).toISOString() },
+    ];
+    expect(nearestResetWindowMs(w3)).toBeGreaterThanOrEqual(7_199_000);
+    // no windows -> null
+    expect(nearestResetWindowMs([])).toBeNull();
+  });
+
+  it('recheckIntervalMs derives a safe re-check interval from nearestMs', () => {
+    // 1 hour -> 6 min recheck
+    expect(recheckIntervalMs(3_600_000)).toBe(360_000);
+    // 24 hours -> 14.4h but capped at 3600000 (1h)
+    expect(recheckIntervalMs(86_400_000)).toBe(3_600_000);
+    // null -> null
+    expect(recheckIntervalMs(null)).toBeNull();
+  });
+
+  it('skips watchdog vars when seat has no health windows', () => {
+    const a = adapterFor('claude');
+    const result = a.buildLaunch(session(), 'hi', launch());
+    expect(result.env[CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS]).toBeUndefined();
+    expect(result.env[CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS]).toBeUndefined();
+  });
+})
 
 describe('claude adapter — shared project memory', () => {
   const MEMORY_DIR = '/home/u/.ashlr/verse/memory/proj-0123456789ab';

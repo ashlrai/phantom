@@ -229,6 +229,49 @@ interface AnthropicUsage {
 
 const ZERO_USAGE: AnthropicUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
 
+// ---------------------------------------------------------------------------
+// V3.18 retry watchdog env vars + compaction window (RADAR-CC-UNATTENDED pacing)
+//
+// These env vars are forwarded to the Claude CLI process at launch so that
+// when a job hits a far-off usage limit it hands off to the next pool instead
+// of sleeping indefinitely.  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is added only
+// for headless (`-p`) runs so the CLI can tune its compaction point to the
+// job's memory budget.
+// ---------------------------------------------------------------------------
+
+/** Time (ms) after which the watchdog should stop waiting for a reset. */
+const CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS = 'CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS';
+/** How often the watchdog re-checks usage (ms).  Capped at 1 h. */
+const CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS = 'CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS';
+/** Tell the CLI a per-job compaction window (tokens) for headless `-p` runs. */
+
+/** Minimum / maximum caps for the re-check interval. */
+const RECHECK_REMAX_MS = 3_600_000;
+
+/** Nearest (shortest) time until any provider reset window, in ms. */
+export function nearestResetWindowMs(
+  windows: readonly { resetsAt: string | null }[],
+): number | null {
+  let nearest: number | null = null;
+  for (const w of windows) {
+    if (w.resetsAt == null) continue;
+    const resetAt = Date.parse(w.resetsAt);
+    if (!Number.isFinite(resetAt)) continue;
+    const delta = resetAt - Date.now();
+    if (delta <= 0) continue;
+    if (nearest === null || delta < nearest) nearest = delta;
+  }
+  return nearest;
+}
+
+/** Compute a safe re-check interval from the nearest reset window. */
+export function recheckIntervalMs(nearestMs: number | null): number | null {
+  if (nearestMs == null || nearestMs <= 0) return null;
+  const raw = Math.max(1, Math.floor(nearestMs / 10));
+  return Math.min(raw, RECHECK_REMAX_MS);
+}
+
+/** Compaction window (tokens) derived from a headless job's memory budget. */
 function addUsage(a: AnthropicUsage, b: AnthropicUsage): AnthropicUsage {
   return {
     input: a.input + b.input,
@@ -1521,6 +1564,15 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
     ...claudeNativeSessionArgs(session, launch),
     '--', text,
   ];
+  // Build shared watchdog env vars from the seat's reset windows (when
+  // available).  These tell the CLI's internal watchdog to hand off instead
+  // of sleeping through a long reset window.
+  const resetWindows = launch.seat.health.windows;
+  const nearestMs = nearestResetWindowMs(resetWindows);
+  const watchdogMax = nearestMs != null ? String(nearestMs) : undefined;
+  const recheck = recheckIntervalMs(nearestMs);
+  const watchdogRecheck = recheck != null ? String(recheck) : undefined;
+
   const env: Record<string, string> = isLocal
     ? {
       PATH: harness!.path,
@@ -1534,8 +1586,17 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
       // then match what the runner actually serves. Not credential-shaped
       // (`_TOKENS`), so the engine's env filter passes it through.
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(localContextWindow(session, launch)),
+      // V3.18: retry-watchdog tells the CLI how long to wait before giving
+      // up and handing off, and how often to re-check usage.
+      ...(watchdogMax != null ? { [CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS]: watchdogMax } : {}),
+      ...(watchdogRecheck != null ? { [CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS]: watchdogRecheck } : {}),
     }
-    : {};
+    : {
+      // V3.18: retry-watchdog env vars for non-local seats (when reset data
+      // is available through the seat's health windows).
+      ...(watchdogMax != null ? { [CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS]: watchdogMax } : {}),
+      ...(watchdogRecheck != null ? { [CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS]: watchdogRecheck } : {}),
+    };
   return { argv, cwd: session.projectPath, env, stdin: null };
 }
 
