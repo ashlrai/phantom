@@ -39,6 +39,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'cloud',
   // 3.15 Devin lane.
   'devin',
+  // Connect wizard: agent/node sign-in approvals.
+  'connect',
   'openai-agents',
   'benchmark', 'queue',
   // 3.15 automations.
@@ -132,6 +134,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
+  // Mirror the verb switch in src/cli/connect.ts (runConnectCli).
+  connect: ['wizard', 'discover', 'status', 'requests', 'request', 'approve', 'deny', 'revoke', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
