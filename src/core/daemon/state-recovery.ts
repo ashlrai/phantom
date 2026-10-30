@@ -45,6 +45,7 @@ import {
 } from '../fleet/local-store-lock.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { ctimeSettleDelayMs, sleepSync } from '../util/stable-file-read.js';
 import { canonicalizeDaemonActivationValue } from './activation-permit.js';
 import {
   loadExistingProvenanceKeyReadOnly,
@@ -1356,6 +1357,19 @@ export function previewDaemonStateQuarantine(
   let source: StableSource;
   try {
     source = stableRead(daemonStatePath(), true);
+    // The plan binds the source generation, so take it only once the source's
+    // ctime has settled: otherwise an identical-byte replacement made in the
+    // same clock tick (unlink + recreate commonly reuses the inode) carries the
+    // same generation and passes as the planned file (util/stable-file-read.ts).
+    const settleMs = ctimeSettleDelayMs(source.stat.ctimeNs);
+    if (settleMs > 0) {
+      sleepSync(settleMs);
+      const settled = stableRead(daemonStatePath(), true);
+      if (!sameSnapshot(source.stat, settled.stat) || settled.sha256 !== source.sha256) {
+        throw new Error('source-changed-while-settling');
+      }
+      source = settled;
+    }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return {

@@ -2,6 +2,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
+import { ctimeSettleDelayMs, SUBSECOND_SETTLE_MS, sleepSync } from '../util/stable-file-read.js';
 import { resolveNativeSeatLaunch } from './native-profile.js';
 import { readResourceJson } from './pool-runtime.js';
 import type { ResourceConnectionConfig } from './connection-monitor.js';
@@ -51,7 +52,11 @@ export function resourceAccountProfileDigest(account: ResourceConnectionConfig['
 /** No credential contents are read. Only an unchanged, private file epoch paired with a
  * prior successful native account check can witness historical identity across restart.
  * Claude's pinned .claude.json supplies local OAuth account metadata, not keychain
- * authentication. Matching it qualifies historical display only, never a current login. */
+ * authentication. Matching it qualifies historical display only, never a current login.
+ * The epoch is metadata only, so it is taken once the file's ctime has settled
+ * (util/stable-file-read.ts): on a coarse-clock filesystem a same-size rewrite
+ * in the same tick would otherwise reproduce every stamp. A file still settling
+ * on a whole-second filesystem is unknown rather than a multi-second wait. */
 export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number]): ResourceAccountLocalEpoch | null {
   try {
     const result = resolveNativeSeatLaunch({ accountsRoot, provider: account.provider, seatId: account.id });
@@ -62,6 +67,9 @@ export function readResourceAccountLocalEpoch(accountsRoot: string, account: Res
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || (stat.mode & 511n) !== 384n ||
       stat.size < 2n || stat.size > 2n * 1024n * 1024n || realpathSync(file) !== file ||
       typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid())) return null;
+    const settleMs = ctimeSettleDelayMs(stat.ctimeNs);
+    if (settleMs > SUBSECOND_SETTLE_MS) return null;
+    sleepSync(settleMs);
     let accountDigest: string | undefined;
     if (account.provider === 'claude') {
       const value = readResourceJson(file);
