@@ -1,0 +1,121 @@
+name: Coverage
+
+# This repository has no merge queue, so a merge_group-only workflow never
+# runs. Push to master collects coverage. pull_request does not start this
+# workflow. The CI hermetic step stays `npm run test:ci` on every event;
+# this workflow calls Vitest directly so coverage flags are not dropped by
+# that wrapper. Node is 22.22.3, the version ci.yml pins.
+on:
+  merge_group:
+  push:
+    branches: [master]
+
+# A burst of pushes to master cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Coverage (ubuntu ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.3"
+          cache: npm
+
+      # Hosted Linux Node is group-writable, which native-profile tests refuse.
+      - name: Drop group/other write from the hosted Node runtime
+        shell: bash
+        run: |
+          node_bin="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          chmod go-w -- "$node_bin"
+
+      # os.tmpdir() on hosted Linux is the sticky world-writable /tmp, and
+      # custody checks refuse that parent. Same private root as CI.
+      - name: Use a private temp root
+        shell: bash
+        run: |
+          private_tmp="/ashlr-private-tmp"
+          sudo install -d -m 0700 -o "$(id -un)" -g "$(id -gn)" -- "$private_tmp"
+          echo "TMPDIR=$private_tmp" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test with coverage
+        shell: bash
+        env:
+          CI: "1"
+          ASHLR_VITEST_TEST_TIMEOUT_MS: "5000"
+        run: |
+          set -euo pipefail
+          node node_modules/vitest/vitest.mjs run \
+            --coverage \
+            --coverage.reporter=lcov \
+            --reporter=default \
+            --shard=${{ matrix.shard }}/3 \
+            --exclude=test/m342.dispatch-production-ledger.test.ts
+          test -s coverage/lcov.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-ubuntu-${{ matrix.shard }}
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 5
+
+  upload:
+    name: Upload coverage
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-ubuntu-*
+          path: coverage-parts
+
+      - name: Require coverage files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find coverage-parts -name lcov.info -type f)
+          test "${#reports[@]}" -eq 3
+          for report in "${reports[@]}"; do
+            test -s "$report"
+          done
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          fail_ci_if_error: false
+          directory: coverage-parts

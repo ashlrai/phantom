@@ -23,7 +23,6 @@ const workflowText = readFileSync(
   resolve(repoRoot, '.github/workflows/dependency-audit.yml'),
   'utf8',
 );
-const dependabotText = readFileSync(resolve(repoRoot, '.github/dependabot.yml'), 'utf8');
 const dependencySecurityPolicy = readFileSync(
   resolve(repoRoot, 'docs/DEPENDENCY-SECURITY.md'),
   'utf8',
@@ -33,7 +32,6 @@ const npmAuditFallbackText = readFileSync(
   'utf8',
 );
 const workflow = parse(workflowText) as Record<string, unknown>;
-const dependabot = parse(dependabotText) as Record<string, unknown>;
 const events = workflow.on as Record<string, Record<string, unknown> | null>;
 const audit = (workflow.jobs as Record<string, Record<string, unknown>>).audit;
 const steps = audit.steps as Array<Record<string, unknown>>;
@@ -522,83 +520,68 @@ exit "\${TEST_OSV_RC:-0}"
     expect(workflow).not.toHaveProperty('on.pull_request_target');
   });
 
-  it('covers both npm manifests and desktop Cargo while hosted update jobs are disabled', () => {
-    const cooldown = {
-      'default-days': 5,
-      'semver-major-days': 30,
-      'semver-minor-days': 7,
-      'semver-patch-days': 3,
+  it('keeps version updates on Renovate and leaves Dependabot alerts in place', () => {
+    expect(existsSync(resolve(repoRoot, '.github/dependabot.yml'))).toBe(false);
+
+    const renovate = JSON.parse(
+      readFileSync(resolve(repoRoot, 'renovate.json'), 'utf8'),
+    ) as {
+      timezone: string;
+      schedule: string[];
+      prConcurrentLimit: number;
+      prHourlyLimit: number;
+      automerge: boolean;
+      minimumReleaseAge: string;
+      vulnerabilityAlerts: { enabled: boolean; automerge: boolean };
+      packageRules: Array<{
+        groupName?: string;
+        matchPackageNames?: string[];
+        allowedVersions?: string;
+        matchUpdateTypes?: string[];
+      }>;
     };
-    const commonUpdate = {
-      'package-ecosystem': 'npm',
-      schedule: {
-        interval: 'weekly',
-        day: 'monday',
-        time: '09:17',
-        timezone: 'America/New_York',
-      },
-      'open-pull-requests-limit': 0,
-      cooldown,
-      groups: {
-        'production-dependencies': { 'dependency-type': 'production' },
-        'development-dependencies': { 'dependency-type': 'development' },
-      },
-    };
+    expect(renovate.timezone).toBe('America/New_York');
+    expect(renovate.schedule).toEqual(['before 6am on Monday']);
+    expect(renovate.prConcurrentLimit).toBe(3);
+    expect(renovate.prHourlyLimit).toBe(2);
+    expect(renovate.automerge).toBe(false);
+    expect(renovate.minimumReleaseAge).toBe('3 days');
+    expect(renovate.vulnerabilityAlerts).toEqual({ enabled: true, automerge: false });
+    expect(
+      renovate.packageRules.flatMap((rule) => (rule.groupName ? [rule.groupName] : [])),
+    ).toEqual(['non-major updates', 'github-actions']);
+    expect(
+      renovate.packageRules.filter((rule) => rule.groupName && rule.matchUpdateTypes?.includes('major')),
+    ).toEqual([]);
 
     // The root npm graph carries exactly four bounded version holds (see
     // docs/DEPENDENCY-SECURITY.md "Version holds"). Each is one exact name plus
     // a lower bound, so releases below the bound still update. Pinning the
     // whole list keeps a new hold, or a widened one, a reviewed change.
     const rootVersionHolds = [
-      { 'dependency-name': 'typescript', versions: ['>=6.1.0'] },
-      { 'dependency-name': 'eslint', versions: ['>=10.0.0'] },
-      { 'dependency-name': 'eslint-plugin-react-hooks', versions: ['>=7.0.0'] },
-      { 'dependency-name': 'jsdom', versions: ['>=30.0.0'] },
+      { 'dependency-name': 'typescript', versions: ['>=6.1.0'], allowed: '<6.1.0' },
+      { 'dependency-name': 'eslint', versions: ['>=10.0.0'], allowed: '<10.0.0' },
+      { 'dependency-name': 'eslint-plugin-react-hooks', versions: ['>=7.0.0'], allowed: '<7.0.0' },
+      { 'dependency-name': 'jsdom', versions: ['>=30.0.0'], allowed: '<30.0.0' },
     ];
-
-    expect(dependabot).toEqual({
-      version: 2,
-      updates: [
-        { ...commonUpdate, directory: '/', ignore: rootVersionHolds },
-        { ...commonUpdate, directory: '/src/raycast' },
-        {
-          'package-ecosystem': 'cargo',
-          directory: '/desktop/src-tauri',
-          schedule: {
-            interval: 'weekly',
-            day: 'monday',
-            time: '09:17',
-            timezone: 'America/New_York',
-          },
-          'open-pull-requests-limit': 0,
-          cooldown,
-        },
-      ],
-    });
-    expect(dependabotText).not.toMatch(/password|token|secret|credential/i);
-    expect(dependabotText).not.toMatch(/registries:|insecure-external-code-execution/i);
-    // Only the root ecosystem's single `ignore:` block is allowed; `exclude:`
-    // (the cooldown bypass) stays forbidden, and no hold may use update-types
-    // or a wildcard, which would silence a dependency rather than bound it.
-    expect(dependabotText.match(/^\s+ignore:/gm)).toHaveLength(1);
-    expect(dependabotText).not.toMatch(/^\s+exclude:/m);
-    expect(dependabotText).not.toMatch(/update-types|dependency-name:\s*["']?[^\s"']*\*/);
     for (const hold of rootVersionHolds) {
       expect(dependencySecurityPolicy).toContain(
         `| \`${hold['dependency-name']}\` | \`${hold.versions[0]}\` |`,
       );
+      const rule = renovate.packageRules.find((candidate) =>
+        candidate.matchPackageNames?.includes(hold['dependency-name']),
+      );
+      expect(rule?.allowedVersions).toBe(hold.allowed);
+      expect(rule?.matchUpdateTypes).toBeUndefined();
     }
+    expect(renovate.packageRules.filter((rule) => rule.allowedVersions)).toHaveLength(
+      rootVersionHolds.length,
+    );
     expect(dependencySecurityPolicy).toContain('A hold is a version-update decision, not a security exception.');
-    expect(dependabotText).toContain('verification and dependency maintenance run through the local fleet');
+    expect(dependencySecurityPolicy).toContain('Dependabot alerts and secret-scanning push protection remain enabled.');
     expect(dependencySecurityPolicy).toContain(
-      'GitHub-hosted Dependabot update jobs are intentionally paused',
+      'Automated Dependabot security-update pull requests stay disabled in repository',
     );
-    expect(dependencySecurityPolicy).toContain(
-      'GitHub applies `cooldown` only to version updates',
-    );
-    expect(dependencySecurityPolicy).toMatch(
-      /Security advisories need no override because they already bypass\s+the cooldown\./,
-    );
-    expect(dependencySecurityPolicy).toMatch(/Wildcard exclusions are\s+not permitted\./);
+    expect(dependencySecurityPolicy).toContain('Renovate `vulnerabilityAlerts` is enabled');
   });
 });
