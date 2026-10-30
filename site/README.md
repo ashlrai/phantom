@@ -1,10 +1,10 @@
 # site/
 
-The Phantom by AshlrAI landing page, ecosystem page and use-case guides at **verse.ashlr.ai**.
+The Phantom by AshlrAI landing, ecosystem and install pages and use-case guides at **verse.ashlr.ai**.
 The domain, CLI, package and installation names stay compatible; see
 [the product naming guide](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-BRAND.md).
 
-Standalone HTML pages: `index.html`, `ecosystem.html`, four use-case pages
+Standalone HTML pages: `index.html`, `ecosystem.html`, `install.html`, four use-case pages
 under `use-cases/` and one comparison page under `compare/`. No source build,
 runtime dependencies, or framework; Vercel's root configuration skips package
 installation and serves this directory as static files. The ecosystem chart uses
@@ -12,9 +12,16 @@ the checked-in `assets/star-history.js` snapshot
 and works when opened from disk. It never embeds a GitHub credential.
 `robots.txt` and `sitemap.xml` list the public canonical pages for crawlers.
 
+Agent-facing indexes `llms.txt` and `llms-full.txt` are generated from the
+root README and docs headings by `node scripts/generate-site-llms.mjs`; use
+`--check` to detect drift. `capabilities.json` and `.well-known/mcp/server.json`
+describe the product and its MCP gateway, and `AGENTS.md` records site edit
+rules. `test/site-discoverability.test.ts` validates the metadata and indexes.
+
 ```sh
 open site/index.html
 open site/ecosystem.html
+open site/install.html
 ```
 
 ## Use-case and comparison pages

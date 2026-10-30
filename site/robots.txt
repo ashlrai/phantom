@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
 
+# Agent indexes: https://verse.ashlr.ai/llms.txt and
+# https://verse.ashlr.ai/llms-full.txt
 Sitemap: https://verse.ashlr.ai/sitemap.xml

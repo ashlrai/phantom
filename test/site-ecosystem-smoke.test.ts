@@ -50,6 +50,7 @@ describe('static ecosystem page', () => {
       'https://verse.ashlr.ai/',
       'https://verse.ashlr.ai/compare/agent-clis',
       'https://verse.ashlr.ai/ecosystem',
+      'https://verse.ashlr.ai/install',
       'https://verse.ashlr.ai/use-cases/local-models',
       'https://verse.ashlr.ai/use-cases/own-accounts',
       'https://verse.ashlr.ai/use-cases/review-agent-work',
