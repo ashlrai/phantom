@@ -65,6 +65,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
+| Measure development-loop timings, bottlenecks and outcomes per dollar | [Development loop metrics](FLEET-LOOP.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Roll up coding pool tokens and cost by task class and merged PR | [Router cost feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/router/README.md) |
 | Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |

@@ -1,0 +1,201 @@
+{
+  "provenance": {
+    "recorded_at": "2026-10-26",
+    "repository": "ashlrai/phantom",
+    "pull_request": 930,
+    "sanitization": "Only selected metadata fields; no bodies or author names. Exact projected gh responses.",
+    "commands": [
+      "gh pr view 930 --repo ashlrai/phantom --json number,createdAt,mergedAt,headRefOid,isDraft,state,title",
+      "gh api repos/ashlrai/phantom/issues/930/timeline --paginate --jq '[.[] | select(.event == \"ready_for_review\" or .event == \"convert_to_draft\" or .event == \"merged\") | {event,created_at}]'",
+      "gh api repos/ashlrai/phantom/pulls/930/reviews --paginate --jq '[.[] | {state,submitted_at,commit_id,reviewer: (if .user.login == \"coderabbitai[bot]\" then .user.login else \"redacted\" end)}]'",
+      "gh api repos/ashlrai/phantom/commits/3ba920f2312d17b3f274997da80bacf24acd2044/check-runs?per_page=100 --jq '{total_count,check_runs:[.check_runs[] | {id,name,status,conclusion,started_at,completed_at,head_sha}]}'"
+    ]
+  },
+  "pull_request": {
+    "createdAt": "2026-10-26T02:30:02Z",
+    "headRefOid": "3ba920f2312d17b3f274997da80bacf24acd2044",
+    "isDraft": false,
+    "mergedAt": "2026-10-26T05:05:07Z",
+    "number": 930,
+    "state": "MERGED",
+    "title": "fix(ci): skip dist-backed Markdown tests in the docs lane"
+  },
+  "timeline": [
+    {
+      "created_at": "2026-10-26T02:35:39Z",
+      "event": "ready_for_review"
+    },
+    {
+      "created_at": "2026-10-26T05:05:07Z",
+      "event": "merged"
+    }
+  ],
+  "reviews": [],
+  "checks": {
+    "check_runs": [
+      {
+        "id": 121376563691,
+        "name": "Merge Gate",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T03:05:28Z",
+        "completed_at": "2026-10-26T03:05:32Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121374030334,
+        "name": "Vercel Preview Comments",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:52:57Z",
+        "completed_at": "2026-10-26T02:52:57Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371257261,
+        "name": "Site PR (ecosystem)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "started_at": "2026-10-26T02:41:53Z",
+        "completed_at": "2026-10-26T02:41:53Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256943,
+        "name": "Docs PR (docs-only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "started_at": "2026-10-26T02:41:53Z",
+        "completed_at": "2026-10-26T02:41:53Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256767,
+        "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "started_at": "2026-10-26T02:41:53Z",
+        "completed_at": "2026-10-26T02:41:53Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256227,
+        "name": "CI (Node 22, ubuntu, authority 3/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:46:53Z",
+        "completed_at": "2026-10-26T02:57:53Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256225,
+        "name": "Native macOS broker foundation (Rust 1.97.1)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:42:59Z",
+        "completed_at": "2026-10-26T02:46:35Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256148,
+        "name": "CI (Node 22, windows, portability 2/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:48:59Z",
+        "completed_at": "2026-10-26T02:55:29Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256115,
+        "name": "CI (Node 22, windows, portability 1/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:48:08Z",
+        "completed_at": "2026-10-26T02:59:58Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256113,
+        "name": "Mac exhaustive (isolated)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:43:11Z",
+        "completed_at": "2026-10-26T03:03:14Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256109,
+        "name": "CI (Node 22, windows, portability 3/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:50:17Z",
+        "completed_at": "2026-10-26T02:56:41Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256107,
+        "name": "CI (Node 22, macos, shared queue authority)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:42:31Z",
+        "completed_at": "2026-10-26T02:46:21Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256089,
+        "name": "CI (Node 22, ubuntu, authority 1/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:48:31Z",
+        "completed_at": "2026-10-26T03:03:12Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256071,
+        "name": "CI (Node 22, windows, portability overflow)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:45:42Z",
+        "completed_at": "2026-10-26T02:53:58Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371256016,
+        "name": "CI (Node 22, ubuntu, authority 2/3)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:43:59Z",
+        "completed_at": "2026-10-26T02:55:09Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121371255919,
+        "name": "Windows service authority (Server 2022)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:42:06Z",
+        "completed_at": "2026-10-26T02:46:15Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121370309823,
+        "name": "Classify PR site lane",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:41:42Z",
+        "completed_at": "2026-10-26T02:41:53Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      },
+      {
+        "id": 121369679462,
+        "name": "Dependency audit (root + Raycast)",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-26T02:37:57Z",
+        "completed_at": "2026-10-26T02:38:28Z",
+        "head_sha": "3ba920f2312d17b3f274997da80bacf24acd2044"
+      }
+    ],
+    "total_count": 18
+  }
+}
