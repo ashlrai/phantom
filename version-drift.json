@@ -1,0 +1,715 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-26T18:18:02.409Z",
+  "toolsUsed": [],
+  "policy": {
+    "readOnly": true,
+    "stableOnly": true,
+    "reference": "manifest; badges compare to latest stable GitHub Release"
+  },
+  "repositories": [
+    {
+      "repo": "ashlrai/phantom",
+      "status": "incomplete",
+      "package": {
+        "name": "@ashlr/phantom",
+        "version": "3.29.15",
+        "private": false
+      },
+      "packages": [
+        {
+          "name": "@ashlr/phantom",
+          "version": "3.29.15",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/phantom/contents/package.json",
+          "status": "ok",
+          "version": "3.29.15"
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/phantom/tags",
+          "status": "ok",
+          "version": "3.29.15"
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/phantom/releases",
+          "status": "ok",
+          "version": "3.29.15"
+        },
+        {
+          "source": "npm",
+          "url": "https://registry.npmjs.org/%40ashlr%2Fphantom/latest",
+          "status": "ok",
+          "version": "3.29.15"
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [],
+      "unknown": [
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/phantom-secrets",
+      "status": "incomplete",
+      "package": {
+        "name": "(workspace)",
+        "version": "0.7.9",
+        "private": true
+      },
+      "packages": [
+        {
+          "name": "(workspace)",
+          "version": "0.7.9",
+          "private": true,
+          "kind": "cargo",
+          "source": "manifest:cargo"
+        },
+        {
+          "name": "phantom-secrets",
+          "version": "0.7.9",
+          "private": false,
+          "kind": "cargo",
+          "source": "manifest:crates/phantom-cli/Cargo.toml"
+        },
+        {
+          "name": "phantom-secrets-mcp",
+          "version": "0.7.9",
+          "private": false,
+          "kind": "cargo",
+          "source": "manifest:crates/phantom-mcp/Cargo.toml"
+        },
+        {
+          "name": "phantom-secrets",
+          "version": "0.7.9",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm/package.json"
+        },
+        {
+          "name": "phantom-secrets-mcp",
+          "version": "0.7.9",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm-mcp/package.json"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/package.json",
+          "status": "missing",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/Cargo.toml",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/tags",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/releases",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "manifest:crates/phantom-cli/Cargo.toml",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/crates/phantom-cli/Cargo.toml",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "manifest:crates/phantom-mcp/Cargo.toml",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/crates/phantom-mcp/Cargo.toml",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "manifest:npm/package.json",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/npm/package.json",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "manifest:npm-mcp/package.json",
+          "url": "https://api.github.com/repos/ashlrai/phantom-secrets/contents/npm-mcp/package.json",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "cargo:phantom-secrets",
+          "url": "https://crates.io/api/v1/crates/phantom-secrets",
+          "status": "ok",
+          "version": "0.5.1"
+        },
+        {
+          "source": "cargo:phantom-secrets-mcp",
+          "url": "https://crates.io/api/v1/crates/phantom-secrets-mcp",
+          "status": "ok",
+          "version": "0.5.1"
+        },
+        {
+          "source": "npm:phantom-secrets",
+          "url": "https://registry.npmjs.org/phantom-secrets/latest",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "npm:phantom-secrets-mcp",
+          "url": "https://registry.npmjs.org/phantom-secrets-mcp/latest",
+          "status": "ok",
+          "version": "0.7.9"
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [
+        {
+          "source": "cargo:phantom-secrets",
+          "expected": "0.7.9",
+          "actual": "0.5.1"
+        },
+        {
+          "source": "cargo:phantom-secrets-mcp",
+          "expected": "0.7.9",
+          "actual": "0.5.1"
+        }
+      ],
+      "unknown": [
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/locus",
+      "status": "incomplete",
+      "package": {
+        "name": "(workspace)",
+        "version": "0.5.2",
+        "private": true
+      },
+      "packages": [
+        {
+          "name": "(workspace)",
+          "version": "0.5.2",
+          "private": true,
+          "kind": "cargo",
+          "source": "manifest:cargo"
+        },
+        {
+          "name": "locus-cli",
+          "version": "0.5.2",
+          "private": false,
+          "kind": "cargo",
+          "source": "manifest:crates/locus-cli/Cargo.toml"
+        },
+        {
+          "name": "locus-mcp",
+          "version": "0.5.2",
+          "private": false,
+          "kind": "cargo",
+          "source": "manifest:crates/locus-mcp/Cargo.toml"
+        },
+        {
+          "name": "locus-cli",
+          "version": "0.5.2",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm/package.json"
+        },
+        {
+          "name": "@ashlrai/locus-mcp",
+          "version": "0.5.2",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm-mcp/package.json"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/package.json",
+          "status": "missing",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/Cargo.toml",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/locus/tags",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/locus/releases",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "manifest:crates/locus-cli/Cargo.toml",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/crates/locus-cli/Cargo.toml",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "manifest:crates/locus-mcp/Cargo.toml",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/crates/locus-mcp/Cargo.toml",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "manifest:npm/package.json",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/npm/package.json",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "manifest:npm-mcp/package.json",
+          "url": "https://api.github.com/repos/ashlrai/locus/contents/npm-mcp/package.json",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "cargo:locus-cli",
+          "url": "https://crates.io/api/v1/crates/locus-cli",
+          "status": "error",
+          "version": null,
+          "reason": "registry identity unverified"
+        },
+        {
+          "source": "cargo:locus-mcp",
+          "url": "https://crates.io/api/v1/crates/locus-mcp",
+          "status": "missing",
+          "version": null
+        },
+        {
+          "source": "npm:locus-cli",
+          "url": "https://registry.npmjs.org/locus-cli/latest",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "npm:@ashlrai/locus-mcp",
+          "url": "https://registry.npmjs.org/%40ashlrai%2Flocus-mcp/latest",
+          "status": "ok",
+          "version": "0.5.2"
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [],
+      "unknown": [
+        {
+          "source": "cargo:locus-cli",
+          "url": "https://crates.io/api/v1/crates/locus-cli",
+          "status": "error",
+          "version": null,
+          "reason": "registry identity unverified"
+        },
+        {
+          "source": "cargo:locus-mcp",
+          "url": "https://crates.io/api/v1/crates/locus-mcp",
+          "status": "missing",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/lexicon",
+      "status": "incomplete",
+      "package": {
+        "name": "@ashlr/lexicon",
+        "version": "0.5.6",
+        "private": false
+      },
+      "packages": [
+        {
+          "name": "@ashlr/lexicon",
+          "version": "0.5.6",
+          "private": false,
+          "kind": "npm",
+          "source": "manifest:npm"
+        }
+      ],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/lexicon/contents/package.json",
+          "status": "ok",
+          "version": "0.5.6"
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/lexicon/tags",
+          "status": "ok",
+          "version": "0.5.5"
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/lexicon/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "npm",
+          "url": "https://registry.npmjs.org/%40ashlr%2Flexicon/latest",
+          "status": "ok",
+          "version": "0.5.4"
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [
+        {
+          "source": "tags",
+          "expected": "0.5.6",
+          "actual": "0.5.5"
+        },
+        {
+          "source": "npm",
+          "expected": "0.5.6",
+          "actual": "0.5.4"
+        }
+      ],
+      "unknown": [
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/lexicon/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/ashlr-stack",
+      "status": "incomplete",
+      "package": null,
+      "packages": [],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/cli/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/cli/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/core/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/core/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/mcp/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/mcp/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [],
+      "unknown": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/cli/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/cli/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/core/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/core/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:packages/mcp/package.json",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-stack/contents/packages/mcp/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        },
+        {
+          "source": "stable-manifest",
+          "status": "unknown"
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/ashlr-cortex",
+      "status": "incomplete",
+      "package": null,
+      "packages": [],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [],
+      "unknown": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-cortex/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        },
+        {
+          "source": "stable-manifest",
+          "status": "unknown"
+        }
+      ],
+      "repairSuggestions": []
+    },
+    {
+      "repo": "ashlrai/ashlr-md",
+      "status": "incomplete",
+      "package": null,
+      "packages": [],
+      "evidence": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        }
+      ],
+      "drift": [],
+      "unknown": [
+        {
+          "source": "manifest:npm",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/contents/package.json",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "manifest:cargo",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/contents/Cargo.toml",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "tags",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/tags",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "releases",
+          "url": "https://api.github.com/repos/ashlrai/ashlr-md/releases",
+          "status": "error",
+          "version": null
+        },
+        {
+          "source": "badges",
+          "url": "https://ashlr.ai/developer-tools",
+          "status": "unknown",
+          "version": null
+        },
+        {
+          "source": "stable-manifest",
+          "status": "unknown"
+        }
+      ],
+      "repairSuggestions": []
+    }
+  ],
+  "summary": {
+    "aligned": 0,
+    "drift": 4,
+    "incomplete": 7
+  }
+}
