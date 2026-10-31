@@ -1,0 +1,43 @@
+--- RQ-REALPRTITLES2Q7/rev5/publish.base.sh
++++ RQ-REALPRTITLES2Q7/rev5/publish.sh
+@@ -19,7 +19,7 @@
+ # worktree's common dir must be exactly ~/Projects/ashlrai/$NAME/.git. Push goes to a literal URL, never a remote name.
+ [[ "$J" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$J" != *..* ]] || { echo "RESULT ABORT bad-job-id"; exit 1; }
+ JL="$R/queue/run/$J.line"; [ -f "$JL" ] && [ ! -L "$JL" ] || { echo "RESULT ABORT no-job-record"; exit 1; }
+-IFS=$'\t' read -r LJ NAME LX < "$JL"
++IFS=$'\t' read -r LJ NAME LANE TIER QT < "$JL"   # rev5: QT = line tail (prompt path, or literal text on hand-queued lines)
+ [ "$LJ" = "$J" ] || { echo "RESULT ABORT job-record-mismatch"; exit 1; }
+ case "$NAME" in phantom|phantom-secrets|ashlr-plugin|locus|lexicon|ashlr-md|ashlr-stack) ;; *) echo "RESULT ABORT repo-not-allowlisted"; exit 1;; esac
+ REPO="ashlrai/$NAME"; FORK_URL="https://github.com/masonwyatt23/$NAME.git"
+@@ -85,7 +85,30 @@
+ DEF=$(gh repo view $REPO --json defaultBranchRef -q .defaultBranchRef.name)
+ { echo "Automated bridge job \`$J\` (pool: $POOL), single commit on base \`${BASE:0:9}\`."; echo; echo "**Tests:** $TR"; echo; [ -n "$SENS" ] && echo "**Sensitive paths (needs Security OK):** $SENS" && echo; [ -n "$T1" ] && echo "**Tier-1 (CODEOWNERS) paths, async post-merge review:**$T1" && echo; echo "<details><summary>Agent notes</summary>"; echo; echo "$NOTES"; echo "</details>"; } > $R/$J.body.md
+ case "$J" in LAND*) SUP=$(grep -ohE "https://github.com/$REPO/pull/[0-9]+" $R/$J.prompt 2>/dev/null | head -1); [ -n "$SUP" ] && printf "\n\nSupersedes %s\n" "$SUP" >> $R/$J.body.md && echo "NOTE supersedes $SUP";; esac
+-URL=$(gh pr create --repo $REPO --head masonwyatt23:codex-bridge/$J --base $DEF --title "bridge: $J" --body-file $R/$J.body.md) || { echo "RESULT ABORT pr"; exit 1; }
++# rev5 (RQ-REALPRTITLES2Q7; Security 07:55 #3): the PR title comes from the job's queue-line text as a
++# conventional-commit "type(scope): summary" -- bridge($NAME): <task>, <= 72 chars; the job id moves to
++# the PR body. Source: the verbatim "J (meta): text" line launch froze into $J.prompt (the .line tail QT
++# names that same prompt file on dispatched lines, or holds literal text on hand-queued lines). The text
++# is sanitized to one printable-ASCII line -- no control bytes, no `, no $( or ${, whitespace collapsed,
++# no leading '-' -- so it can never split into extra argv, read back as a flag, or carry a newline. Empty
++# -> "bridge: $J" (the old title). It is passed to gh as one quoted --title argv element: no eval, no
++# sh -c, no hand-built JSON.
++QL=""
++for QS in "$QT" "$R/$J.prompt"; do
++  if [ -n "$QS" ] && [ -f "$QS" ] && [ ! -L "$QS" ]; then
++    QL=$(awk -v p="$J (" 'index($0, p) == 1 { print; exit }' "$QS" 2>/dev/null)
++    [ -n "$QL" ] && break
++  fi
++done
++if [ -z "$QL" ]; then case "$QT" in ""|*/*) ;; *) QL=$QT ;; esac; fi
++QT1=${QL#*): }; QT2=${QL#*]: }   # drop the "J (meta):" / "J (meta) [tags]:" envelope, whichever cut lands first
++if [ "$QT1" = "$QL" ]; then QSUM=$QT2; elif [ "$QT2" = "$QL" ] || [ ${#QT1} -ge ${#QT2} ]; then QSUM=$QT1; else QSUM=$QT2; fi
++TITLE=$(printf '%s' "$QSUM" | LC_ALL=C sed -e 's/[^ -~]//g' -e 's/`//g' -e 's/\$(//g; s/\${//g' -e 's/  */ /g' -e 's/ *$//' -e 's/^[- ]*//')
++TPFX="bridge($NAME): "; TAV=$((72 - ${#TPFX}))
++if [ ${#TITLE} -gt "$TAV" ]; then TITLE=$(printf '%s' "$TITLE" | cut -c1-"$TAV" | sed -e 's/ [^ ]*$//' -e 's/[^A-Za-z0-9]*$//'); fi
++[ -n "$TITLE" ] && TITLE=$TPFX$TITLE || TITLE="bridge: $J"
++echo "TITLE $TITLE"
++URL=$(gh pr create --repo "$REPO" --head "masonwyatt23:codex-bridge/$J" --base "$DEF" --title "$TITLE" --body-file "$R/$J.body.md") || { echo "RESULT ABORT pr"; exit 1; }
+ : # opened ready directly; draft->ready double-triggered CI and cancelled runs showed as failures
+ [ -z "$SENS" ] && [ -z "$G1T" ] && { gh pr merge "$URL" --repo $REPO --auto --squash >/dev/null 2>&1 || gh pr merge "$URL" --repo $REPO --auto >/dev/null 2>&1; } && echo "AUTO_MERGE on" || echo "NOTE AUTO_MERGE skipped-or-failed"
+ echo "RESULT PR $URL SENS=[$SENS]"
