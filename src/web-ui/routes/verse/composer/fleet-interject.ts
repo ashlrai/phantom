@@ -17,11 +17,21 @@ function mutationHoldError(status = 403): ApiError {
 
 type FleetSendResult = { at: string; outcome: 'accepted' | 'duplicate' };
 
-export function fleetSendStatus(result: FleetSendResult): string {
+function fleetSendTime(result: FleetSendResult): string {
   const date = new Date(result.at);
-  const time = Number.isFinite(date.getTime())
+  return Number.isFinite(date.getTime())
     ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date)
     : result.at.slice(-5);
+}
+
+export function fleetSendLanding(result: FleetSendResult): { text: string; openInbox: boolean } {
+  return result.outcome === 'accepted'
+    ? { text: `Sent to the leaders' inbox · ${fleetSendTime(result)} · open Inbox to confirm`, openInbox: true }
+    : { text: fleetSendStatus(result), openInbox: false };
+}
+
+export function fleetSendStatus(result: FleetSendResult): string {
+  const time = fleetSendTime(result);
   return result.outcome === 'duplicate'
     ? `Already in the inbox (same text, sent ${time})`
     : `Sent to the leaders · ${time}`;
