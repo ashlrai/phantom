@@ -5,6 +5,7 @@ import { readFleetPresence, whatsNewCopy } from './fleet-presence.js';
 import { Button } from '../../../components/primitives/index.js';
 import { openFleetWorkspace } from '../dock/dock-store.js';
 import { fleetPanesPresent } from '../dock/fleet-workspace-auto.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { listPanes } from '../panes/index.js';
 import { APP_VERSION } from '../sections/app-version.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -45,6 +46,10 @@ export function WhatsNewCard() {
       </div>
       <footer className={styles.foot}>
         <Button variant="primary" size="sm" onClick={openPrimary}>{copy.primary.label}</Button>
+        {copy.secondary && <Button variant="ghost" size="sm" onClick={() => {
+          openInterjectDialog({ prefill: '' });
+          markReleaseSeen(APP_VERSION);
+        }}>{copy.secondary.label}</Button>}
         <Button variant="ghost" size="sm" onClick={() => markReleaseSeen(APP_VERSION)}>Later</Button>
       </footer>
     </section>

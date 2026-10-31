@@ -26,6 +26,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { safeHref } from '../cloud/cloud-model.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
@@ -39,6 +40,7 @@ import {
   type FleetNeedsYouResult,
 } from './fleet-needs-you.js';
 import { fleetRunsNeedsYouQuery } from './fleet-needs-you-query.js';
+import { tellLeadersPrefill } from './needs-you-tell.js';
 import { usePollWhileVisible } from './section-visibility.js';
 import styles from './NeedsYouDrawer.module.css';
 
@@ -176,6 +178,11 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               <Button size="sm" variant="subtle" aria-label={label} onClick={open}>
                 {label}
               </Button>
+              <Button size="sm" variant="ghost" aria-label={`Tell the leaders about ${item.title}`} onClick={event => {
+                event.stopPropagation();
+                closeVerseOverlay();
+                openInterjectDialog({ prefill: tellLeadersPrefill(item) });
+              }}>Tell the leaders</Button>
             </span>
           </div>
         );
