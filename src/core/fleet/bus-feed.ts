@@ -74,8 +74,10 @@ async function tail(file: () => string): Promise<{ state: BusFeedSourceState; te
       bytes += result.bytesRead;
     }
     let text = buffer.subarray(0, bytes).toString('utf8');
+    const partialFinalRow = text.length > 0 && !text.endsWith('\n');
+    if (partialFinalRow) text = text.slice(0, text.lastIndexOf('\n') + 1);
     if (offset > 0) text = text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : '';
-    return { state: 'healthy', text };
+    return { state: partialFinalRow ? 'degraded' : 'healthy', text };
   } catch (error) {
     return { state: !handle && (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', text: '' };
   } finally { await handle?.close().catch(() => undefined); }

@@ -2,10 +2,11 @@ import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
-import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
+import { appendBusInbox, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
+phm comms bus status
 phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>]
 phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
@@ -19,6 +20,8 @@ Use --to=<address> or --from=<address> for labels that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
+Status reports metadata only; expired records still occupy retained capacity. It never resets cursors.
+Missing or unavailable stores have unknown counts and bytes (null); unavailable exits 1.
 TTL milliseconds from original receipt; receivedAt is epoch milliseconds. Read never renews TTL.
 Watch polls immediately, then every interval (100..60000 ms, default 1000); each successful poll
 emits one JSON page, including empty pages, and resumes from its emitted nextCursor.
@@ -99,11 +102,17 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
 
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'read', 'watch'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'read', 'watch', 'status'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
+  if (verb === 'status') {
+    if (rest.length !== 0) return invalid();
+    const inspection = inspectBusInbox(options);
+    console.log(JSON.stringify(inspection));
+    return inspection.source === 'unavailable' ? 1 : 0;
+  }
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i]!, inline = /^(--to|--from)=(.*)$/s.exec(token);

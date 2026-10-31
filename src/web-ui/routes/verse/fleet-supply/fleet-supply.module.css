@@ -8,3 +8,6 @@
 .table thead th { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
 .table tbody tr { border-top: 1px solid var(--border-subtle); }
 .held { display: block; color: var(--text-secondary); font-weight: 400; }
+.exhaustion { display: block; font-weight: 400; color: var(--text-secondary); }
+.exhaustion[data-tone="warn"] { color: var(--status-warning-fg); }
+.exhaustion[data-tone="bad"] { color: var(--status-danger-fg); }

@@ -12,6 +12,8 @@ export interface FleetJobChangesV1 {
   job: string;
   state: 'live' | 'missing' | 'degraded';
   baseSha: string | null;
+  /** Present when tracked changes were compared against HEAD instead of the recorded base. */
+  comparisonBase?: 'HEAD';
   files: Array<{ path: string; added: number | null; removed: number | null; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }>;
   totals: { files: number; added: number; removed: number };
   truncated: boolean;
@@ -53,23 +55,35 @@ async function project(job: string, runs: string, home: string, runner: GitRunne
     let text: string;
     try { const buffer = Buffer.alloc(16 * 1024); const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0); text = buffer.toString('utf8', 0, bytesRead); }
     finally { await handle.close(); }
-    const fields = (text.split('\n').find(line => line.trim() !== '') ?? '').trim().split(/\s+/);
-    worktree = fields[2] ?? '';
+    // The launcher records two whitespace-delimited tokens followed by the
+    // full worktree path, which can itself contain whitespace.
+    const fields = /^\s*(\S+)\s+\S+\s+(.+?)\r?$/.exec(text.split('\n').find(line => line.trim() !== '') ?? '');
+    worktree = fields?.[2] ?? '';
     if (!isAbsolute(worktree)) return result;
     worktree = resolve(worktree); // trailing slashes must not make lstat follow a symlink
     if (!inside(home, worktree) || !(await lstat(worktree)).isDirectory()) return result;
     // Also exclude escapes through symlinked ancestor directories.
     if (!inside(await realpath(home), await realpath(worktree))) return result;
-    result.baseSha = /^[0-9a-f]{7,64}$/.test(fields[0] ?? '') ? fields[0]! : null;
+    const sha = fields?.[1] ?? '';
+    result.baseSha = /^[0-9a-f]{7,64}$/.test(sha) ? sha : null;
   } catch { return result; }
   result.state = 'live';
   try {
     // defaultGitRunner supplies gitChildEnv(), including GIT_OPTIONAL_LOCKS=0.
     const options = { cwd: worktree, timeoutMs: 5_000, maxStdoutBytes: 1024 * 1024 };
-    const [diff, status] = await Promise.all([
+    const [baseDiff, status] = await Promise.all([
       runner('git', ['diff', '--numstat', '-z', result.baseSha ?? 'HEAD'], options),
       runner('git', ['status', '--porcelain=v2', '-z', '--untracked-files=all'], options),
     ]);
+    let diff = baseDiff;
+    // Only an unavailable recorded object warrants a second comparison. Never
+    // retry resource failures or expose Git's stderr to the caller.
+    if (result.baseSha && diff.code !== null && diff.code !== 0 && !diff.timedOut && !diff.missing && !diff.truncated &&
+      (diff.stderr.trim() === `fatal: bad object ${result.baseSha}` || diff.stderr.trim() === `fatal: bad revision '${result.baseSha}'`)) {
+      result.state = 'degraded';
+      diff = await runner('git', ['diff', '--numstat', '-z', 'HEAD'], options);
+      if (diff.code === 0 && !diff.timedOut && !diff.missing && !diff.truncated) result.comparisonBase = 'HEAD';
+    }
     result.truncated = diff.truncated || status.truncated;
     if ([diff, status].some(out => out.code !== 0 || out.timedOut || out.missing || out.truncated)) result.state = 'degraded';
     const changed = parsePorcelainV2(status.code === 0 ? status.stdout : '').changed;
