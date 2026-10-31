@@ -37,6 +37,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
+| Install Phantom locally, connect agents over MCP, upgrade and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
@@ -240,6 +241,7 @@ canonical release guide for required hosted qualification and publication.
 - [SPEC: Elon Director — Autonomous Strategic Reasoning Layer (M257+)](SPEC-ELON-DIRECTOR.md)
 - [SPEC: Resource Control Plane (M250–M254)](SPEC-RESOURCE-CONTROL-PLANE.md)
 - [Seams — local-first, cloud-ready (M30)](SEAMS.md)
+- [Self-hosting Phantom](SELF-HOSTING.md)
 - [Small interaction moments](INTERACTION-MOMENTS.md)
 - [Spare-Mac Worker Runbook](WORKER.md)
 - [Standalone fleet MCP onramp](FLEET-MCP-ONRAMP.md)
