@@ -1,7 +1,12 @@
-import type { SwimlaneLane } from '../../../components/charts/Swimlane.js';
+import type { SwimlaneItem, SwimlaneLane } from '../../../components/charts/Swimlane.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
 const HOUR = 3_600_000;
+
+export function jobFromItem(item: SwimlaneItem): string | null {
+  return JOB_ID_RE.test(item.id) ? item.id : null;
+}
 
 export function timelineLanes(runs: FleetRuns, nowMs: number): {
   lanes: SwimlaneLane[];
@@ -19,7 +24,7 @@ export function timelineLanes(runs: FleetRuns, nowMs: number): {
   let unknownAge = 0;
   let earliest = nowMs;
 
-  runs.workers.forEach((worker, index) => {
+  runs.workers.forEach((worker) => {
     let lane = byName.get(worker.lane);
     if (!lane) {
       if (!other) { other = { id: 'other', label: 'other', items: [] }; lanes.push(other); }
@@ -31,7 +36,7 @@ export function timelineLanes(runs: FleetRuns, nowMs: number): {
     earliest = Math.min(earliest, start);
     if (longest === null || age > longest.ageSeconds) longest = { job: worker.job, lane: worker.lane, ageSeconds: age };
     lane.items.push({
-      id: `worker-${index}`, start, end: null,
+      id: worker.job, label: worker.job, start, end: null,
       status: age <= 20 * 60 ? 'running' : age <= 45 * 60 ? 'slow' : 'stuck',
       detail: `${worker.job} · ${worker.tier} · ${ageText(age)}`,
     });
