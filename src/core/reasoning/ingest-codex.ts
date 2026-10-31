@@ -28,6 +28,7 @@ import { constants as fsConstants } from 'node:fs';
 import { lstat, open, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { isRateLimitText, isUsageLimitText } from '../classify/engine-errors.js';
 import { TurnAccumulator, type TurnFeaturesV1 } from './extractors.js';
 import {
   DAY_MS,
@@ -509,7 +510,7 @@ class RolloutParser {
         case 'stream_error': {
           if (this.turn && kind === 'error') {
             this.turn.errored = true;
-            this.turn.errorClass ??= /rate.?limit|429|usage limit/i.test(str(payload['message'])) ? 'rate-limit' : 'execution';
+            this.turn.errorClass ??= isRateLimitText(str(payload['message'])) || isUsageLimitText(str(payload['message'])) ? 'rate-limit' : 'execution';
           }
           return true;
         }

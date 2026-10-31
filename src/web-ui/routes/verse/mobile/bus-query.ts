@@ -14,6 +14,9 @@ const count = (value: unknown): value is number => typeof value === 'number' && 
 const tokens = (value: unknown): value is number | null => value === null || count(value);
 const source = (value: unknown): value is string => value === 'healthy' || value === 'missing' || value === 'degraded';
 
+const BUS_EVENT_LIMIT = 50;
+const BUS_PATH = `/api/verse/fleet/live/bus?limit=${BUS_EVENT_LIMIT}`;
+
 /** Read only the fields the phone displays, without importing the desktop feed. */
 export function narrowBusLite(raw: unknown): BusLite | null {
   if (!record(raw) || raw.v !== 1 || !Array.isArray(raw.hops) || !Array.isArray(raw.events)
@@ -32,11 +35,10 @@ export function narrowBusLite(raw: unknown): BusLite | null {
     events.push({ at: event.at, kind: event.kind, text: event.text });
   }
   events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  return { hops: raw.hops.length, inputTokens, outputTokens, events: events.slice(0, 20),
+  return { hops: raw.hops.length, inputTokens, outputTokens, events: events.slice(0, BUS_EVENT_LIMIT),
     sources: { hops: raw.sources.hops, events: raw.sources.events } };
 }
 
-const BUS_PATH = '/api/verse/fleet/live/bus?limit=20';
 let missing = false;
 
 export const busLiteQuery: QueryDef<BusLite | null> = {
