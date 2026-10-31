@@ -7,7 +7,7 @@ interface Readers {
 }
 
 const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges };
-const usage = 'Usage: phm fleet job <id> [--json] [--changes] [--help]';
+const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 function formatDetail(job: FleetJobDetailV1): string {
@@ -37,7 +37,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
   const seen = new Set<string>();
   for (const arg of args) {
     const flag = arg === '-h' ? '--help' : arg;
-    if (['--json', '--changes', '--help'].includes(flag)) {
+    if (['--json', '--changes', '--log', '--help'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
     } else if (!id && isFleetJobId(arg)) {
@@ -46,8 +46,9 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       return invalid();
     }
   }
+  if (seen.has('--log') && seen.has('--changes')) return invalid();
   if (seen.has('--help')) {
-    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection.`);
+    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail.`);
     return 0;
   }
   if (!id) return invalid();
@@ -57,7 +58,16 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       console.log(seen.has('--json') ? JSON.stringify(job) : formatChanges(job));
     } else {
       const job = await deps.detail(id);
-      console.log(seen.has('--json') ? JSON.stringify(job) : formatDetail(job));
+      if (seen.has('--log')) {
+        if (seen.has('--json')) {
+          console.log(JSON.stringify({ schema: 'fleet.job.log.v1', job: job.job, generatedAt: job.generatedAt, log: job.log, sources: { log: job.sources.log } }));
+        } else {
+          if (job.log.tail.length) process.stdout.write(`${job.log.tail.join('\n')}\n`);
+          process.stderr.write(`Log: ${job.log.source}; health: ${job.sources.log}; truncated: ${job.log.truncated ? 'yes' : 'no'}\n`);
+        }
+      } else {
+        console.log(seen.has('--json') ? JSON.stringify(job) : formatDetail(job));
+      }
     }
     return 0;
   } catch {
