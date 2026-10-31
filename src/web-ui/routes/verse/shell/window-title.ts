@@ -15,6 +15,7 @@ export function formatWindowTitle({ badge }: { badge: FleetRunsBadge | null; tit
   if (badge.merges !== null) title += ` · ${badge.merges} merged/h`;
   if (badge.heldLanes?.length) title += badge.heldLanes.length === 1 ? ` · ${badge.heldLanes[0]} held` : ` · ${badge.heldLanes.length} lanes held`;
   if (badge.switchesOn.length) title += ' · switches on';
+  if (badge.personalPct != null && badge.personalPct >= 90) title += ` · personal ${Math.round(badge.personalPct)}%`;
   return finish();
 }
 
