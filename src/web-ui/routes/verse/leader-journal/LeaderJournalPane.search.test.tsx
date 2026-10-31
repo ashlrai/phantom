@@ -9,7 +9,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 it('filters, expands and highlights matching passes, then restores them when cleared', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-    v: 1, generatedAt: '2026-01-01T12:05:00Z', sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
+    v: 1, generatedAt: '2026-01-01T12:05:00Z', notes: [], sources: { orchestration: 'healthy', planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
     passes: [
       { at: '2026-01-01T12:01:00Z', sections: [{ title: 'Plan', bullets: ['First task'] }] },
       { at: '2026-01-01T12:02:00Z', sections: [{ title: 'Plan', bullets: ['Release approved'] }] },
