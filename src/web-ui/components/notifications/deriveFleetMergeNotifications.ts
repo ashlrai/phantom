@@ -13,6 +13,11 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const natural = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const clamp = (title: string) => title.length > 120 ? `${title.slice(0, 119)}…` : title;
 
+export function releaseOfTitle(title: string): string | null {
+  const match = /^(?:chore\((?:master|main)\): release |release v)(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/.exec(title);
+  return match && match[0] === title ? match[1] ?? null : null;
+}
+
 function isMergeSnapshot(value: unknown): value is MergeSnapshot {
   if (!record(value) || typeof value.generatedAt !== 'string' || !Number.isFinite(Date.parse(value.generatedAt))
     || !record(value.sources) || (value.sources.merges !== 'healthy' && value.sources.merges !== 'degraded')
@@ -31,12 +36,24 @@ export function deriveFleetMergeNotifications(data: unknown, _now: number): AppN
   const actionHref = paneLinkUrl('fleet-merges', null, false, base) ?? undefined;
   const common = { category: 'fleet' as const, severity: 'info' as const, ts: data.generatedAt,
     actionLabel: 'Open merges', actionHref };
-  if (items.length > 5) {
-    const hour = new Date(data.generatedAt).toISOString().slice(0, 13);
-    return [{ ...common, id: `fleet-merge:rollup:${hour}`,
-      title: `${count ?? items.length} PRs merged in the last hour`,
-      detail: items.slice(0, 3).map((item) => clamp(item.title)).join(' · ') }];
+  const releases: AppNotification[] = [];
+  const remaining: Merge[] = [];
+  for (const item of items) {
+    const version = releaseOfTitle(item.title);
+    if (version === null) {
+      remaining.push(item);
+    } else {
+      releases.push({ ...common, severity: 'high', id: `fleet-release:${item.repo}:${version}`,
+        title: `${item.repo.split('/').at(-1)} ${version} shipped`,
+        detail: `Release PR #${item.number} merged. The desktop app can update from Settings ▸ Desktop ▸ Updates.` });
+    }
   }
-  return items.map((item) => ({ ...common, id: `fleet-merge:${item.repo}#${item.number}`,
-    title: `Merged #${item.number}`, detail: `${item.repo.split('/').at(-1)}: ${clamp(item.title)}` }));
+  if (remaining.length > 5) {
+    const hour = new Date(data.generatedAt).toISOString().slice(0, 13);
+    return [...releases, { ...common, id: `fleet-merge:rollup:${hour}`,
+      title: `${count === null ? remaining.length : Math.max(0, count - releases.length)} PRs merged in the last hour`,
+      detail: remaining.slice(0, 3).map((item) => clamp(item.title)).join(' · ') }];
+  }
+  return [...releases, ...remaining.map((item) => ({ ...common, id: `fleet-merge:${item.repo}#${item.number}`,
+    title: `Merged #${item.number}`, detail: `${item.repo.split('/').at(-1)}: ${clamp(item.title)}` }))];
 }
