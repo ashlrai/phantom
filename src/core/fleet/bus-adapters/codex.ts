@@ -136,9 +136,12 @@ async function execute(options: CodexBusOptions, message: CodexInboxMessage): Pr
           }
         } catch { engineFailed = true; }
         const status = !engineFailed && completed && body ? 'completed' : 'failed';
+        const inputTokens = tokenCount(usage['input_tokens']);
+        const cachedInputTokens = tokenCount(usage['cached_input_tokens']);
         resolve({ body: status === 'completed' ? body : failed.body, status,
-          inputTokens: tokenCount(usage['input_tokens']),
-          cachedInputTokens: tokenCount(usage['cached_input_tokens']),
+          inputTokens,
+          cachedInputTokens: inputTokens !== null && cachedInputTokens !== null && cachedInputTokens > inputTokens
+            ? null : cachedInputTokens,
           outputTokens: tokenCount(usage['output_tokens']) });
       });
       if (options.signal?.aborted) stop();
