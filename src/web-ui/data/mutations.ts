@@ -73,3 +73,8 @@ export interface OpenTargetRequest {
 export async function openTarget(req: OpenTargetRequest): Promise<void> {
   await post('/api/open', req);
 }
+
+/** RQ-ONB-2: persist a Connect plan-tier pick; null clears it. */
+export async function setResourcePlanTier(resourceId: string, planTier: string | null): Promise<void> {
+  await post('/api/onboard/plan-tier', { resourceId, planTier });
+}
