@@ -6,6 +6,36 @@ type SourceState = 'healthy' | 'degraded' | 'missing' | 'unknown';
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const source = (value: unknown): SourceState => value === 'healthy' || value === 'degraded' || value === 'missing' ? value : 'unknown';
 
+export function launchPulse(snapshot: unknown, nowMs: number): {
+  state: 'stalled' | 'launching' | 'paused' | 'unknown'; minutesSinceStart: number | null; mergedLastHour: number | null; text: string;
+} {
+  const data = record(snapshot) ? snapshot : {};
+  const count = record(data.mergesLastHour) ? data.mergesLastHour.count : null;
+  const mergedLastHour = typeof count === 'number' && Number.isFinite(count) && count >= 0 ? count : null;
+  const validWorkers = Array.isArray(data.workers) && data.workers.every((w: unknown) => record(w)
+    && (w.ageSeconds === null || (typeof w.ageSeconds === 'number' && Number.isFinite(w.ageSeconds) && w.ageSeconds >= 0)));
+  const validEvents = Array.isArray(data.events) && data.events.every((e: unknown) => record(e)
+    && typeof e.kind === 'string' && typeof e.at === 'string' && Number.isFinite(Date.parse(e.at)));
+  const ages = validWorkers ? (data.workers as Array<{ ageSeconds: number | null }>).flatMap(w => w.ageSeconds === null ? [] : [w.ageSeconds]) : [];
+  const starts = validEvents ? (data.events as Array<{ kind: string; at: string }>).filter(e => /^(launch|start)$/.test(e.kind)).map(e => Date.parse(e.at)) : [];
+  const age = ages.length ? Math.min(...ages) : starts.length && Number.isFinite(nowMs) ? (nowMs - Math.max(...starts)) / 1000 : null;
+  const minutesSinceStart = age === null ? null : Math.max(0, Math.floor(age / 60));
+  if (data.paused === true) return { state: 'paused', minutesSinceStart, mergedLastHour, text: 'Paused' };
+  if (!validWorkers || !validEvents || (data.paused !== undefined && data.paused !== false)) {
+    return { state: 'unknown', minutesSinceStart, mergedLastHour, text: 'No launch data' };
+  }
+  if ((age === null || age >= 1800) && mergedLastHour === 0) {
+    return { state: 'stalled', minutesSinceStart, mergedLastHour, text: minutesSinceStart === null
+      ? 'Stalled: last launch unknown, nothing merged' : `Stalled: nothing launched in ${minutesSinceStart} min, nothing merged` };
+  }
+  if ((age === null && !mergedLastHour) || (age !== null && age >= 1800 && mergedLastHour === null)) {
+    return { state: 'unknown', minutesSinceStart, mergedLastHour, text: 'No launch data' };
+  }
+  const details = [minutesSinceStart === null ? null : `${ages.length ? 'newest worker' : 'latest start'} ${minutesSinceStart} min old`,
+    mergedLastHour === null || mergedLastHour === 0 ? null : `${mergedLastHour} merged in the last hour`].filter(Boolean);
+  return { state: 'launching', minutesSinceStart, mergedLastHour, text: ['Launching', ...details].join(' · ') };
+}
+
 export function readLeaderPasses(snapshot: unknown, nowMs: number): {
   headline: string; tone: Tone; passes: Array<{ label: string; age: string; eta: ReturnType<typeof nextPassEta>; dueText: string; tone: 'ok' | 'warning' | 'danger' }>;
   agents: number | null; lastTick: { text: string; ageMinutes: number | null };

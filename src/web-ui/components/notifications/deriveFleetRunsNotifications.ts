@@ -10,6 +10,7 @@ interface FleetRuns {
   memFreePct?: number | null;
   diskFreeGb?: number | null;
   claudeLane: string | null;
+  codexPersonal?: { resetsAt?: string | null } | null;
   lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }>;
   workers: Array<{ ageSeconds: number | null }>;
   mergesLastHour: { count: number | null };
@@ -24,6 +25,12 @@ const scrub = (v: string) => v.replace(/[A-Za-z0-9_-]{32,}/g, '…');
 const etTime = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
+const etDay = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', month: 'short', day: 'numeric',
+});
+export function usageHeldReason(reason: string | null): boolean {
+  return reason !== null && /usage[_ -]?limit|out of usage|quota|rate.?limit|weekly limit/i.test(reason);
+}
 const masonSource = (source: string) => {
   const value = source.trim().toLowerCase();
   return !/leader|system/.test(value) && (value.includes('mason')
@@ -40,6 +47,8 @@ const textHash = (text: string) => {
 function isFleetRuns(v: unknown): v is FleetRuns {
   return record(v) && date(v.generatedAt) && (v.paused === undefined || typeof v.paused === 'boolean')
     && nullableString(v.claudeLane)
+    && (v.codexPersonal === undefined || v.codexPersonal === null || (record(v.codexPersonal)
+      && (v.codexPersonal.resetsAt === undefined || nullableString(v.codexPersonal.resetsAt))))
     && Array.isArray(v.lanes) && v.lanes.every((l: unknown) => record(l)
       && typeof l.lane === 'string' && l.lane.length > 0 && count(l.running) && count(l.target) && count(l.queued)
       && typeof l.held === 'boolean' && (l.heldReason === undefined || nullableString(l.heldReason)))
@@ -82,8 +91,17 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
     add('fleet-claude-lane-down', 'high', 'Claude lane is down', scrub(data.claudeLane), { label: 'Open host', pane: 'fleet-host' });
   }
   for (const l of data.lanes) {
-    if (l.held) add(`fleet-lane-held-${l.lane}`, 'medium', `${scrub(l.lane)} lane is held`,
-      l.heldReason ? scrub(l.heldReason) : 'Lane is held.', { label: 'Open lanes', pane: 'fleet-lanes' });
+    if (!l.held) continue;
+    if (usageHeldReason(l.heldReason ?? null)) {
+      const reset = l.lane === 'codex-personal' ? data.codexPersonal?.resetsAt : null;
+      const detail = date(reset) ? `Resumes ${etDay.format(new Date(reset))} ${etTime.format(new Date(reset))} ET`
+        : `Held: ${scrub(l.heldReason ?? '')}`;
+      add(`fleet-lane-usage-${l.lane}`, 'high', `${scrub(l.lane)} is out of usage`, detail,
+        { label: 'Open lanes', pane: 'fleet-lanes' });
+    } else {
+      add(`fleet-lane-held-${l.lane}`, 'medium', `${scrub(l.lane)} lane is held`,
+        l.heldReason ? scrub(l.heldReason) : 'Lane is held.', { label: 'Open lanes', pane: 'fleet-lanes' });
+    }
   }
   for (const l of data.lanes) {
     if (l.running === 0 && l.target > 0 && l.queued > 0 && !l.held) {
