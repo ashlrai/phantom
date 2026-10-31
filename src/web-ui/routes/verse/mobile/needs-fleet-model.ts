@@ -7,6 +7,23 @@ export interface FleetAttention {
   title: string;
   detail: string;
   next: string;
+  action?: { kind: 'screen'; screen: 'runs' | 'fleet' | 'leader'; label: string }
+    | { kind: 'copy'; command: string; label: 'Copy command' };
+}
+
+export function attentionAction(open: unknown): FleetAttention['action'] {
+  if (typeof open !== 'object' || open === null) return undefined;
+  if ('kind' in open && open.kind === 'terminal' && 'command' in open && typeof open.command === 'string') {
+    return { kind: 'copy', command: open.command, label: 'Copy command' };
+  }
+  if (!('kind' in open) || open.kind !== 'pane' || !('paneId' in open)) return undefined;
+  switch (open.paneId) {
+    case 'fleet-lanes': return { kind: 'screen', screen: 'runs', label: 'Open runs' };
+    case 'fleet-supply':
+    case 'fleet-host': return { kind: 'screen', screen: 'fleet', label: 'Open fleet' };
+    case 'leader-journal': return { kind: 'screen', screen: 'leader', label: 'Open leader' };
+    default: return undefined;
+  }
 }
 
 /** Read-only issues from the latest fleet snapshot. */
@@ -14,9 +31,11 @@ export function fleetAttention(runs: unknown, nowMs: number): FleetAttention[] {
   if (runs === null) return [];
   const cards = new Map<string, FleetAttention>();
   for (const item of deriveFleetNeedsYou(runs, nowMs).items) {
+    const action = attentionAction(item.open);
     if (!cards.has(item.id)) cards.set(item.id, {
       id: item.id, severity: item.severity === 'urgent' ? 'high' : 'medium',
       title: item.title, detail: item.detail, next: item.nextStep,
+      ...(action ? { action } : {}),
     });
   }
   const lastTick = typeof runs === 'object' && runs !== null && 'lastTick' in runs ? runs.lastTick : undefined;
