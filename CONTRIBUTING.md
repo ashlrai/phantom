@@ -57,6 +57,7 @@ To install the CLI while developing:
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Merge Gate still runs the full check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
@@ -66,6 +67,8 @@ To install the CLI while developing:
 For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
 is separate from these scripts.
+
+Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the full CI check remains the merge gate.
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
