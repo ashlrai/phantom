@@ -6,15 +6,25 @@
   min-height: 0;
 }
 
-.root > :global([data-testid='leader-conversation']) {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
 .root :global([role='log'][aria-label='Conversation with the Leader']) {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+}
+
+/* A line of Mason's own words (inbox or thread): a rail on the left edge marks it his. */
+.masonLine {
+  border-left: 2px solid var(--accent-500);
+  padding-left: var(--space-2);
+}
+
+.note {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
 }
 
 .reply {
