@@ -35,3 +35,49 @@ the fixture suite:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
 ```
+
+## Router-queue restock
+
+`contrib/mac/restock.py` is the deterministic restocker that `dispatchd`/`selfrun.sh`
+invoke on the Mac (installed as `~/.ashlr-runs/bin/restock.py` through `swap.sh`,
+sha-pinned by `selfrun.sh`). It reads `~/.ashlr-runs/queue/router-queue.md`,
+picks eligible `READY` lines into per-lane prompts, marks them `CLAIMED`, and
+never calls a model or the network. It runs as
+`restock.py [--dry-run] [--per-lane N]` and creates or selects no lines for
+repos outside the `GS_REPOS` fleet allowlist or for PRs on the queue's hold list
+(`HOLD`/`HOLD-SECURITY` lines).
+
+Queue policies live here (RQ-QUEUEGEN-BOLD-30, SPEC-AMEND Security #5,
+RQ-RESTOCKPOOLRULEQ7):
+
+- **Bold floor:** before each restock the `bet=bold` share of `READY` lines is
+  counted; while it is under 30%, bold lines pick first. The summary line prints
+  `bold ready=B/N(f) picked=b/n(f) prefer=bold`.
+- **Security pin:** a `READY` line touching `.github`, `publish.sh`, `dispatchd`,
+  `git-safe`, `scrub` or `reap` is parked as `HOLD-SECURITY` carrying
+  `[Security pin required]`; bold preference never promotes it back to `READY`.
+  Negated mentions ("never touch .github") stay eligible.
+- **codex-local eligibility (EO 08:45 small-only):** the small local lane takes
+  only `FIXUP`, `DAILYFIX`, `DRAIN` and `REBASE` kinds (the leading token after
+  an optional `RQ-` prefix, dispatchd's `_kind` convention) or a `-R2`/`-rebase`
+  id suffix, under a declared `size` cap: `<=400` for `DRAIN`/`-R2`, `<=150` for
+  the rest; no `size` fails closed. Any other line routed `pool=codex-local` is
+  rejected — the summary counts `pool-ineligible:<rule>` (`kind`/`size`),
+  `dispatch-events.log` gains one value-free `RESTOCK-SKIP` line per rejection,
+  and the line is never silently re-pooled. `pool=any` never resolves to
+  `codex-local`.
+- **Escalation clauses:** `esc=<pool> after N failed` and `esc=<pool> at T+Nm`
+  are escalation hints, not `after <dep>` dependencies; the dep scan ignores
+  `esc=` attr tokens so those lines are no longer skipped `after-unlanded`.
+
+Install of a new rev is gated on the `G1-CODE-PIN`: update `PIN_RESTOCK_PY` in
+`selfrun.sh` and the `want` lines in `swap.sh` to the new file's sha256 before
+`swap.sh` can place it in `~/.ashlr-runs/bin/`. The `restock.sh` wrapper in that
+directory is unchanged; it only execs this file. This revision is **not**
+installed on the Mac: Security pins the exact script sha before `swap.sh` runs.
+
+Run the fixture tests (HOME-isolated, no live queue access):
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
+```
