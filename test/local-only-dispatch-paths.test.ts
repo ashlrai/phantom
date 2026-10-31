@@ -248,6 +248,7 @@ describe('§A dispatch-path inventory', () => {
     'core/genome/playbook.ts',       // LM Studio playbook synthesis (documented LOCAL-ONLY)
     'core/vision/strategist.ts',     // ollamaDirectComplete — mirrors manager.ts
     'core/visual/grounding.ts',      // completionsUrl() — the only one that can carry a token
+    'core/bridge/pr-title.ts',       // createLoopbackCompleter — loopback-pinned PR title draft, gated per POST
   ];
 
   /** Files whose only mention of the path is a comment, a type, or a registry URL. */

@@ -383,6 +383,27 @@ describe('M155 invariant 3 — shouldEscalate: true on failure signals, false on
     expect(sig.reason).toMatch(/judge-harmful/);
   });
 
+  it('lint-failed → escalate=true once, then the hop cap still holds', () => {
+    const decision = makeCascadeDecision('local');
+    const result: TaskResult = { hasDiff: true, testsPassed: true, applySucceeded: true, lintPassed: false };
+    const sig = shouldEscalate(result, decision);
+
+    expect(sig.escalate).toBe(true);
+    expect(sig.toTier).toBe('mid');
+    expect(sig.reason).toMatch(/lint-failed/);
+
+    const capped = shouldEscalate(result, { ...makeCascadeDecision('local'), attempt: 3 });
+    expect(capped.escalate).toBe(false);
+  });
+
+  it('lintPassed unset or true → no lint signal', () => {
+    const decision = makeCascadeDecision('local');
+    const unset: TaskResult = { hasDiff: true, testsPassed: true, applySucceeded: true };
+    expect(shouldEscalate(unset, decision).escalate).toBe(false);
+    const ran: TaskResult = { hasDiff: true, testsPassed: true, applySucceeded: true, lintPassed: true };
+    expect(shouldEscalate(ran, decision).escalate).toBe(false);
+  });
+
   it('judge=uncertain → escalate=false (not an objective failure)', () => {
     const decision = makeCascadeDecision('local');
     const result: TaskResult = { hasDiff: true, testsPassed: true, applySucceeded: true, judgeVerdict: 'uncertain' };

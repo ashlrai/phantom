@@ -10,19 +10,21 @@ import { bindingLeftPercent } from './binding-left.js';
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function win(over: Partial<{ id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }> = {}): {
+function win(over: Partial<{ id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string; resetText: string | null; resetsAt: string | null }> = {}): {
   id: string;
   usedPercent: number | null;
   limitReached: boolean;
   binding: boolean;
   label: string;
+  resetText: string | null;
+  resetsAt: string | null;
 } {
-  return { id: 'w', usedPercent: null, limitReached: false, binding: false, label: '', ...over };
+  return { id: 'w', usedPercent: null, limitReached: false, binding: false, label: '', resetText: null, resetsAt: null, ...over };
 }
 
-function row(over: Partial<{ quotaCurrent: boolean; windows: { id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }[] }> = {}): {
+function row(over: Partial<{ quotaCurrent: boolean; windows: ReturnType<typeof win>[] }> = {}): {
   quotaCurrent: boolean | undefined;
-  windows: { id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }[];
+  windows: ReturnType<typeof win>[];
 } {
   return { quotaCurrent: true, windows: [], ...over };
 }

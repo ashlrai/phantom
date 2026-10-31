@@ -12,6 +12,7 @@
  * non-loopback endpoints through the local-inference URL gate.
  */
 
+import { assertPermitted, endpointPermitted } from '../policy/local-only.js';
 import { validateLocalBaseUrl } from '../run/local-inference.js';
 
 export const PR_TITLE_MAX_CHARS = 72;
@@ -193,6 +194,7 @@ export function createLoopbackCompleter(options: LoopbackCompleterOptions = {}):
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      assertPermitted(endpointPermitted(checked.baseUrl));
       const response = await fetchImpl(`${checked.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

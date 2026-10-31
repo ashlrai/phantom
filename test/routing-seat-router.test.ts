@@ -31,6 +31,7 @@ import {
 import { rankAlternatives, routeSeat, tierPreference } from '../src/core/routing/router.js';
 import { boundSeatReasons, listSeatIds, reasonSentence, reasonSentences } from '../src/core/routing/seat-reasons.js';
 import { normalizeJournalRecord, type DispatchJournalRecord } from '../src/core/fleet/fleet-runtime-journal.js';
+import type { AccountSchedulingView } from '../src/core/routing/scheduling-types.js';
 import type { BudgetPolicy, RoutingRequest } from '../src/core/routing/types.js';
 import type { VerseSeat } from '../src/core/verse/types.js';
 
@@ -723,5 +724,84 @@ describe('provider-neutral included native Devin role routing',()=>{
     expect(routeSeat(auto('leader','high'),[native],balanced(),opts).seatId).toBe('devin-cli');
     for(const held of [{...native,free:false},{...native,costBasis:'credits' as const},{...native,seatId:'devin-cloud'}])
       expect(routeSeat(auto('leader','high'),[held],balanced(),opts).seatId).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Spend-order router options (rework of #934): spendDown, inFlight, metered opt-in
+// ---------------------------------------------------------------------------
+
+describe('seat router options', () => {
+  const optSeat = (seatId: string, used: number, extra: Partial<SeatCapacity> = {}): SeatCapacity =>
+    seat(seatId, 'codex', [win('codex_codex_secondary', used, { resetsAt: iso(6 * 24 * H) })], {
+      costBasis: 'subscription',
+      billingClass: 'subscription',
+      ...extra,
+    });
+
+  const view = (seatId: string, resetAt: string): AccountSchedulingView => ({
+    seatId,
+    observedAt: iso(-60_000),
+    admission: 'eligible',
+    headroomPercent: 40,
+    reset: {
+      kind: 'weekly-deadline',
+      at: resetAt,
+      description: null,
+      source: 'codex-native-rate-limits',
+      plan: 'plus',
+      windowDurationMins: 10080,
+      startsAt: null,
+    },
+    opportunity: { kind: 'before-reset', reason: 'window closes' },
+    forecast: {
+      taskId: 't',
+      durationMs: { p25: 60_000, p50: 90_000, p75: 120_000, samples: 4 },
+      tokens: null,
+      cohort: { engine: 'codex', model: null, seatId, taskKind: 'code' },
+      fit: 'likely-before-reset',
+      limitations: [],
+    },
+  });
+
+  it('breaks an equal headroom tie toward the sooner reset only when spend-down is on', () => {
+    const seats = [optSeat('later', 20), optSeat('sooner', 20)];
+    const scheduling = {
+      later: view('later', iso(4 * 24 * H)),
+      sooner: view('sooner', iso(6 * H)),
+    };
+    const base = auto('code', 'medium');
+    expect(routeSeat(base, seats, balanced(), opts).seatId).toBe('later');
+    expect(routeSeat(base, seats, balanced(), { nowMs: NOW, spendDown: true, scheduling }).seatId).toBe('sooner');
+    expect(routeSeat(base, [optSeat('busy', 50), optSeat('open', 10)], balanced(), {
+      nowMs: NOW,
+      spendDown: true,
+      scheduling: { busy: scheduling.sooner, open: scheduling.later },
+    }).seatId).toBe('open');
+  });
+
+  it('spreads in-flight ties and keeps metered seats out until they opt in', () => {
+    const base = auto('code', 'medium');
+    const seats = [optSeat('a', 20), optSeat('b', 20)];
+    expect(routeSeat(base, seats, balanced(), { nowMs: NOW, inFlight: { a: 2, b: 0 } }).seatId).toBe('b');
+    const metered = optSeat('api', 20, { billingClass: 'metered', costBasis: 'per-token' });
+    const held = routeSeat(base, [metered, optSeat('sub', 20)], balanced(), { nowMs: NOW, enforceMeteredOptIn: true });
+    expect(held.seatId).toBe('sub');
+    expect(held.exclusions.some((row) => row.seatId === 'api')).toBe(true);
+    const opted = routeSeat(base, [{ ...metered, meteredOptIn: true }, optSeat('sub', 20)], balanced(), {
+      nowMs: NOW,
+      enforceMeteredOptIn: true,
+    });
+    expect(opted.candidates).toContain('api');
+    expect(opted.candidates).toContain('sub');
+  });
+
+  it('reads metered billing from cost basis when no billing class is recorded', () => {
+    const base = auto('code', 'medium');
+    const metered = optSeat('api', 20, { billingClass: undefined, costBasis: 'credits' });
+    const held = routeSeat(base, [metered, optSeat('sub', 20)], balanced(), { nowMs: NOW, enforceMeteredOptIn: true });
+    expect(held.seatId).toBe('sub');
+    expect(held.exclusions[0]?.reasons[0]).toMatch(/metered api billing is off/i);
   });
 });
