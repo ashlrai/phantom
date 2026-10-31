@@ -10,25 +10,27 @@
  * and subscribes to those cache updates, so a second notification poller
  * would duplicate the same expensive reads even with the panel closed.
  *
- * The self-update probe has no SSE event, so it gets one poller — the same
- * cadence (60 s) and visibility gating the Updates row itself uses — plus
- * the native updater's event-driven state, which never polls at all.
+ * The self-update and release PR probes have no SSE event, so each gets a
+ * visibility-gated poller at the same 60 s cadence as its own surface.
+ * The native updater uses event-driven state and never polls.
  */
 import { useEffect } from 'react';
 import { useDesktopUpdates } from '../../app/desktop-updates.js';
 import { useQuery, useRefetch } from '../../data/hooks.js';
 import { controlSnapshotQuery, fleetStatusQuery, runsQuery, inboxQuery } from '../../data/queries.js';
+import { releasePrQuery } from '../../routes/verse/fleet/release-pr-query.js';
 import { updateStatusQuery } from '../../routes/verse/sections/update-status-queries.js';
 import { usePollWhileVisible } from '../../routes/verse/shell/section-visibility.js';
 import { deriveNotifications } from './deriveNotifications.js';
 import { deriveFleetRunsNotifications } from './deriveFleetRunsNotifications.js';
 import { deriveFleetMergeNotifications } from './deriveFleetMergeNotifications.js';
+import { deriveReleasePrNotifications } from './deriveReleasePrNotifications.js';
 import { deriveUpdateNotifications } from './deriveUpdateNotifications.js';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { reconcileNotifications } from './notification-store.js';
 
-/** The Updates row polls the same probe at 60 s — never faster. */
-const UPDATE_STATUS_NOTIFY_POLL_MS = 60_000;
+/** Match the Updates and Releases surfaces; never poll faster. */
+const NOTIFY_POLL_MS = 60_000;
 
 export function useNotificationEngine(): void {
   const control = useQuery(controlSnapshotQuery);
@@ -37,8 +39,10 @@ export function useNotificationEngine(): void {
   const inbox = useQuery(inboxQuery);
   const fleetRuns = useQuery(fleetRunsNotifyQuery);
   const update = useQuery(updateStatusQuery);
+  const releasePr = useQuery(releasePrQuery);
   const nativeUpdates = useDesktopUpdates();
-  usePollWhileVisible(useRefetch(updateStatusQuery), UPDATE_STATUS_NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(updateStatusQuery), NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(releasePrQuery), NOTIFY_POLL_MS);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -46,6 +50,7 @@ export function useNotificationEngine(): void {
   const inboxData = inbox.data;
   const fleetRunsData = fleetRuns.data;
   const updateData = update.data;
+  const releasePrData = releasePr.data;
 
   useEffect(() => {
     const now = Date.now();
@@ -59,7 +64,8 @@ export function useNotificationEngine(): void {
         deriveFleetRunsNotifications(fleetRunsData, now),
         deriveFleetMergeNotifications(fleetRunsData, now),
         deriveUpdateNotifications(updateData ?? null, now, nativeUpdates),
+        deriveReleasePrNotifications(releasePrData, now),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, updateData, nativeUpdates]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, updateData, releasePrData, nativeUpdates]);
 }
