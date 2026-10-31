@@ -1,21 +1,36 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESOURCE_CATALOG } from '../../../core/onboard/catalog.js';
-import type { OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
+import type {
+  OnboardResourceStatus,
+  OnboardScheduledAgent,
+  OnboardStatusReport,
+} from '../../data/api-types.js';
 import { clearMutationToken, setMutationToken } from '../../data/auth-store.js';
 import { ConnectView } from './ConnectView.js';
 
 function resourceStatus(overrides: Partial<OnboardResourceStatus> = {}): OnboardResourceStatus {
   return {
     id: 'codex', installed: true, binaryPath: '/bin/codex',
-    loginState: 'logged-out', loginCommand: 'codex login', selectedPlanTier: null, ...overrides,
+    loginState: 'logged-out', loginCommand: 'codex login', selectedPlanTier: null,
+    keyPresent: null, endpointUp: null, ...overrides,
+  };
+}
+
+function scheduledAgent(overrides: Partial<OnboardScheduledAgent> = {}): OnboardScheduledAgent {
+  return {
+    id: 'au_nightly', name: 'Nightly review', enabled: true,
+    rrule: 'FREQ=DAILY;BYHOUR=2', nextRunAt: '2026-10-29T02:00:00.000Z', ...overrides,
   };
 }
 
 function report(overrides: Partial<OnboardStatusReport> = {}): OnboardStatusReport {
   return {
     generatedAt: '2026-10-28T00:00:00.000Z', dispatchEnabled: true,
-    resources: [resourceStatus()], ...overrides,
+    resources: [resourceStatus()],
+    agents: { schedulerRunning: true, agents: [scheduledAgent()] },
+    balance: { connected: ['codex'], scheduledAgents: { total: 1, enabled: 1 }, resources: [] },
+    ...overrides,
   };
 }
 
@@ -77,5 +92,46 @@ describe('Connect Resources', () => {
     stubApi(503);
     render(<ConnectView />);
     expect(await screen.findByRole('status')).toHaveTextContent('Live detection is unavailable.');
+  });
+
+  it('lists scheduled agents on this computer and posts the toggle to the automations route', async () => {
+    const posts: unknown[] = [];
+    stubApi(200, report(), posts);
+    render(<ConnectView />);
+    const section = screen.getByRole('region', { name: 'Proactive agents' });
+    const toggle = await within(section).findByRole('switch', { name: 'Nightly review enabled' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(within(section).getByText(/FREQ=DAILY;BYHOUR=2/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    await vi.waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ path: '/api/verse/automations/au_nightly/disable', body: '{}' });
+  });
+
+  it('renders the resource-balance summary with real readings and unknown usage', async () => {
+    stubApi(200, report({
+      balance: {
+        connected: ['codex'], scheduledAgents: { total: 1, enabled: 1 },
+        resources: [
+          {
+            id: 'codex', connected: true, evidence: 'signed-in',
+            planTiers: ['Plus', 'Pro'], selectedPlanTier: 'Pro',
+            usage: { usedPct: 41, resetsAt: null, callsToday: 3, tokensToday: null, costTodayUsd: null },
+          },
+          {
+            id: 'openai', connected: false, evidence: 'none',
+            planTiers: ['API'], selectedPlanTier: null, usage: null,
+          },
+        ],
+      },
+    }));
+    render(<ConnectView />);
+    const section = await screen.findByRole('region', { name: 'Resource balance' });
+    expect(within(section).getByText(/1 connected: Codex\./)).toBeInTheDocument();
+    const codexRow = within(section).getByText('Codex').closest('li')!;
+    expect(within(codexRow as HTMLElement).getByText('signed in')).toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).getByText('plan Pro')).toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).getByText(/41% of window used/)).toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).getByText(/3 dispatches today/)).toBeInTheDocument();
+    expect(within(section).queryByText('OpenAI')).not.toBeInTheDocument();
   });
 });

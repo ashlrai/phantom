@@ -1,0 +1,56 @@
+--- a/bin/agent.sb
++++ b/bin/agent.sb
+@@ -36,3 +36,6 @@
+   (subpath "/Users/masonwyatt/.omlx")
+   (subpath "/Users/masonwyatt/.omlx-secrets")
+   (literal "/Users/masonwyatt/.omlx-secrets/key"))
++; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
++(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
++(deny appleevent-send)
+--- a/bin/claude.sb
++++ b/bin/claude.sb
+@@ -36,3 +36,6 @@
+   (subpath "/Users/masonwyatt/.omlx")
+   (subpath "/Users/masonwyatt/.omlx-secrets")
+   (literal "/Users/masonwyatt/.omlx-secrets/key"))
++; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
++(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
++(deny appleevent-send)
+--- a/bin/codex-cmp.sb
++++ b/bin/codex-cmp.sb
+@@ -38,3 +38,6 @@
+   (subpath "/Users/masonwyatt/.omlx")
+   (subpath "/Users/masonwyatt/.omlx-secrets")
+   (literal "/Users/masonwyatt/.omlx-secrets/key"))
++; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
++(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
++(deny appleevent-send)
+--- a/bin/codex-personal.sb
++++ b/bin/codex-personal.sb
+@@ -38,3 +38,6 @@
+   (subpath "/Users/masonwyatt/.omlx")
+   (subpath "/Users/masonwyatt/.omlx-secrets")
+   (literal "/Users/masonwyatt/.omlx-secrets/key"))
++; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
++(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
++(deny appleevent-send)
+--- a/bin/codex-local.sb
++++ b/bin/codex-local.sb
+@@ -34,3 +34,6 @@
+   (subpath "/Users/masonwyatt/.omlx")
+   (subpath "/Users/masonwyatt/.omlx-secrets")
+   (literal "/Users/masonwyatt/.omlx-secrets/key"))
++; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
++(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
++(deny appleevent-send)
+--- a/bin/launch.sh
++++ b/bin/launch.sh
+@@ -88,7 +88,7 @@
+   # the omlx provider has no env_key, so codex sends no Authorization header. Profile codex-local.sb is sha-pinned; mismatch refuses.
+   # rev1.2: ~/.codex-local has no config.toml; the provider is defined and selected entirely by -c flags here (keys per codex
+   # ModelProviderInfo: name, base_url, wire_api=responses; requires_openai_auth=false -> unauthenticated, no env_key).
+-  LSB=$R/bin/codex-local.sb; LSB_SHA=fdb051cdf1a379f94bd8ebd71594ddc619dc0a4ce8f364bc16e6f7fe2df82f06
++  LSB=$R/bin/codex-local.sb; LSB_SHA=SB17_POST_SHA_CODEX_LOCAL
+   { [ -f "$LSB" ] && [ ! -L "$LSB" ] && [ "$(shasum -a 256 "$LSB" | cut -d' ' -f1)" = "$LSB_SHA" ]; } || { echo "REFUSED: codex-local.sb missing or sha mismatch"; exit 5; }
+   case "$M" in fast|strong) ;; *) echo "HELD: bad codex-local model"; exit 3;; esac
+   curl -sf -m 2 --noproxy '*' http://127.0.0.1:8123/v1/models >/dev/null || { echo "HELD: codex-local unhealthy"; exit 3; }

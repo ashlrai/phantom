@@ -15,6 +15,7 @@ import { useQuery } from '../../data/hooks.js';
 import { controlSnapshotQuery, fleetStatusQuery, runsQuery, inboxQuery } from '../../data/queries.js';
 import { deriveNotifications } from './deriveNotifications.js';
 import { deriveFleetRunsNotifications } from './deriveFleetRunsNotifications.js';
+import { deriveFleetMergeNotifications } from './deriveFleetMergeNotifications.js';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { reconcileNotifications } from './notification-store.js';
 
@@ -32,13 +33,14 @@ export function useNotificationEngine(): void {
   const fleetRunsData = fleetRuns.data;
 
   useEffect(() => {
+    const now = Date.now();
     reconcileNotifications(
       deriveNotifications({
         control: controlData,
         fleet: fleetData,
         runs: runsData,
         inbox: inboxData,
-      }).concat(deriveFleetRunsNotifications(fleetRunsData, Date.now())),
+      }).concat(deriveFleetRunsNotifications(fleetRunsData, now), deriveFleetMergeNotifications(fleetRunsData, now)),
     );
   }, [controlData, fleetData, runsData, inboxData, fleetRunsData]);
 }

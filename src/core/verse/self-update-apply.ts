@@ -1,7 +1,7 @@
 /**
  * core/verse/self-update-apply.ts — the APPLY half of Hub self-update. The
- * read-only status route (`GET /api/verse/ops/self-update`) is a sibling job;
- * a follow-up wires `{action:'apply'}` onto it. This module owns no route.
+ * ops API wires `{action:'apply'}` onto POST /api/verse/ops/self-update.
+ * This module owns no route.
  *
  * Steps, each timed and recorded: `git status --porcelain` must be empty
  * (else `refused`, "dirty tree"); `git fetch origin master` (60 s);
