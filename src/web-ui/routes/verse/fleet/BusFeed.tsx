@@ -4,7 +4,10 @@ import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { Tag } from '../../../components/primitives/Tag.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { usePollWhileVisible, useSectionVisible, useDocumentVisible } from '../shell/section-visibility.js';
+import { JobRefs } from './JobRefs.js';
 import { busFeedMissing, busFeedQuery } from './bus-feed-queries.js';
 import { busTimeline, eventTone, relativeAt } from './bus-feed-model.js';
 import styles from './bus-feed.module.css';
@@ -33,7 +36,7 @@ export function BusFeed({ now }: { now: number }) {
     <ul aria-label="Agent bus" className={styles.list}>
       {rows.map(row => <li key={row.key} className={styles.row} data-tone={row.kind === 'hop' ? 'neutral' : eventTone(row.kind)}>
         {row.kind !== 'hop' ? <><time dateTime={row.at ?? undefined} title={row.at ?? undefined}>{relativeAt(row.at, now)}</time><Tag size="sm" className={styles.kind}>{row.kind}</Tag></> : null}
-        <span className={`${styles.text} ${row.kind === 'hop' ? styles.hop : ''}`} title={row.text}>{row.text}</span>
+        <span className={`${styles.text} ${row.kind === 'hop' ? styles.hop : ''}`} title={row.text}><JobRefs text={row.text} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} /></span>
       </li>)}
     </ul>
   </div>;
