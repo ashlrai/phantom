@@ -174,6 +174,21 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   exist, and there are no tidy rules without a `~/Desktop`.
 - `phm status [--json]` is the attention board (dirty, off-sync and stale
   repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI.
+  In a GitHub repository, status also lists advisory per-PR merge ETA ranges
+  (JSON: `github.mergeEtas`). It reads up to ten oldest open PRs and their
+  actual GitHub merge-queue positions; PRs outside the queue show `unknown`.
+  Supply historical **required** check durations in
+  `~/.ashlr/merge-check-history.json`, a JSON array such as
+  `[{"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":300000},
+  {"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":480000}]`.
+  Use completed-check timestamps from your CI history exporter; status never
+  writes history or changes a PR. Each currently required check needs at least
+  two samples from that repository. The range uses the slowest parallel
+  check's observed 10th–90th percentile durations, multiplied by queue position
+  under a conservative serial-slot assumption. Reviews, reruns and queue
+  batching can change actual timing; these ranges are estimates, not deadlines.
+  Missing/malformed history, unavailable required checks, or an unknown queue
+  position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
@@ -460,6 +475,51 @@ with possibly usable partial rows; exit 2 means bad usage or invalid snapshots
 and no rows. Bridge collectors and the supervisor are separate components;
 this command does not install or activate either.
 
+### Restock/queuegen admission lint
+
+`phm backlog lint` gates the Markdown router queue that the bridge's restocker
+and queue generator admit work from. This is the `- READY` line format, not the
+JSON Lines schema used by `phm backlog plan` above:
+
+```sh
+phm backlog lint --queue router-queue.md [--landed landed.txt] \
+  [--repos-root ~/Projects/ashlrai] [--pools devin,codex-personal] [--json]
+```
+
+A candidate line `- READY <job-id> (<attrs>): <task>` is admitted only when all
+of the following hold: the id starts with an uppercase letter and is unique
+among candidates; `repo=` (or the `LAND-<repo>-<n>` id fallback) names one of
+the seven fleet repositories — `phantom`, `phantom-secrets`, `locus`, `lexicon`,
+`ashlr-stack`, `ashlr-plugin`, `ashlr-md`; the repo's folder exists under the
+repos root; the task names a concrete file path (a `name.ext` token, a slash
+path, or a known extensionless basename — schema handles like `queue.v1` do not
+count); the task names a test or acceptance command (a package/verification
+script, a test runner, a test-file reference, or an `Acceptance:`/`Tests:`
+label); every `after`/`depends` reference is landed; and `pool=`, when
+`--pools` is supplied, is in the allowlist (`pool=any` is always allowed).
+`.github/` references outside an explicit negation are rejected.
+
+Dependencies are job ids or PR references (`pull` URLs, `<repo>#<n>`, `PR#<n>`,
+`#<n>` bound to the line's repo); a trailing `-<LETTER>` dep reuses the job's
+own suffix base. `esc=<pool> after <N> failed` is parsed as an escalation spec,
+never as a dependency. `--landed` supplies evidence one token per line: job
+ids, or PR refs as a full URL, `ashlrai/<repo>/pull/<n>`, `<repo>#<n>`, or a
+bare `#<n>` matching any repo. A job dep also counts as landed when the same
+document marks it DONE, MERGED or LANDED. Anything else — including unmerged
+PRs — is `unlanded-dep`.
+
+Every rejected candidate is logged: one `rq-lint-drop` JSON event per line on
+stderr with `line`, `job`, `reasons` and a SHA-256 of the line — never the
+untrusted task text — followed by an `rq-lint` summary. Drop reasons:
+`unparseable`, `bad-id`, `dup-line`, `no-repo`, `bad-repo`,
+`repo-folder-missing`, `github-protected`, `no-file-path`, `no-test-command`,
+`bad-dep`, `unlanded-dep`, `unknown-pool`. stdout carries only the admitted
+lines verbatim (or the full report object with `--json`), so a restock or
+queuegen step can pipe `phm backlog lint --queue q.md > admitted.md`. The
+command is offline and read-only: no model, GitHub, subprocess, credential
+access or queue writes. Exit 0 means no drops, exit 1 means at least one drop,
+exit 2 means bad usage or an unreadable/oversized input.
+
 ## 4. Native engines
 
 There are two registries:
@@ -588,7 +648,13 @@ Inputs are the existing readers' artifacts. From the router queue directory
 (`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
 `ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
 `queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
-(merge transitions in the trailing hour), and `usage-readings.log`. Credit
+(merge outcomes and transitions in the trailing hour), and `usage-readings.log`.
+The merge rate counts a GitHub PR once across repeated observations and jobs;
+legacy transitions without a PR URL deduplicate by job, including LAND rows in
+`ready.tsv`. Rows with neither identifier remain separate observations. Event
+timestamps must include a timezone; the trailing window includes both endpoints
+and uses the event timestamp, not reconciliation time. The bounded ledger is
+read in full because backfilled events need not be ordered by event time. Credit
 comes from the pool-budget ledger; a queue-local `budgets/` directory or the
 usage journal fill pools the ledger has not observed.
 
