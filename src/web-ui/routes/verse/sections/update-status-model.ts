@@ -26,8 +26,11 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
     case 'downloading': headline = `Downloading ${version}${native.bytesTotal ? ` · ${Math.floor(native.bytesReceived / native.bytesTotal * 100)}%` : ''}`; tone = 'info'; break;
     case 'failed': headline = `Update failed: ${describeDesktopUpdateReason(native.reason)}`; tone = 'danger'; break;
     case 'disabled': case 'uncommissioned': headline = 'Automatic updates off'; break;
+    case 'current': headline = 'Up to date'; tone = 'success'; break;
+    case 'checking': headline = 'Checking for updates…'; tone = 'info'; break;
+    case 'idle': headline = 'Automatic updates on · checks when idle'; tone = 'neutral'; break;
     default:
-      if (native?.phase === 'available' && native.version) { headline = `Update ${native.version} available · downloads when idle`; tone = 'info'; }
+      if (native?.phase === 'available') { headline = `Update${readyVersion} available · downloads when idle`; tone = 'info'; }
       else if (facts?.sourceState === 'unavailable') headline = 'Not running from a git checkout';
       else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward) { headline = `${commits(facts.behind)} behind master · ready to fast-forward`; tone = 'info'; }
       else if (facts?.behind != null && facts.behind > 0 && facts.dirty) { headline = `${facts.behind} behind · local changes block the update`; tone = 'warning'; }

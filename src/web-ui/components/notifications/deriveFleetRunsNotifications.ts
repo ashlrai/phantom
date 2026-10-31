@@ -1,11 +1,14 @@
 import type { AppNotification, NotificationSeverity } from './types.js';
 import { ackState, newestLeaderPassMs, parseInboxAt } from '../../routes/verse/fleet/interject-ack-model.js';
 import { LEADER_OVERDUE_MS } from '../../routes/verse/shell/fleet-needs-you.js';
+import { paneLinkUrl } from '../../routes/verse/dock/pane-link.js';
 
 type RecordValue = Record<string, unknown>;
 interface FleetRuns {
   generatedAt: string;
   paused?: boolean;
+  memFreePct?: number | null;
+  diskFreeGb?: number | null;
   claudeLane: string | null;
   lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }>;
   workers: Array<{ ageSeconds: number | null }>;
@@ -51,8 +54,11 @@ function isFleetRuns(v: unknown): v is FleetRuns {
 export function deriveFleetRunsNotifications(data: unknown, now: number): AppNotification[] {
   if (!isFleetRuns(data)) return [];
   const out: AppNotification[] = [];
-  const add = (id: string, severity: NotificationSeverity, title: string, detail: string) => {
-    out.push({ id, category: 'fleet', severity, title, detail, ts: data.generatedAt });
+  const base = typeof window === 'undefined' ? undefined : new URL('/verse/', window.location.href).toString();
+  const add = (id: string, severity: NotificationSeverity, title: string, detail: string, target?: { label: string; pane: string }) => {
+    const actionHref = target ? paneLinkUrl(target.pane, null, false, base) : null;
+    out.push({ id, category: 'fleet', severity, title, detail, ts: data.generatedAt,
+      ...(actionHref && target ? { actionLabel: target.label, actionHref } : {}) });
   };
   const ages = data.workers.flatMap((w) => w.ageSeconds === null ? [] : [w.ageSeconds]);
   const starts = data.events.filter((e) => /^(launch|start)$/.test(e.kind)).map((e) => Date.parse(e.at));
@@ -60,23 +66,34 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
   if ((age === null || age >= 1800) && data.mergesLastHour.count === 0 && data.paused !== true) {
     add('fleet-stall', 'critical', 'Fleet stalled', age === null
       ? 'Last start is unknown and nothing merged in the last hour.'
-      : `Nothing started for ${Math.floor(age / 60)} min and nothing merged in the last hour.`);
+      : `Nothing started for ${Math.floor(age / 60)} min and nothing merged in the last hour.`,
+      { label: 'Open lanes', pane: 'fleet-lanes' });
+  }
+  const disk = count(data.diskFreeGb) ? data.diskFreeGb : null;
+  const memory = count(data.memFreePct) ? data.memFreePct : null;
+  if ((disk !== null && disk < 25) || (memory !== null && memory < 10)) {
+    const critical = (disk !== null && disk < 10) || (memory !== null && memory < 5);
+    const detail = [disk === null ? null : `Disk ${disk} GB free`, memory === null ? null : `memory ${memory}% free`]
+      .filter((part) => part !== null).join(' · ');
+    add('fleet-host-pressure', critical ? 'critical' : 'high', 'Host under pressure', detail,
+      { label: 'Open host', pane: 'fleet-host' });
   }
   if (data.claudeLane && /down|rejected|invalid/i.test(data.claudeLane)) {
-    add('fleet-claude-lane-down', 'high', 'Claude lane is down', scrub(data.claudeLane));
+    add('fleet-claude-lane-down', 'high', 'Claude lane is down', scrub(data.claudeLane), { label: 'Open host', pane: 'fleet-host' });
   }
   for (const l of data.lanes) {
     if (l.held) add(`fleet-lane-held-${l.lane}`, 'medium', `${scrub(l.lane)} lane is held`,
-      l.heldReason ? scrub(l.heldReason) : 'Lane is held.');
+      l.heldReason ? scrub(l.heldReason) : 'Lane is held.', { label: 'Open lanes', pane: 'fleet-lanes' });
   }
   for (const l of data.lanes) {
     if (l.running === 0 && l.target > 0 && l.queued > 0 && !l.held) {
-      add(`fleet-lane-idle-${l.lane}`, 'low', `${scrub(l.lane)} lane is idle`, `${l.queued} queued jobs but nothing is launching.`);
+      add(`fleet-lane-idle-${l.lane}`, 'low', `${scrub(l.lane)} lane is idle`, `${l.queued} queued jobs but nothing is launching.`,
+        { label: 'Open lanes', pane: 'fleet-lanes' });
     }
   }
   if (data.drop && data.drop.pending.length > 0) {
     const detail = `${data.drop.pending.length} leader job files waiting for ingest`;
-    add('fleet-drop-pending', 'info', 'Leader jobs awaiting ingest', detail);
+    add('fleet-drop-pending', 'info', 'Leader jobs awaiting ingest', detail, { label: 'Open leader journal', pane: 'leader-journal' });
   }
   // The inbox and leaders are optional in older or incomplete projections.
   const snapshot = data as unknown as RecordValue;
@@ -96,10 +113,10 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
       const detail = inboxDetail(entry.text);
       if (state === 'seen' && newestPass !== null) {
         add(`fleet-inbox-read:${entry.at}:${textHash(entry.text)}`, 'critical',
-          `Your ${time} message was read by the ${etTime.format(newestPass)} leader pass`, detail);
+          `Your ${time} message was read by the ${etTime.format(newestPass)} leader pass`, detail, { label: 'Open inbox', pane: 'fleet-inbox' });
       } else if (now - at >= LEADER_OVERDUE_MS) {
         add(`fleet-inbox-overdue:${entry.at}`, 'medium',
-          `Your ${time} message has waited ${Math.floor((now - at) / 60_000)} min for a leader pass`, detail);
+          `Your ${time} message has waited ${Math.floor((now - at) / 60_000)} min for a leader pass`, detail, { label: 'Open inbox', pane: 'fleet-inbox' });
       }
     }
   }
