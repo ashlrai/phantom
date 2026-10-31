@@ -24,6 +24,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const [text, setText] = useState('');
   const [posted, setPosted] = useState<{ text: string; until: number } | null>(null);
   const [postedForAck, setPostedForAck] = useState<string | null>(null);
+  const [, setClockTick] = useState(0);
   const sectionVisible = useSectionVisible(), documentVisible = useDocumentVisible();
   useEffect(() => {
     if (!posted || !visible || !sectionVisible || !documentVisible) return;
@@ -34,7 +35,8 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const annotated = annotateAck(filterEntries(inbox.entries, { source, text }), snapshot.data, Date.now());
   const groups = groupByDay(annotated, today);
-  const { waiting } = seenCounts(annotated);
+  const { waiting, overdue } = seenCounts(annotated);
+  usePollWhileVisible(() => setClockTick(tick => tick + 1), 10_000, { enabled: visible && waiting > 0 });
   const matching = posted && posted.until > Date.now() && visible && sectionVisible && documentVisible
     ? annotated.filter(entry => matchesPosted(entry, posted.text)) : [];
   // The dedicated route is oldest-first; the fallback snapshot is newest-first.
@@ -57,7 +59,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
       : inbox.origin === 'none' ? <EmptyState compact title={notFound(route.error) && notFound(snapshot.error) ? 'Inbox not in this build' : 'Inbox unavailable'} /> : <>
     {(inbox.sourceState !== 'healthy' || (route.error && !notFound(route.error)) || (fallback && snapshot.error)) &&
       <p className={styles.banner} role="status">Inbox degraded ({inbox.sourceState}). Showing the entries last read.</p>}
-    {waiting > 0 && <p role="status">{waiting} waiting for a leader pass</p>}
+    {waiting > 0 && <p role="status">{waiting} waiting for a leader pass{overdue && ' · leader pass overdue'}</p>}
     <Input aria-label="Filter inbox text" placeholder="Filter orders…" value={text} onChange={e => setText(e.target.value)} />
     <div className={styles.filters} aria-label="Filter by source">
       {['', ...new Set(inbox.entries.map(e => e.source))].map(s => <Button key={s} size="sm" aria-pressed={source === s} onClick={() => setSource(s)}>{s || 'All sources'}</Button>)}
@@ -66,7 +68,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
       {group.entries.map((entry, i) => <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
-        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
+        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
         <Button size="sm" onClick={() => host.addToMessage(quoteForMessage(entry))}>Add to message</Button>
       </article>)}
