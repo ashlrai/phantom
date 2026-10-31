@@ -8,7 +8,7 @@ import { busStatusExitCode } from './comms-bus-exit.js';
 const HELP = `phm comms bus post --file <envelope.json|->
 phm comms bus status
 phm comms bus read [--after <cursor>] [--limit <n>] [--id <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--id <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>]
+phm comms bus watch [--after <cursor>] [--limit <n>] [--id <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
@@ -28,6 +28,8 @@ TTL milliseconds from original receipt; receivedAt is epoch milliseconds. Read n
 Watch polls immediately, then every interval (100..60000 ms, default 1000); each successful poll
 emits one JSON page, including empty pages, and resumes from its emitted nextCursor.
 Use --max-pages 1..10000 to stop after that many successful pages (default: unlimited).
+Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reaching the
+deadline completes observation successfully; it does not guarantee a reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
@@ -76,29 +78,37 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  const deadline = timeout === undefined ? undefined : performance.now() + timeout;
+  const expired = (): boolean => deadline !== undefined && performance.now() >= deadline;
+  const timer = timeout === undefined ? undefined : setTimeout(stop, timeout);
   let pages = 0;
   deps.signal?.addEventListener('abort', stop, { once: true });
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     if (deps.signal?.aborted) stop();
-    while (!controller.signal.aborted) {
+    while (!controller.signal.aborted && !expired()) {
       const page = list(after, limit, options);
       if (controller.signal.aborted) break;
+      if (page.status !== 'ok' && page.status !== 'retryable') {
+        if (!expired()) emit(JSON.stringify(page));
+        return 1;
+      }
+      if (expired()) break;
       if (page.status === 'ok') {
-        emit(JSON.stringify(filterPage(page, filters)));
+        const output = JSON.stringify(filterPage(page, filters));
+        if (expired()) break;
+        emit(output);
         after = page.nextCursor;
         if (++pages === maxPages) return 0;
-      } else if (page.status !== 'retryable') {
-        emit(JSON.stringify(page));
-        return 1;
       }
       await waitForPoll(interval, controller.signal);
     }
     return 0;
   } finally {
+    clearTimeout(timer);
     deps.signal?.removeEventListener('abort', stop);
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
   }
@@ -122,12 +132,12 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--to|--from|--exclude-from)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
     const label = key === '--id' || key === '--to' || key === '--from' || key === '--exclude-from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--id', '--to', '--from', '--exclude-from', '--priority'] : ['--after', '--limit', '--id', '--to', '--from', '--exclude-from', '--priority'];
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--to', '--from', '--exclude-from', '--priority'] : ['--after', '--limit', '--id', '--to', '--from', '--exclude-from', '--priority'];
     if (!flags.includes(key) || values.has(key) || !value || (label ? !inline && (flags.includes(value) || /^(--id|--to|--from|--exclude-from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && !values.has('--file')) return invalid();
-  for (const key of ['--after', '--limit', '--interval-ms', '--max-pages']) {
+  for (const key of ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms']) {
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
@@ -143,7 +153,9 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     if (interval < 100 || interval > 60000) return invalid();
     const maxPages = values.has('--max-pages') ? Number(values.get('--max-pages')) : undefined;
     if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
-    return watch(after, limit, interval, maxPages, filters, options, deps);
+    const timeout = values.has('--timeout-ms') ? Number(values.get('--timeout-ms')) : undefined;
+    if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
+    return watch(after, limit, interval, maxPages, timeout, filters, options, deps);
   }
   let result;
   if (verb === 'post') {
