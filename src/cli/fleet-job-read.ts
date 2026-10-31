@@ -10,7 +10,7 @@ interface Readers {
 }
 
 const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges, text: getFleetJobText };
-const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes] [--help]';
+const usage = 'Usage: phm fleet job <id> [--json] [--require-published | --changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 function searchTail(tail: string[], literal: string, context: number): { tail: string[]; matchCount: number; scannedLines: number } {
@@ -69,7 +69,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       seen.add('--log-find');
       const inline = flag.startsWith('--log-find=');
       literal = inline ? flag.slice('--log-find='.length) : args[++i];
-      if (!literal || (!inline && ['--json', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines'].includes(literal))) return invalid();
+      if (!literal || (!inline && ['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines'].includes(literal))) return invalid();
     } else if (flag === '--context-lines') {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
@@ -84,7 +84,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       if (!count || /[^0-9]/.test(count)) return invalid();
       maxTailLines = Number(count);
       if (!Number.isSafeInteger(maxTailLines) || maxTailLines < 1 || maxTailLines > 120) return invalid();
-    } else if (['--json', '--changes', '--log', '--prompt', '--notes', '--help'].includes(flag)) {
+    } else if (['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
     } else if (!id && isFleetJobId(arg)) {
@@ -94,11 +94,12 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
     }
   }
   if (['--changes', '--log', '--prompt', '--notes'].filter(flag => seen.has(flag)).length > 1) return invalid();
+  if (seen.has('--require-published') && (!seen.has('--json') || ['--changes', '--log', '--prompt', '--notes'].some(flag => seen.has(flag)))) return invalid();
   if (seen.has('--tail-lines') && !seen.has('--log')) return invalid();
   if (seen.has('--log-find') && !seen.has('--log')) return invalid();
   if (seen.has('--context-lines') && !seen.has('--log-find')) return invalid();
   if (seen.has('--help')) {
-    output.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\nAgent example: phm fleet job JOB1 --log --tail-lines 10 --json`);
+    output.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\n--require-published requires --json and default detail mode. It adds a published handoff evidence check for a PR URL and test line; exit 1 if either is absent. This does not verify a merge or evidence freshness.\nAgent examples: phm fleet job JOB1 --log --tail-lines 10 --json; phm fleet job JOB1 --require-published --json`);
     return 0;
   }
   if (!id) return invalid();
@@ -128,6 +129,13 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
           output.stderr(`Log: ${job.log.source}; health: ${job.sources.log}; truncated: ${job.log.truncated ? 'yes' : 'no'}${search ? `; scrubbed tail search: ${search.matchCount} matching lines / ${search.scannedLines} scanned` : ''}\n`);
         }
       } else {
+        if (seen.has('--require-published')) {
+          const hasPrUrl = Boolean(job.publish?.prUrl?.trim());
+          const hasTestLine = Boolean(job.publish?.testLine?.trim());
+          const check = { kind: 'published_handoff_evidence', ok: hasPrUrl && hasTestLine, hasPrUrl, hasTestLine };
+          output.log(JSON.stringify({ ...job, check }));
+          return check.ok ? 0 : 1;
+        }
         output.log(seen.has('--json') ? JSON.stringify(job) : formatDetail(job));
       }
     }
