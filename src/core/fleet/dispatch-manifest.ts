@@ -109,7 +109,7 @@ export interface ReadDispatchManifestEventsOptions {
   maxFiles?: number;
   maxBytes?: number;
   maxRows?: number;
-  /** Stop once one event beyond limit proves the logical result is partial. */
+  /** Stop after the first fully scanned partition that proves the result is partial. */
   stopAfterLimit?: boolean;
   /** Return no events unless every selected row was read and validated. */
   requireComplete?: boolean;
@@ -601,7 +601,10 @@ export function readDispatchManifestEventsDetailed(opts: ReadDispatchManifestEve
     const maxBytes = boundedReadOption(opts.maxBytes, DEFAULT_READ_MAX_BYTES, HARD_READ_MAX_BYTES);
     const maxRows = boundedReadOption(opts.maxRows, DEFAULT_READ_MAX_ROWS, HARD_READ_MAX_ROWS);
     const dir = dispatchManifestDir();
-    if (!existsSync(dir)) return emptyRead('missing');
+    try { lstatSync(dir); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyRead('missing');
+      throw error;
+    }
     const parentSnapshot = opts.inspectionOnly
       ? inspectPrivateDirectory(dispatchManifestRoot())
       : secureDirectory(dispatchManifestRoot(), false);
@@ -632,18 +635,22 @@ export function readDispatchManifestEventsDetailed(opts: ReadDispatchManifestEve
         entry = handle.readSync();
       }
     } finally { handle.closeSync(); }
-    if (invalidPartition) return emptyRead('degraded', { sourcePresent: true, complete: false, stopReasons: ['io-error'], unreadableFiles: 1 });
     files.sort().reverse();
     if (files.length === 0) {
       const directoryAfter = lstatSync(dir);
       const parentAfter = lstatSync(dispatchManifestRoot());
-      return unsafeDirectory(directoryAfter) || !sameDirectorySnapshot(directorySnapshot, directoryAfter) ||
+      return invalidPartition || unsafeDirectory(directoryAfter) || !sameDirectorySnapshot(directorySnapshot, directoryAfter) ||
         unsafeDirectory(parentAfter) || !sameFile(parentSnapshot, parentAfter)
         ? emptyRead('degraded', { sourcePresent: true, complete: false, stopReasons: ['io-error'], unreadableFiles: 1 })
         : emptyRead('healthy', { sourcePresent: true });
     }
 
     const result = emptyRead('healthy', { sourcePresent: true });
+    if (invalidPartition) {
+      result.complete = false;
+      result.unreadableFiles++;
+      pushStopReason(result.stopReasons, 'io-error');
+    }
     const eventLimit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) && opts.limit > 0 ? Math.floor(opts.limit) : undefined;
     let stoppedAfterEventLimit = false;
     for (const file of files) {
@@ -654,13 +661,26 @@ export function readDispatchManifestEventsDetailed(opts: ReadDispatchManifestEve
       result.filesRead++;
       if (!loaded.ok) {
         if (loaded.reason === 'io-error') result.unreadableFiles++;
-        pushStopReason(result.stopReasons, loaded.reason); result.complete = false; break;
+        pushStopReason(result.stopReasons, loaded.reason); result.complete = false;
+        if (loaded.reason === 'byte-limit') break;
+        continue;
       }
       result.bytesRead += loaded.bytesRead;
       const lines = loaded.text.split('\n');
       if (lines.at(-1) === '') lines.pop();
+      else if (lines.length > 0) {
+        // Writers commit newline-terminated rows. Even parseable tail bytes may
+        // be the prefix of a torn append, so they cannot establish a record.
+        lines.pop();
+        if (result.rowsScanned >= maxRows) {
+          pushStopReason(result.stopReasons, 'row-limit'); result.complete = false; break;
+        }
+        result.rowsScanned++;
+        result.invalidRows++;
+      }
+      let rowLimitReached = false;
       for (const line of lines.reverse()) {
-        if (result.rowsScanned >= maxRows) { pushStopReason(result.stopReasons, 'row-limit'); result.complete = false; break; }
+        if (result.rowsScanned >= maxRows) { pushStopReason(result.stopReasons, 'row-limit'); result.complete = false; rowLimitReached = true; break; }
         result.rowsScanned++;
         if (!line.trim()) continue;
         if (Buffer.byteLength(line, 'utf8') > MAX_READ_ROW_BYTES) { result.invalidRows++; continue; }
@@ -669,18 +689,24 @@ export function readDispatchManifestEventsDetailed(opts: ReadDispatchManifestEve
           const partition = DATE_LEDGER_FILE_RE.exec(file)?.[1];
           if (!isDispatchManifestEvent(parsed) || parsed.ts.slice(0, 10) !== partition) { result.invalidRows++; continue; }
           result.events.push(sanitizeDispatchManifestEvent(parsed));
-          if (opts.stopAfterLimit === true && eventLimit !== undefined && result.events.length > eventLimit) {
-            pushStopReason(result.stopReasons, 'event-limit'); result.complete = false; stoppedAfterEventLimit = true; break;
-          }
         } catch { result.invalidRows++; }
       }
-      if (!result.complete) break;
+      if (rowLimitReached) break;
+      // Timestamps within a partition need not match append order. Scan the
+      // entire partition before selecting the newest events from it.
+      if (opts.stopAfterLimit === true && eventLimit !== undefined && result.events.length > eventLimit) {
+        pushStopReason(result.stopReasons, 'event-limit'); result.complete = false; stoppedAfterEventLimit = true; break;
+      }
     }
-    const directoryAfter = lstatSync(dir);
-    const parentAfter = lstatSync(dispatchManifestRoot());
-    if (directoryAfter.isSymbolicLink() || !directoryAfter.isDirectory() || unsafeDirectory(directoryAfter) ||
-      !sameDirectorySnapshot(directorySnapshot, directoryAfter) || unsafeDirectory(parentAfter) ||
-      !sameFile(parentSnapshot, parentAfter)) {
+    let directoryChanged = false;
+    try {
+      const directoryAfter = lstatSync(dir);
+      const parentAfter = lstatSync(dispatchManifestRoot());
+      directoryChanged = directoryAfter.isSymbolicLink() || !directoryAfter.isDirectory() || unsafeDirectory(directoryAfter) ||
+        !sameDirectorySnapshot(directorySnapshot, directoryAfter) || unsafeDirectory(parentAfter) ||
+        !sameFile(parentSnapshot, parentAfter);
+    } catch { directoryChanged = true; }
+    if (directoryChanged) {
       pushStopReason(result.stopReasons, 'io-error'); result.complete = false; result.unreadableFiles++;
     }
     result.events.sort((left, right) => Date.parse(right.ts) - Date.parse(left.ts));

@@ -11,7 +11,6 @@ import type { VerseBrowserAgentOp } from './browser-types.js';
 import { tools as browserTools } from './verse-mcp-browser.js';
 import { handleVerseMcpBody, untrustedBlock, type VerseMcpToolContext } from './verse-mcp.js';
 
-export const BROWSER_MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 const SERVER_INFO = { name: 'ashlr-verse-browser', version: '1.0.0' };
 
 const INSTRUCTIONS = [

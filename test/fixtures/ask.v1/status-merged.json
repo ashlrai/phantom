@@ -1,0 +1,1 @@
+{"schema":"ask.status.v1","ask_id":"RQ-ASK-20261027-7K2Q","job_id":"RQ-ASK-20261027-7K2Q-A","state":"merged","pool":"codex-cmp","ts":"2026-10-27T03:00:00-04:00","pr":1234,"pr_url":"https://github.com/ashlrai/phantom/pull/1234","merged_at":"2026-10-27T02:55:00-04:00","reverted_at":null,"checks":"success","reason":null,"tokens_total":182000,"wall_s":2400}
