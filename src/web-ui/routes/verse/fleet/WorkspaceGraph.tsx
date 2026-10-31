@@ -5,8 +5,12 @@ import styles from './workspace-graph.module.css';
 const NODE_LIMIT = 80;
 const EDGE_LIMIT = 160;
 
-export function WorkspaceGraph({ graph }: { graph: WorkspaceGraphV1 }) {
+export function WorkspaceGraph({ graph, onSelect }: { graph: WorkspaceGraphV1; onSelect?: (id: string | null) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const select = (id: string) => {
+    const next = onSelect && selectedId === id ? null : id;
+    if (next !== selectedId) { setSelectedId(next); onSelect?.(next); }
+  };
   const marker = useId();
   const nodes = graph.nodes.slice(0, NODE_LIMIT);
   const positions = new Map(nodes.map((node, index) => [node.id, { x: node.kind === 'repository' ? 16 : 340, y: index * 64 + 24 }]));
@@ -26,7 +30,7 @@ export function WorkspaceGraph({ graph }: { graph: WorkspaceGraphV1 }) {
         {nodes.map(node => {
           const position = positions.get(node.id)!;
           return <g key={node.id} transform={`translate(${position.x},${position.y})`}>
-            <foreignObject width="280" height="54"><button className={styles.node} type="button" aria-label={`Inspect workspace node ${node.id}`} aria-pressed={selectedId === node.id} onClick={() => setSelectedId(node.id)}>
+            <foreignObject width="280" height="54"><button className={styles.node} type="button" aria-label={`Inspect workspace node ${node.id}`} aria-pressed={selectedId === node.id} onClick={() => select(node.id)}>
               <strong>{node.label}</strong><span>{node.kind} · {node.state}</span>
             </button></foreignObject>
           </g>;
@@ -38,7 +42,7 @@ export function WorkspaceGraph({ graph }: { graph: WorkspaceGraphV1 }) {
     <h4>Attention inbox</h4>
     <p>Recorded run holds; agent messages are not provided by this source.</p>
     {graph.inbox.length ? <ul>{graph.inbox.slice(0, NODE_LIMIT).map(item => <li key={item.id}>
-      <button type="button" aria-label={`Inspect inbox node ${item.nodeId}`} onClick={() => setSelectedId(item.nodeId)}>{graph.nodes.find(node => node.id === item.nodeId)?.label ?? item.nodeId}</button>: {item.message}
+      <button type="button" aria-label={`Inspect inbox node ${item.nodeId}`} onClick={() => select(item.nodeId)}>{graph.nodes.find(node => node.id === item.nodeId)?.label ?? item.nodeId}</button>: {item.message}
       {item.nextEligibleAt ? <span> · Next eligible: <time dateTime={item.nextEligibleAt}>{item.nextEligibleAt}</time></span> : null}
     </li>)}</ul> : <p>No recorded holds in this snapshot.</p>}
     {graph.inbox.length > NODE_LIMIT ? <p>Showing {NODE_LIMIT} of {graph.inbox.length} inbox items.</p> : null}
