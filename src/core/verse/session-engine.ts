@@ -1449,6 +1449,12 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
    */
   function emitTransient(id: string, event: VerseParsedEvent): void {
     foldLive(id, event);
+    // A model switch is durable-log material too, not only a live notice:
+    // transient events vanish on reload, but which model actually answered a
+    // turn is a fact the operator may need after the fact.
+    if (event.type === 'status' && event.kind === 'model-switch') {
+      log('warn', `session ${id}: model switch — ${event.message}`);
+    }
     if (!listeners.get(id)?.size) return;
     let seq = 0;
     try { seq = store.lastSeq(id); } catch { seq = 0; }
@@ -2396,7 +2402,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     }
 
     const adapter = adapterFor(session.engine);
-    const parser = adapter.createParser(turnId);
+    const parser = adapter.createParser(turnId, session);
     const option = effectiveModelOption(seatLaunch.seat, session.model, session.engine);
     const env = buildTurnEnv(launch.env);
     const [bin, ...args] = launch.argv;

@@ -107,7 +107,7 @@ export interface VerseLiveState {
   startedAt: number | null;
   progress: VerseLiveProgress | null;
   thinking: VerseLiveThinking | null;
-  /** The latest plumbing notice (API retry, preflight, no-output watchdog); cleared when output resumes. */
+  /** The latest plumbing notice (API retry, preflight, no-output watchdog, model switch); cleared when output resumes. */
   notice: VerseLiveNotice | null;
   /** Last turn that settled, so a late transient frame for it cannot resurrect the live line. */
   settledTurnId: string | null;

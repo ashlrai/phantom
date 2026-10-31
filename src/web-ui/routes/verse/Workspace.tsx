@@ -687,6 +687,7 @@ const ENGINE_NOTICE_WORD: Readonly<Record<VerseLiveNotice['kind'], string>> = {
   retry: 'Retrying',
   preflight: 'Preflight',
   watchdog: 'Still running',
+  'model-switch': 'Model switch',
 };
 
 /** The advice notes re-check their evidence on this clock (idle-cache advice appears on time, not on the next render). */
