@@ -1308,4 +1308,18 @@ export interface AshlrConfig {
      */
     fleetModel?: string;
   };
+  /**
+   * RQ-OT-P1-BANDIT: contextual Thompson bandit model routing. Off unless
+   * `bandit` is exactly true; absent/false keeps routeTask byte-identical to
+   * today. When on, routeTask picks among the same availability/quota/
+   * capability/permitted-constrained candidate arms by sampling their
+   * context-conditioned posteriors in the routing arm registry
+   * (~/.ashlr/routing/arms.json, src/core/routing/arms.ts +
+   * src/core/routing/bandit.ts). Learned decisions never auto-apply; the
+   * local-only refusal backstop still runs on the result.
+   */
+  router?: {
+    /** Enable the contextual Thompson sampler in routeTask. Default false. */
+    bandit?: boolean;
+  };
 }

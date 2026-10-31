@@ -1415,6 +1415,17 @@
           "description": "The model the fleet's local Devin CLI engine (devin-cli) runs. Default swe-2-high. Only the free SWE-2 models (swe-2-high, swe-2-medium, swe-2-max) run under autonomy; a billed model holds the lane because its spend cannot be read back."
         }
       }
+    },
+    "router": {
+      "type": "object",
+      "description": "RQ-OT-P1-BANDIT contextual Thompson bandit model routing (src/core/routing/bandit.ts). Off unless bandit is exactly true; absent keeps routeTask byte-identical.",
+      "additionalProperties": false,
+      "properties": {
+        "bandit": {
+          "type": "boolean",
+          "description": "Sample the routeTask candidate arms by their context-conditioned (tier, repo, diff-size) posteriors in ~/.ashlr/routing/arms.json instead of the static policy order. Default false."
+        }
+      }
     }
   },
   "definitions": {
