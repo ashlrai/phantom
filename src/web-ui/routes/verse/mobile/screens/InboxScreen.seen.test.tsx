@@ -40,10 +40,12 @@ it('shows each acknowledgment, counts the filtered rows, and updates after a pas
   expect(screen.getByRole('status')).toHaveTextContent('1 waiting for a leader pass');
   const filters = screen.getByRole('group', { name: 'Filter by source' });
   fireEvent.click(within(filters).getByRole('button', { name: 'desktop' }));
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  // The status remains visible when every displayed message has been seen.
+  expect(screen.getByRole('status')).toHaveTextContent('All messages seen by a leader');
   fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
   ageSeconds = 0;
   await act(() => refetchQuery(inboxTailQuery.key, () => inboxTailQuery.fetch(), true));
   expect(within(screen.getByText('Still waiting').closest('article')!).getByText(`Seen by leaders ${mobileTime('2026-10-31T04:20:00Z')}`)).toBeInTheDocument();
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  // The status remains visible when every displayed message has been seen.
+  expect(screen.getByRole('status')).toHaveTextContent('All messages seen by a leader');
 });
