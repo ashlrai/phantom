@@ -8,6 +8,7 @@ import { assessSeat, HEADROOM_READING_MAX_AGE_MS, type SeatCapacity } from './he
 import { CLAUDE_API_SEAT_ID, effectiveSeatPolicy } from './policy.js';
 import { listSeatIds, reasonSentences } from './seat-reasons.js';
 import { COST_BASIS_RANK, costBasisOf, engineTier, RESOURCE_TIERS, type ResourceTier } from './tiers.js';
+import { planTaskBandit, seatBanditNote, type TaskBanditInput } from './task-bandit.js';
 import type {
   BudgetMode,
   BudgetPolicy,
@@ -38,6 +39,12 @@ export interface RouteOptions {
   /** Actual selected-task opportunity; eligibility/quality remain mandatory. */
   scheduling?: Readonly<Record<string,AccountSchedulingView>>;
   advisorySeatId?: string | null;
+  /**
+   * Task-aware bandit lane (RQ-PARITYROUTERTASKQ7). Consulted only for
+   * AUTONOMOUS requests; an absent or disabled flag keeps the decision
+   * byte-identical to the static router. See task-bandit.ts for invariants.
+   */
+  taskBandit?: TaskBanditInput | null;
 }
 
 /** Independent funding-category and headroom weights. lambdaLatency remains
@@ -352,10 +359,75 @@ function devinFleetVerdict(capacity: SeatCapacity): Verdict {
 }
 
 /**
+ * Task-bandit application, enforce mode: try each drawn arm's engine subset in
+ * θ order and keep the first seat the core admits. Arms of an engine already
+ * tried can only repeat its seat set, so each engine is tried once — the arm
+ * reported is its best-scoring one.
+ *
+ * When no draw yields a seat the decision HOLDS — enforce never falls back to
+ * an engine the bandit gated out. Only the drawn engines' seats get consulted
+ * a second time, so each one's own blocker still explains the hold.
+ */
+function enforceTaskBandit(
+  plan: NonNullable<ReturnType<typeof planTaskBandit>>,
+  req: RoutingRequest,
+  capacity: readonly SeatCapacity[],
+  policy: BudgetPolicy,
+  opts: RouteOptions,
+): SeatDecision {
+  const drawnEngines = new Set<string>();
+  for (const draw of plan.ordered) {
+    if (drawnEngines.has(draw.arm.engine)) continue;
+    drawnEngines.add(draw.arm.engine);
+    const subset = capacity.filter((seat) => seat.engine === draw.arm.engine);
+    const decision = routeSeatCore(req, subset, policy, opts);
+    if (decision.seatId !== null) {
+      return { ...decision, bandit: seatBanditNote(plan, draw.arm.id) };
+    }
+  }
+  const consulted = capacity.filter((seat) => drawnEngines.has(seat.engine));
+  const held = routeSeatCore(req, consulted, policy, opts);
+  return {
+    ...held,
+    bandit: seatBanditNote({ ...plan, holdReason: plan.holdReason ?? 'no drawn arm produced an eligible seat' }, null),
+  };
+}
+
+/**
  * Decide which seat `req` should use. Pure. Every seat in `capacity` ends up
  * in exactly one of `candidates` or `exclusions`.
+ *
+ * With `opts.taskBandit` enabled on an AUTONOMOUS request the task-aware
+ * bandit lane is consulted first (RQ-PARITYROUTERTASKQ7): in 'shadow' mode it
+ * only annotates its draw; in 'enforce' mode it routes inside the drawn arm's
+ * engine through this same router — never past its own gates.
  */
 export function routeSeat(
+  req: RoutingRequest,
+  capacity: readonly SeatCapacity[],
+  policy: BudgetPolicy,
+  opts: RouteOptions,
+): SeatDecision {
+  if (req.autonomous && opts.taskBandit !== undefined && opts.taskBandit !== null) {
+    const present = new Set(capacity.map((seat) => seat.engine));
+    const plan = planTaskBandit(req, opts.taskBandit, present, opts.nowMs);
+    if (plan !== null) {
+      if (plan.mode === 'enforce') return enforceTaskBandit(plan, req, capacity, policy, opts);
+      const decision = routeSeatCore(req, capacity, policy, opts);
+      const chosen = decision.seatId === null ? null
+        : plan.ordered.find((draw) => draw.arm.engine === capacity.find((s) => s.seatId === decision.seatId)?.engine)?.arm.id ?? null;
+      return { ...decision, bandit: seatBanditNote(plan, chosen) };
+    }
+  }
+  return routeSeatCore(req, capacity, policy, opts);
+}
+
+/**
+ * The seat router without the bandit gate — every seat verdict, exclusion and
+ * sentence exactly as before. Exported for the bandit's narrowed subsets and
+ * for tests; callers should prefer `routeSeat`.
+ */
+export function routeSeatCore(
   req: RoutingRequest,
   capacity: readonly SeatCapacity[],
   policy: BudgetPolicy,

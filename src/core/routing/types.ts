@@ -119,6 +119,84 @@ export interface SeatDecision {
    */
   summary?: string;
   mode: BudgetMode;
+  /**
+   * Task-bandit annotation (RQ-PARITYROUTERTASKQ7, additive). Present only
+   * when the task-aware bandit lane was consulted for this decision —
+   * `opts.taskBandit` with an enabled flag on an autonomous request. A
+   * flag-off decision carries no `bandit` field at all.
+   */
+  bandit?: SeatBanditNote;
+}
+
+// ---------------------------------------------------------------------------
+// Task-aware bandit lane (RQ-PARITYROUTERTASKQ7, extends the #960 lane)
+// ---------------------------------------------------------------------------
+
+/**
+ * The engines a task-aware arm may name — Claude Code, Codex, Grok, Devin and
+ * the local runtimes (oMLX rides the `local` engine in this router). The set
+ * deliberately mirrors `BudgetEngine` MINUS `claude-api`, which is never
+ * commissioned. An engine id outside this set is unknown: it is never an arm
+ * and can never be selected by the bandit.
+ */
+export type TaskBanditEngine = 'claude' | 'codex' | 'grok' | 'devin' | 'local';
+
+/**
+ * The risk class a task falls in. `high` is the risky class: per #926 it
+ * stays frontier-only — no arm whose engine is not hosted may be picked.
+ */
+export type TaskRiskClass = 'low' | 'medium' | 'high';
+
+/** Effort an arm asks of its engine, on the `RoutingDifficulty` scale. */
+export type TaskEffort = 'low' | 'medium' | 'high';
+
+/** Context-size buckets; `TaskBanditConfig.sizeEdges` maps tokens onto them. */
+export type TaskSizeBucket = 'xs' | 's' | 'm' | 'l' | 'xl';
+
+/**
+ * One cell of the task classifier: (class, size, risk, repo). Every settled
+ * observation updates the arm posterior at this exact cell and at its three
+ * generalizations (repo-free, size-free, global), so a new repo or an unseen
+ * size borrows strength instead of starting cold.
+ */
+export interface TaskBanditContext {
+  /** What kind of work — the `RoutingTask` of the request that produced it. */
+  taskClass: string;
+  sizeBucket: TaskSizeBucket;
+  riskClass: TaskRiskClass;
+  /** Lowercase `owner/name`, or 'unknown' when the caller cannot say. */
+  repo: string;
+}
+
+/**
+ * One arm: a concrete (engine, model, effort) triple. `model` is advisory —
+ * the seat router admits a SEAT, and dispatch applies the arm's model and
+ * effort to it downstream; null means the engine's own default.
+ */
+export interface TaskArm {
+  /** Stable id recorded on outcomes: `<engine>:<model|default>:<effort>`. */
+  id: string;
+  engine: TaskBanditEngine;
+  model: string | null;
+  effort: TaskEffort;
+}
+
+/** What the bandit lane records on a `SeatDecision` (additive `bandit`). */
+export interface SeatBanditNote {
+  /** The flag mode this decision ran under ('off' adds no field at all). */
+  mode: 'shadow' | 'enforce';
+  /** The classified context the pick was made under. */
+  context: TaskBanditContext;
+  /** Arm ids that passed every gate, in catalog order. */
+  eligibleArmIds: string[];
+  /** The Thompson draw — what the bandit would route; null on a hold. */
+  sampledArmId: string | null;
+  /** The arm whose engine-seat subset produced the applied seat (enforce). */
+  appliedArmId: string | null;
+  /** True when the sampled arm differs from the arm the seat belongs to. */
+  divergent: boolean;
+  /** Why the bandit held; null when it routed. */
+  holdReason: string | null;
 }
 
 export type RoutingTask = 'code' | 'review' | 'plan' | 'bulk' | 'leader';
