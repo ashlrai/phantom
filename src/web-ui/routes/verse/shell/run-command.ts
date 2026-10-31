@@ -25,6 +25,7 @@
 import { useEffect } from 'react';
 import { useToast } from '../../../components/primitives/Toast.js';
 import { cycleTheme } from '../../../data/theme-store.js';
+import type { FleetRuns } from '../ops/ops-runs-model.js';
 import {
   closeVerseOverlay,
   cycleVerseRecentChat,
@@ -195,6 +196,24 @@ function agentsFocus(kind: 'new' | 'new-multi'): void {
   void import('../agents/agents-focus.js').then((m) => m.requestAgentsFocus(kind));
 }
 
+async function copyFleetDigest(): Promise<void> {
+  try {
+    const [{ getQuerySnapshot, runQuery }, { opsRunsQuery }, { fleetDigest }] = await Promise.all([
+      import('../../../data/cache.js'), import('../ops/ops-runs-queries.js'), import('./fleet-digest.js'),
+    ]);
+    let snapshot = getQuerySnapshot<FleetRuns | null>(opsRunsQuery.key);
+    if (!snapshot.data || snapshot.status === 'error' || snapshot.updatedAt === null || Date.now() - snapshot.updatedAt >= 30_000) {
+      await runQuery(opsRunsQuery.key, () => opsRunsQuery.fetch());
+      snapshot = getQuerySnapshot<FleetRuns | null>(opsRunsQuery.key);
+    }
+    if (snapshot.status === 'error' || !snapshot.data) throw new Error('Fleet data unavailable');
+    await navigator.clipboard.writeText(fleetDigest(snapshot.data, Date.now()));
+    shellNotify('Fleet digest copied', 'success');
+  } catch {
+    shellNotify('Nothing to copy: fleet data unavailable', 'danger');
+  }
+}
+
 export function registerShellCommandHandlers(): () => void {
   const surfaces: Array<[string, VerseSectionId]> = [
     ['mode.with-me', 'chat'],
@@ -245,6 +264,7 @@ export function registerShellCommandHandlers(): () => void {
     // The clipboard code loads when asked for (copy-setup.ts), not at first paint.
     // Mind's Leader panel takes these once it mounts (leader-focus.ts waits for it).
     registerCommandHandler('leader.message', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'composer' })); }),
+    registerCommandHandler('fleet.digest', () => { void copyFleetDigest(); }),
     registerCommandHandler('fleet.interject', () => { void import('../fleet/interject-dialog-store.js').then((m) => m.openInterjectDialog()); }),
     registerCommandHandler('leader.directive', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'directive' })); }),
     registerCommandHandler('autonomy.copy-setup', () => { void import('./copy-setup.js').then((m) => m.copyAutonomySetupCommand()); }),

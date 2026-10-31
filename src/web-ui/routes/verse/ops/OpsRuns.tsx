@@ -3,6 +3,7 @@ import { StatTile } from '../../../components/charts/StatTile.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { opsRunsQuery } from './ops-runs-queries.js';
+import { LaneTargets } from './LaneTargets.js';
 import { ageText, countText, newest, relativeText } from './ops-runs-model.js';
 import styles from './ops.module.css';
 import runs from './ops-runs.module.css';
@@ -51,6 +52,7 @@ export function OpsRuns() {
         <td aria-label={`${countText(l.tokensLastHour)} tokens last hour`}>{countText(l.tokensLastHour)}</td>
         <td aria-label={`${countText(l.merged24h)} merged in 24 hours, ${countText(l.mergeRate24h)} percent merge rate`}>{countText(l.merged24h)} ({countText(l.mergeRate24h)} %)</td>
       </tr>)}</tbody></table>
+    <LaneTargets />
     <h3 className={styles.groupTitle}>Workers</h3>
     {data.workers.length === 0 ? <p>No workers running.</p> : <table className={runs.table} aria-label="Workers">
       <thead><tr>{['Job', 'Repo', 'Lane', 'Tier', 'Age'].map((s) => <th key={s} scope="col">{s}</th>)}</tr></thead>
