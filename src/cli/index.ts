@@ -2154,6 +2154,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'tune': {
+        process.exitCode = await (await import('./tune.js')).cmdTune(rest);
+        break;
+      }
+
       case 'learn': {
         const cmdLearn = await loadLearnCmd();
         process.exitCode = await cmdLearn(rest);

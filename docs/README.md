@@ -163,3 +163,5 @@ documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+
+- [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation, paired gate, and outstanding live acceptance.
