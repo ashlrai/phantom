@@ -59,10 +59,11 @@ function waitForTick(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
 export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
-  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? '' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>]`;
+  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? '' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>] [--max-samples <1..10000>]`;
   const seen = new Set<string>();
   let lane: string | undefined;
   let interval = 5000;
+  let maxSamples: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     const flag = arg === '-h' ? '--help' : arg;
@@ -72,25 +73,27 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       // The watch loop is entered after all arguments have been validated.
     } else if (flag === '--interval-ms' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1000 && Number(args[i + 1]) <= 60000) {
       interval = Number(args[++i]);
+    } else if (flag === '--max-samples' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1 && Number(args[i + 1]) <= 10000) {
+      maxSamples = Number(args[++i]);
     } else if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
       process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
       return 2;
     }
     seen.add(flag);
   }
-  if (seen.has('--interval-ms') && !seen.has('--watch')) {
+  if ((seen.has('--interval-ms') || seen.has('--max-samples')) && !seen.has('--watch')) {
     process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
     return 2;
   }
   if (seen.has('--help')) {
-    console.log(`${usage}${verb === 'journal' ? '' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.`);
+    console.log(`${usage}${verb === 'journal' ? '' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried. --max-samples stops after the specified number of successful snapshots.`);
     return 0;
   }
-  const readOnce = async (signal?: AbortSignal): Promise<void> => {
+  const readOnce = async (signal?: AbortSignal): Promise<boolean> => {
     // Each reader returns its existing bounded, scrubbed and versioned projection.
     if (verb === 'runs') {
       const state = await deps.runs();
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatRuns(state));
       else {
         const filtered = { ...state, lanes: state.lanes.filter(row => row.lane === lane),
@@ -102,12 +105,12 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       }
     } else if (verb === 'journal') {
       const state = await deps.journal();
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       console.log(seen.has('--json') ? JSON.stringify(state) : formatJournal(state));
     } else {
       // Match the desktop queue endpoint's additional public-output scrub.
       const state = sanitizePublicJson(await deps.parked()) as FleetQueueV1;
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatParked(state));
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
@@ -116,6 +119,7 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
         console.log(seen.has('--json') ? JSON.stringify(filtered) : `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n${formatParked(filtered)}`);
       }
     }
+    return true;
   };
   if (seen.has('--watch')) {
     const controller = new AbortController();
@@ -125,9 +129,10 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
     watchOptions.signal?.addEventListener('abort', stop, { once: true });
     if (watchOptions.signal?.aborted) stop();
     try {
+      let samples = 0;
       while (!controller.signal.aborted) {
         try {
-          await readOnce(controller.signal);
+          if (await readOnce(controller.signal) && ++samples === maxSamples) break;
         } catch {
           if (controller.signal.aborted) break;
           if (seen.has('--json')) console.log(JSON.stringify({ error: `fleet ${verb} unavailable` }));
