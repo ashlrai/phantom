@@ -4,19 +4,35 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const value = (input: string | number | boolean | null): string => input === null ? 'unknown' : String(input);
 const LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
-type LaneFiltered = ResourceLedgerV1 & { laneFilter?: { lane: unknown; global: string[] } };
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const SPEND_GLOBAL = ['rowsToday', 'errorsToday', 'tokensInToday', 'tokensOutToday', 'usdToday', 'usdWeek', 'lastAt', 'models', 'modelUsageTodayOmitted'].map(key => `apiSpend.${key}`);
+type LedgerView = ResourceLedgerV1 & {
+  laneFilter?: { lane: unknown; global: string[] };
+  modelFilter?: { model: unknown; displayed: number | null; selectionOmitted: number | null; global: string[] };
+};
 
-function filterLane(ledger: ResourceLedgerV1, lane: string | undefined): LaneFiltered {
-  if (lane === undefined) return ledger;
-  return { ...ledger, lanes: ledger.lanes.filter(row => row.lane === lane),
-    laneFilter: { lane: sanitizePublicJson(lane), global: ['generatedAt', 'asOf', 'sources', 'apiSpend', 'jobsMalformedRows'] } };
+function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model: string | undefined): LedgerView {
+  let view: LedgerView = ledger;
+  if (lane !== undefined) {
+    view = { ...view, lanes: ledger.lanes.filter(row => row.lane === lane),
+      laneFilter: { lane: sanitizePublicJson(lane), global: ['generatedAt', 'asOf', 'sources', ...(model === undefined ? ['apiSpend'] : SPEND_GLOBAL), 'jobsMalformedRows'] } };
+  }
+  if (model !== undefined) {
+    const spend = ledger.apiSpend;
+    const selected = spend?.modelUsageToday.filter(row => row.model === model);
+    view = { ...view, apiSpend: spend === null ? null : { ...spend, modelUsageToday: selected! },
+      modelFilter: { model: sanitizePublicJson(model), displayed: selected?.length ?? null,
+        selectionOmitted: selected === undefined ? null : spend!.modelUsageToday.length - selected.length, global: SPEND_GLOBAL } };
+  }
+  return view;
 }
 
-function printLedger(ledger: LaneFiltered): void {
+function printLedger(ledger: LedgerView): void {
   console.log(`Resource ledger (generated: ${ledger.generatedAt}; observed: ${value(ledger.asOf)})`);
   if (ledger.laneFilter !== undefined) {
-    console.log(`Lane filter: ${ledger.laneFilter.lane}; sources and API spend are global`);
+    console.log(`Lane filter: ${ledger.laneFilter.lane}; sources and API spend ${ledger.modelFilter ? 'totals are global' : 'are global'}`);
   }
+  if (ledger.modelFilter !== undefined) console.log(`Model filter: ${ledger.modelFilter.model}; API spend totals and model list are global`);
   console.log(`Sources: status ${ledger.sources.status}; API spend ${ledger.sources.apiSpend}`);
   if (ledger.lanes.length === 0) console.log(ledger.laneFilter === undefined ? 'Lanes: none reported' : 'Lanes: none matching lane filter');
   for (const lane of ledger.lanes) {
@@ -35,10 +51,13 @@ function printLedger(ledger: LaneFiltered): void {
   if (spend === null) {
     console.log('\nAPI spend: unknown');
   } else {
-    console.log(`\nAPI spend: today ${value(spend.usdToday)} USD; week ${value(spend.usdWeek)} USD; rows ${spend.rowsToday}; errors ${spend.errorsToday}`);
+    console.log(`\nAPI spend: ${ledger.modelFilter ? 'global totals: ' : ''}today ${value(spend.usdToday)} USD; week ${value(spend.usdWeek)} USD; rows ${spend.rowsToday}; errors ${spend.errorsToday}`);
     console.log(`  Tokens in/out today: ${spend.tokensInToday}/${spend.tokensOutToday}; last observed: ${value(spend.lastAt)}; models: ${spend.models.length ? spend.models.join(', ') : 'none reported'}`);
     for (const model of spend.modelUsageToday ?? []) {
       console.log(`  ${model.model}: rows ${model.rows}; errors ${model.errors}; tokens in/out ${model.inputTokens}/${model.outputTokens}; ${value(model.usd)} USD; last observed: ${model.lastAt}`);
+    }
+    if (ledger.modelFilter !== undefined) {
+      console.log(`  Model selection: ${ledger.modelFilter.displayed} displayed; ${ledger.modelFilter.selectionOmitted} omitted by selection${ledger.modelFilter.displayed === 0 ? '; no matching model in reader output' : ''}`);
     }
     if (spend.modelUsageTodayOmitted > 0) console.log(`  Model usage omitted: ${spend.modelUsageTodayOmitted}`);
   }
@@ -48,6 +67,7 @@ export async function cmdResourceLedger(
   args: string[],
   read: () => Promise<ResourceLedgerV1> = readResourceLedger,
   signal?: AbortSignal,
+  now: () => number = Date.now,
 ): Promise<number> {
   let json = false;
   let help = false;
@@ -56,6 +76,8 @@ export async function cmdResourceLedger(
   let interval: number | undefined;
   let maxSamples: number | undefined;
   let lane: string | undefined;
+  let model: string | undefined;
+  let freshSeconds: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
@@ -69,6 +91,23 @@ export async function cmdResourceLedger(
         return 2;
       }
       lane = raw;
+    }
+    else if (arg === '--model' && model === undefined) {
+      const raw = args[++i];
+      if (raw === undefined || !MODEL.test(raw)) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      model = raw;
+    }
+    else if (arg === '--check-fresh-seconds' && freshSeconds === undefined) {
+      const raw = args[++i];
+      const parsed = Number(raw);
+      if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      freshSeconds = parsed;
     }
     else if (arg === '--interval-ms' && interval === undefined) {
       const raw = args[++i];
@@ -91,18 +130,23 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json))) {
+  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined)) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--lane <lane>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
     console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
     console.log('--changes-only requires --watch --json and suppresses snapshots that differ only in generatedAt.');
     console.log('JSONL example: phm resources ledger --watch --max-samples 2 --json');
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
+    console.log('--model selects exact matches from the reader’s model usage rows; API spend totals remain global.');
+    console.log('Reader omissions are separate from selection omissions; a missing match may be among omitted rows.');
+    console.log('--check-fresh-seconds N checks global status asOf against the current clock (N is a nonnegative safe integer).');
+    console.log('One-shot only: the versioned freshnessCheck reports age in seconds and pass, stale or unknown.');
+    console.log('Exit 1 for stale, missing/invalid or future asOf; the check does not assess individual lanes or API spend.');
     return 0;
   }
   if (watch) {
@@ -114,7 +158,7 @@ export async function cmdResourceLedger(
     if (signal?.aborted) abort();
     try {
       let samples = 0;
-      let previous: Omit<LaneFiltered, 'generatedAt'> | undefined;
+      let previous: Omit<LedgerView, 'generatedAt'> | undefined;
       while (!stop.signal.aborted) {
         let ledger: ResourceLedgerV1 | undefined;
         try { ledger = await read(); } catch {
@@ -122,7 +166,7 @@ export async function cmdResourceLedger(
           else process.stderr.write('Unable to read resource ledger.\n');
         }
         if (ledger) {
-          const view = filterLane(ledger, lane);
+          const view = selectLedger(ledger, lane, model);
           if (changesOnly) {
             const { generatedAt: _generatedAt, ...comparable } = view;
             if (previous === undefined || !isDeepStrictEqual(previous, comparable)) {
@@ -152,10 +196,24 @@ export async function cmdResourceLedger(
     }
   }
   try {
-    const view = filterLane(await read(), lane);
-    if (json) console.log(JSON.stringify(view, null, 2));
-    else printLedger(view);
-    return 0;
+    const view = selectLedger(await read(), lane, model);
+    if (freshSeconds === undefined) {
+      if (json) console.log(JSON.stringify(view, null, 2));
+      else printLedger(view);
+      return 0;
+    }
+    const observed = view.asOf === null ? NaN : Date.parse(view.asOf);
+    const age = (now() - observed) / 1000;
+    const observedAgeSeconds = Number.isFinite(age) ? age : null;
+    const result = observedAgeSeconds === null || observedAgeSeconds < 0 ? 'unknown'
+      : observedAgeSeconds > freshSeconds ? 'stale' : 'pass';
+    const freshnessCheck = { v: 1, maxAgeSeconds: freshSeconds, observedAgeSeconds, result };
+    if (json) console.log(JSON.stringify({ ...view, freshnessCheck }, null, 2));
+    else {
+      printLedger(view);
+      console.log(`\nFreshness check v1: ${result}; observed age ${value(observedAgeSeconds)} seconds; maximum ${freshSeconds} seconds (global status asOf)`);
+    }
+    return result === 'pass' ? 0 : 1;
   } catch {
     process.stderr.write('Unable to read resource ledger.\n');
     return 1;

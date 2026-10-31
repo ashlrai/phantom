@@ -1,10 +1,14 @@
 /**
  * List explicit incoming review relationships without scheduling or writing work.
- * Usage: npx tsx examples/agents/graph-review-candidates.ts --agent <nodeID>
+ * Usage: npx tsx examples/agents/graph-review-candidates.ts --agent <nodeID> [--exclude-agent <nodeID> ...]
+ * Example: npx tsx examples/agents/graph-review-candidates.ts --agent agent:example --exclude-agent agent:author --exclude-agent agent:participant
  * Output is one JSON object. Ready results contain agentId, complete, sources,
  * issues and reviewers [{ reviewerId, edgeIds }], in graph edge order. Missing
  * agents return not_found with the same binding and health fields; an incomplete
  * graph cannot prove absence. Missing health fields are null.
+ * With exclusions, excludedAgentIds lists unique requested IDs in argument order;
+ * excludedCandidateCount counts distinct reviewers removed. Candidates and
+ * exclusions do not establish independence or authorize a merge.
  * Errors: GRAPH_USAGE (exit 2), GRAPH_UNAVAILABLE, GRAPH_NODE_NOT_FOUND and
  * GRAPH_LOAD_FAILED (exit 1). Errors never include raw exception text.
  * The current default loader projects fleet inventory, not agent/reviews records.
@@ -14,7 +18,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadGraph } from '../../src/core/graph/loader.js';
 
-const usage = 'Usage: npx tsx examples/agents/graph-review-candidates.ts --agent <nodeID>';
+const usage = 'Usage: npx tsx examples/agents/graph-review-candidates.ts --agent <nodeID> [--exclude-agent <nodeID> ...]';
 
 type Dependencies = {
   load?: typeof loadGraph;
@@ -31,10 +35,19 @@ export async function runGraphReviewCandidates(args: string[], deps: Dependencie
   const fail = (status: string, code: string, message: string, exit: number) =>
     emit({ schemaVersion: 1, status, error: { code, message } }, exit);
 
-  if (args.length !== 2 || args[0] !== '--agent' || !args[1] || args[1].startsWith('-')) {
-    return fail('error', 'GRAPH_USAGE', usage, 2);
+  let agentId: string | undefined;
+  const excluded = new Set<string>();
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    const value = args[i + 1];
+    if (!value || value.startsWith('-') || (flag !== '--agent' && flag !== '--exclude-agent') ||
+        (flag === '--agent' && agentId !== undefined)) {
+      return fail('error', 'GRAPH_USAGE', usage, 2);
+    }
+    if (flag === '--agent') agentId = value;
+    else excluded.add(value);
   }
-  const agentId = args[1];
+  if (agentId === undefined) return fail('error', 'GRAPH_USAGE', usage, 2);
   try {
     const graph = await (deps.load ?? loadGraph)();
     if (graph.status === 'unavailable') {
@@ -67,8 +80,10 @@ export async function runGraphReviewCandidates(args: string[], deps: Dependencie
       if (!edgeIds.includes(edge.id)) edgeIds.push(edge.id);
       reviewers.set(edge.from, edgeIds);
     }
+    const eligible = [...reviewers].filter(([reviewerId]) => !excluded.has(reviewerId));
     return emit({ schemaVersion: 1, status: 'ready', agentId, ...health,
-      reviewers: [...reviewers].map(([reviewerId, edgeIds]) => ({ reviewerId, edgeIds })) }, 0);
+      ...(excluded.size ? { excludedAgentIds: [...excluded], excludedCandidateCount: reviewers.size - eligible.length } : {}),
+      reviewers: eligible.map(([reviewerId, edgeIds]) => ({ reviewerId, edgeIds })) }, 0);
   } catch {
     return emit({ schemaVersion: 1, status: 'error', agentId,
       error: { code: 'GRAPH_LOAD_FAILED', message: 'Could not read graph data.' } }, 1);
