@@ -951,7 +951,7 @@ function printHelp(): void {
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
     ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop; no companion probes).'],
-    ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records).'],
+    ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -1046,7 +1046,7 @@ export async function cmdMcp(args: string[]): Promise<number> {
 
   if (sub === 'context') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
-      console.log('Usage: phm mcp context\nRead-only stdio MCP: node_context_pack {node, tasks, outputs, byteBudget}.');
+      console.log('Usage: phm mcp context\nRead-only stdio MCP: node_context_pack {node, tasks, outputs, byteBudget}; unread P0/P1 bus notices for the node join best-effort.');
       return 0;
     }
     if (args.length !== 1) {
