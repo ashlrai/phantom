@@ -36,7 +36,7 @@ import { readAuthHeaders, startServer } from './helpers/authenticated-web-server
 
 const FIXTURE_QUEUE = resolve('test/fixtures/fleet-lanes/queue');
 const ANCHOR = new Date('2026-10-28T02:00:00Z');
-const fixtureOptions = { queueDir: FIXTURE_QUEUE, now: () => ANCHOR } as const;
+const fixtureOptions = { queueDir: FIXTURE_QUEUE, usageLogPaths: [join(FIXTURE_QUEUE, 'usage-readings.jsonl')], now: () => ANCHOR } as const;
 
 let scratch: string;
 let openHandles: Array<{ close(): Promise<void> }>;
@@ -189,6 +189,51 @@ describe('parseUsageJournals', () => {
 // ---------------------------------------------------------------------------
 
 describe('getFleetLaneSnapshot (fixture)', () => {
+  it('counts unique PR outcomes by event time across observations and queue rows', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    const url = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
+    const rows = [
+      { jobId: 'j1', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(1), ts: '2026-10-29T04:37:00Z', reconciledAt: '2026-10-29T07:00:00Z' },
+      { jobId: 'j1', pool: 'codex-personal', status: 'MERGED', pr: url(1) + '/', ts: '2026-10-29T00:37:00-04:00' },
+      { jobId: 'other', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(1).toUpperCase(), ts: '2026-10-29T04:37:00Z' },
+      { jobId: 'j2', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(2), ts: '2026-10-28T23:59:00-05:00' },
+      { jobId: 'j2', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(8), ts: '2026-10-29T05:00:00Z' },
+      { jobId: 'j3', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(3), ts: '2026-10-29T04:00:00Z' },
+      { jobId: 'old', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(4), ts: '2026-10-29T03:59:59Z', reconciledAt: '2026-10-29T04:59:00Z' },
+      { jobId: 'future', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(5), ts: '2026-10-29T05:00:01Z' },
+      { jobId: 'naive', pool: 'codex-personal', outcome: 'MERGED', prUrl: url(6), ts: '2026-10-29T04:59:00' },
+      { jobId: 'closed', pool: 'codex-personal', outcome: 'CLOSED', prUrl: url(7), ts: '2026-10-29T04:59:00Z' },
+      { job: 'legacy', pool: 'codex-personal', to: 'LAND', at: '2026-10-29T04:45:00Z' },
+      { job: 'legacy', pool: 'codex-personal', event: 'pr-merge', at: '2026-10-29T04:45:00Z' },
+    ];
+    await writeFile(join(dir, 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n'));
+    await writeFile(join(dir, 'ready.tsv'), [
+      'id\tstatus\tpool\tat',
+      'j1\tLAND\tcodex-personal\t2026-10-29T04:37:00Z',
+      'legacy\tLAND\tcodex-personal\t2026-10-29T04:45:00Z',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [],
+      now: () => new Date('2026-10-29T05:00:00Z'),
+    });
+    expect(snapshot.lanes.find(l => l.lane === 'codex-personal')!.mergesPerHour).toBe(5);
+  });
+
+  it('finds recent event timestamps before a large backfilled ledger tail', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'jobs.jsonl'), [
+      JSON.stringify({ jobId: 'recent', pool: 'devin', outcome: 'MERGED', ts: '2026-10-28T01:59:00Z' }),
+      JSON.stringify({ jobId: 'old', pool: 'devin', outcome: 'MERGED', ts: '2026-10-27T01:00:00Z', padding: 'x'.repeat(1_100_000) }),
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    expect(snapshot.lanes.find(l => l.lane === 'devin')!.mergesPerHour).toBe(1);
+    expect(snapshot.sources.ledger).toMatchObject({ state: 'healthy', events: 2 });
+  });
+
   it('projects credit, queue depth, live jobs and merges per lane', async () => {
     const snapshot = await getFleetLaneSnapshot(fixtureOptions);
     expect(snapshot.schema).toBe('fleet.lanes.v1');
