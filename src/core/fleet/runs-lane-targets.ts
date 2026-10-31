@@ -6,7 +6,7 @@ import { isAbsolute, join } from 'node:path';
 
 export const VERSE_FLEET_CONTROL_LANES_PATH = '/api/verse/fleet/control/lanes';
 export const LANE_ID_RE = /^[a-z][a-z0-9-]{1,30}$/;
-export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number; held: boolean; heldReason: string | null; heldUntil: string | null; lastChange: string | null; changedBy: string | null }
+export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number; held: boolean; heldReason: string | null; heldUntil: string | null; pausedFrom: number | null; lastChange: string | null; changedBy: string | null }
 export interface LaneTargetsV1 { v: 1; generatedAt: string; sourceState: 'healthy' | 'missing' | 'degraded'; lanes: LaneTargetRow[] }
 export interface LaneTargetsOptions { runsDir?: string; now?: () => Date; changedBy?: string }
 export class LaneTargetError extends Error {
@@ -75,11 +75,18 @@ function changedBy(row: Record<string, unknown>): string | null {
   const time = (v: string) => Date.parse(v.match(/\d{4}-\d{2}-\d{2}T\S+$/)?.[0] ?? '') || 0;
   return entries.sort((a, b) => time(b) - time(a))[0] ?? null;
 }
+// paused_from is the pre-pause target written by setLaneTarget. Only a
+// plausible positive target inside the lane's current bounds is surfaced;
+// anything else stored reads as "nothing remembered".
+function pausedFrom(row: Record<string, unknown>): number | null {
+  const value = row.paused_from;
+  return integer(value) && value > 0 && value >= (row.floor as number) && value <= (row.ceiling as number) ? value : null;
+}
 export async function readLaneTargets(opts: LaneTargetsOptions = {}): Promise<LaneTargetsV1> {
   const state: LaneTargetsV1 = { v: 1, generatedAt: (opts.now ?? (() => new Date()))().toISOString(), sourceState: 'healthy', lanes: [] };
   try {
     const { lanes } = await source(opts);
-    state.lanes = Object.entries(lanes).map(([lane, row]) => ({ lane, target: row.target as number, floor: row.floor as number, ceiling: row.ceiling as number, held: row.held as boolean, heldReason: nullableString(row.held_reason), heldUntil: nullableString(row.held_until), lastChange: epochIso(row.last_change), changedBy: changedBy(row) }));
+    state.lanes = Object.entries(lanes).map(([lane, row]) => ({ lane, target: row.target as number, floor: row.floor as number, ceiling: row.ceiling as number, held: row.held as boolean, heldReason: nullableString(row.held_reason), heldUntil: nullableString(row.held_until), pausedFrom: pausedFrom(row), lastChange: epochIso(row.last_change), changedBy: changedBy(row) }));
   } catch (error) { state.sourceState = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded'; }
   return state;
 }
@@ -93,8 +100,10 @@ export async function setLaneTarget(lane: string, target: number, opts: LaneTarg
     const now = (opts.now ?? (() => new Date()))();
     const iso = now.toISOString();
     const by = (opts.changedBy ?? 'Phantom desktop').replace(/[\t\r\n]/g, ' ');
-    const old = row.target;
+    const old = row.target as number;
     row.target = target;
+    if (target === 0 && old > 0) row.paused_from = old;
+    else if (target > 0) delete row.paused_from;
     row.last_change = Math.floor(now.getTime() / 1000);
     row.changed_by = `${by} ${iso}`;
     const text = `${JSON.stringify(raw, null, 1)}\n`;
