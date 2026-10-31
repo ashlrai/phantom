@@ -575,6 +575,25 @@ not present in this repository. Their consumer contract is to embed the same
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
 
+## Fleet event stream
+
+`phm fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <path>]`
+replays complete JSON-object lines from `dispatch-events.log` and `jobs.jsonl`
+in `~/.ashlr-runs/queue`. It needs no fleet state. `--follow` polls for appended
+records (including files created later); SIGINT/SIGTERM stop it cleanly.
+Each NDJSON row has `v: 1`, `id`, `cursor`, `source`, `at`, `type`, `job`, and
+`pool`. Only these normalized fields are emitted. Timestamp aliases include
+`ts`, `time`, `timestamp`; event aliases include `event`, `type`, `to`, `status`,
+`state`. Missing fields are null, with `type` defaulting to `unknown`.
+
+Save the last consumed row's opaque cursor and pass it to `--cursor` to resume
+both files. IDs are stable for an unchanged record at the same file position.
+Source order is dispatch then jobs per read batch, not global timestamp order.
+Malformed complete lines are skipped; incomplete final lines wait for newline.
+Lines are limited to 64 KiB. A replaced, shortened, or changed checkpoint
+restarts that source, so consumers should deduplicate IDs after recovery.
+Cursors are local to these log files; they cannot recover deleted history.
+
 ## Engineering lanes console
 
 `phm fleet lanes [--json] [--queue-dir <abs>]` prints the `fleet.lanes.v1`

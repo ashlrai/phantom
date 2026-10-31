@@ -32,6 +32,7 @@
  * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -2415,6 +2416,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
+  events:         { allowed: { flags: ['--json', '--follow'], values: ['--queue-dir', '--cursor'] }, usage: 'ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   lanes:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet lanes [--json] [--queue-dir <abs>]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
@@ -2471,6 +2473,34 @@ export async function cmdFleet(args: string[]): Promise<number> {
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
       return cmdFleetStatus(rest.includes('--json'));
+    case 'events': {
+      if (!rest.includes('--json')) {
+        process.stderr.write('fleet events requires --json\n');
+        return 2;
+      }
+      const { fleetEvents } = await import('../core/fleet/events.js');
+      const value = (flag: string): string | undefined => rest.includes(flag) ? rest[rest.indexOf(flag) + 1] : undefined;
+      const controller = new AbortController();
+      const stop = (): void => controller.abort();
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+      try {
+        for await (const event of fleetEvents({ queueDir: value('--queue-dir') ?? join(homedir(), '.ashlr-runs', 'queue'),
+          cursor: value('--cursor'), follow: rest.includes('--follow'), signal: controller.signal })) {
+          if (!process.stdout.write(JSON.stringify(event) + '\n')) {
+            await once(process.stdout, 'drain', { signal: controller.signal });
+          }
+        }
+        return 0;
+      } catch {
+        if (controller.signal.aborted) return 0;
+        process.stderr.write('fleet events failed: check cursor and queue logs\n');
+        return 1;
+      } finally {
+        process.removeListener('SIGINT', stop);
+        process.removeListener('SIGTERM', stop);
+      }
+    }
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
     case 'lanes':
@@ -2523,6 +2553,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
