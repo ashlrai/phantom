@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -51,6 +52,7 @@ export async function cmdResourceLedger(
   let json = false;
   let help = false;
   let watch = false;
+  let changesOnly = false;
   let interval: number | undefined;
   let maxSamples: number | undefined;
   let lane: string | undefined;
@@ -59,6 +61,7 @@ export async function cmdResourceLedger(
     if (arg === '--json' && !json) json = true;
     else if ((arg === '--help' || arg === '-h') && !help) help = true;
     else if (arg === '--watch' && !watch) watch = true;
+    else if (arg === '--changes-only' && !changesOnly) changesOnly = true;
     else if (arg === '--lane' && lane === undefined) {
       const raw = args[++i];
       if (raw === undefined || !LANE.test(raw)) {
@@ -88,15 +91,16 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if ((interval !== undefined || maxSamples !== undefined) && !watch) {
+  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json))) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000]] [--lane <lane>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--lane <lane>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
-    console.log('--max-samples stops after that many successfully emitted snapshots; read errors do not count.');
+    console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
+    console.log('--changes-only requires --watch --json and suppresses snapshots that differ only in generatedAt.');
     console.log('JSONL example: phm resources ledger --watch --max-samples 2 --json');
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
     return 0;
@@ -110,6 +114,7 @@ export async function cmdResourceLedger(
     if (signal?.aborted) abort();
     try {
       let samples = 0;
+      let previous: Omit<LaneFiltered, 'generatedAt'> | undefined;
       while (!stop.signal.aborted) {
         let ledger: ResourceLedgerV1 | undefined;
         try { ledger = await read(); } catch {
@@ -118,7 +123,13 @@ export async function cmdResourceLedger(
         }
         if (ledger) {
           const view = filterLane(ledger, lane);
-          if (json) console.log(JSON.stringify(view));
+          if (changesOnly) {
+            const { generatedAt: _generatedAt, ...comparable } = view;
+            if (previous === undefined || !isDeepStrictEqual(previous, comparable)) {
+              console.log(JSON.stringify(view));
+              previous = structuredClone(comparable);
+            }
+          } else if (json) console.log(JSON.stringify(view));
           else printLedger(view);
           samples++;
         }
