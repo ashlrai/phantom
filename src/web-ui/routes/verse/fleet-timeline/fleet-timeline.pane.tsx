@@ -7,6 +7,7 @@ function TimelineGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+t',
   id: 'fleet-timeline',
   title: 'Worker timeline',
   description: 'Running workers by fleet lane',
