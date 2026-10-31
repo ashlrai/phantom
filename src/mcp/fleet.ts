@@ -14,8 +14,11 @@ import { loadBacklog } from '../core/portfolio/backlog.js';
 import { listProposalsDetailed } from '../core/inbox/store.js';
 import { readKillSwitch } from '../core/sandbox/policy.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
+import { readBusHoplogTail } from '../core/fleet/bus-hoplog.js';
+import { summarizeBusHops } from '../core/fleet/bus-hop-summary.js';
 
 export const MAX_FLEET_TICKS = 50;
+export const MAX_FLEET_BUS_HOPS = 50;
 
 function nonnegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -127,5 +130,41 @@ export async function readFleetStatus() {
       awaitingHostMerge: sourceQuality.complete ? proposals.filter(p => p.status === 'awaiting-host-merge').length : null,
       applied: sourceQuality.complete ? proposals.filter(p => p.status === 'applied').length : null,
     },
+  };
+}
+
+/**
+ * Newest validated cross-agent bus hops (append order) from the private hop
+ * log — the only source. A hop is a recorded send attempt: it carries message
+ * id, from/to and nullable token usage, never a body, delivery, or lifecycle
+ * claim. Missing and unreadable are distinct; neither yields invented rows.
+ * Usage totals are subtotals of the returned tail's recorded attempts, not
+ * provider usage or proof of delivery; unknown samples remain separate.
+ */
+export async function readFleetBusHops(limit = 20) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_FLEET_BUS_HOPS) {
+    throw new RangeError('Bus hop limit must be an integer between 1 and 50.');
+  }
+  const tail = readBusHoplogTail(limit);
+  const hops = tail.hops === null ? null : tail.hops.map(hop => ({
+    id: hop.id,
+    from: hop.from,
+    to: hop.to,
+    inputTokens: hop.inputTokens,
+    outputTokens: hop.outputTokens,
+  }));
+  return {
+    schemaVersion: 1,
+    snapshotKind: 'local-persisted',
+    authority: 'none',
+    generatedAt: new Date().toISOString(),
+    sourceState: tail.state,
+    logBytes: tail.logBytes,
+    hops,
+    usageSummary: hops === null ? null : summarizeBusHops(hops),
+    returnedHops: tail.hops === null ? null : tail.hops.length,
+    skippedRows: tail.skippedRows,
+    truncated: tail.truncated,
+    limit,
   };
 }

@@ -57,6 +57,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   the promote gate's metric runs in the verification sandbox under a standing
   grant.
 
+### Removed
+- Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
+
 ### Fixed
 - Scrub stops flagging prose, code references and public digests as secrets.
 - Automations dedupe prunes against the wall clock (master was red), and the
@@ -99,6 +102,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Local inference URLs and local Ollama defaults pin `localhost` to
   `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
   lookups refuse redirects instead of contacting another endpoint.
+
+### Removed
+- Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used (`WIRE_CONTRACT_KEYS` is kept as a compile-time contract guard). Rebased onto current master the count drops from 150 to 143: `_handlerCounts` is kept (now referenced by `test/m241.event-bus.test.ts`) and six symbols were already removed on master (`AutonomyIcon`, `ApprovalsIcon`, `ThemeIcon`, `TrashIcon`, `hasCommandHandler`, `preloadGuardDialogs`). Includes the internal `GenomeCapture` type in `src/core/types/genome.ts` (deprecated and removed in one step: it was never exported from a published entry point such as `@ashlr/hub`, `@ashlr/hub/types` or `@ashlr/hub/plugin`, so no user import can break; docs/contracts/CONTRACT-M16.md updated). No CLI command, flag or config key changes.
 
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a

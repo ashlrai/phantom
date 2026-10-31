@@ -53,8 +53,6 @@ export const DEVIN_CONNECTION_SCHEMA_VERSION = 1 as const;
 
 /** https://docs.devin.ai/api-reference/overview — "Base URL: https://api.devin.ai/v3/organizations/*". */
 export const DEVIN_API_BASE_URL = 'https://api.devin.ai/v3' as const;
-/** Where the operator creates a key and finds the org id (Settings > Devin API). */
-export const DEVIN_SETTINGS_URL = 'https://app.devin.ai/settings' as const;
 /** Where real usage lives (Settings > Usage & limits). https://docs.devin.ai/admin/billing/usage */
 export const DEVIN_USAGE_URL = 'https://app.devin.ai/settings/usage' as const;
 
@@ -77,6 +75,8 @@ export const DEVIN_TASK_ID_PATTERN = /^dv_\d{8}T\d{4}_[a-z0-9]{6}$/;
 export const DEVIN_SESSION_ID_PATTERN = /^(?:devin-[A-Za-z0-9_-]{1,120}|[a-f0-9]{32})$/;
 /** Organization ids (docs: "Organization ID (prefix: org-)"). */
 export const DEVIN_ORG_ID_PATTERN = /^org-[A-Za-z0-9_-]{1,120}$/;
+/** Org playbook ids (docs example: `playbook-abc123def456`), sent as SessionCreateRequest.playbook_id. */
+export const DEVIN_PLAYBOOK_ID_PATTERN = /^playbook-[A-Za-z0-9_-]{1,120}$/;
 /** v3 credentials: "All API credentials use the `cog_` prefix format." */
 export const DEVIN_KEY_PATTERN = /^cog_[A-Za-z0-9_-]{8,512}$/;
 
@@ -95,8 +95,6 @@ export type DevinTaskOrigin = 'chat' | 'operator' | 'cli' | 'fleet';
  * expired    the session finished (or DEVIN_TASK_EXPIRY_MS passed) with no PR.
  */
 export type DevinTaskState = 'queued' | 'launching' | 'running' | 'blocked' | 'pr-open' | 'merged' | 'closed' | 'failed' | 'expired';
-
-export const DEVIN_TERMINAL_STATES: readonly DevinTaskState[] = ['merged', 'closed', 'failed', 'expired'];
 
 export type DevinFailureCode =
   | 'not-enabled'     // devin.enabled is off
@@ -168,6 +166,13 @@ export interface DevinTaskV1 {
   intake?: CloudIntakeMemo;
   /** 3.15: the playbook version this task runs under (playbooks/); absent = none. */
   playbookRef?: PlaybookRef;
+  /**
+   * The Devin-org playbook attached at launch (SessionCreateRequest.playbook_id,
+   * `playbook-…`), whose source lives in devin/playbooks/. Distinct from
+   * playbookRef: that is a local rendered playbook inlined into the prompt;
+   * this one is referenced by id so the prompt stays short. Absent = none.
+   */
+  playbookId?: string;
   /** Backlog / fleet work item this task came from, if any. */
   backlogItemId: string | null;
   /**

@@ -21,11 +21,15 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { verseControlQuery } from '../../autonomy/control-queries.js';
 import { fleetLiveQuery } from '../../command/surface-data.js';
+import { cloudCreditsQuery } from '../../resources/resources-queries.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { verseBootstrapQuery } from '../../verse-bootstrap-query.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { fleetStateView, type FleetHeadline } from '../fleet-state.js';
+import { homeRunsQuery } from '../home-runs-query.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
+import { MobileInterject } from '../MobileInterject.js';
+import { HomeRuns } from '../HomeRuns.js';
 import { Button, SkeletonList } from '../ui.js';
 import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './HomeScreen.module.css';
@@ -58,11 +62,17 @@ export function elapsedText(startedAt: string | null, now: number = Date.now()):
 }
 
 /** Pull-to-refresh on Home: every read the cards show, forced fresh. */
+export function homeRefreshKeys(): string[] {
+  return [verseControlQuery.key, fleetLiveQuery.key, verseBootstrapQuery.key, homeRunsQuery.key, cloudCreditsQuery.key];
+}
+
 export function refreshHome(): Promise<unknown> {
-  return Promise.all([
+  return Promise.allSettled([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
     refetchQuery(verseBootstrapQuery.key, () => verseBootstrapQuery.fetch(), true),
+    refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
+    refetchQuery(cloudCreditsQuery.key, () => cloudCreditsQuery.fetch(), true),
   ]);
 }
 
@@ -163,6 +173,9 @@ export function HomeBody() {
           })
         )}
       </Section>
+
+      <HomeRuns />
+      <MobileInterject />
 
       <Suspense fallback={<Section title="Seats" flat><SkeletonList rows={3} label="Loading seats" /></Section>}>
         <HomeSeats />
