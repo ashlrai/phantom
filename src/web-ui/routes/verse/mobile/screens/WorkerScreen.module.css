@@ -1,0 +1,8 @@
+.tail {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+}
