@@ -67,6 +67,7 @@ export async function cmdResourceLedger(
   args: string[],
   read: () => Promise<ResourceLedgerV1> = readResourceLedger,
   signal?: AbortSignal,
+  now: () => number = Date.now,
 ): Promise<number> {
   let json = false;
   let help = false;
@@ -76,6 +77,7 @@ export async function cmdResourceLedger(
   let maxSamples: number | undefined;
   let lane: string | undefined;
   let model: string | undefined;
+  let freshSeconds: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
@@ -98,6 +100,15 @@ export async function cmdResourceLedger(
       }
       model = raw;
     }
+    else if (arg === '--check-fresh-seconds' && freshSeconds === undefined) {
+      const raw = args[++i];
+      const parsed = Number(raw);
+      if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      freshSeconds = parsed;
+    }
     else if (arg === '--interval-ms' && interval === undefined) {
       const raw = args[++i];
       if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1000 || Number(raw) > 60000) {
@@ -119,12 +130,12 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json))) {
+  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined)) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
     console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
@@ -133,6 +144,9 @@ export async function cmdResourceLedger(
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
     console.log('--model selects exact matches from the reader’s model usage rows; API spend totals remain global.');
     console.log('Reader omissions are separate from selection omissions; a missing match may be among omitted rows.');
+    console.log('--check-fresh-seconds N checks global status asOf against the current clock (N is a nonnegative safe integer).');
+    console.log('One-shot only: the versioned freshnessCheck reports age in seconds and pass, stale or unknown.');
+    console.log('Exit 1 for stale, missing/invalid or future asOf; the check does not assess individual lanes or API spend.');
     return 0;
   }
   if (watch) {
@@ -183,9 +197,23 @@ export async function cmdResourceLedger(
   }
   try {
     const view = selectLedger(await read(), lane, model);
-    if (json) console.log(JSON.stringify(view, null, 2));
-    else printLedger(view);
-    return 0;
+    if (freshSeconds === undefined) {
+      if (json) console.log(JSON.stringify(view, null, 2));
+      else printLedger(view);
+      return 0;
+    }
+    const observed = view.asOf === null ? NaN : Date.parse(view.asOf);
+    const age = (now() - observed) / 1000;
+    const observedAgeSeconds = Number.isFinite(age) ? age : null;
+    const result = observedAgeSeconds === null || observedAgeSeconds < 0 ? 'unknown'
+      : observedAgeSeconds > freshSeconds ? 'stale' : 'pass';
+    const freshnessCheck = { v: 1, maxAgeSeconds: freshSeconds, observedAgeSeconds, result };
+    if (json) console.log(JSON.stringify({ ...view, freshnessCheck }, null, 2));
+    else {
+      printLedger(view);
+      console.log(`\nFreshness check v1: ${result}; observed age ${value(observedAgeSeconds)} seconds; maximum ${freshSeconds} seconds (global status asOf)`);
+    }
+    return result === 'pass' ? 0 : 1;
   } catch {
     process.stderr.write('Unable to read resource ledger.\n');
     return 1;
