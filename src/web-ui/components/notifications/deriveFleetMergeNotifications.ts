@@ -1,7 +1,8 @@
 import { paneLinkUrl } from '../../routes/verse/dock/pane-link.js';
+import { setVerseSection } from '../../routes/verse/verse-ui-store.js';
 import type { AppNotification } from './types.js';
 
-type Merge = { repo: string; number: number; title: string };
+type Merge = { repo?: string; number?: number; title: string };
 type MergeSnapshot = {
   generatedAt: string;
   sources: { merges: 'healthy' | 'degraded' };
@@ -12,6 +13,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const natural = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const clamp = (title: string) => title.length > 120 ? `${title.slice(0, 119)}…` : title;
+const openUpdates = () => setVerseSection('settings', 'desktop-updates');
+const githubRepo = /^(?!\.{1,2}\/)[A-Za-z0-9_.-]+\/(?!\.{1,2}$)[A-Za-z0-9_.-]+$(?![\s\S])/;
 
 export function releaseOfTitle(title: string): string | null {
   const match = /^(?:chore\((?:master|main)\): release |release v)(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/.exec(title);
@@ -24,8 +27,8 @@ function isMergeSnapshot(value: unknown): value is MergeSnapshot {
     || !record(value.mergesLastHour) || !(value.mergesLastHour.count === null || natural(value.mergesLastHour.count))
     || !Array.isArray(value.mergesLastHour.items)) return false;
   return value.mergesLastHour.items.every((item: unknown) => record(item)
-    && typeof item.repo === 'string' && item.repo.trim().length > 0
-    && natural(item.number) && item.number > 0 && typeof item.title === 'string');
+    && (item.repo === undefined || (typeof item.repo === 'string' && item.repo.trim().length > 0))
+    && (item.number === undefined || (natural(item.number) && item.number > 0)) && typeof item.title === 'string');
 }
 
 /** Project the public merge summary into stable, category-mutable notifications. */
@@ -43,9 +46,10 @@ export function deriveFleetMergeNotifications(data: unknown, _now: number): AppN
     if (version === null) {
       remaining.push(item);
     } else {
-      releases.push({ ...common, severity: 'high', id: `fleet-release:${item.repo}:${version}`,
-        title: `${item.repo.split('/').at(-1)} ${version} shipped`,
-        detail: `Release PR #${item.number} merged. The desktop app can update from Settings ▸ Desktop ▸ Updates.` });
+      releases.push({ category: common.category, severity: 'high', ts: common.ts,
+        actionLabel: 'Update', actionRun: openUpdates, id: `fleet-release:${item.repo}:${version}`,
+        title: `${item.repo?.split('/').at(-1) ?? 'Desktop'} ${version} shipped`,
+        detail: `Release${item.number === undefined ? '' : ` PR #${item.number}`} merged. The desktop app can update from Settings ▸ Desktop ▸ Updates.` });
     }
   }
   if (remaining.length > 5) {
@@ -54,6 +58,12 @@ export function deriveFleetMergeNotifications(data: unknown, _now: number): AppN
       title: `${count === null ? remaining.length : Math.max(0, count - releases.length)} PRs merged in the last hour`,
       detail: remaining.slice(0, 3).map((item) => clamp(item.title)).join(' · ') }];
   }
-  return [...releases, ...remaining.map((item) => ({ ...common, id: `fleet-merge:${item.repo}#${item.number}`,
-    title: `Merged #${item.number}`, detail: `${item.repo.split('/').at(-1)}: ${clamp(item.title)}` }))];
+  return [...releases, ...remaining.map((item) => {
+    const prHref = item.repo && githubRepo.test(item.repo) && item.number
+      ? `https://github.com/${item.repo}/pull/${item.number}` : undefined;
+    return { ...common, ...(prHref ? { actionHref: prHref, actionLabel: 'Open PR' } : {}),
+      id: `fleet-merge:${item.repo}#${item.number}`,
+      title: item.number === undefined ? 'Merged PR' : `Merged #${item.number}`,
+      detail: `${item.repo?.split('/').at(-1) ?? 'Unknown repo'}: ${clamp(item.title)}` };
+  })];
 }
