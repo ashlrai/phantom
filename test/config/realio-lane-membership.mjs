@@ -4,8 +4,6 @@
 // N ad hoc guesses. Files that genuinely need more than this (m482's real npm
 // pack/install contract, h5's 500-cycle leak-containment sweep) keep their own
 // larger per-file/per-test override on top of this floor.
-import { INTEGRATION_REAL_IO_TEST_FILES } from '../integration/lane-membership.mjs';
-
 export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 
 /**
@@ -45,11 +43,10 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
-  // test/integration/lane-membership.mjs names the integration suites that run
-  // real source CLI + Locus subprocesses with private HOME/log/argv fixtures.
-  // Spread (not concatenated) so this array stays the single source of truth
-  // for both vitest.config.ts and the lane-membership guard below.
-  ...INTEGRATION_REAL_IO_TEST_FILES,
+  // test/integration/lane-membership.mjs DERIVES its view by filtering this
+  // array for `test/integration/` — importing it here instead would be a
+  // circular import that fails module evaluation outright, so the integration
+  // suites are literal entries in this list like every other member.
   'test/autopilot.test.ts', // Real temp git origin/clone/worktree, fixer and verify subprocesses, and a real push.
   'test/slowest-tests.test.ts', // Real Node subprocesses exercise file/stdin input, output and CLI exit codes.
   'test/model-inventory-files.test.ts', // Real temporary fleet files, atomic inventory lock and rename preservation.
@@ -93,6 +90,7 @@ export const REAL_IO_TEST_FILES = [
   'test/remote-gateway-auth.test.ts', // real loopback gateway and Mac-only Unix socket pairing ceremony
   'test/remote-admin-race.test.ts', // real owned Unix socket child killed to reproduce stale-admin startup races
   'test/remote-gateway-http.test.ts', // real loopback Hub and gateway servers, Access assertion and SSE lifecycle
+  'test/remote-fleet-feed.test.ts', // real paired-device gateway and loopback fleet feed
   'test/api-error-no-echo.test.ts', // one real loopback web server per test sweeping the /api error paths
   'test/builtin-activity-pgid-reuse.test.ts', // private activity journals with synthetic identity reuse probes
   'test/builtin-activity-settlement-witness.test.ts', // private journals and one real owned subprocess

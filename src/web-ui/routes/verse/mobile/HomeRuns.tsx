@@ -3,6 +3,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { homeRunsView } from './home-runs-model.js';
 import { homeRunsQuery } from './home-runs-query.js';
+import { mergeLabel, prUrl } from './merge-link.js';
 import { useMobile } from './mobile-context.js';
 import { SkeletonList } from './ui.js';
 import { Badge, Row, Section, ui } from './ui-parts.js';
@@ -23,8 +24,13 @@ export function HomeRuns() {
         <SkeletonList rows={3} label="Loading fleet numbers" />
       ) : <>
         <Row title={view.headline} subtitle={view.tick} onClick={() => navigate({ screen: 'fleet' })} />
-        {view.lanes.map((lane) => <Row key={lane.lane} title={lane.lane} trailing={<Badge tone={lane.tone}>{lane.text}</Badge>} />)}
+        {view.lanes.map((lane) => <Row key={lane.lane} title={lane.lane} trailing={<Badge tone={lane.tone}>{lane.text}</Badge>} onClick={() => navigate({ screen: 'runs' })} label={`Open Live runs for ${lane.lane}`} />)}
         <Row title={view.merges} />
+        {query.data?.mergesLastHour.items?.map((merge, i) => {
+          const url = prUrl(merge);
+          const row = <Row title={mergeLabel(merge)} />;
+          return url ? <a key={i} href={url} target="_blank" rel="noopener noreferrer">{row}</a> : <div key={i}>{row}</div>;
+        })}
         {view.codex ? <Row title={view.codex} /> : null}
       </>}
     </Section>

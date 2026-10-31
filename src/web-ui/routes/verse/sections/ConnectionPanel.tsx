@@ -16,7 +16,9 @@ import { IconCopy, IconInfo, IconLock } from '../../../components/primitives/ico
 import { clearMutationToken, clearReadSession } from '../../../data/auth-store.js';
 import { useAuthPhase, useMutationHold } from '../../../data/hooks.js';
 import { useToast } from '../../../components/primitives/Toast.js';
+import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { Panel, SettingRow } from './SettingRow.js';
+import { PairedDevicesRows } from './PairedDevicesRows.js';
 import { FleetSourcesRows } from './FleetSourcesRows.js';
 import styles from './SettingsSection.module.css';
 
@@ -32,6 +34,7 @@ export function ConnectionPanel() {
   const hold = useMutationHold();
   const toast = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [unlockOpen, setUnlockOpen] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
@@ -77,7 +80,7 @@ export function ConnectionPanel() {
           status={hold.hasHold ? formatHoldExpiry(hold.heldUntil) : 'locked'}
           tone={hold.hasHold ? 'success' : 'neutral'}
         />
-        <Button
+        {hold.hasHold ? <Button
           variant="subtle"
           size="sm"
           icon={<IconLock />}
@@ -85,10 +88,11 @@ export function ConnectionPanel() {
             clearMutationToken();
             toast.show('Mutation hold cleared.');
           }}
-          disabled={!hold.hasHold}
         >
           Lock now
-        </Button>
+        </Button> : <Button variant="subtle" size="sm" icon={<IconLock />} onClick={() => setUnlockOpen(true)}>
+          Unlock…
+        </Button>}
       </SettingRow>
 
       <SettingRow
@@ -115,8 +119,16 @@ export function ConnectionPanel() {
         </p>
       </div>
 
-      <h4 className={styles.panelTitle}>Fleet on this Mac</h4>
+      <h4 className={styles.panelTitle} data-verse-anchor="fleet-sources">Fleet on this Mac</h4>
       <FleetSourcesRows />
+      <PairedDevicesRows />
+
+      {unlockOpen && <MutationTokenDialog
+        open
+        onClose={() => setUnlockOpen(false)}
+        onUnlocked={() => toast.show('Unlocked for 20 minutes.')}
+        reason="Actions from this console (fleet switches, lane targets, Update now) need the mutation token."
+      />}
 
       <Dialog
         open={confirmOpen}
