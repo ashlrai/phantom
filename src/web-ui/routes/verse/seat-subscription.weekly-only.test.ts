@@ -14,7 +14,7 @@ describe('weekly-only Claude subscription', () => {
     expect(view.summary).toBe('62% of weekly window used');
     expect(view.binding?.resetsAt).toBe(RESET);
     expect(seatReopensAt(view)).toBe(RESET);
-    expect(seatSubscriptionSentence(seat, view)).toContain('No session cap on this plan');
+    expect(seatSubscriptionSentence(seat, view)).toContain('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.');
   });
 
   it('selects the worst model window and retains the other weekly windows', () => {
@@ -31,12 +31,13 @@ describe('weekly-only Claude subscription', () => {
     expect(view.others.map((w) => w.id)).toEqual(['seven_day_opus']);
   });
 
-  it('preserves the two-window summary and session cap', () => {
+  it('drops a stale five_hour window even when the server names it binding', () => {
     const session = seatWindow({ id: 'five_hour', usedPercent: 75, resetsAt: RESET });
     const view = seatSubscription(nativeSeat(capacity({ windows: [session, week], binding: session, usability: 'ready' })), NOW);
-    expect(view.sessionCap).toBe('present');
-    expect(view.summary).toBe('75% of 5-hour window used');
-    expect(view.others.map((w) => w.id)).toEqual(['seven_day']);
+    expect(view.sessionCap).toBe('none');
+    expect(view.binding?.id).toBe('seven_day');
+    expect(view.summary).toBe('62% of weekly window used');
+    expect(view.others.map((w) => w.id)).toEqual([]);
   });
 
   it('leads with a flagged weekly limit and reopens at its reset', () => {
@@ -49,7 +50,10 @@ describe('weekly-only Claude subscription', () => {
   it.each(['claude', 'codex', 'grok'] as const)('classifies %s without inventing a session-cap exemption', (engine) => {
     expect(seatSubscription(nativeSeat(capacity(), { engine }), NOW).sessionCap).toBe('unknown');
     const both = [week, seatWindow({ id: 'five_hour', usedPercent: 10 })];
-    expect(seatSubscription(nativeSeat(capacity({ windows: both, binding: week }), { engine }), NOW).sessionCap).toBe('present');
+    // Claude's five_hour is filtered before the cap is judged; every other
+    // provider's session window still counts.
+    expect(seatSubscription(nativeSeat(capacity({ windows: both, binding: week }), { engine }), NOW).sessionCap)
+      .toBe(engine === 'claude' ? 'none' : 'present');
     if (engine !== 'claude') expect(seatSubscription(nativeSeat(capacity({ windows: [week] }), { engine }), NOW).sessionCap).toBe('present');
   });
 });

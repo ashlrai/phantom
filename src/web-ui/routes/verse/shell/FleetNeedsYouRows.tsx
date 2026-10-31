@@ -20,13 +20,15 @@
  * other missing reading is reported as NOT answered — silence never earns
  * an all-clear.
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { safeHref } from '../cloud/cloud-model.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
+import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
+import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
 import { deriveReleaseNeedsYou } from './release-needs-you.js';
 import { closeVerseOverlay, setVerseSection, type NeedsYouSplit } from '../verse-ui-store.js';
@@ -60,6 +62,17 @@ const SURFACE_NAME: Readonly<Record<FleetNeedsYouItem['target'], string>> = {
   settings: 'Settings',
 };
 
+const PANE_NAME: Readonly<Record<string, string>> = {
+  'fleet-lanes': 'Lanes', 'fleet-supply': 'Supply', 'fleet-host': 'Mac host',
+  'fleet-releases': 'Releases', 'leader-journal': 'Leader journal',
+};
+
+function revealPane(paneId: string): void {
+  setFocusMode(false);
+  setVerseSection('chat');
+  openDockPane(paneId);
+}
+
 const ANSWERED_NONE: FleetNeedsYouResult = { answered: true, items: [] };
 
 /** The item's target is a section — the drawer's own hand-off: close, then switch. */
@@ -75,6 +88,7 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   nowMs: number;
   onResult: (report: FleetNeedsYouReport) => void;
 }) {
+  const [clipboard, setClipboard] = useState<Record<string, 'copied' | 'failed'>>({});
   const read = useQuery(fleetRunsNeedsYouQuery);
   const refetch = useRefetch(fleetRunsNeedsYouQuery);
   const releaseRead = useQuery(releasePrQuery);
@@ -111,7 +125,29 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
       </div>
       {combined.items.map((item) => {
         const severity = SEVERITY[item.severity];
-        const open = () => openSurface(item.target);
+        const destination = item.open;
+        const paneId = destination?.kind === 'pane' ? normalizePaneId(destination.paneId) : null;
+        const label = destination?.kind === 'terminal'
+          ? `Open Terminal${clipboard[item.id] === 'copied' ? ' · command copied' : ''}`
+          : `Open ${paneId ? PANE_NAME[paneId] ?? paneId : SURFACE_NAME[item.target]}`;
+        const open = async () => {
+          if (destination?.kind === 'terminal') {
+            try {
+              await navigator.clipboard.writeText(destination.command);
+              setClipboard(previous => ({ ...previous, [item.id]: 'copied' }));
+              closeVerseOverlay();
+            } catch {
+              // Keep the row visible so the operator can copy the command manually.
+              setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
+            }
+            revealPane(TERMINAL_PANE_ID);
+          } else if (paneId) {
+            closeVerseOverlay();
+            revealPane(paneId);
+          } else {
+            openSurface(item.target);
+          }
+        };
         const isRelease = releaseUrls.has(item.id);
         const href = releaseUrls.get(item.id);
         return (
@@ -121,6 +157,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               <span className={styles.rowTitle}>{item.title}</span>
               <span className={styles.runFacts}>{item.detail}</span>
               <span className={styles.runFacts}>Next: {item.nextStep}</span>
+              {destination?.kind === 'terminal' && clipboard[item.id] === 'failed' && (
+                <code onClick={event => event.stopPropagation()}>Copy command: {destination.command}</code>
+              )}
               <span className={styles.rowMeta}>
                 <span className={styles.severity} data-severity={severity.tone}>{severity.word}</span>
                 <span>{SURFACE_NAME[item.target]}</span>
@@ -134,8 +173,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
                 setVerseSection('chat');
                 openDockPane('fleet-merges');
               }}>Open Merges</Button>}
-              <Button size="sm" variant="subtle" aria-label={`Open ${SURFACE_NAME[item.target]}`} onClick={open}>
-                {isRelease ? 'Open Fleet' : 'Open'}
+              <Button size="sm" variant="subtle" aria-label={label} onClick={open}>
+                {label}
               </Button>
             </span>
           </div>
