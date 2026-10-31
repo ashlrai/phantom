@@ -165,6 +165,11 @@ const LIVE_STATUSES = new Set([
   'WORKING', 'PUBLISHING', 'PUBLISH_UNKNOWN',
 ]);
 
+/** True when a normalized (uppercased) queue status names an in-flight job. */
+export function isLiveQueueStatus(status: string): boolean {
+  return LIVE_STATUSES.has(status.toUpperCase());
+}
+
 /** Terminal merge evidence. DONE alone is not a merge — it must name a land. */
 const MERGE_WORDS = new Set([
   'land', 'landed', 'merge', 'merged', 'pr-merge', 'pr-merged',
@@ -335,6 +340,19 @@ export function parseReadyTsv(text: string): ParsedTsv {
 // queue.v1.json — light structural read of the DRIVER-1 document.
 // ---------------------------------------------------------------------------
 
+/** One validated queue.v1 job row — the fields a read projection may serve. */
+export interface QueueV1JobRow {
+  id: string;
+  /** Normalized uppercase status. */
+  status: string;
+  pool: string;
+  repo?: string;
+  tier?: string;
+  priority?: string;
+  /** Bounded single-line preview of `title` (or `task`'s first line), when the job carries one. */
+  summary?: string;
+}
+
 interface QueueV1Read {
   /** Per-pool in-flight counts (live statuses). */
   live: Map<string, number>;
@@ -343,6 +361,23 @@ interface QueueV1Read {
   /** job id → pool for ledger rows that do not repeat the pool. */
   jobPool: Map<string, string>;
   jobs: number;
+  /** Validated job rows in document order (same strictness as the counts). */
+  rows: QueueV1JobRow[];
+}
+
+/** Optional free-text job fields that may ride a queue.v1 row. */
+const QUEUE_V1_TEXT_FIELDS = ['repo', 'tier', 'priority'] as const;
+const SUMMARY_MAX_CHARS = 240;
+
+function jobSummary(job: Record<string, unknown>): string | undefined {
+  const title = job['title'];
+  if (typeof title === 'string' && title.trim()) return cleanCell(title).slice(0, SUMMARY_MAX_CHARS);
+  const task = job['task'];
+  if (typeof task === 'string' && task.trim()) {
+    const firstLine = task.split('\n', 1)[0]!;
+    return cleanCell(firstLine).slice(0, SUMMARY_MAX_CHARS);
+  }
+  return undefined;
 }
 
 export function parseQueueV1Document(text: string): QueueV1Read {
@@ -353,6 +388,7 @@ export function parseQueueV1Document(text: string): QueueV1Read {
   const live = new Map<string, number>();
   const ready = new Map<string, number>();
   const jobPool = new Map<string, string>();
+  const rows: QueueV1JobRow[] = [];
   for (const job of value.jobs) {
     const j = record(job);
     if (!j || typeof j.id !== 'string' || !JOB_ID.test(j.id) ||
@@ -361,11 +397,19 @@ export function parseQueueV1Document(text: string): QueueV1Read {
       throw new Error('invalid queue.v1 job');
     }
     const status = j.status.toUpperCase();
+    const row: QueueV1JobRow = { id: j.id, status, pool: j.pool };
+    for (const field of QUEUE_V1_TEXT_FIELDS) {
+      const v = j[field];
+      if (typeof v === 'string' && v.trim()) row[field] = cleanCell(v);
+    }
+    const summary = jobSummary(j);
+    if (summary) row.summary = summary;
+    rows.push(row);
     jobPool.set(j.id, j.pool);
     if (LIVE_STATUSES.has(status)) live.set(j.pool, (live.get(j.pool) ?? 0) + 1);
     else if (status === 'READY') ready.set(j.pool, (ready.get(j.pool) ?? 0) + 1);
   }
-  return { live, ready, jobPool, jobs: value.jobs.length };
+  return { live, ready, jobPool, jobs: value.jobs.length, rows };
 }
 
 // ---------------------------------------------------------------------------

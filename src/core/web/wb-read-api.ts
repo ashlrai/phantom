@@ -9,6 +9,9 @@
  *                             shared single-flight cache + failure backoff
  *                             (web/fleet-status-cache.ts getCachedWbGhStatus)
  *   GET /api/wb/v1/budget   → budget policy + per-seat usage projection
+ *   GET /api/wb/v1/fleet    → composite live fleet workbench view (lanes,
+ *                             jobs, PRs, leader state — see
+ *                             workbench-fleet-view.ts)
  *
  * Auth: identical to every other read route — these paths are `/api/*` GETs,
  * so server.ts's read-session boundary (X-Ashlr-Token or a minted read
@@ -44,6 +47,11 @@ import {
 import type { VerseGithubSnapshot } from '../verse/github-types.js';
 import { getCachedWbGhStatus } from './fleet-status-cache.js';
 import { sendJson } from './read-session.js';
+import {
+  handleWbFleetView,
+  WB_FLEET_PATH,
+  type WorkbenchFleetViewDeps,
+} from './workbench-fleet-view.js';
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -52,8 +60,9 @@ import { sendJson } from './read-session.js';
 export const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
 export const WB_GH_PATH = '/api/wb/v1/gh';
 export const WB_BUDGET_PATH = '/api/wb/v1/budget';
+export { WB_FLEET_PATH };
 
-const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH]);
+const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_FLEET_PATH]);
 
 /** True for every `/api/wb/v1/*` path — handled (or 404d) by this module. */
 export function isWbApiPath(path: string): boolean {
@@ -248,7 +257,7 @@ export async function handleWbApi(
   res: ServerResponse,
   cfg: AshlrConfig,
   path: string,
-  deps: WbGhDeps = {},
+  deps: WorkbenchFleetViewDeps = {},
 ): Promise<boolean> {
   if (!isWbApiPath(path)) return false;
 
@@ -266,6 +275,8 @@ export async function handleWbApi(
     handleWbSnapshot(res);
   } else if (path === WB_GH_PATH) {
     await handleWbGh(cfg, res, deps);
+  } else if (path === WB_FLEET_PATH) {
+    await handleWbFleetView(res, cfg, deps);
   } else {
     handleWbBudget(res);
   }

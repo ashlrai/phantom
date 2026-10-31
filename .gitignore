@@ -42,3 +42,5 @@ undefined/
 
 # Sanitized operator usage readings for bridge handoff
 !/usage-readings.log
+# Committed fleet-lanes fixture journal (documented in test/fixtures/fleet-lanes/README.md)
+!/test/fixtures/fleet-lanes/queue/usage-readings.log

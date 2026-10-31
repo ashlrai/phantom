@@ -1,0 +1,2 @@
+{"pool":"grok-ultra","pctUsed":36,"resetAt":"2026-11-04T00:00:00Z","burnRatePctPerHour":1.2,"projected100At":"2026-10-30T13:00:00Z","fetchedAt":"2026-10-28T01:50:00Z"}
+{"pool":"terra@cmp","pctUsed":null,"fetchedAt":"2026-10-28T01:50:00Z","status":"unknown","reason":"reader-unavailable"}
