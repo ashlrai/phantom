@@ -1409,6 +1409,11 @@
           "enum": ["normal", "fast", "lite", "ultra"],
           "description": "SessionCreateRequest.devin_mode, pinned so the producer is a known agent mode (fusion is not accepted). Default normal."
         },
+        "playbookId": {
+          "type": "string",
+          "pattern": "^playbook-[A-Za-z0-9_-]{1,120}$",
+          "description": "SessionCreateRequest.playbook_id attached to every dispatched Devin task session: the Devin-org playbook (source in devin/playbooks/) carrying the PR conventions, so dispatch prompts stay short. An identifier, not a secret. Chats never attach it. Remove it to stop attaching."
+        },
         "fleetModel": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",

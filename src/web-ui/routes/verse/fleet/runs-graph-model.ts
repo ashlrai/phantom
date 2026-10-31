@@ -1,0 +1,68 @@
+import type { WorkspaceGraphV1 } from './workspace-graph.js';
+
+export interface RunsData {
+  v: 1;
+  workers: Array<{ job: string; lane?: string; model?: string; startedAt?: string; repo?: string }>;
+  leaders: Array<{ name?: string; lane?: string; model?: string }>;
+  lanes?: Array<{ id: string; running: number; target: number }>;
+  mergesLastHour: { count: number | null; items?: Array<{ repo?: string }> };
+  switches: string[];
+}
+type Node = { id: string; kind: 'leader' | 'lane' | 'run' | 'merged' | 'overflow'; label: string; state: string; title: string };
+export interface RunsGraphModel extends Omit<WorkspaceGraphV1, 'nodes' | 'edges'> {
+  nodes: Node[];
+  edges: Array<WorkspaceGraphV1['edges'][number] & { title: string; inferred: boolean }>;
+  counts: { leaders: number; lanes: number; jobs: number; merges: number | null };
+}
+const sorted = <T extends { id: string }>(items: T[]): T[] => items.sort((a, b) => a.id.localeCompare(b.id));
+
+export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
+  const nodes: Node[] = [];
+  const edges: RunsGraphModel['edges'] = [];
+  const laneId = (lane?: string) => lane ? `lane:${lane}` : 'unknown-lane';
+  const lanes = new Map((runs.lanes ?? []).filter(lane => lane.running > 0).map(lane => [laneId(lane.id), lane.id]));
+  for (const worker of runs.workers) lanes.set(laneId(worker.lane), worker.lane ?? 'unknown lane');
+  const add = (id: string, kind: Node['kind'], label: string, state: string, title = label) => nodes.push({ id, kind, label, state, title });
+  const link = (from: string, to: string, inferred = false) => edges.push({ id: JSON.stringify([from, to]), from, to, kind: 'contains', inferred, title: `${from} → ${to}${inferred ? ' (inferred)' : ''}` });
+  for (const [id, name] of lanes) {
+    const lane = runs.lanes?.find(item => laneId(item.id) === id);
+    add(id, 'lane', lane ? `${name} ${lane.running}/${lane.target}` : name, 'recorded');
+  }
+  // Sort before assigning duplicate ordinals so producer ordering cannot move nodes.
+  const leaders = runs.leaders.map(leader => ({ ...leader, id: JSON.stringify([leader.name ?? null, leader.model ?? null, leader.lane ?? null]) }));
+  sorted(leaders).forEach((leader, index) => {
+    const id = `leader:${leader.id}:${index}`;
+    add(id, 'leader', leader.name ?? leader.model ?? 'Leader', 'recorded');
+    const matched = leader.lane && lanes.has(laneId(leader.lane));
+    for (const lane of lanes.keys()) if (!matched || lane === laneId(leader.lane)) link(id, lane, !matched);
+  });
+  const workers = sorted(runs.workers.map(worker => ({ ...worker, id: `run:${worker.job}` })));
+  const overflow = new Map<string, number>();
+  workers.forEach((worker, index) => {
+    const lane = laneId(worker.lane);
+    if (index >= 60) { overflow.set(lane, (overflow.get(lane) ?? 0) + 1); return; }
+    const elapsed = worker.startedAt ? now - Date.parse(worker.startedAt) : NaN;
+    const title = `${worker.job} · ${worker.lane ?? 'unknown lane'} · ${worker.model ?? 'model not reported'} · ${Number.isFinite(elapsed) ? `${Math.floor(Math.max(0, elapsed) / 60_000)}m elapsed` : 'elapsed not reported'}`;
+    add(worker.id, 'run', worker.job, 'running', title);
+    link(lane, worker.id);
+    if ((runs.mergesLastHour.count ?? 0) > 0 && worker.repo && runs.mergesLastHour.items?.some(item => item.repo === worker.repo)) link(worker.id, 'merged:last-hour');
+  });
+  for (const [lane, count] of overflow) {
+    const id = `overflow:${lane}`;
+    add(id, 'overflow', `+${count} more`, 'running'); link(lane, id);
+  }
+  if ((runs.mergesLastHour.count ?? 0) > 0) add('merged:last-hour', 'merged', `Merged last hour · ${runs.mergesLastHour.count}`, 'merged');
+  return { schema: 'graph.v1', observedAt: new Date(now).toISOString(), state: 'running', nodes: sorted(nodes), edges: sorted(edges), inbox: [],
+    counts: { leaders: leaders.length, lanes: lanes.size, jobs: workers.length, merges: runs.mergesLastHour.count } };
+}
+
+export function describeRunsGraph(graph: RunsGraphModel): string {
+  const { leaders, lanes, jobs, merges } = graph.counts;
+  return [[leaders, 'leader'], [lanes, 'lane'], [jobs, 'job'], [merges, 'merge']].map(([count, word]) =>
+    count === null ? 'merges unknown' : `${count} ${word}${count === 1 ? '' : 's'}`).join(' · ');
+}
+
+/** The renderer's current contract only knows repository/run and contains. */
+export function runsWorkspaceGraph(graph: RunsGraphModel): WorkspaceGraphV1 {
+  return { ...graph, nodes: graph.nodes.map(node => ({ ...node, kind: node.kind === 'leader' || node.kind === 'lane' ? 'repository' : 'run', state: `${node.kind} · ${node.state}` })) };
+}

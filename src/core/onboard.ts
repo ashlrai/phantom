@@ -18,8 +18,11 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
-import { saveConfig, defaultConfig, INDEX_PATH } from './config.js';
+import { loadConfig, saveConfig, defaultConfig, INDEX_PATH } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
+import { RESOURCE_CATALOG, type CatalogResource } from './onboard/catalog.js';
+import { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
+import { getFrontierUsage } from './usage/frontier-usage.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
@@ -802,4 +805,261 @@ export async function setupWizard(
   nextSteps.push('try: ashlr run / ashlr swarm / ashlr tui');
 
   return { steps, ready: base.ready && daemonStep.status !== 'manual', nextSteps };
+}
+
+// ---------------------------------------------------------------------------
+// RQ-ONB-2 DETECT - per-catalog-resource status for GET /api/onboard/status
+// ---------------------------------------------------------------------------
+
+/**
+ * One catalog row joined with live detection. loginState is the CLI's own
+ * status-command verdict (never a token file), null when no probe ran;
+ * loginCommand is operator guidance, never executed by us. keyPresent is a
+ * presence-only env check (never the value); endpointUp is the loopback-only
+ * runtime probe (null when the catalog endpoint is not loopback).
+ */
+export interface OnboardResourceStatus {
+  id: string;
+  installed: boolean;
+  binaryPath: string | null;
+  loginState: CliLoginVerdict | null;
+  loginCommand: string | null;
+  selectedPlanTier: string | null;
+  keyPresent: boolean | null;
+  endpointUp: boolean | null;
+}
+
+/** One scheduled agent (a schedule-triggered automation) on this computer. */
+export interface OnboardScheduledAgent {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** The schedule text (rrule), verbatim from the definition. */
+  rrule: string;
+  /** Next occurrence the scheduler recorded; null when it has not computed one. */
+  nextRunAt: string | null;
+}
+
+/** The scheduled agents this computer's daemon/scheduler currently knows. */
+export interface OnboardAgentsReport {
+  /** True when this server's automations tick is running. */
+  schedulerRunning: boolean;
+  agents: OnboardScheduledAgent[];
+}
+
+/** Real usage/credits readings; null fields mean no source reported them. */
+export interface OnboardUsageReading {
+  /** Subscription-window utilization 0-100, only from a real provider signal. */
+  usedPct: number | null;
+  /** When the window resets (ISO), only from a real provider signal. */
+  resetsAt: string | null;
+  /** Fleet dispatches in the accounting window (the local quota ledger). */
+  callsToday: number | null;
+  /** Tokens today from the observability rollup cache, when it holds data. */
+  tokensToday: number | null;
+  /** Estimated USD today from the same rollup cache. */
+  costTodayUsd: number | null;
+}
+
+export type OnboardEvidence =
+  'signed-in' | 'installed' | 'key-present' | 'serving' | 'scheduled-agents' | 'self' | 'none';
+
+/** One catalog row rolled up for the resource balancer. */
+export interface OnboardBalanceRow {
+  id: string;
+  /** True only on real evidence; `evidence` names the signal behind it. */
+  connected: boolean;
+  evidence: OnboardEvidence;
+  /** Catalog plan tiers verbatim (never invented). */
+  planTiers: readonly string[];
+  selectedPlanTier: string | null;
+  /** Real readings only; null means no source reports any -> "unknown". */
+  usage: OnboardUsageReading | null;
+}
+
+/** The resource-balancer summary: what is connected, plan tiers, real usage. */
+export interface OnboardBalanceSummary {
+  /** ids of the connected resources. */
+  connected: string[];
+  scheduledAgents: { total: number; enabled: number };
+  resources: OnboardBalanceRow[];
+}
+
+/** GET /api/onboard/status response body. */
+export interface OnboardStatusReport {
+  generatedAt: string;
+  /** Mirrors the server's mutation surface so the picker can gate honestly. */
+  dispatchEnabled: boolean;
+  resources: OnboardResourceStatus[];
+  agents: OnboardAgentsReport;
+  balance: OnboardBalanceSummary;
+}
+
+/**
+ * Per-catalog-entry detection. Read-only: `which` for the binary and the CLI's
+ * own status command for the login verdict (never token files or ~/.codex
+ * contents). Probed in parallel, each bounded. Never throws.
+ */
+export async function detectOnboardResources(cfg: AshlrConfig): Promise<OnboardResourceStatus[]> {
+  return Promise.all(RESOURCE_CATALOG.map(async (entry) => {
+    const binaryPath = entry.cliBinary ? resolveCliOnPath(entry.cliBinary) : null;
+    const pick = cfg.onboard?.planTiers?.[entry.id];
+    return {
+      id: entry.id,
+      installed: binaryPath !== null,
+      binaryPath,
+      loginState: binaryPath && entry.loginCheckCommand
+        ? await probeCliLogin(entry.loginCheckCommand)
+        : null,
+      loginCommand: entry.loginCommand ?? entry.cliBinary,
+      selectedPlanTier: typeof pick === 'string' && entry.planTiers.includes(pick) ? pick : null,
+      keyPresent: entry.keyEnvName ? envKeyPresent(entry.keyEnvName) : null,
+      endpointUp: entry.validateEndpoint ? await probeLoopbackEndpoint(entry.validateEndpoint) : null,
+    };
+  }));
+}
+
+/**
+ * The schedule-triggered automations on this computer, joined with the next
+ * occurrence each cursor recorded. Read-only on the automations store; the
+ * enable/disable POST lives on the existing /api/verse/automations route.
+ * Never throws: an unreadable store reports an empty schedule.
+ */
+export async function listOnboardScheduledAgents(): Promise<OnboardAgentsReport> {
+  try {
+    const [{ readAutomations, readAutomationState }, { automationsSchedulerRunning }] = await Promise.all([
+      import('./automations/store.js'),
+      import('./automations/scheduler.js'),
+    ]);
+    const [{ automations }, state] = await Promise.all([readAutomations(), readAutomationState()]);
+    const agents = automations
+      .filter((a) => a.trigger.kind === 'schedule')
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        enabled: a.enabled,
+        rrule: a.trigger.kind === 'schedule' ? a.trigger.rrule : '',
+        nextRunAt: state.cursors[a.id]?.nextRunAt ?? null,
+      }));
+    return { schedulerRunning: automationsSchedulerRunning(), agents };
+  } catch {
+    return { schedulerRunning: false, agents: [] };
+  }
+}
+
+/** Catalog resource id -> frontier engine id; null when no engine backs it. */
+const USAGE_ENGINES: Record<string, 'codex' | 'claude'> = { codex: 'codex', 'claude-code': 'claude' };
+
+function balanceEvidence(entry: CatalogResource, row: OnboardResourceStatus, enabledAgents: number): { connected: boolean; evidence: OnboardEvidence } {
+  if (entry.id === 'this-computer') return { connected: true, evidence: 'self' };
+  if (entry.id === 'proactive-agents') {
+    return enabledAgents > 0
+      ? { connected: true, evidence: 'scheduled-agents' }
+      : { connected: false, evidence: 'none' };
+  }
+  if (entry.keyEnvName) {
+    return row.keyPresent === true
+      ? { connected: true, evidence: 'key-present' }
+      : { connected: false, evidence: 'none' };
+  }
+  if (entry.kind === 'local') {
+    if (row.endpointUp === true) return { connected: true, evidence: 'serving' };
+    return row.installed ? { connected: false, evidence: 'installed' } : { connected: false, evidence: 'none' };
+  }
+  if (row.loginState === 'logged-in') return { connected: true, evidence: 'signed-in' };
+  // A CLI with no catalog login check (cursor, gemini) connects on presence.
+  if (row.installed) return { connected: entry.loginCheckCommand === null, evidence: 'installed' };
+  return { connected: false, evidence: 'none' };
+}
+
+/**
+ * Roll the detected rows + scheduled agents into the resource-balancer
+ * summary. Usage comes only from real sources (subscription-window signal,
+ * the dispatch ledger, the rollup cache); everything else stays null so the
+ * UI can print "unknown"; nothing is ever estimated.
+ */
+export async function summarizeOnboardBalance(
+  cfg: AshlrConfig,
+  resources: readonly OnboardResourceStatus[],
+  agents: OnboardAgentsReport,
+): Promise<OnboardBalanceSummary> {
+  const enabledAgents = agents.agents.filter((a) => a.enabled).length;
+  let usage: Awaited<ReturnType<typeof getFrontierUsage>> | null = null;
+  try {
+    // waitForRollup:false - a polled status route must never compute a rollup.
+    usage = await getFrontierUsage(cfg, { waitForRollup: false });
+  } catch {
+    usage = null;
+  }
+  const rows = RESOURCE_CATALOG.map((entry) => {
+    const row = resources.find((r) => r.id === entry.id);
+    const { connected, evidence } = row
+      ? balanceEvidence(entry, row, enabledAgents)
+      : { connected: false, evidence: 'none' as const };
+    let readings: OnboardUsageReading | null = null;
+    const engineId = USAGE_ENGINES[entry.id];
+    const engine = engineId ? usage?.engines.find((e) => e.engine === engineId) : undefined;
+    if (engine) {
+      const hasWindow = engine.subscriptionWindow.state !== 'unknown';
+      readings = {
+        usedPct: hasWindow ? engine.subscriptionWindow.usedPct : null,
+        resetsAt: hasWindow && engine.subscriptionWindow.resetsAt
+          ? new Date(engine.subscriptionWindow.resetsAt * 1000).toISOString()
+          : null,
+        callsToday: engine.callsToday,
+        tokensToday: engine.tokensToday ?? null,
+        costTodayUsd: engine.costToday ?? null,
+      };
+    }
+    return {
+      id: entry.id,
+      connected,
+      evidence,
+      planTiers: entry.planTiers,
+      selectedPlanTier: row?.selectedPlanTier ?? null,
+      usage: readings,
+    };
+  });
+  return {
+    connected: rows.filter((r) => r.connected).map((r) => r.id),
+    scheduledAgents: { total: agents.agents.length, enabled: enabledAgents },
+    resources: rows,
+  };
+}
+
+/** The whole Connect page in one read: detection + schedules + balance. Never throws. */
+export async function buildOnboardStatusReport(cfg: AshlrConfig, dispatchEnabled: boolean): Promise<OnboardStatusReport> {
+  const [resources, agents] = await Promise.all([detectOnboardResources(cfg), listOnboardScheduledAgents()]);
+  let balance: OnboardBalanceSummary;
+  try {
+    balance = await summarizeOnboardBalance(cfg, resources, agents);
+  } catch {
+    balance = { connected: [], scheduledAgents: { total: agents.agents.length, enabled: agents.agents.filter((a) => a.enabled).length }, resources: [] };
+  }
+  return { generatedAt: new Date().toISOString(), dispatchEnabled, resources, agents, balance };
+}
+
+/**
+ * Persist a Connect plan-tier pick to cfg.onboard.planTiers in
+ * ~/.ashlr/config.json. Validated strictly against the catalog; null clears.
+ * A fresh load/save pair keeps config fields written since boot intact.
+ */
+export function persistOnboardPlanTier(
+  body: unknown,
+): { ok: true; resourceId: string; planTier: string | null } | { ok: false; error: string } {
+  const { resourceId, planTier } = (body ?? {}) as { resourceId?: unknown; planTier?: unknown };
+  const entry = RESOURCE_CATALOG.find((r) => r.id === resourceId);
+  if (!entry || entry.planTiers.length === 0) {
+    return { ok: false, error: 'unknown resource or it has no plan tiers' };
+  }
+  if (planTier !== null && (typeof planTier !== 'string' || !entry.planTiers.includes(planTier))) {
+    return { ok: false, error: `planTier must be null or one of: ${entry.planTiers.join(', ')}` };
+  }
+  const cfg = loadConfig();
+  const planTiers = { ...(cfg.onboard?.planTiers ?? {}) };
+  if (planTier === null) delete planTiers[entry.id];
+  else planTiers[entry.id] = planTier;
+  cfg.onboard = { ...(cfg.onboard ?? {}), planTiers };
+  saveConfig(cfg);
+  return { ok: true, resourceId: entry.id, planTier };
 }

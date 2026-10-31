@@ -38,7 +38,8 @@ export type NotificationCategory =
   | 'daemon-health'
   | 'proposal'
   | 'run'
-  | 'log-source';
+  | 'log-source'
+  | 'fleet';
 
 export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> = {
   'action-required': 'Action required',
@@ -49,6 +50,7 @@ export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> =
   proposal: 'Proposals',
   run: 'Runs',
   'log-source': 'Log source',
+  fleet: 'Fleet on this Mac',
 };
 
 export interface AppNotification {
