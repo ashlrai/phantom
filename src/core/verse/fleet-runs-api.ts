@@ -148,13 +148,21 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     return result;
   }
   let cached: { at: number; value: FleetRunsV1 } | undefined;
-  let flight: Promise<FleetRunsV1> | undefined;
+  let generation = 0;
+  let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
   return async (ctx, req, res, path, method) => {
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
-      if (!flight && (!cached || now() - cached.at >= 2000)) {
-        flight = build().then(value => { cached = { at: now(), value }; return value; }).finally(() => { flight = undefined; });
+      if (flight?.generation !== generation && (!cached || now() - cached.at >= 2000)) {
+        const buildGeneration = generation;
+        const promise = build().then(value => {
+          if (generation === buildGeneration) cached = { at: now(), value };
+          return value;
+        }).finally(() => {
+          if (flight?.promise === promise) flight = undefined;
+        });
+        flight = { generation: buildGeneration, promise };
       }
-      sendJson(res, 200, flight ? await flight : cached!.value);
+      sendJson(res, 200, flight?.generation === generation ? await flight.promise : cached!.value);
       return true;
     }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_INBOX_PATH) {
@@ -183,7 +191,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (result.ok) {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
-        if (result.ack.status === 'accepted') cached = undefined;
+        if (result.ack.status === 'accepted') { generation++; cached = undefined; }
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
