@@ -11,6 +11,7 @@ or IDs; matching candidates are excluded. Unsafe topics are ignored.
 - RESEARCH-HANDOFF | How can research findings become small testable engineering proposals?
 - EVIDENCE-CONFLICTS | How should an agent report conflicting primary evidence and uncertainty?
 - RESEARCH-COST | Which measurements reveal research usefulness per unit of compute?
+- PROVIDER-USAGE-PROBES | Which provider usage-percent and reset-time signals can the fleet read itself?
 
 ## Restock contract
 
