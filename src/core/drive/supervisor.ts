@@ -13,6 +13,9 @@ export interface DrivePool {
   id: string;
   floor: number;
   ceiling: number;
+  /** Current lane controls/probe result supplied by the host bridge. */
+  paused?: boolean;
+  admission?: 'open' | 'closed' | 'unknown';
   /**
    * Optional paced daily share (pool-routing.ts): the pool may dispatch only
    * the share that has vested by now, minus what the bridge already counted.
@@ -40,6 +43,8 @@ export interface DriveReport {
   published: string[];
   publicationUnknown: string[];
   held: string | null;
+  /** Reasons for READY jobs excluded by the most recent snapshot. */
+  skipped: { job: string; pool: string; reason: string }[];
 }
 
 /**
@@ -87,9 +92,13 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
   for (const pool of value.pools) {
     if (!object(pool) || !id(pool.id) || pools.has(pool.id) || !count(pool.floor) ||
         !count(pool.ceiling) || pool.floor > pool.ceiling) return invalid();
+    if ((pool.paused !== undefined && typeof pool.paused !== 'boolean') ||
+        (pool.admission !== undefined && !['open', 'closed', 'unknown'].includes(pool.admission as string))) return invalid();
     // A malformed share must never read as an unpaced pool.
     if (pool.daily !== undefined && !isPoolDayShare(pool.daily)) return invalid();
     pools.set(pool.id, { id: pool.id, floor: pool.floor, ceiling: pool.ceiling,
+      ...(pool.paused === undefined ? {} : { paused: pool.paused as boolean }),
+      ...(pool.admission === undefined ? {} : { admission: pool.admission as DrivePool['admission'] }),
       ...(pool.daily === undefined ? {} : { daily: { ...pool.daily } }) });
   }
   if ([...pools.values()].reduce((total, pool) => total + pool.floor, 0) > value.maxRunning) return invalid();
@@ -110,6 +119,28 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
 
 const active = (job: DriveJob): boolean => job.state === 'RUNNING' || job.state === 'STARTING';
 
+function skippedJobs(snapshot: DriveSnapshot, nowMs: number): DriveReport['skipped'] {
+  const counts = new Map(snapshot.pools.map(pool => [pool.id, 0]));
+  let total = 0;
+  for (const job of snapshot.jobs) {
+    if (active(job)) { total++; counts.set(job.pool, counts.get(job.pool)! + 1); }
+  }
+  const reasons = new Map(snapshot.pools.map(pool => {
+    const reason = snapshot.paused ? 'paused'
+      : snapshot.admission !== 'open' ? `admission-${snapshot.admission}`
+      : pool.paused ? 'lane-paused'
+      : pool.admission !== undefined && pool.admission !== 'open' ? `lane-admission-${pool.admission}`
+      : total >= snapshot.maxRunning ? 'global-capacity'
+      : counts.get(pool.id)! >= pool.ceiling ? 'lane-capacity'
+      : pool.daily !== undefined && pacedShareRemaining(pool.daily, nowMs) === 0 ? 'paced-share' : null;
+    return [pool.id, reason];
+  }));
+  return snapshot.jobs.filter(job => job.state === 'READY').flatMap(job => {
+    const reason = reasons.get(job.pool) ?? (drivePoolAllowed(job.id, job.pool) ? null : 'pool-routing');
+    return reason === null ? [] : [{ job: job.id, pool: job.pool, reason }];
+  });
+}
+
 /**
  * Floor deficits get first choice; priority and queue order break ties. A
  * READY job whose declared pool cannot serve its kind (pool-routing.ts) is
@@ -125,7 +156,8 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   const shareLeft = new Map(snapshot.pools.map(pool =>
     [pool.id, pool.daily === undefined ? Number.POSITIVE_INFINITY : pacedShareRemaining(pool.daily, nowMs)]));
   let total = snapshot.jobs.filter(active).length;
-  const ready = snapshot.jobs.filter(job => job.state === 'READY' && drivePoolAllowed(job.id, job.pool));
+  const skipped = new Set(skippedJobs(snapshot, nowMs).map(item => item.job));
+  const ready = snapshot.jobs.filter(job => job.state === 'READY' && !skipped.has(job.id));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
     const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling && shareLeft.get(job.pool)! > 0);
@@ -150,14 +182,18 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
   let lease: string | null = null;
   const nowMs = (): number => (deps.now?.() ?? new Date()).getTime();
   const report: DriveReport = { version: 1, at: (deps.now?.() ?? new Date()).toISOString(), dryRun,
-    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null };
+    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null, skipped: [] };
   const snapshot = async (): Promise<DriveSnapshot> => {
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
     report.paused = state.paused;
     report.active = state.jobs.filter(active).length;
     report.ready = state.jobs.filter(job => job.state === 'READY').length;
+    report.skipped = skippedJobs(state, nowMs());
     report.held = state.paused ? 'paused' : state.admission !== 'open' ? `admission-${state.admission}` : null;
+    if (report.held === null && report.skipped.length === report.ready) {
+      report.held = report.ready === 0 ? 'no-ready-jobs' : report.skipped[0]?.reason ?? 'no-eligible-jobs';
+    }
     return state;
   };
   try {
@@ -195,10 +231,20 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
       const next = planDrive(state, nowMs()).find(job => !attempted.has(job));
       if (!next) break;
       attempted.add(next);
-      if (await deps.paused()) { report.paused = true; report.held = 'paused'; break; }
+      if (await deps.paused()) {
+        report.paused = true; report.held = 'paused';
+        state.paused = true;
+        report.skipped = skippedJobs(state, nowMs());
+        break;
+      }
       if (options.signal?.aborted) break;
+      const pool = state.jobs.find(item => item.id === next)!.pool;
       if (await bridge.launch(lease, next) === 'held') {
-        report.held = 'launch-held';
+        state = await snapshot();
+        report.held = report.skipped.find(item => item.job === next)?.reason ?? 'launch-held';
+        if (!report.skipped.some(item => item.job === next)) {
+          report.skipped.push({ job: next, pool, reason: report.held });
+        }
         break;
       }
       report.launched.push(next);

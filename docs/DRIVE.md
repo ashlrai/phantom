@@ -208,6 +208,18 @@ pool identifiers use ASCII letters, digits, dots, underscores and hyphens, start
 with a letter or digit, and are at most 160 characters. Jobs have unique IDs and
 must reference a configured pool. Priorities are safe integers; higher goes first.
 
+Pools may additionally carry `paused` (boolean) and `admission`
+(`open`, `closed`, or `unknown`) from the current lane controls and probes.
+Omitted fields preserve the bridge's existing global admission contract; an
+explicit unknown probe holds that lane. Refresh these fields with every snapshot.
+The atomic launch operation must still recheck lane controls, probes and capacity.
+
+Tick reports include `skipped` entries with job, pool and a fixed reason for each
+READY job blocked in the latest snapshot, including lane pause, probe admission,
+routing, capacity and paced share. A tick with no eligible work sets `held` to
+the first blocking reason, or `no-ready-jobs` for an empty READY queue. The CLI
+logs this report as JSON; the bridge maps it into its native status schema.
+
 States are READY, HELD, STARTING, RUNNING, FINISHED, FAILED, PUBLISHING, PUBLISHED
 and PUBLISH_UNKNOWN. HELD is not launchable. FINISHED requires an integer
 `exitCode`; only zero is eligible
