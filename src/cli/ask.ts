@@ -7,13 +7,20 @@
  *
  * Usage:
  *   ashlr ask "<question>" [--repo <path>] [--allow-cloud] [--json]
+ *   ashlr ask status [--jobs <path>] [--json]
+ *
+ * `status` reads the local metrics jobs ledger and prints the ask.status.v1
+ * event stream derived from it (queued -> ... -> merged per ask job).
  *
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
+import { deriveAskStatusEvents, type AskStatusEvent } from '../core/ask/status-stream.js';
 
 // ─── Lazy imports (graceful degradation if M25 modules not yet built) ────────
 
@@ -103,6 +110,7 @@ function printHelp(): void {
   out('');
   out('  ' + bold('Usage:'));
   out(`    ${cyan('ashlr ask "<question>"')} [--repo <path>] [--allow-cloud] [--json]`);
+  out(`    ${cyan('ashlr ask status')} [--jobs <path>] [--json]`);
   out('');
   out('  ' + bold('Options:'));
 
@@ -110,6 +118,7 @@ function printHelp(): void {
     ['--repo <path>', 'Scope the search to a single enrolled repo (absolute path).'],
     ['--allow-cloud', 'Allow cloud model for synthesis if local is unavailable. SENDS CODE TO CLOUD.'],
     ['--json',        'Emit AskResult as JSON on stdout instead of human-readable output.'],
+    ['--jobs <path>', 'status: metrics jobs ledger (default ~/.ashlr/metrics/jobs.jsonl).'],
     ['--help',        'Show this help.'],
   ];
   const w = Math.max(...opts.map(([f]) => f.length));
@@ -123,6 +132,7 @@ function printHelp(): void {
   out(`    ${cyan('ashlr ask "what deps are shared across repos"')}`);
   out(`    ${cyan('ashlr ask "where is auth logic" --repo ~/projects/my-app')}`);
   out(`    ${cyan('ashlr ask "summarize the run pipeline" --json')}`);
+  out(`    ${cyan('ashlr ask status --json')}`);
   out('');
   out('  ' + gray('Run `ashlr knowledge build` first to index enrolled repos.'));
   out('');
@@ -170,6 +180,99 @@ function printAskHuman(result: import('../core/types.js').AskResult): void {
   }
 }
 
+// ─── ask status: the ask.status.v1 stream from metrics/jobs.jsonl ────────────
+
+function defaultJobsPath(): string {
+  return path.join(process.env.ASHLR_HOME ?? path.join(homedir(), '.ashlr'), 'metrics', 'jobs.jsonl');
+}
+
+const STATUS_USAGE = 'Usage: ashlr ask status [--jobs <path>] [--json]';
+
+function colorState(state: AskStatusEvent['state'], text: string, c: ReturnType<typeof makeColors>): string {
+  if (state === 'merged') return c.green(text);
+  if (state === 'failed' || state === 'reverted' || state === 'refused') return c.red(text);
+  if (state === 'running' || state === 'verifying' || state === 'in_merge_queue') return c.yellow(text);
+  return c.dim(text);
+}
+
+function printStatusHuman(events: AskStatusEvent[], source: string): void {
+  const tty = isTty();
+  const colors = makeColors(tty);
+  const { bold, cyan, dim, gray } = colors;
+  const out = (s = '') => process.stdout.write(s + '\n');
+
+  out('');
+  out(bold('  Ask status stream') + gray(`  ${source}`));
+  out('');
+  if (events.length === 0) {
+    out(dim('  (no ask.status.v1 events derived)'));
+    out('');
+    return;
+  }
+  const stateW = Math.max(...events.map((e) => e.state.length), 7);
+  const idW = Math.max(...events.map((e) => (e.job_id ?? e.ask_id).length));
+  for (const e of events) {
+    const extras: string[] = [];
+    if (e.ask_id !== e.job_id) extras.push(`ask=${e.ask_id}`);
+    if (e.pool !== null) extras.push(`pool=${e.pool}`);
+    if (e.pr_url !== null) extras.push(e.pr_url);
+    else if (e.pr !== null) extras.push(`pr=${e.pr}`);
+    if (e.reason !== null) extras.push(`reason=${e.reason}`);
+    if (e.wall_s !== null) extras.push(`wall=${e.wall_s}s`);
+    out(`    ${dim(e.ts)}  ${colorState(e.state, pad(e.state, stateW), colors)}` +
+      `  ${cyan(pad(e.job_id ?? e.ask_id, idW))}` +
+      (extras.length ? `  ${dim(extras.join('  '))}` : ''));
+  }
+  out('');
+}
+
+/**
+ * `ashlr ask status [--jobs <path>] [--json]` — derive the ask.status.v1 event
+ * stream from the metrics jobs ledger. Local read only: no model, no network.
+ */
+async function cmdAskStatus(args: string[]): Promise<number> {
+  let jobsPath: string | undefined;
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--help' || a === '-h') {
+      process.stdout.write(STATUS_USAGE + '\n');
+      return 0;
+    } else if (a === '--json') {
+      json = true;
+    } else if (a === '--jobs') {
+      const next = args[++i];
+      if (!next || next.startsWith('--')) {
+        process.stderr.write('error: --jobs requires a path argument\n' + STATUS_USAGE + '\n');
+        return 2;
+      }
+      jobsPath = next;
+    } else {
+      process.stderr.write(`error: Unknown flag: ${a}\n` + STATUS_USAGE + '\n');
+      return 2;
+    }
+  }
+  const source = jobsPath ?? defaultJobsPath();
+  let events: AskStatusEvent[];
+  try {
+    events = deriveAskStatusEvents(await readFile(source, 'utf8'));
+  } catch (err) {
+    const missing = (err as NodeJS.ErrnoException).code === 'ENOENT';
+    process.stderr.write(
+      'error: ' + (missing
+        ? `no metrics jobs ledger at ${source}`
+        : `cannot derive ask status stream: ${err instanceof Error ? err.message : String(err)}`) + '\n',
+    );
+    return 1;
+  }
+  if (json) {
+    for (const event of events) process.stdout.write(JSON.stringify(event) + '\n');
+  } else {
+    printStatusHuman(events, source);
+  }
+  return 0;
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 /**
@@ -182,6 +285,7 @@ function printAskHuman(result: import('../core/types.js').AskResult): void {
  * Exit codes: 0 success, 1 runtime error, 2 bad usage.
  */
 export async function cmdAsk(args: string[]): Promise<number> {
+  if (args[0] === 'status') return cmdAskStatus(args.slice(1));
   const parsed = parseAskArgs(args);
 
   if (parsed.help) {

@@ -416,8 +416,9 @@ installed plist has drifted from config.
     ruleset exists. ashlr-hub is such a repo today; once `protect --apply`
     requires `ashlr/verify` there, G7 can pass on the App's host-verified
     check. On a local-enforcement repo G7 requires the App's green
-    `ashlr/verify` among the checks, so a deploy-only green (a Vercel
-    preview) never proves a PR green.
+    `ashlr/verify` and every GitHub Actions check green, so a deploy-only
+    green (a Vercel preview) never proves a PR green and a red or pending
+    Actions run — the secret scan included — blocks the merge.
 13. **Slow revert CI can trip the kill.** The revert lander waits up to 15
     minutes for checks. Repeated slow runs escalate to owner-hold plus a
     global soft kill.

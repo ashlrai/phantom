@@ -5,9 +5,8 @@
  *   ashlr knowledge graph [--json]
  *   ashlr knowledge impact <file|symbol> [--repo <path>] [--json]
  *
- * All operations are READ-ONLY and LOCAL by default. Indexing/embedding run
- * via the local Ollama provider. Cloud is never used unless --allow-cloud is
- * explicitly passed AND a key exists.
+ * Graph and impact are read-only and local. Indexing/embedding run locally;
+ * --allow-cloud does not change the behavior of knowledge build.
  *
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
@@ -15,6 +14,7 @@
 import path from 'node:path';
 import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
+import { runKnowledgeContextPack } from './knowledge-context-pack.js';
 
 /**
  * Resolve user-supplied repo paths to absolute and partition them by enrollment.
@@ -106,8 +106,9 @@ function printKnowledgeHelp(): void {
 
   const subs: [string, string][] = [
     ['build [--repo <path>] [--allow-cloud]', 'Index enrolled repos (or a single repo) for ask/RAG.'],
-    ['graph [--json]',                        'Print the cross-repo knowledge graph (nodes + edges).'],
-    ['impact <target> [--repo <path>]',       'What references/depends on a file or symbol?'],
+    ['graph [--repo <path>] [--json]',        'Print the cross-repo knowledge graph (nodes + edges).'],
+    ['impact <target> [--repo <path>] [--json]', 'What references/depends on a file or symbol?'],
+    ['context-pack --file <snapshot.json> [--json]', 'Build bounded context from a task/output snapshot.'],
   ];
   const w = Math.max(...subs.map(([s]) => s.length));
   for (const [sub, desc] of subs) {
@@ -118,7 +119,8 @@ function printKnowledgeHelp(): void {
   out('  ' + bold('Options:'));
   const opts: [string, string][] = [
     ['--repo <path>', 'Scope to a single enrolled repo (absolute path or name).'],
-    ['--allow-cloud', 'Allow cloud synthesis for `ashlr ask`. Indexing is always local.'],
+    ['--allow-cloud', 'Accepted by build for compatibility; indexing remains local.'],
+    ['--file <path>', 'Read a task/output snapshot for context-pack.'],
     ['--json',        'Emit structured JSON instead of human-readable output.'],
     ['--help',        'Show this help.'],
   ];
@@ -160,59 +162,66 @@ function printImpactHelp(): void {
 
 // ─── Subcommand: build ────────────────────────────────────────────────────────
 
-interface ParsedBuildArgs {
-  repos: string[];   // empty = all enrolled
+interface ParsedArgs {
+  repos: string[];
+  target: string;
   allowCloud: boolean;
   json: boolean;
   help: boolean;
-  error: string | undefined;
+  error?: string;
 }
 
-function parseBuildArgs(args: string[]): ParsedBuildArgs {
-  const repos: string[] = [];
-  let allowCloud = false;
-  let json = false;
-  let help = false;
-  let error: string | undefined;
-
+function parseArgs(args: string[], command: 'build' | 'graph' | 'impact'): ParsedArgs {
+  const parsed: ParsedArgs = { repos: [], target: '', allowCloud: false, json: false, help: false };
+  const positionals: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--help' || a === '-h') {
-      help = true;
-    } else if (a === '--allow-cloud') {
-      allowCloud = true;
-    } else if (a === '--json') {
-      json = true;
-    } else if (a === '--repo') {
-      const next = args[++i];
-      if (!next || next.startsWith('--')) {
-        error = '--repo requires a path argument';
+    const arg = args[i]!;
+    if (arg === '--help' || arg === '-h') parsed.help = true;
+    else if (arg === '--json') parsed.json = true;
+    else if (arg === '--allow-cloud' && command === 'build') parsed.allowCloud = true;
+    else if (arg === '--repo') {
+      const value = args[i + 1];
+      if (!value || !value.trim() || value.startsWith('-')) {
+        parsed.error = '--repo requires a path argument';
         break;
       }
-      repos.push(next);
-    } else if (!a.startsWith('--')) {
-      // Bare positional: treat as a repo path
-      repos.push(a);
-    } else {
-      error = `Unknown flag: ${a}`;
+      parsed.repos.push(value);
+      i++;
+    } else if (arg.startsWith('-')) {
+      parsed.error = `Unknown flag: ${arg}`;
       break;
+    } else {
+      positionals.push(arg);
     }
   }
-
-  return { repos, allowCloud, json, help, error };
+  if (!parsed.error && parsed.help && (parsed.json || parsed.allowCloud || parsed.repos.length || positionals.length)) {
+    parsed.error = '--help cannot be combined with other arguments';
+  }
+  if (!parsed.error && command === 'impact') {
+    if (positionals.length > 1) parsed.error = `Unexpected argument: ${positionals[1]}`;
+    else if (!parsed.help && !positionals[0]?.trim()) {
+      parsed.error = 'A file or symbol target is required. Usage: ashlr knowledge impact <file|symbol>';
+    }
+    parsed.target = positionals[0] ?? '';
+  } else if (!parsed.error && command !== 'impact') {
+    if (positionals.some((value) => !value.trim())) parsed.error = 'Repository path cannot be empty';
+    else if (positionals.length && parsed.repos.length) parsed.error = 'Use either --repo or positional repository paths, not both';
+    else parsed.repos.push(...positionals);
+  }
+  return parsed;
 }
 
 async function runBuild(subArgs: string[]): Promise<number> {
-  const parsed = parseBuildArgs(subArgs);
+  const parsed = parseArgs(subArgs, 'build');
 
-  if (parsed.help) {
-    printKnowledgeHelp();
-    return 0;
-  }
   if (parsed.error) {
     process.stderr.write('error: ' + parsed.error + '\n');
     process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
     return 2;
+  }
+  if (parsed.help) {
+    printKnowledgeHelp();
+    return 0;
   }
 
   const tty = isTty();
@@ -239,7 +248,7 @@ async function runBuild(subArgs: string[]): Promise<number> {
     process.stderr.write(
       yellow('note: ') +
       'indexing/embedding is ALWAYS local — --allow-cloud has no effect on `knowledge build`.\n' +
-      '      (It only affects `ashlr ask` synthesis.) No repository code leaves the machine here.\n',
+      '      No repository code leaves the machine here.\n',
     );
   }
 
@@ -321,43 +330,6 @@ async function runBuild(subArgs: string[]): Promise<number> {
 
 // ─── Subcommand: graph ────────────────────────────────────────────────────────
 
-interface ParsedGraphArgs {
-  json: boolean;
-  repos: string[];
-  help: boolean;
-  error: string | undefined;
-}
-
-function parseGraphArgs(args: string[]): ParsedGraphArgs {
-  const repos: string[] = [];
-  let json = false;
-  let help = false;
-  let error: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--help' || a === '-h') {
-      help = true;
-    } else if (a === '--json') {
-      json = true;
-    } else if (a === '--repo') {
-      const next = args[++i];
-      if (!next || next.startsWith('--')) {
-        error = '--repo requires a path argument';
-        break;
-      }
-      repos.push(next);
-    } else if (!a.startsWith('--')) {
-      repos.push(a);
-    } else {
-      error = `Unknown flag: ${a}`;
-      break;
-    }
-  }
-
-  return { json, repos, help, error };
-}
-
 function printGraphHuman(graph: import('../core/types.js').KnowledgeGraph): void {
   const tty = isTty();
   const { bold, cyan, dim, yellow, green } = makeColors(tty);
@@ -417,26 +389,21 @@ function printGraphHuman(graph: import('../core/types.js').KnowledgeGraph): void
     out('');
   }
 
-  if (graph.nodes.length === 0) {
-    out(dim('  Tip: run `ashlr knowledge build` to populate the graph.'));
-    out('');
-  } else {
-    out(green('  Tip:') + dim(' use `ashlr knowledge impact <file|symbol>` to drill into dependencies.'));
-    out('');
-  }
+  out(green('  Tip:') + dim(' use `ashlr knowledge impact <file|symbol>` to drill into dependencies.'));
+  out('');
 }
 
 async function runGraph(subArgs: string[]): Promise<number> {
-  const parsed = parseGraphArgs(subArgs);
+  const parsed = parseArgs(subArgs, 'graph');
 
-  if (parsed.help) {
-    printKnowledgeHelp();
-    return 0;
-  }
   if (parsed.error) {
     process.stderr.write('error: ' + parsed.error + '\n');
     process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
     return 2;
+  }
+  if (parsed.help) {
+    printKnowledgeHelp();
+    return 0;
   }
 
   const tty = isTty();
@@ -487,54 +454,6 @@ async function runGraph(subArgs: string[]): Promise<number> {
 
 // ─── Subcommand: impact ──────────────────────────────────────────────────────
 
-interface ParsedImpactArgs {
-  target: string;
-  repos: string[];
-  json: boolean;
-  help: boolean;
-  error: string | undefined;
-}
-
-function parseImpactArgs(args: string[]): ParsedImpactArgs {
-  let target: string | undefined;
-  const repos: string[] = [];
-  let json = false;
-  let help = false;
-  let error: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--help' || a === '-h') {
-      help = true;
-    } else if (a === '--json') {
-      json = true;
-    } else if (a === '--repo') {
-      const next = args[++i];
-      if (!next || next.startsWith('--')) {
-        error = '--repo requires a path argument';
-        break;
-      }
-      repos.push(next);
-    } else if (!a.startsWith('--')) {
-      if (target === undefined) {
-        target = a;
-      } else {
-        error = `Unexpected argument: ${a}. Usage: ashlr knowledge impact <file|symbol>`;
-        break;
-      }
-    } else {
-      error = `Unknown flag: ${a}`;
-      break;
-    }
-  }
-
-  if (!error && !help && target === undefined) {
-    error = 'A file or symbol target is required. Usage: ashlr knowledge impact <file|symbol>';
-  }
-
-  return { target: target ?? '', repos, json, help, error };
-}
-
 function printImpactHuman(result: import('../core/types.js').ImpactResult): void {
   const tty = isTty();
   const { bold, cyan, dim, yellow, green, gray } = makeColors(tty);
@@ -580,16 +499,16 @@ function printImpactHuman(result: import('../core/types.js').ImpactResult): void
 }
 
 async function runImpact(subArgs: string[]): Promise<number> {
-  const parsed = parseImpactArgs(subArgs);
+  const parsed = parseArgs(subArgs, 'impact');
 
-  if (parsed.help) {
-    printImpactHelp();
-    return 0;
-  }
   if (parsed.error) {
     process.stderr.write('error: ' + parsed.error + '\n');
     process.stderr.write('Run `ashlr knowledge impact --help` for usage.\n');
     return 2;
+  }
+  if (parsed.help) {
+    printImpactHelp();
+    return 0;
   }
 
   const tty = isTty();
@@ -653,11 +572,15 @@ async function runImpact(subArgs: string[]): Promise<number> {
  *
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
-export async function cmdKnowledge(args: string[]): Promise<number> {
+async function dispatchKnowledge(args: string[]): Promise<number> {
   const sub = args[0];
   const subArgs = args.slice(1);
 
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  if (sub === undefined || sub === '--help' || sub === '-h' || sub === 'help') {
+    if (subArgs.length) {
+      process.stderr.write('error: help cannot be combined with other arguments\n');
+      return 2;
+    }
     printKnowledgeHelp();
     return 0;
   }
@@ -672,29 +595,36 @@ export async function cmdKnowledge(args: string[]): Promise<number> {
     case 'impact':
       return runImpact(subArgs);
 
+    case 'context-pack':
+      return runKnowledgeContextPack(subArgs);
+
     default:
-      // If the first arg looks like a positional (no --), treat it as
-      // `build` so `ashlr knowledge` (no subcommand) is slightly friendlier.
-      if (!sub.startsWith('--')) {
-        process.stderr.write(`error: Unknown knowledge subcommand: ${sub}\n`);
-        process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
-        return 2;
-      }
-      // Flags with no subcommand: default to help
-      printKnowledgeHelp();
-      return 0;
+      process.stderr.write(`error: Unknown knowledge subcommand or flag: ${sub}\n`);
+      process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
+      return 2;
   }
 }
 
-/**
- * `ashlr knowledge impact <file|symbol> [--repo <path>] [--json]`
- *
- * Programmatic entry for the impact subcommand. There is no top-level
- * `ashlr knowledge impact` route, so user-facing text must name `ashlr knowledge impact`. What references or depends on
- * the given target, within and across enrolled repos?
- *
- * Exit codes: 0 success, 1 error, 2 bad usage.
- */
+// Keep stdout machine-readable on failures as well as successful JSON calls.
+async function runCommand(args: string[], run: () => Promise<number>): Promise<number> {
+  let code: number;
+  try {
+    code = await run();
+  } catch (err) {
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    code = 1;
+  }
+  if (code !== 0 && args.includes('--json')) {
+    process.stdout.write(JSON.stringify({ error: true, exitCode: code }) + '\n');
+  }
+  return code;
+}
+
+export async function cmdKnowledge(args: string[]): Promise<number> {
+  return runCommand(args, () => dispatchKnowledge(args));
+}
+
+/** Programmatic entry for `ashlr knowledge impact`. */
 export async function cmdImpact(args: string[]): Promise<number> {
-  return runImpact(args);
+  return runCommand(args, () => runImpact(args));
 }
