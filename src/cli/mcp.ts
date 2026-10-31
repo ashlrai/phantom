@@ -124,6 +124,8 @@ async function cmdMcpRun(): Promise<number> {
     const registry = discoverRegistryForMcpHost(discoverMcpServers);
     process.stderr.write(`[ashlr mcp] starting gateway with ${registry.servers.length} discovered server(s)\n`);
     await startGateway(registry);
+    // The CLI dispatcher only sets exitCode; unrelated handles may still exist.
+    setTimeout(() => process.exit(0), 100).unref();
     return 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -949,6 +951,7 @@ function printHelp(): void {
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
     ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop; no companion probes).'],
+    ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -970,6 +973,9 @@ function printHelp(): void {
   console.log('');
   console.log(`    ${dim('# Read-only fleet server for any MCP client: command "phm", args ["mcp", "fleet"]')}`);
   console.log('    phm mcp fleet');
+  console.log('');
+  console.log(`    ${dim('# Read-only context-pack server for any MCP client: command "phm", args ["mcp", "context"]')}`);
+  console.log('    phm mcp context');
   console.log('');
   console.log(`    ${dim('# List what would be aggregated')}`);
   console.log(`    ashlr mcp list`);
@@ -1010,6 +1016,15 @@ export async function cmdMcp(args: string[]): Promise<number> {
     return 0;
   }
 
+  // `mcp <verb> --help` prints usage and never runs the verb: `mcp run --help`
+  // used to start the stdio gateway, `mcp list --help` scanned the registry,
+  // and `mcp ecosystem --write --help` would have merged servers into
+  // ~/.ashlr/settings.json.
+  if (sub !== 'fleet' && sub !== 'context' && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
+    printHelp();
+    return 0;
+  }
+
   if (sub === 'fleet') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
       console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}.');
@@ -1025,6 +1040,25 @@ export async function cmdMcp(args: string[]): Promise<number> {
       return 0;
     } catch {
       process.stderr.write('[phm mcp fleet] server unavailable\n');
+      return 1;
+    }
+  }
+
+  if (sub === 'context') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp context\nRead-only stdio MCP: node_context_pack {node, tasks, outputs, byteBudget}.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp context\n');
+      return 2;
+    }
+    try {
+      const { startContextServer } = await import('../mcp/context-server.js');
+      await startContextServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp context] server unavailable\n');
       return 1;
     }
   }

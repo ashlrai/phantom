@@ -444,3 +444,6 @@ export function learnFromApplied(proposal: Proposal, cfg: AshlrConfig): void {
 export function curateSkills(_entries: GenomeEntry[]): GenomeEntry[] {
   return [];
 }
+
+/** Shadow recovery learning shares the structured skill-card ledger. */
+export { nudgeSkillsFromJobs } from './skill-nudge.js';

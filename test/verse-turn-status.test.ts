@@ -186,6 +186,21 @@ describe('chat turn assistant status integration', () => {
     ]);
   });
 
+  it.each(['message', 'stream'] as const)('does not reuse a failed attempt\'s %s when its retry returns no text', async kind => {
+    engine.sendTurn(id, 'Review the parser');
+    const partial = 'The failed attempt is still investigating.';
+    await children[0]!.finish(1, [kind === 'message' ? answer(partial) : delta(partial),
+      { type: 'result', subtype: 'error_during_execution', is_error: true,
+        errors: ['No conversation found with session ID: missing'] }]);
+    expect(children).toHaveLength(2);
+    await children[1]!.finish(0);
+    const events = engine.getEvents(id);
+    expect(assistantTexts(events)).toContain(partial);
+    expect(statuses(events).map(event => event.phase)).toEqual(['acknowledgement', 'result']);
+    expect(statuses(events)[1]?.text).toBe('Turn finished: Review the parser. No response text was returned.');
+    expect(engine.getSession(id)?.lastResult).toBe(statuses(events)[1]?.text);
+  });
+
   it('preserves partial provider text around the result through compaction and reload', async () => {
     engine.sendTurn(id, 'Inspect the parser');
     await children[0]!.finish(0, [delta('Partial '), delta('answer')]);
@@ -305,6 +320,33 @@ describe('chat turn assistant status integration', () => {
     expect(existsSync(join(root, 'sessions', `${id}.json`))).toBe(false);
     expect(existsSync(join(root, 'sessions', `${id}.events.jsonl`))).toBe(false);
     expect(children).toHaveLength(0);
+  });
+
+  it('retains a storage failure when Stop settles a turn waiting on its checkpoint', async () => {
+    let release!: () => void;
+    const checkpoint = new Promise<void>(resolve => { release = resolve; });
+    const gated = makeEngine({ turnHooks: { beforeTurn: () => checkpoint } });
+    const chat = gated.createSession({ seatId: SEAT.id, projectPath: project }, launch).id;
+    const path = join(root, 'sessions', `${chat}.events.jsonl`);
+    const backup = `${path}.backup`;
+    gated.sendTurn(chat, 'Inspect the parser');
+    expect(children).toHaveLength(0);
+    renameSync(path, backup);
+    mkdirSync(path);
+    try {
+      expect(gated.cancelTurn(chat)).toBe(true);
+      release();
+      await vi.waitFor(() => expect(gated.turnEndsSince?.(0).ends).toHaveLength(1));
+      expect(gated.getSession(chat)?.status).toBe('error');
+      expect(gated.getSession(chat)?.lastError).toContain('storage error');
+      expect(gated.getSession(chat)?.lastResult).toBeUndefined();
+      expect(gated.turnEndsSince?.(0).ends[0]?.outcome).toBe('failed');
+      expect(children).toHaveLength(0);
+    } finally {
+      release();
+      rmSync(path, { recursive: true });
+      renameSync(backup, path);
+    }
   });
 
   it.each(['finished', 'cancelled'] as const)('retains a storage failure when its %s result cannot be appended', async outcome => {

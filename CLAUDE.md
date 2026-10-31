@@ -16,14 +16,26 @@ Read first, in this order:
 npm ci                    # install
 npm run build             # full build to dist/
 npm run dev -- <command>  # run the CLI from source
-npm run typecheck         # tsc --noEmit plus the web typecheck
-npm run lint              # eslint plus lane lints
+node scripts/verify-changed.mjs # automated workers: run once, foreground, do not poll
+npm run typecheck         # optional full backend + web check for humans
+npm run lint              # optional full ESLint + lane lints for humans
 npm run check:docs        # documentation link and anchor check
 npx vitest run test/<file>.test.ts   # one backend suite
 npm run test:web          # src/web-ui suites
 npm run test:ci           # backend lanes with isolated HOME/ASHLR_HOME
 npm run gate              # build, static checks and related tests together
 ```
+
+Before a PR, automated workers run `node scripts/verify-changed.mjs` once in
+the foreground instead of full lint and typecheck; do not poll it. Also run the
+documentation check and affected tests. Merge Gate stays the full check.
+
+## Companion tools
+
+The repo config `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`,
+`stack`, `ashlr`. These are companion servers, distinct from the Phantom MCP
+gateway started by `phm mcp`. See [the toolchain guide](docs/AGENT-TOOLCHAIN.md)
+for limits and approval requirements. Server registration does not prove readiness.
 
 ## Rules
 
@@ -38,8 +50,9 @@ npm run gate              # build, static checks and related tests together
   or the matching `docs/contracts/CONTRACT-M<N>.md` in the same change.
 - Do not add runtime dependencies casually (see CONTRIBUTING.md).
 - `test/doc-facts.test.ts` checks every `phm`/`ashlr` command, verb and flag
-  shown in the agent docs against the CLI; when you rename or drop one, fix the
-  doc line it names.
+  shown in README, the ecosystem map and the agent docs against the CLI. When
+  you rename or drop one, fix the doc line it names. It also compares companion
+  server lists with `.mcp.json` and documented npm scripts with `package.json`.
 - When running the CLI by hand, prefer `--help` with HOME set to a scratch
   directory; many commands act on `~/.ashlr`. `--help` and `-h` print usage
   and exit 0 without acting. For parseable output use `--json` where a command

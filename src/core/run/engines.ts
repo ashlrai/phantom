@@ -1,4 +1,5 @@
 import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
+import { checkHostHeadroom } from './host-headroom.js';
 /**
  * engines.ts — M11: hardened per-engine adapters.
  *
@@ -974,6 +975,12 @@ async function spawnEngineInner(
 
     if (!selectedOutcomeAdmissionCurrent(opts?.selectedOutcomeAdmission)) {
       resolve(cancelledEngineResult());
+      return;
+    }
+    const hostHeadroom = checkHostHeadroom();
+    if (!hostHeadroom.allowed) {
+      resolve({ ok: false, output: '', error: hostHeadroom.reason ?? 'Host memory pressure; launch held.',
+        terminationReason: 'error-exit' });
       return;
     }
     const child = spawnSessionChild(spawnBin, spawnArgs, {

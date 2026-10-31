@@ -82,7 +82,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['test/**/*.test.ts'],
+          include: ['test/**/*.test.ts', 'src/core/fleet/order-trace.test.ts', 'src/core/verse/leader-api.orders.test.ts'],
           exclude: [...BASE_EXCLUDE, ...REAL_IO_TEST_FILES],
           // Cap worker forks. Many tests spawn real git/child processes, so at
           // the default (~one fork per core) the machine oversubscribes and

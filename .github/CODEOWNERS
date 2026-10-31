@@ -104,6 +104,7 @@
 /scripts/ship-local.mjs @masonwyatt23
 /scripts/local-app-transaction.mjs @masonwyatt23
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
+/scripts/verify-release-policy.mjs @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
 **/*.entitlements @masonwyatt23
@@ -866,6 +867,7 @@
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
+/test/release-path-policy-v2.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23
 /test/reset-aware-scheduling.test.ts @masonwyatt23

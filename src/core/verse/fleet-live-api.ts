@@ -18,6 +18,9 @@
  *   - agents producing right now — the agent-action ledger's
  *     `daemon:dispatch-start` rows without a terminal row (only while a live
  *     daemon provably runs — see daemon/liveness.ts);
+ *   - the dispatch→merge p50 medians (7 d and prior 7 d) — the same ledger's
+ *     proposalId → dispatch-start join ({@link DispatchTail.started}) against
+ *     `merge:landed` rows by proposalId;
  *   - queued / parked asks — the fleet task queue;
  *   - holds — fleet/quarantine.ts;
  *   - the watching / reverting phases and post-merge green % — U4's
@@ -41,6 +44,13 @@
  * the bytes appended since the last one, in time-sliced chunks. (The whole-
  * partition synchronous read it replaces blocked the loop 30–75 ms per
  * refresh on a dispatching day — review 3.10 c11.)
+ * The dispatch→merge join rides a SECOND incremental tail of the same
+ * ledger ({@link DispatchTail.started}), and every per-repo / per-day figure
+ * — green %, the 14-day trend, merges per repo — comes out of ONE pass over
+ * the authority-ledger rows, never a re-scan per repo per day (see the "ONE
+ * pass" index block in buildFleetLiveSnapshot). Post-merge green % is read
+ * off the already-fetched watch list, not by re-reading the watch store per
+ * repo.
  *
  * POSTs act as `mason` (the only caller that passes Verse's mutation gate):
  * pause sets an `owner-hold`; resume clears one kind, or every active hold on
@@ -83,7 +93,7 @@ import { STANDING_GRANT_PATTERNS } from '../authority/types.js';
 import { displayStandingPolicy } from './display-standing-policy.js';
 import { readLedger } from '../authority/ledger.js';
 import { listRepoHolds, setRepoHold } from '../fleet/quarantine.js';
-import { listPostMergeWatches, postMergeGreenPct, type PostMergeWatchView } from '../fleet/post-merge-watch.js';
+import { listPostMergeWatches, type PostMergeWatchView } from '../fleet/post-merge-watch.js';
 import { listTasks, type TaskQueueRead } from '../fleet/task-source.js';
 import { readJournalSince, readTickState, type FleetJournalRecord, type FleetTickStateV1 } from '../fleet/fleet-runtime-journal.js';
 import { fleetLaneOf } from '../fleet/dispatch-router.js';
@@ -157,8 +167,14 @@ export interface FleetLiveDeps {
   repoIdentity(path: string): string | null;
   /** U4's open + recently finished watches. Throws when the store is corrupt (read as unknown). */
   watches(): PostMergeWatchView[];
-  /** U4's post-merge green % over finished `merge` watches; throws like `watches`. */
-  greenPct(opts: { repo?: string; sinceMs: number; nowMs: number }): { finished: number; green: number; pct: number | null };
+  /**
+   * proposalId → the dispatch-START ms that produced it (runId-correlated
+   * through the agent-action ledger's terminal `daemon:dispatch` row, which
+   * carries both), over partitions inside the window. null = unknown — the
+   * same honesty rule as `inFlight`. The default tails the same ledger
+   * incrementally off the loop ({@link DispatchTail.started}).
+   */
+  dispatchStarts(sinceMs: number): Promise<Map<string, number> | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +232,8 @@ interface PartitionTail {
   starts: Map<string, TailedStart>;
   ended: Set<string>;
   causalEnds: Map<string, number>;
+  /** runId → proposalId from terminal rows that produced a proposal (the dispatch→merge join key). */
+  proposalByRun: Map<string, string>;
   rows: number;
   /** A dispatch row here could not be read: the answer stays unknown until the file is replaced. */
   unreadable: boolean;
@@ -224,6 +242,13 @@ interface PartitionTail {
 export interface DispatchTail {
   /** Dispatches started at/after `sinceMs` with no terminal row; null = unknown. Calls are serialized. */
   read(sinceMs: number): Promise<InFlightDispatch[] | null>;
+  /**
+   * proposalId → the earliest correlated dispatch-START ms, over the same
+   * incremental tail (`daemon:dispatch` terminal rows name both runId and
+   * proposalId). Runs that crossed a partition boundary still join — the
+   * start map is kept, not deleted, on a terminal row. null = unknown.
+   */
+  started(sinceMs: number): Promise<Map<string, number> | null>;
   /** Drop every cursor (the next read starts cold). */
   reset(): void;
 }
@@ -252,7 +277,7 @@ function yieldToLoop(): Promise<void> {
 
 type DispatchRow =
   | { kind: 'start'; start: TailedStart }
-  | { kind: 'end'; runId: string; ms: number; causalKey: string | null }
+  | { kind: 'end'; runId: string; ms: number; causalKey: string | null; proposalId: string | null }
   | null
   | 'unreadable';
 
@@ -293,7 +318,9 @@ function dispatchRowOf(line: string, partitionDate: string | null): DispatchRow 
   if (action !== DISPATCH_START) {
     const trajectory = row['trajectoryId'];
     const outer = typeof trajectory === 'string' && trajectory.startsWith('run:') ? trajectory.slice(4) : null;
-    return { kind: 'end', runId, ms, causalKey: row['runId'] === runId && outer && outer !== runId ? dispatchCausalKey(row, outer) : null };
+    // The terminal row names the proposal the run produced — the join key
+    // from a dispatch-START to the merge:landed that carries the same id.
+    return { kind: 'end', runId, ms, causalKey: row['runId'] === runId && outer && outer !== runId ? dispatchCausalKey(row, outer) : null, proposalId: tailText(row['proposalId'], 200) };
   }
   const backend = typeof row['backend'] === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(row['backend']) ? row['backend'] : null;
   return {
@@ -339,7 +366,9 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
     if (row.kind === 'end') {
       p.ended.add(row.runId);
       if (row.causalKey !== null) p.causalEnds.set(row.causalKey, Math.max(row.ms, p.causalEnds.get(row.causalKey) ?? -Infinity));
-      p.starts.delete(row.runId);
+      if (row.proposalId !== null) p.proposalByRun.set(row.runId, row.proposalId);
+      // The start is KEPT: `read` filters ended runs at answer time, and
+      // `started` needs it to join the proposal back to the dispatch-start.
     } else if (!p.ended.has(row.start.runId)) {
       p.starts.set(row.start.runId, row.start);
     }
@@ -364,7 +393,7 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
     // Replaced (new inode) or truncated: its cursor means nothing — start over.
     if (p && (p.dev !== st.dev || p.ino !== st.ino || st.size < p.offset)) p = undefined;
     if (!p) {
-      p = { dev: st.dev, ino: st.ino, offset: 0, starts: new Map(), ended: new Set(), causalEnds: new Map(), rows: 0, unreadable: false };
+      p = { dev: st.dev, ino: st.ino, offset: 0, starts: new Map(), ended: new Set(), causalEnds: new Map(), proposalByRun: new Map(), rows: 0, unreadable: false };
       partitions.set(name, p);
     }
     if (p.unreadable) return false;
@@ -417,7 +446,13 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
     }
   }
 
-  async function readOnce(sinceMs: number): Promise<InFlightDispatch[] | null> {
+  /**
+   * The shared scan behind `read` and `started`: bring every partition whose
+   * UTC day ends at/after `sinceMs` up to its current end and answer the kept
+   * partition names — or null when anything was unreadable (both callers then
+   * report unknown, per the honesty rule).
+   */
+  async function scan(sinceMs: number): Promise<{ keep: Set<string>; empty: boolean } | null> {
     const dir = dirOf();
     if (dir !== lastDir) {
       partitions.clear();
@@ -430,7 +465,7 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         // No ledger yet: nothing has ever been dispatched here.
         partitions.clear();
-        return [];
+        return { keep: new Set(), empty: true };
       }
       return null;
     }
@@ -478,28 +513,60 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
       partitions.clear();
       return null;
     }
-    // A terminal row can land in a later partition than its start (a run across UTC midnight).
-    const ended = new Set<string>();
-    const causalEnds = new Map<string, number>();
-    for (const name of keep) {
-      for (const runId of partitions.get(name)?.ended ?? []) ended.add(runId);
-      for (const [key, ms] of partitions.get(name)?.causalEnds ?? []) causalEnds.set(key, Math.max(ms, causalEnds.get(key) ?? -Infinity));
-    }
-    const out: TailedStart[] = [];
-    for (const name of keep) {
-      for (const start of partitions.get(name)?.starts.values() ?? []) {
-        const causalEnd = start.causalKey === null ? undefined : causalEnds.get(start.causalKey);
-        if (start.ms >= sinceMs && !ended.has(start.runId) && (causalEnd === undefined || causalEnd < start.ms)) out.push(start);
-      }
-    }
-    return out.sort((a, b) => b.ms - a.ms).map((s) => ({ ...s.dispatch }));
+    return { keep, empty: false };
+  }
+
+  function enqueue<T>(work: () => Promise<T | null>): Promise<T | null> {
+    const run = chain.then(work);
+    chain = run.catch(() => undefined);
+    return run.catch(() => null);
   }
 
   return {
     read(sinceMs) {
-      const run = chain.then(() => readOnce(sinceMs));
-      chain = run.catch(() => undefined);
-      return run.catch(() => null);
+      return enqueue(async () => {
+        const scanned = await scan(sinceMs);
+        if (scanned === null) return null;
+        if (scanned.empty) return [];
+        // A terminal row can land in a later partition than its start (a run across UTC midnight).
+        const ended = new Set<string>();
+        const causalEnds = new Map<string, number>();
+        for (const name of scanned.keep) {
+          for (const runId of partitions.get(name)?.ended ?? []) ended.add(runId);
+          for (const [key, ms] of partitions.get(name)?.causalEnds ?? []) causalEnds.set(key, Math.max(ms, causalEnds.get(key) ?? -Infinity));
+        }
+        const out: TailedStart[] = [];
+        for (const name of scanned.keep) {
+          for (const start of partitions.get(name)?.starts.values() ?? []) {
+            const causalEnd = start.causalKey === null ? undefined : causalEnds.get(start.causalKey);
+            if (start.ms >= sinceMs && !ended.has(start.runId) && (causalEnd === undefined || causalEnd < start.ms)) out.push(start);
+          }
+        }
+        return out.sort((a, b) => b.ms - a.ms).map((s) => ({ ...s.dispatch }));
+      });
+    },
+    started(sinceMs) {
+      return enqueue(async () => {
+        const scanned = await scan(sinceMs);
+        if (scanned === null) return null;
+        const out = new Map<string, number>();
+        if (scanned.empty) return out;
+        // runId → start ms, across every kept partition (starts survive their
+        // terminal rows — a cross-midnight run still joins).
+        const startMsByRun = new Map<string, number>();
+        for (const name of scanned.keep) {
+          for (const [runId, start] of partitions.get(name)?.starts ?? []) startMsByRun.set(runId, start.ms);
+        }
+        for (const name of scanned.keep) {
+          for (const [runId, proposalId] of partitions.get(name)?.proposalByRun ?? []) {
+            const ms = startMsByRun.get(runId);
+            if (ms === undefined) continue;
+            const prev = out.get(proposalId);
+            if (prev === undefined || ms < prev) out.set(proposalId, ms);
+          }
+        }
+        return out;
+      });
     },
     reset() {
       partitions.clear();
@@ -510,6 +577,14 @@ export function createDispatchTail(opts: DispatchTailOptions = {}): DispatchTail
 
 /** The process-wide tail behind the default `inFlight` dependency. */
 const dispatchTail = createDispatchTail();
+/**
+ * A SECOND process-wide tail behind `dispatchStarts`, instance of its own so
+ * the two windows cannot evict each other's partition cursors (in-flight
+ * tails ~2 partitions; the dispatch→merge join tails up to 15). After the
+ * first cold scan each refresh still costs only the bytes appended since the
+ * last one.
+ */
+const dispatchStartTail = createDispatchTail();
 
 function defaultDeps(): FleetLiveDeps {
   return {
@@ -531,7 +606,7 @@ function defaultDeps(): FleetLiveDeps {
     isMirror: (path) => isMirrorPath(path),
     repoIdentity: (path) => repoIdentityOfPath(path),
     watches: () => listPostMergeWatches(),
-    greenPct: (opts) => postMergeGreenPct(opts),
+    dispatchStarts: (sinceMs) => dispatchStartTail.started(sinceMs),
   };
 }
 
@@ -604,6 +679,18 @@ interface ProposalProgress {
   outcome: FleetRunOutcome | null;
   prNumber: number | null;
   landingId: string | null;
+}
+
+/** A landing with its two parsed timestamps — Date.parse runs once per row, not per consumer. */
+interface LandingView {
+  rec: LandingRecord;
+  landedMs: number;
+  proposedMs: number;
+}
+
+interface GreenStat {
+  green: number;
+  total: number;
 }
 
 /**
@@ -751,26 +838,6 @@ export function gateFunnelFromLedger(rows: readonly LedgerEntry[], fromMs: numbe
   return { from: iso(fromMs), to: iso(toMs), stages };
 }
 
-function postMergeGreen(rows: readonly LedgerEntry[], repo: string | null, fromMs: number, toMs: number): { green: number; total: number } {
-  let green = 0;
-  let total = 0;
-  for (const row of rows) {
-    if (row.kind !== 'post-merge:result') continue;
-    if (repo !== null && !sameRepo(row.data.repo, repo)) continue;
-    const at = msOf(row.data.checkedAt);
-    if (!(at >= fromMs && at < toMs)) continue;
-    total += 1;
-    if (row.data.verdict === 'green') green += 1;
-  }
-  return { green, total };
-}
-
-function landingsOf(rows: readonly LedgerEntry[], kind: 'merge:landed' | 'revert:landed'): LandingRecord[] {
-  const out: LandingRecord[] = [];
-  for (const row of rows) if (row.kind === kind) out.push(row.data);
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // The snapshot
 // ---------------------------------------------------------------------------
@@ -845,6 +912,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   const generatedAt = iso(nowMs);
   const since12h = nowMs - 12 * HOUR_MS;
   const since7d = nowMs - 7 * DAY_MS;
+  const since14d = nowMs - 14 * DAY_MS;
   const since30d = nowMs - 30 * DAY_MS;
   const todayMs = localDayStart(nowMs);
 
@@ -863,6 +931,58 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   } catch {
     problems.push('the authority ledger could not be read');
   }
+
+  // ── ONE pass over the ledger rows ──────────────────────────────────────
+  // Everything downstream reads these indexes; nothing re-scans `rows` per
+  // repo or per day. This replaces what used to be a full scan of every
+  // post-merge row for the summary, again per repo, and again per repo per
+  // trend day — ~15 × R + 1 sweeps of the 30-day window on EVERY refresh —
+  // and lands each landing's Date.parse once instead of ~15 × R times.
+  let merges: LandingView[] | null = null;
+  let reverts: LandingView[] | null = null;
+  let mergesByRepo: Map<string, LandingView[]> | null = null;
+  const pmAll: { atMs: number; green: boolean }[] = [];
+  const pmByRepo = new Map<string, { atMs: number; green: boolean }[]>();
+  const pmDaysByRepo = new Map<string, Map<number, GreenStat>>();
+  if (rows) {
+    merges = [];
+    reverts = [];
+    mergesByRepo = new Map();
+    for (const row of rows) {
+      if (row.kind === 'merge:landed' || row.kind === 'revert:landed') {
+        const view: LandingView = { rec: row.data, landedMs: msOf(row.data.landedAt), proposedMs: msOf(row.data.proposedAt) };
+        if (row.kind === 'merge:landed') {
+          merges.push(view);
+          const key = view.rec.repo.toLowerCase();
+          const list = mergesByRepo.get(key) ?? [];
+          list.push(view);
+          mergesByRepo.set(key, list);
+        } else {
+          reverts.push(view);
+        }
+      } else if (row.kind === 'post-merge:result') {
+        const r = row.data;
+        const atMs = msOf(r.checkedAt);
+        if (!Number.isFinite(atMs)) continue;
+        const item = { atMs, green: r.verdict === 'green' };
+        pmAll.push(item);
+        const key = r.repo.toLowerCase();
+        const list = pmByRepo.get(key) ?? [];
+        list.push(item);
+        pmByRepo.set(key, list);
+        // Bucket by the row's own local day — a fixed +24 h window double- or
+        // under-counts the days a DST transition makes 23 h or 25 h long.
+        const dayKey = localDayStart(atMs);
+        const days = pmDaysByRepo.get(key) ?? new Map<number, GreenStat>();
+        const stat = days.get(dayKey) ?? { green: 0, total: 0 };
+        stat.total += 1;
+        if (item.green) stat.green += 1;
+        days.set(dayKey, stat);
+        pmDaysByRepo.set(key, days);
+      }
+    }
+  }
+
   let holds: RepoHold[] | null = null;
   try {
     holds = d.holds(nowMs);
@@ -889,6 +1009,17 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     }
   }
   const inFlight = (inFlightRaw ?? []).filter((f) => nowMs - msOf(f.startedAt) <= IN_FLIGHT_MAX_AGE_MS);
+
+  // proposalId → its dispatch-START ms — the beginning of the end-to-end
+  // cycle the dashboard's "before and after" median is measured over. A
+  // second incremental tail answers this off the loop; null stays unknown.
+  // The window covers a dispatch→merge of up to 7 d for either 7 d window.
+  let dispatchStarts: Map<string, number> | null = null;
+  try {
+    dispatchStarts = await d.dispatchStarts(since14d);
+  } catch {
+    dispatchStarts = null;
+  }
 
   const enrolledRead = safely<string[] | null>(() => d.enrolled(), null);
   const enrolledAll = enrolledRead ?? [];
@@ -946,17 +1077,35 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
       }
     }
   }
-  /** Post-merge green %: U4's watch store, else the ledger's verdict rows (null = unknown / none). */
+  /**
+   * Post-merge green % over finished `merge` watches in [fromMs, nowMs]: the
+   * watch views ALREADY in memory (the store used to be re-read and re-mapped
+   * from disk for every repo on every refresh), else the ledger index.
+   * null = unknown / none — the honesty rule.
+   */
   const greenPctOf = (repo: string | null, fromMs: number): number | null => {
+    const key = repo?.toLowerCase() ?? null;
     if (watches) {
-      try {
-        const g = d.greenPct({ ...(repo !== null ? { repo } : {}), sinceMs: fromMs, nowMs });
-        if (g.finished > 0) return g.pct;
-      } catch { /* fall through to the ledger */ }
+      let finished = 0;
+      let green = 0;
+      for (const v of watches) {
+        if (v.kind !== 'merge' || v.verdict === null || v.checkedAt === null) continue;
+        const at = msOf(v.checkedAt);
+        if (!(at >= fromMs && at <= nowMs)) continue;
+        if (key !== null && v.repo.toLowerCase() !== key) continue;
+        finished += 1;
+        if (v.verdict === 'green') green += 1;
+      }
+      if (finished > 0) return pct(green, finished);
     }
-    if (!rows) return null;
-    const g = postMergeGreen(rows, repo, fromMs, nowMs + 1);
-    return pct(g.green, g.total);
+    let total = 0;
+    let green = 0;
+    for (const e of key === null ? pmAll : pmByRepo.get(key) ?? []) {
+      if (e.atMs < fromMs || e.atMs > nowMs) continue;
+      total += 1;
+      if (e.green) green += 1;
+    }
+    return pct(green, total);
   };
   const runs = new Map<string, FleetLiveRun>();
   for (const f of inFlight) {
@@ -1110,8 +1259,6 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     .slice(0, MAX_RUNS);
 
   // ── Summary ─────────────────────────────────────────────────────────────
-  const merges = rows ? landingsOf(rows, 'merge:landed') : null;
-  const reverts = rows ? landingsOf(rows, 'revert:landed') : null;
   const building = journalKnown && inFlightRaw !== null
     ? runList.filter((r) => r.endedAt === null && (r.phase === 'producing' || r.phase === 'verifying' || r.phase === 'judging' || r.phase === 'landing')).length
     : null;
@@ -1119,20 +1266,40 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
 
   const cycle = merges
     ? median(merges
-      .filter((m) => msOf(m.landedAt) >= since7d && m.proposedAt !== null)
-      .map((m) => msOf(m.landedAt) - msOf(m.proposedAt))
+      .filter((m) => m.landedMs >= since7d && m.rec.proposedAt !== null)
+      .map((m) => m.landedMs - m.proposedMs)
       .filter((ms) => Number.isFinite(ms) && ms >= 0))
     : null;
+  /**
+   * Median (merge landed − dispatch started) over merges landed inside
+   * [fromMs, toMs) — the whole loop: dispatch → produce → proposal → gates
+   * → PR → merge. A merge whose proposal no dispatch-start joins (outside
+   * the tail window, or a hand-opened PR) contributes nothing rather than
+   * dragging the median toward zero; none correlating means "—", never 0.
+   */
+  const d2mMedian = (fromMs: number, toMs: number): number | null => {
+    if (merges === null || dispatchStarts === null) return null;
+    const samples: number[] = [];
+    for (const m of merges) {
+      if (!(m.landedMs >= fromMs && m.landedMs < toMs) || m.rec.proposalId === null) continue;
+      const start = dispatchStarts.get(m.rec.proposalId);
+      if (start === undefined || !Number.isFinite(start) || start > m.landedMs) continue;
+      samples.push(m.landedMs - start);
+    }
+    return median(samples);
+  };
   const summary: FleetLiveSummary = {
     building,
     queued: queuedTasks,
     parked: parkedTasks === null ? null : parkedTasks + heldCount,
     waitingVerify: tick?.waitingVerify ?? null,
-    mergedToday: merges ? merges.filter((m) => msOf(m.landedAt) >= todayMs).length : null,
-    revertsToday: reverts ? reverts.filter((m) => msOf(m.landedAt) >= todayMs).length : null,
-    merged7d: merges ? merges.filter((m) => msOf(m.landedAt) >= since7d).length : null,
+    mergedToday: merges ? merges.filter((m) => m.landedMs >= todayMs).length : null,
+    revertsToday: reverts ? reverts.filter((m) => m.landedMs >= todayMs).length : null,
+    merged7d: merges ? merges.filter((m) => m.landedMs >= since7d).length : null,
     postMergeGreenPct7d: greenPctOf(null, since7d),
     cycleTimeP50Ms7d: cycle,
+    dispatchToMergeP50Ms7d: d2mMedian(since7d, Number.POSITIVE_INFINITY),
+    dispatchToMergeP50MsPrior7d: d2mMedian(since14d, since7d),
   };
 
   // ── Lanes ───────────────────────────────────────────────────────────────
@@ -1204,31 +1371,31 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   }
   for (const h of holds ?? []) repoNames.add(h.repo);
   const openPrs = rows ? openFleetPrsFromLedger(rows) : null;
+  // The 14 trend buckets once, not inside every repo's map (the days are the
+  // same for all of them — oldest first, today last).
+  const trendDayStarts = Array.from({ length: 14 }, (_, i) => localDayStart(todayMs - (13 - i) * DAY_MS + 12 * HOUR_MS));
   const repos: FleetRepoRow[] = [...repoNames]
     .filter((name) => STANDING_GRANT_PATTERNS.nameWithOwner.test(name))
     .sort((a, b) => a.localeCompare(b))
     .map((repo) => {
       const grant = policy?.repos.find((r) => sameRepo(r.nameWithOwner, repo)) ?? null;
-      const repoMerges = merges?.filter((m) => sameRepo(m.repo, repo)) ?? null;
-      const lastMerge = repoMerges && repoMerges.length > 0
-        ? repoMerges.reduce((a, b) => (msOf(a.landedAt) >= msOf(b.landedAt) ? a : b)).landedAt
+      const key = repo.toLowerCase();
+      // null = the ledger could not be read (unknown); [] = read, no merges.
+      const repoMerges = mergesByRepo === null ? null : mergesByRepo.get(key) ?? [];
+      const lastMerge = repoMerges !== null && repoMerges.length > 0
+        ? repoMerges.reduce((a, b) => (a.landedMs >= b.landedMs ? a : b)).rec.landedAt
         : null;
-      const trend: (number | null)[] = [];
-      for (let i = 13; i >= 0; i -= 1) {
-        const dayStart = localDayStart(todayMs - i * DAY_MS + 12 * HOUR_MS);
-        if (!rows) {
-          trend.push(null);
-          continue;
-        }
-        const g = postMergeGreen(rows, repo, dayStart, dayStart + DAY_MS);
-        trend.push(pct(g.green, g.total));
-      }
+      const repoDays = pmDaysByRepo.get(key);
+      const trend = trendDayStarts.map((start) => {
+        const stat = repoDays?.get(start);
+        return stat === undefined ? null : pct(stat.green, stat.total);
+      });
       return {
         repo,
         stage: grant?.stage ?? null,
         enforcement: grant?.enforcement ?? null,
         lastMergeAt: repoMerges === null ? null : lastMerge,
-        mergesToday: repoMerges ? repoMerges.filter((m) => msOf(m.landedAt) >= todayMs).length : null,
+        mergesToday: repoMerges === null ? null : repoMerges.filter((m) => m.landedMs >= todayMs).length,
         maxMergesPerDay: grant?.maxMergesPerDay ?? null,
         greenPct7d: greenPctOf(repo, since7d),
         greenTrend: trend,
@@ -1433,6 +1600,7 @@ export function resetFleetLiveApiForTest(): void {
   if (timer) clearInterval(timer);
   timer = null;
   dispatchTail.reset();
+  dispatchStartTail.reset();
 }
 
 /**
@@ -1641,6 +1809,52 @@ async function applyAction(res: ServerResponse, body: Record<string, unknown>): 
 export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path === '/api/verse/fleet/live/feedback' || path.startsWith('/api/verse/fleet/live/feedback/cases/')) {
     return (await import('./execution-feedback-api.js')).handleExecutionFeedbackApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/live/bus') {
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' });
+      return true;
+    }
+    let limit: number | undefined;
+    try {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      if ([...params.keys()].some((key) => key !== 'limit') || params.getAll('limit').length > 1 ||
+          (params.has('limit') && !/^-?\d+$/.test(params.get('limit')!))) {
+        sendInvalid(res, 'invalid query string');
+        return true;
+      }
+      if (params.has('limit')) limit = Number(params.get('limit'));
+    } catch {
+      sendInvalid(res, 'invalid query string');
+      return true;
+    }
+    const { readFleetBusFeed } = await import('../fleet/bus-feed.js');
+    const { sanitizePublicJson } = await import('../util/public-json.js');
+    sendJson(res, 200, sanitizePublicJson(await readFleetBusFeed({ limit })));
+    return true;
+  }
+  if (path === '/api/verse/fleet/live/queue') {
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' });
+      return true;
+    }
+    let limit: number | undefined;
+    try {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      if ([...params.keys()].some((key) => key !== 'limit') || params.getAll('limit').length > 1 ||
+          (params.has('limit') && !/^-?\d+$/.test(params.get('limit')!))) {
+        sendInvalid(res, 'invalid query string');
+        return true;
+      }
+      if (params.has('limit')) limit = Number(params.get('limit'));
+    } catch {
+      sendInvalid(res, 'invalid query string');
+      return true;
+    }
+    const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
+    const { sanitizePublicJson } = await import('../util/public-json.js');
+    sendJson(res, 200, sanitizePublicJson(await readFleetQueue({ limit })));
+    return true;
   }
   if (path !== VERSE_FLEET_LIVE_PATH) return false;
   try {

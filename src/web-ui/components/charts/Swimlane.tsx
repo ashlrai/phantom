@@ -38,6 +38,8 @@ import { formatDateTime } from '../format/locale-format.js';
 
 export interface SwimlaneItem {
   id: string;
+  /** Accessible name for a selectable item; defaults to its id. */
+  label?: string;
   /** Epoch ms. */
   start: number;
   /** Epoch ms; null while still running. */
@@ -89,6 +91,7 @@ export interface SwimlaneProps {
   /** Axis tick label. Defaults to a span-aware short form (dates past 36 h, clock times below). */
   formatTick?: (ms: number) => string;
   ariaLabel?: string;
+  onSelectItem?: (item: SwimlaneItem, lane: SwimlaneLane) => void;
 }
 
 export const ROW_H = 24;
@@ -166,6 +169,7 @@ export function Swimlane({
   formatTime = defaultFormatTime,
   formatTick,
   ariaLabel,
+  onSelectItem,
 }: SwimlaneProps) {
   // A window bound of 0 / NaN / pre-2000 is a null timestamp that leaked
   // through; fall back to the runs themselves (then to a day ending now), and
@@ -269,7 +273,7 @@ export function Swimlane({
           const outline = isOutline(item);
           const unknown = !outline && tone === 'unknown';
           const dimmed = hover !== null && !(hover.lane === index && hover.item === itemIndex);
-          return (
+          const bar = (
             <rect
               key={item.id}
               data-item={item.id}
@@ -289,6 +293,14 @@ export function Swimlane({
               onPointerLeave={() => setHover((h) => (h && h.lane === index && h.item === itemIndex ? null : h))}
             />
           );
+          return onSelectItem ? <foreignObject key={itemIndex} x={x0} y={y + 5} width={w} height={ROW_H - 10}>
+              <button
+                type="button"
+                aria-label={`${lane.label}: ${item.label ?? item.id}`}
+                className={styles.selectBar}
+                onClick={() => onSelectItem(item, lane)}
+              ><svg width="100%" height="100%" viewBox={`${x0} ${y + 5} ${w} ${ROW_H - 10}`} aria-hidden="true">{bar}</svg></button>
+            </foreignObject> : bar;
         })}
       </g>
     );
@@ -338,7 +350,7 @@ export function Swimlane({
           onScroll={virtual ? (e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
           data-virtualized={virtual ? 'true' : undefined}
         >
-          <svg className={plot.svg} width={width} height={bodyH} viewBox={`0 0 ${width} ${bodyH}`} role="img" aria-label={summary}>
+          <svg className={plot.svg} width={width} height={bodyH} viewBox={`0 0 ${width} ${bodyH}`} role={onSelectItem ? 'group' : 'img'} aria-label={summary}>
             <defs>
               <HatchPattern id={hatchId} />
             </defs>
