@@ -345,16 +345,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const nullablePercent = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-function readHeadroom(value: unknown): SeatHeadroom | null {
+/** Subscription seat IDs use the provider name, optionally followed by an account suffix. */
+export function isClaudeSeat(seatId: string): boolean {
+  const id = seatId.trim().toLowerCase();
+  return id !== 'claude-api' && /^(claude|anthropic)(?:$|-)/.test(id);
+}
+
+function readHeadroom(value: unknown, claudeSeatIds: ReadonlySet<string>): SeatHeadroom | null {
   if (!isRecord(value) || typeof value['seatId'] !== 'string') return null;
+  const seatId = value['seatId'];
+  const claude = isClaudeSeat(seatId) || claudeSeatIds.has(seatId);
   const binding = value['bindingWindow'];
+  const staleSession = claude && binding === 'session';
   return {
-    seatId: value['seatId'],
-    sessionUsedPercent: nullablePercent(value['sessionUsedPercent']),
+    seatId,
+    sessionUsedPercent: claude ? null : nullablePercent(value['sessionUsedPercent']),
     weeklyUsedPercent: nullablePercent(value['weeklyUsedPercent']),
-    bindingWindow: binding === 'session' || binding === 'weekly' ? binding : null,
+    bindingWindow: staleSession ? 'weekly' : binding === 'session' || binding === 'weekly' ? binding : null,
     autonomyHeadroomPercent: nullablePercent(value['autonomyHeadroomPercent']),
-    resetAt: typeof value['resetAt'] === 'string' ? value['resetAt'] : null,
+    // A reset reported for the retired session window is not a weekly reset.
+    resetAt: !staleSession && typeof value['resetAt'] === 'string' ? value['resetAt'] : null,
     // Only an explicit `true` makes a seat eligible — a garbled flag is "not known to be eligible".
     eligibleForAutonomy: value['eligibleForAutonomy'] === true,
     reasons: Array.isArray(value['reasons']) ? value['reasons'].filter((r): r is string => typeof r === 'string') : [],
@@ -401,8 +411,9 @@ export function readBudgetRows(view: unknown): Map<string, BudgetRow> {
       free: info['free'] === true,
     });
   }
+  const claudeSeatIds = new Set(seatInfo.filter((info) => info.engine === 'claude').map((info) => info.seatId));
   const headroom = Array.isArray(view['headroom'])
-    ? view['headroom'].map(readHeadroom).filter((h): h is SeatHeadroom => h !== null)
+    ? view['headroom'].map((h) => readHeadroom(h, claudeSeatIds)).filter((h): h is SeatHeadroom => h !== null)
     : [];
   const safe = { ...(view as unknown as BudgetView), seatInfo, effective, headroom };
   try {

@@ -5,6 +5,7 @@ function FleetGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+g',
   id: 'fleet-hub', title: 'Fleet', description: 'Every fleet pane, one click', needsSession: false,
   icon: FleetGlyph,
   component: lazyPane(() => import('./FleetHubPane.js').then((m) => m.FleetHubPane)),
