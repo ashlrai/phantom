@@ -94,6 +94,29 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+/**
+ * The cumulative fraction of a pool's budget that may be committed by
+ * `nowMs`: the ideal pace line plus an optional lead, so a consumer that is
+ * exactly on pace stays admissible while a burst spends its lead early. This
+ * is the constraint form of the receding-horizon plan above: a consumer is
+ * within pace while `spentFraction <= paceCeilingAt(...)`. Returns 0 outside
+ * the window and on invalid input (the caller decides whether 0 binds).
+ */
+export function paceCeilingAt(input: {
+  nowMs: number;
+  resetAtMs: number;
+  windowStartMs: number;
+  /** Extra fraction the consumer may run ahead of the ideal line (0..1). */
+  leadFraction?: number;
+}): number {
+  const lead = input.leadFraction ?? 0;
+  const { nowMs, resetAtMs, windowStartMs } = input;
+  if (![nowMs, resetAtMs, windowStartMs, lead].every(Number.isFinite)
+      || windowStartMs >= resetAtMs || lead < 0 || lead > 1) return 0;
+  if (nowMs <= windowStartMs || nowMs >= resetAtMs) return 0;
+  return clamp01(idealAt(windowStartMs, resetAtMs, nowMs) + lead);
+}
+
 function idealAt(windowStartMs: number, resetAtMs: number, atMs: number): number {
   const window = resetAtMs - windowStartMs;
   if (window <= 0) return atMs >= resetAtMs ? 1 : 0;

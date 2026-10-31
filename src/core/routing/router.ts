@@ -2,10 +2,11 @@
  * quality is neutral; provider/model display tiers do not establish capability.
  * Ranking uses explicit operator preference, admitted headroom and independent
  * funding category. Legacy aggregate latency remains diagnostic-only. */
+import { paceCeilingAt } from '../resources/pacing.js';
 import { opportunityPriority } from './reset-pressure.js';
 import type { AccountSchedulingView } from './scheduling-types.js';
 import { assessSeat, HEADROOM_READING_MAX_AGE_MS, type SeatCapacity } from './headroom.js';
-import { CLAUDE_API_SEAT_ID, effectiveSeatPolicy } from './policy.js';
+import { CLAUDE_API_SEAT_ID, effectiveSeatPolicy, taskArmKey, taskArmsFor } from './policy.js';
 import { listSeatIds, reasonSentences } from './seat-reasons.js';
 import { COST_BASIS_RANK, costBasisOf, engineTier, RESOURCE_TIERS, type ResourceTier } from './tiers.js';
 import type {
@@ -17,6 +18,7 @@ import type {
   SeatExclusion,
   SeatHeadroom,
   SeatReason,
+  TaskArm,
 } from './types.js';
 
 /** A request may use at most this share of a seat's context window. */
@@ -38,6 +40,29 @@ export interface RouteOptions {
   /** Actual selected-task opportunity; eligibility/quality remain mandatory. */
   scheduling?: Readonly<Record<string,AccountSchedulingView>>;
   advisorySeatId?: string | null;
+  /**
+   * Task-arm outcome evidence, keyed by arm key (`taskArmKey`): merged green
+   * PRs and measured tokens for the reward, plus the arm's spend inside its
+   * current pacing window. Consulted only while `policy.taskArms` is enabled;
+   * malformed reward entries read as unmeasured, and malformed pace evidence
+   * fails closed (the arm stays inadmissible).
+   */
+  armStats?: Readonly<Record<string, TaskArmObservation>>;
+}
+
+/** Measured outcome and pacing evidence for one task arm (`RouteOptions.armStats`). */
+export interface TaskArmObservation {
+  /** Merged green PRs attributed to this arm on completed work. */
+  mergedPrs?: number;
+  /** Total measured input+output tokens on that completed work. */
+  tokens?: number;
+  /** The arm's spend inside its current pacing window. */
+  pace?: {
+    /** Epoch ms the current window started. */
+    windowStartMs: number;
+    /** Tokens spent so far in that window. */
+    spentTokens: number;
+  };
 }
 
 /** Independent funding-category and headroom weights. lambdaLatency remains
@@ -113,6 +138,8 @@ interface Verdict {
   /** The blockers as data; `SeatExclusion.reasons` is derived from them. */
   details: SeatReason[];
   nextEligibleAt: string | null;
+  /** The task arm this seat would serve, set only while the arm flag steers. */
+  arm?: { arm: TaskArm; reward: number | null };
 }
 
 function interactiveVerdict(capacity: SeatCapacity, nowMs: number, readingMaxAgeMs: number): Verdict {
@@ -274,8 +301,144 @@ function rank(verdicts: Verdict[], rankOrder: RankOrder, w: RouterWeights, optio
   return ranked;
 }
 
+// ---------------------------------------------------------------------------
+// Task-aware arms (flagged; `policy.taskArms.enabled`)
+// ---------------------------------------------------------------------------
+
+/** The lead an arm may run ahead of its ideal pace line by default (5% of budget). */
+export const TASK_ARM_PACE_LEAD = 0.05;
+
+/** Observation for an arm, honouring own-name keys only. */
+function armObservation(
+  stats: Readonly<Record<string, TaskArmObservation>> | undefined,
+  arm: TaskArm,
+): TaskArmObservation | undefined {
+  const key = taskArmKey(arm);
+  return stats && Object.hasOwn(stats, key) ? stats[key] : undefined;
+}
+
+/** Merged green PRs per token; null when the arm has no measured yield. */
+function armReward(arm: TaskArm, stats: Readonly<Record<string, TaskArmObservation>> | undefined): number | null {
+  const obs = armObservation(stats, arm);
+  const merged = typeof obs?.mergedPrs === 'number' && Number.isFinite(obs.mergedPrs) && obs.mergedPrs >= 0
+    ? obs.mergedPrs : null;
+  const tokens = typeof obs?.tokens === 'number' && Number.isFinite(obs.tokens) && obs.tokens > 0
+    ? obs.tokens : null;
+  return merged !== null && tokens !== null ? merged / tokens : null;
+}
+
+/**
+ * Whether an arm may take one more job under its token pacing budget: its
+ * observed window spend must not be ahead of the pace ceiling (the linear LP
+ * pacing constraint; a job may cross the line by its own size). No pace spec
+ * or no evidence yet is admissible; corrupt evidence fails closed.
+ */
+function armPaceVerdict(
+  arm: TaskArm,
+  obs: TaskArmObservation | undefined,
+  nowMs: number,
+): { ok: true } | { ok: false; reopensAt: string | null } {
+  const pace = arm.pace;
+  const evidence = obs?.pace;
+  if (!pace || evidence === undefined) return { ok: true };
+  if (typeof evidence !== 'object' || evidence === null) return { ok: false, reopensAt: null };
+  const { windowStartMs, spentTokens } = evidence;
+  if (!Number.isSafeInteger(windowStartMs) || windowStartMs > nowMs
+      || !Number.isFinite(spentTokens) || spentTokens < 0) {
+    return { ok: false, reopensAt: null };
+  }
+  const resetAtMs = windowStartMs + pace.windowMs;
+  if (nowMs >= resetAtMs) return { ok: true };
+  const spentFraction = spentTokens / pace.budgetTokens;
+  const lead = pace.leadFraction ?? TASK_ARM_PACE_LEAD;
+  const ceiling = paceCeilingAt({ nowMs, resetAtMs, windowStartMs, leadFraction: lead });
+  if (spentFraction <= ceiling) return { ok: true };
+  if (spentFraction > 1) return { ok: false, reopensAt: new Date(resetAtMs).toISOString() };
+  // Earliest instant the pace line (including the lead) reaches the spend.
+  const catchUpMs = windowStartMs + Math.max(0, spentFraction - lead) * pace.windowMs;
+  return { ok: false, reopensAt: new Date(Math.max(nowMs, catchUpMs)).toISOString() };
+}
+
+/**
+ * The task-arm stage. For an autonomous request on an armed class, a seat
+ * stays a candidate only while one of the class's arms runs on its engine
+ * inside its pacing budget; each surviving verdict remembers its best arm
+ * and measured yield for the reward rank. Arms that fail `isTaskArm`
+ * (an unknown engine, a bad effort or a malformed pace spec) never match a
+ * seat, and a class with no valid arm leaves every verdict untouched, so the
+ * flag off is byte-identical to today.
+ */
+function applyTaskArms(
+  verdicts: Verdict[],
+  policy: BudgetPolicy,
+  req: RoutingRequest,
+  opts: RouteOptions,
+): boolean {
+  if (!req.autonomous || policy.taskArms?.enabled !== true) return false;
+  const arms = taskArmsFor(policy.taskArms, req.task);
+  if (arms.length === 0) return false;
+  const byEngine = new Map<string, TaskArm[]>();
+  for (const arm of arms) {
+    const list = byEngine.get(arm.engine) ?? [];
+    list.push(arm);
+    byEngine.set(arm.engine, list);
+  }
+  for (const v of verdicts) {
+    if (!v.eligible) continue;
+    const matching = byEngine.get(v.capacity.engine) ?? [];
+    if (matching.length === 0) {
+      v.eligible = false;
+      v.details.push({
+        kind: 'task-arm',
+        text: `No task arm for ${req.task} work runs on the ${v.capacity.engine} engine.`,
+      });
+      v.nextEligibleAt = null;
+      continue;
+    }
+    let best: { arm: TaskArm; reward: number | null } | null = null;
+    let earliestReopen: string | null = null;
+    for (const arm of matching) {
+      const paced = armPaceVerdict(arm, armObservation(opts.armStats, arm), opts.nowMs);
+      if (!paced.ok) {
+        if (paced.reopensAt !== null && (earliestReopen === null || paced.reopensAt < earliestReopen)) {
+          earliestReopen = paced.reopensAt;
+        }
+        continue;
+      }
+      const reward = armReward(arm, opts.armStats);
+      if (best === null || (reward ?? 0) > (best.reward ?? 0)) best = { arm, reward };
+    }
+    if (best === null) {
+      v.eligible = false;
+      v.details.push({
+        kind: 'task-arm',
+        text: `This seat's ${req.task} task arms cannot prove they are inside their token pacing budgets.`,
+        ...(earliestReopen !== null ? { resetsAt: earliestReopen } : {}),
+      });
+      v.nextEligibleAt = earliestReopen;
+      continue;
+    }
+    v.arm = best;
+  }
+  return true;
+}
+
+/** Measured yield first, the baseline order as the tiebreak. Only runs while the flag steers. */
+function orderByArmReward(ranked: Verdict[]): void {
+  const baseline = new Map(ranked.map((v, i) => [v, i]));
+  ranked.sort((a, b) => {
+    const diff = (b.arm?.reward ?? 0) - (a.arm?.reward ?? 0);
+    if (Math.abs(diff) > SCORE_EPSILON) return diff;
+    return baseline.get(a)! - baseline.get(b)!;
+  });
+}
+
 function formatWeight(n: number): string {
   return String(Math.round(n * 100) / 100);
+}
+
+function formatArmRate(reward: number): string {
+  return String(Math.round(reward * 1e9) / 1e9);
 }
 
 function lowerFirst(text: string): string {
@@ -321,7 +484,10 @@ function routeVerdicts(req: RoutingRequest, capacity: readonly SeatCapacity[], p
 export function rankEligibleCapacities(req: RoutingRequest, capacities: readonly SeatCapacity[], policy: BudgetPolicy,
   opts: RouteOptions): SeatCapacity[] {
   const verdicts = routeVerdicts(req, capacities, policy, opts);
-  return rank(verdicts.filter(v => v.eligible), tierPreference(policy.mode, req), resolveWeights(opts.weights), opts).map(v => v.capacity);
+  const armsActive = applyTaskArms(verdicts, policy, req, opts);
+  const eligible = rank(verdicts.filter(v => v.eligible), tierPreference(policy.mode, req), resolveWeights(opts.weights), opts);
+  if (armsActive) orderByArmReward(eligible);
+  return eligible.map(v => v.capacity);
 }
 
 /**
@@ -362,9 +528,11 @@ export function routeSeat(
   opts: RouteOptions,
 ): SeatDecision {
   const verdicts = routeVerdicts(req, capacity, policy, opts);
+  const armsActive = applyTaskArms(verdicts, policy, req, opts);
   const order = tierPreference(policy.mode, req);
   const weights = resolveWeights(opts.weights);
   const eligible = rank(verdicts.filter((v) => v.eligible), order, weights, opts);
+  if (armsActive) orderByArmReward(eligible);
   const exclusions: SeatExclusion[] = verdicts
     .filter((v) => !v.eligible)
     .map((v) => ({
@@ -400,14 +568,18 @@ export function routeSeat(
     const tuned = isDefaultWeights(weights) ? ''
       : `; routing weights cost ×${formatWeight(weights.lambdaCost)}, headroom ×${formatWeight(weights.lambdaPressure)}, `
         + `retained latency weight ×${formatWeight(weights.lambdaLatency)} is inactive`;
+    const armText = chosen.arm
+      ? `; task arm ${taskArmKey(chosen.arm.arm)}${chosen.arm.reward !== null
+        ? ` at ${formatArmRate(chosen.arm.reward)} merged PRs/token` : ' with no measured merged-PR yield'}`
+      : '';
     why = `Routed ${who}${describeWork(req)} to ${chosen.capacity.label} (${chosen.capacity.seatId})${roomText}: `
-      + `${policy.mode} mode ranks by ${rankReason}${tuned}${held}.`;
+      + `${policy.mode} mode ranks by ${rankReason}${tuned}${held}${armText}.`;
     const lead = hasRoom
       ? ` — ${room}% of its ${windowWord} window left`
       : chosen.capacity.free ? ' — no provider token charge, no usage window' : '';
     summary = lead
-      ? `${chosen.capacity.label}${lead}; ${policy.mode} mode ranks by ${rankReason}.`
-      : `${chosen.capacity.label} — ${policy.mode} mode ranks by ${rankReason}.`;
+      ? `${chosen.capacity.label}${lead}; ${policy.mode} mode ranks by ${rankReason}${armText}.`
+      : `${chosen.capacity.label} — ${policy.mode} mode ranks by ${rankReason}${armText}.`;
   } else if (capacity.length === 0) {
     why = `No seats are known, so ${who}${describeWork(req)} has nowhere to run.`;
     summary = 'No seats are known, so this work has nowhere to run.';
@@ -421,6 +593,17 @@ export function routeSeat(
 
   return {
     seatId: chosen?.capacity.seatId ?? null,
+    ...(chosen?.arm
+      ? {
+        taskArm: {
+          key: taskArmKey(chosen.arm.arm),
+          engine: chosen.arm.arm.engine,
+          model: chosen.arm.arm.model,
+          effort: chosen.arm.arm.effort,
+          rewardPerToken: chosen.arm.reward,
+        },
+      }
+      : {}),
     candidates,
     exclusions,
     why,

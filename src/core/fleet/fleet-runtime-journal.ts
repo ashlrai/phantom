@@ -159,6 +159,18 @@ function scrubDecision(decision: SeatDecision | null): SeatDecision | null {
     }),
     why: scrubSecrets(decision.why).slice(0, 600),
     ...(typeof decision.summary === 'string' ? { summary: scrubSecrets(decision.summary).slice(0, 300) } : {}),
+    ...(decision.taskArm
+      ? {
+        taskArm: {
+          key: scrubSecrets(decision.taskArm.key).slice(0, 120),
+          engine: scrubSecrets(decision.taskArm.engine).slice(0, 40),
+          model: decision.taskArm.model === null ? null : scrubSecrets(decision.taskArm.model).slice(0, 120),
+          effort: decision.taskArm.effort,
+          rewardPerToken: typeof decision.taskArm.rewardPerToken === 'number' && Number.isFinite(decision.taskArm.rewardPerToken)
+            ? decision.taskArm.rewardPerToken : null,
+        },
+      }
+      : {}),
     mode: decision.mode,
   };
 }

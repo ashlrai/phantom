@@ -1,0 +1,262 @@
+{
+  "schemaVersion": 1,
+  "snapshots": {
+    "armed": {
+      "capacities": [
+        {
+          "seatId": "claude",
+          "engine": "claude",
+          "label": "Fixture Claude",
+          "free": false,
+          "windows": [
+            { "id": "five_hour", "usedPercent": 20, "resetsAt": null, "resetDescription": "7pm (America/New_York)", "limitReached": false },
+            { "id": "seven_day", "usedPercent": 30, "resetsAt": null, "resetDescription": "Oct 28 at 7pm (America/New_York)", "limitReached": false }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T11:59:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "codex-personal",
+          "engine": "codex",
+          "label": "Fixture Codex",
+          "free": false,
+          "windows": [
+            { "id": "codex_codex_primary", "usedPercent": 30, "resetsAt": "2026-10-29T12:00:00.000Z", "resetDescription": null, "limitReached": false }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T11:59:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {},
+        "updatedAt": "2026-10-26T12:00:00.000Z",
+        "taskArms": {
+          "enabled": true,
+          "classes": {
+            "code": [
+              { "engine": "claude", "model": "claude-opus-4-6", "effort": "high", "pace": { "windowMs": 604800000, "budgetTokens": 1000000 } },
+              { "engine": "local", "model": null, "effort": "medium" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "nowMs": 1793016000000,
+        "armStats": {
+          "claude|claude-opus-4-6|high": { "mergedPrs": 4, "tokens": 40000, "pace": { "windowStartMs": 1793008800000, "spentTokens": 10000 } },
+          "local||medium": { "mergedPrs": 1, "tokens": 30000 }
+        }
+      }
+    },
+    "paced": {
+      "capacities": [
+        {
+          "seatId": "claude",
+          "engine": "claude",
+          "label": "Fixture Claude",
+          "free": false,
+          "windows": [
+            { "id": "five_hour", "usedPercent": 20, "resetsAt": null, "resetDescription": "7pm (America/New_York)", "limitReached": false },
+            { "id": "seven_day", "usedPercent": 30, "resetsAt": null, "resetDescription": "Oct 28 at 7pm (America/New_York)", "limitReached": false }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T11:59:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {},
+        "updatedAt": "2026-10-26T12:00:00.000Z",
+        "taskArms": {
+          "enabled": true,
+          "classes": {
+            "code": [
+              { "engine": "claude", "model": "claude-opus-4-6", "effort": "high", "pace": { "windowMs": 604800000, "budgetTokens": 1000000 } },
+              { "engine": "local", "model": null, "effort": "medium" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "nowMs": 1793016000000,
+        "armStats": {
+          "claude|claude-opus-4-6|high": { "mergedPrs": 4, "tokens": 40000, "pace": { "windowStartMs": 1793008800000, "spentTokens": 300000 } },
+          "local||medium": { "mergedPrs": 1, "tokens": 30000 }
+        }
+      }
+    },
+    "off": {
+      "capacities": [
+        {
+          "seatId": "claude",
+          "engine": "claude",
+          "label": "Fixture Claude",
+          "free": false,
+          "windows": [
+            { "id": "five_hour", "usedPercent": 20, "resetsAt": null, "resetDescription": "7pm (America/New_York)", "limitReached": false },
+            { "id": "seven_day", "usedPercent": 30, "resetsAt": null, "resetDescription": "Oct 28 at 7pm (America/New_York)", "limitReached": false }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T11:59:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {},
+        "updatedAt": "2026-10-26T12:00:00.000Z",
+        "taskArms": {
+          "enabled": false,
+          "classes": {
+            "code": [
+              { "engine": "claude", "model": "claude-opus-4-6", "effort": "high" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "nowMs": 1793016000000,
+        "armStats": {
+          "claude|claude-opus-4-6|high": { "mergedPrs": 4, "tokens": 40000 }
+        }
+      }
+    },
+    "bogus": {
+      "capacities": [
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {},
+        "updatedAt": "2026-10-26T12:00:00.000Z",
+        "taskArms": {
+          "enabled": true,
+          "classes": {
+            "code": [
+              { "engine": "bogus-engine", "model": null, "effort": "high" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    },
+    "held": {
+      "capacities": [
+        {
+          "seatId": "claude",
+          "engine": "claude",
+          "label": "Fixture Claude",
+          "free": false,
+          "windows": [
+            { "id": "five_hour", "usedPercent": 20, "resetsAt": null, "resetDescription": "7pm (America/New_York)", "limitReached": false },
+            { "id": "seven_day", "usedPercent": 30, "resetsAt": null, "resetDescription": "Oct 28 at 7pm (America/New_York)", "limitReached": false }
+          ],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 200000,
+          "observedAt": "2026-10-26T11:59:00.000Z",
+          "spentTodayUsd": null,
+          "costBasis": "subscription"
+        },
+        {
+          "seatId": "local:fixture",
+          "engine": "local",
+          "label": "Fixture local",
+          "free": true,
+          "windows": [],
+          "signedOut": false,
+          "reachable": true,
+          "contextWindow": 32000,
+          "observedAt": null,
+          "spentTodayUsd": null,
+          "costBasis": "free"
+        }
+      ],
+      "policy": {
+        "mode": "balanced",
+        "seats": {},
+        "updatedAt": "2026-10-26T12:00:00.000Z",
+        "taskArms": {
+          "enabled": true,
+          "classes": {
+            "code": [
+              { "engine": "grok", "model": null, "effort": "low" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "nowMs": 1793016000000
+      }
+    }
+  }
+}

@@ -415,6 +415,19 @@ a producer that has not landed reports `unavailable`. Items carrying a different
 180 days), `~/.ashlr/verse/attachments/<sid>/`, `~/.ashlr/fleet/mirrors/`. Directories 0700, files 0600, and none of them
 inside a repository.
 
+### Task-aware arms (additive flag)
+
+`BudgetPolicy.taskArms` (`routing/types.ts`) is an additive flag held only in the stored policy file;
+`POST /api/verse/budget` cannot change it. Shape: `{ enabled, classes: { <RoutingTask>: TaskArm[] } }`, where an arm is
+`{ id?, engine, model | null, effort: 'low' | 'medium' | 'high', pace? }` and `pace` is `{ windowMs, budgetTokens,
+leadFraction? }` for a rolling token window. While `enabled` and the request is autonomous, `routeSeat`
+(`routing/router.ts`) restricts an armed class to eligible seats that can serve a valid arm inside its LP pace ceiling
+(`paceCeilingAt`, `resources/pacing.ts`), then ranks by measured merged green PRs per token supplied through
+`RouteOptions.armStats` keyed by `taskArmKey`. `SeatDecision.taskArm` reports the serving arm and its yield, and the
+`task-arm` `SeatReasonKind` names arm gates in `exclusions`. An arm whose engine is not a `BudgetEngine` is dropped at
+load and can never be selected; a flag that is absent, disabled, empty for the class, or applied to a non-autonomous
+request leaves the decision byte-identical to the unarmed router.
+
 ## V3.11 additive contract — the cloud lane
 
 3.11 adds one mounted module after `budget`: **cloud** (`cloud/cloud-api.ts`, wire shapes and constants in
