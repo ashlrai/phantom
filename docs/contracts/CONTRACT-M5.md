@@ -167,6 +167,26 @@ export function buildRollup(
 
 /** Window label -> milliseconds ('1d'->86_400_000, '7d', '30d'). Unknown -> 7d. */
 export function windowToMs(window: string): number;
+
+/**
+ * Tokens and dollars per merged PR by pool, from queue.v1 fleet_hop spool
+ * events (the local cost record feeding the coding pool cost feed). A PR
+ * joins once a hop exits the 'merged' station at/after opts.sinceMs; every
+ * attributed hop then counts. Re-emitted hops collapse on $insert_id;
+ * test:true hops never count. METADATA ONLY. Never throws.
+ */
+export function buildMergedPrCostRollup(
+  input: readonly unknown[],
+  opts?: { sinceMs?: number },
+): MergedPrCostRollup;
+
+/** Read the fleet-hop spool as raw parsed rows (malformed lines -> null). */
+export function collectFleetHopEvents(opts?: { spoolPath?: string }): unknown[];
+
+/** collectFleetHopEvents + buildMergedPrCostRollup; opts.window maps to sinceMs. */
+export function mergedPrCostRollupFromSpool(
+  opts?: { spoolPath?: string; window?: '1d' | '7d' | '30d'; sinceMs?: number },
+): MergedPrCostRollup;
 ```
 
 ### `src/core/observability/budget-alert.ts`
