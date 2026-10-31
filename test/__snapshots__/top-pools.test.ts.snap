@@ -1,0 +1,109 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`top pools > --json emits one versioned object with the complete schema and no terminal escapes 1`] = `
+{
+  "generatedAt": "2026-10-26T16:00:00.000Z",
+  "localSubscriptionUsage": {
+    "claude": null,
+    "codex": {
+      "usedPercent": 40,
+      "windowLabel": "5h",
+    },
+  },
+  "pools": [
+    {
+      "engine": "claude",
+      "poolId": "claude",
+      "scheduling": {
+        "admission": "unknown",
+        "forecast": null,
+        "headroomPercent": null,
+        "observedAt": "2026-10-26T16:00:00.000Z",
+        "opportunity": {
+          "kind": "unknown",
+          "reason": "A fresh, current account-window observation is required.",
+        },
+        "reset": {
+          "at": null,
+          "description": "Tomorrow",
+          "kind": "unknown",
+          "source": null,
+        },
+        "seatId": "claude",
+      },
+    },
+    {
+      "engine": "codex",
+      "poolId": "codex-personal",
+      "scheduling": {
+        "admission": "eligible",
+        "forecast": null,
+        "headroomPercent": 55,
+        "observedAt": "2026-10-26T16:00:00.000Z",
+        "opportunity": {
+          "kind": "before-reset",
+          "reason": "Qualified native subscription weekly deadline has admitted headroom; work fit remains an estimate.",
+        },
+        "reset": {
+          "at": "2026-10-27T16:00:00.000Z",
+          "description": null,
+          "kind": "weekly-deadline",
+          "plan": "plus",
+          "source": "codex-native-rate-limits",
+          "windowDurationMins": 10080,
+        },
+        "seatId": "codex-personal",
+      },
+    },
+    {
+      "engine": "codex",
+      "poolId": "codex-work",
+      "scheduling": {
+        "admission": "held",
+        "forecast": null,
+        "headroomPercent": 0,
+        "observedAt": "2026-10-26T16:00:00.000Z",
+        "opportunity": {
+          "kind": "held",
+          "reason": "The weekly window is 99% used; 20% is kept for you, so autonomy stops at 80% (resets 2026-10-27T16:00:00.000Z).",
+        },
+        "reset": {
+          "at": "2026-10-27T16:00:00.000Z",
+          "description": null,
+          "kind": "weekly-deadline",
+          "plan": "plus",
+          "source": "codex-native-rate-limits",
+          "windowDurationMins": 10080,
+        },
+        "seatId": "codex-work",
+      },
+    },
+  ],
+  "schemaVersion": 1,
+  "source": "capacity-snapshot",
+}
+`;
+
+exports[`top pools > does not assign local engine usage to missing personal telemetry 1`] = `
+"Pool capacity | 2026-10-26T16:00:00.000Z
+Source: missing
+Pool | Engine | Admission | Headroom | Reset kind | Reset at | Pressure
+codex-personal | codex | unknown | unknown | unknown | unknown | unknown
+Local subscription signal (engine-wide, account attribution unknown):
+  claude: unknown
+  codex: 40% used (5h)
+Read-only estimates; this panel does not authorize dispatch."
+`;
+
+exports[`top pools > renders each account as a co-equal lane 1`] = `
+"Pool capacity | 2026-10-26T16:00:00.000Z
+Source: capacity-snapshot
+Pool | Engine | Admission | Headroom | Reset kind | Reset at | Pressure
+claude | claude | unknown | unknown | unknown | unknown | unknown
+codex-personal | codex | eligible | 55% | weekly-deadline | 2026-10-27T16:00:00.000Z | before-reset
+codex-work | codex | held | 0% | weekly-deadline | 2026-10-27T16:00:00.000Z | held
+Local subscription signal (engine-wide, account attribution unknown):
+  claude: unknown
+  codex: 40% used (5h)
+Read-only estimates; this panel does not authorize dispatch."
+`;
