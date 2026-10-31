@@ -22,6 +22,7 @@ function windowText(name: string, window: CodexResourceWindow | null): string {
   return `  ${name}: ${window.usedPct === null ? 'unavailable' : `${window.usedPct}% used`} | resets: ${window.resetsAt ?? 'unknown'}`;
 }
 
+/** Exit 0 for current usage evidence; exit 1 when evidence is stale or unavailable. */
 export function cmdResourcePersonalUsage(opts: { json: boolean; home?: string }): number {
   const homeDir = homedir();
   const personalHome = resolve(opts.home ?? join(homeDir, '.codex-2'));
@@ -44,5 +45,5 @@ export function cmdResourcePersonalUsage(opts: { json: boolean; home?: string })
     console.log(windowText('Session', resource.session));
     console.log(windowText('Weekly', resource.weekly));
   }
-  return 0;
+  return report.resources[0]?.state === 'current' ? 0 : 1;
 }
