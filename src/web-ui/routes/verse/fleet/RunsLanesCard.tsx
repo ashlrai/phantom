@@ -5,6 +5,7 @@ import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { runQuery } from '../../../data/cache.js';
 import { useQuery } from '../../../data/hooks.js';
 import { useNow } from '../autonomy/use-ticker.js';
+import { openDockPane } from '../dock/dock-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { laneShort } from './lane-label.js';
 import { headerText, laneFill, laneNote, sortLanes } from './runs-lanes-model.js';
@@ -28,7 +29,8 @@ export function RunsLanesCard() {
     {read.status === 'loading' ? <SkeletonLine /> : data ? data.lanes.length === 0 ? <p>No lanes reported on this Mac.</p>
       : <div className={styles.scroll}><table><thead><tr>{['Lane', 'Running/Target', 'Queued', 'Tokens 1h', 'Merged 24h', 'Note'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
         <tbody>{sortLanes(data.lanes).map(lane => <tr key={lane.lane}>
-          <th scope="row" title={lane.lane}>{laneShort(lane.lane)}</th><td>{laneFill(lane)}</td><td title={laneNote(lane)}>{lane.queued}</td>
+          <th scope="row" title={lane.lane}><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane for ${lane.lane}`}>{laneShort(lane.lane)}</button></th><td>{laneFill(lane)}</td>
+          <td title={laneNote(lane)}>{lane.queued > 0 ? <button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-queue')} aria-label={`Open Queue pane, ${lane.queued} queued in ${lane.lane}`}>{lane.queued}</button> : lane.queued}</td>
           <td>{lane.tokensLastHour ?? '—'}</td><td>{lane.merged24h ?? '—'}</td><td>{laneNote(lane)}</td>
         </tr>)}</tbody></table></div> : null}
   </section>;
