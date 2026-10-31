@@ -5,6 +5,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { splitRefs } from '../fleet/job-refs.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
@@ -16,6 +17,7 @@ import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } f
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
+import { canResend, resendPrefill } from './inbox-resend.js';
 import styles from './fleet-inbox.module.css';
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -100,6 +102,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
           {jobs.length > 6 && <span>+{jobs.length - 6} more</span>}
         </div>}
         <Button size="sm" onClick={() => host.addToMessage(quoteForMessage(entry))}>Add to message</Button>
+        {canResend(entry) && <Button size="sm" variant="ghost" aria-label={`Resend order from ${entry.at.slice(11)}`} onClick={() => openInterjectDialog({ prefill: resendPrefill(entry) })}>Resend</Button>}
       </article>; })}
     </section>)}
     </>}

@@ -1,3 +1,5 @@
+import { stateWord, type OrderTraceJob } from '../fleet-inbox/order-trace-model.js';
+
 /**
  * fleet-steering/steering-model.ts — aligns each leaders'-inbox order with
  * the dispatcher events that followed it, so "did my 00:13 order cause
@@ -186,4 +188,13 @@ export function fleetSourceHealth(snapshot: unknown): { inbox: string | null; ru
     inbox: typeof sources.inbox === 'string' ? sources.inbox : null,
     runsDir: typeof sources.runsDir === 'string' ? sources.runsDir : null,
   };
+}
+
+/** Prompt citations are evidence of work; reaction timing alone is not. */
+export function citedJobsLine(jobs: readonly OrderTraceJob[], firstReactionMinutes: number | null): string {
+  if (jobs.length === 0) {
+    return 'No job cites this order yet' + (firstReactionMinutes === null ? '' : ` · first reaction ${firstReactionMinutes} min later`);
+  }
+  const states = jobs.map(stateWord);
+  return `${jobs.length} jobs cite this order · ${states.filter(state => state === 'published').length} published · ${states.filter(state => state.startsWith('PR #')).length} open PRs`;
 }

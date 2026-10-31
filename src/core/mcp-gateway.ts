@@ -8,14 +8,14 @@
  *      startup failures, timeouts, and crashes surface in the returned health
  *      object (ok:false + error). Used by `ashlr mcp doctor` and gateway startup.
  *
- *   2. startGateway(registry): run a stdio MCP server (this process) that starts
- *      every discovered downstream as a child, namespaces their tools as
+ *   2. startGateway(registry): run a stdio MCP server (this process) that lazily starts
+ *      downstreams with cached inventories on their first tool call, namespaces their tools as
  *      `<server>__<tool>`, and proxies tools/list + tools/call to the correct
  *      downstream. ROBUST: per-downstream startup timeout; a downstream that
  *      fails to start is skipped with a stderr warning and never crashes the
  *      gateway. Point ANY agent at `ashlr mcp` to get every discovered tool.
  *
- * This module is the ONLY place (besides mcp-registry) allowed to depend on
+ * This module and its inventory cache (besides mcp-registry) depend on
  * @modelcontextprotocol/sdk.
  */
 
@@ -39,6 +39,7 @@ import {
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
 import { loadConfig } from './config.js';
+import { toolCachePath, readToolCache, writeToolCache } from './mcp-tool-cache.js';
 import { withToolEnv } from './env-bridge.js';
 import { withHeal, defaultHealPolicy } from './run/self-heal.js';
 import { listNativeTools, isNativeTool, callNativeTool } from './mcp-native.js';
@@ -599,6 +600,8 @@ interface DownstreamTool {
 /** Keep failed configured servers too; discovery may recover them later. */
 interface Downstream {
   spec: McpServerSpec;
+  cachePath?: string;
+  lazy: boolean;
   env: Record<string, string>;
   client: Client | null;
   tools: DownstreamTool[];
@@ -611,7 +614,9 @@ interface Downstream {
 }
 
 /**
- * Persistent stdio aggregation. Read-only tools/list may reconnect a failed
+ * Persistent stdio aggregation. Fresh cached inventories start without a child;
+ * their first tool call shares one connection/discovery attempt. Cold inventories
+ * use eager discovery. Read-only tools/list may reconnect a failed
  * configured server once after bounded backoff; effectful calls are never
  * retried. Recovery preserves the captured command, args and child environment.
  * Inventories are replaced only after bounded, complete pagination. Failed
@@ -643,9 +648,12 @@ export async function startGateway(
     Object.freeze(spec.args);
     if (spec.env) Object.freeze(spec.env);
     Object.freeze(spec);
-    return { spec, env: downstreamEnv(spec, gatewayCfg), client: null, tools: [], hasInventory: false, generation: 0, failures: 0, retryAfter: 0 };
+    const env = downstreamEnv(spec, gatewayCfg);
+    const cachePath = toolCachePath(spec, env);
+    const tools = readToolCache(cachePath);
+    return { spec, env, cachePath, lazy: tools !== undefined, client: null, tools: tools ?? [], hasInventory: tools !== undefined, generation: 0, failures: 0, retryAfter: 0 };
   });
-  interface Route { downstream: Downstream; client: Client; original: string }
+  interface Route { downstream: Downstream; client: Client | null; original: string }
   const routes = new Map<string, Route>();
   const rejectedRoutes = new Set<string>();
   let closed = false;
@@ -664,7 +672,7 @@ export async function startGateway(
       else owners.set(key, d);
     }
     for (const d of downstreams) {
-      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
+      if ((!d.client && !d.lazy) || (!d.lazy && d.discoveryError !== undefined) || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
         if (rejectedRoutes.has(key)) continue;
@@ -689,7 +697,7 @@ export async function startGateway(
   const refresh = (d: Downstream, startup = false): Promise<void> => {
     if (closed) return Promise.resolve();
     if (d.inFlight) return d.inFlight;
-    if (!d.client && Date.now() < d.retryAfter) return Promise.resolve();
+    if (!d.lazy && !d.client && Date.now() < d.retryAfter) return Promise.resolve();
     const generation = d.generation;
     const operation = (async (): Promise<void> => {
       let client = d.client;
@@ -708,6 +716,8 @@ export async function startGateway(
         }
         const tools = await discoverTools(client, d.spec.name, timeoutMs);
         if (closed || generation !== d.generation || d.client !== client) return;
+        writeToolCache(d.cachePath, tools);
+        d.lazy = false;
         d.tools = tools;
         d.hasInventory = true;
         d.discoveryError = undefined;
@@ -727,7 +737,8 @@ export async function startGateway(
     return operation;
   };
 
-  await Promise.all(downstreams.map((d) => refresh(d, true)));
+  await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d, true)));
+  rebuildRoutes();
   const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
@@ -741,11 +752,11 @@ export async function startGateway(
     assertUsable();
     const tools: { name: string; description?: string; inputSchema: unknown }[] = listNativeTools()
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
-    await Promise.all(downstreams.map((d) => refresh(d)));
+    await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d)));
     assertUsable();
     // Completion order never changes route precedence or response order.
     for (const d of downstreams) {
-      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
+      if ((!d.client && !d.lazy) || (!d.lazy && d.discoveryError !== undefined) || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
         if (rejectedRoutes.has(key)) {
@@ -777,8 +788,21 @@ export async function startGateway(
     assertUsable();
     const requested = request.params.name;
     if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
-    const route = routes.get(requested);
-    if (!route || route.downstream.client !== route.client) {
+    let route = routes.get(requested);
+    if (route?.downstream.lazy) {
+      const d = route.downstream;
+      await refresh(d);
+      if (!d.client || d.discoveryError !== undefined) {
+        const error = d.discoveryError ?? 'Downstream unavailable';
+        // A failed lazy connection keeps its cached routes and can retry immediately.
+        d.discoveryError = undefined;
+        d.retryAfter = 0;
+        rebuildRoutes();
+        return { isError: true, content: [{ type: 'text', text: error }] };
+      }
+      route = routes.get(requested);
+    }
+    if (!route || !route.client || route.downstream.client !== route.client) {
       const live = [...routes].filter(([, r]) => r.downstream.client === r.client).map(([name, r]) => ({ name, original: r.original }));
       throw new Error(unknownToolMessage(requested, live));
     }
