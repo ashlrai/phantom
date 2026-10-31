@@ -10,6 +10,8 @@
  *   ashlr resources --watch   — refresh every 30s (Ctrl-C to stop)
  */
 
+import { isAbsolute, parse, resolve } from 'node:path';
+
 import type { BackendResourceState } from '../core/fabric/resource-monitor.js';
 import { noColorRequested } from './ui.js';
 
@@ -161,6 +163,7 @@ function printResourcesHelp(): void {
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
   console.log('  Usage: phm resources [--json] [--watch]');
+  console.log('         phm resources personal [--json] [--home <absolute-path>]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
   console.log('         phm resources launcher --help');
   console.log('         phm resources profile --help');
@@ -168,11 +171,41 @@ function printResourcesHelp(): void {
   console.log('');
   console.log(`    ${cyan('phm resources')}          ${dim('table view of availability/used%/cap/resets')}`);
   console.log(`    ${cyan('phm resources --json')}   ${dim('raw JSON (ResourceSnapshot)')}`);
+  console.log(`    ${cyan('phm resources autopilot --json')} ${dim('read-only lane targets from disk, inode and credit readings')}`);
   console.log(`    ${cyan('phm resources --watch')}  ${dim('refresh every 30s (Ctrl-C to stop)')}`);
   console.log('');
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'personal') {
+    let json = false;
+    let help = false;
+    let home: string | undefined;
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--json' && !json) json = true;
+      else if ((arg === '--help' || arg === '-h') && !help) help = true;
+      else if (arg === '--home' && home === undefined) {
+        const value = args[++i];
+        if (!value || !isAbsolute(value) || value !== value.trim() || /\p{Cc}/u.test(value) || value.length > 4096 ||
+            resolve(value) === parse(value).root || value.split(/[\\/]+/).some(part => ['.codex', '..'].includes(part))) {
+          process.stderr.write('Invalid personal home; provide an absolute personal path.\n');
+          return 2;
+        }
+        home = value;
+      } else {
+        process.stderr.write('Invalid personal arguments; use phm resources personal --help.\n');
+        return 2;
+      }
+    }
+    if (help) {
+      console.log('Usage: phm resources personal [--json] [--home <absolute-path>]');
+      console.log('Read personal Codex session usage (default: ~/.codex-2); no usage history is written.');
+      return 0;
+    }
+    const { cmdResourcePersonalUsage } = await import('./resource-personal-usage.js');
+    return cmdResourcePersonalUsage({ json, home });
+  }
   if (args[0] === 'claude-promotion') {
     const { cmdClaudePromotion } = await import('./claude-promotion.js');
     return cmdClaudePromotion(args.slice(1));
@@ -184,6 +217,10 @@ export async function cmdResources(args: string[]): Promise<number> {
   if (args[0] === 'launcher') {
     const { cmdResourceLauncher } = await import('./resource-launcher.js');
     return cmdResourceLauncher(args.slice(1));
+  }
+  if (args[0] === 'autopilot') {
+    const { cmdResourceAutopilot } = await import('./resource-autopilot.js');
+    return cmdResourceAutopilot(args.slice(1));
   }
   if (args[0] === 'pool') {
     const { cmdResourcePool } = await import('./resource-pool.js');

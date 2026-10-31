@@ -1,6 +1,8 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { evictAll } from '../../data/cache.js';
+import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
+import { NOTIFICATION_CATEGORY_LABEL } from './types.js';
+import { evictAll, refetchQuery } from '../../data/cache.js';
 import { markCheckComplete } from '../../data/auth-store.js';
 import { __resetNotificationStoreForTests, getNotificationSnapshot } from './notification-store.js';
 import { useNotificationEngine } from './useNotificationEngine.js';
@@ -50,6 +52,7 @@ describe('notification refresh channel', () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+      '/api/verse/fleet/runs': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -65,6 +68,7 @@ describe('notification refresh channel', () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+      '/api/verse/fleet/runs': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -88,7 +92,31 @@ describe('notification refresh channel', () => {
       'next-action-check-output', 'proposal-backlog', 'run-failed-failed-run', 'security-critical',
     ]);
     for (const path of Object.keys(sources)) {
-      expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(2);
+      expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(path === '/api/verse/fleet/runs' ? 1 : 2);
     }
+  });
+
+  it('derives the fleet category and retires it when the optional endpoint answers 404', async () => {
+    let missing = false;
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      if (path === '/api/verse/fleet/runs') return missing
+        ? new Response('not found', { status: 404 })
+        : new Response(JSON.stringify({ generatedAt: '2026-09-06T12:05:00.000Z', paused: false,
+          claudeLane: 'down', lanes: [], workers: [], mergesLastHour: { count: null }, drop: null, events: [] }));
+      const sources: Record<string, unknown> = { '/api/control': healthyControl(),
+        '/api/fleet': { nextActions: [] }, '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] } };
+      return new Response(JSON.stringify(sources[path]));
+    }));
+    await act(async () => { render(<Harness />); });
+    expect(getNotificationSnapshot().items).toEqual([expect.objectContaining({
+      id: 'fleet-claude-lane-down', category: 'fleet', severity: 'high',
+    })]);
+    expect(NOTIFICATION_CATEGORY_LABEL.fleet).toBe('Fleet on this Mac');
+    missing = true;
+    await expect(fleetRunsNotifyQuery.fetch()).resolves.toBeNull();
+    await act(async () => {
+      await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true);
+    });
+    expect(getNotificationSnapshot().items).toEqual([]);
   });
 });
