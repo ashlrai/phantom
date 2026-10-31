@@ -27,6 +27,7 @@ import { runFleetAction } from '../fleet-actions.js';
 import { fleetStateView, type FleetHeadline } from '../fleet-state.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
+import { HomeRuns } from '../HomeRuns.js';
 import { Button, SkeletonList } from '../ui.js';
 import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './HomeScreen.module.css';
@@ -165,6 +166,7 @@ export function HomeBody() {
         )}
       </Section>
 
+      <HomeRuns />
       <MobileInterject />
 
       <Suspense fallback={<Section title="Seats" flat><SkeletonList rows={3} label="Loading seats" /></Section>}>

@@ -1,0 +1,3 @@
+accept RQ-PHX-ALPHA.md
+reject RQ-PHX-FOO.md denied-path
+accept RQ-PHX-BETA.md
