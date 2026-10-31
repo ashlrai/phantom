@@ -173,9 +173,17 @@ describe('operator documentation navigation', () => {
     const result = checkDocumentation({ root, mode: 'package' });
     expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });
     expect(result.sourceLinks).toBeGreaterThan(0);
-    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md']) {
+    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md', 'docs/BRIDGE-WORKTREES.md']) {
       expect(existsSync(join(root, excluded))).toBe(false);
     }
+  });
+
+  it('links the source-only model inventory guide from the packaged documentation index', () => {
+    const root = packagedDocumentation();
+    const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+    expect(index).toContain('https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/README.md'] }).errors).toEqual([]);
   });
 
   it.each(['RESIDENT-RUNTIME', 'DEVIN'])('refuses an omitted %s operator guide in the package', (guide) => {
