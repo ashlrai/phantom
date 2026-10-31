@@ -22,6 +22,8 @@ import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { VerseControlLockedError } from '../../autonomy/control-queries.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { BusSection } from '../BusSection.js';
+import { busLiteQuery } from '../bus-query.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { fleetRunsQuery, postFleetRunsInbox } from '../runs-queries.js';
@@ -54,9 +56,12 @@ function untilText(iso: string, now: number): string {
   return `in ${Math.round(ms / 86_400_000)} d`;
 }
 
-/** Pull-to-refresh: the one read this screen has, forced fresh. */
+/** Pull-to-refresh: force both reads fresh. */
 export function refreshRunsScreen(): Promise<unknown> {
-  return refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
+  return Promise.all([
+    refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true),
+    refetchQuery(busLiteQuery.key, () => busLiteQuery.fetch(), true),
+  ]);
 }
 
 export function RunsScreen() {
@@ -197,6 +202,7 @@ export function RunsScreen() {
             </div>
           )}
         </Section>
+        <BusSection />
       </>
     );
   }
