@@ -1,5 +1,5 @@
 /**
- * routes/verse/sections/AboutPanel.tsx — what this is and which build it is.
+ * routes/verse/sections/AboutPanel.tsx: what this is and which build it is.
  * The version comes from package.json at build time (./app-version.ts).
  */
 import { PRODUCT_COMPANY, PRODUCT_DESCRIPTOR } from '../../../app/product-brand.js';
@@ -25,9 +25,10 @@ export function AboutPanel() {
               <span>Interface build</span><Tag mono>v{APP_VERSION}</Tag>
             </p>
           ) : null}
+          <p className={styles.aboutLine}>Build versions identify this interface and desktop shell; release availability is separate.</p>
           <p className={styles.aboutLine}>{PRODUCT_DESCRIPTOR} · by {PRODUCT_COMPANY}</p>
           <p className={styles.aboutLine}>
-            The workbench connects to a local server. Agent and cloud sessions use the providers and accounts you connect.
+            Work with agents in chat or delegate fleet outcomes. Sessions use the providers and accounts you connect.
           </p>
           <p className={styles.aboutLine}>
             <a
@@ -36,7 +37,7 @@ export function AboutPanel() {
               target="_blank"
               rel="noreferrer noopener"
             >
-              Source and changelog
+              Source repository
               <IconExternalLink size={12} />
             </a>
           </p>

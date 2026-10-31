@@ -6,6 +6,7 @@
  * an active trigger at the caret, what a completion inserts and where the
  * caret lands, and how an attachment token is added and removed.
  */
+import { FLEET_RUNS_INBOX_MAX_CHARS } from '../../../../core/verse/fleet-runs-types.js';
 import type { VerseFileMatch } from '../../../../core/verse/workbench-types.js';
 
 export type ComposerTrigger =
@@ -83,7 +84,7 @@ export function mentionFor(match: VerseFileMatch, primaryRoot: string | null): s
 // Slash commands
 // ---------------------------------------------------------------------------
 
-export type SlashCommandId = 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
+export type SlashCommandId = 'fleet' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
 
 export interface SlashCommand {
   id: SlashCommandId;
@@ -91,7 +92,7 @@ export interface SlashCommand {
   description: string;
 }
 
-/** SPEC-310C §2: `/` offers exactly these, in this order. */
+/** Commands offered by the composer. */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'handoff', title: '/handoff', description: 'Continue in a fresh chat with a handoff note' },
   { id: 'compact', title: '/compact', description: 'Summarise earlier turns to free context (sent as a turn)' },
@@ -99,6 +100,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'plan', title: '/plan', description: 'Switch this chat to Plan mode — nothing is edited' },
   { id: 'effort', title: '/effort', description: 'Choose the reasoning effort' },
   { id: 'model', title: '/model', description: 'Choose the model' },
+  { id: 'fleet', title: '/fleet', description: 'Send a message to the fleet leaders’ inbox' },
 ];
 
 /** Commands whose id or title starts with (then contains) the query. */
@@ -154,4 +156,10 @@ export function readFileAsBase64(file: Blob): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+/** Parse only a leading fleet command; the inbox bounds the trimmed payload. */
+export function parseFleetCommand(draft: string): { text: string } | null {
+  const match = /^\/fleet\s+(\S[\s\S]*)$/.exec(draft);
+  return match ? { text: match[1]!.trim().slice(0, FLEET_RUNS_INBOX_MAX_CHARS) } : null;
 }

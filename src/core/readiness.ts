@@ -21,7 +21,7 @@
  * time, so we do NOT use it here for the writeable probe.)
  */
 
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import {
   accessSync,
   closeSync,
@@ -35,6 +35,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import type { AshlrConfig } from './types.js';
 import { probeEndpoint } from './providers.js';
@@ -976,4 +977,55 @@ export async function buildReadiness(cfg: AshlrConfig): Promise<ReadinessReport>
     ...(locus ? { locus } : {}),
     generatedAt: new Date().toISOString(),
   };
+}
+
+// RQ-ONB-2 DETECT: read-only CLI detection for GET /api/onboard/status. Same
+// rules as every facet above: mutate nothing, never throw, report metadata only.
+
+/** READ-ONLY resolution of a CLI binary via `which`/`where`, or null. Never throws. */
+export function resolveCliOnPath(binary: string): string | null {
+  if (!/^[A-Za-z0-9._-]+$/.test(binary)) return null;
+  try {
+    const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [binary],
+      { encoding: 'utf8', timeout: 4000 });
+    if (r.error || r.status !== 0) return null;
+    return (r.stdout ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export type CliLoginVerdict = 'logged-in' | 'logged-out' | 'unknown';
+
+const execFileAsync = promisify(execFile);
+
+function cliLoginVerdict(exitCode: number | null, output: string): CliLoginVerdict {
+  const text = output.trim();
+  try {
+    // JSON status answers (e.g. `claude auth status`) carry the verdict explicitly.
+    const loggedIn = (JSON.parse(text) as { loggedIn?: unknown }).loggedIn;
+    if (typeof loggedIn === 'boolean') return loggedIn ? 'logged-in' : 'logged-out';
+  } catch { /* not a JSON verdict */ }
+  if (/not logged in|logged out|no credentials|unauth/i.test(text)) return 'logged-out';
+  if (exitCode === 0 && /logged in|authenticated/i.test(text)) return 'logged-in';
+  return 'unknown';
+}
+
+/**
+ * READ-ONLY login verdict from a CLI's OWN status command (`codex login
+ * status`, `claude auth status`): argv split, execFile WITHOUT a shell,
+ * bounded timeout, never a token file or credential store. Raw output is
+ * discarded after parsing so account identifiers cannot leak. Never throws.
+ */
+export async function probeCliLogin(checkCommand: string, timeoutMs = 4000): Promise<CliLoginVerdict> {
+  const argv = checkCommand.trim().split(/\s+/).filter(Boolean);
+  try {
+    const { stdout, stderr } = await execFileAsync(argv[0]!, argv.slice(1),
+      { timeout: timeoutMs, maxBuffer: 65536, encoding: 'utf8' });
+    return cliLoginVerdict(0, `${stdout ?? ''}\n${stderr ?? ''}`);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
+    if (err.killed === true || err.code === 'ENOENT') return 'unknown';
+    return cliLoginVerdict(typeof err.code === 'number' ? err.code : null, `${err.stdout ?? ''}\n${err.stderr ?? ''}`);
+  }
 }
