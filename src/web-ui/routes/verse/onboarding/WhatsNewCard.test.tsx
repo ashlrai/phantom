@@ -7,6 +7,7 @@ import { OnboardingGate } from './OnboardingGate.js';
 import { completeOnboarding, markReleaseSeen, replayOnboarding, resetOnboarding } from './onboarding-store.js';
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), section: vi.fn(), panes: vi.fn() }));
+vi.mock('../../../data/hooks.js', () => ({ useQuery: () => ({ data: { sources: { runsDir: 'healthy' } } }) }));
 vi.mock('./OnboardingFlow.js', () => ({ OnboardingFlow: () => <h2>Tour</h2> }));
 vi.mock('../dock/dock-store.js', () => ({ openFleetWorkspace: mocks.open }));
 vi.mock('../panes/index.js', () => ({ listPanes: mocks.panes }));
