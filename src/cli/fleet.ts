@@ -2473,6 +2473,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
+    case 'session': {
+      const { cmdFleetSession } = await import('./fleet-session.js');
+      return cmdFleetSession(rest);
+    }
     case 'lanes':
       return cmdFleetLanes(rest);
     case 'direction':
@@ -2524,6 +2528,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
+  console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);

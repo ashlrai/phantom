@@ -198,6 +198,23 @@ stderr.
 For the desktop app and the first useful turn, follow the
 [Quickstart](QUICKSTART.md) and [desktop/README.md](../desktop/README.md).
 
+### Inspecting a router job session
+
+`phm fleet session <job> --json [--follow] [--queue-dir <abs>]` reads
+`jobs.jsonl` in `~/.ashlr-runs/queue` (or the supplied queue directory).
+It combines matching transitions into a `fleet.session.v1` snapshot with
+job id, lane, status, repository, tier, timestamp, PR URL, provider session
+URLs and the last 64 KiB of log text. Missing links are null; a missing log
+is empty. It reads `logPath`, `log_file`, `logFile` or `log` from the ledger,
+falling back to `<queue-dir>/logs/<job>.log`. Recognized secret patterns in
+log text are redacted. Ledger reads cover the latest 4 MiB.
+
+`--follow` emits complete JSON Lines snapshots whenever the metadata or log
+tail changes, polling every 500 ms, and exits on a terminal job status or
+SIGINT/SIGTERM. Finished jobs emit once. Unknown jobs return a JSON error
+and exit 1; malformed arguments exit 2. This command is read-only and
+never contacts providers.
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
