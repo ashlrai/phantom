@@ -103,6 +103,21 @@ export default tseslint.config(
     },
   },
   {
+    // .github/tests/*.mjs declare their Node globals per file via
+    // `/* global */` directives. ci-mac-rotation.test.mjs is the exception —
+    // it has no directive yet resolves URLs via `new URL(..., import.meta.url)`.
+    // Scope the missing global to that file only; giving the whole directory
+    // these globals would collide with the per-file directives (no-redeclare).
+    files: ['.github/tests/ci-mac-rotation.test.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     // Node build scripts (e.g. scripts/copy-assets.mjs) run under Node and use
     // Node globals.
     files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
