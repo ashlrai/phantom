@@ -100,9 +100,11 @@ describe('Mason inbox', () => {
     expect(await appendInboxEntry('hello', { runsDir })).toEqual({ ok: false, reason: 'write-failed' });
   });
 
-  it('reports failure if the event log cannot be appended after the inbox write', async () => {
+  it('reports success if the event log cannot be appended after the inbox write', async () => {
     await mkdir(join(runsDir, 'dispatch-events.log'));
-    expect(await appendInboxEntry('hello', { runsDir, now: () => when })).toEqual({ ok: false, reason: 'write-failed' });
+    expect(await appendInboxEntry('hello', { runsDir, now: () => when })).toEqual({
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(formatInboxEntry('hello', 'Phantom desktop', when)),
+    });
     expect(await readFile(inboxPath(), 'utf8')).toBe(formatInboxEntry('hello', 'Phantom desktop', when));
   });
 });

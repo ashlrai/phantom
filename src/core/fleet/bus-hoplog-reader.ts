@@ -22,7 +22,7 @@ export interface BusHopReadResult {
   status: 'ok' | 'missing' | 'unreadable';
   /** Valid hops in original file order, selecting the most recent when capped. */
   hops: Readonly<BusHop>[];
-  /** Complete rows in the scanned tail that failed JSON or hop validation. */
+  /** Complete rows in the scanned tail that failed UTF-8, JSON or hop validation. */
   invalidRows: number;
   /** The last row lacked a newline and was excluded, even if it was valid JSON. */
   partialFinalRow: boolean;
@@ -102,14 +102,15 @@ export function readBusHopsDetailed(options: BusHopReadOptions = {}): BusHopRead
     }
     const end = partialFinalRow ? bytes.lastIndexOf(10) + 1 : length;
     const hops: Readonly<BusHop>[] = [];
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     let invalidRows = 0, rowTruncated = false, next = 0;
     for (let offset = start; offset < end;) {
       const newline = bytes.indexOf(10, offset);
       if (newline < 0 || newline >= end) break;
-      const line = bytes.toString('utf8', offset, newline);
+      const line = bytes.subarray(offset, newline);
       offset = newline + 1;
       let hop: Readonly<BusHop> | null = null;
-      try { const parsed: unknown = JSON.parse(line); hop = createBusHop(parsed, parsed); } catch { /* invalid row */ }
+      try { const parsed: unknown = JSON.parse(decoder.decode(line)); hop = createBusHop(parsed, parsed); } catch { /* invalid row */ }
       if (!hop) { invalidRows++; continue; }
       if (hops.length < maxRows) hops.push(hop);
       else { hops[next] = hop; next = (next + 1) % maxRows; rowTruncated = true; }
