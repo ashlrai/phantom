@@ -24,6 +24,7 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { VerseControlLockedError } from '../../autonomy/control-queries.js';
+import { JOB_ID_RE } from '../../fleet-job-log/worker-log-model.js';
 import { laneTargetsQuery } from '../../ops/lane-targets-queries.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
@@ -170,7 +171,8 @@ export function RunsScreen() {
             <>
               <div className={ui.group}>
                 {workers.map((w, i) => (
-                  <Row key={`${w.job}-${i}`} title={w.job} subtitle={`${w.repo} · ${w.lane} · ${w.tier}`} trailing={ageText(w.ageSeconds)} />
+                  <Row key={`${w.job}-${i}`} title={w.job} subtitle={`${w.repo} · ${w.lane} · ${w.tier}`} trailing={ageText(w.ageSeconds)}
+                    label={`Open worker ${w.job}`} onClick={JOB_ID_RE.test(w.job) ? () => navigate({ screen: 'worker', job: w.job }) : undefined} />
                 ))}
               </div>
               {data.workers.length > WORKER_CAP ? <p className={ui.faint}>+{data.workers.length - WORKER_CAP} more</p> : null}
