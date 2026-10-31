@@ -103,7 +103,7 @@ function printSnapshot(snapshot: import('../core/fabric/resource-monitor.js').Re
   console.log(bold('  Resource Snapshot') + gray(`  —  ${ts}`));
   console.log('');
 
-  const COL = { engine: 14, avail: 14, used: 7, cap: 14, resets: 10, cost: 10, latency: 8 };
+  const COL = { engine: 21, avail: 14, used: 7, cap: 14, resets: 10, cost: 10, latency: 8 };
   const header =
     `  ${bold(pad('engine', COL.engine))}` +
     `  ${bold(pad('avail', COL.avail))}` +
@@ -118,8 +118,10 @@ function printSnapshot(snapshot: import('../core/fabric/resource-monitor.js').Re
   console.log(gray(divider));
 
   for (const b of snapshot.backends) {
+    const localName = b.backend === 'local-coder' && /^(oMLX reachable|ollama (idle|saturated))/.test(b.reason)
+      ? `local-coder (${b.reason.startsWith('oMLX') ? 'oMLX' : 'ollama'})` : b.backend;
     const row =
-      `  ${pad(cyan(b.backend), COL.engine)}` +
+      `  ${pad(cyan(localName), COL.engine)}` +
       `  ${pad(availColor(b.availability), COL.avail)}` +
       `  ${pad(formatUsedPct(b), COL.used)}` +
       `  ${pad(formatCap(b), COL.cap)}` +

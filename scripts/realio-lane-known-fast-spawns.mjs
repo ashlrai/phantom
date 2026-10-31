@@ -17,6 +17,7 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/resources-local-omlx-probe.test.ts', // Bounded loopback fixture; slowest case is the 2s timeout.
   'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.
   'test/changelog-sync.test.ts', // 1.22s slowest test, 2026-10-26 JSON fixture run; local Node/git only, no network
   'test/grokbot-lane.test.ts', // 0.37s max on 2026-10-26; bounded loopback webhook, mocked Secrets child
