@@ -5,10 +5,11 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--limit <1..200>] [--json]
+const HELP = `phm comms inbox read [--source <label>] [--contains <text>] [--limit <1..200>] [--json]
 phm comms inbox post --file <text-file|-> [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
+--contains <text> is a literal case-insensitive substring match on message text (not regex) over the same bounded inbox tail, applied before the limit.
 The local process owner is the trust boundary; this does not authenticate internet or email senders.
 Input must be an owner-controlled stable regular UTF-8 text file, or stdin with --file - (maximum ${INBOX_MAX_CHARS} characters).
 Duplicate receipts are retained only for the receiver's process lifetime.`;
@@ -44,7 +45,7 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, json = false;
+    let file: string | undefined, json = false, contains: string | undefined;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
@@ -57,6 +58,11 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
         const key = arg.slice(2), value = rest[++i];
         if (value === undefined || ['--source', '--limit', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
+      } else if (verb === 'read' && arg === '--contains') {
+        const value = rest[++i];
+        if (value === undefined || !value.trim() || contains !== undefined ||
+          ['--source', '--limit', '--contains', '--json', '--file', '--help', '-h'].includes(value)) return invalid();
+        contains = value;
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
@@ -64,8 +70,16 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
-      const result = await readInboxEntries(queryParams.size ? { ...options, limit: Number.MAX_SAFE_INTEGER } : options);
-      const entries = queryParams.size ? projectInboxRead(result, query)!.entries : result.entries;
+      const result = await readInboxEntries(queryParams.size || contains !== undefined ? { ...options, limit: Number.MAX_SAFE_INTEGER } : options);
+      let entries;
+      if (contains !== undefined) {
+        const needle = contains.toLowerCase();
+        // Match on projected entries so redaction and the source filter still apply; the limit then keeps the newest matches.
+        entries = projectInboxRead(result, { limit: Number.MAX_SAFE_INTEGER, source: query.source })!.entries
+          .filter((entry) => entry.text.toLowerCase().includes(needle)).slice(-query.limit);
+      } else {
+        entries = queryParams.size ? projectInboxRead(result, query)!.entries : result.entries;
+      }
       console.log(JSON.stringify({ ...result, entries }));
       return result.sourceState === 'degraded' ? 1 : 0;
     }
