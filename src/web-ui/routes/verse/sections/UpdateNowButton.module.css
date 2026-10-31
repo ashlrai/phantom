@@ -14,3 +14,12 @@
 .result[data-tone='ok'] { color: var(--status-success-fg); }
 .result[data-tone='warning'] { color: var(--status-warning-fg); }
 .result[data-tone='danger'] { color: var(--status-danger-fg); }
+
+.steps {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-sm-size);
+  color: var(--text-secondary);
+}
+
+.note { color: var(--text-tertiary); overflow-wrap: anywhere; }
