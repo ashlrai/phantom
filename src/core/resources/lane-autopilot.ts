@@ -125,7 +125,7 @@ export function decideLane(input: LaneInput, disk: DiskLevel, nowMs: number): La
   const l = input.limits;
   if (disk === 'pause') return { lane: input.lane, target: 0, reason: 'disk pause: no new launches', held: true };
   const p = paceTarget(input, nowMs);
-  let held = p === null;
+  const held = p === null;
   let t = p === null ? l.target : p.t;
   let reason = p === null ? 'reading unknown or stale: hold' : p.reason;
   if (p !== null && input.kind !== 'cloud' && disk !== 'green' && t > l.target) { t = l.target; reason += '; disk compact: raises frozen'; }
