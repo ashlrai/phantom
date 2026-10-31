@@ -1665,6 +1665,29 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     sendJson(res, 200, sanitizePublicJson(await readFleetBusFeed({ limit })));
     return true;
   }
+  if (path === '/api/verse/fleet/live/queue') {
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' });
+      return true;
+    }
+    let limit: number | undefined;
+    try {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      if ([...params.keys()].some((key) => key !== 'limit') || params.getAll('limit').length > 1 ||
+          (params.has('limit') && !/^-?\d+$/.test(params.get('limit')!))) {
+        sendInvalid(res, 'invalid query string');
+        return true;
+      }
+      if (params.has('limit')) limit = Number(params.get('limit'));
+    } catch {
+      sendInvalid(res, 'invalid query string');
+      return true;
+    }
+    const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
+    const { sanitizePublicJson } = await import('../util/public-json.js');
+    sendJson(res, 200, sanitizePublicJson(await readFleetQueue({ limit })));
+    return true;
+  }
   if (path !== VERSE_FLEET_LIVE_PATH) return false;
   try {
     if (method === 'GET') {

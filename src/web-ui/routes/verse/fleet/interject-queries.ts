@@ -6,6 +6,9 @@ import { VerseMutationLockedError } from '../verse-queries.js';
 interface InboxTail {
   inbox: Array<{ at: string; source: string; text: string }>;
   sources?: { inbox?: string };
+  generatedAt?: string;
+  lastTick?: string | null;
+  leaders?: Array<{ label: string; ageSeconds: number | null }>;
 }
 
 export const inboxTailQuery: QueryDef<InboxTail> = {
@@ -16,7 +19,15 @@ export const inboxTailQuery: QueryDef<InboxTail> = {
       && typeof row.at === 'string' && typeof row.source === 'string' && typeof row.text === 'string')) {
       throw new Error('The inbox tail is unavailable.');
     }
-    return { inbox: value.inbox, sources: value.sources };
+    return {
+      inbox: value.inbox, sources: value.sources,
+      generatedAt: typeof value.generatedAt === 'string' ? value.generatedAt : undefined,
+      lastTick: typeof value.lastTick === 'string' || value.lastTick === null ? value.lastTick : undefined,
+      leaders: Array.isArray(value.leaders) && value.leaders.every(leader => leader
+        && typeof leader.label === 'string' && (leader.ageSeconds === null
+          || (typeof leader.ageSeconds === 'number' && Number.isFinite(leader.ageSeconds) && leader.ageSeconds >= 0)))
+        ? value.leaders : undefined,
+    };
   },
 };
 
