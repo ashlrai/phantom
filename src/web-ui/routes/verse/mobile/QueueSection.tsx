@@ -32,7 +32,7 @@ export function QueueSection() {
         {read.status === 'error' ? <Banner>Queue could not refresh. Showing the last reading.</Banner> : null}
         {Object.values(q.sources).some((source) => source !== 'healthy') ? <Banner>Queue data may be incomplete.</Banner> : null}
         {q.byLane.length > 0 ? <div className={ui.group} aria-label="Queue by lane">
-          {laneRows(q).map((lane) => <Row key={lane.lane} title={lane.lane} trailing={`${lane.ready} ready · ${lane.parked} parked`} />)}
+          {laneRows(q).map((lane) => <Row key={lane.lane} title={lane.lane} trailing={`${lane.ready} ready · ${lane.parked} parked`} onClick={() => navigate({ screen: 'runs' })} label={`Open lane ${lane.lane} controls`} />)}
         </div> : null}
         {q.groups.length > 0 ? <div className={ui.group} aria-label="Parked groups">
           {groupRows(q).map((group, index) => <Row
