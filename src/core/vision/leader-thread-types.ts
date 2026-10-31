@@ -88,6 +88,8 @@ export interface OperatorDirective {
 }
 
 export interface AppendMasonMessageResult {
+  /** Present for sourceEventId calls only. Pending also covers interrupted work. */
+  outcome?: 'pending' | 'completed';
   message: LeaderThreadMessage;
   reply: LeaderThreadMessage | null;
   directive?: OperatorDirective;

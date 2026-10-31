@@ -40,6 +40,8 @@ import { SkeletonCardGrid, SkeletonLine } from '../../../components/primitives/S
 import { StatTile, chartFormat } from '../../../components/charts/index.js';
 import { verseBootstrapQuery } from '../verse-queries.js';
 import { AccountCard } from '../usage/AccountCard.js';
+import { CodexBurnCard } from '../usage/CodexBurnCard.js';
+import { FleetLedgerCard } from '../usage/FleetLedgerCard.js';
 import { AccountDetail } from '../usage/AccountDetail.js';
 import { CapacityFacts } from '../usage/CapacityFacts.js';
 import { CapacityStrip, useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
@@ -445,6 +447,8 @@ export function UsageSection(): ReactNode {
           </div>
         ) : (
           <>
+            <CodexBurnCard now={now} />
+            <FleetLedgerCard now={now} />
             {/*
               The ONE capacity view every surface shares (SPEC-310C §4),
               from the seat roster, A2 health and A9 budget. A seat name
