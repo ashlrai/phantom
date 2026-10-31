@@ -5,6 +5,7 @@
 # Phantom documentation
 
 Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
+Prepare queue driver operation, recovery and cutover (planned): [Driver runbook](DRIVER.md).
 
 Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
 kernel includes the Universe experiment runtime and compatible command interfaces.
@@ -29,6 +30,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
+| Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
@@ -41,11 +43,13 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
 | Inspect station/pool queue rates, wait, WIP and Little’s law drift | [Queue statistics](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-STATS.md) |
+| Manage a local job queue and import router snapshots | [Job queue](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE.md) |
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
+| Understand macOS CLI launch holds and memory recovery thresholds | [Host headroom](https://github.com/ashlrai/phantom/blob/master/docs/HOST-HEADROOM.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
