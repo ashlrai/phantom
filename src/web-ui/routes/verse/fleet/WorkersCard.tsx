@@ -21,7 +21,7 @@ export function WorkersCard() {
   const id = useId();
   const read = useQuery(workersQuery);
   const refresh = useRefresh(workersQuery);
-  const [job, setJob] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ job: string; repo: string | null } | null>(null);
   usePollWhileVisible(() => { void runQuery(workersQuery.key, () => workersQuery.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   const data = read.data;
   const healthy = data?.sources.workers === 'healthy' && !read.error;
@@ -40,7 +40,7 @@ export function WorkersCard() {
         <tbody>{sortWorkers(data.workers).map(worker => {
           const url = publishFor(worker.job, data.publishesLastHour);
           const state = workerAgeState(worker.lane, worker.ageSeconds);
-          return <tr key={worker.job} className={state === 'stuck' ? styles.rowStuck : state === 'long' ? styles.rowLong : undefined}><td><button className={styles.job} onClick={() => setJob(worker.job)} aria-label={`Job ${worker.job}`}>{worker.job}</button></td>
+          return <tr key={worker.job} className={state === 'stuck' ? styles.rowStuck : state === 'long' ? styles.rowLong : undefined}><td><button className={styles.job} onClick={() => setSelected({ job: worker.job, repo: worker.repo })} aria-label={`Job ${worker.job}`}>{worker.job}</button></td>
             <td>{worker.repo}</td><td><Tag title={worker.lane}>{laneShort(worker.lane)}</Tag></td><td aria-label={`Tier ${worker.tier}`}>{worker.tier}</td>
             <td data-age-state={state} aria-label={worker.ageSeconds === null ? 'Age unknown' : `Age ${Math.floor(worker.ageSeconds)} seconds`}>{worker.ageSeconds === null ? '—' : ageText(worker.ageSeconds)}{state !== 'normal' ? <> <Tag title={ageStateText(state, worker.lane) ?? undefined}>{state === 'long' ? 'long' : 'stuck?'}</Tag></> : null}</td>
             <td>{url ? <a href={url} target="_blank" rel="noreferrer" aria-label={`PR for job ${worker.job}`}>PR</a> : '—'}
@@ -49,6 +49,6 @@ export function WorkersCard() {
                 openInterjectDialog({ prefill: workerTellPrefill(worker) });
               }}>Tell the leaders</Button> : null}</td></tr>;
         })}</tbody></table></div>}
-    {job ? <JobDetailSheet key={job} job={job} onClose={() => setJob(null)} /> : null}
+    {selected ? <JobDetailSheet key={selected.job} job={selected.job} repo={selected.repo} onClose={() => setSelected(null)} /> : null}
   </section>;
 }
