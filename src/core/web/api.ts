@@ -1963,17 +1963,14 @@ export async function handleApi(
       return true;
     }
 
-    // ── GET /api/onboard/status ── RQ-ONB-2 DETECT: per-catalog-entry rows for
-    // Connect Resources. `which` resolves the binary; the CLI's OWN status
-    // command supplies the login verdict (never token files or ~/.codex
-    // contents). Read-only like /api/orient; probes are bounded.
+    // ── GET /api/onboard/status ── RQ-ONB-2 DETECT + RQ-ONB-7: per-catalog rows,
+    // this computer's scheduled agents, and the resource-balancer summary.
+    // `which` resolves binaries; the CLI's OWN status command supplies login
+    // verdicts (never token files or ~/.codex contents); usage reports only
+    // real-source readings. Read-only like /api/orient; probes are bounded.
     if (path === '/api/onboard/status' && method === 'GET') {
-      const { detectOnboardResources } = await import('../onboard.js');
-      sendJson(res, 200, {
-        generatedAt: new Date().toISOString(),
-        dispatchEnabled: ctx.allowDispatch,
-        resources: await detectOnboardResources(cfg),
-      });
+      const { buildOnboardStatusReport } = await import('../onboard.js');
+      sendJson(res, 200, await buildOnboardStatusReport(cfg, ctx.allowDispatch));
       return true;
     }
 

@@ -51,7 +51,7 @@ it('falls back, sorts, filters by source and text, and quotes once', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Add to message' }));
   expect(props.host.addToMessage).toHaveBeenCalledExactlyOnceWith('> Review\n> <b>literal</b>\n— Telegram, 2026-01-01 10:00 ET');
   fireEvent.click(screen.getByRole('button', { name: 'All sources' }));
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'patch' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Filter inbox text' }), { target: { value: 'patch' } });
   expect(screen.getAllByRole('article')).toHaveLength(1);
   expect(screen.getByText('Review fake patch')).toBeInTheDocument();
 });
