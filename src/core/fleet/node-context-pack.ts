@@ -31,7 +31,8 @@ function terms(text: string): Set<string> {
  *
  * Priority: upstream outputs, upstream tasks, the node's task, then lexical
  * matches from unrelated jobs (descending query overlap). Input order breaks
- * ties. No files, embeddings, network, clock, or caller mutation are involved.
+ * ties. Exact jobId/kind/text duplicates retain their first occurrence.
+ * No files, embeddings, network, clock, or caller mutation are involved.
  * Source text is untrusted data, not instructions or execution authority.
  */
 export function buildNodeContextPack(input: NodeContextPackInput): string {
@@ -39,6 +40,7 @@ export function buildNodeContextPack(input: NodeContextPackInput): string {
   const budget = Math.floor(input.byteBudget);
   const upstream = new Set(input.node.upstreamJobIds);
   const query = terms(input.node.query ?? '');
+  const seen = new Set<string>();
   const candidates = [
     ...input.outputs.map(record => ({ ...record, kind: 'output' as const })),
     ...input.tasks.map(record => ({ ...record, kind: 'task' as const })),
@@ -46,6 +48,9 @@ export function buildNodeContextPack(input: NodeContextPackInput): string {
     if (!record.jobId.trim() || !record.text.trim()) return [];
     // A node's own output is not prior context for that node.
     if (record.jobId === input.node.jobId && record.kind === 'output') return [];
+    const key = JSON.stringify([record.jobId, record.kind, record.text]);
+    if (seen.has(key)) return [];
+    seen.add(key);
     const words = terms(record.text);
     const score = [...query].filter(word => words.has(word)).length;
     const priority = upstream.has(record.jobId) ? (record.kind === 'output' ? 0 : 1)

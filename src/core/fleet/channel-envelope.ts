@@ -10,6 +10,8 @@ import { scrubSecrets } from '../util/scrub.js';
 export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
+const MAX_TIMER_MS = 2_147_483_647;
 
 export interface ChannelMessage {
   channel: InboundChannel;
@@ -37,9 +39,12 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
   receiptStore?: ChannelDedupeStore;
   /** Optional sink for another shared context. Must report success only after persistence. */
   write?: (envelope: ChannelEnvelope) => Promise<InboxAppendResult>;
-  /** Best-effort transport, not durable delivery. Calls are serialized; do not await
-   * another receive on this receiver from the callback. Receives only a detached ack. */
+  /** Best-effort transport, not durable delivery. Calls wait serially through the
+   * deadline; a timed-out promise can still complete and cannot be cancelled here.
+   * Do not await another receive on this receiver from the callback. Receives only a detached ack. */
   acknowledge?: (ack: ChannelAck) => Promise<void>;
+  /** Maximum acknowledgement wait in milliseconds, a positive timer-safe integer. */
+  acknowledgementTimeoutMs?: number;
 }
 
 /** Rolling window from first successful receipt, including across clock bucket
@@ -47,6 +52,10 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
  * Failed writes do not reserve a key. Capacity refuses rather than evicting keys.
  */
 export function createChannelReceiver(options: ChannelReceiverOptions): (input: ChannelMessage) => Promise<ChannelReceiveResult> {
+  const ackTimeoutMs = options.acknowledgementTimeoutMs === undefined ? CHANNEL_ACK_TIMEOUT_MS : options.acknowledgementTimeoutMs;
+  if (!Number.isInteger(ackTimeoutMs) || ackTimeoutMs < 1 || ackTimeoutMs > MAX_TIMER_MS) {
+    throw new RangeError('acknowledgementTimeoutMs must be a positive timer-safe integer');
+  }
   const allowed = new Set(options.allowedSenderIds);
   const seen = new Map<string, { at: number; key: string }>();
   const store = options.receiptStore ?? (options.write && options.runsDir === undefined
@@ -55,7 +64,15 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   let lastTime = 0;
   async function success(envelope: ChannelEnvelope, status: ChannelAck['status']): Promise<ChannelReceiveResult> {
     const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status };
-    try { await options.acknowledge?.({ ...ack }); } catch { /* Transport is best-effort. */ }
+    if (options.acknowledge) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const transport = options.acknowledge({ ...ack });
+        // Promise.race also observes a transport rejection after the deadline.
+        await Promise.race([transport, new Promise<void>((resolve) => { timer = setTimeout(resolve, ackTimeoutMs); })]);
+      } catch { /* Transport is best-effort. */ }
+      finally { if (timer !== undefined) clearTimeout(timer); }
+    }
     return { ok: true, envelope, ack };
   }
   async function receive(input: ChannelMessage): Promise<ChannelReceiveResult> {

@@ -1,16 +1,35 @@
+import { etaText, LEADER_PASS_CADENCE_MS, nextPassEta } from '../fleet/next-pass-eta.js';
+
 /** Local wire contract for the independently delivered leader-journal endpoint. */
 export interface JournalSection { title: string; bullets: string[] }
+export interface LeaderNote { at: string; bullets: string[] }
 export interface JournalPass { at: string; sections: JournalSection[] }
 export interface DropIngestRow { verb: string; file: string; reason: string | null }
 export interface DropIngestedRow { at: string; id: string; leader: string; lane: string; tier: string; title: string }
 export interface LeaderJournalV1 {
   v: 1;
   generatedAt: string;
-  sources: Record<'planLog' | 'ingestLog' | 'ingested', 'healthy' | 'missing' | 'degraded'>;
+  sources: Record<'planLog' | 'ingestLog' | 'ingested' | 'orchestration', 'healthy' | 'missing' | 'degraded'>;
+  notes: LeaderNote[];
   passes: JournalPass[];
   ingest: DropIngestRow[];
   ingested: DropIngestedRow[];
   rejectedLastHour: number | null;
+}
+
+export function passSchedule(passes: readonly JournalPass[], nowMs: number): {
+  lastAtMs: number | null;
+  eta: ReturnType<typeof nextPassEta> | null;
+  text: string;
+  tone: 'ok' | 'warning' | 'danger';
+} {
+  if (passes.length === 0) return { lastAtMs: null, eta: null, text: 'no pass recorded yet', tone: 'warning' };
+  const times = passes.map((pass) => Date.parse(pass.at)).filter(Number.isFinite);
+  const lastAtMs = times.length ? Math.max(...times) : null;
+  const eta = nextPassEta(lastAtMs, nowMs, LEADER_PASS_CADENCE_MS);
+  const tone = eta.kind === 'due-in' ? 'ok'
+    : eta.kind === 'overdue' && lastAtMs !== null && nowMs - lastAtMs - LEADER_PASS_CADENCE_MS > 30 * 60_000 ? 'danger' : 'warning';
+  return { lastAtMs, eta, text: etaText(eta), tone };
 }
 
 type Check<T> = (value: unknown) => value is T;
@@ -28,7 +47,8 @@ const count: Check<number> = (value): value is number => typeof value === 'numbe
 export const isLeaderJournal: Check<LeaderJournalV1> = shape({
   v: (value): value is 1 => value === 1,
   generatedAt: string,
-  sources: shape({ planLog: source, ingestLog: source, ingested: source }),
+  sources: shape({ orchestration: source, planLog: source, ingestLog: source, ingested: source }),
+  notes: array(shape({ at: string, bullets: array(string) })),
   passes: array(shape({ at: string, sections: array(shape({ title: string, bullets: array(string) })) })),
   ingest: array(shape({ verb: string, file: string, reason: nullable(string) })),
   ingested: array(shape({ at: string, id: string, leader: string, lane: string, tier: string, title: string })),
@@ -67,4 +87,9 @@ export function filterPasses(passes: readonly JournalPass[], query: string): Arr
 }
 export function passFilterLabel(shown: number, total: number): string {
   return shown === total ? '' : `${shown} of ${total} passes`;
+}
+
+export function filterNotes(notes: readonly LeaderNote[], query: string): LeaderNote[] {
+  return filterPasses(notes.map(note => ({ at: note.at, sections: [{ title: '', bullets: note.bullets }] })), query)
+    .map(({ pass }) => ({ at: pass.at, bullets: pass.sections[0].bullets }));
 }

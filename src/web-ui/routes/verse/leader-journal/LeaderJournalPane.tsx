@@ -1,31 +1,40 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
-import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
-import { filterPasses, groupRejects, ingestTone, passFilterLabel, passSummary } from './leader-journal-model.js';
+import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passSchedule, passSummary } from './leader-journal-model.js';
 import { leaderJournalQuery } from './leader-journal-queries.js';
 import styles from './leader-journal.module.css';
 
 export function LeaderJournalPane({ visible }: PaneProps) {
   const [query, setQuery] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  useEffect(() => {
+    if (visible && sectionVisible && documentVisible) setNowMs(Date.now());
+  }, [visible, sectionVisible, documentVisible]);
   const read = useQuery(leaderJournalQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(leaderJournalQuery);
   const refresh = useRefresh(leaderJournalQuery);
-  usePollWhileVisible(refetch, 30_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(() => { setNowMs(Date.now()); refetch(); }, 30_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
   const passes = data ? [...data.passes].sort((a, b) => (Date.parse(b.at) - Date.parse(a.at)) || b.at.localeCompare(a.at)) : [];
+  const schedule = data ? passSchedule(passes, nowMs) : null;
   const searching = query.trim().length > 0;
   const filtered = filterPasses(passes, query);
+  const notes = filterNotes(data?.notes ?? [], query);
   const rejects = data ? Object.entries(groupRejects(data.ingest)) : [];
 
   return <div className={styles.pane} aria-label="Leader journal">
     <header className={styles.header}>
       <div>
-        {data ? <p className={styles.headline}>{passes.length} {passes.length === 1 ? 'pass' : 'passes'} · last {passes[0] ? formatRelative(passes[0].at) || 'unknown' : 'none'}</p> : null}
+        {data ? <p className={styles.headline}>{passes.length} {passes.length === 1 ? 'pass' : 'passes'} · last {passes[0] ? formatRelative(passes[0].at, nowMs) || 'unknown' : 'none'}</p> : null}
+        {schedule ? <span role="status"><StatusBadge status={schedule.tone} tone={schedule.tone === 'ok' ? 'success' : schedule.tone}>{schedule.text}</StatusBadge></span> : null}
         {data && data.rejectedLastHour !== null && data.rejectedLastHour > 0 ? <StatusBadge status="rejected">{data.rejectedLastHour} rejected in the last hour</StatusBadge> : null}
       </div>
       <input type="search" aria-label="Search journal" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -35,6 +44,14 @@ export function LeaderJournalPane({ visible }: PaneProps) {
       : data === null ? <p className={styles.note}>The leader journal API has not landed in this build yet.</p>
         : data === undefined ? <div className={styles.section} aria-label="Loading leader journal" aria-busy="true"><SkeletonLine /><SkeletonLine /></div>
           : <>
+            <section className={styles.section} aria-labelledby="journal-notes">
+              <h3 id="journal-notes">Leader notes</h3>
+              {data.sources.orchestration !== 'healthy' ? <p className={styles.note}>Leader notes source missing.</p> : null}
+              {notes.length === 0 ? <p className={styles.note}>{searching ? 'No notes match' : 'No leader notes yet.'}</p> : notes.map((note, index) => <details className={styles.pass} key={`${note.at}-${index}`} open={searching || index === 0}>
+                <summary>{note.at}{note.bullets[0] ? <span> · {note.bullets[0]}</span> : null}</summary>
+                <ul>{note.bullets.map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet}</li>)}</ul>
+              </details>)}
+            </section>
             <section className={styles.section} aria-labelledby="journal-passes">
               <h3 id="journal-passes">Passes</h3>
               {data.sources.planLog !== 'healthy' ? <p className={styles.note}>Plan log source {data.sources.planLog}.</p> : null}

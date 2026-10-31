@@ -66,16 +66,23 @@ const workersShape: Shape = {
   workers: [{ job: 'string', repo: 'string', lane: 'string', tier: 'string', ageSeconds: 'number?' }],
   leaders: [{ label: 'string', ageSeconds: 'number?' }], orchestratorAgents: 'number?',
 };
+const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
 const mergesShape: Shape = { count: 'number?', items: [{ repo: 'string', number: 'number', title: 'string' }] };
 
 async function personal(now: number): Promise<unknown> {
   const { collectCodexSessionUsages, buildCodexResourceReport } = await import('../fleet/codex-session-usage.js');
-  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: join(homedir(), '.codex'), CODEX_HOME_ALT: join(homedir(), '.codex-2') } });
-  const account = buildCodexResourceReport(usages.filter(u => u.accountId === 'codex-personal'), [], now).resources[0];
-  if (!account || !account.session) return null;
-  return { usedPct: account.session.usedPct, resetsAt: account.session.resetsAt, asOf: account.observedAt };
+  // Isolate the personal home before normalizing the collector's slot identity.
+  const home = homedir();
+  const personalHome = join(home, '.codex-2');
+  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: home });
+  const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
+  const account = report.resources.find(resource => resource.state === 'current' && resource.weekly?.usedPct != null &&
+    (resource.weekly.windowMinutes === null || resource.weekly.windowMinutes > 315) &&
+    resource.observedAt !== null && Date.parse(resource.observedAt) <= now);
+  if (!account?.weekly) return null;
+  return { usedPct: account.weekly.usedPct, resetsAt: account.weekly.resetsAt, asOf: account.observedAt };
 }
 export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
@@ -134,7 +141,9 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         const value = project(key === 'inbox' && record(raw) ? raw.entries : raw, shape);
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
+        const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
+        if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
         if (key === 'inbox') result.inbox = value as FleetRunsV1['inbox'];
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
@@ -145,13 +154,21 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     return result;
   }
   let cached: { at: number; value: FleetRunsV1 } | undefined;
-  let flight: Promise<FleetRunsV1> | undefined;
+  let generation = 0;
+  let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
   return async (ctx, req, res, path, method) => {
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
-      if (!flight && (!cached || now() - cached.at >= 2000)) {
-        flight = build().then(value => { cached = { at: now(), value }; return value; }).finally(() => { flight = undefined; });
+      if (flight?.generation !== generation && (!cached || now() - cached.at >= 2000)) {
+        const buildGeneration = generation;
+        const promise = build().then(value => {
+          if (generation === buildGeneration) cached = { at: now(), value };
+          return value;
+        }).finally(() => {
+          if (flight?.promise === promise) flight = undefined;
+        });
+        flight = { generation: buildGeneration, promise };
       }
-      sendJson(res, 200, flight ? await flight : cached!.value);
+      sendJson(res, 200, flight?.generation === generation ? await flight.promise : cached!.value);
       return true;
     }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_INBOX_PATH) {
@@ -180,7 +197,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (result.ok) {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
-        if (result.ack.status === 'accepted') cached = undefined;
+        if (result.ack.status === 'accepted') { generation++; cached = undefined; }
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',

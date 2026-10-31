@@ -13,7 +13,10 @@
 .track { height: var(--space-1); margin-top: var(--space-1); overflow: hidden; border-radius: var(--radius-sm); background: var(--meter-track); }
 .fill { height: 100%; background: var(--data-seq-4); }
 .fill[data-tone='held'] { background: var(--status-unknown-solid); }
-.worker code { flex: 1 1 100%; font-family: var(--font-mono); }
+.jobButton, .moreButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.jobButton { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.jobButton:hover, .jobButton:focus-visible, .moreButton:hover, .moreButton:focus-visible { text-decoration: underline; }
+.moreButton { margin-top: var(--space-3); color: var(--text-tertiary); }
 .worker span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
 .merge a { color: var(--text-link); }
 .muted { margin: 0; color: var(--text-tertiary); }
