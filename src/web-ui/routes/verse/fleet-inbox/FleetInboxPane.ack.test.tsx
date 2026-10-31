@@ -31,18 +31,33 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearMutationToken(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('shows source and acknowledgement chips and updates after a leader refresh', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-31T04:20:00Z'));
   render(<FleetInboxPane {...props} />);
   const seen = (await screen.findByText('Seen order')).closest('article')!;
   const waiting = screen.getByText('Waiting order').closest('article')!;
   expect(await within(seen).findByText('Seen by a leader pass')).toBeInTheDocument();
   expect(within(seen).getByText('Phantom desktop')).toBeInTheDocument();
-  expect(within(waiting).getByText(/^Waiting for the next pass \(posted /)).toBeInTheDocument();
+  expect(within(waiting).getByText(/^Waiting · (next pass|pass overdue)/)).toBeInTheDocument();
   expect(within(waiting).getByText('Telegram')).toBeInTheDocument();
   expect(screen.getByText('1 waiting for a leader pass')).toBeInTheDocument();
   passAge = 60;
   await act(() => refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true));
   expect(within(waiting).getByText('Seen by a leader pass')).toBeInTheDocument();
   expect(screen.queryByText('1 waiting for a leader pass')).not.toBeInTheDocument();
+});
+
+it('updates the countdown and marks an overdue pass even when the snapshot stays unchanged', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-31T04:28:50Z'));
+  await act(async () => { render(<FleetInboxPane {...props} />); });
+  vi.mocked(apiGet).mockImplementation(() => new Promise(() => {}));
+  expect(screen.getByText('Waiting · next pass in ~2 min')).toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(screen.getByText('Waiting · next pass in ~1 min')).toBeInTheDocument();
+  vi.setSystemTime(new Date('2026-10-31T04:32:50Z'));
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(screen.getByText('Waiting · pass overdue by 3 min')).toHaveAttribute('data-overdue', 'true');
+  expect(screen.getByText('1 waiting for a leader pass · leader pass overdue')).toBeInTheDocument();
 });
 
 it('polls a newly posted waiting entry at 15 seconds, then returns to the normal interval', async () => {
