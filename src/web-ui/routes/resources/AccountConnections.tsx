@@ -69,7 +69,6 @@ function windowLabel(provider: ResourceAccountConnection['provider'], id: string
 }
 
 function missingQuotaAction(account: ResourceAccountConnection, current: boolean): string | null {
-  if (account.reason === 'connection-monitor-stopped') return 'The connection monitor stopped. Restart the scoped console to collect a new sample.';
   if (account.provider === 'claude' && account.reason === 'usage-version-unsupported') return 'This Claude version has not been verified for automatic usage reads. Check /usage in the native client; Phantom will not send an unverified command.';
   if (account.provider === 'claude' && account.reason === 'usage-account-changed') return 'The native account changed. Verify the intended profile and restart the scoped console before collecting usage.';
   if (account.provider === 'claude' && ['usage-output-invalid', 'usage-process-failed', 'usage-identity-unavailable'].includes(account.reason)) {
@@ -80,6 +79,24 @@ function missingQuotaAction(account: ResourceAccountConnection, current: boolean
   }
   if (['probe-quota-invalid', 'probe-protocol-unsupported'].includes(account.reason)) {
     return 'Native usage metadata could not be read. Check usage in the native client; this view has no verified allowance.';
+  }
+  return null;
+}
+
+/** Fixed recovery copy only: reason may contain private provider diagnostics. */
+function connectionRecovery(account: ResourceAccountConnection, historical: boolean): string | null {
+  if (historical || account.state === 'checking') return null;
+  if (account.reason === 'connection-monitor-stopped') {
+    return 'The connection monitor stopped. Restart the scoped console to collect a new sample.';
+  }
+  if (account.reason === 'connection-account-changed') {
+    return 'The native account changed. Verify the intended profile in this account’s native launcher, then wait for a new check.';
+  }
+  if (account.state === 'signed-out' || account.authentication === 'signed-out') {
+    return 'Sign in through this account’s native launcher, then wait for a new check.';
+  }
+  if (account.state === 'unavailable' || account.health === 'unavailable') {
+    return 'The connection check could not be completed. Verify this account in its native launcher and check your network connection, then wait for the next automatic check to retry.';
   }
   return null;
 }
@@ -109,6 +126,7 @@ function AccountRow({ account, sampledAt, historical, ceiling }: {
   const provider = PROVIDERS[account.provider];
   const executionIntegrated = account.executionSupported;
   const missingAction = missingQuotaAction(account, current);
+  const recovery = connectionRecovery(account, historical);
   const usageSummary = summarizeAccountUsage(account, { sampledAt, ceilingPercent: ceiling, historical });
 
   return <li className={styles.account} aria-label={`${account.label} connection`} data-current={current}>
@@ -124,7 +142,7 @@ function AccountRow({ account, sampledAt, historical, ceiling }: {
         <StatusBadge status={reachable ? 'Metadata reachable' : account.health === 'unavailable' ? 'Metadata unavailable' : 'Health unverified'}
           tone={reachable ? 'info' : 'unknown'} />
       </div>
-      <p>{signedOut ? 'Sign in through this account’s native launcher, then wait for a new check.'
+      <p>{recovery ? recovery
         : account.state === 'checking' ? 'A metadata check is in progress; no task is being started.'
           : !current ? 'Current sign-in and connection health are not established.'
             : 'Sign-in metadata is not proof of task readiness.'}</p>

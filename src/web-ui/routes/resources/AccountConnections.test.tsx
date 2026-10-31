@@ -165,6 +165,46 @@ describe('account connections evidence', () => {
     }
   });
 
+  it.each([true, false])('shows redacted recovery with retained quota: %s', (retained) => {
+    const reason = 'PRIVATE_ERROR /private/auth fixture@example.invalid';
+    const { container } = render(<AccountConnections connections={snapshot([account({
+      state: 'unavailable', health: 'unavailable', reason,
+      windows: retained ? account().windows : [],
+    })])} />);
+    expect(screen.getByText(/wait for the next automatic check to retry/)).toBeVisible();
+    expect(screen.getByText('Check unavailable')).toBeVisible();
+    expect(screen.queryByText('Signed in')).not.toBeInTheDocument();
+    for (const value of reason.split(' ')) expect(container.innerHTML).not.toContain(value);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('updates failed connection recovery as the existing monitor retries and succeeds', () => {
+    const { rerender } = render(<AccountConnections connections={snapshot([account({ state: 'unavailable' })])} />);
+    expect(screen.getByText(/automatic check to retry/)).toBeVisible();
+    rerender(<AccountConnections connections={snapshot([account({ state: 'checking' })], { refreshing: true })} />);
+    expect(screen.getByText('Checking account metadata…')).toBeVisible();
+    expect(screen.getByText('A metadata check is in progress; no task is being started.')).toBeVisible();
+    expect(screen.queryByText(/automatic check to retry/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Signed in')).not.toBeInTheDocument();
+    rerender(<AccountConnections connections={snapshot()} />);
+    expect(screen.getByText('Signed in')).toBeVisible();
+    expect(screen.getByText('Metadata reachable')).toBeVisible();
+    expect(screen.queryByText(/automatic check to retry/)).not.toBeInTheDocument();
+  });
+
+  it.each(['connection-monitor-stopped', 'connection-account-changed'])('shows %s recovery even with retained quota', (reason) => {
+    render(<AccountConnections connections={snapshot([account({ state: 'unavailable', reason })])} />);
+    expect(screen.getByText(reason === 'connection-monitor-stopped'
+      ? /Restart the scoped console to collect a new sample/
+      : /Verify the intended profile in this account’s native launcher/)).toBeVisible();
+  });
+
+  it('does not present historical failures as an active retry', () => {
+    render(<AccountConnections connections={snapshot([account({ state: 'unavailable' })])} historical />);
+    expect(screen.getByText('Historical snapshot')).toBeVisible();
+    expect(screen.queryByText(/automatic check to retry/)).not.toBeInTheDocument();
+  });
+
   it('reuses the snapshot refresh state without introducing controls or timers', () => {
     const { rerender } = render(<AccountConnections connections={snapshot([], { refreshing: true })} />);
     expect(screen.getByText('Checking account metadata…')).toBeVisible();
