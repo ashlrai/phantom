@@ -5,6 +5,7 @@
 # Phantom documentation
 
 Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
+Prepare queue driver operation, recovery and cutover (planned): [Driver runbook](DRIVER.md).
 
 Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
 kernel includes the Universe experiment runtime and compatible command interfaces.
