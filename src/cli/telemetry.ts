@@ -1,9 +1,10 @@
 /**
- * `ashlr telemetry` — M19 telemetry status + test command.
+ * `ashlr telemetry` — telemetry status, test and recorded execution evidence.
  *
  * Sub-commands:
  *   status   Print endpoint configured (bool), PAT available (bool, NEVER the
  *            value), active sink mode, local telemetry dir + JSONL file count.
+ *   feedback Inspect bounded recorded outcomes, coverage and inference limits.
  *   test     Emit a single synthetic metadata-only span via getSink and report
  *            the TelemetryEmitResult.
  *
@@ -19,6 +20,7 @@
  * Lazy imports — degrades gracefully if M19 modules not yet built.
  */
 
+import type { ExecutionFeedbackView } from '../core/fleet/execution-feedback-types.js';
 import type { AshlrConfig, TelemetryEmitResult, GovernanceStatus, GenAiSpan } from '../core/types.js';
 import { ansi as C, makeColors, isTty, pad } from './ui.js';
 
@@ -84,7 +86,7 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedTelemetryArgs {
-  sub: 'status' | 'test' | 'help';
+  sub: 'status' | 'test' | 'feedback' | 'help';
   json: boolean;
   usageError?: string;
 }
@@ -97,6 +99,9 @@ function parseTelemetryArgs(args: string[]): ParsedTelemetryArgs {
     const arg = args[i]!;
     if (arg === 'status') {
       result.sub = 'status';
+      i++;
+    } else if (arg === 'feedback') {
+      result.sub = 'feedback';
       i++;
     } else if (arg === 'test') {
       result.sub = 'test';
@@ -161,12 +166,42 @@ function govLevelColor(level: 'ok' | 'warn' | 'over'): (s: string) => string {
   return green;
 }
 
+/** Display only recorded evidence; the source contains no selection decision trace. */
+export function telemetryFeedbackReport(view: ExecutionFeedbackView) {
+  return {
+    observedOutcomes: {
+      counts: view.counts,
+      observedCounts: view.observedCounts,
+      sampleSize: Object.values(view.observedCounts).reduce((sum, count) => sum + count, 0),
+      meaning: 'Terminal producer outcomes; proposal production does not establish verification, merge or deployment.',
+    },
+    sampleCoverage: {
+      sourceState: view.sourceState,
+      complete: view.complete,
+      countBasis: view.counts === null ? 'observed lower bounds; exact totals unknown' : 'exact within bounded inspection window',
+      window: view.window,
+      observedThrough: view.observedThrough,
+      ...view.coverage,
+      meaning: 'Window and reader limits apply. Read time does not refresh observations; missing evidence is unknown, not zero.',
+    },
+    selectionRationale: {
+      status: 'unavailable',
+      meaning: 'No per-attempt selection rationale is recorded in this projection. Inspect the original routing decision; outcome counts cannot reconstruct it.',
+    },
+    inferredPerformance: {
+      status: 'unmeasured',
+      estimate: null,
+      meaning: 'No comparable account/model/task denominator or counterfactual. These observations establish neither a model ranking nor a causal routing or repair benefit.',
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // cmdTelemetry — main entry point
 // ---------------------------------------------------------------------------
 
 /**
- * `ashlr telemetry [status|test] [--json]`
+ * `ashlr telemetry [status|test|feedback] [--json]`
  *
  * Returns a process exit code: 0 = ok, 1 = error.
  */
@@ -186,6 +221,26 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
   if (parsed.sub === 'help') {
     printTelemetryHelp();
     return 0;
+  }
+
+  // Inspection-only feedback does not need telemetry configuration or a sink.
+  if (parsed.sub === 'feedback') {
+    try {
+      const { readExecutionFeedback } = await import('../core/fleet/execution-feedback.js');
+      const report = telemetryFeedbackReport(readExecutionFeedback());
+      if (parsed.json) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      else {
+        for (const [section, evidence] of Object.entries(report)) {
+          console.log(`${section}:`);
+          console.log(JSON.stringify(evidence, null, 2));
+        }
+      }
+      return 0;
+    } catch {
+      const unavailable = { sourceState: 'unavailable', detail: 'Execution feedback could not be read; outcomes, coverage, selection rationale and performance remain unknown.' };
+      process.stdout.write((parsed.json ? JSON.stringify(unavailable, null, 2) : unavailable.detail) + '\n');
+      return 1;
+    }
   }
 
   // Load config
@@ -366,6 +421,7 @@ function printTelemetryHelp(): void {
     ['status (default)', 'Show endpoint + PAT configured (booleans only — values never printed),'],
     ['',                 'active sink mode (local/otlp), local telemetry dir + file count,'],
     ['',                 'and spend governance summary.'],
+    ['feedback',         'Inspect recorded outcomes, sample coverage and inference limits (read-only).'],
     ['test',             'Emit a synthetic metadata-only test span via the configured sink'],
     ['',                 'and report the TelemetryEmitResult (ok/detail).'],
   ];
@@ -410,6 +466,7 @@ function printTelemetryHelp(): void {
   console.log(`    ${cyan('ashlr telemetry')}              ${dim('# status (default)')}`);
   console.log(`    ${cyan('ashlr telemetry status')}       ${dim('# explicit status')}`);
   console.log(`    ${cyan('ashlr telemetry status --json')} ${dim('# machine-readable')}`);
+  console.log(`    ${cyan('ashlr telemetry feedback --json')} ${dim('# bounded execution evidence; no performance ranking')}`);
   console.log(`    ${cyan('ashlr telemetry test')}         ${dim('# emit one synthetic test span')}`);
   console.log(`    ${cyan('ashlr telemetry test --json')}  ${dim('# test + JSON result')}`);
   console.log('');
