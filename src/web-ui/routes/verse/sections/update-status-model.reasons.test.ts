@@ -18,6 +18,6 @@ describe('desktop update status explanations', () => {
   });
   it('prioritizes an available native version over git facts', () => {
     expect(describeUpdateStatus({ ...base, native: { ...native, phase: 'available' } })).toMatchObject({ headline: 'Update 3.30.0 available · downloads when idle', tone: 'info' });
-    expect(describeUpdateStatus({ ...base, native: { ...native, phase: 'available', version: null } }).headline).toBe('1 commit behind master · ready to fast-forward');
+    expect(describeUpdateStatus({ ...base, native: { ...native, phase: 'available', version: null } }).headline).toBe('Update available · downloads when idle');
   });
 });
