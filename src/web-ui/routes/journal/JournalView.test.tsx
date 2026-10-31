@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { JournalView } from './JournalView.js';
+import { JournalEntryRow } from './JournalEntryRow.js';
+import { buildJournalEntries } from './journal-model.js';
 import { evictAll } from '../../data/cache.js';
 
 function renderJournal() {
@@ -86,5 +88,40 @@ describe('JournalView', () => {
     fireEvent.click(screen.getByText('ship the feature'));
 
     await waitFor(() => expect(screen.getByText(/Run finished/)).toBeInTheDocument());
+  });
+});
+
+
+describe('journal timestamps', () => {
+  it('shows local time and timezone while preserving the source timestamp across timezones', () => {
+    const originalZone = process.env.TZ;
+    const ts = '2026-01-15T12:00:00Z';
+    const entry = buildJournalEntries({ logs: { ...LOGS, entries: [{ ...LOGS.entries[0], ts }] } })[0];
+    try {
+      process.env.TZ = 'UTC';
+      const { container, rerender } = render(<JournalEntryRow entry={entry} />);
+      const utc = container.querySelector('[title]')!;
+      const utcText = utc.textContent;
+      expect(utc.getAttribute('title')).toContain('UTC');
+      expect(utc.getAttribute('title')).toContain(ts);
+
+      process.env.TZ = 'America/New_York';
+      rerender(<JournalEntryRow entry={entry} />);
+      expect(utc.textContent).not.toBe(utcText);
+      expect(utc.getAttribute('title')).toContain('America/New_York');
+      expect(utc.getAttribute('title')).toContain(ts);
+      expect(entry.ts).toBe(ts);
+    } finally {
+      if (originalZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalZone;
+    }
+  });
+
+  it('renders an invalid timestamp without throwing', () => {
+    const ts = 'not-a-date';
+    const entry = buildJournalEntries({ logs: { ...LOGS, entries: [{ ...LOGS.entries[0], ts }] } })[0];
+    render(<JournalEntryRow entry={entry} />);
+    expect(screen.getByText('Invalid Date')).toHaveAttribute('title', `Invalid date: ${ts}`);
+    expect(entry.ts).toBe(ts);
   });
 });
