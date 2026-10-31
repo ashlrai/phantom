@@ -12,6 +12,8 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
   neighbors   Find a node and its bounded graph neighborhood (default: both, depth 1).
               Returns at most 500 nodes and indicates whether results were truncated.
               Use -- before a node ID that looks like an option (also applies to node).
+  --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
+              can-message|can-delegate|reviews|routes-to (exact match).
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
@@ -24,6 +26,8 @@ Node and neighbors also exit 1 when the node is not found.
 
 type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors';
 type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND';
+const NODE_KINDS = ['agent', 'engine-account', 'model', 'mcp'] as const;
+const EDGE_KINDS = ['can-message', 'can-delegate', 'reviews', 'routes-to'] as const;
 
 interface Options {
   command: GraphCommand | null;
@@ -32,6 +36,7 @@ interface Options {
   nodeId: string | null;
   direction: GraphDirection;
   depth: number;
+  kind: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
@@ -39,7 +44,7 @@ function isCommand(value: string): value is GraphCommand {
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1 };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null };
   let directionSeen = false;
   let depthSeen = false;
   for (let i = 0; i < args.length; i++) {
@@ -48,6 +53,11 @@ function parse(args: string[]): Options {
     else if ((arg === '--help' || arg === '-h') && !options.help) options.help = true;
     else if ((options.command === 'neighbors' || options.command === 'node') && arg === '--' && options.nodeId === null && i + 1 < args.length) {
       options.nodeId = args[++i]!;
+    } else if ((options.command === 'nodes' || options.command === 'edges') && arg === '--kind' && options.kind === null) {
+      const value = args[++i];
+      const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
+      if (value === undefined || !kinds.includes(value)) throw new Error(`Kind must be ${kinds.join(', ')}.`);
+      options.kind = value;
     } else if (options.command === 'neighbors' && arg === '--direction' && !directionSeen) {
       const value = args[++i];
       if (value !== 'in' && value !== 'out' && value !== 'both') throw new Error('Direction must be in, out, or both.');
@@ -119,18 +129,21 @@ export async function cmdGraph(args: string[]): Promise<number> {
       console.log(JSON.stringify(result, null, options.json ? undefined : 2));
       return 0;
     }
+    const records = command === 'nodes' || command === 'edges'
+      ? (options.kind === null ? graph[command] : graph[command].filter((record) => record?.kind === options.kind))
+      : null;
     const data = command === 'status'
       ? { counts: { nodes: graph.nodes.length, edges: graph.edges.length } }
-      : { [command]: graph[command] };
+      : { [command]: records };
     if (options.json) {
       console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data,
         complete: graph.complete, sources: graph.sources, issues: graph.issues }));
     } else if (command === 'status') {
       console.log(`Graph: ready · ${graph.nodes.length} node${graph.nodes.length === 1 ? '' : 's'} · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}`);
     } else {
-      const records = JSON.stringify(graph[command], null, 2);
-      console.log(`Graph ${command}: ${graph[command].length}`);
-      console.log(records);
+      const serialized = JSON.stringify(records, null, 2);
+      console.log(`Graph ${command}: ${records!.length}`);
+      console.log(serialized);
     }
     return 0;
   } catch {

@@ -56,14 +56,15 @@ describe('Tell the leaders', () => {
     const view = renderMobile(<MobileInterject />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Landed in the inbox');
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('next leader pass due in about 8 min'));
+    // The microphone also exposes its browser fallback as a status.
+    expect(await screen.findByText(/^Landed in the inbox/)).toHaveAttribute('role', 'status');
+    await waitFor(() => expect(screen.getByText(/^Landed in the inbox/)).toHaveTextContent('next leader pass due in about 8 min'));
     view.unmount();
     renderMobile(<MobileInterject />);
-    expect(screen.getByRole('status')).toHaveTextContent('Landed in the inbox');
+    expect(screen.getByText(/^Landed in the inbox/)).toHaveAttribute('role', 'status');
     pass = posted + 30_000;
     await act(() => refetchQuery(inboxTailQuery.key, () => inboxTailQuery.fetch(), true));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Read by the .* pass$/));
+    await waitFor(() => expect(screen.getByText(/^Read by the .* pass$/)).toHaveAttribute('role', 'status'));
   });
 
   it('shows at most three entries without the field in read-only mode', async () => {
