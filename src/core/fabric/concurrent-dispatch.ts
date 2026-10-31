@@ -86,12 +86,16 @@ export interface DispatchAssignment {
   backend: EngineId;
 }
 
+export type DispatchDeferralReason = 'capacity' | 'candidate-filter' | 'parent-tier';
+
 /** Plan output: concrete assignments + any items that could not be placed. */
 export interface DispatchPlan {
   /** Items assigned to a backend (backend had headroom at plan time). */
   assignments: DispatchAssignment[];
   /** Items that could not be assigned to an eligible backend. */
   unassigned: WorkItem[];
+  /** Reasons keyed by original input position; absent for assigned positions. */
+  deferralReasons?: Partial<Record<number, DispatchDeferralReason>>;
   /**
    * Per-backend measured slot count at plan time (execution hard governor).
    * Keyed by backend; includes all backends from the snapshot.
@@ -310,13 +314,26 @@ export function planConcurrentDispatch(
 
   const assignments: DispatchAssignment[] = [];
   const unassigned: WorkItem[] = [];
+  const deferralReasons: Partial<Record<number, DispatchDeferralReason>> = {};
 
   // Round-robin cursor for spreading across backends.
   let rrCursor = 0;
 
-  for (const item of items) {
+  for (const [position, item] of items.entries()) {
     const requiresEditingBackend = isTrustedGeneratedRepairItem(item);
     const requiresParentTier = isTrustedDiagnosticResliceItem(item) && item.repairParentTier != null;
+    const candidateDecisions = new Map<EngineId, boolean>();
+    const tierDecisions = new Map<EngineId, ReturnType<typeof engineTierOf>>();
+    const allowsCandidate = (backend: EngineId): boolean => {
+      if (!candidateDecisions.has(backend)) {
+        candidateDecisions.set(backend, candidateAllowed(item, backend));
+      }
+      return candidateDecisions.get(backend)!;
+    };
+    const tierFor = (backend: EngineId): ReturnType<typeof engineTierOf> => {
+      if (!tierDecisions.has(backend)) tierDecisions.set(backend, resolveTier(backend));
+      return tierDecisions.get(backend)!;
+    };
 
     // 1. Try preferred backend first.
     const preferred = routeItem(item);
@@ -324,7 +341,7 @@ export function planConcurrentDispatch(
     if (
       prefRem > 0 &&
       (!requiresEditingBackend || preferred !== 'builtin') &&
-      candidateAllowed(item, preferred)
+      allowsCandidate(preferred)
     ) {
       assignments.push({ item, backend: preferred });
       remaining.set(preferred, prefRem - 1);
@@ -337,9 +354,9 @@ export function planConcurrentDispatch(
     if (requiresParentTier) {
       const substitute = eligibleBackends.find(candidate =>
         candidate !== 'builtin' &&
-        candidateAllowed(item, candidate) &&
+        allowsCandidate(candidate) &&
         (remaining.get(candidate) ?? 0) > 0 &&
-        resolveTier(candidate) === item.repairParentTier,
+        tierFor(candidate) === item.repairParentTier,
       );
       if (substitute) {
         assignments.push({ item, backend: substitute });
@@ -347,17 +364,22 @@ export function planConcurrentDispatch(
         continue;
       }
       unassigned.push(item);
+      deferralReasons[position] = 'parent-tier';
       continue;
     }
 
     // 2. Preferred backend has no slots — round-robin across all eligible.
     const n = eligibleBackends.length;
     let placed = false;
+    // Only candidates the planner already visits are consulted: probing
+    // zero-slot backends would introduce new predicate side effects.
+    let allowedCandidate = false;
     for (let attempt = 0; attempt < n; attempt++) {
       const idx = (rrCursor + attempt) % n;
       const candidate = eligibleBackends[idx]!;
       if (requiresEditingBackend && candidate === 'builtin') continue;
-      if (!candidateAllowed(item, candidate)) continue;
+      if (!allowsCandidate(candidate)) continue;
+      allowedCandidate = true;
       const rem = remaining.get(candidate) ?? 0;
       if (rem > 0) {
         assignments.push({ item, backend: candidate });
@@ -370,10 +392,11 @@ export function planConcurrentDispatch(
 
     if (!placed) {
       unassigned.push(item);
+      deferralReasons[position] = n > 0 && !allowedCandidate ? 'candidate-filter' : 'capacity';
     }
   }
 
-  return { assignments, unassigned, slotsMap };
+  return { assignments, unassigned, slotsMap, deferralReasons };
 }
 
 // ---------------------------------------------------------------------------
@@ -593,9 +616,14 @@ export async function buildGatewayDispatchPlan(
     const slotsMap = new Map<EngineId, number>([['builtin', fallbackSlots]]);
     const assignments: DispatchAssignment[] = [];
     const unassigned: WorkItem[] = [];
-    for (const item of items) {
-      if (isTrustedGeneratedRepairItem(item) || assignments.length >= fallbackSlots) {
+    const deferralReasons: Partial<Record<number, DispatchDeferralReason>> = {};
+    for (const [position, item] of items.entries()) {
+      const requiresEditingBackend = isTrustedGeneratedRepairItem(item);
+      if (requiresEditingBackend || assignments.length >= fallbackSlots) {
         unassigned.push(item);
+        deferralReasons[position] = isTrustedDiagnosticResliceItem(item) && item.repairParentTier != null
+          ? 'parent-tier'
+          : requiresEditingBackend ? 'candidate-filter' : 'capacity';
       } else {
         assignments.push({ item, backend: 'builtin' });
       }
@@ -604,6 +632,7 @@ export async function buildGatewayDispatchPlan(
       assignments,
       unassigned,
       slotsMap,
+      deferralReasons,
     };
   }
 }
