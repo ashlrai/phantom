@@ -28,6 +28,13 @@ export function releaseGapText(view: ReleaseGapView): string {
   return `Installed ${view.installed} · latest release ${view.latest}`;
 }
 
+export function unshippedText(input: { commitsSinceTag: number | null; prNumber: number | null; prBlocked: boolean | null }): string | null {
+  if (input.commitsSinceTag === null || input.commitsSinceTag === 0) return null;
+  const text = `${input.commitsSinceTag} commits merged since, not yet released`;
+  if (input.prNumber === null || input.prBlocked === null) return text;
+  return `${text} · release PR #${input.prNumber} ${input.prBlocked ? 'blocked' : 'open'}`;
+}
+
 export function releaseNotesUrl(tag: string): string {
   return `https://github.com/ashlrai/phantom/releases/tag/${encodeURIComponent(tag)}`;
 }
