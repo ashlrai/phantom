@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
+import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
+import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
 import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
+import { jobTextQuery } from './job-text-queries.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -43,6 +46,17 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refreshDetail = useRefresh(query);
   usePollWhileVisible(refetchRuns, 5_000, { enabled: visible, refreshOnShow: false });
   usePollWhileVisible(refetchDetail, pollMs(detail.data), { enabled: visible && valid, refreshOnShow: false });
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const copy = async () => {
+    if (!valid || !detail.data) return;
+    try { await navigator.clipboard.writeText(workerLogMarkdown(job, detail.data, Date.now())); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
   const [follow, setFollow] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
@@ -76,11 +90,14 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (event.key === 'Enter') { event.preventDefault(); moveMatch(event.shiftKey ? -1 : 1); }
         if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
       }} /></label>
+      <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>
       <button type="button" onClick={() => { refreshRuns(); if (valid) { refreshDetail(); refreshChanges(); } }}>Refresh</button>
     </div>
+    <JobText key={`prompt:${job}`} job={job} kind="prompt" enabled={active && valid} />
+    <JobText key={`notes:${job}`} job={job} kind="notes" enabled={active && valid} />
     {job !== '' && !valid && <p id="worker-log-id-hint" className={styles.hint}>Use 3–80 letters, numbers, dots, underscores or hyphens, starting with a letter or number.</p>}
     {runs.status === 'error' && <p role="status">Workers could not refresh.</p>}
     {runs.data && options.length === 0 && <p className={styles.hint}>No workers running right now.</p>}
@@ -106,4 +123,24 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     </>}
     {valid && detail.data === undefined && detail.status !== 'error' && <p role="status">Reading worker log…</p>}
   </div>;
+}
+
+function JobText({ job, kind, enabled }: { job: string; kind: 'notes' | 'prompt'; enabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const query = useMemo(() => jobTextQuery(job, kind), [job, kind]);
+  const result = useQuery(query, { enabled: enabled && open });
+  const refresh = useRefresh(query);
+  const data = result.data;
+  return <details open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{kind === 'prompt' ? 'Brief (what the job asked)' : 'Notes (what the worker reported)'}</summary>
+    {open && <>
+      <button type="button" disabled={!enabled} onClick={refresh}>Refresh</button>
+      {result.status === 'error' ? <p>Could not read</p>
+        : data === null ? <p>Not in this build yet</p>
+          : data?.state === 'missing' ? <p>{kind === 'notes' ? 'No notes yet' : 'No brief on disk'}</p>
+            : data?.state === 'unreadable' ? <p>Could not read</p>
+              : data ? <><p>{data.bytes} bytes{data.truncated ? ' · truncated' : ''}</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '16rem', overflow: 'auto' }}>{data.text}</pre></>
+                : <p>{enabled ? 'Reading…' : 'Select a worker'}</p>}
+    </>}
+  </details>;
 }

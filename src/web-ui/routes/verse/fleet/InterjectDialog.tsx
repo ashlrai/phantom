@@ -2,8 +2,12 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { Dialog } from '../../../components/primitives/Dialog.js';
 import { ApiError } from '../../../data/client.js';
+import { useQuery } from '../../../data/hooks.js';
 import { VerseMutationLockedError } from '../verse-queries.js';
+import { newestLeaderPassMs } from './interject-ack-model.js';
+import { dialogDescription, landedText } from './interject-dialog-eta.js';
 import { closeInterjectDialog, postInterjection, takeInterjectPrefill, useInterjectDialogOpen } from './interject-dialog-store.js';
+import { inboxTailQuery } from './interject-queries.js';
 import styles from './interject-dialog.module.css';
 
 function errorMessage(error: unknown): string {
@@ -19,6 +23,9 @@ export function InterjectDialog() {
 }
 
 function InterjectDialogBody() {
+  const read = useQuery(inboxTailQuery, { freshMs: 30_000 });
+  const newestPass = newestLeaderPassMs(read.data?.leaders, Date.parse(read.data?.generatedAt ?? ''));
+  const now = Date.now();
   const titleId = useId();
   const fieldId = useId();
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -28,7 +35,7 @@ function InterjectDialogBody() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [landed, setLanded] = useState('');
+  const [landed, setLanded] = useState<number | null>(null);
 
   useEffect(() => {
     const prefill = takeInterjectPrefill();
@@ -45,14 +52,14 @@ function InterjectDialogBody() {
     return () => { active.current = false; };
   }, []);
   useEffect(() => {
-    if (!landed) return;
+    if (landed === null) return;
     const timer = window.setTimeout(closeInterjectDialog, 2000);
     return () => window.clearTimeout(timer);
   }, [landed]);
 
   async function send(event?: FormEvent): Promise<void> {
     event?.preventDefault();
-    if (sending.current || landed) return;
+    if (sending.current || landed !== null) return;
     const trimmed = text.trim();
     if (!trimmed) { setError('Enter a message first.'); return; }
     sending.current = true;
@@ -61,9 +68,8 @@ function InterjectDialogBody() {
     try {
       const at = await postInterjection(trimmed);
       if (!active.current) return;
-      const date = new Date(at);
       setText('');
-      setLanded(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`);
+      setLanded(Date.parse(at));
     } catch (err) {
       if (active.current) setError(errorMessage(err));
     } finally {
@@ -74,19 +80,19 @@ function InterjectDialogBody() {
 
   return (
     <Dialog open onClose={closeInterjectDialog} titleId={titleId} title="Tell the fleet leaders"
-      description="Lands in the leaders' inbox. The next leader pass reads it (every 15–20 min)." initialFocusRef={inputRef}>
+      description={dialogDescription(newestPass, now)} initialFocusRef={inputRef}>
       <form onSubmit={(event) => { void send(event); }} className={styles.form}>
         <label htmlFor={fieldId}>Message</label>
-        <textarea id={fieldId} ref={inputRef} rows={6} maxLength={6000} value={text} disabled={busy || !!landed}
+        <textarea id={fieldId} ref={inputRef} rows={6} maxLength={6000} value={text} disabled={busy || landed !== null}
           aria-invalid={!!error} aria-describedby={`${fieldId}-count${error ? ` ${fieldId}-error` : ''}`}
           onChange={(event) => { setText(event.target.value); setError(''); }}
           onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) { event.preventDefault(); void send(); } }} />
         <div id={`${fieldId}-count`} className={styles.counter} aria-live="polite">{text.length} / 6000</div>
         {error ? <p id={`${fieldId}-error`} className={styles.error} role="alert">{error}</p> : null}
-        {landed ? <p className={styles.landed} role="status">Landed at {landed} — the leaders read newest first</p> : null}
+        {landed !== null ? <p className={styles.landed} role="status">{landedText(landed, newestPass, now)}</p> : null}
         <div className={styles.actions}>
           <Button onClick={closeInterjectDialog}>Cancel</Button>
-          <Button variant="primary" type="submit" busy={busy} disabled={!!landed}>Send (⌘↵)</Button>
+          <Button variant="primary" type="submit" busy={busy} disabled={landed !== null}>Send (⌘↵)</Button>
         </div>
       </form>
     </Dialog>

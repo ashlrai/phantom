@@ -19,18 +19,20 @@ import { useEffect, useState } from 'react';
 import { clearMutationToken, clearReadSession } from '../../../../data/auth-store.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
 import { currentRemoteSession, remotePushPublicKey, subscribeRemotePush } from '../../../../data/remote-session.js';
-import { useMutationHold, useTheme } from '../../../../data/hooks.js';
+import { useMutationHold, useQuery, useRefetch, useTheme } from '../../../../data/hooks.js';
 import type { ThemePreference } from '../../../../data/theme-store.js';
 import { writeVerseLayoutPreference } from '../../../../app/console-mode.js';
 import { requestGuarded } from '../../shell/guard-store.js';
+import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { APP_NAME, APP_VERSION } from '../../sections/app-version.js';
 import type { Reachability } from '../connectivity.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { showMobileToast } from '../mobile-toast.js';
+import { deviceRows, pairedDevicesQuery } from '../paired-devices-query.js';
 import { enableRemotePush, supportsIphoneHomeScreenPush } from '../pwa.js';
 import { BottomSheet } from '../sheet.js';
 import { Button, Screen } from '../ui.js';
-import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
+import { Badge, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './MoreScreen.module.css';
 
 const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
@@ -81,6 +83,9 @@ export function MoreScreen() {
   const [pushKey, setPushKey] = useState<string | null>(null);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
   const remote = isRemoteMobileMode();
+  const devices = useQuery(pairedDevicesQuery, { enabled: !remote });
+  const refetchDevices = useRefetch(pairedDevicesQuery);
+  usePollWhileVisible(refetchDevices, 30_000, { enabled: !remote });
   const pushAvailable = remote && currentRemoteSession()?.capabilities.push === true;
   const pushEligible = pushAvailable && supportsIphoneHomeScreenPush();
   useEffect(() => {
@@ -174,6 +179,18 @@ export function MoreScreen() {
       ) : !remote && permissions.act === 'locked' ? (
         <div className={styles.actions}><Button variant="tinted" block onClick={unlock}>Unlock</Button></div>
       ) : null}
+
+      <Section title="Devices paired to this Mac">
+        {remote ? <Row title="Paired devices are listed when you open this on the Mac's network." />
+          : devices.status === 'error' ? <ErrorState title="Couldn’t load paired devices" reason="Check the connection and try again." onRetry={refetchDevices} />
+          : devices.data === undefined ? <Row title="Loading paired devices…" />
+          : devices.data === null ? <Row title="Not in this build yet" />
+          : devices.data.sourceState === 'missing' || devices.data.devices.length === 0 ? <Row title="No devices paired yet" />
+          : deviceRows(devices.data, Date.now(), permissions.deviceLabel).map((device) => (
+            <Row key={device.id} title={device.label} subtitle={<>{device.email ? <>{device.email}<br /></> : null}{device.text}</>}
+              trailing={device.current ? <Badge tone="info">This phone</Badge> : undefined} />
+          ))}
+      </Section>
 
       <Section title="Go to">
         <Row title="Live runs" subtitle="What is running on your Mac right now, and a line to the leaders" onClick={() => navigate({ screen: 'runs' })} />

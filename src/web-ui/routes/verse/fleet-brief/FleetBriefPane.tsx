@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { opsReleasesQuery } from '../fleet-releases/fleet-releases-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { fleetBriefText } from './fleet-brief-model.js';
+import { fleetBriefWithRelease } from './fleet-brief-model.js';
 import styles from './fleet-brief.module.css';
 
 export function FleetBriefPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -11,11 +12,15 @@ export function FleetBriefPane({ visible }: Pick<PaneProps, 'visible'>) {
   const documentVisible = useDocumentVisible();
   const active = visible && sectionVisible && documentVisible;
   const read = useQuery(opsRunsQuery, { enabled: active, freshMs: 0 });
+  const releases = useQuery(opsReleasesQuery, { enabled: active, freshMs: 0 });
   const refetch = useRefetch(opsRunsQuery);
+  const refetchReleases = useRefetch(opsReleasesQuery);
   const refresh = useRefresh(opsRunsQuery);
+  const refreshReleases = useRefresh(opsReleasesQuery);
   const [notice, setNotice] = useState('');
   usePollWhileVisible(refetch, 10_000, { enabled: visible, refreshOnShow: false });
-  const text = read.data ? fleetBriefText(read.data, Date.now()) : '';
+  usePollWhileVisible(refetchReleases, 60_000, { enabled: visible, refreshOnShow: false });
+  const text = read.data ? fleetBriefWithRelease(read.data, releases.data, Date.now()) : '';
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -27,7 +32,7 @@ export function FleetBriefPane({ visible }: Pick<PaneProps, 'visible'>) {
   return <div className={styles.pane} aria-label="Fleet brief">
     <div className={styles.actions}>
       <button type="button" onClick={() => void copy()} disabled={!text}>Copy</button>
-      <button type="button" onClick={refresh}>Refresh</button>
+      <button type="button" onClick={() => { refresh(); refreshReleases(); }}>Refresh</button>
       <span role="status">{notice}</span>
     </div>
     {read.data === null ? <p>The fleet runs API has not landed in this build yet.</p>

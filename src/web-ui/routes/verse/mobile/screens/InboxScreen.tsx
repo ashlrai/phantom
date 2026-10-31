@@ -19,6 +19,7 @@ import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { inboxTailQuery } from '../inbox-tail-query.js';
 import { inboxSeen, type InboxSeen } from '../inbox-seen-model.js';
+import { inboxPending } from '../inbox-pending-model.js';
 import { INBOX_NOT_IN_THIS_BUILD, INBOX_READ_LIMIT, inboxReadQuery, type FleetInboxReadEntry } from '../inbox-read-query.js';
 import { useMobile } from '../mobile-context.js';
 import { cx, Screen, SkeletonList } from '../ui.js';
@@ -107,6 +108,7 @@ export function InboxScreen() {
     const active = source !== null && sources.some((s) => s.toLowerCase() === source.toLowerCase()) ? source : null;
     const shown = active === null ? data.entries : data.entries.filter((e) => e.source.toLowerCase() === active.toLowerCase());
     const seen = inboxSeen(shown, snapshot.data?.snapshot, now);
+    const pending = inboxPending(seen.entries, snapshot.data?.snapshot, now);
     body = (
       <>
         {data.sourceState !== 'healthy' ? (
@@ -116,7 +118,7 @@ export function InboxScreen() {
               : 'The inbox read is degraded — this may not be everything.'}
           </Banner>
         ) : null}
-        {seen.waiting > 0 ? <p role="status">{seen.waiting} waiting for a leader pass{seen.overdue ? ' · leader pass overdue' : ''}</p> : null}
+        {shown.length > 0 ? <Banner tone={pending.tone === 'ok' ? 'info' : pending.tone}>{pending.text}</Banner> : null}
         {data.entries.length === 0 ? (
           <EmptyState title="Nothing yet." body="Use the box on Live runs." />
         ) : (

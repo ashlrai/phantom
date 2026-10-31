@@ -28,11 +28,12 @@ async function showCard() {
   await screen.findByRole('heading', { name: `What's new in Phantom ${APP_VERSION}` });
 }
 
-it('renders the version and all three release highlights', async () => {
+it('renders the version and all four release highlights', async () => {
   await showCard();
-  expect(screen.getByText('Fleet workspace: live jobs, lanes and merges from this Mac')).toBeTruthy();
-  expect(screen.getByText("Leaders' inbox: your prompts land in MASON-INBOX.md")).toBeTruthy();
-  expect(screen.getByText('Ops tray: queue, releases and lane targets')).toBeTruthy();
+  expect(screen.getByText('Open Lanes, Merges and Queue as dock panes with /pane.')).toBeTruthy();
+  expect(screen.getByText('The Inbox pane sends messages to MASON-INBOX.md.')).toBeTruthy();
+  expect(screen.getByText('The notification bell shows fleet, merge and update alerts.')).toBeTruthy();
+  expect(screen.getByText('Pair a device to use the mobile remote at /verse/m/.')).toBeTruthy();
 });
 
 it.each(['Open fleet workspace', 'Later', 'Escape'])('%s acknowledges the release and removes the card', async (action) => {

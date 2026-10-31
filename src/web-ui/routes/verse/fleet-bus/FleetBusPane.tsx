@@ -4,6 +4,8 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { busFeedMissing, busFeedQuery, type BusEvent, type BusKind } from '../fleet/bus-feed-queries.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { busFilterLabel, groupEvents, isInterjection, matchEvents, summarizeHops } from './fleet-bus-model.js';
@@ -26,7 +28,7 @@ const newEvents = (known: readonly IdentifiedEvent[], current: readonly Identifi
 };
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString();
 
-export function FleetBusPane({ visible }: PaneProps) {
+export function FleetBusPane({ visible, host }: PaneProps) {
   const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 0 });
   const refetch = useRefetch(busFeedQuery);
   usePollWhileVisible(() => { if (!busFeedMissing()) refetch(); }, 5_000, { enabled: visible && !busFeedMissing() });
@@ -69,7 +71,7 @@ export function FleetBusPane({ visible }: PaneProps) {
     {ordered.length === 0 ? <p className={styles.message}>{items.length ? 'No events match this filter.' : 'No bus events yet.'}</p> :
       <ol className={styles.list} aria-label="Bus event feed">{identify(ordered).map(({ event, id }) => <li key={id} className={`${styles.row} ${isInterjection(event) ? styles.interjection : ''}`} aria-label={isInterjection(event) ? 'Interjection' : undefined}>
         <time className={styles.time} dateTime={event.at} title={new Date(event.at).toLocaleString()}>{formatRelative(event.at)}</time>
-        <Tag size="sm">{event.kind}</Tag><span className={styles.text}>{event.text}</span>
+        <Tag size="sm">{event.kind}</Tag><span className={styles.text}><JobRefs text={event.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span>
       </li>)}</ol>}
   </section>;
 }

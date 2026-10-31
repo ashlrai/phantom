@@ -4,6 +4,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { safeHref } from '../cloud/cloud-model.js';
+import { JobRefs } from '../fleet/JobRefs.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
@@ -11,6 +12,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { readMerges } from './fleet-merges-model.js';
 import { fleetMergesQuery } from './fleet-merges-queries.js';
 import { mergesMarkdown } from './merges-markdown.js';
+import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
 import { ReleaseStrip } from './ReleaseStrip.js';
 import styles from './fleet-merges.module.css';
 
@@ -19,6 +21,14 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
   const refetch = useRefetch(fleetMergesQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   const data = useMemo(() => readMerges(read.data), [read.data]);
+  const history = useMergeHistory();
+  const trend = summariseMerges(history, Date.now());
+  useEffect(() => {
+    const snapshot = read.data;
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && 'generatedAt' in snapshot && typeof snapshot.generatedAt === 'string') {
+      recordMergeSample(snapshot.generatedAt, data.count);
+    }
+  }, [read.data, data.count]);
   const [notice, setNotice] = useState('');
   useEffect(() => {
     if (notice !== 'Copied') return;
@@ -36,12 +46,13 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     <ReleaseStrip visible={visible} />
     <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
+    {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Merge data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
     <section><h3 className={styles.heading}>Merged in the last hour</h3>
       {data.merged.length === 0 ? <p className={styles.message}>No merged PRs reported.</p> : <ul className={styles.list} aria-label="Merged PRs">{data.merged.map((item, index) => {
         const href = safeHref(item.href, 'github.com');
-        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span>{item.title}</span></li>;
+        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span></li>;
       })}</ul>}
     </section>
     <section><h3 className={styles.heading}>Publishes waiting</h3>
