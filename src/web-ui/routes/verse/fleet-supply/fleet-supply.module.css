@@ -7,6 +7,8 @@
 .table th:first-child { text-align: left; overflow-wrap: anywhere; }
 .table thead th { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
 .table tbody tr { border-top: 1px solid var(--border-subtle); }
+.linkButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.linkButton:hover, .linkButton:focus-visible { text-decoration: underline; }
 .held { display: block; color: var(--text-secondary); font-weight: 400; }
 .exhaustion { display: block; font-weight: 400; color: var(--text-secondary); }
 .exhaustion[data-tone="warn"] { color: var(--status-warning-fg); }

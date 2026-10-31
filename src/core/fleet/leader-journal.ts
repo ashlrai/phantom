@@ -6,12 +6,14 @@ import { redactHomePaths, scrubPrivateText } from '../util/scrub.js';
 
 export const VERSE_OPS_LEADER_JOURNAL_PATH = '/api/verse/ops/leader-journal';
 export interface JournalSection { title: string; bullets: string[] }
+export interface LeaderNote { at: string; bullets: string[] }
 export interface JournalPass { at: string; sections: JournalSection[] }
 export interface DropIngestRow { verb: string; file: string; reason: string | null }
 export interface DropIngestedRow { at: string; id: string; leader: string; lane: string; tier: string; title: string }
 export interface LeaderJournalV1 {
   v: 1; generatedAt: string;
-  sources: Record<'planLog' | 'ingestLog' | 'ingested', 'healthy' | 'missing' | 'degraded'>;
+  sources: Record<'planLog' | 'ingestLog' | 'ingested' | 'orchestration', 'healthy' | 'missing' | 'degraded'>;
+  notes: LeaderNote[];
   passes: JournalPass[]; ingest: DropIngestRow[]; ingested: DropIngestedRow[];
   rejectedLastHour: number | null;
 }
@@ -46,6 +48,21 @@ export function parsePlanLog(markdown: string, limit = 8): JournalPass[] {
     if (bullet && section && section.bullets.length < 12) section.bullets.push(clean(safeLine(bullet[1]), 300));
   }
   return passes.reverse().slice(0, limitTo(limit, 8));
+}
+
+export function parseLeaderNotes(markdown: string, limit = 12): LeaderNote[] {
+  const notes: LeaderNote[] = [];
+  let note: LeaderNote | undefined;
+  for (const line of markdown.split(/\r?\n/)) {
+    if (line.startsWith('## ')) {
+      const heading = /^## Leader notes, (.+?)(?: \(.*)?$/.exec(line);
+      note = heading ? { at: clean(safeLine(heading[1].trim()), 80), bullets: [] } : undefined;
+      if (note) notes.push(note);
+    } else if (note && line.startsWith('- ')) {
+      note.bullets.push(clean(safeLine(line.slice(2).trim()), 400));
+    }
+  }
+  return notes.reverse().slice(0, limitTo(limit, 12));
 }
 
 // Accept timestamps only as a prefix, so a timestamp in a reason cannot change the count.
@@ -98,8 +115,8 @@ export async function readLeaderJournal(opts: { runsDir?: string; now?: () => nu
   let now = Date.now();
   try { const value = (opts.now ?? Date.now)(); if (Number.isFinite(value) && Math.abs(value) <= 8.64e15) now = value; } catch { /* use the system clock */ }
   const state: LeaderJournalV1 = { v: 1, generatedAt: new Date(now).toISOString(),
-    sources: { planLog: 'missing', ingestLog: 'missing', ingested: 'missing' },
-    passes: [], ingest: [], ingested: [], rejectedLastHour: null };
+    sources: { orchestration: 'missing', planLog: 'missing', ingestLog: 'missing', ingested: 'missing' },
+    notes: [], passes: [], ingest: [], ingested: [], rejectedLastHour: null };
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const leader = join(root, 'leader');
   const drop = join(leader, 'drop');
@@ -113,6 +130,7 @@ export async function readLeaderJournal(opts: { runsDir?: string; now?: () => nu
     } catch (error) { state.sources[key] = (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'degraded'; }
   }
   await Promise.all([
+    source('orchestration', join(leader, 'ORCHESTRATION.md'), [root, leader], text => { state.notes = parseLeaderNotes(text); }),
     source('planLog', join(leader, 'PLAN-LOG.md'), [root, leader], text => { state.passes = parsePlanLog(text); }),
     source('ingestLog', join(drop, 'ingest.log'), [root, leader, drop], (text, truncated) => {
       state.ingest = parseIngestLog(text);
