@@ -455,8 +455,36 @@ Supports **Telegram** (recommended) and macOS iMessage. Configure in `cfg.comms`
 ashlr fleet status         # per-backend throughput, queue, proposals, quota, kill state
 ashlr fleet watch          # glanceable monitoring + recent autonomous actions
 ashlr pulse                # rolling activity + spend analytics (1d/7d/30d)
+ashlr pulse memory --samples memory.json  # sampled RSS and memguard benchmark
 ashlr audit                # append-only confinement + action audit log
 ```
+
+`fleet status --json` emits the additive `schema: "fleet.v1"` contract.
+Its `memory` block reads only local files under `~/.ashlr-runs`:
+
+| File | Format | Output |
+| --- | --- | --- |
+| `PAUSE` | Plain reason text, trimmed | `pause: { state: "present", reason: string or null }` |
+| `memguard.json` | `{ "freeMemoryPercent": 4.5, "swapUsedBytes": 1024 }` | Percent in [0, 100], swap in bytes |
+| `admission-waits.json` | `{ "admissionWaitsByPool": { "codex-personal": 3 } }` | Current waiting launch counts by pool, nonnegative safe integers |
+
+All three sources are optional and independent. Missing `PAUSE` reports
+`state: "absent"`; unreadable `PAUSE` reports `state: "unknown"`. An empty
+PAUSE file is still present with a null reason. Missing, unreadable or malformed
+metrics report null, including `admissionWaitsByPool: null` when counts are
+unknown. A valid empty pool map means no recorded waits; zero is an observed
+value. Invalid metric fields become null independently; an invalid pool count
+makes the entire pool map unknown to avoid implying complete coverage.
+These are last persisted observations with no freshness guarantee and grant no
+launch authority. Fleet status runs no memory probes or network requests for
+this block and never creates these files. Producers must persist the formats
+above. The human status board also displays these observations.
+
+The canonical types are `FleetStatus` in `src/core/fleet/status.ts` and
+`FleetMemoryStatus` in `src/core/fleet/memory-state.ts`. Legacy snapshots may
+omit `schema` and `memory`. Tests and callers can inject all source paths via
+`buildFleetStatus(cfg, { memoryPaths: { pausePath, metricsPath, admissionPath } })`
+or call `readFleetMemory(memoryPaths)` directly.
 
 `fleet status` shows both tick-level **Proposal production** and durable
 **Dispatch yield**. Dispatch yield is read from
@@ -466,6 +494,30 @@ grouped by backend/source in the human view and by backend, source, repo, and
 backend+model in JSON/API output. Learned routing uses this ledger too, but
 excludes non-learnable control-flow outcomes such as `proposal-disabled` so
 intentional capture staging does not count as backend quality failure.
+
+`phm pulse memory --samples memory.json [--json] [--send]` benchmarks an
+explicit runner export. Example input (RSS is process-tree bytes):
+
+```json
+[{"jobId":"RQ-MEM-BENCH","samples":[{"rssBytes":104857600,"memguard":"RUN"},{"rssBytes":157286400,"memguard":"PAUSE"}],"mergedPr":{"repo":"ashlrai/phantom","number":123}}]
+```
+
+The runner must supply samples and include `mergedPr` only after confirming a
+merge. This command does not sample processes or infer merges. Repeated PAUSE
+samples count once until RUN resumes. PR peak RSS is the maximum associated job
+peak; the efficiency ratio is the sum of all job peaks (including failed jobs)
+divided by distinct merged PRs. Empty samples and a zero merge denominator
+remain unknown, rather than reporting a misleading zero. Peaks are sampled
+observations, so sampling gaps can miss short spikes.
+
+Without `--send`, the command only reports. With `--send`, it uses the existing
+Pulse analytics sink and its existing credential: run through `phantom exec --`
+when credentials are required. No new PostHog key or direct PostHog client is
+introduced. Delivery to a downstream PostHog destination depends on the
+configured Pulse bridge. Without a configured endpoint the sink stores spans
+locally; JSON output identifies the sink and delivery success. Imports are
+bounded to 16 MiB, 10,000 unique jobs and 100,000 total samples. Re-sending an
+export emits another batch; use one authoritative export per benchmark run.
 
 Queue status reports raw backlog plus daemon-eligible work: items cooling in the
 worked ledger or already covered by pending proposals are counted separately, so
