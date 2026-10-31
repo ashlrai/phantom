@@ -416,5 +416,14 @@ export type {
   ServingRuntimeState,
 } from '../../core/verse/fleet-types.js';
 
-/** RQ-ONB-2 DETECT: GET /api/onboard/status row + report shapes. */
-export type { OnboardResourceStatus, OnboardStatusReport } from '../../core/onboard.js';
+/** RQ-ONB-2 DETECT + RQ-ONB-7: GET /api/onboard/status shapes. */
+export type {
+  OnboardAgentsReport,
+  OnboardBalanceRow,
+  OnboardBalanceSummary,
+  OnboardEvidence,
+  OnboardResourceStatus,
+  OnboardScheduledAgent,
+  OnboardStatusReport,
+  OnboardUsageReading,
+} from '../../core/onboard.js';
