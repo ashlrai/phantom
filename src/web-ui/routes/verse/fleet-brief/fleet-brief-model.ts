@@ -1,10 +1,22 @@
 import { ageText, newest, type FleetRuns } from '../ops/ops-runs-model.js';
 import { isOpsReleases } from '../fleet-releases/fleet-releases-model.js';
 import { releaseLine } from './release-line.js';
+import type { visitDelta } from '../fleet/visit-delta.js';
 
 const limit = 2000;
 const singleLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 const time = (ms: number) => Number.isFinite(ms) ? new Date(ms).toISOString().slice(11, 16) : '—';
+
+/** Adapt the shared visit summary for the brief without recomputing its deltas. */
+export function sinceVisitLine(delta: ReturnType<typeof visitDelta> | null, _nowMs: number): string | null {
+  if (delta === null) return null;
+  return delta
+    .replace(/\(([^)]+)\):/, (_, gap: string) => `(${gap.replace(/(\d+) m\b/g, '$1 min')} ago):`)
+    .replace(/\b(\d+) merged\b/g, (_, count: string) => `+${count} merge${count === '1' ? '' : 's'}`)
+    .replace(/\b(\d+) new interjections?\b/g, '+$1 inbox')
+    .replace('no change', 'nothing changed')
+    .replace(/, /g, ' · ');
+}
 
 export function fleetBriefText(runs: FleetRuns, nowMs: number): string {
   const lanes = runs.lanes.map((lane) => `${singleLine(lane.lane)} ${lane.running}/${lane.target}${lane.held ? ` (held: ${singleLine(lane.heldReason ?? 'unspecified')})` : ''}`).join(' · ') || 'none';
