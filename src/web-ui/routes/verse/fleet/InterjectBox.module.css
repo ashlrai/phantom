@@ -14,3 +14,7 @@
 .entry[open] .preview { display: none; }
 .expanded, .entry[open] .collapsed { display: none; }
 .entry[open] .expanded { display: inline; }
+.ack { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--status-unknown-solid); }
+.dot[data-state='seen'] { background: var(--status-success-solid); }
+.dot[data-state='waiting'] { background: var(--text-secondary); }
