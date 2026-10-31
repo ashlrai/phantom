@@ -1,0 +1,8 @@
+{"schemaVersion":1,"id":"a-merge","lane":"codex-cmp","tier":"frontier","outcome":"running","tokens":50,"startedAt":"2026-10-25T10:00:00.000Z"}
+{"schemaVersion":1,"id":"b-empty","lane":"codex-cmp","tier":"frontier","outcome":"empty","tokens":100}
+{"schemaVersion":1,"id":"c-fail","lane":"codex-cmp","tier":"frontier","outcome":"failed","tokens":100}
+{"schemaVersion":1,"id":"d-running","lane":"codex-cmp","tier":"frontier","outcome":"running","tokens":999}
+{"schemaVersion":1,"id":"e-incomplete","lane":"codex-cmp","tier":"frontier"}
+{"schemaVersion":1,"id":"f-revert","lane":"grok","tier":"mid","outcome":"merged","tokens":200,"pr":"ashlrai/example#2","startedAt":"2026-10-25T10:00:00.000Z","mergedAt":"2026-10-25T10:30:00.000Z","reverted":true,"impact":9}
+{"schemaVersion":1,"id":"g-merge","lane":"grok","tier":"mid","outcome":"merged","tokens":100,"pr":"ashlrai/example#3","startedAt":"2026-10-25T10:00:00.000Z","mergedAt":"2026-10-25T11:00:00.000Z","reverted":false,"impact":6}
+{"schemaVersion":1,"id":"h-unknown-cost","lane":"local","tier":"local","outcome":"merged","pr":"ashlrai/example#4"}
