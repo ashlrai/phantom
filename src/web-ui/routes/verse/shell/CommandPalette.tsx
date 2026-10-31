@@ -35,7 +35,7 @@ import styles from './CommandPalette.module.css';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
-import { openDockPane } from '../dock/dock-store.js';
+import { revealDockPane } from '../dock/reveal-pane.js';
 import { usePanes } from '../panes/pane-registry.js';
 import { paletteWorkers } from './palette-workers.js';
 
@@ -190,7 +190,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       return;
     }
     if (payload.kind === 'pane') {
-      openDockPane(payload.paneId);
+      revealDockPane(payload.paneId);
       recordVerseAction(`pane.${payload.paneId}`);
       onClose();
       return;
@@ -199,7 +199,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       if (payload.url) window.open(payload.url, '_blank', 'noopener,noreferrer');
       if (!payload.url || payload.selectLog) {
         requestWorkerLogJob(payload.job);
-        openDockPane('worker-log');
+        revealDockPane('worker-log');
       }
       recordVerseAction(payload.url ? 'worker.pr' : 'worker.log');
       onClose();
