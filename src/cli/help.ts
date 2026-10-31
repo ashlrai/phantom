@@ -512,6 +512,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'config effective [--json]',     desc: 'Read-only effective autonomy/daemon/foundry/backend settings.', topic: 'core' },
   { cmd: 'config set <k> --json <v>',    desc: 'Set a structured (array/object) config value as JSON.', topic: 'core' },
   { cmd: 'config path',                  desc: 'Print the path to config.json.', topic: 'core' },
+  { cmd: 'doctor merge-path --repo owner/name', desc: 'Read-only required-check sentinel for recent PR heads.', topic: 'core' },
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
