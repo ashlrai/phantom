@@ -6,7 +6,7 @@ import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { burnLine, burnTotals, formatTokens, headline, laneBars, workerRows } from './fleet-lanes-model.js';
+import { burnLine, burnTotals, formatTokens, headline, isPhantomRepo, laneBars, repoMix, repoMixLine, repoShort, workerRows } from './fleet-lanes-model.js';
 import { LanePauseButton } from './LanePauseButton.js';
 import { LaneTargetStepper } from './LaneTargetStepper.js';
 import styles from './fleet-lanes.module.css';
@@ -60,8 +60,9 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
         </section>
         <section className={styles.section} aria-labelledby="fleet-lanes-workers">
           <h3 id="fleet-lanes-workers" className={styles.title}>Workers</h3>
+          <p className={styles.muted} aria-label="Repository mix">{repoMixLine(repoMix(data))}</p>
           {workers.length === 0 ? <p className={styles.muted}>No workers running.</p> : <ul className={styles.list}>
-            {(showAll ? workers : workers.slice(0, 12)).map((worker, i) => <li key={`${worker.job}:${i}`} className={styles.worker}><button type="button" className={styles.jobButton} onClick={() => openLog(worker.job)} aria-label={`Open log for ${worker.job}`}><code>{worker.job}</code></button><span>{worker.lane} · {worker.tier}</span><span>{worker.age}</span></li>)}
+            {(showAll ? workers : workers.slice(0, 12)).map((worker, i) => <li key={`${worker.job}:${i}`} className={styles.worker} data-filler={isPhantomRepo(worker.repo) ? undefined : 'true'}><button type="button" className={styles.jobButton} onClick={() => openLog(worker.job)} aria-label={`Open log for ${worker.job}`}><code>{worker.job}</code></button><span title={repoShort(worker.repo) !== worker.repo ? worker.repo : undefined}>{repoShort(worker.repo)}</span><span>{worker.lane} · {worker.tier}</span><span>{worker.age}</span></li>)}
           </ul>}
           {workers.length > 12 ? <button type="button" className={styles.moreButton} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `Show ${workers.length - 12} more`}</button> : null}
         </section>
