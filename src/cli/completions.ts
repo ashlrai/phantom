@@ -22,7 +22,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'node', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
@@ -52,7 +52,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget',
+  'worktrees', 'drive', 'budget', 'top',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -78,6 +78,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
   telemetry: ['status', 'test'],
+  node: ['bootstrap'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh', 'plan'],

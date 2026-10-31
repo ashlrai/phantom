@@ -203,6 +203,21 @@ evidence without additional model calls.
 
 ---
 
+### Inspect commands and companion tools
+
+```sh
+phm help                  # CLI usage
+phm docs --agent --json    # machine-readable command registry
+phm mcp list --json        # discovered servers and per-server tool counts
+phm mcp doctor            # check required server readiness
+```
+
+For agents working in this checkout, `.mcp.json` declares `phantom-secrets`,
+`locus`, `lexicon`, `stack`, `ashlr`. These companion servers are separate from
+Phantom's aggregation gateway (`phm mcp`). Registration and discovery do not
+establish authorization or live readiness. See the
+[agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
+
 ## The desktop app (macOS)
 
 The desktop app is a native window around Phantom, with a menu-bar item,
@@ -237,6 +252,10 @@ The guarded `ship:local --native` path handles a first install or an existing
 verified app with the prebuilt native binary and local signature. It does not
 compile Rust. Verify that it copied the new binary and that the installed app
 reports this release. A bare `cargo tauri build` can wrap stale web assets.
+
+Settings > About shows the installed desktop version when native shell metadata
+is available, and the interface build separately when it differs. In a browser,
+it shows the interface build. Neither label establishes release publication.
 
 ### Open
 
