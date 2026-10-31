@@ -10,11 +10,14 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../autonomy/format.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { jobTextQuery } from '../fleet-job-log/job-text-queries.js';
 import { jobChangesQuery } from '../fleet-job-log/worker-changes-queries.js';
 import { changesHeadline, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
+import { JobRefs } from './JobRefs.js';
+import { closesRefs, notesHeadline, notesPreview } from './job-notes-model.js';
 import styles from './workers-card.module.css';
 
 const tones: Record<string, Tone> = { running: 'success', published: 'info', archived: 'neutral', unknown: 'warning' };
@@ -25,9 +28,14 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
   const read = useQuery(query);
   const changesQuery = jobChangesQuery(job);
   const changes = useQuery(changesQuery, { freshMs: 0 });
+  const notesQuery = jobTextQuery(job, 'notes');
+  const notes = useQuery(notesQuery, { freshMs: 0 });
   usePollWhileVisible(() => { void runQuery(query.key, () => query.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
+  usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
   const d = read.data;
+  const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
+  const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
   const facts = d ? [['Lane', d.lane], ['Tier', d.tier], ['Model', d.model], ['Launched', formatRelative(d.launchedAt)], ['Base', d.baseSha?.slice(0, 7)], ['Branch', d.branch]] : [];
   return <Sheet open titleId={id} title={job} onClose={onClose}>
     {read.status === 'refreshing' ? <RefreshIndicator /> : null}
@@ -45,7 +53,6 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</dd></div>)}</dl>
       {d.publish?.prUrl ? <p><a href={d.publish.prUrl} target="_blank" rel="noreferrer">PR for job {job}</a></p> : null}
       {d.publish?.autoMerge != null ? <p>Auto-merge {d.publish.autoMerge ? 'on' : 'off'}</p> : null}
-      <p>Notes present: {d.hasNotes === null ? 'unknown' : d.hasNotes ? 'yes' : 'no'}</p>
       <section aria-label="Changed files">
         <h3>Changed files</h3>
         {changes.error ? <p role="status">Changes unavailable</p> : changes.data === null ? <p>Changes are not in this build yet</p> : !changes.data ? <SkeletonLine /> : <>
@@ -58,6 +65,17 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
             {changes.data.files.length > 40 && <p>+{changes.data.files.length - 40} more</p>}
             {changes.data.truncated && <p>Showing a limited set of changes.</p>}
           </>}
+        </>}
+      </section>
+      <section aria-label="Bridge notes">
+        <h3>Bridge notes</h3>
+        {notes.error ? <p role="status">Bridge notes unavailable</p> : notes.data === undefined ? <SkeletonLine /> : <>
+          <p>{notes.data === null && d.hasNotes === null ? 'Notes unknown in this build' : notesHeadline(notes.data)}</p>
+          {notes.data?.state === 'ok' && preview ? <>
+            {issues.length > 0 && <p>Closes {issues.map((number, index) => <span key={number}>{index > 0 ? ', ' : ''}<a href={`https://github.com/ashlrai/phantom/issues/${number}`} target="_blank" rel="noopener noreferrer">#{number}</a></span>)}</p>}
+            <pre className={styles.log}><JobRefs text={preview.lines.join('\n')} onOpenJob={id => { requestWorkerLogJob(id); openDockPane('worker-log'); onClose(); }} /></pre>
+            {preview.more > 0 && <p>+{preview.more} more lines</p>}
+          </> : null}
         </>}
       </section>
       {d.log.source === 'missing' ? <p>No log yet.</p> : <><h3>Log tail ({d.log.source}, {d.log.tail.length} lines{d.log.truncated ? ', truncated' : ''})</h3>
