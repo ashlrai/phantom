@@ -588,7 +588,13 @@ Inputs are the existing readers' artifacts. From the router queue directory
 (`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
 `ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
 `queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
-(merge transitions in the trailing hour), and `usage-readings.log`. Credit
+(merge outcomes and transitions in the trailing hour), and `usage-readings.log`.
+The merge rate counts a GitHub PR once across repeated observations and jobs;
+legacy transitions without a PR URL deduplicate by job, including LAND rows in
+`ready.tsv`. Rows with neither identifier remain separate observations. Event
+timestamps must include a timezone; the trailing window includes both endpoints
+and uses the event timestamp, not reconciliation time. The bounded ledger is
+read in full because backfilled events need not be ordered by event time. Credit
 comes from the pool-budget ledger; a queue-local `budgets/` directory or the
 usage journal fill pools the ledger has not observed.
 
