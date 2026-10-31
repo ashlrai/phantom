@@ -11,7 +11,8 @@ Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
-Priority is a routing attribute, not authority.
+Priority is a routing attribute; it does not establish identity or authority.
+Example: phm comms bus watch --to worker --from coordinator --priority P0
 Use --to=<address> or --from=<address> for labels that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
