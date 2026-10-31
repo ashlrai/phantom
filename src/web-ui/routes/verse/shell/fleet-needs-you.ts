@@ -34,6 +34,7 @@ export interface FleetNeedsYouItem {
   /** The plain next step, in operator language — never a path. */
   nextStep: string;
   target: FleetNeedsYouTarget;
+  open?: { kind: 'pane'; paneId: string } | { kind: 'terminal'; command: string };
 }
 
 export interface FleetNeedsYouResult {
@@ -68,6 +69,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (lane !== null && /down/i.test(lane)) {
     items.push({
       id: 'claude-lane-down',
+      open: { kind: 'terminal', command: '~/.ashlr-runs/bin/fix-claude-lane.sh' },
       severity: 'urgent',
       title: 'The Claude lane is down',
       detail: SAFE_STATUS.test(lane) ? `Claude lane: ${lane}` : 'The lane reported itself down.',
@@ -104,6 +106,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (pulse.state === 'incident') {
     items.push({
       id: 'stall-incident',
+      open: { kind: 'pane', paneId: 'leader-journal' },
       severity: 'urgent',
       title: pulse.headline,
       detail: pulse.detail ?? 'Nothing started and nothing merged for 30 minutes.',
@@ -121,7 +124,9 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       return at !== null && newestPass !== null && at > newestPass;
     }).length;
     items.push({
-      id: 'leader-overdue', severity: 'urgent',
+      id: 'leader-overdue',
+      open: { kind: 'pane', paneId: 'leader-journal' },
+      severity: 'urgent',
       title: newestPass === null ? 'No leader process is running' : `No leader pass for ${Math.floor((nowMs - newestPass) / 60_000)} minutes`,
       detail: waiting === 0 ? 'Nothing is waiting in the inbox yet' : `${waiting} inbox entries are waiting on a leader`,
       nextStep: 'Check the leaders in Ops and restart the leader loop if it stopped', target: 'ops',
@@ -132,6 +137,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     if (!l.held) continue;
     items.push({
       id: `lane-held:${l.lane}`,
+      open: { kind: 'pane', paneId: 'fleet-lanes' },
       severity: 'attention',
       title: `Lane ${l.lane} is held`,
       detail: l.heldReason ?? 'No reason recorded',
@@ -151,6 +157,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if ((used != null && used >= 100) || heldForLimit) {
     items.push({
       id: 'supply-personal-out',
+      open: { kind: 'pane', paneId: 'fleet-supply' },
       severity: (personalLane?.queued ?? 0) > 0 ? 'urgent' : 'attention',
       title: `Personal Codex is out${reset ? ` until ${reset}` : ''}`,
       detail: personalLane ? `${personalLane.queued} jobs are waiting on it` : 'Queue size is unknown',
@@ -168,7 +175,9 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       reset ? `resets ${reset}` : null,
     ].filter((part): part is string => part !== null).join(' · ');
     items.push({
-      id: 'supply-personal-low', severity: 'attention',
+      id: 'supply-personal-low',
+      open: { kind: 'pane', paneId: 'fleet-supply' },
+      severity: 'attention',
       title: `Personal Codex is at ${used}%`, detail,
       nextStep: 'Move new work to Devin and local lanes before it runs out', target: 'fleet',
     });
@@ -181,6 +190,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (pressure.length > 0) {
     items.push({
       id: 'host-pressure',
+      open: { kind: 'pane', paneId: 'fleet-host' },
       severity: 'attention',
       title: 'This Mac is under pressure',
       detail: pressure.join(' · '),
