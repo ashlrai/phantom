@@ -2,6 +2,7 @@ import type { ResourceAccountConnection, ResourceConnectionsSnapshot } from '../
 import { StatusBadge } from '../../components/primitives/StatusBadge.js';
 import { resourceTime } from './CapacityBoard.js';
 import { summarizeAccountUsage } from './account-usage-summary.js';
+import { visibleWindows, windowNote } from '../verse/usage/provider-windows.js';
 import styles from './AccountConnections.module.css';
 
 const PROVIDERS = { codex: 'Codex', claude: 'Claude Code', grok: 'Grok Build' } as const;
@@ -109,7 +110,11 @@ function AccountRow({ account, sampledAt, historical, ceiling }: {
   const provider = PROVIDERS[account.provider];
   const executionIntegrated = account.executionSupported;
   const missingAction = missingQuotaAction(account, current);
-  const usageSummary = summarizeAccountUsage(account, { sampledAt, ceilingPercent: ceiling, historical });
+  // Anthropic removed Claude's 5-hour limit: a connection payload that still
+  // carries the window is read without it, and the row says so once.
+  const windows = visibleWindows(account.provider, account.windows);
+  const note = windowNote(account.provider);
+  const usageSummary = summarizeAccountUsage({ ...account, windows }, { sampledAt, ceilingPercent: ceiling, historical });
 
   return <li className={styles.account} aria-label={`${account.label} connection`} data-current={current}>
     <div className={styles.identity}>
@@ -147,9 +152,10 @@ function AccountRow({ account, sampledAt, historical, ceiling }: {
           <p>Reference comparison only; not dispatch eligibility or a token allowance.</p>
         </> : <p>Account reference summary unavailable: verified usage, freshness and a saved reference are required for every window.</p>}
       </section>
-      {account.windows.some((window) => window.nativeReport) ? <p className={styles.quotaAction}>
+      {note !== null ? <p className={styles.quotaAction}>{note}</p> : null}
+      {windows.some((window) => window.nativeReport) ? <p className={styles.quotaAction}>
         Native /usage report. Percentages are rounded down and may be cached. Quota freshness is unverified; not used for dispatch or ceiling comparison.</p> : null}
-      {account.windows.length ? account.windows.map((window) => {
+      {windows.length ? windows.map((window) => {
         const used = typeof window.usedPercent === 'number' && Number.isFinite(window.usedPercent)
           && window.usedPercent >= 0 && window.usedPercent <= 100 ? window.usedPercent : null;
         const resetPassed = timestamp(window.resetsAt) <= sampled;
