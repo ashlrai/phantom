@@ -1203,3 +1203,17 @@ describe('ResourcesDrawer — equal partners (3.15)', () => {
     expect(within(screen.getByRole('region', { name: 'Free · local' })).getByText(/connected tools can use network services/)).toBeInTheDocument();
   });
 });
+
+
+describe('ResourcesDrawer — weekly-only Claude', () => {
+  it('shows a single weekly bar and explains the absent session cap', async () => {
+    const week = seatWindow({ id: 'seven_day', usedPercent: 62, resetsAt: RESET });
+    roster = [nativeSeat(capacity({ windows: [week], usability: 'ready', observedAt: CHECKED }), { id: 'claude-weekly', label: 'Claude weekly' })];
+    render(<ResourcesDrawer mode="docked" now={NOW} />);
+    const heading = await screen.findByRole('heading', { name: /^Claude weekly/ });
+    const card = within(heading.closest('li')!);
+    expect(card.getAllByRole('img', { name: /weekly window/ })).toHaveLength(1);
+    expect(card.getByText('No session cap on this plan')).toBeInTheDocument();
+    expect(card.queryByText(/5-hour|rolling 5h/)).toBeNull();
+  });
+});

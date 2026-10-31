@@ -28,6 +28,8 @@ export { loadBacklog } from '../core/portfolio/backlog.js';
 export { loadPreviousReport, listReports } from '../core/quality/store.js';
 export { ask } from '../core/knowledge/ask.js';
 export { impact, buildGraph } from '../core/knowledge/graph.js';
+export { startGraphServer } from './graph-http.js';
+export type { GraphHttpOptions, GraphHttpHandle, GraphHttpDependencies } from './graph-http.js';
 
 // Runs + swarms (read-only history)
 export { listRuns, loadRun } from '../core/run/orchestrator.js';
