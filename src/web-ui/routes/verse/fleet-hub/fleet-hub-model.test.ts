@@ -14,7 +14,7 @@ it('computes live counts and availability without requiring registrations', () =
   const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, [{ id: 'fleet-lanes', title: 'Lanes' }, { id: 'fleet-events', title: 'Fleet events' }]);
   expect(tiles.map(({ id, count }) => [id, count])).toEqual([
     ['fleet-lanes', '1/2 · 1 held'], ['fleet-events', '1'], ['fleet-inbox', '1'], ['fleet-bus', '—'],
-    ['fleet-merges', '2'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '—'],
+    ['fleet-merges', '2'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '1 events'],
   ]);
   expect(tiles.filter((tile) => tile.present).map((tile) => tile.id)).toEqual(['fleet-lanes', 'fleet-events']);
 });
