@@ -103,6 +103,19 @@ export default tseslint.config(
     },
   },
   {
+    // ci-mac-rotation.test.mjs resolves repo-root paths through `new URL(...)`
+    // but, unlike its sibling CI tests, has no `/* global URL */` pragma —
+    // the pragma lives here since the test file itself is a Tier-1 path.
+    files: ['.github/tests/ci-mac-rotation.test.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     // Node build scripts (e.g. scripts/copy-assets.mjs) run under Node and use
     // Node globals.
     files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
