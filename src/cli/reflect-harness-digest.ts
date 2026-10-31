@@ -1,6 +1,6 @@
 import { readHarnessDigest } from '../core/learn/harness-digest-reader.js';
 
-const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>]... [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
+const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>]... [--query <text>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
 Read a local digest (maximum 1 MiB) and emit dated HTTPS citations as JSON.
 Dates are UTC calendar days; older than N days is stale (default 7, boundary is fresh).
 Missing, invalid, or future dates have null checkedAt and stale, with an issue.
@@ -13,21 +13,27 @@ With --needs-refresh, include only stale or undated selected sources and sources
 IDs are referenced by selected issues; v and selected issues are preserved.
 With --with-takeaways, select only sources with at least one nonblank takeaway;
 this composes with --needs-refresh and preserves v and selected issues.
+With --query, select sources whose title or retained takeaway contains the nonblank
+text as a case-insensitive literal substring. Whitespace is significant. Issues are
+scoped to matching source IDs, including all issues for a matching duplicate ID.
+This searches the local digest only; no semantic or code index or network is used.
 With --check, exit 0 for a non-empty selection with all sources fresh and no issues;
 exit 1 for an empty selection, an ID absent from the digest, stale or undated sources,
 issues, or read failure. Requested IDs are checked before takeaway filtering.
-The check evaluates the selection before --needs-refresh, after --source and
---with-takeaways. Issues remain scoped by --source and are not filtered by takeaways.
+The check evaluates the selection before --needs-refresh, after --source,
+--with-takeaways and --query. Without --query, issues remain scoped by --source
+and are not filtered by takeaways.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
 Options: --file <markdown>  Input file; --json  Required JSON output;
          --source <id>  Exact source ID (repeatable); --stale-days <n>  Non-negative integer;
+         --query <text>  Literal title or takeaway substring (case-insensitive);
          --needs-refresh  Filter sources;
          --with-takeaways  Filter sources to those with takeaways;
          --check  Check freshness;
          --help, -h  Show help.`;
 
 export function cmdReflectHarnessDigest(args: string[], now = new Date()): number {
-  if (args.includes('--help') || args.includes('-h')) {
+  if (args.some((arg, i) => (arg === '--help' || arg === '-h') && (i === 0 || args[i - 1] !== '--query'))) {
     process.stdout.write(HELP + '\n');
     return 0;
   }
@@ -36,6 +42,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   let check = false;
   let needsRefresh = false;
   let withTakeaways = false;
+  let query: string | undefined;
   const sourceIds = new Set<string>();
   let staleDays: number | undefined;
   const usage = (): number => {
@@ -56,6 +63,10 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
       const value = args[++i];
       if (!value || !/^S\d+$/.test(value)) return usage();
       sourceIds.add(value);
+    } else if (arg === '--query' && query === undefined) {
+      const value = args[++i];
+      if (value === undefined || !value.trim()) return usage();
+      query = value.toLowerCase();
     } else if (arg === '--stale-days' && staleDays === undefined) {
       const value = args[++i];
       if (!value || !/^(0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value))) return usage();
@@ -76,10 +87,18 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     issues: result.issues.filter(issue => sourceIds.has(issue.id)),
     ...(sourceIds.size > 1 ? { requestedSourceIds: [...sourceIds] } : {}),
   };
-  const selected = withTakeaways ? {
+  const takeawaySelection = withTakeaways ? {
     ...sourceSelection,
     sources: sourceSelection.sources.filter(source => source.takeaways?.some(takeaway => takeaway.trim().length > 0)),
   } : sourceSelection;
+  let selected = takeawaySelection;
+  if (query !== undefined) {
+    const sources = selected.sources.filter(source =>
+      source.title.toLowerCase().includes(query) || source.takeaways?.some(takeaway => takeaway.toLowerCase().includes(query)),
+    );
+    const ids = new Set(sources.map(source => source.id));
+    selected = { ...selected, sources, issues: selected.issues.filter(issue => ids.has(issue.id)) };
+  }
   const issueIds = new Set(selected.issues.map(issue => issue.id));
   const output = needsRefresh
     ? { ...selected, sources: selected.sources.filter(source => source.stale !== false || issueIds.has(source.id)) }
