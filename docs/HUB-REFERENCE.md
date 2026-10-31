@@ -458,6 +458,33 @@ ashlr pulse                # rolling activity + spend analytics (1d/7d/30d)
 ashlr audit                # append-only confinement + action audit log
 ```
 
+`fleet status --json` emits the additive `schema: "fleet.v1"` contract.
+Its `memory` block reads only local files under `~/.ashlr-runs`:
+
+| File | Format | Output |
+| --- | --- | --- |
+| `PAUSE` | Plain reason text, trimmed | `pause: { state: "present", reason: string or null }` |
+| `memguard.json` | `{ "freeMemoryPercent": 4.5, "swapUsedBytes": 1024 }` | Percent in [0, 100], swap in bytes |
+| `admission-waits.json` | `{ "admissionWaitsByPool": { "codex-personal": 3 } }` | Current waiting launch counts by pool, nonnegative safe integers |
+
+All three sources are optional and independent. Missing `PAUSE` reports
+`state: "absent"`; unreadable `PAUSE` reports `state: "unknown"`. An empty
+PAUSE file is still present with a null reason. Missing, unreadable or malformed
+metrics report null, including `admissionWaitsByPool: null` when counts are
+unknown. A valid empty pool map means no recorded waits; zero is an observed
+value. Invalid metric fields become null independently; an invalid pool count
+makes the entire pool map unknown to avoid implying complete coverage.
+These are last persisted observations with no freshness guarantee and grant no
+launch authority. Fleet status runs no memory probes or network requests for
+this block and never creates these files. Producers must persist the formats
+above. The human status board also displays these observations.
+
+The canonical types are `FleetStatus` in `src/core/fleet/status.ts` and
+`FleetMemoryStatus` in `src/core/fleet/memory-state.ts`. Legacy snapshots may
+omit `schema` and `memory`. Tests and callers can inject all source paths via
+`buildFleetStatus(cfg, { memoryPaths: { pausePath, metricsPath, admissionPath } })`
+or call `readFleetMemory(memoryPaths)` directly.
+
 `fleet status` shows both tick-level **Proposal production** and durable
 **Dispatch yield**. Dispatch yield is read from
 `~/.ashlr/dispatch-production/YYYY-MM-DD.jsonl` and reports

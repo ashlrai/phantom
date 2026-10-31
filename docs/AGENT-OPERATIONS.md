@@ -37,14 +37,19 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
-succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
-unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
-deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request that is ready
-for review. A draft pull request skips those until it is marked ready, which
-starts a full run; a draft cannot merge, so open drafts while iterating
-and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
+**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
+the secret-shape scan, lane classification, and — unless the change is
+docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+required check and fails unless exactly that selection ran and every full lane
+was skipped. No pull request or merge-queue commit may occupy a macOS or
+Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+(`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
+native-broker lanes, and the Windows service authority run only in the daily
+scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
+or on the reusable release call — where the caller's push event still defers
+the macOS and Windows-service legs to the daily run while the `ci` matrix,
+including its Windows portability legs, stays the release's native gate
+(`.github/workflows/ci.yml`).
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
@@ -106,6 +111,15 @@ itself. Only the trusted bridge should call it with verified metadata.
 An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
+
+`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
+`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
+as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
+2, frontier 3) over the first N listed repos. Every repo must be one of the
+seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
+whole. The projection is deterministic, so replayed asks dedupe by job id at
+the queue store, and it mutates nothing: no receipts, queue file or audit log
+are written. `task` stays untrusted prompt data on each emitted job.
 
 `phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
 The bridge passes `prompt` only as untrusted model input, never as shell,
@@ -266,13 +280,14 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
 | `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
-| `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, direction report, engine readiness and quality metrics |
+| `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
+| `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
@@ -421,6 +436,15 @@ work, including against every terminal and in-progress queue status. Keep queue
 history (or equivalent tombstones); removing history permits replay. Existing
 READY capacity counts distinct source identities and titles rather than copied
 rows with different IDs; the bridge owns stale-job reconciliation.
+
+A READY row whose ID belongs to the `REFILL-*-SALVA` or `REFILL-*-TEST` family
+is **parked** until the row's title or prompt names both an absolute
+(multi-segment) worktree path and a `*.test.*` file. These families repeatedly
+produced empty runs from unanchored task text. A parked row is not READY
+capacity and does not suppress refill, but it remains valid queue history and
+still deduplicates its ID, source objective and title — unpin it by editing
+the row to name the concrete worktree and test file, not by appending a
+duplicate. The `rq-plan` record reports the count as `parked`.
 stderr is JSON Lines too: each successful queue read emits `rq-queue-read`,
 with before/after hashes and added/removed/changed row identities, states and
 hashes. Task and diff text never appear in audit logs. Supply `--previous-queue`
@@ -550,3 +574,40 @@ not present in this repository. Their consumer contract is to embed the same
 `budgets` object from `phm budget show --json`; this change does not create or
 replace those external files. The core reader is `readPoolBudgets` in
 `src/core/fleet/pool-budget-store.ts`.
+
+## Engineering lanes console
+
+`phm fleet lanes [--json] [--queue-dir <abs>]` prints the `fleet.lanes.v1`
+projection — one row per router lane (pool) with credit left, ready-queue
+depth, live jobs and merges per hour — and the same projection is served on
+the loopback console at `GET /api/fleet/lanes` and rendered in the Fleet
+view. It is strictly read-only: bounded file reads, no writes, no spawned
+readers, no provider calls, no secrets.
+
+Inputs are the existing readers' artifacts. From the router queue directory
+(`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
+(merge transitions in the trailing hour), and `usage-readings.log`. Credit
+comes from the pool-budget ledger; a queue-local `budgets/` directory or the
+usage journal fill pools the ledger has not observed.
+
+Every input degrades independently: a missing file reports `missing`, a
+corrupt one `degraded`, and the affected cells come back null/`unknown` rather
+than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
+directory covering every source.
+
+Proposal apply cleanup and crash-leftover reaping use plain `git worktree remove`,
+which also reclaims ignored build directories such as `node_modules` and `target`. Dirty or locked
+checkouts remain available for recovery. To retain an inbox checkout for a
+FIXUP, put its absolute path in the JSON array at
+`~/.ashlr/kept-worktrees.json`. Exact paths and their filesystem aliases match;
+entries are not glob patterns. A missing file means no pins, while a malformed,
+unreadable or symlinked file stops inbox reaping. These pins apply to proposal
+apply cleanup and the crash-leftover reaper; sandbox and merge terminal cleanup
+have separate retention controls.
+
+The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
+excluding pinned checkouts and symlink targets. It does not delete files or
+measure shared repository objects. A bounded or failed scan reports an unknown
+total; reported logical bytes are not a promise of physical disk space freed.
