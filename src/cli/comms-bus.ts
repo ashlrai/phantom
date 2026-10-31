@@ -2,6 +2,7 @@ import { dirname, resolve } from 'node:path';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseBusEnvelope, MAX_BUS_ENVELOPE_BYTES } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
+import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json>
 phm comms bus read [--after <cursor>] [--limit <n>]
@@ -39,5 +40,5 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {})
     result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
   } else result = listBusInboxAfter(after, limit, options);
   console.log(JSON.stringify(result));
-  return ['ok', 'posted', 'duplicate'].includes(result.status) ? 0 : 1;
+  return busStatusExitCode(result.status);
 }
