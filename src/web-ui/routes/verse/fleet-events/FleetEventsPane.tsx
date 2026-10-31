@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, SkeletonLine, Tag } from '../../../components/primitives/index.js';
+import { Button, Input, SkeletonLine, Tag } from '../../../components/primitives/index.js';
 import { IconExternalLink } from '../../../components/primitives/icons.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -9,7 +9,7 @@ import { JobRefs } from '../fleet/JobRefs.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { diffNew, filterByKinds, readFeed, sortNewestFirst, summarizeKinds, type FeedItem } from './fleet-events-model.js';
+import { diffNew, filterByKinds, filterByText, readFeed, sortNewestFirst, summarizeKinds, type FeedItem } from './fleet-events-model.js';
 import { fleetEventsQuery } from './fleet-events-queries.js';
 import styles from './fleet-events.module.css';
 
@@ -23,6 +23,7 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
   const [arrivals, setArrivals] = useState<FeedItem[]>([]);
   const [merged, setMerged] = useState<FeedItem[] | null>(null);
   const [kind, setKind] = useState<string | null>(null);
+  const [text, setText] = useState('');
   useEffect(() => {
     if (!paused || read.data == null) return;
     setArrivals(current => [...current, ...diffNew(new Set([...frozen, ...current].map(item => item.id)), feed.items)]);
@@ -30,7 +31,8 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
   useEffect(() => { setMerged(null); }, [read.data]);
   const items = paused ? frozen : merged ?? feed.items;
   const kinds = [...new Set([...items.map(item => item.kind), 'publish'])].sort();
-  const rows = filterByKinds(items, new Set(kind ? [kind] : []));
+  const kindRows = filterByKinds(items, new Set(kind ? [kind] : []));
+  const rows = filterByText(kindRows, text);
   const missing = read.data === null || (read.error instanceof ApiError && read.error.status === 404);
   const togglePause = () => {
     if (!paused) { setFrozen(items); setArrivals([]); setPaused(true); }
@@ -50,8 +52,10 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
     <p className={styles.summary}>{summarizeKinds(items)}</p>
     <div className={styles.controls}>
       <div className={styles.filters} aria-label="Filter event kinds">{kinds.map(value => <Button key={value} size="sm" variant="subtle" aria-pressed={kind === value} onClick={() => setKind(kind === value ? null : value)}>{value}</Button>)}</div>
+      <Input className={styles.filterText} size="sm" aria-label="Filter events" placeholder="Filter events…" value={text} onChange={e => setText(e.target.value)} />
       <Button size="sm" aria-pressed={paused} onClick={togglePause}>{paused ? `Resume${arrivals.length ? ` · ${arrivals.length} new` : ''}` : 'Pause'}</Button>
     </div>
+    {text.trim() !== '' && <p className={styles.message} role="status">{rows.length} of {kindRows.length} shown</p>}
     {rows.length === 0 ? <p className={styles.message}>{items.length ? 'No events match this filter.' : 'No fleet events yet.'}</p> :
       <ol className={styles.list} aria-label="Fleet event feed">{rows.map(item => {
         const href = item.kind === 'publish' && item.url && /^https:\/\/github\.com\/[^\s?#]+$/.test(item.url) ? safeHref(item.url, 'github.com') : null;
