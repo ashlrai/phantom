@@ -1,3 +1,4 @@
+import { NO_SESSION_CAP_NOTE, sessionCap } from '../seat-subscription.js';
 import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/usage/accounts-model.ts — the "can I use this account right
@@ -535,7 +536,7 @@ export function buildAccountCard(account: Account, sourceNote: string | null = n
     health: account.health,
     reasonCode: account.reason,
     observedAt: account.observedAt,
-    notes: account.notes,
+    notes: [...account.notes, ...(sessionCap(engine, account.windows) === 'none' ? [NO_SESSION_CAP_NOTE] : [])],
     unsupported: account.unsupported,
   };
   return {
