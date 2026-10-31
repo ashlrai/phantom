@@ -1,14 +1,18 @@
 import { readHarnessDigest } from '../core/learn/harness-digest-reader.js';
 
-const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--stale-days <n>]
+const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--stale-days <n>] [--check]
 Read a local digest (maximum 1 MiB) and emit dated HTTPS citations as JSON.
 Dates are UTC calendar days; older than N days is stale (default 7, boundary is fresh).
 Missing, invalid, or future dates have null checkedAt and stale, with an issue.
 Malformed IDs are issues; duplicate IDs remain in sources with an issue.
 Issue codes: malformed_id, duplicate_id, missing_checked, invalid_checked,
 future_checked, missing_urls. Only links on Source lines are included.
+With --check, exit 0 for a non-empty digest with all sources fresh and no issues;
+exit 1 for an empty digest, stale or undated sources, issues, or read failure.
+Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
 Options: --file <markdown>  Input file; --json  Required JSON output;
-         --stale-days <n>  Non-negative integer; --help, -h  Show help.`;
+         --stale-days <n>  Non-negative integer; --check  Check freshness;
+         --help, -h  Show help.`;
 
 export function cmdReflectHarnessDigest(args: string[], now = new Date()): number {
   if (args.includes('--help') || args.includes('-h')) {
@@ -17,6 +21,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   }
   let file: string | undefined;
   let json = false;
+  let check = false;
   let staleDays: number | undefined;
   const usage = (): number => {
     process.stderr.write('error: invalid harness-digest arguments; run `phm reflect harness-digest --help` for usage.\n');
@@ -25,6 +30,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--check' && !check) check = true;
     else if (arg === '--file' && file === undefined) {
       const value = args[++i];
       if (!value || value.startsWith('-')) return usage();
@@ -42,5 +48,5 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     return 1;
   }
   process.stdout.write(JSON.stringify(result) + '\n');
-  return 0;
+  return check && (result.sources.length === 0 || result.issues.length > 0 || result.sources.some(source => source.stale !== false)) ? 1 : 0;
 }
