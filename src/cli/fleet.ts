@@ -2299,6 +2299,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'merge-throughput') {
+    const { cmdMergeThroughput } = await import('./telemetry.js');
+    return cmdMergeThroughput(args.slice(1));
+  }
   if (args[0] === 'queue') {
     const { cmdRouterQueue } = await import('./router-queue.js');
     return cmdRouterQueue(args.slice(1));
@@ -2396,6 +2400,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
+  console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
