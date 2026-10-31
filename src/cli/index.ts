@@ -1977,6 +1977,11 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'router': {
+        const { cmdRouter } = await import('./router.js');
+        process.exitCode = await cmdRouter(rest);
+        break;
+      }
       case 'router-calibration': {
         const { cmdRouterCalibration } = await import('./router-calibration.js');
         process.exitCode = await cmdRouterCalibration(rest);
