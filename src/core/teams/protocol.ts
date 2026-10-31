@@ -30,6 +30,9 @@ export interface TeamActor {
 
 export const TEAM_EVENT_TYPES = [
   'member.joined',
+  'member.invited',
+  'member.role-changed',
+  'repo.linked',
   'agent.registered',
   'presence.heartbeat',
   'message.posted',
