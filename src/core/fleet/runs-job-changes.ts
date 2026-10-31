@@ -55,14 +55,17 @@ async function project(job: string, runs: string, home: string, runner: GitRunne
     let text: string;
     try { const buffer = Buffer.alloc(16 * 1024); const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0); text = buffer.toString('utf8', 0, bytesRead); }
     finally { await handle.close(); }
-    const fields = (text.split('\n').find(line => line.trim() !== '') ?? '').trim().split(/\s+/);
-    worktree = fields[2] ?? '';
+    // The launcher records two whitespace-delimited tokens followed by the
+    // full worktree path, which can itself contain whitespace.
+    const fields = /^\s*(\S+)\s+\S+\s+(.+?)\r?$/.exec(text.split('\n').find(line => line.trim() !== '') ?? '');
+    worktree = fields?.[2] ?? '';
     if (!isAbsolute(worktree)) return result;
     worktree = resolve(worktree); // trailing slashes must not make lstat follow a symlink
     if (!inside(home, worktree) || !(await lstat(worktree)).isDirectory()) return result;
     // Also exclude escapes through symlinked ancestor directories.
     if (!inside(await realpath(home), await realpath(worktree))) return result;
-    result.baseSha = /^[0-9a-f]{7,64}$/.test(fields[0] ?? '') ? fields[0]! : null;
+    const sha = fields?.[1] ?? '';
+    result.baseSha = /^[0-9a-f]{7,64}$/.test(sha) ? sha : null;
   } catch { return result; }
   result.state = 'live';
   try {
