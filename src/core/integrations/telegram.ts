@@ -31,14 +31,15 @@
  * own id and the id it replied to, so the comms layer can map Telegram
  * messages to Leader-thread messages.
  *
- * Never throws — all errors silently degrade to {ok:false} / [].
+ * Errors return {ok:false} / []; polling diagnostics contain no provider text.
  */
 
 import { readEnvironmentCredential } from './secrets.js';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
 import { splitTelegramText, telegramHtmlToPlain } from './telegram-format.js';
 
@@ -84,6 +85,7 @@ export interface TelegramSendResult {
 
 /** An inbound event parsed from a Telegram update. */
 export interface InboundEvent {
+  updateId?: number;
   /** 'text' = normal message; 'callback' = button tap. */
   kind: 'text' | 'callback';
   /** Raw message text (kind='text'). */
@@ -120,6 +122,73 @@ export interface PollResult {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+interface TelegramPollHealth {
+  lastPoll: string | null;
+  lastSuccess: string | null;
+  error: string | null;
+}
+function healthPath(): string { return join(homedir(), '.ashlr', 'comms', 'telegram-health.json'); }
+export function readTelegramHealth(cfg: AshlrConfig): TelegramPollHealth & { pollerAlive: boolean; lastUpdateId: number | null; tokenPresent: boolean; leaderTick: 'never' | 'started' | 'completed' | 'failed' | 'spawn-failed' } {
+  let state: TelegramPollHealth = { lastPoll: null, lastSuccess: null, error: null };
+  try {
+    const raw = JSON.parse(readFileSync(healthPath(), 'utf8')) as TelegramPollHealth;
+    const date = (value: unknown): string | null => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+    state = { lastPoll: date(raw.lastPoll), lastSuccess: date(raw.lastSuccess), error: raw.error ? 'poll failed; inspect value-free poll log' : null };
+  } catch { /* never polled */ }
+  let leaderTick: 'never' | 'started' | 'completed' | 'failed' | 'spawn-failed' = 'never';
+  try {
+    const tick = JSON.parse(readFileSync(join(homedir(), '.ashlr', 'vision', 'leader', '.wake-result.json'), 'utf8')) as { status?: unknown };
+    if (tick.status === 'started' || tick.status === 'completed' || tick.status === 'failed' || tick.status === 'spawn-failed') leaderTick = tick.status;
+  } catch { /* no tick result */ }
+  const age = Date.now() - Date.parse(state.lastPoll ?? '');
+  return { ...state, leaderTick, pollerAlive: age >= 0 && age < 7 * 60_000, lastUpdateId: loadOffset() > 0 ? loadOffset() - 1 : null,
+    tokenPresent: Boolean(resolveToken(cfg)?.trim()) };
+}
+function pollHealth(cfg: AshlrConfig, error: string | null, apiSuccess = error === null): void {
+  const old = readTelegramHealth(cfg);
+  const now = new Date().toISOString();
+  try {
+    mkdirSync(join(homedir(), '.ashlr', 'comms'), { recursive: true, mode: 0o700 });
+    writeFileSync(healthPath(), JSON.stringify({ lastPoll: now, lastSuccess: apiSuccess ? now : old.lastSuccess, error }), { mode: 0o600 });
+  } catch { console.error('Telegram poll: health state could not be written'); }
+  if (error) console.error(`Telegram poll: ${error}`);
+}
+function pollError(response: unknown): string {
+  const code = response && typeof response === 'object' ? (response as Record<string, unknown>)['error_code'] : undefined;
+  return typeof code === 'number' && Number.isSafeInteger(code) && code >= 100 && code <= 599
+    ? `API error ${code}${code === 409 ? ' (conflicting poller or webhook)' : ''}` : 'network or invalid API response';
+}
+const startedPollers = new Set<string>();
+
+function inboxPath(): string { return join(homedir(), '.ashlr', 'comms', 'telegram-inbound.json'); }
+function writeInbox(updates: InboundEvent[], newOffset: number, namespace: string): void {
+  mkdirSync(join(homedir(), '.ashlr', 'comms'), { recursive: true, mode: 0o700 });
+  writeFileSync(inboxPath() + '.tmp', JSON.stringify({ namespace, updates: updates.map(event => ({ ...event, ...(event.text ? { text: scrubSecrets(event.text) } : {}) })), newOffset }), { mode: 0o600 });
+  renameSync(inboxPath() + '.tmp', inboxPath());
+}
+function readInbox(namespace: string): PollResult | null {
+  try {
+    const raw = JSON.parse(readFileSync(inboxPath(), 'utf8')) as PollResult & { namespace: string };
+    if (raw.namespace !== namespace || !Array.isArray(raw.updates) || !Number.isSafeInteger(raw.newOffset) || raw.newOffset < 0 ||
+        raw.updates.some(event => !Number.isSafeInteger(event.updateId) || event.updateId! < 0 || !['text', 'callback'].includes(event.kind))) {
+      throw new Error('Telegram inbound state mismatch');
+    }
+    return raw;
+  }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error('Telegram inbound state unreadable');
+  }
+}
+/** Checkpoint after handling, never before. A failed event remains first next cycle. */
+export function acknowledgeTelegramUpdate(updateId: number, cfg: AshlrConfig): void {
+  const namespace = telegramQuestionNamespace(cfg)!;
+  const inbox = readInbox(namespace);
+  if (!inbox) return;
+  writeInbox(inbox.updates.filter(event => event.updateId !== updateId), inbox.newOffset, namespace);
+  saveOffset(inbox.newOffset);
+}
+
 function offsetPath(): string {
   return join(homedir(), '.ashlr', 'comms', 'telegram-offset');
 }
@@ -127,8 +196,8 @@ function offsetPath(): string {
 function loadOffset(): number {
   try {
     const raw = readFileSync(offsetPath(), 'utf8').trim();
-    const n = parseInt(raw, 10);
-    return isFinite(n) ? n : 0;
+    const n = Number(raw);
+    return /^\d+$/.test(raw) && Number.isSafeInteger(n) && n >= 0 ? n : 0;
   } catch {
     return 0;
   }
@@ -138,7 +207,8 @@ function saveOffset(offset: number): void {
   try {
     const dir = join(homedir(), '.ashlr', 'comms');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(offsetPath(), String(offset), 'utf8');
+    writeFileSync(offsetPath() + '.tmp', String(offset), { mode: 0o600 });
+    renameSync(offsetPath() + '.tmp', offsetPath());
   } catch {
     // best-effort
   }
@@ -170,7 +240,7 @@ export function telegramEnabled(cfg: AshlrConfig): boolean {
     cfg.comms?.channel === 'telegram' &&
     cfg.comms?.enabled === true &&
     typeof resolveToken(cfg) === 'string' &&
-    (resolveToken(cfg)?.length ?? 0) > 0 &&
+    (resolveToken(cfg)?.trim().length ?? 0) > 0 &&
     typeof resolveChatId(cfg) === 'string' &&
     (resolveChatId(cfg)?.length ?? 0) > 0
   );
@@ -180,13 +250,6 @@ export function telegramEnabled(cfg: AshlrConfig): boolean {
 function apiUrl(cfg: AshlrConfig, method: string): string {
   const token = resolveToken(cfg) ?? '';
   return `https://api.telegram.org/bot${token}/${method}`;
-}
-
-/** Scrub token from an error message so it never leaks. */
-function scrubToken(msg: string, token: string | undefined): string {
-  if (!token) return msg;
-  // Replace all occurrences of the token (it may appear in a URL)
-  return msg.split(token).join('[REDACTED]');
 }
 
 /**
@@ -669,10 +732,8 @@ export async function sendTelegramMessage(
     }
 
     return { ok: true, messageId: messageIds[0], messageIds };
-  } catch (err) {
-    // Scrub token from any error that might surface it
-    const msg = err instanceof Error ? err.message : String(err);
-    void scrubToken(msg, token); // consume to satisfy lint; we don't re-throw
+  } catch {
+    // Provider errors may contain credential-bearing URLs; never render them.
     return { ok: false };
   }
 }
@@ -685,17 +746,35 @@ export async function sendTelegramMessage(
  * Poll for new Telegram updates using getUpdates long-poll (offset-based).
  * Returns InboundEvents for text messages AND callback_query button taps.
  * Drops updates from any chat id !== cfg.comms.telegram.chatId.
- * Advances and persists the offset on each call.
+ * Persists the offset on each call. Durable callers checkpoint a private inbox
+ * before advancing and acknowledge events after handling them.
  * Never throws.
  */
-export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult> {
-  if (!telegramEnabled(cfg)) return { updates: [], newOffset: 0 };
+export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Promise<PollResult> {
+  if (!telegramEnabled(cfg)) {
+    pollHealth(cfg, resolveToken(cfg)?.trim() ? 'Telegram configuration incomplete' : 'bot token missing; run through Phantom Secrets phantom exec --');
+    return { updates: [], newOffset: loadOffset() };
+  }
 
-  const token = resolveToken(cfg);
   const allowedChatId = resolveChatId(cfg)!;
-  const offset = loadOffset();
+  let offset = loadOffset();
 
   try {
+    if (durable) {
+      const inbox = readInbox(telegramQuestionNamespace(cfg)!);
+      if (inbox?.updates.some(event => event.fromChatId !== String(allowedChatId))) throw new Error('Telegram inbox chat mismatch');
+      if (inbox?.updates.length) { pollHealth(cfg, null, false); return inbox; }
+      if (inbox) offset = Math.max(offset, inbox.newOffset);
+    }
+    const namespace = telegramQuestionNamespace(cfg)! + homedir();
+    if (!startedPollers.has(namespace)) {
+      const cleared = await callApi(cfg, 'deleteWebhook', { drop_pending_updates: false });
+      if (!cleared || typeof cleared !== 'object' || (cleared as Record<string, unknown>)['ok'] !== true) {
+        pollHealth(cfg, pollError(cleared));
+        return { updates: [], newOffset: offset };
+      }
+      startedPollers.add(namespace);
+    }
     const body: Record<string, unknown> = {
       timeout: 0,       // non-blocking poll; dispatch cycle handles timing
       allowed_updates: ['message', 'callback_query'],
@@ -709,21 +788,30 @@ export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult>
       typeof resp !== 'object' ||
       (resp as Record<string, unknown>)['ok'] !== true
     ) {
+      pollHealth(cfg, pollError(resp));
       return { updates: [], newOffset: offset };
     }
+    pollHealth(cfg, null);
 
     const rawUpdates = (resp as Record<string, unknown>)['result'];
-    if (!Array.isArray(rawUpdates) || rawUpdates.length === 0) {
+    if (!Array.isArray(rawUpdates)) {
+      pollHealth(cfg, 'invalid update batch');
+      return { updates: [], newOffset: offset };
+    }
+    if (rawUpdates.length === 0) {
       return { updates: [], newOffset: offset };
     }
 
     const events: InboundEvent[] = [];
+    const seen = new Set<number>();
     let maxUpdateId = offset - 1;
 
     for (const upd of rawUpdates) {
       if (typeof upd !== 'object' || upd === null) continue;
       const u = upd as Record<string, unknown>;
       const updateId = typeof u['update_id'] === 'number' ? u['update_id'] : -1;
+      if (!Number.isSafeInteger(updateId) || updateId < offset || updateId < 0 || seen.has(updateId)) continue;
+      seen.add(updateId);
       if (updateId > maxUpdateId) maxUpdateId = updateId;
 
       // Text message
@@ -740,6 +828,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult>
           const replyToMessageId =
             replied && typeof replied['message_id'] === 'number' ? (replied['message_id'] as number) : undefined;
           events.push({
+            ...(durable ? { updateId } : {}),
             kind: 'text',
             text,
             fromChatId,
@@ -762,6 +851,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult>
         const tappedMessageId = typeof cbMsg?.['message_id'] === 'number' ? (cbMsg['message_id'] as number) : undefined;
         if (ROUTED_CALLBACK_PREFIXES.some((p) => data.startsWith(p))) {
           events.push({
+            ...(durable ? { updateId } : {}),
             kind: 'callback',
             data,
             fromChatId,
@@ -779,6 +869,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult>
         if (!isFinite(idxRaw) || idxRaw < 0) continue;
 
         events.push({
+          ...(durable ? { updateId } : {}),
           kind: 'callback',
           requestId: reqId,
           optionIndex: idxRaw,
@@ -791,12 +882,12 @@ export async function pollTelegramUpdates(cfg: AshlrConfig): Promise<PollResult>
 
     // Advance offset to maxUpdateId + 1 so acknowledged updates are not re-delivered
     const newOffset = maxUpdateId >= 0 ? maxUpdateId + 1 : offset;
+    if (durable) writeInbox(events, newOffset, telegramQuestionNamespace(cfg)!);
     saveOffset(newOffset);
 
     return { updates: events, newOffset };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    void scrubToken(msg, token);
+  } catch {
+    pollHealth(cfg, 'poll failed');
     return { updates: [], newOffset: offset };
   }
 }

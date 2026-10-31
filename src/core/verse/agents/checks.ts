@@ -80,7 +80,7 @@ export function checkRows(rollup: unknown): CheckRow[] {
     const ctx = typeof entry['state'] === 'string' ? entry['state'].toUpperCase() : '';
     let state: CheckRow['state'];
     if (status && status !== 'COMPLETED') state = 'pending';
-    else if (conclusion === 'SUCCESS' || conclusion === 'NEUTRAL' || ctx === 'SUCCESS') state = 'passing';
+    else if (conclusion === 'SUCCESS' || ctx === 'SUCCESS') state = 'passing';
     else if (conclusion === 'SKIPPED') state = 'skipped';
     else if (['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'].includes(conclusion) || ctx === 'FAILURE' || ctx === 'ERROR') state = 'failing';
     else state = 'pending';
@@ -157,7 +157,12 @@ export function autoMergeVerdict(input: MergeVerdictInput): { allowed: boolean; 
   if (input.paused) return { allowed: false, reason: 'Phantom is paused: nothing merges on its own until it resumes.' };
   if (!input.pr) return { allowed: false, reason: 'No PR yet. Auto-merge waits for one.' };
   if (input.pr.headSha === null) return { allowed: false, reason: 'GitHub has not reported this PR’s head yet.' };
-  const refusal = mergeRefusal(input.pr, input.branch, input.pr.headSha);
+  const unpassed = input.requiredChecks.find((name) => {
+    const matches = input.checks.filter((check) => check.name === name);
+    return matches.length !== 1 || matches[0]?.state !== 'passing';
+  });
+  const requiredPassing = input.requiredChecks.length > 0 && unpassed === undefined;
+  const refusal = mergeRefusal(requiredPassing ? { ...input.pr, checks: 'passing' } : input.pr, input.branch, input.pr.headSha);
   if (refusal) return { allowed: false, reason: refusal };
   if (input.diffRefusal) return { allowed: false, reason: `${input.diffRefusal} That merge is yours, never automatic.` };
   if (input.protectedHit) {
@@ -174,11 +179,8 @@ export function autoMergeVerdict(input: MergeVerdictInput): { allowed: boolean; 
   if (input.requiredChecks.length === 0) {
     return { allowed: false, reason: 'Auto-merge needs owner-configured code checks; preview deployment success alone is not a code gate.' };
   }
-  for (const name of input.requiredChecks) {
-    const matches = input.checks.filter((check) => check.name === name);
-    if (matches.length !== 1 || matches[0]?.state !== 'passing') {
-      return { allowed: false, reason: `Required code check ${name} has not passed on this PR head.` };
-    }
+  if (unpassed !== undefined) {
+    return { allowed: false, reason: `Required code check ${unpassed} has not passed on this PR head.` };
   }
   return { allowed: true, reason: 'Green and mergeable: Auto-merge squash-merges it (GitHub’s branch rules still apply).' };
 }
@@ -328,6 +330,8 @@ export async function readAgentChecks(
         const parsed = parseGhPr(raw);
         if (parsed) {
           pr = parsed.pr;
+          // gh returns this rollup for headRefOid in the same PR snapshot.
+          // The merge path reads it again and pins --match-head-commit.
           rows = checkRows(raw['statusCheckRollup']);
           const summary = summarizeCheckRollup(raw['statusCheckRollup']);
           ci = summary.state === 'unknown' ? 'unknown' : summary.state;

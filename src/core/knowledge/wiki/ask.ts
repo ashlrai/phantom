@@ -376,7 +376,3 @@ export async function askWiki(opts: AskWikiOptions): Promise<WikiAskResult> {
   }
 }
 
-/** Convenience for callers holding a key (the Verse route). */
-export function repoKeyFor(repo: string): string {
-  return wikiKey(repo);
-}
