@@ -1193,6 +1193,8 @@ export function buildOpenAICompatibleClient(
     assertPermitted(verdict);
   }
   const chatUrl = baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  // Local inference must not escape loopback through a server redirect.
+  const localRedirect = isLoopbackEndpoint(baseUrl) ? { redirect: 'error' as const } : {};
 
   function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1250,6 +1252,7 @@ export function buildOpenAICompatibleClient(
           headers: buildHeaders(),
           body: requestBody,
           ...(transport?.redirect ? { redirect: transport.redirect } : {}),
+          ...localRedirect,
         }, transport?.timeoutMs ?? FETCH_TIMEOUT_MS, requestSignal);
         response = opened.response;
         cleanupResponse = opened.cleanup;
@@ -1428,6 +1431,7 @@ export function buildOpenAICompatibleClient(
               method: 'POST',
               headers: buildHeaders(),
               body: JSON.stringify(body),
+              ...localRedirect,
             },
             STREAM_TIMEOUT_MS,
             requestSignal,

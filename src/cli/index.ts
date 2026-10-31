@@ -2653,6 +2653,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'automations': {
         // 3.15: standing triggers → lane tasks (src/cli/automations.ts). `fire`
         // goes through the lanes' own gates; `fire --dry-run` writes nothing.
