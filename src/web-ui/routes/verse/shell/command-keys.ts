@@ -146,6 +146,7 @@ const KEYS = {
     // and Stop still confirm on screen — raising authority is never ONE key.
     'fleet.start': 'mod+alt+s',
     'fleet.pause': 'mod+alt+p',
+    'fleet.interject': 'mod+alt+m',
     'fleet.resume': 'mod+alt+r',
     // Not `fleet.stop` (the shell's guarded palette row, which stays keyless):
     // this key opens the Fleet tab's own Stop confirmation.

@@ -57,6 +57,7 @@ import { describeResetAt } from '../../../core/verse/seat-readiness.js';
 import type { VerseEngine, VerseSeat } from '../../data/api-types.js';
 import { percentText } from './autonomy/format.js';
 import { formatNativeCreditUnits, nativeCreditBalanceTitle } from './resources/codex-credit-value.js';
+import { visibleWindows, windowNote } from './usage/provider-windows.js';
 import {
   SEAT_CAPACITY_WORD,
   seatCapacity,
@@ -113,6 +114,8 @@ export interface SeatSubscriptionView {
    * — and must not be dressed in meters that imply otherwise.
    */
   kind: 'subscription' | 'local';
+  /** A Claude seat never has a session window — Anthropic removed the 5-hour limit — so `none` is its steady state; empty readings stay unknown. */
+  sessionCap: 'none' | 'present' | 'unknown';
   /** Plan tier as the provider names it: "max", "pro", "SuperGrok". */
   plan: string | null;
   cls: SeatCapacityClass;
@@ -244,12 +247,23 @@ function creditsPhrase(raw: SeatCapacityRecord['credits']): { phrase: string | n
     title: providerTitle === null ? null : `${providerTitle} Not dollars or subscription percentage.`, reading: credits };
 }
 
+export function sessionCap(engine: VerseEngine, windows: readonly { id: string }[]): SeatSubscriptionView['sessionCap'] {
+  if (windows.length === 0) return 'unknown';
+  return engine === 'claude' && !windows.some((w) => /^(claude_)*five_hour$/.test(w.id)) ? 'none' : 'present';
+}
+
+function worstWindow(windows: SeatWindowView[]): SeatWindowView | null {
+  return windows.find((w) => w.limitReached) ?? windows.filter((w) => w.usedPercent !== null)
+    .reduce<SeatWindowView | null>((a, b) => a === null || (b.usedPercent ?? 0) > (a.usedPercent ?? 0) ? b : a, null);
+}
+
 function localView(seat: VerseSeat): SeatSubscriptionView {
   const unavailable = seatUnavailableReason(seat);
   const ready = seat.health.state === 'ready';
   const cls: SeatCapacityClass = unavailable !== null ? 'blocked' : ready ? 'ready' : 'unread';
   return {
     kind: 'local',
+    sessionCap: 'unknown',
     plan: null,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -268,7 +282,7 @@ function localView(seat: VerseSeat): SeatSubscriptionView {
 /** The V1 path: no `capacity` record, so the V1 rule decides, unchanged. */
 function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
   const legacy = seatCapacity(seat, now);
-  const windows = seat.health.windows.map((w) => ({...legacyWindowView(w, now), current: nativeQuotaCurrent(seat, now)}));
+  const windows = visibleWindows(seat.engine, seat.health.windows).map((w) => ({...legacyWindowView(w, now), current: nativeQuotaCurrent(seat, now)}));
   const flagged = windows.find((w) => w.limitReached) ?? null;
   const measured = windows.filter((w) => w.usedPercent !== null);
   const worst = measured.length === 0
@@ -279,6 +293,7 @@ function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
   const cls = unavailable !== null ? 'blocked' : legacy.cls;
   return {
     kind: 'subscription',
+    sessionCap: sessionCap(seat.engine, windows),
     plan: null,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -287,7 +302,7 @@ function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
     others: binding === null ? windows : windows.filter((w) => w.id !== binding.id),
     credits: null,
     creditsTitle: null,
-    notes: [],
+    notes: windowNote(seat.engine) === null ? [] : [windowNote(seat.engine)!],
     evidenceSource: null,
     observedAt: seat.health.observedAt,
     extended: false,
@@ -308,12 +323,16 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
   if (capacity === undefined) return fallbackView(seat, now);
 
   const quotaCurrent = nativeQuotaCurrent(seat, now);
-  const windows = capacity.windows.map((w) => ({...toWindowView(seat.engine, w, now), current: quotaCurrent}));
-  // Resolve the server's CHOICE of binding window back to this seat's own
-  // view of it, so the two can never disagree about a reset or a label.
-  const served = capacity.binding;
-  const binding = served === null
-    ? null
+  const windows = visibleWindows(seat.engine, capacity.windows).map((w) => ({...toWindowView(seat.engine, w, now), current: quotaCurrent}));
+  // Anthropic removed the 5-hour limit: a Claude seat IS its weekly windows.
+  // When an older server still sends `five_hour` — or names it the binding
+  // window — the view drops it and the worst weekly window binds. Other
+  // plans retain the server's choice, resolved to this seat's own window.
+  const served = capacity.binding !== null && visibleWindows(seat.engine, [capacity.binding]).length > 0 ? capacity.binding : null;
+  const weeklyOnly = sessionCap(seat.engine, windows) === 'none';
+  const weekly = windows.filter((w) => /^(claude_)*seven_day(?:_|$)/.test(w.id));
+  const binding = weeklyOnly && weekly.length > 0 ? worstWindow(weekly) : served === null
+    ? (capacity.binding === null ? null : worstWindow(windows))
     : (windows.find((w) => w.id === served.id) ?? {...toWindowView(seat.engine, served, now), current: quotaCurrent});
   const others = binding === null ? windows : windows.filter((w) => w.id !== binding.id);
   const lastReading = seat.health.state === 'degraded' && capacity.usability === 'unknown';
@@ -357,6 +376,7 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
 
   return {
     kind: 'subscription',
+    sessionCap: sessionCap(seat.engine, windows),
     plan: capacity.planType,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -369,7 +389,7 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
     creditSpendControlReached: credits.reading?.spendControlReached ?? null,
     creditState: credits.reading === null ? 'unknown' : !codexCreditsAvailable(credits.reading) ? 'none' :
       credits.reading.spendControlReached === true ? 'held' : 'available',
-    notes: [...capacity.notes],
+    notes: [...capacity.notes, ...(windowNote(seat.engine) === null ? [] : [windowNote(seat.engine)!])],
     evidenceSource: capacity.evidenceSource,
     observedAt: capacity.observedAt ?? seat.health.observedAt,
     extended: true,
@@ -445,6 +465,8 @@ export function seatSubscriptionSentence(seat: VerseSeat, view: SeatSubscription
   if (view.plan !== null) parts.push(view.plan);
   parts.push(view.word);
   parts.push(view.summary);
+  const note = windowNote(seat.engine);
+  if (note !== null) parts.push(note);
   if (view.credits !== null) parts.push(view.credits);
   if (view.binding?.resetText != null) parts.push(view.binding.resetText);
   return parts.join(' · ');
