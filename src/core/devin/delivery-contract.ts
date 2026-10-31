@@ -37,8 +37,15 @@ export const DEVIN_REPORT_SCHEMA: Readonly<Record<string, unknown>> = Object.fre
  * inlined between the task text and the contract. Empty ⇒ unchanged. It is
  * inlined rather than synced as a Devin-side playbook: one source of truth,
  * versioned here, and no Devin playbook to keep in step.
+ *
+ * `playbookId` is a Devin-org playbook attached to the session
+ * (SessionCreateRequest.playbook_id; config `devin.playbookId`, source in
+ * devin/playbooks/). When set, the prompt references it by id and the
+ * contract drops the convention boilerplate it already carries (checks and
+ * secret hygiene), so dispatch prompts stay short. Empty ⇒ unchanged.
  */
-export function buildDevinPrompt(task: Pick<DevinTaskV1, 'id' | 'prompt' | 'repo' | 'branch' | 'baseBranch' | 'title'>, playbook = ''): string {
+export function buildDevinPrompt(task: Pick<DevinTaskV1, 'id' | 'prompt' | 'repo' | 'branch' | 'baseBranch' | 'title'>, playbook = '', playbookId = ''): string {
+  const attached = playbookId.trim() !== '';
   const example = JSON.stringify({
     status: 'done',
     summary: 'One or two plain sentences on what changed and why.',
@@ -46,6 +53,31 @@ export function buildDevinPrompt(task: Pick<DevinTaskV1, 'id' | 'prompt' | 'repo
     risks: ['Anything a reviewer should look at closely.'],
     filesChanged: 3,
   }, null, 2);
+  const rules = [
+    `Create branch \`${task.branch}\` from \`${task.baseBranch}\` and do all work on it. Never use any other branch name.`,
+    `Never push to any other branch. Never push to \`${task.baseBranch}\`, master or main. Never merge anything, never approve a pull request, and never enable auto-merge.`,
+    ...(attached ? [] : ['Run the repository\'s relevant checks and tests for what you changed, and fix what you broke.']),
+    `Commit your work, then push \`${task.branch}\` to origin (the same repository — never a fork).`,
+    `Open ONE pull request from \`${task.branch}\` against \`${task.baseBranch}\` titled \`${DEVIN_PR_TITLE_PREFIX} ${task.title}\`. A draft is fine.`,
+    [
+      `The pull request body must END with a fenced code block whose language tag is \`${DEVIN_REPORT_FENCE}\`, containing one JSON object:`,
+      '   - "status": "done" | "partial" | "blocked" | "no-change"',
+      '   - "summary": a short plain-language summary',
+      '   - "testsRun": the exact commands you ran, each with its result',
+      '   - "risks": anything a reviewer should know (an empty list if none)',
+      '   - "filesChanged": the number of files changed (optional)',
+      '   For example:',
+      '',
+      `\`\`\`${DEVIN_REPORT_FENCE}`,
+      example,
+      '```',
+      '',
+    ].join('\n'),
+    'Also provide the same JSON object as your structured output.',
+    `If nothing needs changing, still push an empty commit on \`${task.branch}\` and open the pull request with status "no-change", so Phantom sees the task finish.`,
+    'If you are blocked, push what you have and open the pull request with status "blocked" and the reason in the summary.',
+    ...(attached ? [] : ['Never put secrets, API keys or tokens in commits, the pull request, or your messages.']),
+  ];
   return [
     task.prompt.trim(),
     ...(playbook.trim() ? ['', playbook.trim()] : []),
@@ -54,27 +86,10 @@ export function buildDevinPrompt(task: Pick<DevinTaskV1, 'id' | 'prompt' | 'repo
     `DELIVERY CONTRACT (Phantom Devin task ${task.id}) — follow it exactly; Phantom only sees what arrives on GitHub.`,
     '',
     `Repository: ${task.repo}. Base branch: \`${task.baseBranch}\`.`,
-    `1. Create branch \`${task.branch}\` from \`${task.baseBranch}\` and do all work on it. Never use any other branch name.`,
-    `2. Never push to any other branch. Never push to \`${task.baseBranch}\`, master or main. Never merge anything, never approve a pull request, and never enable auto-merge.`,
-    '3. Run the repository\'s relevant checks and tests for what you changed, and fix what you broke.',
-    `4. Commit your work, then push \`${task.branch}\` to origin (the same repository — never a fork).`,
-    `5. Open ONE pull request from \`${task.branch}\` against \`${task.baseBranch}\` titled \`${DEVIN_PR_TITLE_PREFIX} ${task.title}\`. A draft is fine.`,
-    `6. The pull request body must END with a fenced code block whose language tag is \`${DEVIN_REPORT_FENCE}\`, containing one JSON object:`,
-    '   - "status": "done" | "partial" | "blocked" | "no-change"',
-    '   - "summary": a short plain-language summary',
-    '   - "testsRun": the exact commands you ran, each with its result',
-    '   - "risks": anything a reviewer should know (an empty list if none)',
-    '   - "filesChanged": the number of files changed (optional)',
-    '   For example:',
-    '',
-    `\`\`\`${DEVIN_REPORT_FENCE}`,
-    example,
-    '```',
-    '',
-    '7. Also provide the same JSON object as your structured output.',
-    `8. If nothing needs changing, still push an empty commit on \`${task.branch}\` and open the pull request with status "no-change", so Phantom sees the task finish.`,
-    '9. If you are blocked, push what you have and open the pull request with status "blocked" and the reason in the summary.',
-    '10. Never put secrets, API keys or tokens in commits, the pull request, or your messages.',
+    ...(attached
+      ? [`The Devin playbook attached to this session (\`${playbookId.trim()}\`) carries the PR conventions: checks, scope, secrets and style. Follow it; this contract keeps only the delivery mechanics.`]
+      : []),
+    ...rules.map((rule, index) => `${index + 1}. ${rule}`),
   ].join('\n');
 }
 
