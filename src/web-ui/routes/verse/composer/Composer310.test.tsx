@@ -614,7 +614,7 @@ describe('footer', () => {
     const user = userEvent.setup();
     const onContinueOn = vi.fn();
     await renderReady(props({ onContinueOn }));
-    const chip = screen.getByRole('button', { name: /^Seat: Claude Max, 5h window 12% used/ });
+    const chip = screen.getByRole('button', { name: /^Seat: Claude Max, weekly window 12% used/ });
     await user.click(chip);
     const menu = screen.getByRole('menu', { name: 'Seat' });
     await user.click(within(menu).getByRole('menuitem', { name: /Continue on Qwen3 Coder/ }));

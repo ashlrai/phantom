@@ -10,6 +10,7 @@ import type { VerseContextMode, VerseWindowSource } from '../../../core/verse/ty
 import { budgetFor, canonicalModelId, claudeAutocompactFlag, reconcileAutoCompactAt } from '../../../core/verse/context-math.js';
 import { engineTier, orderByTier, seatTier } from '../../../core/routing/tiers.js';
 import { usedPercentText } from './percent-text.js';
+import { visibleWindows } from './usage/provider-windows.js';
 import { formatMetric } from '../../components/charts/format-metric.js';
 import { formatTokens } from './verse-readouts.js';
 
@@ -304,7 +305,7 @@ export function seatCapacity(seat: VerseSeat, now: number = Date.now()): SeatCap
   if (reason !== null) return { cls: 'blocked', usedPercent: null, text: reason };
 
   if (!nativeQuotaCurrent(seat, now)) return { cls: 'unread', usedPercent: null, text: 'Last known usage · current usage unconfirmed' };
-  const measured = seat.health.windows.filter(
+  const measured = visibleWindows(seat.engine, seat.health.windows).filter(
     (w): w is { id: string; usedPercent: number; resetsAt: string | null } =>
       typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent),
   );

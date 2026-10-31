@@ -32,7 +32,8 @@ import { buildBudgetRows, STATUS_WORDS, type BudgetSeatStatus } from '../budget/
 import { relativePhrase } from '../context/context-model.js';
 import { percentText, tidyProse } from '../autonomy/format.js';
 import { CONNECTION_TONE, CONNECTION_WORD, usableAgainPhrase, type HealthTone } from '../health/health-model.js';
-import { NO_SESSION_CAP_NOTE, seatReopensAt, seatSubscription, type SeatCapacityClass, type SeatWindowView } from '../seat-subscription.js';
+import { seatReopensAt, seatSubscription, type SeatCapacityClass, type SeatWindowView } from '../seat-subscription.js';
+import { visibleWindows, windowNote } from './provider-windows.js';
 import { SEAT_CAPACITY_WORD } from '../verse-model.js';
 
 export type { SeatCapacityClass };
@@ -254,7 +255,10 @@ function seatRow(
     summary: blockedByHealth ? (connection.reasons[0] ?? connection.word) : view.summary,
     connection,
     windows,
-    historicalUsage: windows.length === 0 ? resourceUsageHistory(seat, now) : null,
+    historicalUsage: (() => {
+      const history = windows.length === 0 ? resourceUsageHistory(seat, now) : null;
+      return history === null ? null : { ...history, windows: visibleWindows(seat.engine, history.windows) };
+    })(),
     historicalCredits: resourceCreditHistory(seat, now),
     credits: view.credits,
     creditBalance: view.creditBalance ?? null,
@@ -263,7 +267,7 @@ function seatRow(
     creditObservedAt: seat.engine === 'codex' && parseable(seat.capacity?.observedAt) ? seat.capacity!.observedAt : null,
     creditsExpiresAt: seat.engine === 'codex' && parseable(seat.capacity?.creditsExpiresAt) ? seat.capacity!.creditsExpiresAt! : null,
     reserve: reserveOf(budget.get(seat.id)),
-    notes: [...view.notes, ...(view.sessionCap === 'none' ? [NO_SESSION_CAP_NOTE] : [])],
+    notes: [...view.notes],
     quotaCurrent: view.quotaCurrent,
     quotaExpiresAt: view.quotaExpiresAt,
     quotaReadReason: windows.length === 0 && seat.engine === 'claude' ? seat.capacity?.quotaReadReason ?? null : null,
@@ -626,11 +630,12 @@ function checkedParts(row: Pick<CapacityRow, 'checkedAt'>, now: number): { check
 export function accountStatus(row: CapacityRow, opts: AccountStatusOptions): AccountStatus {
   const now = opts.now ?? Date.now();
   const { checked, checkedTitle } = checkedParts(row, now);
+  const note = windowNote(row.engine);
   const make = (kind: AccountStatusKind, label: string, detail: string | null, extra: Partial<AccountStatus> = {}): AccountStatus => ({
     kind,
     label,
-    detail: row.notes.includes(NO_SESSION_CAP_NOTE)
-      ? [detail, NO_SESSION_CAP_NOTE].filter(Boolean).join(' · ') : detail,
+    detail: note !== null && row.notes.includes(note)
+      ? [detail, note].filter(Boolean).join(' · ') : detail,
     tone: STATUS_TONE[kind],
     usableAgain: null,
     checked,

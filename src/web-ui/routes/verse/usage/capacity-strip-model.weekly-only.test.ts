@@ -18,16 +18,17 @@ describe('weekly-only Claude capacity strip', () => {
     expect(row.resetAt).toBe(RESET);
     expect(row.quotaReadReason).toBeNull();
     expect(row.windows.map((w) => w.id)).toEqual(['seven_day', 'seven_day_opus']);
-    expect(accountStatus(row, { now: NOW, checking: false, healthRead: true }).detail).toContain('No session cap on this plan');
+    expect(accountStatus(row, { now: NOW, checking: false, healthRead: true }).detail)
+      .toContain('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.');
     render(createElement(CapacityStrip, { seats: [seat], accounts: { healthRead: true, now: NOW } }));
-    expect(screen.getByText(/No session cap on this plan/)).toBeInTheDocument();
-    expect(screen.queryByText(/5-hour|rolling 5h/)).toBeNull();
+    expect(screen.getByText(/Anthropic removed the 5-hour limit/)).toBeInTheDocument();
+    expect(screen.queryByText(/5-hour window|rolling 5h/)).toBeNull();
   });
 
-  it.each(['codex', 'grok'] as const)('adds no session-cap note to %s', (engine) => {
+  it.each(['codex', 'grok'] as const)('adds no lifted-limit note to %s', (engine) => {
     const week = seatWindow({ id: 'seven_day', usedPercent: 62, resetsAt: RESET });
     const row = buildCapacityRows([nativeSeat(capacity({ windows: [week], binding: week, usability: 'ready' }), { engine })], { now: NOW })[0]!;
-    expect(row.notes).not.toContain('No session cap on this plan');
-    expect(accountStatus(row, { now: NOW, checking: false, healthRead: true }).detail ?? '').not.toContain('No session cap');
+    expect(row.notes).not.toContain('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.');
+    expect(accountStatus(row, { now: NOW, checking: false, healthRead: true }).detail ?? '').not.toContain('5-hour limit');
   });
 });
