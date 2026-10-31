@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model, fleet and lane.
+ * handoff, compact, new, plan, effort, model, fleet, lane and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -74,6 +74,7 @@ import {
   matchSlashCommands,
   parseFleetCommand,
   parseLaneCommand,
+  parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
   type ComposerTrigger,
@@ -88,7 +89,9 @@ import { SuggestMenu, suggestOptionId, type SuggestItem } from './composer/Sugge
 import { useAttachmentDrafts, useFollowUpQueue, useSessionControls } from './composer/useComposerData.js';
 import { FOOTER_FOLD_SHEET, useFooterFold } from './composer/useFooterFold.js';
 import { useTokenGate } from './context/use-token-gate.js';
+import { openDockPane } from './dock/dock-store.js';
 import { ComposerSeatBlock } from './health/ComposerSeatBlock.js';
+import { listPanes } from './panes/pane-registry.js';
 import type { SeatChoice } from './SeatSelector.js';
 import { useViewport } from './shell/viewport.js';
 import { getVerseSessionHead } from './verse-store.js';
@@ -538,11 +541,12 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet, lane and compact insert text; other commands consume their token.
+    // Fleet, lane, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
       case 'fleet':
       case 'lane':
+      case 'pane':
       case 'compact': {
         if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
         const next = applyCompletion(draft, trigger, command.title);
@@ -713,6 +717,17 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     if (disabled || sending || tooLong) return;
     const value = text.trim();
     if (!value) return;
+    const pane = parsePaneCommand(text, listPanes());
+    if (pane) {
+      if ('error' in pane) {
+        setFleetStatus({ text: pane.error, error: true });
+      } else {
+        openDockPane(pane.id);
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `Opened ${pane.title}`, error: false });
+      }
+      return;
+    }
     const lane = parseLaneCommand(text);
     if (lane) {
       if ('error' in lane) {
