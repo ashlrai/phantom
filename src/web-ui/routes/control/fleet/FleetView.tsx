@@ -181,6 +181,32 @@ export function FleetView() {
             </dl>
           </section>
 
+          <section className={styles.section} aria-labelledby="fleet-queue-holds">
+            <h2 id="fleet-queue-holds" className={styles.sectionTitle}>Queue holds</h2>
+            <p>Read-only observations. Counts can overlap; unknown counts do not mean zero.</p>
+            <dl className={styles.metaGrid}>
+              {([
+                ['Cooldown', fleet.queue.cooldownItems, 'Waiting for the retry cooldown to expire.'],
+                ['Pending proposal', fleet.queue.pendingItems, 'Work already has a pending proposal.'],
+                ['Repair route blocked', fleet.queue.repairRouteBlockedItems, 'No feasible repair route is currently available.'],
+                ['Repair control blocked', fleet.queue.repairControlBlockedItems, 'Repair work is held by control policy.'],
+                ['Repair lifecycle unavailable', fleet.queue.repairLifecycleUnavailableItems, 'Repair lifecycle evidence is unavailable.'],
+                ['Repair terminal', fleet.queue.repairTerminalItems, 'Repair work has reached a terminal state.'],
+                ['Repair quarantined', fleet.queue.repairQuarantinedItems, 'Repair work is quarantined.'],
+              ] as const).map(([label, count, explanation]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>
+                    <StatusBadge status={count === undefined ? 'unknown' : count > 0 ? 'paused' : 'done'}>
+                      {count === undefined ? 'Unknown' : `${count} held`}
+                    </StatusBadge>
+                    <p>{explanation}</p>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>Lease health</h2>
             {!fleet.queue.shared ? (
