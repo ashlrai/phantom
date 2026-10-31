@@ -31,11 +31,18 @@ export const inboxTailQuery: QueryDef<InboxTail> = {
   },
 };
 
-export async function postInterjection(text: string): Promise<{ at: string }> {
+async function post(text: string): Promise<{ at: string; duplicate: boolean; accepted: boolean }> {
   const token = getMutationToken();
   if (!token) throw new VerseMutationLockedError();
-  const result = await apiPost<{ at: string }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop' }, token);
+  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop' }, token);
   if (!result || typeof result.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
   touchMutationHold();
-  return { at: result.at };
+  return { at: result.at, duplicate: result.duplicate === true, accepted: result.accepted === true };
 }
+
+export async function postInterjection(text: string): Promise<{ at: string }> {
+  const { at } = await post(text);
+  return { at };
+}
+
+export const postInterjectionDetailed = post;
