@@ -92,6 +92,19 @@ refuses writes, every call audited by argument keys only, output scrubbed and
 capped at 32 KB.
 
 Human CLI: `phm team view | join | approve | deny | claim | release | say`.
+Use `--team <id>` consistently, including when deciding an approval.
+
+`phm team view` labels each member's role and approval responsibility, explains
+presence, points to scoped shared-context tools, and suggests a next action:
+join the first human owner, register an agent, or retrieve context before work.
+These are setup hints, not an authorization or readiness check. Offline members
+retain their roles. `--json` returns the existing raw `TeamState` without the
+human guidance. See [the local team walkthrough](../TEAM.md#local-team-at-a-glance).
+
+Shared context is retrieved separately through `phm_team_context_get` with an
+explicit owner scope; the CLI overview does not print context entries. Team
+state and context remain local in Phase 1; using the same id on two machines
+does not replicate either.
 
 ## 5. Shared context and context-window efficiency
 
