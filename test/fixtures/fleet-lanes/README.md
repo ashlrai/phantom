@@ -11,8 +11,9 @@ timestamps and balances are illustrative, not a live queue copy.
 - `jobs.jsonl` — transition ledger: two in-window merges (`codex-cmp` LAND,
   and one resolved to `local-omlx` through the queue's job→pool map), one
   out-of-window LAND, one FAILED non-merge.
-- `usage-readings.log` — journal rows for `grok-ultra` (observed) and
-  `terra@cmp` (pctUsed null → unknown credit).
+- `usage-readings.jsonl` — journal rows for `grok-ultra` (observed) and
+  `terra@cmp` (pctUsed null → unknown credit), passed explicitly by the suite
+  because log files are ignored by Git.
 - `budgets/` — pool-budget ledger batch (devin ACUs, codex-cmp weekly+credits).
 
 Window anchor used by the suite: `now = 2026-10-28T02:00:00Z`
