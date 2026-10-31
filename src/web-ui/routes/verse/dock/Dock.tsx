@@ -63,6 +63,8 @@ import {
 } from './dock-store.js';
 import { CloseGlyph, PanelBottomGlyph, PanelRightGlyph, SplitGlyph } from './dock-icons.js';
 import styles from './Dock.module.css';
+import { useAgentWorkspace, WORKSPACE_PANES } from './agent-workspace.js';
+import { paneLinkUrl } from './pane-link.js';
 
 /** What every pane gets besides its own id, visibility and presentation (PaneProps minus those). */
 export type DockPaneContext = Omit<PaneProps, 'paneId' | 'visible' | 'presentation' | 'requests'>;
@@ -119,34 +121,43 @@ export function Dock(props: DockProps) {
   const { presentation, windowWidth, columnWidth, columnMax = Number.POSITIVE_INFINITY, columnHeight = 0, pane: paneContext } = props;
   const { state, requests } = useDock();
   usePanes(); // re-render when a pane is registered, replaced or removed
+  const workspace = useAgentWorkspace(paneContext.sessionId);
+  const tiled = workspace && presentation === 'column' && WORKSPACE_PANES.some((id) => id === state.active);
   const panelRef = useRef<HTMLElement>(null);
   const tabRefs = useRef(new Map<DockPaneId, HTMLButtonElement>());
   const idBase = useId();
   const [menu, setMenu] = useState<{ kind: 'add' | 'split'; anchor: MenuAnchor; from: HTMLElement } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ pane: DockPaneId; text: 'Copied' | 'Copy failed' } | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyRequest = useRef(0);
+  useEffect(() => () => {
+    copyRequest.current += 1;
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+  }, []);
   // Panes mount on first show and stay mounted while their tab is open.
   const [mounted, setMounted] = useState<ReadonlySet<DockPaneId>>(() => new Set(state.open && state.active ? [state.active] : []));
 
   const context: PaneContext = { sessionId: paneContext.sessionId, session: paneContext.session, roots: paneContext.roots };
-  const tabs = state.tabs.filter((id) => isPaneAvailable(id, context));
+  const tabs = (tiled ? [...new Set([...WORKSPACE_PANES, ...state.tabs])] : state.tabs).filter((id) => isPaneAvailable(id, context));
   const active = state.active !== null && tabs.includes(state.active) ? state.active : tabs[0] ?? null;
   const split = state.splitWith !== null && tabs.includes(state.splitWith) && state.splitWith !== active ? state.splitWith : null;
   const open = state.open && active !== null;
   const sheet = presentation === 'sheet' || presentation === 'bottom-sheet';
   const docked = !sheet;
   // Stacked panes only where there is height for two: not in a phone's sheet, not in the bottom row.
-  const canSplit = presentation === 'column' || presentation === 'sheet';
-  const showSplit = split !== null && canSplit;
+  const canSplit = !tiled && (presentation === 'column' || presentation === 'sheet');
+  const showSplit = !tiled && split !== null && canSplit;
 
   useEffect(() => {
     if (!open) return;
     setMounted((prev) => {
-      const want = [active, split].filter((p): p is DockPaneId => p !== null);
+      const want = (tiled ? [...WORKSPACE_PANES] : [active, split]).filter((p): p is DockPaneId => p !== null);
       const next = new Set([...prev].filter((p) => tabs.includes(p)));
       for (const p of want) next.add(p);
       if (next.size === prev.size && [...next].every((p) => prev.has(p))) return prev;
       return next;
     });
-  }, [open, active, split, tabs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps -- tabs is compared by content
+  }, [open, active, split, tiled, tabs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps -- tabs is compared by content
 
   // The panel is open: fetch every pane's code now, so a tab's first click
   // renders in the same frame instead of flashing its skeleton.
@@ -188,7 +199,31 @@ export function Dock(props: DockProps) {
 
   if (!open) return null;
 
+  async function copyPaneLink(pane: DockPaneId) {
+    const request = ++copyRequest.current;
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    setCopyNotice(null);
+    let text: 'Copied' | 'Copy failed' = 'Copy failed';
+    try {
+      const link = paneLinkUrl(pane, paneContext.sessionId, getPane(pane)?.needsSession ?? true);
+      if (!link || !navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(link);
+      text = 'Copied';
+    } catch {
+      // An unavailable or rejected clipboard is reported on the button.
+    }
+    if (request !== copyRequest.current) return;
+    setCopyNotice({ pane, text });
+    copyTimer.current = setTimeout(() => setCopyNotice(null), 1500);
+  }
+
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, pane: DockPaneId) {
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'c') {
+      event.preventDefault();
+      event.stopPropagation();
+      void copyPaneLink(pane);
+      return;
+    }
     const i = tabs.indexOf(pane);
     let next: DockPaneId | undefined;
     if (event.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
@@ -246,7 +281,7 @@ export function Dock(props: DockProps) {
       {presentation === 'bottom-sheet' ? <span className={styles.grabber} aria-hidden="true" /> : null}
       {/* Beside the chat, the head runs under the macOS title bar: it drags the window like the chat header does. */}
       <div className={styles.head} data-app-region={presentation === 'column' ? 'drag' : undefined}>
-        <div className={styles.tabs} role="tablist" aria-label="Dock panes">
+        <div className={styles.tabs} role="tablist" aria-label="Dock panes" aria-multiselectable={tiled || undefined}>
           {tabs.map((id) => {
             const registered = getPane(id)!;
             const Icon = registered.icon;
@@ -261,7 +296,7 @@ export function Dock(props: DockProps) {
                   type="button"
                   role="tab"
                   id={`${idBase}-tab-${id}`}
-                  aria-selected={selected}
+                  aria-selected={tiled ? WORKSPACE_PANES.some((pane) => pane === id) : selected}
                   aria-controls={`${idBase}-pane-${id}`}
                   tabIndex={selected ? 0 : -1}
                   className={styles.tab}
@@ -272,10 +307,15 @@ export function Dock(props: DockProps) {
                   <Icon size={14} />
                   <span className={styles.tabLabel}>{title}</span>
                 </button>
-                <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
+                {selected ? <button type="button" className={styles.tabCopy}
+                  aria-label={copyNotice?.pane === id ? copyNotice.text : `Copy link to ${title}`}
+                  title={`Copy link to ${title}`} onClick={() => { void copyPaneLink(id); }}>
+                  {copyNotice?.pane === id ? copyNotice.text : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" /></svg>}
+                </button> : null}
+                {!tiled || !WORKSPACE_PANES.some((pane) => pane === id) ? <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
                   title={`Close ${title}`} tabIndex={-1} onClick={() => closeDockTab(id)}>
                   <CloseGlyph size={12} />
-                </button>
+                </button> : null}
               </div>
             );
           })}
@@ -311,9 +351,9 @@ export function Dock(props: DockProps) {
         </div>
       </div>
 
-      <div className={styles.body}>
-        {tabs.filter((p) => mounted.has(p) || p === active || p === split).map((id) => {
-          const shown = id === active || (id === split && showSplit);
+      <div className={styles.body} data-workspace={tiled || undefined}>
+        {tabs.filter((p) => mounted.has(p) || p === active || p === split || (tiled && WORKSPACE_PANES.some((id) => id === p))).map((id) => {
+          const shown = tiled ? WORKSPACE_PANES.some((pane) => pane === id) : id === active || (id === split && showSplit);
           const position = id === active ? 'top' : id === split ? 'bottom' : 'hidden';
           return (
             <div
@@ -330,6 +370,7 @@ export function Dock(props: DockProps) {
                 ? { flexBasis: `${(position === 'top' ? state.splitRatio : 1 - state.splitRatio) * 100}%`, order: position === 'top' ? 0 : 2 }
                 : undefined}
             >
+              {tiled ? <div className={styles.workspaceTitle}>{titleOf(id)}</div> : null}
               <PaneHost id={id} visible={shown} presentation={presentation} context={paneContext} requests={requests} />
             </div>
           );
