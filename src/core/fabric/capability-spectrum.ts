@@ -15,7 +15,6 @@ import {
   type ExecutionIdentityPublicResourceV1,
 } from './execution-identity.js';
 
-export const CAPABILITY_SPECTRUM_SCHEMA_VERSION = 1 as const;
 export const CAPABILITY_SPECTRUM_PROTOCOL = 'capability-spectrum-shadow-v1' as const;
 export const CAPABILITY_SPECTRUM_OBSERVATION_MAX_AGE_MS = 5 * 60_000;
 export const CAPABILITY_SPECTRUM_MAX_RESOURCES = 128;

@@ -25,6 +25,13 @@ npm run test:ci           # backend lanes with isolated HOME/ASHLR_HOME
 npm run gate              # build, static checks and related tests together
 ```
 
+## Companion tools
+
+The repo config `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`,
+`stack`, `ashlr`. These are companion servers, distinct from the Phantom MCP
+gateway started by `phm mcp`. See [the toolchain guide](docs/AGENT-TOOLCHAIN.md)
+for limits and approval requirements. Server registration does not prove readiness.
+
 ## Rules
 
 - Tests are hermetic: never read, write or assert against the real home
@@ -38,8 +45,9 @@ npm run gate              # build, static checks and related tests together
   or the matching `docs/contracts/CONTRACT-M<N>.md` in the same change.
 - Do not add runtime dependencies casually (see CONTRIBUTING.md).
 - `test/doc-facts.test.ts` checks every `phm`/`ashlr` command, verb and flag
-  shown in the agent docs against the CLI; when you rename or drop one, fix the
-  doc line it names.
+  shown in README, the ecosystem map and the agent docs against the CLI. When
+  you rename or drop one, fix the doc line it names. It also compares companion
+  server lists with `.mcp.json` and documented npm scripts with `package.json`.
 - When running the CLI by hand, prefer `--help` with HOME set to a scratch
   directory; many commands act on `~/.ashlr`. `--help` and `-h` print usage
   and exit 0 without acting. For parseable output use `--json` where a command
