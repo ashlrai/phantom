@@ -783,19 +783,3 @@ export function parseRepoDeps(
   return result;
 }
 
-/**
- * Convenience: dependency-risk count for a repo — the number of distinct
- * production-ecosystem packages it declares. Metadata only; feeds the cloud's
- * RepoHealth.depRisk channel (a count, never a list of names). NEVER throws.
- */
-export function declaredDepCount(repoPath: string, repoFullName?: string | null): number {
-  try {
-    const edges = parseRepoDeps(repoPath, repoFullName).edges;
-    const prodNames = new Set(
-      edges.filter((e) => e.depKind === 'prod').map((e) => e.name),
-    );
-    return prodNames.size;
-  } catch {
-    return 0;
-  }
-}

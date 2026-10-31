@@ -57,6 +57,7 @@ import {
 import {
   DEVIN_BRANCH_PREFIX,
   DEVIN_ORG_ID_PATTERN,
+  DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
   DEVIN_PR_TITLE_PREFIX,
   DEVIN_PROMPT_MAX_CHARS,
@@ -201,9 +202,6 @@ export function devinChatVerdict(state: DevinStatus['state'], newSessionGate?: D
     ? { ready: false, tone: 'off', word: 'Off', detail: 'Turn the Devin lane on to chat with Devin.', fix: commandFix('Turn on the Devin lane', 'ashlr devin enable') } as ReadinessVerdict
     : { ready: false, tone: 'off', word: 'Off', detail: 'Connect Devin to chat with it.', fix: commandFix('Connect Devin', 'ashlr devin connect') } as ReadinessVerdict;
 }
-
-/** @deprecated 3.15 — kept for importers; the live answer is `devinChatVerdict(state)`. */
-export const DEVIN_CHAT_VERDICT: ReadinessVerdict = Object.freeze(devinChatVerdict('not-connected'));
 
 /**
  * The fleet verdict: why the fleet may or may not launch Devin sessions now.
@@ -547,6 +545,15 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
   // --- lane gates (no network) --------------------------------------------
   const section = readConfig(deps);
   if (!devinEnabled(section)) return refusal(devinFailureSentence('not-enabled') + ' Turn it on with `ashlr devin enable`.', 'not-enabled');
+  // The Devin-org playbook (source in devin/playbooks/) is referenced by id
+  // rather than inlined, so a malformed config refuses instead of launching a
+  // session whose prompt names a playbook that is not attached.
+  const configuredPlaybookId = typeof section?.playbookId === 'string' ? section.playbookId.trim() : '';
+  if (configuredPlaybookId !== '' && !DEVIN_PLAYBOOK_ID_PATTERN.test(configuredPlaybookId)) {
+    return refusal('The devin.playbookId config is not a Devin playbook id (it starts with playbook-). Fix it or remove it before launching.', 'invalid-request');
+  }
+  // Chat sessions keep their conversational contract: they never attach it.
+  const sessionPlaybookId = !chatLaunch && configuredPlaybookId !== '' ? configuredPlaybookId : null;
   const connection = readDevinConnection();
   if (!connection) return refusal(devinFailureSentence('not-connected'), 'not-connected');
   const connectionIdentity = consumptionIdentity();
@@ -639,6 +646,7 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
     report: null,
     backlogItemId,
     ...(playbook.ref ? { playbookRef: playbook.ref } : {}),
+    ...(sessionPlaybookId ? { playbookId: sessionPlaybookId } : {}),
     ...(chatLaunch && typeof (req as DevinChatLaunch).verseSessionId === 'string' ? { verseSessionId: (req as DevinChatLaunch).verseSessionId } : {}),
   };
   try {
@@ -728,7 +736,8 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
     writeDevinTask(task);
     ownedTaskRecord = JSON.stringify(task);
     const session = await client.createSession(orgId, {
-      prompt: chatLaunch ? buildDevinChatPrompt(task, { planOnly, playbook: playbook.block }) : buildDevinPrompt(task, playbook.block),
+      prompt: chatLaunch ? buildDevinChatPrompt(task, { planOnly, playbook: playbook.block }) : buildDevinPrompt(task, playbook.block, sessionPlaybookId ?? ''),
+      ...(sessionPlaybookId ? { playbookId: sessionPlaybookId } : {}),
       ...(humanSeat ? { createAsUserId: humanSeat.userId } : {}),
       title: `${DEVIN_PR_TITLE_PREFIX} ${title}`,
       repos: [repo],

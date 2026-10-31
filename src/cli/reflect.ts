@@ -188,6 +188,7 @@ function printHelp(): void {
   out(`    ${cyan('ashlr reflect')} [--since <7d|30d|all>] [--json] [--allow-cloud]`);
   out(`    ${cyan('ashlr reflect playbooks')} [--persist] [--allow-cloud]`);
   out(`    ${cyan('ashlr reflect propose')}`);
+  out(`    ${cyan('phm reflect harness-digest')} --file <markdown> --json [--stale-days <n>]`);
   out('');
   out('  ' + bold('Options:'));
   const opts: [string, string][] = [
@@ -203,6 +204,7 @@ function printHelp(): void {
   out('  ' + bold('Subcommands:'));
   out(`    ${cyan('playbooks')}  Distill recurring SUCCESSFUL patterns (report-only). Add ${cyan('--persist')} to write them to the genome.`);
   out(`    ${cyan('propose')}    Emit derived routing/policy/prompt tuning as PENDING inbox proposals.`);
+  out(`    ${cyan('harness-digest')}  Read dated source citations from a local Markdown digest.`);
   out('');
   out('  ' + gray('Metrics are deterministic and local-only. Tuning is proposal-only — nothing auto-applies.'));
   out('');
@@ -342,6 +344,10 @@ function printReportHuman(report: ReflectionReport): void {
  * Exit codes: 0 success, 1 runtime error, 2 bad usage.
  */
 export async function cmdReflect(args: string[]): Promise<number> {
+  if (args[0] === 'harness-digest') {
+    const { cmdReflectHarnessDigest } = await import('./reflect-harness-digest.js');
+    return cmdReflectHarnessDigest(args.slice(1));
+  }
   const parsed = parseReflectArgs(args);
 
   if (parsed.help) {
