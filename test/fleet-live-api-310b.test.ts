@@ -68,6 +68,8 @@ let setHoldCalls: SetRepoHoldRequest[];
 let journal: FleetJournalRecord[];
 let tick: FleetTickStateV1 | null;
 let watchViews: PostMergeWatchView[] = [];
+let dispatchStartMap: Map<string, number> | null;
+let dispatchStartCalls: number[];
 let seq = 0;
 
 function row<K extends LedgerEntry['kind']>(kind: K, data: Extract<LedgerEntry, { kind: K }>['data'], at: string): LedgerEntry {
@@ -141,11 +143,11 @@ function deps(): Partial<FleetLiveDeps> {
     repoIdentity: (path) => (path.endsWith('ashlrai__binshield') ? REPO : null),
     // U4's watch store: empty unless a test sets it (the ledger is then the source).
     watches: () => watchViews,
-    greenPct: (opts) => {
-      const finished = watchViews.filter((v) => v.kind === 'merge' && v.verdict !== null && v.checkedAt !== null
-        && Date.parse(v.checkedAt) >= opts.sinceMs && (opts.repo === undefined || v.repo === opts.repo));
-      const green = finished.filter((v) => v.verdict === 'green').length;
-      return { finished: finished.length, green, pct: finished.length === 0 ? null : Math.round((green / finished.length) * 1000) / 10 };
+    // proposalId → dispatch-start ms: the agent-action ledger join the
+    // dispatch→merge medians read; null plays an unreadable ledger.
+    dispatchStarts: async (sinceMs) => {
+      dispatchStartCalls.push(sinceMs);
+      return dispatchStartMap;
     },
   };
 }
@@ -183,6 +185,8 @@ beforeEach(() => {
   journal = [];
   tick = null;
   watchViews = [];
+  dispatchStartMap = new Map();
+  dispatchStartCalls = [];
   setFleetLiveDepsForTest(deps());
 });
 
@@ -492,6 +496,75 @@ describe('U4 post-merge watch store (INT1)', () => {
   });
 });
 
+describe('dispatch → merge medians (dev-cycle before/after)', () => {
+  const DAY_MS = 86_400_000;
+  const mergeRow = (id: string, proposalId: string | null, landedMsAgo: number): LedgerEntry =>
+    row('merge:landed', landing(id, 'merge', { proposalId, landedAt: iso(landedMsAgo) }), iso(landedMsAgo));
+
+  it('joins proposalId to the dispatch-start: the last 7d against the prior 7d', async () => {
+    rows = [
+      mergeRow('L1', 'p-1', 20 * MIN),            // dispatched 80 min ago → 60 min
+      mergeRow('L2', 'p-2', 4 * 60 * MIN),        // dispatched 10 h ago → 6 h
+      mergeRow('L3', 'p-3', 8 * DAY_MS),          // prior window → 3 h
+      mergeRow('L4', null, 30 * MIN),             // no proposal → never a sample
+      mergeRow('L5', 'p-9', 40 * MIN),            // its "start" is after the merge → rejected
+    ];
+    dispatchStartMap = new Map([
+      ['p-1', NOW - 80 * MIN],
+      ['p-2', NOW - 10 * 60 * MIN],
+      ['p-3', NOW - 8 * DAY_MS - 3 * 60 * MIN],
+      ['p-9', NOW - 10 * MIN],
+    ]);
+    const built = await buildFleetLiveSnapshot({ ...(deps() as FleetLiveDeps) });
+    expect(built.snapshot.summary.dispatchToMergeP50Ms7d).toBe(210 * MIN); // median of 60 min and 6 h
+    expect(built.snapshot.summary.dispatchToMergeP50MsPrior7d).toBe(3 * 60 * MIN);
+    // The tail was asked for the 14-day window, not the 12-hour runs window.
+    expect(dispatchStartCalls).toEqual([NOW - 14 * DAY_MS]);
+  });
+
+  it('is unknown — never a smaller number — when the dispatch ledger cannot be read', async () => {
+    rows = [mergeRow('L1', 'p-1', 20 * MIN)];
+    dispatchStartMap = null;
+    const built = await buildFleetLiveSnapshot({ ...(deps() as FleetLiveDeps) });
+    expect(built.snapshot.summary.dispatchToMergeP50Ms7d).toBeNull();
+    expect(built.snapshot.summary.dispatchToMergeP50MsPrior7d).toBeNull();
+  });
+
+  it('keeps the two windows independent: prior unknown does not blank the 7d median', async () => {
+    rows = [mergeRow('L1', 'p-1', 20 * MIN)];
+    dispatchStartMap = new Map([['p-1', NOW - 80 * MIN]]);
+    const built = await buildFleetLiveSnapshot({ ...(deps() as FleetLiveDeps) });
+    expect(built.snapshot.summary.dispatchToMergeP50Ms7d).toBe(60 * MIN);
+    expect(built.snapshot.summary.dispatchToMergeP50MsPrior7d).toBeNull();
+  });
+});
+
+describe('repo green trend — one indexed pass, local-day buckets', () => {
+  const DAY_MS = 86_400_000;
+  const pm = (landingId: string, verdict: 'green' | 'red', checkedMsAgo: number): LedgerEntry =>
+    row('post-merge:result', { v: 1, landingId, repo: REPO, mergeSha: 'b'.repeat(40), ci: verdict, suite: 'pass', verdict, detail: verdict, checkedAt: iso(checkedMsAgo) } as never, iso(checkedMsAgo));
+
+  it('fills each of the 14 day buckets once, from the ledger index', async () => {
+    policy = policyFixture();
+    rows = [
+      pm('L1', 'green', 1 * MIN), pm('L2', 'red', 2 * MIN),   // today: 1 of 2 green
+      pm('L3', 'red', DAY_MS + 30 * MIN),                      // yesterday: 0 of 1
+      pm('L4', 'green', 13 * DAY_MS),                          // oldest bucket: 1 of 1
+    ];
+    const built = await buildFleetLiveSnapshot({ ...(deps() as FleetLiveDeps) });
+    const row = built.snapshot.repos.find((r) => r.repo === REPO);
+    expect(row?.greenTrend).toHaveLength(14);
+    expect(row?.greenTrend[13]).toBe(50);
+    expect(row?.greenTrend[12]).toBe(0);
+    expect(row?.greenTrend[0]).toBe(100);
+    expect(row?.greenTrend[11]).toBeNull();
+    // The same index answers the summary and the repo's 7d figure — the
+    // 13-day-old row stays in its trend bucket but out of the 7d window.
+    expect(built.snapshot.summary.postMergeGreenPct7d).toBeCloseTo(33.3, 1);
+    expect(row?.greenPct7d).toBeCloseTo(33.3, 1);
+  });
+});
+
 describe('mirrors apart from repos (R3f, L1 leftover 3)', () => {
   it('keeps enrolled fleet mirrors OUT of the repo table and exposes them as snapshot.mirrors', async () => {
     const built = await buildFleetLiveSnapshot({
@@ -600,6 +673,33 @@ describe('in-flight dispatches: incremental async ledger tail (review c11)', () 
       dispatchRow('daemon:dispatch-start', 'outer', at(1), { itemId: 'shared', trajectoryId: 'run:outer' }),
     ]);
     tail.reset();
+    expect(await tail.read(T0)).toEqual([]);
+  });
+
+  it('started() joins each proposal to its dispatch-start, across partitions; in-flight still filters ends', async () => {
+    append(`${DAY}.jsonl`, [
+      dispatchRow('daemon:dispatch-start', 'a', at(23, 50)),
+      dispatchRow('daemon:dispatch-start', 'z', at(23, 55)),
+      dispatchRow('daemon:dispatch-skip', 'z', at(23, 56)),
+    ]);
+    append('2026-09-21.jsonl', [
+      // A run that crossed midnight: the start lives in the day-1 partition.
+      dispatchRow('daemon:dispatch', 'a', '2026-09-21T00:20:00.000Z', { proposalId: 'p-1' }),
+      dispatchRow('daemon:dispatch-start', 'b', '2026-09-21T01:00:00.000Z'),
+      dispatchRow('daemon:dispatch', 'b', '2026-09-21T02:00:00.000Z', { proposalId: 'p-2' }),
+    ]);
+    const tail = createDispatchTail({ dir: () => dir });
+    expect(await tail.started(T0)).toEqual(new Map([
+      ['p-1', Date.parse(at(23, 50))],
+      ['p-2', Date.parse('2026-09-21T01:00:00.000Z')],
+    ]));
+    // A window that excludes the start's partition drops the proposal rather
+    // than inventing a zero cycle.
+    const day2 = Date.parse('2026-09-21T00:00:00.000Z');
+    const starts = await tail.started(day2);
+    expect(starts?.has('p-1')).toBe(false);
+    expect(starts?.get('p-2')).toBe(Date.parse('2026-09-21T01:00:00.000Z'));
+    // Keeping starts for the join does not leak them into the in-flight answer.
     expect(await tail.read(T0)).toEqual([]);
   });
 

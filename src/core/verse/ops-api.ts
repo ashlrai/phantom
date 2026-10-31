@@ -13,7 +13,7 @@
  * team event log (`phm team`, the MCP team tools, src/core/teams), the fleet
  * task queue and router tick/journal (src/core/fleet), the calibration
  * harness (src/core/learn), and the companion ledger (src/core/proactive).
- * Nothing is re-stored; nothing here can apply, merge, publish or deploy.
+ * Nothing is re-stored; self-update delegates to the guarded apply module.
  * The leaders POST is the same `message.posted` event `phm team say` writes.
  *
  * POSTURE. GETs sit behind the read-session boundary like every workbench
@@ -51,6 +51,7 @@ import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { fetchOrigin, readSelfUpdateStatus, type SelfUpdateDeps } from './self-update-status.js';
+import { applySelfUpdate, detectRestartMode, scheduleRestart, realSelfUpdateRunner, type SelfUpdateApplyResult } from './self-update-apply.js';
 import { probeReleases, type OpsReleaseProbeDeps } from './ops-releases.js';
 import {
   OPS_BOARD_JOURNAL_WINDOW_MS,
@@ -83,6 +84,7 @@ import {
 /** Test seams : production defaults are the real buses, never fixtures. */
 export interface OpsApiDeps {
   selfUpdate?: SelfUpdateDeps;
+  selfUpdateApply?: (opts: { restart: boolean }) => Promise<SelfUpdateApplyResult>;
   now?: () => number;
   fleetTasks?: () => TaskQueueRead;
   teamEvents?: (team: string) => TeamEvent[];
@@ -425,6 +427,32 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
   const enrolled = deps.enrolled ?? (() => listEnrolled());
   const releases = deps.releases ?? ((paths: readonly string[]) => probeReleases(paths, deps.releaseDeps));
   const post = deps.postMessage ?? defaultPost;
+  const apply = deps.selfUpdateApply ?? (async (opts: { restart: boolean }): Promise<SelfUpdateApplyResult> => {
+    let repoRoot: string | null = null;
+    // The status reader owns repository discovery. Capture its resolved root
+    // through its reader seam without probing git or reading package contents.
+    await readSelfUpdateStatus({
+      ...deps.selfUpdate,
+      readPackageVersion: (root) => { repoRoot = root; return null; },
+      statFetchHead: () => null,
+      runGit: async () => ({ code: 1, stdout: '' }),
+    });
+    if (!repoRoot) {
+      const at = new Date(now()).toISOString();
+      return {
+        v: 1, startedAt: at, finishedAt: at, outcome: 'refused', reason: 'Repository unavailable',
+        fromCommit: null, toCommit: null, steps: [],
+        restart: { required: false, mode: detectRestartMode(process.env, process.argv) },
+      };
+    }
+    const result = await applySelfUpdate({ runner: realSelfUpdateRunner, repoRoot, cliEntry: join(repoRoot, 'dist/cli/index.js') });
+    const mode = detectRestartMode(process.env, process.argv);
+    if (opts.restart && result.outcome === 'updated' && result.restart.required && mode === 'sidecar-supervised') {
+      scheduleRestart({ mode });
+    }
+    return { ...result, restart: { ...result.restart, mode } };
+  });
+  let applyInFlight = false;
   let statusCache: { at: number; value: ReturnType<typeof readSelfUpdateStatus> } | null = null;
 
   return async (ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, path: string, method: string): Promise<boolean> => {
@@ -449,11 +477,34 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
     if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'POST') {
       if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
       if (!passesMutationGate(req, res, ctx.token)) return true;
+      let action: 'fetch' | 'apply';
+      let restart = true;
       try {
         const body: unknown = JSON.parse(await readBody(req));
-        if (!body || typeof body !== 'object' || Array.isArray(body)
-          || Object.keys(body).length !== 1 || !('action' in body) || body.action !== 'fetch') throw new Error('bad');
-      } catch { sendInvalid(res, 'expected {action:"fetch"}'); return true; }
+        if (!body || typeof body !== 'object' || Array.isArray(body) || !('action' in body)) throw new Error('bad');
+        if (body.action === 'fetch' && Object.keys(body).length === 1) action = 'fetch';
+        else if (body.action === 'apply' && Object.keys(body).every((key) => key === 'action' || key === 'restart')
+          && (!('restart' in body) || typeof body.restart === 'boolean')) {
+          action = 'apply';
+          if ('restart' in body) restart = body.restart as boolean;
+        } else throw new Error('bad');
+      } catch { sendInvalid(res, 'expected {action:"fetch"} or {action:"apply", restart?:boolean}'); return true; }
+      if (action === 'apply') {
+        if (applyInFlight) { sendJson(res, 409, { error: 'busy' }); return true; }
+        applyInFlight = true;
+        try {
+          const result = await apply({ restart });
+          sendJson(res, 200, {
+            ...result, action: 'apply',
+            reason: result.reason === null ? null : scrubSecrets(result.reason),
+            steps: result.steps.map((step) => ({ ...step, note: step.note === null ? null : scrubSecrets(step.note) })),
+          });
+        } finally {
+          statusCache = null;
+          applyInFlight = false;
+        }
+        return true;
+      }
       const result = await fetchOrigin(deps.selfUpdate);
       statusCache = null;
       sendJson(res, 200, result);

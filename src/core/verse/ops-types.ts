@@ -167,6 +167,8 @@ export interface OpsRepoReleaseV1 {
   version: string | null;
   /** Newest git tag; null = none or the repo could not be read. */
   latestTag: string | null;
+  /** Local commits after latestTag; absent on older servers, null when unknown. */
+  commitsSinceTag?: number | null;
   /** The workflow file that looks like a release pipeline, e.g. `release.yml`. */
   releaseWorkflow: string | null;
   /**

@@ -17,6 +17,7 @@ import { clearMutationToken, clearReadSession } from '../../../data/auth-store.j
 import { useAuthPhase, useMutationHold } from '../../../data/hooks.js';
 import { useToast } from '../../../components/primitives/Toast.js';
 import { Panel, SettingRow } from './SettingRow.js';
+import { PairedDevicesRows } from './PairedDevicesRows.js';
 import { FleetSourcesRows } from './FleetSourcesRows.js';
 import styles from './SettingsSection.module.css';
 
@@ -117,6 +118,7 @@ export function ConnectionPanel() {
 
       <h4 className={styles.panelTitle}>Fleet on this Mac</h4>
       <FleetSourcesRows />
+      <PairedDevicesRows />
 
       <Dialog
         open={confirmOpen}
