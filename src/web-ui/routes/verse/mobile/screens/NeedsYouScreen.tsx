@@ -38,6 +38,7 @@ import {
 } from 'react';
 import type { NeedsYouAction, NeedsYouActionKind, NeedsYouItem, NeedsYouKind, NeedsYouSeverity } from '../../../../../core/verse/workbench-types.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
+import { useQuery } from '../../../../data/hooks.js';
 import type { QuestionFormStore } from '../../leader/LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('../../leader/LeaderQuestionForm.js'));
 
@@ -56,7 +57,11 @@ import {
 } from '../../shell/needs-you-model.js';
 import { markResolved, useResolvedIds } from '../../shell/resolved-store.js';
 import type { NeedsYouSplit } from '../../verse-ui-store.js';
+import { useDocumentVisible, useSectionVisible } from '../../shell/section-visibility.js';
+import { FleetAttentionCards } from '../FleetAttentionCards.js';
 import { sinceText } from '../connectivity.js';
+import { homeRunsQuery } from '../home-runs-query.js';
+import { fleetAttention } from '../needs-fleet-model.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { showMobileToast } from '../mobile-toast.js';
@@ -467,6 +472,11 @@ export function NeedsYouScreen() {
   const resolved = useResolvedIds();
   const hiddenIds = useHiddenIds();
   const reduced = usePrefersReducedMotion();
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const fleet = useQuery(homeRunsQuery, { enabled: sectionVisible && documentVisible });
+  const nowMs = Date.now();
+  const hasFleetAttention = fleetAttention(fleet.data ?? null, nowMs).length > 0;
   const [split, setSplit] = useState<NeedsYouSplit>('all');
   const [undo, setUndo] = useState<{ id: string; title: string } | null>(null);
   const [answering, setAnswering] = useState<NeedsYouItem | null>(null);
@@ -556,6 +566,8 @@ export function NeedsYouScreen() {
           action={<Button variant="tinted" onClick={() => unhideOnThisPhone(hiddenHere.map((i) => i.id))}>Show hidden</Button>}
         />
       );
+    } else if (coverage.vouched && hasFleetAttention) {
+      body = null;
     } else if (coverage.vouched) {
       body = (
         <EmptyState
@@ -622,6 +634,7 @@ export function NeedsYouScreen() {
         </div>
       ) : null}
 
+      <FleetAttentionCards nowMs={nowMs} />
       {body}
 
       {data && shown.length > 0 && !coverage.vouched ? <p className={styles.note}>Not everything answered: {describeSilence(coverage)}.</p> : null}

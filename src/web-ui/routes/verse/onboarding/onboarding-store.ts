@@ -31,6 +31,8 @@
  * the app is fully usable without it, and it is reachable from Settings.
  */
 
+import { clampStep } from './onboarding-model.js';
+
 export interface OnboardingRecord {
   /** ISO timestamp of the run that reached the last step. */
   completedAt: string | null;
@@ -67,7 +69,7 @@ function readStored(): StoredOnboarding {
       completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : null,
       dismissedAt: typeof parsed.dismissedAt === 'string' ? parsed.dismissedAt : null,
       expanded: parsed.expanded === true,
-      step: typeof parsed.step === 'number' && Number.isFinite(parsed.step) ? Math.max(0, Math.trunc(parsed.step)) : 0,
+      step: typeof parsed.step === 'number' ? clampStep(parsed.step) : 0,
     };
   } catch {
     // Unreadable storage means "answered" — see the fail-safe note above.
@@ -125,7 +127,7 @@ export function getOnboardingState(): OnboardingState {
 }
 
 export function setOnboardingStep(step: number): void {
-  patch({ step: Math.max(0, Math.trunc(step)) }, true);
+  patch({ step: clampStep(step) }, true);
 }
 
 /** The chip was clicked: show the full card. */
