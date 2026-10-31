@@ -43,37 +43,30 @@ Adding example audit coverage and qualifying a supported replacement across
 both toolchains remain separate follow-up work; this disclosure adds no audit
 exception or dependency override.
 
-## Dependabot cooldown
+## Version updates
 
-GitHub-hosted Dependabot update jobs are intentionally paused while CI and
-dependency maintenance run through the local engineering fleet. Every configured
-ecosystem remains explicit in `.github/dependabot.yml`, but each
-`open-pull-requests-limit` is `0`. Dependabot alerts and secret-scanning push
-protection remain enabled; automated Dependabot security-update pull requests
-are disabled in repository settings. Re-enabling hosted updates requires an
-explicit capacity decision, restoration of bounded pull-request limits, and a
-reviewed local acceptance pass.
+Dependabot version-update entries are removed. Renovate opens version pull
+requests before 6am America/New_York on Monday. Non-major updates share one
+pull request. GitHub Actions non-major updates, including digest and pin
+updates, are their own group. Each major update opens its own pull request.
+Renovate waits 3 days after a release (`minimumReleaseAge`) before opening
+a version pull request. `prConcurrentLimit` is 3,
+`prHourlyLimit` is 2, and automerge is off.
 
-Routine npm and Cargo version updates wait 3 days for patch releases, 7 days
-for minor releases, 30 days for major releases, and 5 days when a SemVer class
-is unavailable. This is a review window for newly published packages, not a
-security-update delay: GitHub applies `cooldown` only to version updates, so
-Dependabot security updates bypass it.
-
-For a non-security emergency, add the exact dependency name to that ecosystem's
-`cooldown.exclude` list in a dedicated pull request. The pull request must link
-the incident or release blocker, name the reviewing maintainer, state an expiry
-date, and remove the exclusion after the update merges. Wildcard exclusions are
-not permitted. Security advisories need no override because they already bypass
-the cooldown.
+Dependabot alerts and secret-scanning push protection remain enabled.
+Automated Dependabot security-update pull requests stay disabled in repository
+settings. Renovate `vulnerabilityAlerts` is enabled, so security pull requests
+come from Renovate. Dependabot security updates stay off so the two do not
+race. The Renovate configuration does not change those repository settings.
 
 ## Version holds
 
-The root npm ecosystem carries four `ignore` holds, and no other ecosystem
-carries any. Each names one exact dependency and a lower version bound, so every
-release below the bound still flows through version updates; none ignores a
-whole dependency, an update type, or a wildcard name. Each hold exists because
-the held major cannot install or cannot pass here, and each is lifted by its
+The root npm graph carries four Renovate `allowedVersions` holds, expressed
+below as the versions that stay out of version-update pull requests. Each
+names one exact dependency and a lower version bound, so every release below
+the bound still flows through version updates. None ignores a whole
+dependency, an update type, or a wildcard name. Each hold exists because the
+held major cannot install or cannot pass here, and each is lifted by its
 stated condition, not by expiry:
 
 | Dependency | Held versions | Lifted when |
@@ -84,10 +77,12 @@ stated condition, not by expiry:
 | `jsdom` | `>=30.0.0` | the affected `getByRole` queries are updated |
 
 A hold is a version-update decision, not a security exception. It changes only
-which version-update pull requests Dependabot would propose; it does not hide an
+which version-update pull requests Renovate would propose; it does not hide an
 advisory. Dependabot alerts stay enabled and `npm audit` reads the lockfile
 directly, so an advisory against a held version still surfaces there.
-Adding or widening a hold follows the same review as a `cooldown.exclude`
+Adding or widening a hold is a reviewed change: one exact dependency, a stated
+reason, and a stated lift condition.
+
 entry: one exact dependency, a stated reason, and a stated lift condition.
 
 ## Desktop RustSec containment
