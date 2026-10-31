@@ -1108,6 +1108,10 @@ export interface AshlrConfig {
     /** Display name shown in pulse team views. */
     name?: string;
   };
+  /** RQ-ONB-2: Connect plan picks (resource id -> tier), written by POST /api/onboard/plan-tier. */
+  onboard?: {
+    planTiers?: Record<string, string>;
+  };
   /**
    * M111: Multi-machine fleet work-queue coordination. DEFAULT ABSENT (off) -
    * single-machine behavior is unchanged when this block is missing.
