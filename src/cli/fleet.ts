@@ -2440,6 +2440,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdRouterQueue } = await import('./router-queue.js');
     return cmdRouterQueue(args.slice(1));
   }
+  if (args[0] === 'runs' || args[0] === 'journal' || args[0] === 'parked') {
+    const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
+    return cmdFleetRunsRead(args[0], args.slice(1));
+  }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
@@ -2551,6 +2555,9 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
+  console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
+  console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
