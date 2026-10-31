@@ -8,7 +8,7 @@
  *  - Never throws. Every sensing path is wrapped in try/catch and degrades
  *    to availability:'unknown', which resource-aware dispatch treats as no
  *    trusted capacity signal.
- *  - No network calls except the Ollama localhost health check (2s timeout).
+ *  - Local health checks use loopback only, with a 2s timeout.
  *  - Claude sensing: first trusts unexpired Claude CLI rate_limit_event JSONL
  *    captured locally, then falls back to OAuth usage, transcript sensing, and
  *    finally legacy stats-cache/fleet budget paths.
@@ -23,7 +23,7 @@
  *  - Codex sensing delegates entirely to readCodexRateLimits() — real data.
  *  - NIM sensing first verifies that the executor can resolve its configured
  *    credential, then reactively reads the in-memory backoff store.
- *  - Local/Ollama sensing: GET /api/ps with 2s timeout.
+ *  - Local sensing: Ollama /api/ps and oMLX /v1/models.
  *  - Builtin: always available, no sensing needed.
  *
  * Integration point for M255 concurrent dispatcher:
@@ -43,6 +43,7 @@ import { readCodexRateLimits } from '../observability/codex-source.js';
 import { readDecisions } from '../fleet/decisions-ledger.js';
 import { resolveProviderKey, explainProviderKey } from '../integrations/secrets.js';
 import { resolveEngineRegistry } from '../run/engine-registry.js';
+import { pinLoopbackHost, validateLocalBaseUrl } from '../run/local-inference.js';
 import { readClaudeUsage } from './claude-usage.js';
 import { fetchClaudeUsageApi } from './usage-api.js';
 import {
@@ -1140,19 +1141,27 @@ function senseCredentialedApiState(backend: 'nim' | 'kimi', cfg: unknown, rcfg: 
   return senseReactiveApiState(backend, resourceCfg, { costPerMTokenOut: defaultCost, label: backend });
 }
 
+const OMLX_PORT = 8123;
+const LOCAL_PROBE_TIMEOUT_MS = 2000;
+
 /** Ping Ollama /api/ps with a 2-second timeout. Returns null on timeout/error. */
 function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), 2000);
+    let req: http.ClientRequest | undefined;
+    const timer = setTimeout(() => { req?.destroy(); resolve(null); }, LOCAL_PROBE_TIMEOUT_MS);
     try {
-      const url = new URL('/api/ps', baseUrl);
-      const req = http.get(
-        { hostname: url.hostname, port: Number(url.port) || 11434, path: url.pathname, timeout: 2000 },
+      const checked = validateLocalBaseUrl(baseUrl);
+      if (!checked.ok || !checked.loopback) { clearTimeout(timer); resolve(null); return; }
+      const url = new URL('/api/ps', checked.baseUrl);
+      if (url.protocol !== 'http:') { clearTimeout(timer); resolve(null); return; }
+      req = http.get(
+        { hostname: pinLoopbackHost(url.hostname).replace(/^\[|\]$/g, ''), port: Number(url.port) || 11434, path: url.pathname, timeout: LOCAL_PROBE_TIMEOUT_MS },
         (res) => {
-          clearTimeout(timer);
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) { res.resume(); clearTimeout(timer); resolve(null); return; }
           let body = '';
           res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
           res.on('end', () => {
+            clearTimeout(timer);
             try {
               const parsed = JSON.parse(body) as unknown;
               if (typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as Record<string, unknown>)['models'])) {
@@ -1168,7 +1177,12 @@ function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
         },
       );
       req.on('error', () => { clearTimeout(timer); resolve(null); });
-      req.on('timeout', () => { req.destroy(); clearTimeout(timer); resolve(null); });
+      req.on('timeout', () => {
+        if (!req) { clearTimeout(timer); resolve(null); return; }
+        req.destroy();
+        clearTimeout(timer);
+        resolve(null);
+      });
     } catch {
       clearTimeout(timer);
       resolve(null);
@@ -1179,7 +1193,7 @@ function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
 /**
  * Capacity for the llama-server serving runtime — the local FLEET runtime.
  *
- * This is deliberately NOT `senseOllamaState`. The two local runtimes have
+ * This is deliberately NOT `senseLocalState`. The two local runtimes have
  * opposite capacity models and sharing one sense function would flatten the
  * only difference that matters:
  *
@@ -1336,7 +1350,7 @@ async function senseLlamaServerState(
   }
 }
 
-async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Promise<BackendResourceState> {
+export async function senseLocalState(backend: EngineId, rcfg: ResourceCfgShape, omlxPort = OMLX_PORT): Promise<BackendResourceState> {
   const now = new Date().toISOString();
   const backoff = backoffStore.get(backend);
   const maxConcurrent = rcfg.local?.maxConcurrent ?? 1;
@@ -1360,7 +1374,15 @@ async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Prom
   }
 
   try {
-    const ps = await ollamaPs(baseUrl);
+    const [ps, omlx] = await Promise.all([ollamaPs(baseUrl),
+      Number.isInteger(omlxPort) && omlxPort >= 1 && omlxPort <= 65535 ? fetch(`http://127.0.0.1:${omlxPort}/v1/models`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS), redirect: 'error' })
+        .then((res) => { void res.body?.cancel().catch(() => {}); return res.ok; }).catch(() => false) : Promise.resolve(false),
+    ]);
+    if (ps === null && omlx) {
+      return { backend, availability: 'open', usedPct: null, cap: maxConcurrent, capUnit: 'concurrent',
+        capWindow: null, resetsAt: null, costPerMTokenOut: 0, p50LatencyMs: null, snapshotAt: now,
+        reason: 'oMLX reachable; occupancy unknown', backoffUntilMs: null };
+    }
     if (ps === null) {
       return {
         backend,
@@ -1373,7 +1395,7 @@ async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Prom
         costPerMTokenOut: 0,
         p50LatencyMs: null,
         snapshotAt: now,
-        reason: `ollama unreachable at ${baseUrl} — health check timed out`,
+        reason: 'ollama and oMLX unreachable',
         backoffUntilMs: null,
       };
     }
@@ -1469,7 +1491,7 @@ export async function getBackendResourceState(
       case 'claude':    return await senseClaudeState(rcfg);
       case 'codex':     return senseCodexState();
       case 'builtin':   return builtinState('builtin');
-      case 'local-coder': return await senseOllamaState('local-coder', rcfg);
+      case 'local-coder': return await senseLocalState('local-coder', rcfg);
       default:          return builtinState(backend);
     }
   } catch {
