@@ -212,6 +212,13 @@ is shown as `FAIL`, including listed files. Missing or invalid Vitest JSON,
 unhandled errors, and non-zero exits also fail the gate. Keep the notes current
 and remove an entry when its cause is fixed.
 
+**Quarantining a flaky test.** The only sanctioned way to land a test skip is a
+tracked row in `queue/quarantine.tsv` (test, repo, lead, expiry within 7 days).
+`npm run gate` verifies every added `.skip`/`.todo`/`x`-prefixed marker against
+it and fails on untracked or expired skips, born-disabled tests, leftover rows,
+and any attempt to quarantine `secret-shape`, `gitleaks`, `cargo-deny` or
+`ci-gate`. See [the quarantine ledger guide](QUARANTINE-LEDGER.md).
+
 **`npm run ship:local`** (`scripts/ship-local.mjs`, macOS only) refuses a dirty tree
 (`--allow-dirty` installs it as `releases/<sha>-dirty-<time>`), then:
 

@@ -12,7 +12,8 @@
  *
  * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
  * GATE_BUILD_ASSET_SCRIPTS), web typecheck, eslint (cached), the real-io lane guard, the
- * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs),
+ * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the quarantine-ledger verifier
+ * (scripts/check-quarantine-ledger.mjs: every added test skip needs a live ledger row),
  * the docs check. Then the web build + first-paint budget. Phase B runs the
  * focused backend and web suites in parallel; a full gate runs them serially
  * so load-sensitive UI timing assertions measure the UI rather than backend work.
@@ -387,6 +388,17 @@ function staticSteps() {
   ];
 }
 
+/**
+ * The quarantine verifier in the same static-step shape. With a merge-base it
+ * checks the diff's added skips against queue/quarantine.tsv; in --full there is
+ * no diff, so it validates the ledger itself (shape, expiry, live coverage).
+ */
+function quarantineStep(mergeBase) {
+  const args = ['scripts/check-quarantine-ledger.mjs'];
+  if (mergeBase) args.push('--base', mergeBase);
+  return { name: 'quarantine-ledger', cmd: node, args };
+}
+
 async function runStatic(step) {
   let result = await runCommand(step.name, step.cmd, step.args);
   let durationMs = result.durationMs;
@@ -482,8 +494,8 @@ async function main() {
     return step;
   };
 
-  say('phase A: build, typecheck-web, eslint, realio-lane, verse-sync-io, docs (parallel)');
-  const phaseA = await Promise.all(staticSteps().map((step) => runStatic(step).then(record)));
+  say('phase A: build, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
+  const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
   const buildFailed = phaseA.find((step) => step.name === 'build').status === 'fail';
   const phaseAFailed = phaseA.some((step) => step.status === 'fail');
 
