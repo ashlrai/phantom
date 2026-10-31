@@ -45,6 +45,7 @@ export * from './command-keys.js';
 /** Result groups, in the order the palette shows them (SPEC-310C §1). */
 export const PALETTE_GROUPS = [
   { id: 'needs-you', label: 'Needs you' },
+  { id: 'panes', label: 'Panes' },
   { id: 'workers', label: 'Workers' },
   { id: 'chats', label: 'Chats' },
   { id: 'actions', label: 'Actions' },
@@ -349,7 +350,7 @@ export const WORKBENCH_COMMANDS = [
   // Mind and the conversation panel takes the ask once its chunk mounts.
   { id: 'leader.message', title: 'Message the Leader…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'ask', 'chat', 'strategy', 'memo', 'talk', 'telegram'] },
   { id: 'fleet.digest', title: 'Fleet: copy live digest', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['status', 'digest', 'copy', 'telegram', 'paste', 'fleet'] },
-  { id: 'fleet.interject', title: 'Tell the fleet leaders…', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['interject', 'inbox', 'leaders', 'fleet', 'prompt', 'steer', 'say'] },
+  { ...bind('fleet.interject'), title: 'Tell the fleet leaders…', group: 'actions', section: 'App', keywords: ['interject', 'inbox', 'leaders', 'fleet', 'prompt', 'steer', 'say'] },
   { id: 'leader.directive', title: 'Add Leader directive…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'directive', 'instruction', 'rule', 'standing order'] },
   // ── The repo wiki (3.15) ────────────────────────────────────────────────
   // Served by the shell (run-command.ts → wiki/wiki-focus.ts): it opens the

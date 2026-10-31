@@ -33,12 +33,13 @@ import {
   type WorkbenchCommand,
 } from './command-catalog.js';
 
-export type PaletteItemKind = 'worker' | 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument';
+export type PaletteItemKind = 'pane' | 'worker' | 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument';
 
 export interface PaletteItem {
   /** Unique across the whole list (React key + active-descendant id). */
   key: string;
   kind: PaletteItemKind;
+  workerState?: PaletteWorker['state'];
   group: PaletteGroupId | 'recent';
   title: string;
   /** Muted second part of the row. */
@@ -57,7 +58,8 @@ export interface PaletteItem {
   /** What Enter does — interpreted by the component. */
   payload:
     | { kind: 'needs-you'; itemId: string }
-    | { kind: 'worker'; job: string; url?: string }
+    | { kind: 'pane'; paneId: string }
+    | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
     | { kind: 'seat'; seatId: string; label: string }
@@ -71,9 +73,12 @@ export interface PaletteWorker {
   tier: string;
   ageSeconds: number | null;
   prUrl: string | null;
+  state?: 'running' | 'queued' | 'merged';
+  at?: string | null;
 }
 
 export interface PaletteInput {
+  panes?: ReadonlyArray<{ id: string; title: string; keywords?: readonly string[] }>;
   workers?: readonly PaletteWorker[];
   needsYou: readonly NeedsYouItem[];
   running: readonly VerseActivityRunning[];
@@ -100,6 +105,7 @@ const GROUP_ORDER: readonly (PaletteGroupId | 'recent')[] = [
 const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent', number>> = {
   'needs-you': 5,
   recent: PALETTE_RECENT_LIMIT,
+  panes: 8,
   chats: 8,
   workers: 8,
   actions: 8,
@@ -248,6 +254,16 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
+  for (const pane of input.panes ?? []) {
+    items.push({
+      key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
+      title: `Open pane: ${pane.title}`, subtitle: null, shortcut: null,
+      monogram: null, engine: null,
+      keywords: [pane.title, ...pane.id.split('-'), ...(pane.keywords ?? [])],
+      argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
+    });
+  }
+
   const running = new Map(input.running.map((r) => [r.sessionId, r] as const));
   const sessions = [...input.sessions].sort((a, b) => {
     const ra = running.has(a.id) || a.status === 'running' ? 0 : 1;
@@ -275,16 +291,24 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
-  for (const worker of [...(input.workers ?? [])].sort((a, b) => (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1) || a.job.localeCompare(b.job))) {
+  const workerRank = (worker: PaletteWorker) => worker.state === 'queued' ? 1 : worker.state === 'merged' ? 2 : 0;
+  for (const worker of [...(input.workers ?? [])].sort((a, b) => workerRank(a) - workerRank(b)
+    || (workerRank(a) === 0 ? (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1) : 0) || a.job.localeCompare(b.job))) {
+    const url = safePrUrl(worker.prUrl);
+    const state = worker.state ?? 'running';
+    const subtitle = !worker.state ? `${worker.lane} · ${worker.tier} · ${workerAge(worker.ageSeconds)}`
+      : state === 'running' ? `running · ${workerAge(worker.ageSeconds)} · ${worker.lane}`
+      : state === 'queued' ? `queued · ${[worker.lane, worker.tier].filter(Boolean).join('/')}`
+      : [`merged${worker.at && relative(worker.at, now) ? ` ${relative(worker.at, now)}` : ''}`, url ? prLabel(url) : ''].filter(Boolean).join(' · ');
     const item: PaletteItem = {
-      key: `worker:${worker.job}`, kind: 'worker', group: 'workers', title: worker.job,
-      subtitle: `${worker.lane} · ${worker.tier} · ${workerAge(worker.ageSeconds)}`, shortcut: null, monogram: null,
+      key: `worker:${worker.job}`, kind: 'worker', workerState: worker.state, group: 'workers', title: worker.job,
+      subtitle, shortcut: null, monogram: null,
       engine: null, keywords: [worker.lane, worker.tier, 'worker', 'log'], argument: null,
-      tone: 'running', payload: { kind: 'worker', job: worker.job },
+      tone: state === 'running' ? 'running' : 'neutral',
+      payload: state === 'merged' && url ? { kind: 'worker', job: worker.job, url, selectLog: true } : { kind: 'worker', job: worker.job },
     };
     items.push(item);
-    const url = safePrUrl(worker.prUrl);
-    if (url && new URL(url).protocol === 'https:') items.push({
+    if (state === 'running' && url && new URL(url).protocol === 'https:') items.push({
       ...item, key: `worker-pr:${worker.job}`, title: `Open ${prLabel(url)} for ${worker.job}`,
       keywords: ['pr', 'pull'], tone: 'neutral', payload: { kind: 'worker', job: worker.job, url },
     });
@@ -405,9 +429,14 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
   if (trimmed === '' && !prefix) {
     // Empty query: what needs you, then what you did last.
     items.filter((i) => i.group === 'needs-you').slice(0, 3).forEach((item, order) => push(item, 0, order));
-    const recent = recentActions.map((id) => findCommand(id)).filter((c): c is WorkbenchCommand => c !== null && c.group !== null);
-    const shown = recent.length > 0 ? recent : (['chat.new', 'needs-you.open', 'shortcuts.open'] as const).map((id) => findCommand(id)!);
-    shown.slice(0, PALETTE_RECENT_LIMIT).forEach((command, order) => push(commandItem(command, platform, 'recent'), 0, order));
+    const recent = recentActions.flatMap((id): PaletteItem[] => {
+      const pane = items.find((item) => item.payload.kind === 'pane' && `pane.${item.payload.paneId}` === id);
+      if (pane) return [{ ...pane, group: 'recent' }];
+      const command = findCommand(id);
+      return command?.group ? [commandItem(command, platform, 'recent')] : [];
+    });
+    const shown = recent.length > 0 ? recent : (['chat.new', 'needs-you.open', 'shortcuts.open'] as const).map((id) => commandItem(findCommand(id)!, platform, 'recent'));
+    shown.slice(0, PALETTE_RECENT_LIMIT).forEach((item, order) => push(item, 0, order));
   } else {
     items.forEach((item, order) => {
       if (only && item.group !== only) return;
@@ -419,14 +448,17 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
 
   const out: PaletteGroup[] = [];
   const flatScores: number[] = [];
-  for (const id of GROUP_ORDER) {
+  const namesPane = !prefix && trimmed !== '' && items.some((item) => item.payload.kind === 'pane'
+    && [item.title.slice('Open pane: '.length), item.payload.paneId.replace(/-/g, ' ')].some((name) => name.toLowerCase() === trimmed.toLowerCase()));
+  const groupOrder = namesPane ? ['panes' as const, ...GROUP_ORDER.filter((id) => id !== 'panes')] : GROUP_ORDER;
+  for (const id of groupOrder) {
     const list = groups.get(id);
     if (!list || list.length === 0) continue;
     // Chats: running first (SPEC-310C §1), then by match. Everything else by
     // match, with catalog / recency order breaking ties.
-    const runRank = (e: { item: PaletteItem }) => (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
+    const runRank = (e: { item: PaletteItem }) => id === 'workers' ? (e.item.workerState === 'queued' ? 1 : e.item.workerState === 'merged' ? 2 : 0) : (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
     list.sort((a, b) => runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
-    const cap = prefix && id !== 'workers' ? 50 : GROUP_CAP[id];
+    const cap = (id === 'panes' && trimmed !== '') || prefix && (id !== 'workers' || list.some(e => e.item.workerState !== undefined)) ? 50 : GROUP_CAP[id];
     const shown = list.slice(0, cap);
     for (const e of shown) flatScores.push(e.score);
     out.push({ id, label: GROUP_LABEL[id], items: shown.map((e) => e.item) });

@@ -9,7 +9,7 @@ export interface RunsData {
   mergesLastHour: { count: number | null; items?: Array<{ repo?: string; number?: number }> };
   switches: string[];
 }
-type Node = { id: string; kind: 'leader' | 'lane' | 'run' | 'merged' | 'overflow'; label: string; state: string; title: string; data?: { lane?: string; repo?: string; number?: number } };
+type Node = { id: string; kind: 'leader' | 'lane' | 'run' | 'merged' | 'overflow'; label: string; state: string; title: string; data?: { lane?: string; tier?: string; repo?: string; number?: number } };
 export interface RunsGraphModel extends Omit<WorkspaceGraphV1, 'nodes' | 'edges'> {
   nodes: Node[];
   edges: Array<WorkspaceGraphV1['edges'][number] & { title: string; inferred: boolean }>;
@@ -33,7 +33,7 @@ export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
   const leaders = runs.leaders.map(leader => ({ ...leader, id: JSON.stringify([leader.name ?? null, leader.model ?? null, leader.lane ?? null]) }));
   sorted(leaders).forEach((leader, index) => {
     const id = `leader:${leader.id}:${index}`;
-    add(id, 'leader', leader.name ?? leader.model ?? 'Leader', 'recorded');
+    add(id, 'leader', leader.name ?? leader.model ?? 'Leader', 'recorded', undefined, { lane: leader.lane });
     const matched = leader.lane && lanes.has(laneId(leader.lane));
     for (const lane of lanes.keys()) if (!matched || lane === laneId(leader.lane)) link(id, lane, !matched);
   });
@@ -47,7 +47,7 @@ export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
     if (index >= 60) { overflow.set(lane, (overflow.get(lane) ?? 0) + 1); return; }
     const elapsed = worker.startedAt ? now - Date.parse(worker.startedAt) : NaN;
     const title = `${worker.job} · ${worker.lane ?? 'unknown lane'} · ${worker.model ?? 'model not reported'} · ${Number.isFinite(elapsed) ? `${Math.floor(Math.max(0, elapsed) / 60_000)}m elapsed` : 'elapsed not reported'}`;
-    add(worker.id, 'run', worker.job, 'running', title);
+    add(worker.id, 'run', worker.job, 'running', title, { lane: worker.lane, tier: worker.model });
     link(lane, worker.id);
     if ((runs.mergesLastHour.count ?? 0) > 0 && worker.repo && runs.mergesLastHour.items?.some(item => item.repo === worker.repo)) {
       link(worker.id, 'merged:last-hour');
@@ -56,7 +56,7 @@ export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
   });
   for (const [lane, count] of overflow) {
     const id = `overflow:${lane}`;
-    add(id, 'overflow', `+${count} more`, 'running'); link(lane, id);
+    add(id, 'overflow', `+${count} more`, 'running', undefined, { lane: lanes.get(lane) }); link(lane, id);
   }
   if ((runs.mergesLastHour.count ?? 0) > 0) {
     add('merged:last-hour', 'merged', `Merged last hour · ${runs.mergesLastHour.count}`, 'merged');
@@ -64,6 +64,16 @@ export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
   }
   return { schema: 'graph.v1', observedAt: new Date(now).toISOString(), state: 'running', nodes: sorted(nodes), edges: sorted(edges), inbox: [],
     counts: { leaders: leaders.length, lanes: lanes.size, jobs: workers.length, merges: runs.mergesLastHour.count } };
+}
+
+export function filterGraphNodes(nodes: RunsGraphModel['nodes'], query: string): { matched: Set<string>; total: number } {
+  const term = query.trim().toLowerCase();
+  return { matched: new Set(nodes.filter(node => [node.id, node.label, node.data?.lane, node.data?.tier, node.state]
+    .some(value => value?.toLowerCase().includes(term))).map(node => node.id)), total: nodes.length };
+}
+
+export function filterLabel(matched: number, total: number): string {
+  return matched === total ? '' : `${matched} of ${total} nodes`;
 }
 
 export function describeRunsGraph(graph: RunsGraphModel): string {
