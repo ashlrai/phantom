@@ -36,6 +36,7 @@ import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { usePanes } from '../panes/pane-registry.js';
 import { paletteWorkers } from './palette-workers.js';
 
 // Dictation (voice/): lazy, so the palette opens as fast as before.
@@ -49,6 +50,8 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   const ui = useVerseUi();
   const open = ui.overlay === 'palette';
   const runs = useQuery(opsRunsQuery, { enabled: open, freshMs: 0 });
+  const panes = usePanes();
+  useEffect(() => { void import('../panes/index.js'); }, []);
   const activity = useActivity();
   const sessions = useQuery(verseSessionsQuery);
   const bootstrap = useQuery(verseBootstrapQuery);
@@ -75,6 +78,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
 
   const input = useMemo(
     () => ({
+      panes: [...panes].sort((a, b) => a.title.localeCompare(b.title)),
       workers: paletteWorkers(runs.data),
       needsYou: activity.data?.needsYou ?? [],
       running: activity.data?.running ?? [],
@@ -84,7 +88,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       recentActions: ui.recentActions,
       platform,
     }),
-    [runs.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
+    [panes, runs.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
   );
 
   const view = useMemo(() => {
@@ -152,6 +156,12 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       }
       onClose();
       executeCatalogCommand(payload.commandId, { via: 'palette' });
+      return;
+    }
+    if (payload.kind === 'pane') {
+      openDockPane(payload.paneId);
+      recordVerseAction(`pane.${payload.paneId}`);
+      onClose();
       return;
     }
     if (payload.kind === 'worker') {
