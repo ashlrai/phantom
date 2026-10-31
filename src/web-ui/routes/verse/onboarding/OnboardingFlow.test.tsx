@@ -272,6 +272,34 @@ describe('OnboardingFlow — what it says about the machine', () => {
     expect(calls.some((u) => u.startsWith('/api/verse/accounts'))).toBe(false);
   });
 
+  it('shows a pending account read while the roster is loading', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => String(input).startsWith('/api/verse/bootstrap')
+      ? new Promise<Response>(() => {}) : Promise.resolve(json({}))));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(screen.getByText('Reading seats…')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+  });
+
+  it('shows when account information is unavailable', async () => {
+    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => new Response('', { status: 404 }) }));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(await screen.findByText('Account information is unavailable in this build.')).toBeInTheDocument();
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+  });
+
+  it('shows an account read error instead of an empty roster', async () => {
+    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => new Response('', { status: 503 }) }));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(await screen.findByText('Could not read accounts. The server answered HTTP 503.')).toBeInTheDocument();
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+  });
+
   it('says no seats were reported, rather than inventing a roster, when there are none', async () => {
     vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => json(bootstrap({ seats: [] })) }));
     const user = userEvent.setup();

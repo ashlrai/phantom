@@ -75,6 +75,35 @@ external-message, delete, spend`. Agents can request them; nobody can accept
 them until a human owner/admin runs `phm team approve <id>`. There is no MCP
 tool that approves.
 
+### Workspace actions and audit
+
+After `phm team join --team acme`, a local human owner/admin can run:
+
+```sh
+phm team invite human:evan --team acme
+phm team role human:evan admin --team acme
+phm team link ashlrai/phantom --team acme
+phm audit --team acme --json
+phm audit --team acme --action member.role-changed --limit 20
+```
+
+Invites add local workspace membership; they send no email or external message.
+Workspace mutations derive the caller from the local human identity, ignore
+`--as`, and reject agent processes. Owners cannot be demoted through this API;
+role changes require another owner/admin. Linked repos appear in `team view`.
+
+Each successful action is its own audit record in the existing locked,
+append-only `events.jsonl`: `member.invited`, `member.role-changed` (including
+previous role), or `repo.linked`, with actor, timestamp and event ID. A failed
+or duplicate action appends nothing. State and audit share the same append,
+so a state change cannot succeed without its record. Earlier `member.joined`
+records also appear in the audit listing. The viewer is read-only, newest-first,
+with exact event-type `--action`, `--since`, `--limit` and `--json` filters;
+`--result` is not supported for team records. There is no rewrite/delete API;
+peer imports with an existing event ID cannot replace its original record.
+As with the rest of the local bus, a process with direct filesystem access as
+the same OS user can edit the file; this is not tamper-proof remote storage.
+
 ## 4. MCP tools (agents)
 
 | tool | safety | purpose |
@@ -92,6 +121,30 @@ refuses writes, every call audited by argument keys only, output scrubbed and
 capped at 32 KB.
 
 Human CLI: `phm team view | join | approve | deny | claim | release | say`.
+
+### Member readiness and onboarding
+
+Use the [team onboarding walkthrough](../TEAM.md#start-here-role-context-and-next-action)
+before the first task and after returning. `phm team view --team <id>` shows
+protocol roles, current claims, open handoffs, pending approvals and recent
+messages; `--json` returns the full state, including handoff detail and context
+references. Context packs are retrieved separately through `phm_team_context_get`.
+The view is evidence to review, not a readiness or access certification.
+
+Phase 1 logs are local to `$ASHLR_HOME`: matching team IDs on different machines
+do not share state. Confirm the authoritative log before joining an empty view;
+the first joining human becomes owner. Join/approval identity is derived from
+the local OS user and optional owner configuration, never from `--as`.
+A member cannot self-promote with `join --role admin`.
+
+Keep two questions separate: protocol role controls team operations; repository
+and connector access comes from their respective owners. For missing access,
+contact the owner/admin through an approved channel with the task reference,
+required scope and redacted failure, then retry the original check. For missing
+context, confirm owner/project/person scope and request a cited entry; do not
+broaden client boundaries. Returning members re-read current task sources and
+resolve claims before editing. Online presence, a successful join or an empty
+context pack alone cannot establish readiness.
 
 ## 5. Shared context and context-window efficiency
 

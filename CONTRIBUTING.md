@@ -63,6 +63,10 @@ To install the CLI while developing:
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
+For explicit Bun-compatible test inventories, see the standalone
+[Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
+is separate from these scripts.
+
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
 ### Focused iteration

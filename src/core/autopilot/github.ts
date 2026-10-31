@@ -54,6 +54,7 @@ export async function readPr(repo: string, number: number, gh: Gh = defaultGh): 
     merged: raw['merged'] === true,
     draft: raw['draft'] === true,
     author: str(obj(raw['user'])['login']),
+    title: str(raw['title']),
     headRef: str(head['ref']),
     headSha: str(head['sha']),
     headRepo: str(obj(head['repo'])['full_name']),
@@ -239,4 +240,36 @@ export async function listOwnedPrs(repo: string, viewer: string, prefixes: reado
 /** Re-run one Actions job (its check-run id is the job id). */
 export async function rerunJob(repo: string, jobId: number, gh: Gh = defaultGh): Promise<void> {
   await gh(['api', '-X', 'POST', `repos/${assertRepo(repo)}/actions/jobs/${jobId}/rerun`]);
+}
+
+/**
+ * The newest PR — open or closed — whose head is `branch` in this repository.
+ * Backs the recut's open-PR retry: the branch was pushed before, so a PR under
+ * it may already exist even when the state file never recorded its number.
+ */
+export async function readPrByBranch(repo: string, branch: string, gh: Gh = defaultGh): Promise<{ number: number; state: 'open' | 'closed'; merged: boolean } | null> {
+  const owner = repo.split('/')[0]!;
+  const raw = await api(gh, `repos/${assertRepo(repo)}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=10`);
+  const hit = (Array.isArray(raw) ? raw : []).map(obj).find((p) => str(obj(p['head'])['ref']) === branch);
+  if (!hit || !Number.isSafeInteger(Number(hit['number']))) return null;
+  return { number: Number(hit['number']), state: hit['state'] === 'open' ? 'open' : 'closed', merged: hit['merged_at'] != null };
+}
+
+/** Open a pull request and return its number. */
+export async function createPr(repo: string, pr: { title: string; head: string; base: string; body: string; draft?: boolean }, gh: Gh = defaultGh): Promise<number> {
+  const args = ['api', '-X', 'POST', `repos/${assertRepo(repo)}/pulls`, '-f', `title=${pr.title}`, '-f', `head=${pr.head}`, '-f', `base=${pr.base}`, '-f', `body=${pr.body}`];
+  if (pr.draft) args.push('-F', 'draft=true');
+  const raw = obj(JSON.parse(await gh(args)));
+  const number = Number(raw['number']);
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error('GitHub did not return a PR number');
+  return number;
+}
+
+/** Leave one comment on a PR's conversation (the issues endpoint covers PRs). */
+export async function commentOnPr(repo: string, number: number, body: string, gh: Gh = defaultGh): Promise<void> {
+  await gh(['api', '-X', 'POST', `repos/${assertRepo(repo)}/issues/${number}/comments`, '-f', `body=${body}`]);
+}
+
+export async function closePr(repo: string, number: number, gh: Gh = defaultGh): Promise<void> {
+  await gh(['api', '-X', 'PATCH', `repos/${assertRepo(repo)}/pulls/${number}`, '-f', 'state=closed']);
 }

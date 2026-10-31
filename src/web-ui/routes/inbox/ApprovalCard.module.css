@@ -1,0 +1,29 @@
+.card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.card h3, .card p { margin: 0; }
+.card p { color: var(--text-secondary); }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
+.facts dt { color: var(--text-tertiary); }
+.facts dd { margin: 0; }
+.details { white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; }
+.actions p { flex-basis: 100%; }
+.card button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.card button:disabled { opacity: 0.5; cursor: default; }
+.card button.approve { background: var(--accent-600); color: var(--text-on-accent); }

@@ -38,7 +38,8 @@ export type NotificationCategory =
   | 'daemon-health'
   | 'proposal'
   | 'run'
-  | 'log-source';
+  | 'log-source'
+  | 'fleet';
 
 export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> = {
   'action-required': 'Action required',
@@ -49,6 +50,7 @@ export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> =
   proposal: 'Proposals',
   run: 'Runs',
   'log-source': 'Log source',
+  fleet: 'Fleet on this Mac',
 };
 
 export interface AppNotification {
@@ -63,7 +65,7 @@ export interface AppNotification {
   detail: string;
   /** ISO timestamp of the underlying event, when known; falls back to first-seen. */
   ts: string;
-  /** Hash-router path to jump straight to the relevant view. */
+  /** Hash-router path or absolute workbench deep link to the relevant view. */
   actionHref?: string;
   actionLabel?: string;
   /** Present when the notification is itself ABOUT degraded/unknown source

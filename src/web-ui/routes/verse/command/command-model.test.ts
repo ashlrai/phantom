@@ -29,7 +29,21 @@ describe('buildKpis', () => {
     expect(green!.value).toBe('96%');
     expect(green!.delta?.unit).toBe('pts');
     expect(cycle!.value).toBe('2h 14m');
+    // The dev-cycle before/after: the live fixture's median is 46 min faster
+    // than the prior week, and a slower week reads as bad (goodWhenPositive).
+    expect(cycle!.delta?.versus).toBe('vs prior 7d');
+    expect(cycle!.delta?.goodWhenPositive).toBe(false);
+    expect(cycle!.delta?.format?.(cycle!.delta!.value)).toBe('−46m');
     expect(lift!.value).toBe('+4.2 pts');
+  });
+
+  it('shows no cycle delta when either week is unknown', () => {
+    const fleet = fleetLive('live', NOW);
+    const sparse = { ...fleet, summary: { ...fleet.summary, dispatchToMergeP50MsPrior7d: null } };
+    const kpis = buildKpis({ fleet: sparse, history: fleetHistory('live', NOW), learning: learningState('live', NOW), policy: null });
+    const cycle = kpis.find((k) => k.id === 'cycle');
+    expect(cycle!.value).toBe('2h 14m');
+    expect(cycle!.delta).toBeNull();
   });
 
   it('is honest when nothing answers: dashes, no deltas', () => {
