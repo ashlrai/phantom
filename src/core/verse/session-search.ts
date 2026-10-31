@@ -27,6 +27,9 @@
  * sets `truncated`, so the UI can say "searched the most recent N" instead of
  * implying the whole history was covered. At most VERSE_SEARCH_MAX_HITS_PER_SESSION
  * hits come from one session so a single long chat cannot fill the list.
+ * If a message exceeds the remaining budget, only its prefix is searched;
+ * a phrase crossing that boundary is not a match. Partial-message hits use a
+ * placeholder snippet because the cut may split a secret before it is scrubbed.
  *
  * Snippets are whitespace-collapsed, ≤ 240 chars, and `scrubSecrets`'d.
  */
@@ -175,8 +178,12 @@ export function searchSessions(input: VerseSearchInput): VerseSearchResponse {
         truncated = true;
         break;
       }
-      scannedChars += text.length;
-      const lower = text.toLowerCase();
+      const remaining = VERSE_SEARCH_MAX_SCAN_CHARS - scannedChars;
+      const scannedText = text.slice(0, remaining);
+      const partial = scannedText.length < text.length;
+      if (partial) truncated = true;
+      scannedChars += scannedText.length;
+      const lower = scannedText.toLowerCase();
       let termScore = 0;
       let all = true;
       for (const term of terms) {
@@ -195,7 +202,7 @@ export function searchSessions(input: VerseSearchInput): VerseSearchResponse {
         seq: event.seq,
         at: event.at,
         kind,
-        snippet: buildSnippet(text, terms[0]),
+        snippet: partial ? '[Match in scanned message prefix]' : buildSnippet(scannedText, terms[0]),
         score: Math.round(score * 1000) / 1000,
       });
     }
