@@ -217,5 +217,31 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     });
   }
 
+  for (const l of snapshot.lanes) {
+    if (l.running !== 0 || l.target <= 0 || l.queued <= 0 || l.held) continue;
+    items.push({
+      id: `lane-idle:${l.lane}`,
+      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      severity: 'attention',
+      title: `Lane ${l.lane} is idle`,
+      detail: `${l.queued} queued jobs but nothing is running.`,
+      nextStep: `Lane ${l.lane} has ${l.queued} queued and nothing running; check its hold and target in Lanes`,
+      target: 'fleet',
+    });
+  }
+
+  const pendingDrop = snapshot.drop?.pending.length ?? 0;
+  if (pendingDrop > 0) {
+    items.push({
+      id: 'drop-pending',
+      open: { kind: 'pane', paneId: 'leader-journal' },
+      severity: 'attention',
+      title: 'Leader jobs awaiting ingest',
+      detail: `${pendingDrop} pending drop ${pendingDrop === 1 ? 'file' : 'files'}.`,
+      nextStep: `${pendingDrop} pending drop ${pendingDrop === 1 ? 'file' : 'files'}; ingest sweeps every few minutes`,
+      target: 'ops',
+    });
+  }
+
   return { answered, items };
 }
