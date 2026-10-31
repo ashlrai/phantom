@@ -65,7 +65,7 @@ export interface AppNotification {
   detail: string;
   /** ISO timestamp of the underlying event, when known; falls back to first-seen. */
   ts: string;
-  /** Hash-router path to jump straight to the relevant view. */
+  /** Hash-router path or absolute workbench deep link to the relevant view. */
   actionHref?: string;
   actionLabel?: string;
   /** Present when the notification is itself ABOUT degraded/unknown source
