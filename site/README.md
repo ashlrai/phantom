@@ -10,7 +10,7 @@ runtime dependencies, or framework; Vercel's root configuration skips package
 installation and serves this directory as static files. The ecosystem chart uses
 the checked-in `assets/star-history.js` snapshot
 and works when opened from disk. It never embeds a GitHub credential.
-`robots.txt` and `sitemap.xml` list the public canonical pages for crawlers.
+`robots.txt`, `sitemap.xml`, and `llms.txt` list the public canonical pages for crawlers and AI agents.
 
 ```sh
 open site/index.html
@@ -49,6 +49,21 @@ The generator reads each page's own canonical URL and takes `lastmod` from the
 last git commit touching the file (today, UTC, while a change is still
 uncommitted). That keeps `lastmod` truthful: it tracks actual page updates,
 never a fabricated fresh date.
+
+Generate the agent-facing `llms.txt` and `llms-full.txt` after adding,
+removing, or editing site pages:
+
+```sh
+node scripts/generate-site-llms.mjs           # rewrite site/llms.txt and site/llms-full.txt
+node scripts/generate-site-llms.mjs --check   # read-only; exits 1 on drift
+```
+
+The generator reads the HTML pages and `package.json` to produce two plain-text
+guides for AI agents. `llms.txt` is a concise index (title, install, page links,
+agent resources); `llms-full.txt` adds install details, CLI commands, and full
+use-case descriptions. Both are fully deterministic — the same site tree and
+`package.json` always produce the same output bytes. No network or credentials.
+
 
 Refresh the chart snapshot before publishing changes to the ecosystem page:
 

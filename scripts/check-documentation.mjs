@@ -13,6 +13,7 @@ export const OPERATOR_DOCUMENTATION = Object.freeze([
   'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
   'docs/ASHLR-UNIVERSE.md', 'docs/RESOURCE-POOLS.md', 'docs/NORTH-STAR.md', 'docs/MISSION-OS.md',
   'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/AUTOMATIC-OUTCOMES.md',
+  'docs/FLEET-API.md',
   'docs/RESIDENT-RUNTIME.md',
   'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
   'docs/AUTHORITY.md',
@@ -157,6 +158,11 @@ export function checkDocumentation({ root, mode = 'source', entrypoints = OPERAT
         if (mode === 'package') continue;
         local = href.slice(sourcePrefix.length);
         base = canonicalRoot;
+      } else if (file === 'docs/FLEET-API.md' && /^\.\.\/src\/(?:[\w.-]+\/)*[\w.-]+(?:#[\w-]+)?$/u.test(href)
+        && !href.slice('../src/'.length).split('/').includes('..')) {
+        // The guide links to the checkout; source files are not in npm.
+        sourceLinks++;
+        if (mode === 'package') continue;
       } else if (/^[a-z][a-z\d+.-]*:/iu.test(href) || href.startsWith('//')) {
         externalLinks++;
         continue;

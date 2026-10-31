@@ -145,6 +145,7 @@ import type { ToolsRegistry } from './types.js';
  * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md, ashlr-hub.
  */
 export function getToolsRegistry(): ToolsRegistry;
+export function getToolsRegistry(options: { parallel: true }): Promise<ToolsRegistry>;
 ```
 
 ### `src/cli/mcp.ts`
@@ -177,3 +178,7 @@ export async function cmdMcp(args: string[]): Promise<number>;
 
 Additionally, `ashlr status` and `ashlr doctor` surface the ecosystem tools
 summary from `getToolsRegistry()`.
+
+`getToolsRegistry({ parallel: true })` returns the same ordered inventory and applies the same
+locator, timeout, version and ambiguity rules, with independent tool probes in
+parallel. Results are scoped to one invocation. Doctor uses this async path.
