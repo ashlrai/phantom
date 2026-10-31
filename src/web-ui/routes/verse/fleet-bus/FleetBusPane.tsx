@@ -3,19 +3,19 @@ import { Button, SkeletonLine, Tag } from '../../../components/primitives/index.
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
-import { busFeedMissing, busFeedQuery, type BusEvent, type BusKind } from '../fleet/bus-feed-queries.js';
+import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { busFilterLabel, groupEvents, isInterjection, matchEvents, summarizeHops } from './fleet-bus-model.js';
+import { busFilterLabel, busRows, groupEvents, isInterjection, matchEvents, summarizeHops, type BusRow } from './fleet-bus-model.js';
 import styles from './fleet-bus.module.css';
 
 // Include an occurrence number so identical log lines remain separate events.
-function identify(events: readonly BusEvent[]) {
+function identify(events: readonly BusRow[]) {
   const counts = new Map<string, number>();
   return events.map(event => {
-    const identity = JSON.stringify([event.at, event.kind, event.text]);
+    const identity = JSON.stringify(event.kind === 'hop' ? [event.kind, event.hopId] : [event.at, event.kind, event.text]);
     const occurrence = counts.get(identity) ?? 0;
     counts.set(identity, occurrence + 1);
     return { event, id: `${identity}:${occurrence}` };
@@ -32,13 +32,13 @@ export function FleetBusPane({ visible, host }: PaneProps) {
   const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 0 });
   const refetch = useRefetch(busFeedQuery);
   usePollWhileVisible(() => { if (!busFeedMissing()) refetch(); }, 5_000, { enabled: visible && !busFeedMissing() });
-  const events = useMemo(() => identify(read.data?.events ?? []), [read.data]);
+  const events = useMemo(() => identify(busRows(read.data?.events ?? [], read.data?.hops ?? [], 60, read.data?.lastHopAt)), [read.data]);
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<IdentifiedEvent[]>([]);
   const [arrivals, setArrivals] = useState<IdentifiedEvent[]>([]);
   const [merged, setMerged] = useState<IdentifiedEvent[] | null>(null);
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<BusKind | null>(null);
+  const [kind, setKind] = useState<BusRow['kind'] | null>(null);
   useEffect(() => {
     if (paused && read.data) setArrivals(current => [...current, ...newEvents([...frozen, ...current], events)]);
   }, [events, frozen, paused, read.data]);
@@ -63,15 +63,15 @@ export function FleetBusPane({ visible, host }: PaneProps) {
     {(data.sources.hops !== 'healthy' || data.sources.events !== 'healthy') && <p className={styles.notice} role="status">Bus data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Bus could not refresh. Showing the last reading.</p>}
     <div className={styles.controls}>
-      <div className={styles.filters} aria-label="Filter event kinds">{kinds.map(value => <Button key={value} size="sm" variant="subtle" aria-pressed={kind === value} onClick={() => setKind(kind === value ? null : value)}>{value}</Button>)}</div>
+      <div className={styles.filters} aria-label="Filter event kinds">{kinds.map(value => <Button key={value} size="sm" variant="subtle" aria-pressed={kind === value} onClick={() => setKind(kind === value ? null : value)}>{value === 'hop' ? 'Hops' : value}</Button>)}</div>
       <input className={styles.search} type="search" aria-label="Filter bus events" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }} />
       <Button size="sm" aria-pressed={paused} onClick={togglePause}>{paused ? `Resume${arrivals.length ? ` · ${arrivals.length} new` : ''}` : 'Pause'}</Button>
     </div>
     {filterLabel && <p className={styles.message}>{filterLabel}</p>}
     {ordered.length === 0 ? <p className={styles.message}>{items.length ? 'No events match this filter.' : 'No bus events yet.'}</p> :
       <ol className={styles.list} aria-label="Bus event feed">{identify(ordered).map(({ event, id }) => <li key={id} className={`${styles.row} ${isInterjection(event) ? styles.interjection : ''}`} aria-label={isInterjection(event) ? 'Interjection' : undefined}>
-        <time className={styles.time} dateTime={event.at} title={new Date(event.at).toLocaleString()}>{formatRelative(event.at)}</time>
-        <Tag size="sm">{event.kind}</Tag><span className={styles.text}><JobRefs text={event.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span>
+        {event.kind === 'hop' ? <span className={styles.time} /> : <time className={styles.time} dateTime={event.at} title={new Date(event.at).toLocaleString()}>{formatRelative(event.at)}</time>}
+        <Tag size="sm">{event.kind}</Tag><span className={styles.text}>{event.kind === 'hop' ? event.text : <JobRefs text={event.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}</span>
       </li>)}</ol>}
   </section>;
 }

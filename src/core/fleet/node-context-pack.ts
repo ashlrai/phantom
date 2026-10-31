@@ -15,6 +15,8 @@ export interface NodeContextPackInput {
   tasks: readonly NodeContextRecord[];
   outputs: readonly NodeContextRecord[];
   byteBudget: number;
+  /** Reserve a small first slice for each distinct upstream output job. */
+  fairUpstream?: boolean;
 }
 
 function terms(text: string): Set<string> {
@@ -34,6 +36,8 @@ function terms(text: string): Set<string> {
  * ties. Exact jobId/kind/text duplicates retain their first occurrence.
  * No files, embeddings, network, clock, or caller mutation are involved.
  * Source text is untrusted data, not instructions or execution authority.
+ * Fair mode reserves one cited output per upstream job where it fits, gives
+ * each a small equal byte allowance, then spends the rest in priority order.
  */
 export function buildNodeContextPack(input: NodeContextPackInput): string {
   if (!Number.isFinite(input.byteBudget) || input.byteBudget <= 0) return '';
@@ -57,6 +61,57 @@ export function buildNodeContextPack(input: NodeContextPackInput): string {
       : record.jobId === input.node.jobId ? 2 : 3;
     return priority === 3 && score === 0 ? [] : [{ ...record, priority, score }];
   }).sort((a, b) => a.priority - b.priority || b.score - a.score);
+
+  if (input.fairUpstream) {
+    const lines = new Map<number, string>();
+    let used = 0;
+    const bytes = (line: string): number => Buffer.byteLength(line, 'utf8');
+    const fit = (index: number, limit: number): string => {
+      const record = candidates[index]!;
+      const render = (text: string, truncated: boolean): string =>
+        JSON.stringify({ jobId: record.jobId, kind: record.kind, text, truncated }) + '\n';
+      const full = render(record.text, false);
+      if (bytes(full) <= limit) return full;
+      const points = Array.from(record.text);
+      let low = 0;
+      let high = points.length;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (bytes(render(points.slice(0, mid).join(''), true)) <= limit) low = mid;
+        else high = mid - 1;
+      }
+      return low ? render(points.slice(0, low).join(''), true) : '';
+    };
+    const jobs = new Set<string>();
+    const reserved: number[] = [];
+    for (const [index, record] of candidates.entries()) {
+      if (record.priority !== 0 || jobs.has(record.jobId)) continue;
+      jobs.add(record.jobId);
+      // Reserve an envelope and one code point before allocating larger slices.
+      const first = Array.from(record.text)[0]!;
+      const minimum = JSON.stringify({ jobId: record.jobId, kind: record.kind, text: first,
+        truncated: first !== record.text }) + '\n';
+      if (bytes(minimum) > budget - used) continue;
+      lines.set(index, minimum);
+      reserved.push(index);
+      used += bytes(minimum);
+    }
+    const allowance = Math.min(256, Math.floor((budget - used) / (reserved.length || 1)));
+    for (const index of reserved) {
+      const previous = lines.get(index)!;
+      const line = fit(index, bytes(previous) + allowance);
+      lines.set(index, line);
+      used += bytes(line) - bytes(previous);
+    }
+    for (const [index] of candidates.entries()) {
+      const previous = lines.get(index) ?? '';
+      const line = fit(index, budget - used + bytes(previous));
+      if (!line) continue;
+      lines.set(index, line);
+      used += bytes(line) - bytes(previous);
+    }
+    return [...lines.entries()].sort(([a], [b]) => a - b).map(([, line]) => line).join('');
+  }
 
   let pack = '';
   let used = 0;
