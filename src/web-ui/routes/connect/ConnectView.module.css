@@ -8,6 +8,7 @@
 .step { color: var(--text-secondary); font-size: var(--text-sm-size); }
 .card ul { list-style: none; padding: 0; margin: var(--space-4) 0 0; }
 .card li { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.card li > div { flex: 1; min-width: 0; }
 .badge { display: grid; place-items: center; flex: 0 0 2rem; height: 2rem; border: 1px solid var(--border-strong); border-radius: 6px; font-weight: 600; }
 .card small { display: block; color: var(--text-secondary); margin-top: 2px; }
 .card a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

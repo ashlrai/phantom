@@ -1,34 +1,35 @@
-# RQ-DUPMATCHFIXQ7 (SPEC-AMEND Security #1): exact-id matching for the dup-PR precheck
+# Router precheck handoff (RQ-DUPMATCHFIXQ7 / RQ-PRECHECK13Q8)
 
-Install (Masbot, after Security pins SHA256SUMS): take a .bak of the live
-~/.ashlr-runs/bin/precheck.sh, confirm its sha256 is the base below (eb0f2b29,
-the RQ-EMPTY-SHAPE result), then under dispatchd.lock copy precheck.sh into
-~/.ashlr-runs/bin/ (chmod 755). No dispatchd.py change: PRECHECK_UNSURE exits 12,
-which dispatchd already treats as a DONE-NOOP skip — a gh outage stalls jobs as
-logged UNSURE rows in precheck-skips.tsv instead of launching blind runs.
+The dispatcher is external to this repository. Do not install the shell script
+alone: its consumer must adopt `scripts/bridge/precheck.py:apply_precheck` under
+the queue lock and atomically persist the returned row before acting on `launch`.
+Recheck precheck-owned BLOCKED rows on subsequent ticks; preserve other holds.
+Normal dispatch checks still apply. No live installation was performed here.
 
-Before installing, run the fixture suite on the staged file:
+| Exit | Meaning | Queue action |
+| --- | --- | --- |
+| 0 + matching GO | Eligible | Normal dispatch |
+| 10 + matching receipt | Merged/closed | DONE |
+| 11 | Open, green target | BLOCKED, recheck |
+| 12 + exact open-PR receipt | Duplicate | BLOCKED, recheck |
+| 64 + invalid-job receipt | Permanent invalid input | FAILED, retain row |
+| 75, legacy 13, unknown/error/malformed receipt | Uncertain | READY, retry next tick |
 
-  bats staging/RQ-DUPMATCHFIXQ7/precheck_dup_match.bats      # 20 tests
-  # or against the live file: PRECHECK=$HOME/.ashlr-runs/bin/precheck.sh bats ...
+Exit 13 previously inferred acceptance from files/tests or symbol definitions.
+Those probes are deleted: existing implementation is often the subject of a fix.
+Lookup errors previously shared exit 12 with duplicates; old DONE-NOOP handling
+silently consumed uncertain work. They now return 75. The classifier also safely
+handles old UNSURE/13 receipts during migration. Receipts must match the job ID;
+raw tool output is never stored in diagnostics. Duplicate receipts are idempotent.
+Exact token/head matching still rejects fuzzy GitHub search hits.
 
-Rules (still no model call; gh stays read-only):
+Run offline with temporary HOME:
 
-- `gh --search "$id in:title,body"` only nominates CANDIDATES. A PR now counts
-  iff title or body contains the id as a whole [A-Za-z0-9-] token — a '-' never
-  delimits, so RQ-RELEASE-TRAIN-1 matches neither RQ-RELTRAIN-1-RETIRE nor
-  RQ-RELEASE-TRAIN-1-RETIRE, and RQ-GEN-2026102703-02 never matches -020 — or
-  headRefName is exactly codex-bridge/<id> (also probed directly via --head,
-  since the search index never sees headRefName). grep -F only; the id is
-  never expanded into a regex.
-- Any gh non-zero exit, missing gh/tr, grep/tr error, or malformed output row
-  fails CLOSED: exit 12 with reason=PRECHECK_UNSURE_{merged,open,pr_<N>,no_<tool>}
-  so the DONE-NOOP log and precheck-skips.tsv show UNSURE rather than a false
-  duplicate. dispatchd needs no new code.
-- `gh -q '.[0].number'` prints `null` on an empty list; the --head probe uses
-  `// empty` and numeric validation so an empty result can no longer read as
-  a hit (latent false-skip in the old code path, masked because fuzzy searches
-  almost never returned empty).
-- The FIXUP/LAND `gh pr view` probe fails closed too: an unreadable named
-  target is UNSURE (retried next tick), never a blind launch. [ -z "$pr" ]
-  still gates the open-PR dup check exactly as before.
+```sh
+HOME=$(mktemp -d) bats staging/RQ-DUPMATCHFIXQ7/precheck_dup_match.bats
+HOME=$(mktemp -d) python3 -m unittest discover -s scripts/bridge -p test_precheck.py -v
+```
+
+`precheck.sh.diff` is the incremental patch from the checked-in pre-fix script.
+`SHA256SUMS` pins this bundle. Supervisor installation and external dispatcher
+integration require their own review; these local tests do not prove deployment.
