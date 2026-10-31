@@ -14,7 +14,7 @@ export function narrowRuns(data: unknown): RunsData | null {
   return { v: 1, workers: objects(data.workers).map(w => ({ job: w.job as string, lane: str(w.lane), model: str(w.model) ?? str(w.tier), startedAt: str(w.startedAt), repo: str(w.repo) })),
     leaders: data.leaders.map(value => { const l = record(value) ? value : {}; return { name: str(l.name) ?? str(l.label), lane: str(l.lane), model: str(l.model) }; }),
     lanes: objects(data.lanes).flatMap(l => { const id = str(l.lane) ?? str(l.id); return id !== undefined && natural(l.running) && natural(l.target) ? [{ id, running: l.running, target: l.target }] : []; }),
-    mergesLastHour: { count: data.mergesLastHour.count as number | null, items: objects(data.mergesLastHour.items).map(i => ({ repo: str(i.repo) })) }, switches: data.switches };
+    mergesLastHour: { count: data.mergesLastHour.count as number | null, items: objects(data.mergesLastHour.items).map(i => ({ repo: str(i.repo), ...(natural(i.number) ? { number: i.number } : {}) })) }, switches: data.switches };
 }
 let missing = false;
 export const runsGraphQuery: QueryDef<RunsData | null> = {
