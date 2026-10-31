@@ -13,7 +13,7 @@
  *
  * Security:
  *   - Token is NEVER thrown in errors, NEVER logged.
- *   - Only updates whose chat id === cfg.comms.telegram.chatId are returned; all others dropped.
+ *   - Only private updates from the configured non-bot user and chat are returned.
  *   - No-op when not configured (no throw).
  *   - Network done via node fetch/https, never a shell.
  *
@@ -86,6 +86,9 @@ export interface TelegramSendResult {
 /** An inbound event parsed from a Telegram update. */
 export interface InboundEvent {
   updateId?: number;
+  /** Identity evidence retained for durable replay; older records fail closed. */
+  senderUserId?: number;
+  privateChat?: boolean;
   /** 'text' = normal message; 'callback' = button tap. */
   kind: 'text' | 'callback';
   /** Raw message text (kind='text'). */
@@ -141,6 +144,7 @@ export function readTelegramHealth(cfg: AshlrConfig): TelegramPollHealth & { pol
     if (tick.status === 'started' || tick.status === 'completed' || tick.status === 'failed' || tick.status === 'spawn-failed') leaderTick = tick.status;
   } catch { /* no tick result */ }
   const age = Date.now() - Date.parse(state.lastPoll ?? '');
+  if (!trustedPrivateId(cfg)) state.error = 'operator input disabled: configure a positive private chat ID; no group operator allowlist is supported';
   return { ...state, leaderTick, pollerAlive: age >= 0 && age < 7 * 60_000, lastUpdateId: loadOffset() > 0 ? loadOffset() - 1 : null,
     tokenPresent: Boolean(resolveToken(cfg)?.trim()) };
 }
@@ -166,14 +170,18 @@ function writeInbox(updates: InboundEvent[], newOffset: number, namespace: strin
   writeFileSync(inboxPath() + '.tmp', JSON.stringify({ namespace, updates: updates.map(event => ({ ...event, ...(event.text ? { text: scrubSecrets(event.text) } : {}) })), newOffset }), { mode: 0o600 });
   renameSync(inboxPath() + '.tmp', inboxPath());
 }
-function readInbox(namespace: string): PollResult | null {
+function readInbox(namespace: string, cfg: AshlrConfig): PollResult | null {
   try {
     const raw = JSON.parse(readFileSync(inboxPath(), 'utf8')) as PollResult & { namespace: string };
     if (raw.namespace !== namespace || !Array.isArray(raw.updates) || !Number.isSafeInteger(raw.newOffset) || raw.newOffset < 0 ||
         raw.updates.some(event => !Number.isSafeInteger(event.updateId) || event.updateId! < 0 || !['text', 'callback'].includes(event.kind))) {
       throw new Error('Telegram inbound state mismatch');
     }
-    return raw;
+    const updates = raw.updates.filter(event => event.privateChat === true &&
+      event.senderUserId === trustedPrivateId(cfg) && trustedPrivateId(cfg) !== null &&
+      event.fromChatId === resolveChatId(cfg));
+    if (updates.length !== raw.updates.length) writeInbox(updates, raw.newOffset, namespace);
+    return { updates, newOffset: raw.newOffset };
   }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -183,7 +191,7 @@ function readInbox(namespace: string): PollResult | null {
 /** Checkpoint after handling, never before. A failed event remains first next cycle. */
 export function acknowledgeTelegramUpdate(updateId: number, cfg: AshlrConfig): void {
   const namespace = telegramQuestionNamespace(cfg)!;
-  const inbox = readInbox(namespace);
+  const inbox = readInbox(namespace, cfg);
   if (!inbox) return;
   writeInbox(inbox.updates.filter(event => event.updateId !== updateId), inbox.newOffset, namespace);
   saveOffset(inbox.newOffset);
@@ -225,6 +233,20 @@ function resolveToken(cfg: AshlrConfig): string | undefined {
 
 function resolveChatId(cfg: AshlrConfig): string | undefined {
   return cfg.comms?.telegram?.chatId;
+}
+
+/** A private chat ID also identifies its sole human operator. Groups do not. */
+function trustedPrivateId(cfg: AshlrConfig): number | null {
+  const id = resolveChatId(cfg);
+  return typeof id === 'string' && /^[1-9]\d*$/.test(id) && positiveSafeInteger(Number(id)) ? Number(id) : null;
+}
+
+function verifiedPrivateSender(cfg: AshlrConfig, message: unknown, sender: unknown): number | null {
+  const id = trustedPrivateId(cfg), msg = brandObject(message), user = brandObject(sender);
+  const chat = brandObject(msg?.['chat']);
+  return id !== null && chat?.['type'] === 'private' && chat['id'] === id &&
+    user?.['id'] === id && user['is_bot'] === false && msg?.['sender_chat'] === undefined
+    ? id : null;
 }
 
 /** Opaque configuration binding; never contains the bot token or chat identity. */
@@ -745,7 +767,7 @@ export async function sendTelegramMessage(
 /**
  * Poll for new Telegram updates using getUpdates long-poll (offset-based).
  * Returns InboundEvents for text messages AND callback_query button taps.
- * Drops updates from any chat id !== cfg.comms.telegram.chatId.
+ * Requires the configured private chat and its matching non-bot sender.
  * Persists the offset on each call. Durable callers checkpoint a private inbox
  * before advancing and acknowledge events after handling them.
  * Never throws.
@@ -756,13 +778,11 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
     return { updates: [], newOffset: loadOffset() };
   }
 
-  const allowedChatId = resolveChatId(cfg)!;
   let offset = loadOffset();
 
   try {
     if (durable) {
-      const inbox = readInbox(telegramQuestionNamespace(cfg)!);
-      if (inbox?.updates.some(event => event.fromChatId !== String(allowedChatId))) throw new Error('Telegram inbox chat mismatch');
+      const inbox = readInbox(telegramQuestionNamespace(cfg)!, cfg);
       if (inbox?.updates.length) { pollHealth(cfg, null, false); return inbox; }
       if (inbox) offset = Math.max(offset, inbox.newOffset);
     }
@@ -819,7 +839,8 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
         const msg = u['message'] as Record<string, unknown>;
         const chat = (msg['chat'] as Record<string, unknown> | undefined);
         const fromChatId = String(chat?.['id'] ?? '');
-        if (fromChatId !== String(allowedChatId)) continue; // auth: drop foreign
+        const senderUserId = verifiedPrivateSender(cfg, msg, msg['from']);
+        if (senderUserId === null) continue;
 
         const text = typeof msg['text'] === 'string' ? msg['text'] : undefined;
         if (text !== undefined) {
@@ -828,7 +849,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
           const replyToMessageId =
             replied && typeof replied['message_id'] === 'number' ? (replied['message_id'] as number) : undefined;
           events.push({
-            ...(durable ? { updateId } : {}),
+            ...(durable ? { updateId, senderUserId, privateChat: true } : {}),
             kind: 'text',
             text,
             fromChatId,
@@ -843,7 +864,8 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
         const cbq = u['callback_query'] as Record<string, unknown>;
         const chat = ((cbq['message'] as Record<string, unknown> | undefined)?.['chat'] as Record<string, unknown> | undefined);
         const fromChatId = String(chat?.['id'] ?? '');
-        if (fromChatId !== String(allowedChatId)) continue; // auth: drop foreign
+        const senderUserId = verifiedPrivateSender(cfg, cbq['message'], cbq['from']);
+        if (senderUserId === null) continue;
 
         const callbackQueryId = typeof cbq['id'] === 'string' ? cbq['id'] : undefined;
         const data = typeof cbq['data'] === 'string' ? cbq['data'] : '';
@@ -851,7 +873,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
         const tappedMessageId = typeof cbMsg?.['message_id'] === 'number' ? (cbMsg['message_id'] as number) : undefined;
         if (ROUTED_CALLBACK_PREFIXES.some((p) => data.startsWith(p))) {
           events.push({
-            ...(durable ? { updateId } : {}),
+            ...(durable ? { updateId, senderUserId, privateChat: true } : {}),
             kind: 'callback',
             data,
             fromChatId,
@@ -869,7 +891,7 @@ export async function pollTelegramUpdates(cfg: AshlrConfig, durable = false): Pr
         if (!isFinite(idxRaw) || idxRaw < 0) continue;
 
         events.push({
-          ...(durable ? { updateId } : {}),
+          ...(durable ? { updateId, senderUserId, privateChat: true } : {}),
           kind: 'callback',
           requestId: reqId,
           optionIndex: idxRaw,
