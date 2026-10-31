@@ -9,7 +9,10 @@ import { jobDetailQuery } from './worker-log-queries.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
 import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
+import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import styles from './worker-log.module.css';
+
+const EMPTY_LINES: string[] = [];
 
 export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const sectionVisible = useSectionVisible();
@@ -41,10 +44,20 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(refetchRuns, 5_000, { enabled: visible, refreshOnShow: false });
   usePollWhileVisible(refetchDetail, pollMs(detail.data), { enabled: visible && valid, refreshOnShow: false });
   const [follow, setFollow] = useState(true);
-  const logRef = useRef<HTMLPreElement>(null);
-  const lines = detail.data?.log?.tail?.join('\n') ?? '';
+  const logRef = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState('');
+  const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
+  const lines = detail.data?.log?.tail ?? EMPTY_LINES;
+  const text = lines.join('\n');
+  const matches = useMemo(() => findMatches(lines, search), [lines, search]);
+  const matchedLines = useMemo(() => new Set(matches), [matches]);
+  const current = selectedMatch !== null && matches.includes(selectedMatch) ? selectedMatch : matches[0] ?? null;
   const truncated = detail.data?.log?.truncated === true;
-  useEffect(() => { if (follow && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [follow, job, lines, truncated]);
+  useEffect(() => { if (follow && !search && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [follow, job, text, truncated, search]);
+  useEffect(() => {
+    if (current !== null) logRef.current?.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: 'center' });
+  }, [current, job, search, text]);
+  const moveMatch = (dir: 1 | -1) => setSelectedMatch(nextMatch(matches, current, dir));
   const retained = valid && !options.some(option => option.job === job);
   const url = safePrUrl(detail.data?.publish?.prUrl);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
@@ -59,6 +72,13 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       </select></label>
       <label>Job ID <input aria-label="Job ID" value={job} onChange={event => setSelection(event.target.value)} aria-invalid={job !== '' && !valid} aria-describedby={job !== '' && !valid ? 'worker-log-id-hint' : undefined} /></label>
       <label className={styles.follow}><input type="checkbox" checked={follow} onChange={event => setFollow(event.target.checked)} /> Follow</label>
+      <label>Find in log <input type="search" aria-label="Find in log" value={search} onChange={event => { setSearch(event.target.value); setSelectedMatch(null); }} onKeyDown={event => {
+        if (event.key === 'Enter') { event.preventDefault(); moveMatch(event.shiftKey ? -1 : 1); }
+        if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
+      }} /></label>
+      <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
+      <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
+      <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>
       <button type="button" onClick={() => { refreshRuns(); if (valid) { refreshDetail(); refreshChanges(); } }}>Refresh</button>
     </div>
     {job !== '' && !valid && <p id="worker-log-id-hint" className={styles.hint}>Use 3–80 letters, numbers, dots, underscores or hyphens, starting with a letter or number.</p>}
@@ -72,7 +92,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
       {detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
-        <pre ref={logRef} className={styles.log} role="log" aria-live="polite">{[truncated ? '… earlier lines not shown' : null, lines].filter(value => value !== null).join('\n')}</pre>}
+        <div ref={logRef} className={styles.log} role="log" aria-live="polite">{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>
         {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
