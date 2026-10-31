@@ -6,7 +6,7 @@ export interface FleetRuns {
   lastTick: string | null;
   claudeLane: string | null;
   switches: string[];
-  lanes: Array<{ lane: string; running: number | null; target: number | null; queued: number | null; held: boolean }>;
+  lanes: Array<{ lane: string; running: number | null; target: number | null; queued: number | null; held: boolean; heldReason?: string | null; merged24h?: number | null }>;
   mergesLastHour: { count: number | null; items?: FleetRunsMerge[] };
   codexPersonal: { usedPct: number | null; resetsAt: string | null } | null;
 }
@@ -21,7 +21,9 @@ export function isHomeFleetRuns(v: unknown): v is FleetRuns {
     || !Array.isArray(v['switches']) || !v['switches'].every((s: unknown) => typeof s === 'string')
     || !Array.isArray(v['lanes']) || !v['lanes'].every((lane: unknown) => record(lane)
       && typeof lane['lane'] === 'string' && numberOrNull(lane['running']) && numberOrNull(lane['target'])
-      && numberOrNull(lane['queued']) && typeof lane['held'] === 'boolean')
+      && numberOrNull(lane['queued']) && typeof lane['held'] === 'boolean'
+      && (lane['heldReason'] === undefined || stringOrNull(lane['heldReason']))
+      && (lane['merged24h'] === undefined || numberOrNull(lane['merged24h'])))
     || !record(v['mergesLastHour']) || !numberOrNull(v['mergesLastHour']['count'])
     || (v['mergesLastHour']['items'] !== undefined && (!Array.isArray(v['mergesLastHour']['items'])
       || !v['mergesLastHour']['items'].every((m: unknown) => record(m) && typeof m['repo'] === 'string'
@@ -50,7 +52,7 @@ function parsed(at: string | null): number | null {
 }
 
 export function homeRunsView(runs: FleetRuns | null, nowMs: number): {
-  headline: string; lanes: Array<{ lane: string; text: string; tone: Tone }>;
+  headline: string; lanes: Array<{ lane: string; text: string; tone: Tone; heldReason?: string | null; merged24h?: number | null }>;
   merges: string; codex: string | null; tick: string; incident: string | null;
 } {
   const lanes = runs?.lanes ?? [];
@@ -61,6 +63,8 @@ export function homeRunsView(runs: FleetRuns | null, nowMs: number): {
     headline: runs ? `${total(lanes, 'running')} running · ${total(lanes, 'target')} target` : '— running · — target',
     lanes: lanes.filter((lane) => lane.target !== 0 || lane.queued !== 0).map((lane) => ({
       lane: lane.lane,
+      ...(lane.heldReason !== undefined && { heldReason: lane.heldReason }),
+      ...(lane.merged24h !== undefined && { merged24h: lane.merged24h }),
       text: `${count(lane.running)}/${count(lane.target)} · ${count(lane.queued)} queued`,
       tone: lane.held ? 'danger' : lane.running === 0 && (lane.queued ?? 0) > 0 && (lane.target ?? 0) > 0 ? 'warning' : 'success',
     })),

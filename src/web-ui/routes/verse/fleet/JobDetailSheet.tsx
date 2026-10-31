@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
 import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
@@ -22,8 +22,14 @@ import styles from './workers-card.module.css';
 
 const tones: Record<string, Tone> = { running: 'success', published: 'info', archived: 'neutral', unknown: 'warning' };
 const fileStatus: Record<FleetJobChangesV1['files'][number]['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: '?' };
-export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => void }) {
+export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: string | null; onClose: () => void }) {
   const id = useId();
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const query = jobDetailQuery(job);
   const read = useQuery(query);
   const changesQuery = jobChangesQuery(job);
@@ -36,6 +42,12 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
   const d = read.data;
   const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
   const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
+  const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
+    && repo.split('/').every(part => part !== '.' && part !== '..') ? repo : null;
+  const copyBranch = async (branch: string) => {
+    try { await navigator.clipboard.writeText(branch); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
   const facts = d ? [['Lane', d.lane], ['Tier', d.tier], ['Model', d.model], ['Launched', formatRelative(d.launchedAt)], ['Base', d.baseSha?.slice(0, 7)], ['Branch', d.branch]] : [];
   return <Sheet open titleId={id} title={job} onClose={onClose}>
     {read.status === 'refreshing' ? <RefreshIndicator /> : null}
@@ -50,7 +62,7 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
         }}>{action.label}</Button>)}
     </div>
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
-      <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</dd></div>)}</dl>
+      <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
       {d.publish?.prUrl ? <p><a href={d.publish.prUrl} target="_blank" rel="noreferrer">PR for job {job}</a></p> : null}
       {d.publish?.autoMerge != null ? <p>Auto-merge {d.publish.autoMerge ? 'on' : 'off'}</p> : null}
       <section aria-label="Changed files">
@@ -72,8 +84,9 @@ export function JobDetailSheet({ job, onClose }: { job: string; onClose: () => v
         {notes.error ? <p role="status">Bridge notes unavailable</p> : notes.data === undefined ? <SkeletonLine /> : <>
           <p>{notes.data === null && d.hasNotes === null ? 'Notes unknown in this build' : notesHeadline(notes.data)}</p>
           {notes.data?.state === 'ok' && preview ? <>
-            {issues.length > 0 && <p>Closes {issues.map((number, index) => <span key={number}>{index > 0 ? ', ' : ''}<a href={`https://github.com/ashlrai/phantom/issues/${number}`} target="_blank" rel="noopener noreferrer">#{number}</a></span>)}</p>}
-            <pre className={styles.log}><JobRefs text={preview.lines.join('\n')} onOpenJob={id => { requestWorkerLogJob(id); openDockPane('worker-log'); onClose(); }} /></pre>
+            {issues.length > 0 && <p>Closes {issues.map((number, index) => <span key={number}>{index > 0 ? ', ' : ''}{validRepo ? <a href={`https://github.com/${validRepo}/issues/${number}`} target="_blank" rel="noopener noreferrer">#{number}</a> : <span title="repository unknown">#{number}</span>}</span>)}</p>}
+            <pre className={styles.log}>{preview.lines.join('\n').split(/((?:^|\s)(?:closes|fixes|resolves)\s*:?\s+#\d+(?![\w]|\.\d))/gim).map((part, index) => index % 2
+              ? part : <JobRefs key={index} text={part} onOpenJob={id => { requestWorkerLogJob(id); openDockPane('worker-log'); onClose(); }} />)}</pre>
             {preview.more > 0 && <p>+{preview.more} more lines</p>}
           </> : null}
         </>}
