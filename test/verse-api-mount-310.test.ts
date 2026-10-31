@@ -187,9 +187,9 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the real mount table', () => {
-  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev and runs-history — in that order', () => {
+  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history and release-pr — in that order', () => {
     setMountedApiModulesForTest(null);
-    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history']);
+    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr']);
   });
 
   it('every entry resolves to a handler function (the owning units exported what the contract names)', async () => {
@@ -227,6 +227,7 @@ describe('the real mount table', () => {
       devin: VERSE_DEVIN_PATH,
       jev: VERSE_JEV_PATH,
       'runs-history': RUNS_HISTORY_PATH,
+      'release-pr': '/api/verse/release-pr',
     };
     for (const [owner, p] of Object.entries(representative) as Array<[MountedApiModuleId, string]>) {
       for (const { id, handler } of handlers) {

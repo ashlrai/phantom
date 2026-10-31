@@ -1,7 +1,8 @@
 /** Shared inbound boundary. Adapters authenticate first and map channel identities
  * to one canonical sender ID; an asserted ID in a message body is never identity.
- * Share one receiver across adapters. Dedupe is local to its process lifetime.
+ * Default inbox receipts survive receiver restarts in the shared runs context.
  */
+import { CHANNEL_RECEIPT_LIMIT, createLocalChannelDedupeStore, type ChannelDedupeStore } from './channel-dedupe-store.js';
 import { createHash } from 'node:crypto';
 import { appendInboxEntry, INBOX_MAX_CHARS, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -27,10 +28,13 @@ export interface ChannelAck {
 }
 export type ChannelReceiveResult =
   | { ok: true; envelope: ChannelEnvelope; ack: ChannelAck }
-  | { ok: false; reason: 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
+  | { ok: false; reason: 'dedupe-store-unavailable' | 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
 
 export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDir' | 'now'> {
   allowedSenderIds: ReadonlySet<string>;
+  /** Custom sinks without runsDir remain memory-only unless a store is supplied.
+   * Default inbox sinks use a local receipt store under runsDir. */
+  receiptStore?: ChannelDedupeStore;
   /** Optional sink for another shared context. Must report success only after persistence. */
   write?: (envelope: ChannelEnvelope) => Promise<InboxAppendResult>;
   /** Best-effort transport, not durable delivery. Calls are serialized; do not await
@@ -45,6 +49,8 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
 export function createChannelReceiver(options: ChannelReceiverOptions): (input: ChannelMessage) => Promise<ChannelReceiveResult> {
   const allowed = new Set(options.allowedSenderIds);
   const seen = new Map<string, { at: number; key: string }>();
+  const store = options.receiptStore ?? (options.write && options.runsDir === undefined
+    ? undefined : createLocalChannelDedupeStore(options.runsDir));
   let tail = Promise.resolve();
   let lastTime = 0;
   async function success(envelope: ChannelEnvelope, status: ChannelAck['status']): Promise<ChannelReceiveResult> {
@@ -68,26 +74,35 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     const now = (options.now ?? (() => new Date()))().getTime();
     if (!Number.isSafeInteger(now) || now < lastTime || now < 0) return { ok: false, reason: 'invalid' };
     lastTime = now;
-    for (const [hash, receipt] of seen) {
-      if (now - receipt.at >= CHANNEL_DEDUPE_WINDOW_MS) seen.delete(hash);
-    }
-    const hash = createHash('sha256').update(JSON.stringify([input.verifiedSenderId, body])).digest('hex');
-    const previous = seen.get(hash);
-    const dedupeKey = previous?.key ?? createHash('sha256').update(JSON.stringify([hash, now])).digest('hex');
-    const envelope: ChannelEnvelope = {
-      channel: input.channel, verifiedSenderId: input.verifiedSenderId,
-      receivedAt: new Date(now).toISOString(), body, dedupeKey,
+    const work = async (receipts: typeof seen, commit: () => void | Promise<void>): Promise<
+      { envelope: ChannelEnvelope; status: ChannelAck['status'] } | Exclude<ChannelReceiveResult, { ok: true }>
+    > => {
+      for (const [hash, receipt] of receipts) {
+        if (now - receipt.at >= CHANNEL_DEDUPE_WINDOW_MS) receipts.delete(hash);
+      }
+      const hash = createHash('sha256').update(JSON.stringify([input.verifiedSenderId, body])).digest('hex');
+      const previous = receipts.get(hash);
+      const dedupeKey = previous?.key ?? createHash('sha256').update(JSON.stringify([hash, now])).digest('hex');
+      const envelope: ChannelEnvelope = {
+        channel: input.channel, verifiedSenderId: input.verifiedSenderId,
+        receivedAt: new Date(now).toISOString(), body, dedupeKey,
+      };
+      if (previous) return { envelope, status: 'duplicate' };
+      if (receipts.size >= CHANNEL_RECEIPT_LIMIT) return { ok: false, reason: 'full' };
+      try {
+        const result = options.write
+          ? await options.write({ ...envelope })
+          : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
+        if (!result.ok) return { ok: false, reason: result.reason };
+      } catch { return { ok: false, reason: 'write-failed' }; }
+      receipts.set(hash, { at: now, key: dedupeKey });
+      await commit();
+      return { envelope, status: 'accepted' };
     };
-    if (previous) return success(envelope, 'duplicate');
-    if (seen.size >= 10_000) return { ok: false, reason: 'full' };
     try {
-      const result = options.write
-        ? await options.write({ ...envelope })
-        : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
-      if (!result.ok) return { ok: false, reason: result.reason };
-      seen.set(hash, { at: now, key: dedupeKey });
-    } catch { return { ok: false, reason: 'write-failed' }; }
-    return success(envelope, 'accepted');
+      const result = store ? await store.transaction(work) : await work(seen, () => {});
+      return 'envelope' in result ? success(result.envelope, result.status) : result;
+    } catch { return { ok: false, reason: 'dedupe-store-unavailable' }; }
   }
   return (input) => {
     // Snapshot before queuing: callers cannot change identity/body while waiting.

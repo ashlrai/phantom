@@ -2,8 +2,9 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, parse, resolve } from 'node:path';
 import { laneDeadSignals, type LaneDeadSignal } from './lane-dead-signal.js';
+import { buildCodexResourceReport, collectCodexSessionUsages } from './codex-session-usage.js';
 import { redactHomePaths, scrubPrivateText } from '../util/scrub.js';
 
 export const VERSE_LEADER_RESOURCES_PATH = '/api/verse/leader/resources';
@@ -13,10 +14,16 @@ export interface ResourceLaneRow {
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
+  observation?: { source: 'codex-personal-sessions'; asOf: string };
+}
+export interface ApiModelUsage {
+  model: string; rows: number; errors: number; inputTokens: number; outputTokens: number;
+  usd: number | null; lastAt: string;
 }
 export interface ApiSpendSummary {
   rowsToday: number; errorsToday: number; tokensOutToday: number; tokensInToday: number;
   usdToday: number | null; usdWeek: number | null; lastAt: string | null; models: string[];
+  modelUsageToday: ApiModelUsage[]; modelUsageTodayOmitted: number;
 }
 export interface ResourceLedgerV1 {
   v: 1; generatedAt: string; sources: Record<'status' | 'apiSpend' | 'jobs', 'healthy' | 'missing' | 'degraded'>;
@@ -30,6 +37,7 @@ const safeName = (v: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.tes
 const missing = (e: unknown): boolean => object(e) && e.code === 'ENOENT';
 const STATUS_MAX = 1024 * 1024;
 const SPEND_TAIL = 512 * 1024;
+const MODEL_USAGE_MAX = 100;
 
 async function readBounded(path: string, limit: number, tail: boolean): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -53,12 +61,13 @@ async function readBounded(path: string, limit: number, tail: boolean): Promise<
 
 /** Offset follows Date#getTimezoneOffset: minutes west of UTC. Week starts Monday. */
 function parseSpend(lines: string, nowMs: number, tzOffsetMinutes: number): { summary: ApiSpendSummary; corrupt: boolean } {
-  const summary: ApiSpendSummary = { rowsToday: 0, errorsToday: 0, tokensOutToday: 0, tokensInToday: 0, usdToday: null, usdWeek: null, lastAt: null, models: [] };
+  const summary: ApiSpendSummary = { rowsToday: 0, errorsToday: 0, tokensOutToday: 0, tokensInToday: 0, usdToday: null, usdWeek: null, lastAt: null, models: [], modelUsageToday: [], modelUsageTodayOmitted: 0 };
   const offset = tzOffsetMinutes * 60_000;
   const localNow = new Date(nowMs - offset);
   const today = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()) + offset;
   const week = today - ((localNow.getUTCDay() + 6) % 7) * 86_400_000;
   const models = new Set<string>();
+  const usage = new Map<string, ApiModelUsage>();
   let lastMs = -Infinity;
   let corrupt = false;
   for (const line of lines.split(/\r?\n/)) {
@@ -80,15 +89,31 @@ function parseSpend(lines: string, nowMs: number, tzOffsetMinutes: number): { su
     summary.tokensInToday += number(row.input_tokens) ?? 0;
     summary.tokensOutToday += number(row.output_tokens) ?? 0;
     if (cost !== null) summary.usdToday = (summary.usdToday ?? 0) + cost;
+    if (typeof row.model === 'string' && safeName(row.model)) {
+      let model = usage.get(row.model);
+      if (!model) {
+        model = { model: row.model, rows: 0, errors: 0, inputTokens: 0, outputTokens: 0, usd: null, lastAt: at };
+        usage.set(row.model, model);
+      }
+      model.rows++;
+      if (row.is_error === true) model.errors++;
+      model.inputTokens += number(row.input_tokens) ?? 0;
+      model.outputTokens += number(row.output_tokens) ?? 0;
+      if (cost !== null) model.usd = (model.usd ?? 0) + cost;
+      if (ms > Date.parse(model.lastAt)) model.lastAt = at;
+    }
   }
   summary.models = [...models].sort();
+  const modelUsage = [...usage.values()].sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0);
+  summary.modelUsageToday = modelUsage.slice(0, MODEL_USAGE_MAX);
+  summary.modelUsageTodayOmitted = Math.max(0, modelUsage.length - MODEL_USAGE_MAX);
   return { summary, corrupt };
 }
 export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes = new Date(nowMs).getTimezoneOffset()): ApiSpendSummary {
   return parseSpend(lines, nowMs, tzOffsetMinutes).summary;
 }
 
-export async function readResourceLedger(opts: { runsDir?: string; now?: () => number } = {}): Promise<ResourceLedgerV1> {
+export async function readResourceLedger(opts: { runsDir?: string; now?: () => number; personalCodexHome?: string } = {}): Promise<ResourceLedgerV1> {
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
@@ -134,6 +159,31 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       } catch (e) { result.sources.apiSpend = missing(e) ? 'missing' : 'degraded'; }
     })(),
   ]);
+  // Both collector slots point at the explicitly personal home. The collector
+  // deduplicates them; relabel only that isolated reading before reporting it.
+  const personalHome = opts.personalCodexHome ?? join(homedir(), '.codex-2');
+  if (isAbsolute(personalHome) && personalHome === personalHome.trim() && personalHome.length <= 4096 &&
+      !/\p{Cc}/u.test(personalHome) && resolve(personalHome) !== parse(personalHome).root &&
+      !personalHome.split(/[\\/]+/).some(part => part === '.codex' || part === '..')) {
+    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: homedir() });
+    const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
+    const personal = report.resources[0];
+    const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
+    const lane = result.lanes.find(row => row.lane === 'codex-personal');
+    const statusAt = result.asOf ? Date.parse(result.asOf) : NaN;
+    if (lane && personal?.weekly?.usedPct != null &&
+        (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
+        Number.isFinite(observed) && observed <= now &&
+        (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null)) {
+      lane.usedPct = personal.weekly.usedPct;
+      lane.resetAt = personal.weekly.resetsAt;
+      lane.burnPctPerHour = personal.weekly.burnPctPerHour;
+      lane.tokensPerHour6h = null;
+      lane.projectedExhaustion = personal.weekly.projectedExhaustionAt;
+      lane.source = 'codex-personal-sessions';
+      lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
+    }
+  }
   if (signals !== null) {
     const byLane = new Map((signals as ReturnType<typeof laneDeadSignals>).lanes.map(signal => [signal.lane, signal]));
     for (const lane of result.lanes) lane.deadSignal = byLane.get(lane.lane) ?? { lane: lane.lane, lastFinishes: 0, emptyFailures: 0, state: 'ok' };

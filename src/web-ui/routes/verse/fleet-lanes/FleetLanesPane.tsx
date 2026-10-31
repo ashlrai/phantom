@@ -3,6 +3,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { burnLine, burnTotals, formatTokens, headline, laneBars, workerRows } from './fleet-lanes-model.js';
+import { LaneTargetStepper } from './LaneTargetStepper.js';
 import styles from './fleet-lanes.module.css';
 
 function pullUrl(repo: string, number: number): string | null {
@@ -38,7 +39,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {data.lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {laneBars(data).map((lane) => <li key={lane.lane} className={styles.lane}>
-              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
+              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
               <div className={styles.track} role="img" aria-label={`${lane.lane}: ${lane.running} running of ${lane.target} target`}>
                 {lane.fillPct !== null ? <div className={styles.fill} data-tone={lane.tone} style={{ width: `${lane.fillPct}%` }} /> : null}
               </div>

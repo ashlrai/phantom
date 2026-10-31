@@ -1,3 +1,4 @@
+import type { SelfUpdateLastApply } from '../../../../core/verse/self-update-last.js';
 import type { ServerObservation } from './update-status-queries.js';
 
 export interface AboutUpdateLines {
@@ -21,6 +22,19 @@ function relative(iso: string, now: number): string {
   return seconds < 0 ? `in ${duration(-seconds)}` : `${duration(seconds)} ago`;
 }
 
+export function lastApplyOf(status: unknown): SelfUpdateLastApply | null {
+  if (!status || typeof status !== 'object' || !('lastApply' in status)) return null;
+  const r = status.lastApply;
+  if (!r || typeof r !== 'object') return null;
+  const v = r as Record<string, unknown>;
+  if (!['updated', 'already-current', 'refused', 'failed'].includes(v.outcome as string)
+    || !(v.reason === null || typeof v.reason === 'string')
+    || ![v.startedAt, v.finishedAt].every((d) => typeof d === 'string' && Number.isFinite(Date.parse(d)))
+    || ![v.fromCommit, v.toCommit].every((c) => c === null || (typeof c === 'string' && /^[a-f0-9]{7,64}$/.test(c)))
+    || typeof v.restartRequired !== 'boolean' || !['sidecar-supervised', 'manual'].includes(v.restartMode as string)) return null;
+  return r as SelfUpdateLastApply;
+}
+
 export function aboutUpdateLines(status: ServerObservation, now: number): AboutUpdateLines {
   if (!status) return { tone: 'unknown', headline: 'Self-update status unavailable.', rows: [] };
   if ('kind' in status) return { tone: 'notInBuild', headline: 'Self-update status is not in this build.', rows: [] };
@@ -31,6 +45,15 @@ export function aboutUpdateLines(status: ServerObservation, now: number): AboutU
   if (status.originSha !== null) rows.push({ label: 'Origin', value: status.originSha.slice(0, 7), mono: true });
   if (status.lastFetchAt !== null) rows.push({ label: 'Last fetch', value: relative(status.lastFetchAt, now) });
   if (status.uptimeSeconds !== null) rows.push({ label: 'Process up', value: duration(status.uptimeSeconds) });
+
+  const last = lastApplyOf(status);
+  if (last) {
+    let value = `${last.outcome} ${relative(last.finishedAt, now)}`;
+    if ((last.outcome === 'refused' || last.outcome === 'failed') && last.reason) value += ` · ${last.reason}`;
+    if (last.outcome === 'updated' && last.toCommit) value += ` · to ${last.toCommit.slice(0, 7)}`;
+    if (last.restartRequired && last.fromCommit !== null && status.headSha === last.fromCommit) value += ' · restart needed';
+    rows.push({ label: 'Last update', value });
+  }
 
   const origin = status.branch ? `origin/${status.branch}` : 'origin';
   if (status.sourceState === 'unavailable') return { tone: 'unknown', headline: 'Self-update status unavailable.', rows };
