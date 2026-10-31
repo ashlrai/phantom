@@ -26,6 +26,8 @@ import {
   degradedSources,
   formatReset,
   laneTokens,
+  personalCodexAccount,
+  personalDisagreement,
   rowsFromAccounts,
   type UsageRow,
   type UsageWindowRow,
@@ -125,6 +127,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const lanes = useMemo(() => laneTokens(runsRead.data ?? null), [runsRead.data]);
   const degraded = useMemo(() => degradedSources(runsRead.data ?? null), [runsRead.data]);
   const nowMs = Date.now();
+  const disagreement = personalDisagreement(rows, personal, personalCodexAccount(snapshot?.accounts ?? [])?.observedAt ?? null, nowMs);
 
   const accountsMissing = read !== undefined && !read.available;
   const runsMissing = runsRead.data === null || (runsRead.error instanceof ApiError && runsRead.error.status === 404);
@@ -166,6 +169,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
                   nowMs={nowMs}
                 />
                 {personal.asOf && <li className={styles.asOf}>as of {formatRelative(personal.asOf)}</li>}
+                {disagreement && <li className={styles.notice} role="status" data-tone="warn">{disagreement.text}</li>}
               </ul>
             </li>
           )}

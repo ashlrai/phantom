@@ -5,15 +5,16 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--after <RFC3339-with-zone>] [--limit <1..200>] [--json]
+const HELP = `phm comms inbox read [--source <label>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--limit <1..200>] [--json]
 phm comms inbox post --file <text-file|-> [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
+--priority selects entries with exactly that priority; entries without a priority do not match.
 --after selects timestamps strictly later than the instant and reports omittedUndated; inbox local times are Eastern.
 Ambiguous or nonexistent Eastern times and unparseable timestamps count as undated.
 The local process owner is the trust boundary; this does not authenticate internet or email senders.
 Input must be an owner-controlled stable regular UTF-8 text file, or stdin with --file - (maximum ${INBOX_MAX_CHARS} characters).
-Duplicate receipts are retained only for the receiver's process lifetime.`;
+Default duplicate receipts persist across receiver restarts in the shared runs context.`;
 
 // Identity is owned by this adapter, never derived from arguments or message content.
 const LOCAL_OPERATOR = 'local-operator';
@@ -96,7 +97,7 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, json = false;
+    let file: string | undefined, after: Instant | undefined, priority: string | undefined, json = false;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
@@ -108,9 +109,13 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
       } else if (verb === 'read' && arg === '--after' && after === undefined) {
         const value = rest[++i];
         if (value === undefined || (after = rfc3339Instant(value)) === undefined) return invalid();
+      } else if (verb === 'read' && arg === '--priority' && priority === undefined) {
+        const value = rest[++i];
+        if (value === undefined || !/^P[0-3]$/.test(value)) return invalid();
+        priority = value;
       } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--after', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
       } else return invalid();
     }
@@ -119,7 +124,7 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
-      const filtered = queryParams.size > 0 || after !== undefined;
+      const filtered = queryParams.size > 0 || after !== undefined || priority !== undefined;
       const result = await readInboxEntries(filtered ? { ...options, limit: Number.MAX_SAFE_INTEGER } : options);
       let omittedUndated = 0;
       const datedEntries = after === undefined ? result.entries : result.entries.filter(entry => {
@@ -127,7 +132,8 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
         if (instant === undefined) { omittedUndated++; return false; }
         return laterThan(instant, after!);
       });
-      const entries = filtered ? projectInboxRead({ ...result, entries: datedEntries }, query)!.entries : result.entries;
+      const matchingEntries = priority === undefined ? datedEntries : datedEntries.filter(entry => entry.priority === priority);
+      const entries = filtered ? projectInboxRead({ ...result, entries: matchingEntries }, query)!.entries : result.entries;
       console.log(JSON.stringify({ ...result, entries, ...(after === undefined ? {} : { omittedUndated }) }));
       return result.sourceState === 'degraded' ? 1 : 0;
     }
