@@ -1,5 +1,6 @@
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { safeHref } from '../cloud/cloud-model.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 
 export type FeedbackReadState = 'warming' | 'current' | 'stale' | 'unavailable';
 
@@ -19,6 +20,8 @@ export interface OutcomeCaseRow {
   label: string;
   failureKind: string | null;
   proposalRecorded: boolean;
+  jobId: string | null;
+  prLink: { url: string; label: string } | null;
 }
 
 export interface OutcomesView {
@@ -75,6 +78,17 @@ const byNewest = (left: string | null, right: string | null): number => {
   return (Number.isFinite(b) ? b : -Infinity) - (Number.isFinite(a) ? a : -Infinity);
 };
 
+function pullRequestLink(item: Record<string, unknown>): OutcomeCaseRow['prLink'] {
+  const steps = Array.isArray(item.timeline) ? item.timeline.map(record) : [];
+  const step = steps.find(row => row.stage === 'pr-opened' && text(row.href));
+  const href = text(item.href) ?? text(item.prUrl) ?? text(step?.href);
+  const number = nonneg(item.prNumber);
+  const url = safeHref(href ?? (number && number > 0 ? `https://github.com/ashlrai/phantom/pull/${number}` : null), 'github.com');
+  if (!url) return null;
+  const match = new URL(url).pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)\/?$/);
+  return match ? { url, label: `#${match[1]}` } : null;
+}
+
 export function outcomeLabel(outcome: string): string {
   if (outcome === 'producer-succeeded') return 'Produced';
   if (outcome === 'empty-diff') return 'Empty diff';
@@ -117,7 +131,8 @@ export function readOutcomes(value: unknown): OutcomesView | null {
     if (!caseId) return [];
     const outcome = readOutcome(item.outcome);
     return [{ caseId, endedAt: text(item.endedAt), outcome, label: outcomeLabel(outcome),
-      failureKind: text(item.failureKind), proposalRecorded: item.proposalRecorded === true }];
+      failureKind: text(item.failureKind), proposalRecorded: item.proposalRecorded === true,
+      jobId: JOB_ID_RE.test(caseId) ? caseId : null, prLink: pullRequestLink(item) }];
   }).sort((a, b) => byNewest(a.endedAt, b.endedAt)).slice(0, MAX_CASES);
   const notes: string[] = [];
   if (sourceState !== 'healthy') notes.push('Outcome data may be incomplete.');
