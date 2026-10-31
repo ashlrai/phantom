@@ -96,6 +96,50 @@ See the pinned upstream [model settings](https://github.com/jundot/omlx/blob/v0.
 [Splash integration](https://github.com/jundot/omlx/blob/v0.7.2/docs/Splash.md).
 Revalidate these fields when adopting a newer oMLX version.
 
+### Canary: oMLX 0.7.3rc1 on one loopback lane
+
+A `canary` block in the same request pins exactly one named model lane to a
+0.7.3 release candidate on its own loopback port while every other lane keeps
+the stable `version` (0.7.2 remains the default). The planner refuses anything
+else: stable or other RC lines can never canary.
+
+```json
+{
+  "canary": {
+    "lane": "planner",
+    "version": "0.7.3rc1",
+    "port": 8001,
+    "provenance": { "cut": "core", "pin": "security", "install": "masbot" },
+    "incompleteToolCall": "retry-then-reroute",
+    "judge": { "cacheStore": false, "logprobs": true },
+    "eval": "flint"
+  }
+}
+```
+
+Every field is enforced:
+
+- `lane` must be one of the declared `models` ids, and at least one model must
+  remain on the default lane. The canary lane's model moves to
+  `canary.modelSettings`; `canary.settings` binds `127.0.0.1` on `port`
+  (default `8001`, never `8000`). Masbot installs the RC as a second oMLX
+  instance on that port; nothing else runs it.
+- `provenance` must be exactly `{"cut":"core","pin":"security","install":"masbot"}`.
+  A canary install is only planned through a Core cut, a Security pin and
+  Masbot — no other actor, key or value is accepted.
+- `memguard.wiredLimitBytes` (the live memguard wired limit) is required for a
+  canary and tightens every ceiling when present. The canary lane's ceiling is
+  its own allocation (`canary.budgetBytes`); the default lane's ceiling drops
+  by the same amount, so the two servers cannot oversubscribe the host.
+- `incompleteToolCall` must be `"retry-then-reroute"`: on the RC's
+  `incomplete_tool_call` finish reason the lane retries the call once, then
+  reroutes off the canary. This is emitted as `policy.on_incomplete_tool_call`.
+- `judge` must be `{"cacheStore":false,"logprobs":true}`: the judge evaluating
+  the canary runs with the cache store off and derives verdict confidence from
+  token logprobs. Emitted as `policy.judge`.
+- `eval` must be `"flint"`: installing the canary requires rerunning the Flint
+  eval. Emitted as `policy.eval`.
+
 ## mlx-lm.server
 
 `mlx_lm.server` serves an OpenAI-like API on `localhost:8080`. Its own docs say it "is not recommended for production as it only implements basic security checks" ([SERVER.md](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md)). Treat it as a dev tool, loopback only. To use it, point `OPENAI_COMPAT_BASE_URL` at `http://127.0.0.1:8080/v1`.
