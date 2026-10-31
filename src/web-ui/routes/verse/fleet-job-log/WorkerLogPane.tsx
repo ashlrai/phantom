@@ -7,6 +7,8 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
+import { jobChangesQuery } from './worker-changes-queries.js';
+import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import styles from './worker-log.module.css';
 
 export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -29,6 +31,11 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const valid = JOB_ID_RE.test(job);
   const query = useMemo(() => jobDetailQuery(job), [job]);
   const detail = useQuery(query, { enabled: active && valid, freshMs: 0 });
+  const changesQuery = useMemo(() => jobChangesQuery(job), [job]);
+  const changes = useQuery(changesQuery, { enabled: active && valid, freshMs: 0 });
+  const refetchChanges = useRefetch(changesQuery);
+  const refreshChanges = useRefresh(changesQuery);
+  usePollWhileVisible(refetchChanges, pollMs(detail.data), { enabled: visible && valid, refreshOnShow: false });
   const refetchDetail = useRefetch(query);
   const refreshDetail = useRefresh(query);
   usePollWhileVisible(refetchRuns, 5_000, { enabled: visible, refreshOnShow: false });
@@ -52,7 +59,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       </select></label>
       <label>Job ID <input aria-label="Job ID" value={job} onChange={event => setSelection(event.target.value)} aria-invalid={job !== '' && !valid} aria-describedby={job !== '' && !valid ? 'worker-log-id-hint' : undefined} /></label>
       <label className={styles.follow}><input type="checkbox" checked={follow} onChange={event => setFollow(event.target.checked)} /> Follow</label>
-      <button type="button" onClick={() => { refreshRuns(); if (valid) refreshDetail(); }}>Refresh</button>
+      <button type="button" onClick={() => { refreshRuns(); if (valid) { refreshDetail(); refreshChanges(); } }}>Refresh</button>
     </div>
     {job !== '' && !valid && <p id="worker-log-id-hint" className={styles.hint}>Use 3–80 letters, numbers, dots, underscores or hyphens, starting with a letter or number.</p>}
     {runs.status === 'error' && <p role="status">Workers could not refresh.</p>}
@@ -66,6 +73,16 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       </div>
       {detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
         <pre ref={logRef} className={styles.log} role="log" aria-live="polite">{[truncated ? '… earlier lines not shown' : null, lines].filter(value => value !== null).join('\n')}</pre>}
+      {changes.data && <section aria-label="Changes" className={styles.changes}>
+        <div>{changesHeadline(changes.data)}</div>
+        {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
+          {changes.data.state === 'degraded' && <p role="status">Changes could not fully refresh.</p>}
+          {changes.data.files.length === 0 && changes.data.state === 'live' ? <p>No changes yet</p> : <ul>
+            {sortFiles(changes.data.files).map(file => <li key={file.path} className={styles.file}><code>{file.path}</code><span>+{file.added ?? '?'} −{file.removed ?? '?'}</span>{file.status === 'untracked' && <span>untracked</span>}</li>)}
+          </ul>}
+          {changes.data.truncated && <p>Showing a limited set of changes.</p>}
+        </>}
+      </section>}
     </>}
     {valid && detail.data === undefined && detail.status !== 'error' && <p role="status">Reading worker log…</p>}
   </div>;
