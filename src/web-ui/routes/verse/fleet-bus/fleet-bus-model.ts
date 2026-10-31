@@ -22,4 +22,13 @@ export function groupEvents(events: readonly BusEvent[], kind: BusKind | null): 
   return events.filter(event => kind === null || event.kind === kind).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
+export function matchEvents(events: readonly BusEvent[], query: string): BusEvent[] {
+  const term = query.toLowerCase();
+  return events.filter(event => event.text.toLowerCase().includes(term) || event.kind.toLowerCase().includes(term));
+}
+
+export function busFilterLabel(shown: number, total: number): string {
+  return shown === total ? '' : `${shown} of ${total} events`;
+}
+
 export function isInterjection(event: BusEvent): boolean { return event.kind === 'inbox'; }
