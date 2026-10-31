@@ -121,7 +121,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       try {
         const raw: unknown = await read();
         if (raw === null && key === 'codex') { result.sources[key] = 'missing'; return; }
-        const value = project(raw, shape);
+        // The canonical inbox reader returns an envelope; older injected
+        // readers may still supply the snapshot array directly.
+        if (key === 'inbox' && !Array.isArray(raw) &&
+          (!record(raw) || !['healthy', 'missing', 'degraded'].includes(String(raw.sourceState)))) throw new Error('inbox state');
+        const value = project(key === 'inbox' && record(raw) ? raw.entries : raw, shape);
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
