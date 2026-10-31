@@ -10,6 +10,7 @@ function shape<S extends Record<string, Check<unknown>>>(schema: S): Check<{ [K 
     v !== null && typeof v === 'object' && !Array.isArray(v)
     && Object.entries(schema).every(([key, check]) => check((v as Record<string, unknown>)[key]));
 }
+const optional = <T>(check: Check<T>): Check<T | undefined> => (v): v is T | undefined => v === undefined || check(v);
 const n = nullable(num);
 const s = nullable(str);
 const source: Check<'healthy' | 'degraded' | 'missing' | 'not-landed'> = (v): v is 'healthy' | 'degraded' | 'missing' | 'not-landed' =>
@@ -20,6 +21,7 @@ export const isFleetRuns = shape({
   lastTick: s, paused: nullable(bool), memFreePct: n, diskFreeGb: n, switches: array(str), claudeLane: s,
   lanes: array(shape({ lane: str, running: num, target: num, queued: num, held: bool, heldReason: s, tokensLastHour: n, merged24h: n, mergeRate24h: n })),
   workers: array(shape({ job: str, repo: str, lane: str, tier: str, ageSeconds: n })),
+  claimed: optional(array(shape({ job: str, lane: str, tier: str, at: str }))),
   leaders: array(shape({ label: str, ageSeconds: n })), orchestratorAgents: n,
   publishesLastHour: array(shape({ job: str, lane: s, url: s, at: str })),
   mergesLastHour: shape({ count: n, items: array(shape({ repo: str, number: num, title: str })) }),
