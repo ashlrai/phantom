@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -5,13 +6,14 @@ import { homeRunsView } from './home-runs-model.js';
 import { homeRunsQuery } from './home-runs-query.js';
 import { mergeLabel, prUrl } from './merge-link.js';
 import { useMobile } from './mobile-context.js';
-import { SkeletonList } from './ui.js';
+import { Button, SkeletonList } from './ui.js';
 import { Badge, Row, Section, ui } from './ui-parts.js';
 
 export function HomeRuns() {
   const { navigate } = useMobile();
   const query = useQuery(homeRunsQuery);
   const refetch = useRefetch(homeRunsQuery);
+  const [showAll, setShowAll] = useState<boolean>(false);
   usePollWhileVisible(refetch, 10_000);
 
   if (query.status !== 'error' && query.data === null) return null;
@@ -26,11 +28,16 @@ export function HomeRuns() {
         <Row title={view.headline} subtitle={view.tick} onClick={() => navigate({ screen: 'fleet' })} />
         {view.lanes.map((lane) => <Row key={lane.lane} title={lane.lane} subtitle={lane.tone === 'danger' ? (lane.heldReason ? `held: ${lane.heldReason.replace(/_/g, ' ')}` : undefined) : (lane.merged24h != null ? `${lane.merged24h} merged today` : undefined)} trailing={<Badge tone={lane.tone}>{lane.text}</Badge>} onClick={() => navigate({ screen: 'runs' })} label={`Open Live runs for ${lane.lane}`} />)}
         <Row title={view.merges} />
-        {query.data?.mergesLastHour.items?.map((merge, i) => {
+        {(query.data?.mergesLastHour.items ?? []).slice(0, showAll ? undefined : 6).map((merge, i) => {
           const url = prUrl(merge);
           const row = <Row title={mergeLabel(merge)} />;
           return url ? <a key={i} href={url} target="_blank" rel="noopener noreferrer">{row}</a> : <div key={i}>{row}</div>;
         })}
+        {(query.data?.mergesLastHour.items?.length ?? 0) > 6 ? (
+          <Button variant="tinted" aria-expanded={showAll} onClick={() => setShowAll(v => !v)}>
+            {showAll ? 'Show fewer' : `Show all ${query.data?.mergesLastHour.items?.length} merges`}
+          </Button>
+        ) : null}
         {view.codex ? <Row title={view.codex} /> : null}
       </>}
     </Section>
