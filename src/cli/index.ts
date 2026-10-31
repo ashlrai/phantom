@@ -2078,6 +2078,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'graph': {
+        const { cmdGraph } = await import('./graph.js');
+        process.exitCode = await cmdGraph(rest);
+        break;
+      }
+
       case 'init': {
         const { cmdInit } = await import('./doctor-init.js');
         process.exitCode = await cmdInit(rest);
@@ -2202,6 +2208,11 @@ async function main(): Promise<void> {
       }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
+        break;
+      }
+      case 'self-swap': {
+        const { cmdSelfSwap } = await import('./self-swap.js');
+        process.exitCode = await cmdSelfSwap(rest);
         break;
       }
       // People try `phm upgrade` first; it used to be an unknown command.

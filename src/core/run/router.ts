@@ -75,6 +75,17 @@ import {
   providerPermitted,
   resolveLocalOnlyMode,
 } from '../policy/local-only.js';
+// RQ-OT-P1-BANDIT: contextual Thompson sampler over the routing arm registry
+// (routing/arms.ts). Selection only; outcome recording is caller-driven via
+// routing/bandit.ts recordOutcome. Everything is gated on cfg.router.bandit.
+import { loadArmRegistry, type ArmKey } from '../routing/arms.js';
+import {
+  banditContextLabel,
+  createSeededRng,
+  selectArm,
+  type BanditContext,
+  type DiffSizeClass,
+} from '../routing/bandit.js';
 
 // ---------------------------------------------------------------------------
 // Cloud provider env-key map — detection only, values are NEVER read/logged.
@@ -555,6 +566,167 @@ function permittedRoutingContext(
   };
 }
 
+// ---------------------------------------------------------------------------
+// RQ-OT-P1-BANDIT: contextual Thompson sampling over the routing arm registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Engines routeTask's own strategy can reach. When a RoutingContext does not
+ * name its admitted set, the bandit's candidate pool stays inside this list.
+ */
+const BANDIT_CANDIDATE_ENGINES: readonly EngineId[] = [
+  'claude' as EngineId,
+  'codex' as EngineId,
+  'nim' as EngineId,
+  'local-coder' as EngineId,
+  'builtin' as EngineId,
+];
+
+function banditRoutingEnabled(cfg: AshlrConfig): boolean {
+  return cfg.router?.bandit === true;
+}
+
+/**
+ * Estimated diff-size class for the bandit context: the M154 localized scope
+ * when the item carries one (same thresholds routeTaskCascade uses), else the
+ * effort estimate. Deterministic and side-effect free.
+ */
+function diffSizeClassFor(item: WorkItem): DiffSizeClass {
+  const scope = (item as RoutingWorkItem).localizedScope;
+  const files = scope?.fileCount ?? 0;
+  const symbols = scope?.symbolCount ?? 0;
+  if (files > 5 || symbols > 20) return 'large';
+  if (files > 1 || symbols > 5) return 'medium';
+  if (scope !== undefined) return 'small';
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  return effort >= 4 ? 'large' : effort >= 2 ? 'medium' : 'small';
+}
+
+/** Execution-effort label stamped into the arm key (WorkItem.effort 1-5). */
+function banditArmEffort(item: WorkItem): string {
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  return effort >= 4 ? 'high' : effort >= 2 ? 'medium' : 'low';
+}
+
+/** The bandit's discrete context: routing tier, repo basename, diff-size class. */
+function banditContextFor(item: WorkItem): BanditContext {
+  const tail = item.repo.split(/[\\/]/).filter(Boolean).pop();
+  return {
+    tier: modelTierForTask(item),
+    repo: tail ?? item.repo,
+    diffClass: diffSizeClassFor(item),
+  };
+}
+
+interface BanditCandidate {
+  arm: ArmKey;
+  /** The catalog entry behind the arm, or null for a bare-engine arm. */
+  entry: ModelEntry | null;
+}
+
+/**
+ * The arms the bandit may pick: every catalog model that clears the same hard
+ * gates routeTask's own branches apply (engine availability via quota and
+ * subscription, local-only permission, capability, effort cap, Claude 5
+ * exclusions), plus a bare-engine arm when an admitted engine has no eligible
+ * catalog entry (builtin, or a roster engine outside the catalog). The sampler
+ * only reorders inside this set; it cannot reach a route the policy could not
+ * produce, and it never bypasses the post-decision local-only backstop.
+ */
+function banditCandidateArms(
+  item: WorkItem,
+  cfg: AshlrConfig,
+  ctx: RoutingContext,
+  c5Excludes: ReadonlySet<string>,
+): BanditCandidate[] {
+  const capability = capabilityForSource(item.source);
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const effortLabel = banditArmEffort(item);
+  // The quality-policy substantive fast-path lifts the cap to 5 so frontier
+  // flagships stay reachable; mirror that here per engine.
+  const effortCap =
+    cfg.foundry?.routingPolicy === 'quality' && isSubstantiveItem(item) ? 5 : effort;
+  const engines = ctx.availableEngines ?? BANDIT_CANDIDATE_ENGINES;
+  const candidates: BanditCandidate[] = [];
+  for (const engine of engines) {
+    if (!engineAvailable(engine, cfg, ctx)) continue;
+    if (!enginePermitted(engine, cfg).permitted) continue;
+    const entries = KNOWN_MODELS.filter(
+      (m) =>
+        m.engine === engine &&
+        !m.historical &&
+        !m.explicitOnly &&
+        !c5Excludes.has(m.id) &&
+        (!capability || m.capabilities.includes(capability)) &&
+        m.minEffort <= effortCap,
+    );
+    if (entries.length === 0) {
+      candidates.push({ arm: { provider: engine, model: 'default', effort: effortLabel }, entry: null });
+      continue;
+    }
+    for (const entry of entries) {
+      candidates.push({
+        arm: { provider: engine, model: modelTagFrom(entry.id), effort: effortLabel },
+        entry,
+      });
+    }
+  }
+  return candidates;
+}
+
+/**
+ * The bandit route, or null to defer to the static policy. Null when the flag
+ * is off, when no candidate clears the hard gates, or on ANY error (including
+ * an unreadable/corrupt arm registry) - routeTask never throws, so a broken
+ * store degrades to today's routing instead of breaking dispatch.
+ *
+ * Selection is seeded by the work item id: the same item under the same
+ * registry always samples the same arm, which is what keeps the flag-on path
+ * deterministic and the decision stable across routeTask calls.
+ */
+function routeTaskBandit(
+  item: WorkItem,
+  cfg: AshlrConfig,
+  ctx: RoutingContext,
+): TaskRouteDecision | null {
+  if (!banditRoutingEnabled(cfg)) return null;
+  try {
+    const registry = loadArmRegistry();
+    const banditCtx = banditContextFor(item);
+    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg));
+    const selection = selectArm(
+      registry,
+      banditCtx,
+      candidates.map((c) => c.arm),
+      createSeededRng(item.id),
+    );
+    if (!selection) return null;
+    const entry =
+      candidates.find((c) => c.arm === selection.arm)?.entry ??
+      KNOWN_MODELS.find(
+        (m) => m.engine === selection.arm.provider && modelTagFrom(m.id) === selection.arm.model,
+      ) ??
+      null;
+    const p = selection.posterior;
+    return {
+      engine: selection.arm.provider as EngineId,
+      model:
+        entry !== null
+          ? decisionModelFor(entry)
+          : selection.arm.model === 'default'
+            ? null
+            : selection.arm.model,
+      catalogEntry: entry,
+      reason:
+        `bandit[${banditContextLabel(banditCtx)}] sampled ${selection.arm.provider}:${selection.arm.model} ` +
+        `(merge a=${p.merge.alpha.toFixed(1)} b=${p.merge.beta.toFixed(1)}, ` +
+        `cost s=${p.cost.shape.toFixed(1)} r=${p.cost.rate.toFixed(1)}, score=${selection.score.toFixed(3)})`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Route a WorkItem to a concrete {engine, model}, respecting difficulty, source
  * type, cost policy, quota/subscription availability, AND the local-only mode.
@@ -562,6 +734,10 @@ function permittedRoutingContext(
  * Under local-only the candidate set is narrowed to permitted engines and the
  * final decision is enforced (see `enforceLocalOnlyTaskDecision`). With the mode
  * off both steps are no-ops and routing is byte-identical to pre-local-only.
+ *
+ * RQ-OT-P1-BANDIT: when cfg.router.bandit === true the unenforced decision may
+ * come from the contextual Thompson sampler instead of the static policy. The
+ * same narrowing, enforcement and never-throws contract apply either way.
  *
  * Never throws.
  */
@@ -572,7 +748,7 @@ export function routeTask(
 ): TaskRouteDecision {
   const narrowed = permittedRoutingContext(ctx, cfg);
   const decision = enforceLocalOnlyTaskDecision(
-    routeTaskUnenforced(item, cfg, narrowed.ctx),
+    routeTaskBandit(item, cfg, narrowed.ctx) ?? routeTaskUnenforced(item, cfg, narrowed.ctx),
     cfg,
   );
   if (narrowed.removed.length === 0 || decision.reason.includes('local-only')) return decision;
