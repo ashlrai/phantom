@@ -135,8 +135,24 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
   authority and provider qualification remain separate gates.
 - Add bounded steward disk and session-retention planning with the existing
   operator controls; source availability does not establish runtime acceptance.
+- Add an MCP 2026-07-28 conformance suite
+  (`test/mcp-conformance-2026-07-28.test.ts`) that drives the phantom-served
+  gateway in process over linked in-memory transports and end to end through
+  a spawned `phm mcp` stdio child against `test/fixtures/mock-mcp-server.mjs`:
+  protocol negotiation, stateless requests, JSON-RPC error discipline,
+  optional tool-field passthrough and clean shutdown.
 
 ### Fixed
+- Bring the `phm mcp` aggregation gateway to the 2026-07-28 protocol profile.
+  It now serves and echoes `2026-07-28` (ahead of the SDK's supported set),
+  accepts the version in `params.protocolVersion` or the stateless
+  `params._meta` carriers, and answers requests without a prior handshake.
+  Wire errors follow spec: `-32700` for JSON parse failures, `-32600` for
+  schema-invalid messages, `-32602` for invalid params or unroutable tools
+  and `-32601` for unknown methods. Downstream tool listings keep their
+  spec-optional fields (`title`, `annotations`, `outputSchema`, `icons`,
+  `execution`, `_meta`) through discovery and namespacing, and the gateway
+  now exits when its stdin closes instead of serving forever.
 - Provider error bodies that echo the rejected API key no longer carry it into
   thrown errors. The OpenAI-compatible client, visual grounding and the Devin
   client now redact any run of 8 or more characters of the key they sent, so

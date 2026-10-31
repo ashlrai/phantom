@@ -1,6 +1,5 @@
 /** Real gateway handler with controlled SDK peers; no downstream processes or providers. */
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { runInLocusJobEnv } from '../src/core/integrations/locus-job-env.js';
 import { startGateway, probeServer, callBrowserTool } from '../src/core/mcp-gateway.js';
 import type { McpRegistry } from '../src/core/types.js';
@@ -17,7 +16,11 @@ type Peer = {
 const state = vi.hoisted(() => ({
   peers: new Map<string, Peer>(),
   handlers: new Map<unknown, Handler>(),
-  server: null as null | { onclose?: () => void; close: Mock<() => Promise<void>> },
+  server: null as null | {
+    onclose?: () => void;
+    close: Mock<() => Promise<void>>;
+    fallbackRequestHandler?: (request: { method: string; params?: unknown }) => Promise<unknown>;
+  },
   attempts: [] as { command: string; args: string[]; env: Record<string, string> }[],
   connectPlans: new Map<string, Array<() => Promise<void>>>(),
 }));
@@ -55,9 +58,11 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
   Server: class {
     onclose?: () => void;
+    fallbackRequestHandler?: (request: { method: string; params?: unknown }) => Promise<unknown>;
     readonly close = vi.fn(async () => {});
     constructor() { state.server = this; }
     setRequestHandler(schema: unknown, handler: Handler) { state.handlers.set(schema, handler); }
+    removeRequestHandler() {}
     async connect() {}
   },
 }));
@@ -92,8 +97,8 @@ async function gateway(names = ['alpha', 'beta'], configured?: McpRegistry, time
   expect(state.server?.onclose).toBeTypeOf('function');
   expect([...state.peers.keys()], JSON.stringify(stderr.mock.calls)).toEqual(names);
   return {
-    list: () => state.handlers.get(ListToolsRequestSchema)!() as Promise<Listed>,
-    call: (name: string) => state.handlers.get(CallToolRequestSchema)!({ params: { name } }),
+    list: () => state.server!.fallbackRequestHandler!({ method: 'tools/list' }) as Promise<Listed>,
+    call: (name: string) => state.server!.fallbackRequestHandler!({ method: 'tools/call', params: { name } }) as Promise<unknown>,
   };
 }
 function deferred<T>() {
@@ -333,7 +338,7 @@ describe('gateway deadlines and termination', () => {
     connect.resolve();
     await vi.waitFor(() => expect(timedOut.close).toHaveBeenCalledTimes(2));
     expect(timedOut.listTools).not.toHaveBeenCalled();
-    await expect(state.handlers.get(CallToolRequestSchema)!({ params: { name: 'alpha__initial' } })).rejects.toThrow('Unknown tool');
+    await expect(state.server!.fallbackRequestHandler!({ method: 'tools/call', params: { name: 'alpha__initial' } })).rejects.toThrow('Unknown tool');
   });
 
   it('termination closes the upstream SDK server and every downstream exactly once, then removes listeners', async () => {

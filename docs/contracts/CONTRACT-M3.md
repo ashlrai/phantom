@@ -70,9 +70,51 @@ import type { McpRegistry, McpServerSpec, McpServerHealth } from './types.js';
  * exposes them namespaced as `<server>__<tool>`. Proxies tools/list and
  * tools/call to the correct downstream. Per-downstream startup TIMEOUT is 8s; a
  * downstream that fails to start is skipped with a warning logged to stderr and
- * never crashes the gateway. Resolves when the server is wired to stdio.
+ * never crashes the gateway.
+ *
+ * `transport` defaults to a new StdioServerTransport; an injected Transport
+ * (e.g. InMemoryTransport) serves the same gateway in process for tests.
+ * On the default stdio transport the gateway exits when stdin closes.
+ * Resolves when the gateway transport closes (stdin EOF, SIGINT/SIGTERM or
+ * a client-initiated shutdown).
+ *
+ * Protocol profile: serves GATEWAY_MCP_PROTOCOL_VERSIONS (2026-07-28 first,
+ * then the SDK's supported set). initialize echoes a recognized version and
+ * accepts the version in params.protocolVersion or in params._meta under
+ * `protocolVersion`, `io.modelcontextprotocol/protocolVersion` or
+ * `modelcontextprotocol.io/protocolVersion`. Requests are answered without a
+ * prior handshake. Wire discipline: -32700 for JSON parse failures, -32600
+ * for schema-invalid messages, -32602 for invalid params or unroutable tool
+ * names, -32601 for unknown methods.
  */
-export async function startGateway(registry: McpRegistry): Promise<void>;
+export async function startGateway(
+  registry: McpRegistry,
+  timeoutMs?: number,
+  transport?: Transport,
+): Promise<void>;
+
+/**
+ * MCP protocol versions the gateway serves, newest first: '2026-07-28' ahead
+ * of the SDK's SUPPORTED_PROTOCOL_VERSIONS.
+ */
+export const GATEWAY_MCP_PROTOCOL_VERSIONS: readonly string[];
+
+/**
+ * Negotiate a requested protocol version: echoes it when the gateway serves
+ * it, else answers the newest gateway version. Never throws.
+ */
+export function negotiateGatewayProtocolVersion(asked: unknown): string;
+
+/**
+ * Build the initialize result for the gateway. Reads the requested version
+ * from params.protocolVersion first, then the 2026-07-28 `_meta` carriers.
+ * Lenient params are allowed (missing capabilities/clientInfo tolerated).
+ */
+export function gatewayInitializeResult(
+  params: unknown,
+  capabilities: Record<string, unknown>,
+  serverInfo: { name: string; version: string },
+): { protocolVersion: string; capabilities: Record<string, unknown>; serverInfo: { name: string; version: string } };
 
 /**
  * Probe a single downstream server: start it, list its tools, return health,

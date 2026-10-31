@@ -27,14 +27,11 @@ import type { ChildProcess } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ReadResourceRequestSchema,
   ErrorCode,
-  McpError,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  type JSONRPCMessage,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
@@ -158,6 +155,102 @@ export function gatewayVersion(): string {
   }
   cachedGatewayVersion = typeof version === 'string' && version.trim() ? version.trim() : '0.0.0-unknown';
   return cachedGatewayVersion;
+}
+
+// ---------------------------------------------------------------------------
+// Protocol version conformance (2026-07-28 profile)
+// ---------------------------------------------------------------------------
+
+/**
+ * Protocol versions this gateway serves, newest first. The SDK ships the
+ * 2025-11-25 baseline; we extend it with the 2026-07-28 profile, under which
+ * a client may skip `initialize` entirely and carry its protocol version in
+ * `params._meta` (the same profile verse-mcp.ts serves over HTTP). The first
+ * entry is also the answer to an unrecognized requested version: the spec
+ * asks for the newest version the server supports.
+ */
+export const GATEWAY_MCP_PROTOCOL_VERSIONS: readonly string[] = [
+  ...new Set<string>(['2026-07-28', ...SUPPORTED_PROTOCOL_VERSIONS]),
+];
+
+/** `_meta` keys that carry a protocol version under the 2026-07-28 stateless form. */
+const META_VERSION_KEYS = [
+  'protocolVersion',
+  'io.modelcontextprotocol/protocolVersion',
+  'modelcontextprotocol.io/protocolVersion',
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * A JSON-RPC error the SDK serializes verbatim: a safe-integer `code` plus the
+ * exact `message` (McpError would prefix the text with "MCP error <code>:").
+ */
+function rpcError(code: number, message: string): Error & { code: number } {
+  return Object.assign(new Error(message), { code });
+}
+
+/** A protocol version carried in `params._meta` (2026-07-28 stateless form), if any. */
+function metaProtocolVersion(params: Record<string, unknown>): string | null {
+  const meta = isRecord(params['_meta']) ? params['_meta'] : null;
+  if (!meta) return null;
+  for (const key of META_VERSION_KEYS) {
+    if (typeof meta[key] === 'string') return meta[key] as string;
+  }
+  return null;
+}
+
+/**
+ * Negotiate a wire version: echo a recognized request, otherwise answer with
+ * the newest version served (list head). Mirrors verse-mcp.ts negotiation.
+ */
+export function negotiateGatewayProtocolVersion(asked: unknown): string {
+  return typeof asked === 'string' && GATEWAY_MCP_PROTOCOL_VERSIONS.includes(asked)
+    ? asked
+    : GATEWAY_MCP_PROTOCOL_VERSIONS[0]!;
+}
+
+/**
+ * Build the initialize result for both the classic handshake and the lenient
+ * 2026-07-28 form: `params.protocolVersion` wins, then the `_meta` carriers,
+ * then the default. Params may be absent entirely (a stateless client that
+ * still sends initialize), which also negotiates the default.
+ */
+export function gatewayInitializeResult(
+  params: unknown,
+  capabilities: Record<string, unknown>,
+  serverInfo: { name: string; version: string },
+): { protocolVersion: string; capabilities: Record<string, unknown>; serverInfo: { name: string; version: string } } {
+  const p = isRecord(params) ? params : {};
+  const asked = typeof p['protocolVersion'] === 'string' ? p['protocolVersion'] : metaProtocolVersion(p);
+  return { protocolVersion: negotiateGatewayProtocolVersion(asked), capabilities, serverInfo };
+}
+
+/**
+ * Answer a transport-level deserialization failure on the wire. The SDK's
+ * stdio transport reports a malformed line or a schema-invalid message only
+ * through `onerror`, so without this the peer gets silence where JSON-RPC
+ * promises an error reply: -32700 for malformed JSON, -32600 for a
+ * well-formed value that is not a request shape. `id` is null in both cases:
+ * none was readable. Stream/internal errors pass through unanswered.
+ */
+async function reportWireError(transport: Transport, error: unknown): Promise<void> {
+  const code = error instanceof SyntaxError
+    ? ErrorCode.ParseError
+    : Array.isArray((error as { issues?: unknown } | null | undefined)?.issues)
+      ? ErrorCode.InvalidRequest
+      : undefined;
+  if (code === undefined) return;
+  const label = code === ErrorCode.ParseError ? 'Parse error' : 'Invalid Request';
+  try {
+    await transport.send({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code, message: `${label}: ${safeErrorMessage(error).slice(0, 240)}` },
+    } as unknown as JSONRPCMessage);
+  } catch { /* transport already closed */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,26 +395,6 @@ const MAX_DISCOVERY_PAGES = 64;
 const MAX_DISCOVERY_TOOLS = 4_096;
 const MAX_DISCOVERY_BYTES = 4 * 1024 * 1024;
 const MAX_CURSOR_BYTES = 4_096;
-
-/**
- * A tools/call for a name the gateway does not route is the caller's mistake,
- * so it answers JSON-RPC -32602 (invalid params), not the SDK's default -32603
- * (internal error). The message text is kept as is: the SDK sends `message` and
- * `code` from the thrown error. Downstream failures (McpError, or any error
- * without the `Unknown tool "` prefix) pass through unchanged.
- */
-export function unknownToolAsInvalidParams<A extends unknown[], R>(handler: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
-  return async (...args: A): Promise<R> => {
-    try {
-      return await handler(...args);
-    } catch (err) {
-      if (err instanceof Error && !(err instanceof McpError) && err.message.startsWith('Unknown tool "')) {
-        throw Object.assign(err, { code: ErrorCode.InvalidParams });
-      }
-      throw err;
-    }
-  };
-}
 
 /**
  * Env var set on every downstream child the gateway spawns. A downstream that
@@ -525,7 +598,17 @@ async function discoverTools(client: Client, serverName: string, timeoutMs: numb
       if (!tool || typeof tool.name !== 'string' || !tool.name.trim()) throw new Error('Invalid downstream tool name');
       if (names.has(tool.name)) throw new Error('Duplicate downstream tool name');
       names.add(tool.name);
-      tools.push({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema });
+      tools.push({
+        name: tool.name,
+        ...(tool.description !== undefined ? { description: tool.description } : {}),
+        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+        ...(tool.title !== undefined ? { title: tool.title } : {}),
+        ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+        ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
+        ...(tool.icons !== undefined ? { icons: tool.icons } : {}),
+        ...(tool.execution !== undefined ? { execution: tool.execution } : {}),
+        ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
+      });
     }
     if (performance.now() >= deadline) throw new Error(`tools/list(${serverName}) discovery timed out after ${timeoutMs}ms`);
     if (listed.nextCursor === undefined) return tools;
@@ -594,6 +677,13 @@ interface DownstreamTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  /** Spec-optional Tool fields passed through verbatim on tools/list. */
+  title?: string;
+  annotations?: unknown;
+  outputSchema?: unknown;
+  icons?: unknown;
+  execution?: unknown;
+  _meta?: unknown;
 }
 
 /** Keep failed configured servers too; discovery may recover them later. */
@@ -623,6 +713,7 @@ interface Downstream {
 export async function startGateway(
   registry: McpRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  transport: Transport = new StdioServerTransport(),
 ): Promise<void> {
   // This also catches aliases and opaque executable wrappers that structural
   // registry filtering cannot recognize. Check before any downstream starts.
@@ -727,18 +818,17 @@ export async function startGateway(
   };
 
   await Promise.all(downstreams.map((d) => refresh(d, true)));
-  const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
+  const serverInfo = { name: 'ashlr', version: gatewayVersion() };
+  const capabilities = { tools: {}, resources: {} };
+  const server = new Server(serverInfo, { capabilities });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
     if (closed) throw new Error('MCP gateway is closed');
   };
-  server.setRequestHandler(ListResourcesRequestSchema, async () => { assertUsable(); return listFirmResources(); });
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => { assertUsable(); return listFirmResourceTemplates(); });
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => { assertUsable(); return readFirmResource(request.params.uri); });
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const listToolsResult = async () => {
     assertUsable();
-    const tools: { name: string; description?: string; inputSchema: unknown }[] = listNativeTools()
+    const tools: DownstreamTool[] = listNativeTools()
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
     await Promise.all(downstreams.map((d) => refresh(d)));
     assertUsable();
@@ -753,7 +843,12 @@ export async function startGateway(
         }
         const route = routes.get(key);
         if (!route || route.downstream !== d || route.client !== d.client) continue;
-        tools.push({ name: key, description: `[${d.spec.name}] ${tool.description ?? tool.name}`, inputSchema: tool.inputSchema ?? { type: 'object' } });
+        tools.push({
+          ...tool,
+          name: key,
+          description: `[${d.spec.name}] ${tool.description ?? tool.name}`,
+          inputSchema: tool.inputSchema ?? { type: 'object' },
+        });
       }
     }
     return {
@@ -769,35 +864,90 @@ export async function startGateway(
           rejectedRoutes: [...rejectedRoutes],
         },
       },
-    } as { tools: { name: string; description?: string; inputSchema: object }[]; _meta: Record<string, unknown> };
-  });
+    } as { tools: DownstreamTool[]; _meta: Record<string, unknown> };
+  };
 
-  server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
+  const callToolResult = async (rawParams: unknown): Promise<Record<string, unknown>> => {
     assertUsable();
-    const requested = request.params.name;
-    if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
+    const params = isRecord(rawParams) ? rawParams : {};
+    const requested = params['name'];
+    if (typeof requested !== 'string' || !requested) {
+      throw rpcError(ErrorCode.InvalidParams, 'tools/call requires a tool name string');
+    }
+    const args = params['arguments'];
+    if (args !== undefined && !isRecord(args)) {
+      throw rpcError(ErrorCode.InvalidParams, 'tools/call arguments must be an object');
+    }
+    if (isNativeTool(requested)) return callNativeTool(requested, args ?? {});
     const route = routes.get(requested);
     if (!route || route.downstream.client !== route.client) {
       const live = [...routes].filter(([, r]) => r.downstream.client === r.client).map(([name, r]) => ({ name, original: r.original }));
-      throw new Error(unknownToolMessage(requested, live));
+      throw rpcError(ErrorCode.InvalidParams, unknownToolMessage(requested, live));
     }
     try {
-      return await withDeadline(route.client.callTool({ name: route.original, arguments: request.params.arguments ?? {} }, undefined, { timeout: timeoutMs }), timeoutMs, `tools/call(${route.downstream.spec.name})`);
+      return await withDeadline(route.client.callTool({ name: route.original, arguments: args ?? {} }, undefined, { timeout: timeoutMs }), timeoutMs, `tools/call(${route.downstream.spec.name})`) as Record<string, unknown>;
     } catch (err) {
       await drop(route.downstream, route.client);
       throw err; // never replay an effectful request, even after reconnection
     }
-  }));
+  };
+
+  // 2026-07-28 profile: one lenient dispatch for every gateway-managed
+  // method. The SDK's per-schema handlers reject the stateless form (a
+  // version carried in params._meta, or absent params) and answer
+  // shape-invalid params with -32603 plus a schema dump; this dispatch
+  // answers -32602 (invalid params) like the spec and verse-mcp.ts do, and
+  // -32601 for anything unregistered.
+  for (const method of [
+    'initialize', 'ping', 'tools/list', 'tools/call',
+    'resources/list', 'resources/templates/list', 'resources/read',
+  ]) {
+    server.removeRequestHandler(method);
+  }
+  server.fallbackRequestHandler = async (request) => {
+    switch (request.method) {
+      case 'initialize':
+        return gatewayInitializeResult(request.params, capabilities, serverInfo);
+      case 'ping':
+        assertUsable();
+        return {};
+      case 'tools/list':
+        return listToolsResult();
+      case 'tools/call':
+        return callToolResult(request.params);
+      case 'resources/list':
+        assertUsable();
+        return listFirmResources() as Record<string, unknown>;
+      case 'resources/templates/list':
+        assertUsable();
+        return listFirmResourceTemplates() as Record<string, unknown>;
+      case 'resources/read': {
+        assertUsable();
+        const uri = isRecord(request.params) ? request.params['uri'] : undefined;
+        if (typeof uri !== 'string' || !uri) {
+          throw rpcError(ErrorCode.InvalidParams, 'resources/read requires a uri string');
+        }
+        return readFirmResource(uri) as Record<string, unknown>;
+      }
+      default:
+        throw rpcError(ErrorCode.MethodNotFound, 'Method not found');
+    }
+  };
 
   let closing: Promise<void> | undefined;
   const onSigint = (): void => onSignal('SIGINT');
   const onSigterm = (): void => onSignal('SIGTERM');
   let onSignal: (signal: NodeJS.Signals) => void;
+  let onStdinEnd: (() => void) | undefined;
   const closeAll = (): Promise<void> => {
     if (closing) return closing;
     closed = true;
     process.removeListener('SIGINT', onSigint);
     process.removeListener('SIGTERM', onSigterm);
+    if (onStdinEnd) {
+      process.stdin.removeListener('end', onStdinEnd);
+      process.stdin.removeListener('close', onStdinEnd);
+    }
     const clients = downstreams.flatMap((d) => {
       d.generation++;
       const client = d.client;
@@ -828,7 +978,23 @@ export async function startGateway(
     process.once('SIGTERM', onSigterm);
   });
   try {
-    await server.connect(new StdioServerTransport());
+    await server.connect(transport);
+    // JSON-RPC conformance: answer transport deserialization failures on the
+    // wire (see reportWireError) instead of dropping them silently. Wrap after
+    // connect so the protocol's own onerror stays in the chain.
+    const priorOnError = transport.onerror;
+    transport.onerror = (error: Error): void => {
+      priorOnError?.(error);
+      void reportWireError(transport, error);
+    };
+    if (transport instanceof StdioServerTransport) {
+      // The SDK's stdio transport never watches input EOF: with a closed
+      // upstream it would serve forever. MCP lifecycle expects the server to
+      // exit when its input closes, so drive the normal close path from it.
+      onStdinEnd = () => { void server.close(); };
+      process.stdin.once('end', onStdinEnd);
+      process.stdin.once('close', onStdinEnd);
+    }
     if (!closed) process.stderr.write(`[ashlr mcp] gateway ready — ${listNativeTools().length} native ashlr tool(s) + ${routes.size} downstream tool(s) from ${downstreams.filter((d) => d.client).length}/${downstreams.length} server(s)\n`);
     await finished;
   } finally {
