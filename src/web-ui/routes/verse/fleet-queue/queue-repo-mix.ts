@@ -28,3 +28,12 @@ export function repoMixByLane(items: QueueItemShape[]): Array<{
     .map((mix) => ({ ...mix, otherRepos: [...mix.otherRepos].sort((a, b) => a.localeCompare(b)) }))
     .sort((a, b) => b.total - a.total || a.lane.localeCompare(b.lane));
 }
+
+export const PERSONAL_PHANTOM_RESTOCK_MIN = 20;
+
+export function restockNotice(byLane: ReadonlyArray<{ lane: string; phantom?: number }>): string | null {
+  const personal = byLane.find((lane) => lane.lane === 'codex-personal');
+  return personal?.phantom !== undefined && personal.phantom < PERSONAL_PHANTOM_RESTOCK_MIN
+    ? `Only ${personal.phantom} Phantom lines are ready on codex-personal; under ${PERSONAL_PHANTOM_RESTOCK_MIN} the author adds filler on the next restock.`
+    : null;
+}
