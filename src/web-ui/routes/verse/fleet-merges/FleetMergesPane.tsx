@@ -52,7 +52,9 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     <section><h3 className={styles.heading}>Merged in the last hour</h3>
       {data.merged.length === 0 ? <p className={styles.message}>No merged PRs reported.</p> : <ul className={styles.list} aria-label="Merged PRs">{data.merged.map((item, index) => {
         const href = safeHref(item.href, 'github.com');
-        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span></li>;
+        const at = item.at, valid = typeof at === 'string' && Number.isFinite(Date.parse(at));
+        const jobId = item.job, showJob = jobId !== null && !item.title.includes(jobId);
+        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span> <span>· {showJob && <><code>{jobId}</code> · </>}{item.lane ?? '—'} · {valid ? <time dateTime={at} title={new Date(at).toLocaleString()}>{formatRelative(at)}</time> : 'time unknown'}</span></li>;
       })}</ul>}
     </section>
     <section><h3 className={styles.heading}>Publishes waiting</h3>
