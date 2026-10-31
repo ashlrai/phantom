@@ -1,4 +1,6 @@
 import { ageText, newest, type FleetRuns } from '../ops/ops-runs-model.js';
+import { isOpsReleases } from '../fleet-releases/fleet-releases-model.js';
+import { releaseLine } from './release-line.js';
 
 const limit = 2000;
 const singleLine = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -27,4 +29,18 @@ export function fleetBriefText(runs: FleetRuns, nowMs: number): string {
     inbox = inbox.slice(0, Math.max(0, inbox.length - excess));
   }
   return render().slice(0, limit);
+}
+
+export function fleetBriefWithRelease(runs: FleetRuns, releases: unknown, nowMs: number): string {
+  const phantom = (name: string) => name === 'phantom' || name.endsWith('/phantom');
+  const lines = isOpsReleases(releases)
+    ? [...releases.repos].sort((a, b) => Number(phantom(b.repo)) - Number(phantom(a.repo)))
+      .map((repo) => `Release: ${repo.repo} ${releaseLine(repo, nowMs)}`)
+    : ['Release: status unknown'];
+  let text = fleetBriefText(runs, nowMs);
+  for (const line of lines) {
+    if (text.length + line.length + 1 > limit) break;
+    text += `\n${line}`;
+  }
+  return text;
 }
