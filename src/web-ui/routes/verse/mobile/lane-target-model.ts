@@ -1,4 +1,4 @@
-import type { LaneTargetsV1 } from '../../../../core/fleet/runs-lane-targets.js';
+import type { LaneTargetsV1 } from '../ops/lane-targets-model.js';
 import type { FleetRunsLane } from './runs-queries.js';
 import { LANE_PAUSE_KEY, parsePauseRecord, pauseLabel, resumeTransition, type PauseRecord } from '../fleet-lanes/lane-pause-model.js';
 
@@ -14,14 +14,15 @@ export function writePauseRecord(record: PauseRecord): void {
 
 export function pauseState(row: MobileLaneRow, record: PauseRecord): { paused: boolean; label: string | null; resumeTarget: number } {
   const paused = row.target === 0;
-  return { paused, label: paused ? pauseLabel(row.lane, record) : null,
-    resumeTarget: resumeTransition(row.lane, record, row.floor).target };
+  return { paused, label: paused ? pauseLabel(row.lane, record, row.pausedFrom) : null,
+    resumeTarget: resumeTransition(row.lane, record, row.floor, row.pausedFrom).target };
 }
 
 export interface MobileLaneRow extends FleetRunsLane {
   floor: number;
   ceiling: number;
   writable: boolean;
+  pausedFrom: number | null;
 }
 
 export function mergeLaneRows(runsLanes: FleetRunsLane[], targets: LaneTargetsV1 | null): MobileLaneRow[] {
@@ -32,6 +33,7 @@ export function mergeLaneRows(runsLanes: FleetRunsLane[], targets: LaneTargetsV1
     return { ...lane, target: control?.target ?? lane.target, held,
       heldReason: control ? control.heldReason : lane.heldReason,
       floor: control?.floor ?? 0, ceiling: control?.ceiling ?? lane.target ?? 0,
+      pausedFrom: control?.pausedFrom ?? null,
       writable: targets !== null && !held };
   });
 }
