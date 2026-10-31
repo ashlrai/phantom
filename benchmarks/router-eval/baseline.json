@@ -1,0 +1,517 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "router-eval-2026-10-26",
+    "day": "2026-10-26",
+    "jobs": 45,
+    "sha256": "92e52795c84cfd00257051149dee871279b927dce5830497345de2c719800a4e"
+  },
+  "policy": "logged",
+  "coverage": {
+    "jobs": 45,
+    "changed": 0,
+    "rejected": 0,
+    "observed": 42,
+    "unobserved": 0,
+    "held": 2,
+    "pending": 1,
+    "resolved": 42
+  },
+  "mergeRate": {
+    "value": 0.6904761904761905,
+    "ci95": [
+      0.5397400606391092,
+      0.8092889714120513
+    ],
+    "n": 42
+  },
+  "costPerMergedPrUsd": {
+    "value": 2.5475862068965514,
+    "ci95": [
+      1.8103225806451617,
+      3.5576
+    ],
+    "n": 42
+  },
+  "tokensPerMergedPr": {
+    "value": 152079.3103448276,
+    "ci95": [
+      113429.03225806452,
+      204341.66666666666
+    ],
+    "n": 42
+  },
+  "wallTimeMsMean": {
+    "value": 3087142.8571428573,
+    "ci95": [
+      2490000,
+      3662857.1428571427
+    ],
+    "n": 42
+  },
+  "perArm": [
+    {
+      "arm": "codex-cmp",
+      "decided": 19,
+      "observed": 18,
+      "merged": 12,
+      "resolved": 18,
+      "mergeRate": 0.6666666666666666,
+      "costUsd": 14.96,
+      "tokens": 1005200,
+      "wallTimeMsMean": 1490000
+    },
+    {
+      "arm": "codex-personal",
+      "decided": 3,
+      "observed": 3,
+      "merged": 3,
+      "resolved": 3,
+      "mergeRate": 1,
+      "costUsd": 2.03,
+      "tokens": 129300,
+      "wallTimeMsMean": 1160000
+    },
+    {
+      "arm": "devin",
+      "decided": 15,
+      "observed": 15,
+      "merged": 9,
+      "resolved": 15,
+      "mergeRate": 0.6,
+      "costUsd": 55.099999999999994,
+      "tokens": 2954800,
+      "wallTimeMsMean": 4912000
+    },
+    {
+      "arm": "local-qwen",
+      "decided": 4,
+      "observed": 4,
+      "merged": 3,
+      "resolved": 4,
+      "mergeRate": 0.75,
+      "costUsd": 0,
+      "tokens": 197800,
+      "wallTimeMsMean": 5640000
+    },
+    {
+      "arm": "prompt:adaptive",
+      "decided": 2,
+      "observed": 2,
+      "merged": 2,
+      "resolved": 2,
+      "mergeRate": 1,
+      "costUsd": 1.79,
+      "tokens": 123200,
+      "wallTimeMsMean": 1560000
+    }
+  ],
+  "bootstrap": {
+    "seed": 6168327,
+    "resamples": 2000
+  },
+  "decisions": [
+    {
+      "id": "RQ-001",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-002",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-003",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-004",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-005",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-006",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-007",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-008",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "failed"
+    },
+    {
+      "id": "RQ-009",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-010",
+      "chosen": "codex-personal",
+      "replayed": "codex-personal",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-011",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-012",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-013",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-014",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-015",
+      "chosen": "codex-personal",
+      "replayed": "codex-personal",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-016",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-017",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-018",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "failed"
+    },
+    {
+      "id": "RQ-019",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-020",
+      "chosen": "local-qwen",
+      "replayed": "local-qwen",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-021",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-022",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-023",
+      "chosen": "local-qwen",
+      "replayed": "local-qwen",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-024",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-025",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-026",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "failed"
+    },
+    {
+      "id": "RQ-027",
+      "chosen": "local-qwen",
+      "replayed": "local-qwen",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-028",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-029",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-030",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-031",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-032",
+      "chosen": "codex-personal",
+      "replayed": "codex-personal",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-033",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-034",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "failed"
+    },
+    {
+      "id": "RQ-035",
+      "chosen": "local-qwen",
+      "replayed": "local-qwen",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-036",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-037",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-038",
+      "chosen": "devin",
+      "replayed": "devin",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "closed"
+    },
+    {
+      "id": "RQ-039",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-040",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-041",
+      "chosen": "prompt:adaptive",
+      "replayed": "prompt:adaptive",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-042",
+      "chosen": "prompt:adaptive",
+      "replayed": "prompt:adaptive",
+      "changed": false,
+      "resolution": "recorded",
+      "reason": "replays the recorded arm",
+      "outcome": "merged"
+    },
+    {
+      "id": "RQ-043",
+      "chosen": null,
+      "replayed": null,
+      "changed": false,
+      "resolution": "held",
+      "reason": "replays the recorded arm"
+    },
+    {
+      "id": "RQ-044",
+      "chosen": null,
+      "replayed": null,
+      "changed": false,
+      "resolution": "held",
+      "reason": "replays the recorded arm"
+    },
+    {
+      "id": "RQ-045",
+      "chosen": "codex-cmp",
+      "replayed": "codex-cmp",
+      "changed": false,
+      "resolution": "pending",
+      "reason": "replays the recorded arm"
+    }
+  ]
+}
