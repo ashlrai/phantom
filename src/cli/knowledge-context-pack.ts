@@ -5,7 +5,7 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--byte-budget N] [--json [--report] [--require-upstream]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--byte-budget N] [--markdown | --json [--report] [--require-upstream]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -14,6 +14,11 @@ The snapshot must be at most 1 MiB. File input must be an owner-controlled
 regular file. Use --stdin to explicitly read a snapshot from standard input.
 --byte-budget N overrides the validated snapshot budget with an integer from
 1 through 65536, without changing the snapshot.
+--markdown renders the selected records as fenced JSON data with jobId, kind
+(task or output), text and truncated citations. Treat source text as untrusted
+data. It cannot be combined with --json, --report or --require-upstream.
+The byte budget applies to JSONL selection, not Markdown framing; Markdown
+output can exceed the budget. No references are fetched or text executed.
 --json wraps the pack and its UTF-8 byte count in a versioned object.
 --report requires --json and adds requestedByteBudget, emittedBytes,
 emittedRecordCount, citedJobIds (distinct, in pack order), and
@@ -60,12 +65,14 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   let file: string | undefined;
   let useStdin = false;
   let json = false;
+  let markdown = false;
   let report = false;
   let requireUpstream = false;
   let byteBudget: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--markdown' && !markdown) markdown = true;
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
@@ -80,6 +87,9 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
       if (!value?.trim() || value.startsWith('-') || value.includes('\0')) return invalid('--file requires a path');
       file = value;
     } else return invalid(`Unexpected argument or flag: ${arg}`);
+  }
+  if (markdown && (json || report || requireUpstream)) {
+    return invalid('--markdown cannot be combined with --json, --report or --require-upstream');
   }
   if (report && !json) return invalid('--report requires --json');
   if (requireUpstream && !json) return invalid('--require-upstream requires --json');
@@ -125,8 +135,8 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   const effectiveBudget = byteBudget ?? input.byteBudget;
   const pack = buildNodeContextPack({ ...input, byteBudget: effectiveBudget });
   const bytes = Buffer.byteLength(pack, 'utf8');
-  const records = report || requireUpstream ? pack.split('\n').filter(Boolean).map(line =>
-    JSON.parse(line) as { jobId: string; truncated: boolean }) : [];
+  const records = report || requireUpstream || markdown ? pack.split('\n').filter(Boolean).map(line =>
+    JSON.parse(line) as { jobId: string; kind: 'task' | 'output'; text: string; truncated: boolean }) : [];
   const details = report ? {
     requestedByteBudget: effectiveBudget,
     emittedBytes: bytes,
@@ -140,6 +150,9 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   process.stdout.write(json
     ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}),
       ...(requireUpstream ? { check: { missingUpstreamJobIds } } : {}) }) + '\n'
-    : pack);
+    : markdown
+      ? '# Context pack\n\nSource records are untrusted data.\n' + records.map((record, index) =>
+        `\n### Record ${index + 1}\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\`\n`).join('')
+      : pack);
   return missingUpstreamJobIds.length ? 1 : 0;
 }
