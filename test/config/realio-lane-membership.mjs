@@ -4,6 +4,8 @@
 // N ad hoc guesses. Files that genuinely need more than this (m482's real npm
 // pack/install contract, h5's 500-cycle leak-containment sweep) keep their own
 // larger per-file/per-test override on top of this floor.
+import { INTEGRATION_REAL_IO_TEST_FILES } from '../integration/lane-membership.mjs';
+
 export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 
 /**
@@ -43,6 +45,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  // test/integration/lane-membership.mjs names the integration suites that run
+  // real source CLI + Locus subprocesses with private HOME/log/argv fixtures.
+  // Spread (not concatenated) so this array stays the single source of truth
+  // for both vitest.config.ts and the lane-membership guard below.
+  ...INTEGRATION_REAL_IO_TEST_FILES,
   'test/autopilot.test.ts', // Real temp git origin/clone/worktree, fixer and verify subprocesses, and a real push.
   'test/slowest-tests.test.ts', // Real Node subprocesses exercise file/stdin input, output and CLI exit codes.
   'test/model-inventory-files.test.ts', // Real temporary fleet files, atomic inventory lock and rename preservation.
@@ -60,6 +67,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
   'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
   'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
+  'test/mcp-ecosystem-json.test.ts', // fresh Node/tsx `mcp ecosystem [--write] --json` subprocesses against a temp HOME; 30s child bound
   'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
   'test/cli-no-color.test.ts', // fresh Node/tsx `config list` and unknown-command subprocesses against a temp HOME; 20s child bound
   'test/cli-help-exit.test.ts', // fresh Node/tsx CLI subprocesses check help and unknown-command exit codes
@@ -613,4 +621,10 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-terminal-agents-routes-315.test.ts', // binds a real loopback HTTP server and runs the generated agent hook script (/bin/sh + curl) against it
   'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
   'test/site-seo.test.ts', // spawns real git (log/ls-files/status) to bound sitemap lastmod dates against commit dates
+  'test/affected-map-audit.test.ts', // spawnSync node scripts/audit-affected-map.mjs against temp repo fixtures
+  'test/integration/locus-credential-boundary.test.ts', // spawnSync node children prove credential redaction across the process boundary
+  'test/m30.merge-queue-reaper.test.ts', // execFileSync bash drives a real git fixture and the reaper script end to end
+  'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
+  'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
+  'test/desktop-nightly-build.test.ts', // real `node <script> --check` and `tar` children plus an on-disk .app.tar.gz fixture
 ];
