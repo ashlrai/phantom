@@ -7,6 +7,7 @@
  * Usage:
  *   ashlr resources           — table view
  *   ashlr resources --json    — raw JSON (ResourceSnapshot)
+ *   ashlr resources --ledger --json — resource and pool budget ledger
  *   ashlr resources --watch   — refresh every 30s (Ctrl-C to stop)
  */
 
@@ -160,7 +161,7 @@ function printResourcesHelp(): void {
   console.log(bold('  phm resources') + dim(' — per-backend resource control plane (read-only)'));
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
-  console.log('  Usage: phm resources [--json] [--watch]');
+  console.log('  Usage: phm resources [--json] [--watch] [--ledger]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
   console.log('         phm resources launcher --help');
   console.log('         phm resources profile --help');
@@ -168,6 +169,7 @@ function printResourcesHelp(): void {
   console.log('');
   console.log(`    ${cyan('phm resources')}          ${dim('table view of availability/used%/cap/resets')}`);
   console.log(`    ${cyan('phm resources --json')}   ${dim('raw JSON (ResourceSnapshot)')}`);
+  console.log(`    ${cyan('phm resources --ledger --json')} ${dim('remaining quota, burn, exhaustion and observed final-hour usage by pool/bucket')}`);
   console.log(`    ${cyan('phm resources autopilot --json')} ${dim('read-only lane targets from disk, inode and credit readings')}`);
   console.log(`    ${cyan('phm resources --watch')}  ${dim('refresh every 30s (Ctrl-C to stop)')}`);
   console.log('');
@@ -196,7 +198,7 @@ export async function cmdResources(args: string[]): Promise<number> {
   }
   // Reject an unknown command before help or provider discovery. Otherwise a
   // misspelled credit operation looks successful and may read unrelated accounts.
-  if (args.some(arg => !['--json', '--watch', '--help', '-h'].includes(arg)) || new Set(args).size !== args.length) {
+  if (args.some(arg => !['--json', '--watch', '--ledger', '--help', '-h'].includes(arg)) || new Set(args).size !== args.length) {
     process.stderr.write('Invalid resource arguments; use phm resources --help.\n');
     return 2;
   }
@@ -204,7 +206,7 @@ export async function cmdResources(args: string[]): Promise<number> {
     printResourcesHelp();
     return 0;
   }
-  const jsonMode  = args.includes('--json');
+  const jsonMode  = args.includes('--json') || args.includes('--ledger');
   const watchMode = args.includes('--watch');
 
   // Explicit resource pools never import the default-home legacy monitor/config.
@@ -219,6 +221,11 @@ export async function cmdResources(args: string[]): Promise<number> {
   }
 
   async function tick(): Promise<void> {
+    if (args.includes('--ledger')) {
+      const { getResourceLedger } = await import('../core/fabric/resource-ledger.js');
+      console.log(JSON.stringify(await getResourceLedger(cfg), null, 2));
+      return;
+    }
     const snapshot = await getResourceSnapshot(cfg);
     if (jsonMode) {
       console.log(JSON.stringify(snapshot, null, 2));
