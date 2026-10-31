@@ -9,12 +9,13 @@ import { scrubSecrets } from '../util/scrub.js';
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
 export interface ParkedGroup { reason: string; lane: string | null; count: number; jobs: string[] }
 export interface PrecheckSkip { at: string; job: string; code: string; reason: string }
-type Source = 'healthy' | 'missing' | 'degraded';
+export type Source = 'healthy' | 'missing' | 'degraded';
 export interface FleetQueueV1 {
   v: 1; generatedAt: string;
   sources: Record<'ready' | 'skips', Source>;
   total: number; ready: number; parked: number; malformed: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
+  nextUp?: Array<{ lane: string; jobs: string[] }>;
   groups: ParkedGroup[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
@@ -43,18 +44,25 @@ function boundedLimit(limit?: number): number {
   return Number.isNaN(limit) ? 25 : Math.min(200, Math.max(1, Math.floor(limit ?? 25)));
 }
 
+/** Render a valid local Date as ISO text carrying the actual local offset. */
+export function localIso(date: Date): string {
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
+}
+
 /** Parse local wall time and render its actual offset, including DST. */
-function localTimestamp(raw: string): { at: string; ms: number } {
+export function localTimestamp(raw: string): { at: string; ms: number } {
   const match = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)$/.exec(raw);
   if (match) {
     const [, y, m, d, h, min, s] = match;
     const date = new Date(Number(y), Number(m) - 1, Number(d), Number(h), Number(min), Number(s));
     if (date.getFullYear() === Number(y) && date.getMonth() === Number(m) - 1 && date.getDate() === Number(d) &&
         date.getHours() === Number(h) && date.getMinutes() === Number(min) && date.getSeconds() === Number(s)) {
-      const offset = -date.getTimezoneOffset();
-      const sign = offset >= 0 ? '+' : '-';
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return { at: `${y}-${m}-${d}T${h}:${min}:${s}${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`, ms: date.getTime() };
+      return { at: localIso(date), ms: date.getTime() };
     }
   }
   return { at: raw, ms: Number.NaN };
@@ -87,7 +95,7 @@ export function parsePrecheckSkips(text: string, nowMs: number, limit?: number):
   return { skips, last24h };
 }
 
-async function readSource(path: string, max: number, tail: boolean): Promise<{ state: Source; text: string }> {
+export async function readSource(path: string, max: number, tail: boolean): Promise<{ state: Source; text: string }> {
   let file: Awaited<ReturnType<typeof open>> | undefined;
   try {
     const before = await lstat(path);
@@ -157,6 +165,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     parsedRows.push({ row, originalState, unsafeRepo });
   }
   const lanes = new Map<string, { lane: string; ready: number; parked: number; phantom: number; other: number; otherRepos: Set<string> }>();
+  const nextUp = new Map<string, string[]>();
   const groups = new Map<string, ParkedGroup>();
   let ready = 0;
   let parked = 0;
@@ -169,6 +178,10 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     lanes.set(lane, counts);
     if (!state.parked) {
       ready++; counts.ready++;
+      // readSource reads a bounded window of ready.tsv, so "first" means
+      // first within the read window — file order is launch order.
+      const jobs = nextUp.get(lane) ?? [];
+      if (jobs.length < 3) { jobs.push(row.id); nextUp.set(lane, jobs); }
       if (isPhantomJob({ lane, id: row.id, repo: row.repo ?? null })) counts.phantom++;
       else {
         counts.other++;
@@ -192,6 +205,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
     total: ready + parked, ready, parked, malformed,
     byLane: [...lanes.values()].map((counts) => ({ ...counts, otherRepos: [...counts.otherRepos].sort().slice(0, 5) })).sort((a, b) => a.lane.localeCompare(b.lane)),
+    nextUp: [...nextUp.entries()].map(([lane, jobs]) => ({ lane, jobs })).sort((a, b) => a.lane.localeCompare(b.lane)),
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
