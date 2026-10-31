@@ -948,7 +948,7 @@ function printHelp(): void {
 
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
-    ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop; no companion probes).'],
+    ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop, fleet_bus_hops, fleet_bus_inbox; no companion probes).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -1021,7 +1021,7 @@ export async function cmdMcp(args: string[]): Promise<number> {
 
   if (sub === 'fleet') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
-      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}.');
+      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}, fleet_bus_hops {limit?: 1..50}, fleet_bus_inbox {after?: >=0, limit?: 1..100, to?: <label>, from?: <label>}.');
       return 0;
     }
     if (args.length !== 1) {
