@@ -5,12 +5,14 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { WorkspaceGraph } from './WorkspaceGraph.js';
+import { JobDetailSheet } from './JobDetailSheet.js';
 import { buildRunsGraph, describeRunsGraph, filterGraphNodes, filterLabel, nodeAction, runsWorkspaceGraph } from './runs-graph-model.js';
 import { runsGraphQuery } from './runs-graph-queries.js';
 import styles from './runs-graph.module.css';
 
 export function RunsGraph() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sheetJob, setSheetJob] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const canvas = useRef<HTMLDivElement>(null);
   const sectionVisible = useSectionVisible();
@@ -59,10 +61,12 @@ export function RunsGraph() {
       }}><WorkspaceGraph graph={runsWorkspaceGraph(graph)} onSelect={setSelectedId} /></div>
       {selected ? <div className={styles.actions} role="group" aria-label="Selected node">
         <span>{selected.label}</span>
-        {action?.kind === 'log' ? <button type="button" onClick={() => { requestWorkerLogJob(action.job); openDockPane('worker-log'); }}>Open worker log</button>
+        {action?.kind === 'log' ? <><button type="button" onClick={() => { requestWorkerLogJob(action.job); openDockPane('worker-log'); }}>Open worker log</button>
+          <button type="button" aria-label={`Open details for ${action.job}`} onClick={() => setSheetJob(action.job)}>Open details</button></>
           : action?.kind === 'pr' ? <a href={action.url} target="_blank" rel="noopener noreferrer">{action.label}</a>
           : action?.kind === 'lanes' ? <button type="button" onClick={() => openDockPane('fleet-lanes')}>Open Lanes pane</button> : null}
       </div> : null}
     </> : null}
+    {sheetJob ? <JobDetailSheet key={sheetJob} job={sheetJob} onClose={() => setSheetJob(null)} /> : null}
   </section>;
 }
