@@ -57,6 +57,7 @@ describe('receipt-bound task diagnosis', () => {
     ['worker-process-failed', 'Native process could not complete', /configured launcher and native executable/],
     ['worker-output-truncated', 'Native capture was truncated', /Reduce the task or response scope/],
     ['worker-output-token-limit', 'Reported output exceeded the task limit', /deliberately review the task budget/],
+    ['worker-1m-context-credits-stop', 'Long-context usage credits exhausted', /smaller-context model/],
     ['worker-timed-out', 'Worker deadline reached', /confirm cleanup and fresh capacity evidence/],
     ['worker-cancelled', 'Worker invocation cancelled', /recorded task and cancellation intent/],
   ] as const)('offers a fixed next check for %s', (reason, label, nextCheck) => {

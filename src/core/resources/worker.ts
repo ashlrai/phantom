@@ -4,12 +4,13 @@ import { isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { buildOpenAICompatibleClient, OpenAICompatServiceTierError } from '../run/provider-client.js';
 import { runVerifySubprocessAsync } from '../run/verify-commands.js';
-import { MAX_RESOURCE_OBSERVATION_AGE_MS, validateResourcePool, type ResourceObservation, type ResourceWorker } from './pool-policy.js';
+import { MAX_RESOURCE_OBSERVATION_AGE_MS, validateResourcePool, WORKER_1M_CONTEXT_CREDITS_STOP_REASON,
+  type ResourceObservation, type ResourceWorker } from './pool-policy.js';
 import { mergeClaudeResourceObservation } from './provider-observations.js';
 import { validResourceNativeProcessSignal, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { validateResourceBindings, type ResourceBinding } from './worker-bindings.js';
-import { probePoolCliVersion } from './pool-cli-versions.js';
+import { claudeRetryWatchdogEnv, probePoolCliVersion } from './pool-cli-versions.js';
 export { validateResourceBindings } from './worker-bindings.js';
 export type { ResourceBinding } from './worker-bindings.js';
 
@@ -181,6 +182,19 @@ function parseCodex(output: string, model: string): ResourceWorkerResult {
       : !result.trim() ? 'worker-output-missing' : 'worker-completed' };
 }
 
+/**
+ * The provider's own fixed refusal text for a spent long-context allowance,
+ * matched only inside the terminal result's declared error fields — the same
+ * conservatism as the Codex upgrade check, never inferred from task text,
+ * partial wording, or a guessed status code.
+ */
+const CLAUDE_1M_CONTEXT_CREDITS_STOP = 'usage credits required for 1m context';
+function claudeOneMContextCreditsStop(row: Record<string, unknown>): boolean {
+  const fields: unknown[] = [row.result, ...(Array.isArray(row.errors) ? row.errors : [])];
+  return fields.some((field) => typeof field === 'string' &&
+    field.toLowerCase().includes(CLAUDE_1M_CONTEXT_CREDITS_STOP));
+}
+
 function parseClaude(output: string): ResourceWorkerResult {
   const rows = events(output);
   if (!rows) return empty('worker-invalid-events');
@@ -211,8 +225,14 @@ function parseClaude(output: string): ResourceWorkerResult {
     (terminal.api_error_status === undefined || terminal.api_error_status === null) &&
     (terminal.deferred_tool_use === undefined || terminal.deferred_tool_use === null) && result.trim();
   return { status: success ? 'completed' : 'failed', output: result, inputTokens, outputTokens,
-    reason: success ? 'worker-completed' : 'worker-terminal-failed' };
+    reason: success ? 'worker-completed' : claudeOneMContextCreditsStop(terminal)
+      ? WORKER_1M_CONTEXT_CREDITS_STOP_REASON : 'worker-terminal-failed' };
 }
+
+/** Provider-refusal reasons classified from the terminal row keep their
+ * precision through a non-zero exit — the refusal was read, not guessed. */
+const EXIT_PRESERVED_WORKER_REASONS: ReadonlySet<string> = new Set([
+  'worker-cli-upgrade-required', WORKER_1M_CONTEXT_CREDITS_STOP_REASON]);
 
 export function workerEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -228,6 +248,7 @@ async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBi
   task: ResourceWorkerTask, signal?: AbortSignal): Promise<ResourceWorkerResult> {
   const dispatchedAt = Date.now();
   const started = performance.now();
+  let cliVersion: string | null = null;
   if (worker.provider === 'claude') {
     const version = await probePoolCliVersion('claude', binding.command, {
       cwd: task.cwd, env: workerEnvironment(), timeoutMs: task.timeoutMs, signal,
@@ -237,6 +258,7 @@ async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBi
     if (version.failure === 'timed-out') return empty('worker-timed-out', 'timed-out');
     if (version.status !== 'supported') return empty(version.status === 'outdated'
       ? 'worker-cli-version-outdated' : 'worker-cli-version-unverified');
+    cliVersion = version.version;
   }
   const remainingMs = worker.provider === 'claude'
     ? Math.floor(task.timeoutMs - (performance.now() - started)) : task.timeoutMs;
@@ -249,7 +271,11 @@ async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBi
       task.mode === 'read-only' ? '' : 'Read,Glob,Grep,Edit,Write', '--permission-mode',
       task.mode === 'read-only' ? 'plan' : 'acceptEdits'];
   const processResult = await runVerifySubprocessAsync([...binding.command, ...suffix], {
-    cwd: task.cwd, env: workerEnvironment(), timeoutMs: remainingMs, input: task.prompt, maxOutputChars: MAX_BYTES, signal,
+    cwd: task.cwd, timeoutMs: remainingMs, input: task.prompt, maxOutputChars: MAX_BYTES, signal,
+    // Watchdog tuning reaches only a build that defines it (2.1.311+); the
+    // wait bound is this task's own remaining deadline, so a usage limit that
+    // resets past the horizon ends the request rather than parking the slot.
+    env: { ...workerEnvironment(), ...(worker.provider === 'claude' ? claudeRetryWatchdogEnv(cliVersion, remainingMs) : {}) },
   });
   const parsed = processResult.outputTruncated ? empty('worker-output-truncated')
     : worker.provider === 'codex' ? parseCodex(processResult.stdout, worker.model) : parseClaude(processResult.stdout);
@@ -282,7 +308,7 @@ async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBi
   if (processResult.outputTruncated) return parsed;
   if (processResult.error) return { ...parsed, status: 'failed', reason: 'worker-process-failed' };
   if (processResult.exitCode !== 0 || processResult.signal) return { ...parsed, status: 'failed',
-    reason: !processResult.signal && parsed.reason === 'worker-cli-upgrade-required' ? parsed.reason : 'worker-exit-failed' };
+    reason: !processResult.signal && EXIT_PRESERVED_WORKER_REASONS.has(parsed.reason) ? parsed.reason : 'worker-exit-failed' };
   // CLI tasks may make multiple internal requests. Their output token setting
   // is a reported-usage cutoff, not a preventive native provider spend cap.
   if (parsed.outputTokens !== null && parsed.outputTokens > task.maxOutputTokens) {

@@ -71,6 +71,11 @@ const DIAGNOSES: Record<string, Diagnosis> = {
     explanation: 'Reported output tokens exceeded this task’s limit. This check is not a measurement of the account’s total usage.',
     nextCheck: 'Reduce the requested response scope or deliberately review the task budget; the failed response is not accepted work.',
   },
+  'worker-1m-context-credits-stop': {
+    label: 'Long-context usage credits exhausted',
+    explanation: 'The native CLI stopped because the task’s long-context mode requires usage credits that were not available.',
+    nextCheck: 'Retry on a compatible smaller-context model or after the enrolled account’s usage window resets, under a new task ID. This is a bounded classification, not a billing measurement.',
+  },
   'worker-output-missing': {
     label: 'Worker response was empty',
     explanation: 'The worker did not provide a nonempty response.',

@@ -114,6 +114,28 @@ describe('descriptive resource performance', () => {
     expect(() => validateResourcePerformanceReport(report, pool)).toThrow();
   });
 
+  it('tallies 1M-context-credits stops per worker inside the per-pool report', () => {
+    const stop = receipt('stop', { status: 'failed', reason: 'worker-1m-context-credits-stop' });
+    const rows = [receipt('one'), stop, receipt('two', { status: 'failed' }),
+      receipt('other-worker', { workerId: 'local-b', capacityKey: 'local-b', status: 'failed',
+        reason: 'worker-1m-context-credits-stop', execution: measure(2) }),
+      receipt('mislabeled', { status: 'timed-out', reason: 'worker-1m-context-credits-stop' })];
+    const report = build(rows);
+    expect(report.workers[0]?.stops).toEqual({ oneMContextCredits: 1 });
+    expect(report.workers[1]?.stops).toEqual({ oneMContextCredits: 1 });
+    expect(validateResourcePerformanceReport(report, pool)).toEqual(report);
+  });
+
+  it.each(['exceeds-failures', 'missing', 'negative', 'extra-key'])('rejects malformed stop tallies: %s', (kind) => {
+    const report = build([receipt('one', { status: 'failed', reason: 'worker-1m-context-credits-stop' })]);
+    const row = report.workers[0]! as unknown as Record<string, unknown>;
+    if (kind === 'exceeds-failures') (row.stops as Record<string, number>).oneMContextCredits = 2;
+    if (kind === 'missing') delete row.stops;
+    if (kind === 'negative') (row.stops as Record<string, number>).oneMContextCredits = -1;
+    if (kind === 'extra-key') Object.assign(row.stops as object, { other: 1 });
+    expect(() => validateResourcePerformanceReport(report, pool)).toThrow();
+  });
+
   it('bounds the source ledger without truncating successful-looking summaries', () => {
     expect(() => build(Array.from({ length: 4_097 }, (_, index) => receipt(`row-${index}`)))).toThrow();
   });

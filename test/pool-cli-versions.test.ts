@@ -1,7 +1,8 @@
 /** Stubbed version output only. No real vendor process, credential or network access. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runVerifySubprocessAsync, type VerifySubprocessResult } from '../src/core/run/verify-commands.js';
-import { assessPoolCliVersion, POOL_CLI_MIN_VERSIONS, probePoolCliVersion } from '../src/core/resources/pool-cli-versions.js';
+import { assessPoolCliVersion, claudeRetryWatchdogEnv, CLAUDE_RETRY_WATCHDOG_MIN_VERSION, CLAUDE_WATCHDOG_RECHECK_MAX_MS,
+  POOL_CLI_MIN_VERSIONS, probePoolCliVersion } from '../src/core/resources/pool-cli-versions.js';
 
 vi.mock('../src/core/run/verify-commands.js', () => ({ runVerifySubprocessAsync: vi.fn() }));
 const runner = vi.mocked(runVerifySubprocessAsync);
@@ -71,5 +72,31 @@ describe('shared pool CLI security manifest', () => {
       .toEqual({ status: 'unknown', version: null });
     expect(await probePoolCliVersion('codex', [], options)).toEqual({ status: 'unknown', version: null });
     expect(runner).not.toHaveBeenCalled();
+  });
+});
+
+describe('gated claude retry-watchdog env', () => {
+  it('requires Claude Code 2.1.311, above the 2.1.309 admission floor', () => {
+    expect(CLAUDE_RETRY_WATCHDOG_MIN_VERSION).toBe('2.1.311');
+    expect(POOL_CLI_MIN_VERSIONS.claude.minimum < CLAUDE_RETRY_WATCHDOG_MIN_VERSION).toBe(true);
+  });
+  it.each(['2.1.311', '2.1.312', '2.2.0', '2.1.311+build.1'])(
+    'sets only the two bounded usage-limit controls on %s', (version) => {
+      expect(claudeRetryWatchdogEnv(version, 600_000)).toEqual({
+        CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS: '600000',
+        CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS: '60000' });
+    });
+  it.each([null, '2.1.309', '2.1.310', '2.1.311-rc.1', 'PRIVATE_VERSION'])(
+    'sets nothing below the floor or unverifiable: %s', (version) => {
+      expect(claudeRetryWatchdogEnv(version, 600_000)).toEqual({});
+    });
+  it.each([0, -1, 0.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1, '60000' as unknown as number])(
+    'sets nothing for an unusable wait bound %s', (waitMs) => {
+      expect(claudeRetryWatchdogEnv('2.1.311', waitMs)).toEqual({});
+    });
+  it('floors the recheck at 1 ms and caps it at the documented maximum', () => {
+    expect(claudeRetryWatchdogEnv('2.1.311', 5).CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS).toBe('1');
+    expect(claudeRetryWatchdogEnv('2.1.311', 86_400_000).CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS)
+      .toBe(String(CLAUDE_WATCHDOG_RECHECK_MAX_MS));
   });
 });
