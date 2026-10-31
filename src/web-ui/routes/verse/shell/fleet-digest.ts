@@ -1,4 +1,7 @@
 import type { FleetRuns } from '../ops/ops-runs-model.js';
+import { etaText, nextPassEta } from '../fleet/next-pass-eta.js';
+
+type DigestRuns = Omit<FleetRuns, 'leaders'> & { leaders?: Array<{ label: string; ageSeconds: number | null }> };
 
 const clean = (value: string): string => value.replace(/\s+/g, ' ').trim().replace(/https?:\/\/\S{81,}/g, (url) => `${url.slice(0, 79)}…`);
 const limit = (value: string, length: number): string => value.length > length ? `${value.slice(0, length - 1)}…` : value;
@@ -11,7 +14,7 @@ const elapsed = (at: string, now: number): string | null => {
   return Number.isFinite(time) ? `${age((now - time) / 1000)} ago` : null;
 };
 
-export function fleetDigest(runs: FleetRuns, nowMs: number): string {
+export function fleetDigest(runs: DigestRuns, nowMs: number): string {
   const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(nowMs);
   const header = [`Phantom fleet · ${time}`];
   const tick = runs.lastTick && elapsed(runs.lastTick, nowMs);
@@ -26,6 +29,11 @@ export function fleetDigest(runs: FleetRuns, nowMs: number): string {
   }).join(' · ')}`);
   const ages = runs.workers.flatMap((worker) => worker.ageSeconds === null ? [] : [worker.ageSeconds]);
   lines.push(`Workers: ${runs.workers.length}${ages.length ? ` · oldest ${age(Math.max(...ages))}` : ''}`);
+  const leaderAges = (runs.leaders ?? []).flatMap((leader) => leader.ageSeconds !== null && Number.isFinite(leader.ageSeconds) ? [leader.ageSeconds] : []);
+  if (leaderAges.length) {
+    const newest = Math.min(...leaderAges);
+    lines.push(`Leaders: newest pass ${age(newest)} ago · ${etaText(nextPassEta(nowMs - newest * 1000, nowMs))}`);
+  }
   const counts = [...(runs.mergesLastHour.count === null ? [] : [`Merged last hour: ${runs.mergesLastHour.count}`]), `publishes: ${runs.publishesLastHour.length}`];
   lines.push(counts.join(' · '));
   if (runs.codexPersonal) {

@@ -8,7 +8,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
-import { parseInboxReadQuery, projectInboxRead } from './fleet-inbox-read.js';
+import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
@@ -176,7 +176,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       try { query = parseInboxReadQuery(new URL(req.url ?? '/', 'http://localhost').searchParams); }
       catch { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid query string' }); return true; }
       if ('error' in query) { sendJson(res, 400, { code: 'VERSE_INVALID', error: query.error }); return true; }
-      try { sendJson(res, 200, projectInboxRead(await inbox(query.limit), query)); }
+      // Filter within the bounded tail before applying the requested result limit.
+      try { sendJson(res, 200, projectInboxRead(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
       catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
       return true;
     }
