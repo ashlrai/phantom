@@ -1,4 +1,7 @@
 import { useEffect } from 'react';
+import { useQuery } from '../../../data/hooks.js';
+import { fleetSourcesQuery } from '../sections/fleet-sources-query.js';
+import { readFleetPresence, whatsNewCopy } from './fleet-presence.js';
 import { Button } from '../../../components/primitives/index.js';
 import { openFleetWorkspace } from '../dock/dock-store.js';
 import { fleetPanesPresent } from '../dock/fleet-workspace-auto.js';
@@ -9,6 +12,8 @@ import { markReleaseSeen } from './onboarding-store.js';
 import styles from './onboarding.module.css';
 
 export function WhatsNewCard() {
+  const { data } = useQuery(fleetSourcesQuery);
+  const copy = whatsNewCopy(readFleetPresence(data));
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') markReleaseSeen(APP_VERSION);
@@ -17,7 +22,12 @@ export function WhatsNewCard() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  function openFleet() {
+  function openPrimary() {
+    if (copy.primary.action !== 'fleet-workspace') {
+      setVerseSection('settings');
+      markReleaseSeen(APP_VERSION);
+      return;
+    }
     const available = fleetPanesPresent(listPanes().map(p => p.id));
     if (available.length > 0) openFleetWorkspace(available);
     else setVerseSection('fleet');
@@ -30,12 +40,10 @@ export function WhatsNewCard() {
         <h2 id="whats-new-title" className={styles.title}>What's new in Phantom {APP_VERSION}</h2>
       </header>
       <div className={styles.body}>
-        <p className={styles.lead}>Fleet workspace: live jobs, lanes and merges from this Mac</p>
-        <p className={styles.lead}>Leaders' inbox: your prompts land in MASON-INBOX.md</p>
-        <p className={styles.lead}>Ops tray: queue, releases and lane targets</p>
+        {copy.bullets.map(bullet => <p key={bullet} className={styles.lead}>{bullet}</p>)}
       </div>
       <footer className={styles.foot}>
-        <Button variant="primary" size="sm" onClick={openFleet}>Open fleet workspace</Button>
+        <Button variant="primary" size="sm" onClick={openPrimary}>{copy.primary.label}</Button>
         <Button variant="ghost" size="sm" onClick={() => markReleaseSeen(APP_VERSION)}>Later</Button>
       </footer>
     </section>
