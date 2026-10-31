@@ -52,7 +52,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget',
+  'worktrees', 'drive', 'budget', 'top',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */

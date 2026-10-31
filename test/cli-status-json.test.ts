@@ -24,6 +24,7 @@ function runStatus(args: string[], writeConfig: (home: string) => void = () => {
   delete env.ASHLR_HOME;
   delete env.NO_COLOR;
   delete env.FORCE_COLOR;
+  delete env.CLAUDE_CODE_PLUGIN_CACHE_DIR;
   const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', 'status', ...args], {
     cwd: root, encoding: 'utf8', timeout: 20_000, env,
   });
@@ -38,8 +39,19 @@ describe('CLI: phm status --json', () => {
     expect(result.stdout).not.toContain('\u001b');
     const data = JSON.parse(result.stdout) as Record<string, unknown> & {
       summary: Record<string, number>; roots: Array<{ path: string; exists: boolean }>;
+      tools: { installed: number; total: number; installedIds: unknown } | null;
     };
     expect(result.stdout).toBe(JSON.stringify(data) + '\n');
+    // installedIds is the roster of PATH/app-bundle probe hits on this machine;
+    // its length varies (an Ashlr MD.app install, a binary beside node), so the
+    // contract is asserted strictly here, then pinned to a sentinel for the
+    // environment-independent shape snapshot.
+    expect(data.tools).not.toBeNull();
+    expect(Array.isArray(data.tools!.installedIds)).toBe(true);
+    const installedIds = data.tools!.installedIds as unknown[];
+    expect(installedIds.every(id => typeof id === 'string' && id.length > 0)).toBe(true);
+    expect(installedIds.length).toBe(data.tools!.installed);
+    data.tools!.installedIds = ['<tool>'];
     expect(outputContractShape(data)).toMatchSnapshot();
     expect(data.schemaVersion).toBe(1);
     expect(data.summary).toEqual({ tracked: 0, clean: 0, dirty: 0, offSync: 0, stale: 0, staleDays: 30 });
