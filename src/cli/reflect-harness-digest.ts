@@ -10,12 +10,12 @@ future_checked, missing_urls. Only links on Source lines are included.
 With --source, select all records and issues matching an exact ID (S followed by digits).
 With --needs-refresh, include only stale or undated selected sources and sources whose
 IDs are referenced by selected issues; v and selected issues are preserved.
-With --with-takeaways, include only selected sources with nonempty takeaway arrays;
+With --with-takeaways, select only sources with at least one nonblank takeaway;
 this composes with --needs-refresh and preserves v and selected issues.
 With --check, exit 0 for a non-empty selection with all sources fresh and no issues;
 exit 1 for an empty selection, stale or undated sources, issues, or read failure.
-Without --source, the check always evaluates the full digest, even with display filters.
-With --source, the check evaluates the selection before --needs-refresh and --with-takeaways.
+The check evaluates the selection before --needs-refresh, after --source and
+--with-takeaways. Issues remain scoped by --source and are not filtered by takeaways.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
 Options: --file <markdown>  Input file; --json  Required JSON output;
          --source <id>  Exact source ID; --stale-days <n>  Non-negative integer;
@@ -66,16 +66,18 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     process.stderr.write('error: unable to read digest as a stable regular file (maximum 1 MiB).\n');
     return 1;
   }
-  const selected = sourceId === undefined ? result : {
+  const sourceSelection = sourceId === undefined ? result : {
     ...result,
     sources: result.sources.filter(source => source.id === sourceId),
     issues: result.issues.filter(issue => issue.id === sourceId),
   };
+  const selected = withTakeaways ? {
+    ...sourceSelection,
+    sources: sourceSelection.sources.filter(source => source.takeaways?.some(takeaway => takeaway.trim().length > 0)),
+  } : sourceSelection;
   const issueIds = new Set(selected.issues.map(issue => issue.id));
-  const output = needsRefresh || withTakeaways
-    ? { ...selected, sources: selected.sources.filter(source =>
-      (!needsRefresh || source.stale !== false || issueIds.has(source.id)) &&
-      (!withTakeaways || (source.takeaways?.length ?? 0) > 0)) }
+  const output = needsRefresh
+    ? { ...selected, sources: selected.sources.filter(source => source.stale !== false || issueIds.has(source.id)) }
     : selected;
   process.stdout.write(JSON.stringify(output) + '\n');
   return check && (selected.sources.length === 0 || selected.issues.length > 0 || selected.sources.some(source => source.stale !== false)) ? 1 : 0;
