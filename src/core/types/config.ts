@@ -1297,6 +1297,14 @@ export interface AshlrConfig {
      */
     mode?: 'normal' | 'fast' | 'lite' | 'ultra';
     /**
+     * SessionCreateRequest.playbook_id: the id of a Devin-org playbook
+     * (`playbook-…`; the source for ours lives in devin/playbooks/) attached
+     * to every dispatched task session, so the dispatch prompt references it
+     * instead of repeating its conventions. An identifier, not a secret.
+     * Chats never attach it. Empty or absent = no playbook.
+     */
+    playbookId?: string;
+    /**
      * The model a NEW Devin (CLI) chat starts on - any id, family slug or
      * alias `devin models list` prints (core/devin/models.ts resolves it).
      * Default 'swe-2-high' (SWE-2, listed Free). Each chat can still pick

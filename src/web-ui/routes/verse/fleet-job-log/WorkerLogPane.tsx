@@ -6,6 +6,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
+import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
 import styles from './worker-log.module.css';
 
 export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -17,8 +18,14 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refreshRuns = useRefresh(opsRunsQuery);
   const options = jobOptions(runs.data);
   const [selection, setSelection] = useState<string | null>(null);
+  const requestedJob = useRequestedWorkerLogJob();
+  useEffect(() => {
+    if (requestedJob === null) return;
+    const requested = takeRequestedWorkerLogJob();
+    if (requested !== null && requested !== selection) setSelection(requested);
+  }, [requestedJob, selection]);
   const job = selection ?? options[0]?.job ?? '';
-  useEffect(() => { if (selection === null && options[0]) setSelection(options[0].job); }, [selection, options]);
+  useEffect(() => { if (requestedJob === null && selection === null && options[0]) setSelection(options[0].job); }, [requestedJob, selection, options]);
   const valid = JOB_ID_RE.test(job);
   const query = useMemo(() => jobDetailQuery(job), [job]);
   const detail = useQuery(query, { enabled: active && valid, freshMs: 0 });
