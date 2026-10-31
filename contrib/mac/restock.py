@@ -163,5 +163,9 @@ for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock n
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
+# RQ-PHX-RESTOCKAPPENDRACE31: the early read is stale by now, and a writer appending in between had
+# its lines erased by the whole-file replace. Re-read just before it and carry the appended tail
+# through; same-index lines keep this pass's CLAIMED/HOLD-SECURITY marks.
+lines += rd(Q + "/router-queue.md").splitlines()[len(lines):]
 open(Q + "/router-queue.md.tmp", "w").write("\n".join(lines) + "\n"); os.replace(Q + "/router-queue.md.tmp", Q + "/router-queue.md")
 with open(EV, "a") as f: f.write("%s RESTOCK queued %d (%s) bold=%.2f sec=%d\n" % (TS, len(out), ", ".join("%s=%d" % (l, len(picks[l])) for l in CODEX), bold_frac, len(seclist)))
