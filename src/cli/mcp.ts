@@ -124,6 +124,8 @@ async function cmdMcpRun(): Promise<number> {
     const registry = discoverRegistryForMcpHost(discoverMcpServers);
     process.stderr.write(`[ashlr mcp] starting gateway with ${registry.servers.length} discovered server(s)\n`);
     await startGateway(registry);
+    // The CLI dispatcher only sets exitCode; unrelated handles may still exist.
+    setTimeout(() => process.exit(0), 100).unref();
     return 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
