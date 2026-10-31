@@ -2174,6 +2174,11 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
+      case 'self-swap': {
+        const { cmdSelfSwap } = await import('./self-swap.js');
+        process.exitCode = await cmdSelfSwap(rest);
+        break;
+      }
       // People try `phm upgrade` first; it used to be an unknown command.
       case 'update':
       case 'upgrade': {
