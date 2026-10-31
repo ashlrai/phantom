@@ -57,6 +57,8 @@ import {
 } from './agent-os-epoch-records.js';
 import { isAgentOsEpochStorePlatformSupportedV1 } from './agent-os-epoch-store.js';
 
+export const AGENT_OS_EPOCH_ATTEMPT_STORE_PROTOCOL_V1 =
+  'ashlr-agent-os-epoch-attempt-store-v1' as const;
 export const AGENT_OS_EPOCH_ATTEMPT_SET_DOMAIN_V1 =
   'ashlr:agent-os:epoch-attempt-set:v1\0' as const;
 export const AGENT_OS_EPOCH_SNAPSHOT_BINDING_BATCH_PROTOCOL_V1 =

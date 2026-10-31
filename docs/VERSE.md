@@ -282,11 +282,9 @@ that were not measured. An unmeasured value is shown as "—", never as zero.
 **Seat burn-down history.** Command's per-seat burn-downs keep the whole
 window across reloads. Each seat's 5-hour and weekly readings are logged to
 `~/.ashlr/routing/capacity-history.jsonl` (0600) by the workbench server and by the
-daemon, and served from `GET /api/verse/budget/history`. Capacity pools that
-are not seats — the `devin` lane, a `codex-local` reading — can record samples
-under their pool id in the same log, so a pool's series is just another line.
-The log holds at least 8 days and stays under about 2 MiB; once it is full,
-older readings are thinned per seat before any are dropped. To stop recording, set
+daemon, and served from `GET /api/verse/budget/history`. The log holds at least
+8 days and stays under about 2 MiB; once it is full, older readings are thinned
+per seat before any are dropped. To stop recording, set
 `ASHLR_CAPACITY_HISTORY=0` in the environment of the workbench server and the
 daemon. Both then stop writing, and the burn-downs keep only what the page
 reads while it is open plus whatever the log already holds.

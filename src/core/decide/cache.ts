@@ -58,6 +58,10 @@ export function cacheSet(key: string, result: TypeSafeOk, now: number = Date.now
   }
 }
 
+export function cacheSize(): number {
+  return entries.size;
+}
+
 export function clearDecisionCache(): void {
   entries.clear();
 }

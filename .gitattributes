@@ -16,10 +16,3 @@
 *.woff binary
 *.woff2 binary
 *.pdf binary
-
-# CHANGELOG merge strategy: union lets independent appends (e.g. two feature
-# branches adding their own entries under ## [Unreleased]) merge automatically
-# without a manual conflict. GitHub server merges ignore this driver, but lane
-# merges (rebase/merge in a local worktree) benefit.
-CHANGELOG.md merge=union
-**/CHANGELOG.md merge=union

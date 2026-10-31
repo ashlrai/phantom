@@ -1,42 +1,35 @@
 /** Per-browser UI opt-ins. These are presentation flags, never authority grants. */
-export type FeatureFlag = 'agentWorkspace' | 'oneAsk';
+export type FeatureFlag = 'agentWorkspace';
 export const FEATURE_FLAGS_STORAGE_KEY = 'ashlr.feature-flags.v1';
 
-const KNOWN_FLAGS: readonly FeatureFlag[] = ['agentWorkspace', 'oneAsk'];
-
-const cache = new Map<FeatureFlag, boolean>();
+let agentWorkspace: boolean | undefined;
 const listeners = new Set<() => void>();
 
-function readStored(): Record<string, unknown> {
+function readAgentWorkspace(): boolean {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY) ?? 'null');
-    // Project only the known booleans; never retain arbitrary persisted fields.
-    return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+    // Project only the known boolean; never retain arbitrary persisted fields.
+    return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      && Object.hasOwn(raw, 'agentWorkspace')
+      && (raw as Record<string, unknown>)['agentWorkspace'] === true;
   } catch {
-    return {};
+    return false;
   }
 }
 
 export function getFeatureFlag(name: FeatureFlag): boolean {
-  if (!KNOWN_FLAGS.includes(name)) return false;
-  let value = cache.get(name);
-  if (value === undefined) {
-    value = readStored()[name] === true;
-    cache.set(name, value);
-  }
-  return value;
+  if (name !== 'agentWorkspace') return false;
+  agentWorkspace ??= readAgentWorkspace();
+  return agentWorkspace;
 }
 
 export function setFeatureFlag(name: FeatureFlag, enabled: boolean): void {
-  if (!KNOWN_FLAGS.includes(name) || typeof enabled !== 'boolean') return;
+  if (name !== 'agentWorkspace' || typeof enabled !== 'boolean') return;
   if (getFeatureFlag(name) === enabled) return;
-  cache.set(name, enabled);
+  agentWorkspace = enabled;
   try {
     // Write a fresh allowlisted object, never a merge with untrusted storage.
-    localStorage.setItem(
-      FEATURE_FLAGS_STORAGE_KEY,
-      JSON.stringify(Object.fromEntries(KNOWN_FLAGS.map((flag) => [flag, getFeatureFlag(flag)]))),
-    );
+    localStorage.setItem(FEATURE_FLAGS_STORAGE_KEY, JSON.stringify({ agentWorkspace: enabled }));
   } catch {
     /* The choice still holds for this page when persistence is unavailable. */
   }
@@ -50,6 +43,6 @@ export function subscribeFeatureFlags(listener: () => void): () => void {
 
 /** Test seam: emulate a reload without changing the saved preference. */
 export function resetFeatureFlagsForTests(): void {
-  cache.clear();
+  agentWorkspace = undefined;
   for (const listener of [...listeners]) listener();
 }

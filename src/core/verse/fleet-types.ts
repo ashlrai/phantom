@@ -399,3 +399,7 @@ export function withLiveSlots(
   };
 }
 
+/** True for a config whose local-only setting can be written by this server. */
+export function localOnlyWritable(policy: LocalOnlyPolicy): boolean {
+  return policy.mutable;
+}

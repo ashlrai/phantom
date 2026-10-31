@@ -161,6 +161,10 @@ export const LEADER_POWER_KINDS = [
 
 export type LeaderPowerKind = (typeof LEADER_POWER_KINDS)[number];
 
+export function isLeaderPowerKind(kind: string): kind is LeaderPowerKind {
+  return (LEADER_POWER_KINDS as readonly string[]).includes(kind);
+}
+
 /**
  * What a launch is for. `self-improve` puts a cloud launch behind the cloud
  * budget's stricter self-improvement gate (reserve, per-day and open-PR caps)

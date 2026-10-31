@@ -55,6 +55,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 import { validResetProvenance } from '../routing/reset-pressure.js';
+import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readResourceJson } from '../resources/pool-runtime.js';
 import { createResourceReadingCache, normalizeResourceLastKnownUsage, type ResourceReadingCache } from '../resources/reading-cache.js';
 import type { ResourceLastKnownUsage } from '../resources/reading-cache-types.js';
@@ -2023,3 +2024,12 @@ export function buildVerseAccountsSnapshot(options: {
   };
 }
 
+/** Best-effort private-directory check used by callers before starting a collector. */
+export function accountsRootIsPrivate(accountsRoot: string): boolean {
+  try {
+    inspectPrivateDirectory(accountsRoot);
+    return true;
+  } catch {
+    return false;
+  }
+}

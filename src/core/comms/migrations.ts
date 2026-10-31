@@ -31,6 +31,12 @@ import { expireRequestsWhere, type CommsRequest } from './requests.js';
 
 /** Persisted wire kind of the legacy Strategist briefing AND the pre-3.14 Leader memo question. */
 export const LEGACY_BRIEFING_KIND = 'elon-vision';
+/**
+ * 3.14 wire kind of an informational (non-blocking) Leader-memo report. Memos
+ * normally arrive through the Leader thread; the comms layer still renders a
+ * report of this kind with memo buttons if one is ever queued.
+ */
+export const LEADER_MEMO_KIND = 'leader-memo';
 
 const MIGRATION_ID = 'telegram-leader-line-v1';
 const DIGEST_STALE_MS = 24 * 3_600_000;

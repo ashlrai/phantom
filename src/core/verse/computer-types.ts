@@ -55,11 +55,15 @@ export const VERSE_COMPUTER_REVOKE_PATH = `${VERSE_COMPUTER_PATH}/revoke`;
 /** POST {} → VerseComputerState (KILL: revoke every grant of every chat, fail everything waiting) */
 export const VERSE_COMPUTER_KILL_PATH = `${VERSE_COMPUTER_PATH}/kill`;
 
+/** The MCP tool scope these tools register under (verse-mcp.ts). */
+export const COMPUTER_MCP_SCOPE = 'computer';
+
 // ---------------------------------------------------------------------------
 // Tiers and app policy
 // ---------------------------------------------------------------------------
 
 export type ComputerTier = 'read' | 'click' | 'full';
+export const COMPUTER_TIERS: readonly ComputerTier[] = ['read', 'click', 'full'];
 
 const TIER_RANK: Record<ComputerTier, number> = { read: 0, click: 1, full: 2 };
 
@@ -486,6 +490,8 @@ export type NativeComputerOp =
   | { op: 'resume' }
   | { op: 'kill' }
   | { op: 'arm' };
+
+export type NativeComputerOpName = NativeComputerOp['op'];
 
 /** Why native refused or failed (the `code` of a failed result). */
 export type ComputerErrorCode =

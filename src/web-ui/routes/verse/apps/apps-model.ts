@@ -23,6 +23,14 @@ import type { AccountStatus, CapacityRow } from '../usage/capacity-strip-model.j
 export const APPS_GROUP_ORDER = ['accounts', 'desktop', 'terminal-agents', 'local-models', 'mcp-servers'] as const;
 export type AppsGroupId = (typeof APPS_GROUP_ORDER)[number];
 
+export const APPS_GROUP_TITLE: Readonly<Record<AppsGroupId, string>> = {
+  accounts: 'Accounts',
+  desktop: 'Desktop',
+  'terminal-agents': 'Terminal agents',
+  'local-models': 'Local models',
+  'mcp-servers': 'MCP servers',
+};
+
 const HEALTH_TONE: Readonly<Record<VerseAppHealthState, HealthTone | 'off'>> = {
   ok: 'success',
   warn: 'warning',

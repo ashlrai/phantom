@@ -2122,8 +2122,8 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     }
     let ok = exitCode === 0 && !turn.sawError;
     let lastError: string | null = null;
-    // Stop normally returns the session to idle, with a cancelled event and
-    // result line. A storage failure still leaves the session in error.
+    // Stop is a normal action, not a failure: the session returns to idle
+    // and the `cancelled` event is the only record of it.
     const stopped = turn.termination === 'cancelled' || turn.termination === 'closed';
 
     if (stopped) {
@@ -2276,13 +2276,6 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       session.nativeSessionId = nativeSessionId;
       save(session);
       log('warn', `session ${id}: ${code}; recovered on a new native session (${how})`);
-      // The retry owns the final answer. Partial output from the failed
-      // attempt remains in the transcript, but cannot become its result.
-      const status = turnStatuses.get(id);
-      if (status?.turnId === turn.turnId) {
-        status.answer = '';
-        status.streaming = false;
-      }
       startTurn(session, turn.turnId, turn.seatLaunch, turnLaunch, redactionsFor(turn.seatLaunch, turnLaunch), {
         text: turn.text,
         userSeq: turn.userSeq,
@@ -2384,11 +2377,10 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
           // Stopped before it started: the same close-out a stopped turn gets.
           emit(id, { type: 'cancelled', turnId });
           emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: current.nativeSessionId, durationMs: 0 });
-          const storageError = storageFailed.has(id);
-          current.status = storageError ? 'error' : 'idle';
-          if (!storageError) current.lastError = null;
+          current.status = 'idle';
+          current.lastError = null;
           save(current);
-          afterTurn(id, turnId, storageError ? 'failed' : 'cancelled', 0);
+          afterTurn(id, turnId, 'cancelled', 0);
           return;
         }
         startTurn(current, turnId, seatLaunch, launch, redactions, { ...turnCtx, gated: true });

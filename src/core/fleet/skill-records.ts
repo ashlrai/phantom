@@ -150,6 +150,9 @@ export function skillUseEventsDir(): string {
   return join(skillRecordsDir(), 'uses');
 }
 
+/** Alias matching the ~/.ashlr/skills directory name. */
+export const skillsDir = skillRecordsDir;
+
 function eventTimestamp(value: unknown): string {
   const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(parsed)) throw new Error('invalid skill record timestamp');
@@ -517,6 +520,10 @@ export function recordSkillCard(input: SkillCard | SkillCard[]): void {
 export function recordSkillUseEvent(input: SkillUseEvent | SkillUseEvent[]): void {
   appendRecords(input, skillUseEventsDir(), sanitizeSkillUseEvent);
 }
+
+/** Append aliases for callers that name the storage operation directly. */
+export const appendSkillCard = recordSkillCard;
+export const appendSkillUseEvent = recordSkillUseEvent;
 
 function boundedOption(value: number | undefined, fallback: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value)

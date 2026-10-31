@@ -191,6 +191,12 @@ export function markMemoDelivered(memoId: string, at = new Date().toISOString())
   save(file);
 }
 
+/** When a memo reached Mason, or null. */
+export function memoDeliveredAt(memoId: string | undefined): string | null {
+  if (!memoId) return null;
+  return load().deliveredMemos[memoId] ?? null;
+}
+
 // Typed controls use a strict, separately locked sidecar. Legacy best-effort
 // map writes cannot reset its claims or turn an old unnamespaced token current.
 export interface TelegramQuestionDraft {

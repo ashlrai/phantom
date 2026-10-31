@@ -15,7 +15,7 @@ import type {
   VerseGitStatus,
   VerseGitSuggestedAction,
 } from '../../../data/api-types.js';
-import type { VerseGitCheckCounts, VerseGitStatusDetail } from '../../../../core/verse/workbench-types.js';
+import type { VerseGitCheckCounts, VerseGitPrLookup, VerseGitStatusDetail } from '../../../../core/verse/workbench-types.js';
 
 // ---------------------------------------------------------------------------
 // Wire additions the server sends beyond the frozen VerseGitStatus — contract
@@ -24,6 +24,7 @@ import type { VerseGitCheckCounts, VerseGitStatusDetail } from '../../../../core
 // so the two can never drift.
 // ---------------------------------------------------------------------------
 
+export type GitPrLookup = VerseGitPrLookup;
 export type GitCheckCounts = VerseGitCheckCounts;
 
 export interface GitStatusView extends VerseGitStatus, Partial<Omit<VerseGitStatusDetail, keyof VerseGitStatus>> {}

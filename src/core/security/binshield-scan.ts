@@ -7,6 +7,7 @@ const BINSHIELD_TIMEOUT_MS = 60_000;
 const BINSHIELD_MAX_BUFFER = 1024 * 1024;
 
 export type BinshieldRiskLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
+export type AdvisorySeverity = BinshieldRiskLevel;
 
 export type CVE = {
   id: string;

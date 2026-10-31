@@ -15,7 +15,7 @@
  * never fail a decision. Explicit operator updates refuse unreadable settings.
  */
 
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { DecisionKind, DecisionRecord, JevKindStats } from './types.js';
@@ -188,6 +188,10 @@ export function costEstimate(
   return { usd, source: cfg.inputUsdPerMTok !== null || cfg.outputUsdPerMTok !== null ? 'operator-rates' : 'published-model' };
 }
 
+export function estimateCostUsd(inputTokens: number, outputTokens: number, cfg: JevConfig = readJevConfig(), model?: string): number | null {
+  return costEstimate(inputTokens, outputTokens, cfg, model)?.usd ?? null;
+}
+
 /** A sum is unknown if any called record lacks a valid observation. Cache hits don't bill. */
 export function calledSum(records: readonly DecisionRecord[], field: 'inputTokens' | 'outputTokens' | 'estCostUsd'): number | null {
   let sum = 0;
@@ -256,6 +260,19 @@ export function readLedger(day: string = localDay()): DecisionRecord[] {
       }
     }
     return out;
+  } catch {
+    return [];
+  }
+}
+
+/** The days that have a ledger file, newest first. */
+export function ledgerDays(): string[] {
+  try {
+    return readdirSync(jevLedgerDir())
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+      .map((f) => f.slice(0, 10))
+      .sort()
+      .reverse();
   } catch {
     return [];
   }

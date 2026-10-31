@@ -137,6 +137,19 @@ export const IconChevronRight = (p: IconProps) => (
   </Icon>
 );
 
+export const IconChevronLeft = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m9.8 4-4 4 4 4" />
+  </Icon>
+);
+
+export const IconMic = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6" y="1.8" width="4" height="7.4" rx="2" />
+    <path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 11.9v2.3" />
+  </Icon>
+);
+
 export const IconSend = (p: IconProps) => (
   <Icon {...p}>
     <path d="M14 2 7.2 8.8M14 2l-4.4 12-2.4-5.2L2 6.4 14 2Z" />
@@ -153,6 +166,12 @@ export const IconExternalLink = (p: IconProps) => (
   <Icon {...p}>
     <path d="M9.5 2.5H13.5v4M13.5 2.5 7.8 8.2" />
     <path d="M12.5 9.6v2.9a1.5 1.5 0 0 1-1.5 1.5H3.5A1.5 1.5 0 0 1 2 12.5V5a1.5 1.5 0 0 1 1.5-1.5h2.9" />
+  </Icon>
+);
+
+export const IconFolder = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.3l1.4 1.8h5.1A1.6 1.6 0 0 1 14 6.4v5A1.6 1.6 0 0 1 12.4 13H3.6A1.6 1.6 0 0 1 2 11.4V4.6Z" />
   </Icon>
 );
 
@@ -194,6 +213,17 @@ export const IconMonitor = (p: IconProps) => (
   <Icon {...p}>
     <rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.5" />
     <path d="M5.8 14h4.4M8 11.2V14" />
+  </Icon>
+);
+
+export const IconDrag = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="4" r="1" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="4" r="1" fill="currentColor" stroke="none" />
+    <circle cx="6" cy="8" r="1" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="8" r="1" fill="currentColor" stroke="none" />
+    <circle cx="6" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="12" r="1" fill="currentColor" stroke="none" />
   </Icon>
 );
 

@@ -515,6 +515,13 @@ export async function setCheckpointRef(gitRoot: string, ref: string, commit: str
   if (res.code !== 0) throw failed('Saving the checkpoint', res);
 }
 
+export async function readCheckpointRef(gitRoot: string, ref: string, run: CheckpointGitRunner = defaultCheckpointGit): Promise<string | null> {
+  assertCheckpointRef(ref);
+  const res = await run(gitRoot, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+  const sha = res.stdout.toString('utf8').trim();
+  return res.code === 0 && isSha(sha) ? sha : null;
+}
+
 /** Every ref under `prefix` (a checkpoint namespace) → its commit. */
 export async function listCheckpointRefs(gitRoot: string, prefix: string, run: CheckpointGitRunner = defaultCheckpointGit): Promise<Map<string, string>> {
   assertCheckpointRef(`${prefix}/x`);

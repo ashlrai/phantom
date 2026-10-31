@@ -49,6 +49,7 @@ export const RUNTIME_ACTIVATION_AUTHORITY_KEY_DOMAIN_V1 =
   'ashlr:runtime-activation-authority-key:v1' as const;
 export const RUNTIME_ACTIVATION_MANIFEST_DOMAIN_V1 = 'ashlr:runtime-activation-manifest:v1' as const;
 export const RUNTIME_ACTIVATION_REQUEST_DOMAIN_V1 = 'ashlr:runtime-activation-preflight-request:v1' as const;
+export const RUNTIME_ACTIVATION_AUTHORITY_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_ACTIVATION_AUTHORITY_MAX_LIFETIME_MS = 15 * 60 * 1_000;
 
 const SIGNATURE_INPUT_DOMAIN = 'ashlr:runtime-activation-manifest-signature:v1\0';

@@ -27,6 +27,7 @@ import {
   computerAppPolicy,
   isComputerTier,
   minTier,
+  tierRank,
   type ComputerErrorCode,
   type ComputerFrame,
   type ComputerGrantWire,
@@ -448,6 +449,16 @@ export function forgetComputerChat(sessionId: string): void {
 export function anyComputerGrant(): boolean {
   for (const state of chats.values()) if (state.grants.size > 0) return true;
   return false;
+}
+
+/** Highest tier any chat holds for an app (for diagnostics). */
+export function highestComputerTier(bundleId: string): ComputerTier | null {
+  let best: ComputerTier | null = null;
+  for (const state of chats.values()) {
+    const grant = state.grants.get(grantKey(bundleId));
+    if (grant && (best === null || tierRank(grant.tier) > tierRank(best))) best = grant.tier;
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------

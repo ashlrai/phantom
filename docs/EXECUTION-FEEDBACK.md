@@ -44,9 +44,3 @@ The timeline joins a real terminal attempt to proposals only by exact run and tr
 Partial proposal history, unreadable ledger sources, malformed records and conflicting bindings have independent coverage. Missing timestamps stay unknown; the reading time never becomes a verification or merge time. The shared worker's existing timeout and heap boundaries contain expensive history inspection; these are read limits, not account or work quotas. No new case-count truncation is introduced. Detail responses project only closed outcome fields and fixed navigation links, excluding prompts, diffs, raw errors, account identities, grant IDs and repository paths.
 
 A merge or green post-merge observation is not shipping proof. Case details explicitly say release/deployment is not recorded. Current durable records also lack workflow/check-run IDs, so this view neither fabricates GitHub Actions links nor fetches them when opened.
-
-## One-ask reward observation
-
-`inspectOneAskReward` reports one attempt's task weight divided by its total input and output tokens after an authenticated merge survives a 72-hour Git history inspection. A deterministic revert yields the negative of that value, including when found later; publishing without merging yields zero. The caller supplies the complete attempt usage and a positive weight. Missing or invalid usage, an unauthenticated merge, incomplete inspection, an unelapsed window, and a heuristic follow-up remain unknown rather than earning a score.
-
-This is an observation of the inspected local HEAD, not proof that a remote branch was fetched or that every kind of revert was detected. The existing inspector detects explicit Git revert references and treats overlapping fix-like commits as heuristic follow-ups. A later inspection can change the result. This score does not release post-merge credit, change routing, or grant merge authority.

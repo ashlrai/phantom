@@ -53,6 +53,9 @@ export interface OfflineChoicePayload {
   model: 'jev-1.13.0'; mode: 'offline-fixture'; state: string;
   questions: { resource_choice: TypeSafeChoiceQuestion };
 }
+export type OfflineChoiceResponse =
+  | { ok: true; answers: { resource_choice: { type: 'choice'; choice: string; confidence: number; probabilities: Record<string, number> } } }
+  | { ok: false; reason: 'timeout' | '429' | '529' | 'malformed-response' };
 export interface OfflineChoiceAdapter {
   mode: 'offline-fixture'; choose(payload: OfflineChoicePayload, signal: AbortSignal): Promise<unknown>;
 }

@@ -17,6 +17,7 @@ import {
   touchMutationHold,
   clearMutationToken,
 } from './auth-store.js';
+import type { SseEventName } from './sse.js';
 import { subscribeTheme, getTheme, setTheme, cycleTheme, type ThemePreference } from './theme-store.js';
 
 /**
@@ -145,6 +146,18 @@ export function useMutationHold(): MutationHold {
     touch: touchMutationHold,
     clear: clearMutationToken,
   };
+}
+
+/** Subscribe to a raw named SSE event for the lifetime of the component. */
+export function useSseEvent(name: SseEventName, onEvent: (payload: unknown) => void): void {
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    void import('./sse.js').then(({ onSseEvent }) => {
+      if (active) unsubscribe = onSseEvent(name, onEvent);
+    }).catch(() => undefined);
+    return () => { active = false; unsubscribe(); };
+  }, [name, onEvent]);
 }
 
 export interface ThemeControl {

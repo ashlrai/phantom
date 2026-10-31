@@ -10,6 +10,7 @@ import { comparePreparationScenarioVectors, extractPreparationScenarioVector } f
 import { parsePreparationMeasurementReport } from './preparation-measurement-report.js';
 import type { UniverseDiagnostic } from './types.js';
 
+export const PREPARATION_PROCESS_SCORE_ID = 'preparation-process-score-v1';
 const TARGET = 'src/core/resources/engineering-preparation.ts';
 export interface PreparationProcessInventoryFile { path: string; executable: boolean; bytes: number; sha256: string }
 export interface PreparationProcessInventory { digest: string; files: PreparationProcessInventoryFile[] }

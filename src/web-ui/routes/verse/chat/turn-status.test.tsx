@@ -5,7 +5,7 @@ import { statusLine, turnAcknowledgement, turnResult } from '../../../../core/ve
 import { bootstrap, session } from '../fixtures.test-support.js';
 import { Sidebar } from '../Sidebar.js';
 import { parseVerseEventFrame, VERSE_EVENT_TYPES } from '../verse-event-frame.js';
-import { applyVerseEvent, applyVerseEvents, getVerseSessionHead, resetVerseStore, seedVerseSession, setVerseSession } from '../verse-store.js';
+import { applyVerseEvent, getVerseSessionHead, resetVerseStore, seedVerseSession } from '../verse-store.js';
 import { buildTranscript } from '../verse-transcript.js';
 
 const event = (phase: 'acknowledgement' | 'result', text: string): Extract<VerseEvent, { type: 'assistant-status' }> => ({
@@ -53,38 +53,6 @@ describe('assistant status delivery', () => {
     expect(getVerseSessionHead('chat').session?.lastResult).toBeUndefined();
     applyVerseEvent('chat', result);
     expect(getVerseSessionHead('chat').session?.lastResult).toBe(result.text);
-  });
-
-  it.each(['detail', 'post'] as const)('retains a streamed result when a stale %s snapshot arrives', source => {
-    const result = event('result', 'Result for Fix it: Fixed and verified.');
-    const stale = session({ id: 'chat', status: 'running', updatedAt: '2026-10-26T11:59:59Z' });
-    seedVerseSession('chat', stale, []);
-    applyVerseEvents('chat', [
-      { type: 'user-message', seq: 1, at: '2026-10-26T11:59:58Z', turnId: 'task', text: 'Fix it' },
-      { type: 'turn-started', seq: 2, at: stale.updatedAt, turnId: 'task', pid: 123 },
-      result,
-      { type: 'turn-done', seq: 4, at: '2026-10-26T12:00:01Z', turnId: 'task', ok: true, nativeSessionId: null, durationMs: 2_000 },
-    ]);
-    if (source === 'detail') seedVerseSession('chat', stale, []);
-    else setVerseSession('chat', stale, 'task');
-    expect(getVerseSessionHead('chat').session).toMatchObject({ status: 'idle', lastResult: result.text });
-  });
-
-  it('replays the latest durable result from a cold detail read', () => {
-    const first = event('result', 'Earlier result');
-    const latest = { ...first, seq: 5, text: 'Latest result' };
-    seedVerseSession('chat', session({ id: 'chat', updatedAt: '2026-10-26T11:59:59Z' }), [
-      first, { ...event('acknowledgement', 'Working again'), seq: 4 }, latest,
-    ]);
-    expect(getVerseSessionHead('chat').session?.lastResult).toBe(latest.text);
-  });
-
-  it('keeps a newer snapshot result when the fetched event log lags behind it', () => {
-    const previous = event('result', 'Earlier result');
-    seedVerseSession('chat', session({
-      id: 'chat', updatedAt: '2026-10-26T12:01:00Z', lastResult: 'A newer result',
-    }), [previous]);
-    expect(getVerseSessionHead('chat').session?.lastResult).toBe('A newer result');
   });
 
   it('renders the durable result in an unread sidebar row and clears it when selected', () => {

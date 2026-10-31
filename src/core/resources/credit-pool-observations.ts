@@ -5,7 +5,6 @@ import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { sameResourceAccountIdentity, validResourceAccountIdentityWitness, type ResourceAccountIdentityWitness } from './account-identity-witness.js';
-import { TYPED_MAX_AGE_MS, type Reading } from './lane-autopilot.js';
 import type { CreditPoolObservation, CreditPoolReadView, CreditPoolRowView } from './credit-pool-types.js';
 
 export const CREDIT_POOL_FILE = 'credit-pools.json';
@@ -176,61 +175,4 @@ export function writeCreditPoolObservation(value: unknown, options: {
     inspectPrivateDirectory(options.root);
     writePrivateFileAtomic(join(options.root, CREDIT_POOL_FILE), text);
   } finally { releaseLocalStoreLock(lock); }
-}
-
-// ---------------------------------------------------------------------------
-// Resource autopilot inputs (read-only). Typed values come from budget-overrides.json,
-// which Masbot fills in; every value must carry as_of. Values are never logged.
-// ---------------------------------------------------------------------------
-
-export const AUTOPILOT_CODEX_TTL_MS = 30 * 60_000;
-export const AUTOPILOT_DEVIN_TTL_MS = 5 * 60_000;
-
-function typedAsOf(entry: Record<string, unknown>): string | null {
-  const at = entry['as_of'];
-  return typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null;
-}
-function num(value: unknown): number | null {
-  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
-}
-
-/** Anthropic API balance typed under budget-overrides.json `claude-api.gift`. Missing as_of means unknown. */
-export function anthropicBalanceReading(overrides: unknown): Reading<{ usdRemaining: number }> {
-  const lane = object(overrides) ? overrides['claude-api'] : undefined;
-  const gift = object(lane) ? lane['gift'] : undefined;
-  if (!object(gift)) return { value: null, asOf: null, ttlMs: TYPED_MAX_AGE_MS };
-  const usd = num(gift['usd_remaining']); const asOf = typedAsOf(gift);
-  return { value: usd === null || asOf === null ? null : { usdRemaining: usd }, asOf, ttlMs: TYPED_MAX_AGE_MS };
-}
-
-/** Devin period allowance typed under budget-overrides.json `devin.allowance` plus live v3 consumption totals. */
-export function devinAllowanceReading(overrides: unknown, usedAcus: number | null, nowMs: number):
-Reading<{ usedAcus: number; allowanceAcus: number; periodFraction: number }> {
-  const lane = object(overrides) ? overrides['devin'] : undefined;
-  const a = object(lane) ? lane['allowance'] : undefined;
-  if (!object(a) || usedAcus === null) return { value: null, asOf: null, ttlMs: TYPED_MAX_AGE_MS };
-  const acus = num(a['acus']); const asOf = typedAsOf(a);
-  const start = typeof a['period_start'] === 'string' ? Date.parse(a['period_start']) : NaN;
-  const end = typeof a['period_end'] === 'string' ? Date.parse(a['period_end']) : NaN;
-  if (acus === null || asOf === null || !(end > start)) return { value: null, asOf, ttlMs: TYPED_MAX_AGE_MS };
-  const periodFraction = Math.max(0, Math.min(1, (nowMs - start) / (end - start)));
-  return { value: { usedAcus, allowanceAcus: acus, periodFraction }, asOf, ttlMs: TYPED_MAX_AGE_MS };
-}
-
-/** Codex usage from session rollout `rate_limits` only (as in PR #1138); never auth files. */
-export function codexQuotaReading(rateLimits: unknown, asOf: string | null): Reading<{ usedPercent: number }> {
-  if (!object(rateLimits) || asOf === null) return { value: null, asOf, ttlMs: AUTOPILOT_CODEX_TTL_MS };
-  const used: number[] = [];
-  for (const key of ['primary', 'secondary']) {
-    const w = rateLimits[key];
-    const pct = object(w) ? num(w['used_percent']) : null;
-    if (pct !== null) used.push(pct);
-  }
-  return { value: used.length ? { usedPercent: Math.max(...used) } : null, asOf, ttlMs: AUTOPILOT_CODEX_TTL_MS };
-}
-
-/** Cloud credits (Vercel, Supabase, Hugging Face): no verified read-only source yet. Slot left open. */
-export function cloudCreditReading(_provider: string): Reading<{ usdRemaining: number }> {
-  return { value: null, asOf: null, ttlMs: TYPED_MAX_AGE_MS };
 }

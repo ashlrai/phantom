@@ -757,7 +757,6 @@ mod tests {
     }
 
     /// Live check against a REAL sidecar server (not run by default):
-    /// Ignored because it requires a running sidecar and operator-provided credentials.
     /// `ASHLR_LIVE_ACTIVITY_PORT=… ASHLR_LIVE_ACTIVITY_TOKEN=… [ASHLR_LIVE_MUTATION_TOKEN=…]
     ///  cargo test -- --ignored live_activity`.
     /// Proves the real route's response parses, its cursor is one we echo, a
@@ -765,7 +764,7 @@ mod tests {
     /// cancel POST passes the sidecar's mutation gate: an unknown session is a
     /// 404 (gate passed, route answered), a wrong token a 401.
     #[test]
-    #[ignore = "requires a running sidecar and ASHLR_LIVE_ACTIVITY_PORT/ASHLR_LIVE_ACTIVITY_TOKEN"]
+    #[ignore]
     fn live_activity_poll_and_cancel_against_a_running_server() {
         use crate::health_watch::{fetch, post_json, FetchError};
         let port: u16 = std::env::var("ASHLR_LIVE_ACTIVITY_PORT")

@@ -1010,15 +1010,6 @@ export async function cmdMcp(args: string[]): Promise<number> {
     return 0;
   }
 
-  // `mcp <verb> --help` prints usage and never runs the verb: `mcp run --help`
-  // used to start the stdio gateway, `mcp list --help` scanned the registry,
-  // and `mcp ecosystem --write --help` would have merged servers into
-  // ~/.ashlr/settings.json.
-  if (sub !== 'fleet' && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
-    printHelp();
-    return 0;
-  }
-
   if (sub === 'fleet') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
       console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}.');

@@ -35,6 +35,13 @@ import type { WorkedEvent, WorkedOutcome } from '../fleet/worked-ledger.js';
 import { hostname } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 
+export const WORK_QUEUE_COORDINATOR_SEAM = {
+  id: 'workQueueCoordinator' as const,
+  name: 'WorkQueueCoordinator',
+  delegatesTo: 'core/fleet/worked-ledger.ts + core/fleet/shared-store.ts',
+  summary: 'Work-item claim/skip coordination (LOCAL = per-machine; SHARED = multi-machine filesystem lease).',
+};
+
 export interface QueueClaimGeneration {
   readonly itemId: string;
   readonly generationId: string;

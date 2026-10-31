@@ -1,5 +1,4 @@
 import type { DriveJob } from './supervisor.js';
-import { drivePoolAllowed } from './pool-routing.js';
 
 /**
  * Structural read seam for DRIVER-1's documented queue.v1. The full document
@@ -38,10 +37,7 @@ export function projectDriveQueueV1(queue: DriveQueueV1): DriveJob[] {
     }
     const priority = /^P([0-9])$/.exec(job.priority);
     const routed = [job.pool, job.tier, job.repo].every(value => value !== 'unspecified');
-    // A line whose pool violates the kind routing policy (pool-routing.ts) is
-    // held for review, like an `unspecified` route — never launched as routed.
-    const ready = job.status === 'READY' && priority !== null && routed && job.deps.every(dep => completed.has(dep)) &&
-      drivePoolAllowed(job.id, job.pool);
+    const ready = job.status === 'READY' && priority !== null && routed && job.deps.every(dep => completed.has(dep));
     return { id: job.id, pool: job.pool, priority: priority ? 9 - Number(priority[1]) : 0,
       state: job.status === 'CLAIMED' ? 'STARTING' : ready ? 'READY' : 'HELD' };
   });

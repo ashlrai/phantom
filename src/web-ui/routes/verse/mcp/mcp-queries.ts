@@ -125,3 +125,13 @@ export async function applyMcpServer(
   return result;
 }
 
+/**
+ * POST /api/verse/mcp/cli-probe — read the installed CLI versions.
+ *
+ * A POST because it launches the provider CLIs. Nothing about it is a read.
+ */
+export async function probeCliVersions(): Promise<unknown> {
+  const result = await post<unknown>('/api/verse/mcp/cli-probe', {});
+  invalidate(MCP_CLI_HEALTH_KEY);
+  return result;
+}

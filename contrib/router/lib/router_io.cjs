@@ -223,7 +223,7 @@ function headroom(ledgerText, nowIso, cooldownJson, cliCsv) {
 }
 
 function rejectsModel(text) {
-  return /not available|not supported|do not have access|does not have access|don't have access|unknown model|model[ _-]not[ _-]found|no such model|invalid model|is not a valid model|rejected|cannot use model|not entitled/i.test(text);
+  return /not available|not supported|do not have access|does not have access|don't have access|unknown model|model_not_found|invalid model|is not a valid model|rejected|cannot use model|not entitled/i.test(text);
 }
 
 function codexModels(data) {
@@ -965,27 +965,8 @@ function markDead(state, accountId, reason, nowIso) {
   return found;
 }
 
-// A model rejected at runtime joins probed_bad so later jobs resolve around it.
-function recordModelReject(state, cli, model, nowIso) {
-  if (!['codex', 'claude', 'grok', 'omlx'].includes(cli)) return false;
-  const clean = String(model || '');
-  if (!/^[A-Za-z0-9._:/-]+$/.test(clean)) return false;
-  if (state.models == null || typeof state.models !== 'object') state.models = {};
-  const row = state.models[cli] && typeof state.models[cli] === 'object' ? state.models[cli] : {};
-  const bad = Array.isArray(row.probed_bad) ? row.probed_bad.slice() : [];
-  if (!bad.includes(clean)) bad.push(clean);
-  row.probed_bad = bad;
-  row.checked_at = nowIso;
-  state.models[cli] = row;
-  return true;
-}
-
 function authFailed(text) {
   // A missing login stays retryable. A refresh or renewal failure marks the pool dead.
-  // A rejected model is not an auth failure: Codex 0.165 fails fast on an
-  // unknown model, and its preserved provider text can carry login guidance.
-  // The pool must stay up while the model is dropped and the job rerouted.
-  if (rejectsModel(text)) return false;
   return /failed to refresh|could not refresh|cannot refresh|can't refresh|refresh token|re-?authenticate|authentication failed|auth error|invalid_grant|session expired|login expired|token expired|credentials (?:are )?expired|unable to renew|cannot renew|can't renew/i.test(String(text));
 }
 
@@ -1769,13 +1750,6 @@ function main() {
       nowIso,
       flags.limited === '1',
     );
-    writeState(flags.state, state);
-    return;
-  }
-  if (command === 'record-model-reject') {
-    const nowIso = flags.now || isoFromMs(Date.now());
-    const state = readState(flags.state);
-    if (!recordModelReject(state, flags.cli || '', flags.model || '', nowIso)) process.exit(1);
     writeState(flags.state, state);
     return;
   }

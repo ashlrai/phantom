@@ -292,11 +292,50 @@ export interface AgentBoardResponse {
 // Requests
 // ===========================================================================
 
+/** POST /api/verse/agents/workspaces — make the worktree (the chat is created next, by the page). */
+export interface AgentWorkspaceCreateRequest {
+  root: string;
+  /** Optional slug; derived from the title otherwise. */
+  name?: string;
+  title: string;
+  planFirst?: boolean;
+  spendCapUsd?: number | null;
+  autoFix?: boolean;
+  autoMerge?: boolean;
+}
+
 export interface AgentWorkspaceCreateResponse {
   agent: AgentRecord;
   config: WorkspaceConfigRead;
   /** Agents archived to stay under the cap. */
   archivedForCap: string[];
+}
+
+/** POST /api/verse/agents/:id/bind — attach the chat, and hand over the first prompt. */
+export interface AgentBindRequest {
+  sessionId: string;
+  /** Held until setup finishes, then sent (as a plan request when Plan first is on). */
+  prompt?: string;
+}
+
+/** POST /api/verse/agents/chat — adopt an existing chat (no workspace) so it can have toggles and a cap. */
+export interface AgentAdoptRequest {
+  sessionId: string;
+}
+
+/** POST /api/verse/agents/:id/settings */
+export interface AgentSettingsUpdate {
+  autoFix?: boolean;
+  autoMerge?: boolean;
+  spendCapUsd?: number | null;
+  pinned?: boolean;
+  title?: string;
+}
+
+/** POST /api/verse/agents/:id/plan — approve (optionally edited) or discard. */
+export interface AgentPlanDecision {
+  action: 'approve' | 'discard';
+  text?: string;
 }
 
 /** GET /api/verse/agents/:id/checks */

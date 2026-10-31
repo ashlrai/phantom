@@ -35,7 +35,7 @@ router_verify_isolated() {
   fi
   node_bin=$(command -v node)
   npm_bin=$(command -v npm)
-  path_allow="$(dirname "$npm_bin"):$(dirname "$node_bin"):/usr/bin:/bin"
+  path_allow="$(dirname "$node_bin"):$(dirname "$npm_bin"):/usr/bin:/bin"
   home=$(mktemp -d "${TMPDIR:-/tmp}/router-verify.XXXXXX")
   case "$home" in
     "${TMPDIR:-/tmp}/router-verify."*) ;;
@@ -49,11 +49,11 @@ router_verify_isolated() {
     while IFS= read -r script; do
       [[ -n "$script" ]] || continue
       if [[ "$script" == "test" ]]; then
-        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- "$npm_bin" --prefix "$dir" test; then
+        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" test; then
           rc=1
         fi
       elif [[ "$script" == "lint" ]]; then
-        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- "$npm_bin" --prefix "$dir" run lint; then
+        if ! router_exec_clean "HOME=${home}" "PATH=${path_allow}" npm_config_offline=true -- npm --prefix "$dir" run lint; then
           rc=1
         fi
       fi

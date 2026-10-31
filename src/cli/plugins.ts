@@ -7,17 +7,25 @@
  *   - `enable` is the consent gate: shows declared capabilities + a trust
  *     warning, requires interactive confirmation (or --yes), and pins the
  *     entry file's sha256 into ~/.ashlr/config.json (tamper evidence).
+ *     Stdin that is not a terminal never prompts (exit 2, prints the --yes
+ *     command). --dry-run writes nothing. An unchanged pin reports already
+ *     enabled and does not rewrite config.
  *   - `disable` removes the name from plugins.enabled (pin kept for re-enable).
+ *     A name that is not enabled reports already disabled and exits 0.
+ *     --dry-run writes nothing.
  *   - `ashlr x <name> [...]` runs an enabled plugin's command through the
  *     wrapped (audited, exit-code-safe) runner.
  *
- * Exit codes: 0 success · 1 runtime error · 2 bad usage.
+ * Exit codes: 0 success, 1 runtime error, 2 bad usage (including enable
+ * without --yes when stdin is not a terminal).
  */
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { join, basename } from 'node:path';
 
-import { loadConfig, saveConfig } from '../core/config.js';
+import { loadConfig, loadConfigReadOnly, saveConfig } from '../core/config.js';
 import { makeColors, isTty, pad } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 
@@ -33,16 +41,30 @@ async function importIntegrity() {
 
 function printPluginsHelp(): void {
   console.log('');
-  console.log(c.bold('  ashlr plugins') + c.dim(' — manage the plugin layer (default-off)'));
+  console.log(c.bold('  ashlr plugins') + c.dim('  manage the plugin layer (default-off)'));
   console.log('');
-  console.log(`    ${c.cyan('ashlr plugins init <name> [--capability k]')} ${c.dim('scaffold a working plugin skeleton')}`);
-  console.log(`    ${c.cyan('ashlr plugins list [--json]')}        ${c.dim('discover plugins (manifests only — runs NO plugin code)')}`);
-  console.log(`    ${c.cyan('ashlr plugins info <name>')}          ${c.dim('manifest detail for one plugin')}`);
-  console.log(`    ${c.cyan('ashlr plugins enable <name> [--yes]')} ${c.dim('consent gate: confirm + integrity-pin + enable')}`);
-  console.log(`    ${c.cyan('ashlr plugins disable <name>')}       ${c.dim('remove from plugins.enabled')}`);
-  console.log(`    ${c.cyan('ashlr x <name> [args...]')}           ${c.dim("run an enabled plugin's command")}`);
+  console.log(`    ${c.cyan('ashlr plugins list [--json]')}`);
+  console.log(`    ${c.cyan('ashlr plugins info <name> [--json]')}`);
+  console.log(`    ${c.cyan('ashlr plugins init <name> [--capability scanner|template|provider|command] [--json] [--dry-run]')}`);
+  console.log(`    ${c.cyan('ashlr plugins enable <name> [--yes] [--json] [--dry-run]')}`);
+  console.log(`    ${c.cyan('ashlr plugins disable <name> [--json] [--dry-run]')}`);
+  console.log(`    ${c.cyan('ashlr x <name> [args...]')}`);
   console.log('');
-  console.log('  ' + c.dim('Plugins live in ~/.ashlr/plugins/<name>/ — see docs/PLUGINS.md for the trust model.'));
+  console.log('  Examples:');
+  console.log(`    ${c.cyan('phm plugins list --json')}`);
+  console.log(`    ${c.cyan('phm plugins init my-scanner --capability scanner --dry-run')}`);
+  console.log(`    ${c.cyan('phm plugins enable my-scanner --dry-run')}`);
+  console.log(`    ${c.cyan('phm plugins enable my-scanner --yes')}`);
+  console.log('');
+  console.log('  Flags:');
+  console.log(`    ${c.cyan('--json')}        one JSON value on stdout`);
+  console.log(`    ${c.cyan('--yes')}         enable without a prompt`);
+  console.log(`    ${c.cyan('--dry-run')}     report the change and write nothing`);
+  console.log(`    ${c.cyan('--capability')}  init only: scanner, template, provider, or command`);
+  console.log('');
+  console.log('  ' + c.dim('When stdin is not a terminal, enable does not prompt. Pass --yes.'));
+  console.log('  ' + c.dim('Exit 0 done, 1 plugin or entry file failed, 2 bad usage or enable without --yes.'));
+  console.log('  ' + c.dim('Plugins live in ~/.ashlr/plugins/<name>/. See docs/PLUGINS.md for the trust model.'));
   console.log('');
 }
 
@@ -52,8 +74,13 @@ function usageError(usage: string): number {
   return 2;
 }
 
-/** y/N prompt (TTY only; non-TTY refuses unless --yes). */
+/**
+ * y/N prompt. When stdin is not a terminal this resolves false immediately
+ * and does not read stdin, so a piped agent cannot hang. Callers must treat
+ * that as a refusal and print the --yes command.
+ */
 function promptConfirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return Promise.resolve(false);
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(`${question} [y/N] `, (answer) => {
@@ -144,46 +171,85 @@ async function cmdPluginsInfo(name: string | undefined, jsonMode: boolean): Prom
   return 0;
 }
 
-async function cmdPluginsEnable(name: string | undefined, yes: boolean, jsonMode: boolean): Promise<number> {
+function enableResult(fields: {
+  name: string;
+  integrity: string;
+  already: boolean;
+  dryRun: boolean;
+}): { ok: true; enabled: true; name: string; integrity: string; already: boolean; dryRun: boolean } {
+  return { ok: true, enabled: true, name: fields.name, integrity: fields.integrity, already: fields.already, dryRun: fields.dryRun };
+}
+
+async function cmdPluginsEnable(name: string | undefined, yes: boolean, jsonMode: boolean, dryRun: boolean): Promise<number> {
   if (!name) {
-    return usageError('ashlr plugins enable <name> [--yes]');
+    return usageError('ashlr plugins enable <name> [--yes] [--json] [--dry-run]');
   }
   const { discoverPlugins } = await importRegistry();
   const { hashEntry } = await importIntegrity();
 
   const found = discoverPlugins().find((p) => p.manifest?.name === name);
   if (!found?.ok || !found.manifest) {
-    process.stderr.write(`error: no valid plugin named "${name}" under ~/.ashlr/plugins/` +
-      (found?.reason ? ` (${found.reason})` : '') + '\n');
+    const why = found?.reason ? ` (${found.reason})` : '';
+    process.stderr.write(
+      `error: no valid plugin named "${name}" under ~/.ashlr/plugins/${why}\n` +
+      '  Re-run: phm plugins list --json\n',
+    );
     return 1;
   }
 
-  // ── The consent gate ──────────────────────────────────────────────────────
+  const entryPath = join(found.dir, found.manifest.entry);
+  const hash = hashEntry(entryPath);
+  if (!hash) {
+    process.stderr.write(
+      `error: could not hash entry file ${entryPath}. The file is missing or unreadable.\n` +
+      `  Re-run after the entry exists: phm plugins enable ${name} --yes\n`,
+    );
+    return 1;
+  }
+
+  const current = loadConfigReadOnly();
+  const pinned = current.plugins?.integrity?.[name];
+  const already = (current.plugins?.enabled ?? []).includes(name) && pinned === hash;
+  if (already || dryRun) {
+    const result = enableResult({ name, integrity: hash, already, dryRun });
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    } else if (already) {
+      console.log(c.green(`  already enabled ${name}`) + c.dim(' (entry pin unchanged)'));
+    } else {
+      console.log(c.dim(`  dry-run: would enable ${name} and pin ${hash.slice(0, 18)}…`));
+      console.log(c.dim(`  Re-run: phm plugins enable ${name} --yes`));
+    }
+    return 0;
+  }
+
+  // Consent gate. stdin, not stdout: a terminal stdout with a piped stdin must not prompt.
   if (!yes) {
-    if (!isTty()) {
-      process.stderr.write('error: enabling a plugin requires confirmation — re-run with --yes in non-TTY contexts.\n');
-      return 1;
+    if (!process.stdin.isTTY) {
+      const message = `stdin is not a terminal, so plugins enable will not prompt. Re-run: phm plugins enable ${name} --yes`;
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify({
+          ok: false, enabled: false, name, already: false, dryRun: false, error: message,
+        }) + '\n');
+      }
+      process.stderr.write(
+        `error: ${message}\n` +
+        `  Preview: phm plugins enable ${name} --dry-run\n`,
+      );
+      return 2;
     }
     console.log('');
     console.log(c.bold(`  Enable plugin "${name}" v${found.manifest.version}?`));
     console.log(`    capabilities: ${c.cyan(found.manifest.capabilities.join(', ') || '(none)')}`);
     console.log('');
-    console.log(c.yellow('  ⚠ An enabled plugin runs IN-PROCESS with the same OS privileges as ashlr.'));
-    console.log(c.yellow('    Only enable plugins whose source you have read or whose author you trust.'));
+    console.log(c.yellow('  An enabled plugin runs in-process with the same OS privileges as ashlr.'));
+    console.log(c.yellow('  Only enable plugins whose source you have read or whose author you trust.'));
     console.log('');
     const confirmed = await promptConfirm('  Enable?');
     if (!confirmed) {
-      console.log(c.dim('  Aborted — plugin remains disabled.'));
+      console.log(c.dim('  Aborted. Plugin remains disabled.'));
       return 0;
     }
-  }
-
-  // ── Integrity pin + config write ─────────────────────────────────────────
-  const entryPath = join(found.dir, found.manifest.entry);
-  const hash = hashEntry(entryPath);
-  if (!hash) {
-    process.stderr.write(`error: could not hash entry file ${entryPath} — does it exist?\n`);
-    return 1;
   }
 
   const cfg = loadConfig();
@@ -193,36 +259,54 @@ async function cmdPluginsEnable(name: string | undefined, yes: boolean, jsonMode
   cfg.plugins = plugins;
   saveConfig(cfg);
 
+  const result = enableResult({ name, integrity: hash, already: false, dryRun: false });
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ enabled: true, name, integrity: hash }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
-    console.log(c.green(`  ✓ enabled ${name}`) + c.dim(` (entry pinned ${hash.slice(0, 18)}…)`));
+    console.log(c.green(`  enabled ${name}`) + c.dim(` (entry pinned ${hash.slice(0, 18)}…)`));
     console.log('');
   }
   return 0;
 }
 
-async function cmdPluginsDisable(name: string | undefined, jsonMode: boolean): Promise<number> {
+function disableResult(name: string, already: boolean, dryRun: boolean): {
+  ok: true; enabled: false; name: string; already: boolean; dryRun: boolean;
+} {
+  return { ok: true, enabled: false, name, already, dryRun };
+}
+
+async function cmdPluginsDisable(name: string | undefined, jsonMode: boolean, dryRun: boolean): Promise<number> {
   if (!name) {
-    return usageError('ashlr plugins disable <name>');
+    return usageError('ashlr plugins disable <name> [--json] [--dry-run]');
   }
-  const cfg = loadConfig();
-  const enabled = cfg.plugins?.enabled ?? [];
+  const current = loadConfigReadOnly();
+  const enabled = current.plugins?.enabled ?? [];
   if (!enabled.includes(name)) {
-    process.stderr.write(`error: plugin "${name}" is not enabled\n`);
-    return 1;
+    const result = disableResult(name, true, dryRun);
+    if (jsonMode) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    else {
+      console.log(c.dim(`  already disabled ${name}. Nothing changed.`));
+      console.log(c.dim('  List plugins: phm plugins list --json'));
+    }
+    return 0;
   }
+  if (dryRun) {
+    const result = disableResult(name, false, true);
+    if (jsonMode) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    else console.log(c.dim(`  dry-run: would disable ${name}. Re-run: phm plugins disable ${name}`));
+    return 0;
+  }
+
+  const cfg = loadConfig();
   cfg.plugins = {
-    enabled: enabled.filter((n) => n !== name),
+    enabled: (cfg.plugins?.enabled ?? []).filter((n) => n !== name),
     settings: cfg.plugins?.settings ?? {},
     integrity: cfg.plugins?.integrity ?? {},
   };
   saveConfig(cfg);
-  if (jsonMode) {
-    process.stdout.write(JSON.stringify({ enabled: false, name }, null, 2) + '\n');
-  } else {
-    console.log(c.green(`  ✓ disabled ${name}`));
-  }
+  const result = disableResult(name, false, false);
+  if (jsonMode) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  else console.log(c.green(`  disabled ${name}`));
   return 0;
 }
 
@@ -315,14 +399,14 @@ function initEntrySource(name: string, capability: InitCapability): string {
   }
 }
 
-async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number> {
+async function cmdPluginsInit(args: string[], jsonMode: boolean, dryRun: boolean): Promise<number> {
   const capIdx = args.indexOf('--capability');
   // The value after --capability is not the name: `init --capability command foo` names foo.
   const name = args.find((a, i) => !a.startsWith('--') && !(capIdx !== -1 && i === capIdx + 1));
   const capability = (capIdx !== -1 ? args[capIdx + 1] : 'scanner') as InitCapability;
 
   if (!name) {
-    return usageError('ashlr plugins init <name> [--capability scanner|template|provider|command]');
+    return usageError('ashlr plugins init <name> [--capability scanner|template|provider|command] [--json] [--dry-run]');
   }
   if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) {
     process.stderr.write(`error: plugin name must match ^[a-z][a-z0-9-]{0,39}$ — got "${name}"\n`);
@@ -333,12 +417,22 @@ async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number
     return 2;
   }
 
-  const { homedir } = await import('node:os');
-  const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
   const dir = join(homedir(), '.ashlr', 'plugins', name);
   if (existsSync(join(dir, 'manifest.json'))) {
-    process.stderr.write(`error: ${dir} already has a manifest.json — refusing to overwrite\n`);
+    process.stderr.write(
+      `error: ${dir} already has a manifest.json, so init will not overwrite it.\n` +
+      `  Re-run: phm plugins enable ${name} --yes\n`,
+    );
     return 1;
+  }
+  if (dryRun) {
+    const result = { created: false, dryRun: true, name, capability, dir };
+    if (jsonMode) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    else {
+      console.log(c.dim(`  dry-run: would scaffold ${name} (${capability}) at ${dir}`));
+      console.log(c.dim(`  Re-run: phm plugins init ${name} --capability ${capability}`));
+    }
+    return 0;
   }
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -359,7 +453,7 @@ async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number
   writeFileSync(join(dir, 'index.mjs'), initEntrySource(name, capability));
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ created: true, name, capability, dir }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ created: true, dryRun: false, name, capability, dir }, null, 2) + '\n');
   } else {
     console.log('');
     console.log(c.green(`  ✓ scaffolded ${name}`) + c.dim(` (${capability}) at ${dir}`));
@@ -382,19 +476,20 @@ async function cmdPluginsInit(args: string[], jsonMode: boolean): Promise<number
  */
 const PLUGINS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   init: {
-    allowed: { flags: ['--json'], values: ['--capability'] },
-    usage: 'usage: ashlr plugins init <name> [--capability scanner|template|provider|command] [--json]',
+    allowed: { flags: ['--json', '--dry-run'], values: ['--capability'] },
+    usage: 'usage: ashlr plugins init <name> [--capability scanner|template|provider|command] [--json] [--dry-run]',
   },
   list: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins list [--json]' },
   info: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins info <name> [--json]' },
-  enable: { allowed: { flags: ['--yes', '--json'] }, usage: 'usage: ashlr plugins enable <name> [--yes] [--json]' },
-  disable: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins disable <name> [--json]' },
+  enable: { allowed: { flags: ['--yes', '--json', '--dry-run'] }, usage: 'usage: ashlr plugins enable <name> [--yes] [--json] [--dry-run]' },
+  disable: { allowed: { flags: ['--json', '--dry-run'] }, usage: 'usage: ashlr plugins disable <name> [--json] [--dry-run]' },
 };
 
 export async function cmdPlugins(args: string[]): Promise<number> {
   const sub = args[0];
   const jsonMode = args.includes('--json');
   const yes = args.includes('--yes');
+  const dryRun = args.includes('--dry-run');
 
   // `plugins <verb> --help` / `-h` prints usage before any plugin is read or
   // scaffolded: the verbs took the flag as a plugin name.
@@ -412,9 +507,9 @@ export async function cmdPlugins(args: string[]): Promise<number> {
   }
   if (sub === 'list') return cmdPluginsList(jsonMode);
   if (sub === 'info') return cmdPluginsInfo(args[1], jsonMode);
-  if (sub === 'init') return cmdPluginsInit(args.slice(1), jsonMode);
-  if (sub === 'enable') return cmdPluginsEnable(args[1], yes, jsonMode);
-  if (sub === 'disable') return cmdPluginsDisable(args[1], jsonMode);
+  if (sub === 'init') return cmdPluginsInit(args.slice(1), jsonMode, dryRun);
+  if (sub === 'enable') return cmdPluginsEnable(args[1], yes, jsonMode, dryRun);
+  if (sub === 'disable') return cmdPluginsDisable(args[1], jsonMode, dryRun);
 
   process.stderr.write(`error: unknown plugins subcommand: ${sub}\n`);
   printPluginsHelp();

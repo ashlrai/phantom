@@ -613,7 +613,4 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-terminal-agents-routes-315.test.ts', // binds a real loopback HTTP server and runs the generated agent hook script (/bin/sh + curl) against it
   'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
   'test/site-seo.test.ts', // spawns real git (log/ls-files/status) to bound sitemap lastmod dates against commit dates
-  'test/affected-map-audit.test.ts', // spawnSync node scripts/audit-affected-map.mjs against temp repo fixtures
-  'test/integration/locus-credential-boundary.test.ts', // spawnSync node children prove credential redaction across the process boundary
-  'test/m30.merge-queue-reaper.test.ts', // execFileSync bash drives a real git fixture and the reaper script end to end
 ];

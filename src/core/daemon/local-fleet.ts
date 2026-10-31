@@ -1246,6 +1246,11 @@ export function markLocalFleetAgentRunning(agentId: string): void {
   }
 }
 
+/** Replace the process monitor. Tests use this; production never needs it. */
+export function setLocalFleetMonitor(monitor: LocalFleetMonitor | null): void {
+  processMonitor = monitor;
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot persistence
 // ---------------------------------------------------------------------------
@@ -1404,6 +1409,11 @@ function persistLedgerState(state: LedgerState): void {
     // An unwritable checkpoint must not stop work. The in-process count still
     // binds for this process's lifetime, which is the window that matters.
   }
+}
+
+/** Drop the in-process count. Tests only; production never needs it. */
+export function resetLocalFleetDispatchState(): void {
+  ledgerState = null;
 }
 
 /** Today's local dispatch count, preferring this process's authoritative one. */

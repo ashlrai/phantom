@@ -506,6 +506,17 @@ export type FleetPhase =
   | 'watching'
   | 'reverting';
 
+export const FLEET_PHASES: readonly FleetPhase[] = [
+  'queued',
+  'parked',
+  'producing',
+  'verifying',
+  'judging',
+  'landing',
+  'watching',
+  'reverting',
+];
+
 export type FleetRunOutcome = 'merged' | 'proposed' | 'owner-lane' | 'refused' | 'failed' | 'reverted' | 'cancelled';
 
 export interface FleetLiveRun {

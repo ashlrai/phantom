@@ -133,6 +133,11 @@ export function noteTickPhase(phase: string, detail: string | null = null, now: 
   });
 }
 
+/** True while this process has a tick open (tests and callers that build details lazily). */
+export function tickProgressOpen(): boolean {
+  return open !== null;
+}
+
 function canonicalIso(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const ms = Date.parse(value);

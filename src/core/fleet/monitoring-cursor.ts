@@ -121,6 +121,8 @@ export function canonicalEnrollmentDigest(repos: readonly string[]): string {
   ])).digest('hex');
 }
 
+export const monitoringEnrollmentDigest = canonicalEnrollmentDigest;
+
 export function monitoringRepoDigest(repo: string): string {
   const canonical = canonicalRepo(repo);
   return canonical ? createHash('sha256').update(JSON.stringify([
@@ -184,6 +186,15 @@ export function selectSuccessorsWithWrap<T>(
     selected.push(ordered[(start + offset) % ordered.length]![1]);
   }
   return { selected, wrapped: wrapped || start + count > ordered.length };
+}
+
+/** Select one successor and wrap to the first identity after the final key. */
+export function selectSuccessorWithWrap<T>(
+  values: readonly T[],
+  after: string | null,
+  keyOf: (value: T) => string,
+): T | null {
+  return selectSuccessorsWithWrap(values, after, 1, keyOf).selected[0] ?? null;
 }
 
 /** Simple one-at-a-time rotation primitive for daemon integrations. */

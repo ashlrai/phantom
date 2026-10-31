@@ -227,6 +227,13 @@ export async function githubNameWithOwner(repo: string): Promise<string | null> 
   return out ? parseGithubRemote(out) : null;
 }
 
+/** Current blob ids only (for cheap staleness checks). Null when unavailable. */
+export async function currentBlobs(repo: string): Promise<{ head: string | null; blobs: Map<string, string> } | null> {
+  const scan = await scanRepo(repo);
+  if (scan.files.length === 0 && !scan.git) return null;
+  return { head: scan.head, blobs: new Map(scan.files.map((f) => [f.rel, f.blob])) };
+}
+
 /**
  * Read one repo file as UTF-8 text. Refuses anything that is not a regular file
  * inside the repo (no symlinks — a link to ~/.ssh must never be read), anything

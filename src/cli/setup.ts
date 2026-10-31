@@ -95,37 +95,6 @@ function buildSummary(steps: OnboardStep[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
-
-function printSetupHelp(): void {
-  console.log('');
-  console.log(bold('  ashlr setup') + dim(' - first-run fleet wizard'));
-  console.log('');
-  console.log('  ' + bold('Usage:'));
-  console.log('');
-  console.log(`    ${cyan('ashlr setup [--yes] [--wire] [--json] [--user <name>] [--user-id <id>]')}`);
-  console.log('');
-  console.log('  ' + bold('Flags:'));
-  console.log('');
-  const flags: [string, string][] = [
-    ['--yes',          'Accept defaults / non-interactive (auto-enroll, skip confirmations). Implied when stdin is not a TTY.'],
-    ['--wire',         'Wire detected editors (backup-first, idempotent).'],
-    ['--json',         'Emit OnboardResult as JSON on stdout.'],
-    ['--user <name>',  'Set the user display name (cfg.user.name). Attributed in fleet pulse.'],
-    ['--user-id <id>', 'Set the user stable id - email recommended (cfg.user.id).'],
-  ];
-  const flagW = Math.max(...flags.map(([f]) => f.length));
-  for (const [flag, desc] of flags) {
-    console.log(`    ${cyan(pad(flag, flagW))}  ${desc}`);
-  }
-  console.log('');
-  console.log(`  ${dim('Exit 0 only when every blocking setup requirement is ready;')}`);
-  console.log(`  ${dim('daemon-service authority denial is blocking (exit 1).')}`);
-  console.log('');
-}
-
-// ---------------------------------------------------------------------------
 // cmdSetup
 // ---------------------------------------------------------------------------
 
@@ -136,12 +105,6 @@ function printSetupHelp(): void {
  * Daemon-service authority denial is blocking and returns 1.
  */
 export async function cmdSetup(args: string[]): Promise<number> {
-  // `setup --help` prints usage and never enters the wizard or the resident
-  // service authorization check.
-  if (args.includes('--help') || args.includes('-h')) {
-    printSetupHelp();
-    return 0;
-  }
   const jsonMode  = args.includes('--json');
   const wireMode  = args.includes('--wire');
   const yesMode   = args.includes('--yes') || !process.stdin.isTTY;

@@ -428,7 +428,7 @@ export type EnrollmentListResponse =
 
 const ENROLL_USAGE: Record<'list' | 'add' | 'remove' | 'kill', string> = {
   list:   'Usage: ashlr enroll list [--json]',
-  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]',
+  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]',
   remove: 'Usage: ashlr enroll remove <repo> [--json]',
   kill:   'Usage: ashlr enroll kill on|off [--json]',
 };
@@ -494,7 +494,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return code;
     };
     // A typo such as `--locus-frm` used to enroll without Locus firm mode.
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm', '--no-secrets-offer'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm'] });
     if (bad) {
       if (json) return fail(2, bad.message);
       console.error(red('error: ') + bad.message);
@@ -502,7 +502,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return 2;
     }
     if (!repo) {
-      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]');
+      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
     }
     const policy = await loadPolicy();
     if (!policy) {
@@ -524,14 +524,6 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       const failure = result === undefined ? null : policyMutationFailure(result, 'Enrollment');
       if (failure) return fail(1, failure);
       if (!json) console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
-      if (!json && !args.includes('--no-secrets-offer')) {
-        try {
-          const { secretsSetupOffer } = await import('./enroll-secrets-offer.js');
-          for (const line of secretsSetupOffer(repo)) console.log(dim(line));
-        } catch {
-          // Advisory only; enrollment already succeeded.
-        }
-      }
 
       // Soft-offer Locus firm on FIRST successful enrollment only. Never forces
       // on CI/tests: non-TTY / --yes requires --locus-firm or ASHLR_LOCUS_FIRM=1.

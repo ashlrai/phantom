@@ -44,6 +44,15 @@ export function preferredLeaderLocalModels(cfg: AshlrConfig | undefined): string
   return [...new Set([...one, ...stringList(leader['localModels'])])];
 }
 
+/**
+ * Legacy configuration helper retained for compatibility. Current native
+ * Leader routing is provider-neutral; this flag does not exclude Claude from
+ * conversations or reserve it for weekly runs.
+ */
+export function claudeFallbackEnabled(cfg: AshlrConfig | undefined): boolean {
+  return leaderCfg(cfg)['claudeFallback'] === true;
+}
+
 const SPEED_RANK: Record<LeaderSpeedClass, number> = { fast: 0, unknown: 1, large: 2 };
 
 /** Stable order for local seats: operator-named first, then fast → unknown → large, then the input order. */

@@ -70,6 +70,10 @@ export {
  */
 export const CLAUDE_STANDARD_AUTOCOMPACT_WINDOW = 400_000;
 
+/** Claude Code clamps `--autocompact` to [100k, 1M]. */
+export const CLAUDE_AUTOCOMPACT_MIN = 100_000;
+export const CLAUDE_AUTOCOMPACT_MAX = 1_000_000;
+
 /** Grok: `auto_compact_threshold_percent` in the 0.2.118 catalog. */
 export const GROK_AUTO_COMPACT_PERCENT = 80;
 

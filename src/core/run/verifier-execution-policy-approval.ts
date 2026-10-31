@@ -271,6 +271,13 @@ export interface VerifierExecutionCompositionIdentityV1 {
   backend: VerifierExecutionPolicyBackendV1;
 }
 
+export interface InspectVerifierExecutionCompositionV1Input {
+  policyApprovalInput: InspectVerifierExecutionPolicyApprovalV1Input;
+  executionAuthorityInput: InspectVerifierExecutionAuthorityV2Input;
+  expectedIdentity: VerifierExecutionCompositionIdentityV1;
+  timeAuthorityObservation: VerifierExecutionTimeAuthorityObservationV1;
+}
+
 export type VerifierExecutionCompositionReasonV1 =
   | 'clock-authority-unavailable'
   | 'invalid-input'

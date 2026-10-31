@@ -3,8 +3,9 @@ import { currentQuotaReading } from '../../../core/verse/quota-freshness.js';
  * routes/verse/verse-model.ts — small pure helpers shared by the Verse
  * components (labels, grouping, health → tone). No React, no I/O.
  */
-import type { VerseEngine, VerseModelOption, VerseProject, VerseSeat, VerseSession } from '../../data/api-types.js';
+import type { VerseEngine, VerseModelOption, VerseProject, VerseSeat, VerseSeatHealth, VerseSession } from '../../data/api-types.js';
 import type { VerseContextMode, VerseWindowSource } from '../../../core/verse/types.js';
+import type { Tone } from '../../components/primitives/StatusBadge.js';
 // context-math is PURE and browser-safe by contract (its only import is
 // type-only), so a value import here does not drag node into the bundle.
 import { budgetFor, canonicalModelId, claudeAutocompactFlag, reconcileAutoCompactAt } from '../../../core/verse/context-math.js';
@@ -225,6 +226,19 @@ export const CODEX_EXPANSIVE_METERING_NOTE =
 /** The first model on a seat that can actually run (skips ones listed with an `unavailableReason`). */
 export function firstRunnableModel(seat: VerseSeat): VerseModelOption | null {
   return seat.models.find((m) => !m.unavailableReason) ?? null;
+}
+
+export function healthTone(state: VerseSeatHealth['state']): Tone {
+  switch (state) {
+    case 'ready':
+      return 'success';
+    case 'degraded':
+      return 'warning';
+    case 'unavailable':
+      return 'danger';
+    default:
+      return 'unknown';
+  }
 }
 
 export function seatUnavailableReason(seat: VerseSeat): string | null {

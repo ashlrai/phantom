@@ -65,9 +65,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['report', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
@@ -89,13 +89,12 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   worker: ['setup', 'status'],
   fleet: [
-    'status', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
+    'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
-  ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
   wiki: ['build', 'status', 'show', 'ask'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
@@ -105,7 +104,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   'conductor-permit': ['request', 'mint', 'inspect', 'stage'],
   vision: ['show', 'review', 'preview', 'shadow', 'approve', 'reconcile', 'set'],
-  eval: ['attention', 'swe-bench', 'router'],
+  eval: ['attention', 'swe-bench'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
@@ -130,7 +129,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
+  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
@@ -201,33 +200,24 @@ complete -F _ashlr_completions ashlr phm
 `;
 }
 
-function printCompletionsHelp(): void {
+export async function cmdCompletions(args: string[]): Promise<number> {
+  const shell = args[0];
+  if (shell === 'zsh') {
+    process.stdout.write(zshScript());
+    return 0;
+  }
+  if (shell === 'bash') {
+    process.stdout.write(bashScript());
+    return 0;
+  }
   const c = makeColors(isTty());
   console.log('');
   console.log(c.bold('  phm completions') + c.dim(' — shell completion scripts'));
   console.log('');
-  console.log('  ' + c.bold('Usage:'));
-  console.log('');
   console.log(`    ${c.cyan('phm completions zsh')}    ${c.dim('print zsh completion (_ashlr) to stdout')}`);
   console.log(`    ${c.cyan('phm completions bash')}   ${c.dim('print bash completion to stdout')}`);
   console.log('');
-}
-
-export async function cmdCompletions(args: string[]): Promise<number> {
-  const shell = args[0];
-  // `--help` / `-h` prints usage and never emits a script - even after a shell
-  // word (`completions zsh --help` used to dump the zsh script).
-  const help = args.includes('--help') || args.includes('-h') || shell === 'help' || shell === undefined;
-  if (shell === 'zsh' && !help) {
-    process.stdout.write(zshScript());
-    return 0;
-  }
-  if (shell === 'bash' && !help) {
-    process.stdout.write(bashScript());
-    return 0;
-  }
-  printCompletionsHelp();
-  return help ? 0 : 2;
+  return shell === undefined || shell === '--help' || shell === '-h' || shell === 'help' ? 0 : 2;
 }
 
 // ---------------------------------------------------------------------------

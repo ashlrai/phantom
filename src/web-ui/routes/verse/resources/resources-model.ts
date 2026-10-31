@@ -75,6 +75,13 @@ export function summarizeResources(rows: readonly CapacityRow[], opts: { healthR
   return { tone, spoken };
 }
 
+export const TONE_WORD: Readonly<Record<ResourcesTone, string>> = {
+  ok: 'all usable',
+  tight: 'running low',
+  alert: 'needs attention',
+  unknown: 'not read yet',
+};
+
 // ---------------------------------------------------------------------------
 // Cloud credits
 // ---------------------------------------------------------------------------

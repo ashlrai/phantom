@@ -494,7 +494,7 @@ describe('session-engine: reasoning flush on crash and shutdown', () => {
     engine.sendTurn(s.id, 'hello');
     expect(tapped).toEqual([]);
     await new Promise((r) => setImmediate(r));
-    expect(tapped).toEqual(['user-message', 'assistant-status', 'turn-started']);
+    expect(tapped).toEqual(['user-message', 'turn-started']);
     expect(flush).not.toHaveBeenCalled();
   });
 

@@ -409,6 +409,24 @@ export function recordOvernightIteration(
   });
 }
 
+/** Append a discard the engine decided outside the post-merge gate. */
+export function recordOvernightDiscard(
+  item: Omit<OvernightDiscardedItem, 'at'> & { at?: string | null },
+  opts: { now?: () => number } = {},
+): OvernightStatus {
+  const current = readOvernightStatus();
+  if (!current.run) return current;
+  return updateOvernightStatus({
+    run: {
+      ...current.run,
+      discarded: [...current.run.discarded, {
+        ...item,
+        at: item.at ?? new Date((opts.now ?? Date.now)()).toISOString(),
+      }],
+    },
+  });
+}
+
 /** Update the live "what is it doing right now" fields. Cheap; called per tick. */
 export function recordOvernightActivity(
   patch: { iterationsDone?: number | null; repo?: string | null; activity?: string | null },

@@ -34,25 +34,10 @@ describe('UI feature flags', () => {
   it('persists both choices across reloads', () => {
     for (const enabled of [true, false]) {
       setFeatureFlag('agentWorkspace', enabled);
-      expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: enabled, oneAsk: false });
+      expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: enabled });
       resetFeatureFlagsForTests();
       expect(getFeatureFlag('agentWorkspace')).toBe(enabled);
     }
-  });
-
-  it('persists each flag independently', () => {
-    expect(getFeatureFlag('oneAsk')).toBe(false);
-    setFeatureFlag('oneAsk', true);
-    expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: false, oneAsk: true });
-    setFeatureFlag('agentWorkspace', true);
-    expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: true, oneAsk: true });
-    resetFeatureFlagsForTests();
-    expect(getFeatureFlag('oneAsk')).toBe(true);
-    expect(getFeatureFlag('agentWorkspace')).toBe(true);
-    setFeatureFlag('oneAsk', false);
-    resetFeatureFlagsForTests();
-    expect(getFeatureFlag('oneAsk')).toBe(false);
-    expect(getFeatureFlag('agentWorkspace')).toBe(true);
   });
 
   it('notifies subscribers only on a change and supports unsubscribe', () => {
@@ -98,7 +83,7 @@ describe('UI feature flags', () => {
     }));
     expect(getFeatureFlag('agentWorkspace')).toBe(true);
     setFeatureFlag('agentWorkspace', false);
-    expect(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)).toBe('{"agentWorkspace":false,"oneAsk":false}');
+    expect(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)).toBe('{"agentWorkspace":false}');
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
 });

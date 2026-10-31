@@ -364,22 +364,14 @@ describe('G7 — required checks (no checks → owner lane)', () => {
     expect(evaluateG7Checks({ ...base, required: [{ context: 'lint', appId: null }], runs: [], statuses: [{ context: 'lint', state: 'success' }] }).verdict).toBe('pass');
   });
 
-  it('local enforcement needs the App\'s green ashlr/verify; every other check is informational (3.13)', () => {
+  it('local enforcement needs the App\'s green ashlr/verify, every other check green, and no red one (3.13)', () => {
     const local = { ...base, enforcement: 'local' as const, required: [] };
     const verify = (conclusion: string | null, appId = '424242', id = 9) => run('ashlr/verify', conclusion, conclusion === null ? 'in_progress' : 'completed', appId, id);
     expect(evaluateG7Checks({ ...local, runs: [] })).toMatchObject({ verdict: 'owner-lane', code: 'no-checks' });
     // 3.13: a green deploy-only / CI check alone no longer proves anything on a local repo.
     expect(evaluateG7Checks({ ...local, runs: [run('build', 'success')] })).toMatchObject({ verdict: 'owner-lane', code: 'no-verify-check' });
     expect(evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('success')] }).verdict).toBe('pass');
-    // Only required contexts block: a red non-required check is informational, a red ashlr/verify refuses.
-    const nonRequiredRed = evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('success'), run('lint', 'failure', 'completed', '1', 2)] });
-    expect(nonRequiredRed).toMatchObject({ verdict: 'pass', code: 'checks-green' });
-    expect(nonRequiredRed.inputs['informational']).toEqual(['build:green', 'lint:red']);
-    expect(evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('failure')] }).verdict).toBe('refuse');
-    // A required context the branch names anyway still blocks on a local repo.
-    const alsoRequired = { ...local, fleetAppId: '424242', required: [{ context: 'ci/test', appId: '15368' }] };
-    expect(evaluateG7Checks({ ...alsoRequired, runs: [verify('success'), run('ci/test', 'failure', 'completed', '15368', 2)] }).verdict).toBe('refuse');
-    expect(evaluateG7Checks({ ...alsoRequired, runs: [verify('success'), run('ci/test', 'success', 'completed', '15368', 2)] }).verdict).toBe('pass');
+    expect(evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('success'), run('lint', 'failure', 'completed', '1', 2)] }).verdict).toBe('refuse');
   });
 
   it('unreadable checks wait', () => {

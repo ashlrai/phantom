@@ -29,7 +29,6 @@ import { RefreshIndicator } from '../../../components/primitives/RefreshIndicato
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { Dialog } from '../../../components/primitives/Dialog.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
-import { LanesPanel } from './LanesPanel.js';
 import styles from './FleetView.module.css';
 
 type PendingAction = 'pause' | 'resume' | null;
@@ -260,8 +259,6 @@ export function FleetView() {
           </section>
         </>
       )}
-
-      <LanesPanel />
 
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>Recent activity</h2>

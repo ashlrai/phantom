@@ -71,7 +71,6 @@ export async function cmdBacklogPlan(args: string[]): Promise<number> {
     console.error(JSON.stringify({
       event: 'rq-plan', sha: diff.sha, ready: plan.ready, minimum: plan.minimum,
       target: plan.target, added: plan.jobs.length, shortfall: plan.shortfall,
-      parked: plan.parked,
     }));
     const output = formatRqQueue(plan.jobs);
     if (output) process.stdout.write(output);

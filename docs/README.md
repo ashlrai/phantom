@@ -35,7 +35,6 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
-| Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
@@ -43,7 +42,6 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
-| Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
@@ -61,7 +59,6 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
-| Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed](METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
@@ -85,6 +82,9 @@ The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/doc
 records the source checkout's overview and full command table.
 
 ## For coding agents
+
+Command scores and the remaining agent gaps are in
+[CLI agent readiness](CLI-AGENT-READINESS.md).
 
 Start with the selected command registry from the binary you intend to use:
 

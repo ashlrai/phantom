@@ -1068,6 +1068,12 @@ async function observeRuntimeActivationLaunchHandoffInternal(
   }
 }
 
+export async function observeRuntimeActivationLaunchHandoffV1(
+  options: RuntimeActivationLaunchHandoffOptionsV1,
+): Promise<RuntimeActivationLaunchHandoffResultV1> {
+  return observeRuntimeActivationLaunchHandoffInternal(options, undefined, process.platform);
+}
+
 /**
  * Verification-only fault-injection surface. It shares the same permanently
  * false authority result and has no daemon, service, or admission consumer.

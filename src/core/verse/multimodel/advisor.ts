@@ -27,6 +27,10 @@ export const ROUTABLE_ENGINES: readonly BudgetEngine[] = ['claude', 'codex', 'de
  * Hard and cheap-first work retain the weaker configured preference. */
 export const STICKINESS = 3.5;
 export const STICKINESS_WEAK = 1.25;
+/** Legacy readable bound; provider-aggregate ROI no longer tilts selection. */
+export const ROI_MAX_TILT = 0.75;
+/** Legacy readable diagnostic threshold; it does not establish exact-model evidence. */
+export const ROI_MIN_DISPATCHES = 10;
 /** Where a tool-less local model lands for edit work: behind everything. */
 const NO_TOOLS_PENALTY = 3;
 const EDIT_KINDS: ReadonlySet<PromptKind> = new Set(['code', 'debug', 'refactor', 'bulk']);

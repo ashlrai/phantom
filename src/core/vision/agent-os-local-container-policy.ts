@@ -44,6 +44,16 @@ export interface AgentOsLocalContainerLimitsV1 {
   cleanupStartGraceMs: number;
 }
 
+export interface AgentOsLocalContainerCreatePolicyInputV1 {
+  image: string;
+  producerDigest: string;
+  allowedProducerDigests: string[];
+  user: string;
+  workingDir: string;
+  seccompProfileDigest: string;
+  limits: AgentOsLocalContainerLimitsV1;
+}
+
 export interface AgentOsLocalContainerCreatePolicyV1 {
   schemaVersion: 1;
   protocol: typeof AGENT_OS_LOCAL_CONTAINER_POLICY_V1;

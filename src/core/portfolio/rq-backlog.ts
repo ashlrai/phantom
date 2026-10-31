@@ -37,8 +37,6 @@ export interface RqPlan {
   target: number;
   /** Remaining gap to target after exhausting available grounded candidates. */
   shortfall: number;
-  /** READY rows held out of capacity by {@link rqJobIsParked}. */
-  parked: number;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -99,33 +97,6 @@ export const rqDigest = (value: string): string => createHash('sha256').update(v
 const titleKey = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const objectiveKey = (job: RqJob): string => `${job.repo}:${job.source}:${job.sourceId}`;
 const workKey = (job: RqJob): string => `${job.repo}:${titleKey(job.title) || rqDigest(job.title)}`;
-
-// The REFILL-*-SALVA and REFILL-*-TEST families repeatedly ran empty (no diff,
-// no PR) because their rows never named concrete targets. A READY family row
-// stays parked — it is not READY capacity and does not suppress refill — until
-// its text names both an absolute worktree path and a `*.test.*` file. Parked
-// rows remain valid queue history: they still deduplicate ids, objectives and
-// titles, so fixing a row edits it rather than appending a duplicate.
-const PARKED_FAMILY = /^REFILL-.+-(?:SALVA|TEST)$/;
-const TOKEN_SPLIT = /[\s"'`(){}[\]<>,;:!?|=]+/;
-const WORKTREE_PATH = /^\/[^/]+(?:\/[^/]+)+$/;
-const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
-
-function namesAnchors(job: RqJob): boolean {
-  let path = false;
-  let test = false;
-  for (const raw of `${job.title}\n${job.prompt}`.split(TOKEN_SPLIT)) {
-    const token = raw.replace(/\.+$/, '');
-    if (WORKTREE_PATH.test(token)) path = true;
-    if (TEST_FILE.test(token)) test = true;
-  }
-  return path && test;
-}
-
-/** A READY parked-family row without a worktree path and test file anchor. */
-export function rqJobIsParked(job: RqJob): boolean {
-  return job.status === 'READY' && PARKED_FAMILY.test(job.id) && !namesAnchors(job);
-}
 
 /** Invalid queue data is unknown, never an empty queue. No partial admission. */
 export function parseRqQueue(contents: string, config: RqConfig): RqJob[] {
@@ -246,10 +217,8 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
   const readyObjectives = new Set<string>();
   const readyTitles = new Set<string>();
   let ready = 0;
-  let parked = 0;
   for (const job of queue) {
     if (job.status !== 'READY') continue;
-    if (rqJobIsParked(job)) { parked++; continue; }
     const objective = objectiveKey(job);
     const title = workKey(job);
     if (!readyObjectives.has(objective) && !readyTitles.has(title)) ready++;
@@ -258,7 +227,7 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
   }
   const minimum = config.activeSlots * 3;
   const target = config.activeSlots * 5;
-  if (ready >= minimum) return { jobs: [], ready, minimum, target, shortfall: 0, parked };
+  if (ready >= minimum) return { jobs: [], ready, minimum, target, shortfall: 0 };
   const ids = new Set(queue.map((job) => job.id));
   const objectives = new Set(queue.map(objectiveKey));
   const titles = new Set(queue.map(workKey));
@@ -276,7 +245,7 @@ export function planRqBacklog(configValue: unknown, sourceValue: unknown, queueT
     objectives.add(objective);
     titles.add(title);
   }
-  return { jobs, ready, minimum, target, shortfall: Math.max(0, target - ready - jobs.length), parked };
+  return { jobs, ready, minimum, target, shortfall: Math.max(0, target - ready - jobs.length) };
 }
 
 export function formatRqQueue(jobs: readonly RqJob[]): string {

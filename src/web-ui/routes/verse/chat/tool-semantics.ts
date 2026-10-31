@@ -114,6 +114,19 @@ export function actionForName(name: string): ToolAction {
   return toolActionForName(name);
 }
 
+/** Short verb for a file-activity row; also the a11y wording. */
+export const ACTION_LABEL: Record<ToolAction, string> = {
+  read: 'read',
+  edit: 'edited',
+  create: 'created',
+  delete: 'deleted',
+  command: 'ran',
+  search: 'searched',
+  task: 'delegated',
+  web: 'fetched',
+  other: 'used',
+};
+
 // ---------------------------------------------------------------------------
 // Payload readers
 // ---------------------------------------------------------------------------

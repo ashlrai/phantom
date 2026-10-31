@@ -50,13 +50,7 @@ plant_auth() {
 plant_auth .codex
 plant_auth .codex-2
 auth_digest() {
-  local sum
-  if command -v sha256sum >/dev/null 2>&1; then
-    sum=sha256sum
-  else
-    sum='shasum -a 256'
-  fi
-  find "$HOME/.codex" "$HOME/.codex-2" -type f -print0 | sort -z | xargs -0 $sum
+  find "$HOME/.codex" "$HOME/.codex-2" -type f -print0 | sort -z | xargs -0 sha256sum
 }
 before_auth=$(auth_digest)
 
@@ -139,7 +133,7 @@ if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "--version" ]]; then
-  printf 'codex 0.165.0\n'
+  printf 'codex 0.164.0\n'
   exit 0
 fi
 if [[ " $* " == *" read-only "* ]]; then
@@ -148,14 +142,10 @@ if [[ " $* " == *" read-only "* ]]; then
 fi
 cat >/dev/null || true
 wt=""
-model=""
 prev=""
 for arg in "$@"; do
   if [[ "$prev" == "--cd" ]]; then
     wt=$arg
-  fi
-  if [[ "$prev" == "--model" ]]; then
-    model=$arg
   fi
   prev=$arg
 done
@@ -167,10 +157,6 @@ case "${CODEX_HOME:-}" in
     exit 0
     ;;
   *)
-    if [[ -f "$HOME/codex-stub-unknown-model" ]]; then
-      printf 'stream error: model not found: The model %s does not exist or you do not have access to it. Re-authenticate to refresh this accounts model catalog.\n' "${model:-gpt-6-sol}" >&2
-      exit 1
-    fi
     printf 'Failed to refresh token. Please reauthenticate.\n' >&2
     exit 1
     ;;
@@ -193,10 +179,6 @@ fi
 printf 'not logged in\n' | node "$ROOT/lib/router_io.cjs" auth-failed && fail 'plain logged-out text marked an auth failure'
 printf 'Failed to refresh token\n' | node "$ROOT/lib/router_io.cjs" auth-failed
 printf 'Logged in using ChatGPT\n' | node "$ROOT/lib/router_io.cjs" codex-login --code 0 | grep -qx in
-printf 'stream error: model not found: The model gpt-6-sol does not exist or you do not have access to it. Re-authenticate to refresh this accounts model catalog.\n' \
-  | node "$ROOT/lib/router_io.cjs" auth-failed && fail 'unknown-model text marked an auth failure'
-printf 'stream error: model not found: The model gpt-6-sol does not exist or you do not have access to it.\n' \
-  | node "$ROOT/lib/router_io.cjs" rejects-model
 
 # shellcheck source=../ashlr-router
 source "$ROOT/ashlr-router"
@@ -264,59 +246,6 @@ case "$picked" in
   personal$'\t'*) ;;
   *) fail "dead work pool was retried: $picked" ;;
 esac
-
-# Codex 0.165 fails fast on an unknown model and preserves the provider text,
-# which can carry login guidance. The router must drop the model and reroute
-# instead of marking the pool down.
-node -e '
-  const fs = require("fs");
-  const file = process.argv[1];
-  const state = JSON.parse(fs.readFileSync(file, "utf8"));
-  for (const row of state.pools || []) {
-    if (row && row.poolId === "codex-work") {
-      row.dead = false;
-      row.deadReason = "";
-    }
-  }
-  fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
-' "$ASHLR_ROUTER_HOME/state.json"
-touch "$HOME/codex-stub-unknown-model"
-router_run_job "ashlrai/phantom" 8 codex workhorse "" "fixture" "$body" "" work
-node -e '
-  const fs = require("fs");
-  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const workPool = (state.pools || []).find((row) => row.poolId === "codex-work");
-  if (!workPool || workPool.dead === true) process.exit(2);
-  const bad = (state.models && state.models.codex && state.models.codex.probed_bad) || [];
-  if (bad.indexOf("gpt-6-sol") === -1) process.exit(3);
-  const lines = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  const jobs = lines.filter((row) => row.event === "job" && row.issue === 8);
-  const work = jobs.find((row) => row.account === "work");
-  const personal = jobs.find((row) => row.account === "personal");
-  if (!work || work.exit === 0) process.exit(4);
-  if (!String(work.warning || "").includes("CLI default")) process.exit(5);
-  if (!personal || personal.exit !== 0) process.exit(6);
-' "$ASHLR_ROUTER_HOME/state.json" "$ASHLR_ROUTER_HOME/ledger.jsonl" || fail 'unknown-model error did not reroute with the pool up'
-if [[ ! -f "$ASHLR_ROUTER_HOME/worktrees/phantom/codex-8/FROM_PERSONAL.txt" ]]; then
-  fail 'unknown-model job did not reach the personal pool'
-fi
-picked=$(router_pick_codex_account dry | tail -n 1)
-case "$picked" in
-  work$'\t'*) ;;
-  *) fail "live work pool was not picked first after an unknown-model error: $picked" ;;
-esac
-router_probe_codex
-node -e '
-  const fs = require("fs");
-  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const workPool = (state.pools || []).find((row) => row.poolId === "codex-work");
-  if (!workPool || workPool.dead === true) process.exit(2);
-  const bad = (state.models && state.models.codex && state.models.codex.probed_bad) || [];
-  for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
-    if (bad.indexOf(model) === -1) process.exit(3);
-  }
-' "$ASHLR_ROUTER_HOME/state.json" || fail 'codex probe marked the pool down on unknown models'
-rm -f "$HOME/codex-stub-unknown-model"
 
 : > "$ASHLR_ROUTER_HOME/logs/router.log"
 "$ROOT/ashlr-router" keepalive
@@ -620,7 +549,7 @@ fi
 if [[ -d "$verify_home" ]]; then
   fail 'verify temp HOME was left behind'
 fi
-if ! [[ "$(trap -p EXIT)" == *cleanup* ]]; then
+if ! trap -p EXIT | grep -q cleanup; then
   fail 'verify replaced the EXIT trap'
 fi
 
@@ -706,7 +635,7 @@ fi
 if [[ -f "$empty/pid" ]]; then
   fail 'a fresh empty lock gained a pid'
 fi
-touch -d '10 seconds ago' "$empty" 2>/dev/null || touch -t "$(date -v-10S '+%Y%m%d%H%M.%S')" "$empty"
+touch -d '10 seconds ago' "$empty"
 if router_lock_alive "$empty"; then
   fail 'a stale empty lock stayed alive'
 fi
@@ -723,17 +652,7 @@ fi
 
 pgid=$(node -e 'const {spawn}=require("child_process"); const p=spawn("sleep",["30"],{detached:true,stdio:"ignore"}); p.unref(); process.stdout.write(String(p.pid));')
 printf '%s\n' "$pgid" > "$tmp/model.pgid"
-i=0
-while [[ "$i" -lt 50 ]] && ! kill -0 -- "-${pgid}" 2>/dev/null; do
-  sleep 0.1
-  i=$((i + 1))
-done
 router_reap_model_group "$tmp/model.pgid"
-i=0
-while [[ "$i" -lt 50 ]] && kill -0 "$pgid" 2>/dev/null; do
-  sleep 0.1
-  i=$((i + 1))
-done
 if kill -0 "$pgid" 2>/dev/null; then
   fail 'model process group was still alive'
 fi

@@ -471,6 +471,9 @@ export function formatSnapshot(nodes: readonly BrowserSnapshotNode[]): string {
 // Screenshot geometry (≤ 1280×800 images; coordinates map back to CSS px)
 // ---------------------------------------------------------------------------
 
+export const SCREENSHOT_MAX_WIDTH = 1280;
+export const SCREENSHOT_MAX_HEIGHT = 800;
+
 export interface BrowserShotGeometry {
   /** CSS px per image px. */
   scale: number;

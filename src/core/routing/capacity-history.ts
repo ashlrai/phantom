@@ -19,15 +19,6 @@
  * Both read the same snapshot, so they see the same observations; the rules
  * below make a second recorder a no-op instead of a duplicate.
  *
- * POOL SAMPLES (VISION-V4). Some capacity never appears as a snapshot seat:
- * `devin` is refused by the snapshot codec (it meters ACUs, not windows —
- * budget-store.ts) and the local Codex session-log reading
- * (fleet/codex-session-usage.ts) is never a seat at all. appendCapacitySamples
- * records those pool readings beside the seat rows: a pool id lives in the
- * same series id space as a seat (`row.seat`), so a pool's series is just
- * another line in this file and in the response — every rule below applies
- * to it unchanged.
- *
  * RULES
  *  - A row carries the seat's `observedAt` (when the provider window was
  *    read), never the publish time: republishing a stale reading adds nothing,
@@ -73,7 +64,7 @@ import type {
   CapacityHistoryWindow,
 } from './capacity-history-types.js';
 import { classifyWindow, type CapacityWindow, type SeatCapacity, type SeatWindowClass } from './headroom.js';
-import { BUDGET_SEAT_ID_RE, DEVIN_SEAT_ID } from './policy.js';
+import { BUDGET_SEAT_ID_RE } from './policy.js';
 
 export const CAPACITY_HISTORY_FILE = 'capacity-history.jsonl';
 
@@ -128,17 +119,6 @@ export const HISTORY_MAX_POINTS_PER_SERIES = 720;
 
 const WINDOWS: readonly CapacityHistoryWindow[] = ['session', 'weekly'];
 const SOURCES: readonly CapacityHistorySource[] = ['daemon', 'verse'];
-
-/**
- * Pool ids outside the snapshot's seat vocabulary (see the header). A sample
- * records under its pool id exactly as a seat row records under its seat id —
- * same series id space, so a pool's line never collides with a seat's.
- * `devin` is policy.ts's DEVIN_SEAT_ID (the Devin lane's grant id);
- * `codex-local` is the local Codex session-log reading, beside the native
- * `codex:*` seats.
- */
-export const DEVIN_POOL_ID: string = DEVIN_SEAT_ID;
-export const CODEX_LOCAL_POOL_ID = 'codex-local';
 const NO_FOLLOW = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
 /**
  * O_NONBLOCK, as verse/fleet-history.ts: a blocking open() of a FIFO waits
@@ -274,61 +254,6 @@ export function historyRowsFromSeats(
         source: opts.source,
       });
     }
-  }
-  return rows;
-}
-
-/**
- * A capacity sample for a pool that is not a snapshot seat (VISION-V4): the
- * caller has already reduced the pool's reading to one window's percent —
- * the same shape a seat's peak window lands in. The pool id becomes the
- * row's `seat`, so a pool series is written, compressed, compacted and
- * served beside the seat series with no special case anywhere downstream.
- *
- * The same honesty rules as a seat apply: `observedAt` is when the pool was
- * READ (never the publish time), a reading stamped in the future or older
- * than the keep window records nothing, and a percent that is not finite
- * records nothing — unknown usage is never written as 0.
- */
-export interface CapacityPoolSample {
-  /** The pool's series id (`devin`, `codex-local`, …) — BUDGET_SEAT_ID_RE. */
-  pool: string;
-  /** Which of the two burn-down windows this reading draws. */
-  window: CapacityHistoryWindow;
-  /** Percent of the window used; clamped to 0–100 and rounded like a seat row. */
-  usedPct: number;
-  /** The window's machine reset, when the pool reports one. */
-  resetsAt?: string | null;
-  /** When the pool was read, ISO. */
-  observedAt: string;
-}
-
-/**
- * The rows one batch of pool samples would record (before compression).
- * Pure — the sibling of {@link historyRowsFromSeats} for the pool
- * vocabulary, with the same timestamp and percent rules.
- */
-export function historyRowsFromSamples(
-  samples: readonly CapacityPoolSample[],
-  opts: { nowMs: number; source: CapacityHistorySource },
-): CapacityHistoryRow[] {
-  const rows: CapacityHistoryRow[] = [];
-  for (const sample of samples.slice(0, MAX_SEATS)) {
-    if (!isObject(sample) || typeof sample.pool !== 'string' || !BUDGET_SEAT_ID_RE.test(sample.pool)) continue;
-    if (!WINDOWS.includes(sample.window)) continue;
-    const used = sample.usedPct;
-    if (typeof used !== 'number' || !Number.isFinite(used)) continue;
-    const observed = typeof sample.observedAt === 'string' ? Date.parse(sample.observedAt) : NaN;
-    if (!Number.isFinite(observed) || observed > opts.nowMs + FUTURE_SKEW_MS || observed < opts.nowMs - HISTORY_KEEP_MS) continue;
-    const resetMs = typeof sample.resetsAt === 'string' ? Date.parse(sample.resetsAt) : NaN;
-    rows.push({
-      ts: isoSeconds(observed),
-      seat: sample.pool,
-      window: sample.window,
-      usedPct: Math.round(Math.min(100, Math.max(0, used)) * 10) / 10,
-      resetsAt: Number.isFinite(resetMs) ? isoSeconds(resetMs) : null,
-      source: opts.source,
-    });
   }
   return rows;
 }
@@ -605,50 +530,6 @@ function errorText(err: unknown): string {
 
 const NOTHING: CapacityHistoryWriteResult = Object.freeze({ appended: 0, compacted: false, error: null });
 
-/** Each series' newest row in `tail`, keyed by historySeriesKey. */
-function lastRowsBySeries(tail: Chunk | null): Map<string, CapacityHistoryRow> {
-  // A series quiet for longer than the tail window gets one extra row — harmless.
-  const last = new Map<string, CapacityHistoryRow>();
-  for (const row of tail ? rowsOf(tail) : []) {
-    const key = historySeriesKey(row.seat, row.window);
-    const prev = last.get(key);
-    if (!prev || Date.parse(row.ts) >= Date.parse(prev.ts)) last.set(key, row);
-  }
-  return last;
-}
-
-/**
- * The shared write: `rows` (newest per series already in `last`) go through
- * the compression rule, the kept ones append in one O_APPEND write, then the
- * file compacts when due. `tail` is the chunk `last` was read from.
- */
-function appendRows(
-  file: string,
-  tail: Chunk | null,
-  last: Map<string, CapacityHistoryRow>,
-  rows: readonly CapacityHistoryRow[],
-  nowMs: number,
-): CapacityHistoryWriteResult {
-  const fresh: CapacityHistoryRow[] = [];
-  for (const row of rows) {
-    const key = historySeriesKey(row.seat, row.window);
-    if (!shouldRecordRow(last.get(key), row)) continue;
-    fresh.push(row);
-    last.set(key, row);
-  }
-  if (fresh.length === 0) return { ...NOTHING };
-  // After a torn last line, start on a fresh one so only the fragment is lost.
-  const separator = tail && tail.size > 0 && !tail.endsWithNewline ? '\n' : '';
-  const text = `${separator}${fresh.map(serializeRow).join('\n')}\n`;
-  appendPrivate(file, text);
-  let compacted = false;
-  if (needsCompaction(file, (tail?.size ?? 0) + Buffer.byteLength(text), nowMs)) {
-    compactCapacityHistory(file, nowMs);
-    compacted = true;
-  }
-  return { appended: fresh.length, compacted, error: null };
-}
-
 /**
  * Record `seats` (one snapshot's readings) under the compression rule.
  * NEVER THROWS: history is a convenience beside the budget gate, never a
@@ -668,7 +549,14 @@ export function appendCapacityHistory(
     const file = opts.file ?? capacityHistoryPath();
     ensurePrivateDirectory(dirname(file));
     const tail = readChunk(file, TAIL_BYTES, 'tail');
-    const last = lastRowsBySeries(tail);
+    // Each series' newest row. A series quiet for longer than the tail
+    // window gets one extra row — harmless.
+    const last = new Map<string, CapacityHistoryRow>();
+    for (const row of tail ? rowsOf(tail) : []) {
+      const key = historySeriesKey(row.seat, row.window);
+      const prev = last.get(key);
+      if (!prev || Date.parse(row.ts) >= Date.parse(prev.ts)) last.set(key, row);
+    }
     // Each seat's newest weekly reset keeps a weekly-only Codex primary on
     // its weekly line through its last hours (historyWindowClass).
     const weeklyResetBySeat = new Map<string, string>();
@@ -676,32 +564,24 @@ export function appendCapacityHistory(
       if (row.window === 'weekly' && row.resetsAt) weeklyResetBySeat.set(row.seat, row.resetsAt);
     }
     const rows = historyRowsFromSeats(seats, { nowMs, source: opts.source, weeklyResetBySeat });
-    return appendRows(file, tail, last, rows, nowMs);
-  } catch (err) {
-    return { appended: 0, compacted: false, error: errorText(err) };
-  }
-}
-
-/**
- * Record pool `samples` (VISION-V4) — the sibling of appendCapacityHistory
- * for pools that never appear as snapshot seats (`devin`, `codex-local`).
- * Rows land in the same file under the pool id, through the same
- * compression and compaction; pool series sit beside the seat series.
- * NEVER THROWS; a no-op under ASHLR_CAPACITY_HISTORY=0.
- */
-export function appendCapacitySamples(
-  samples: readonly CapacityPoolSample[],
-  opts: { source: CapacityHistorySource; nowMs?: number; file?: string; env?: NodeJS.ProcessEnv },
-): CapacityHistoryWriteResult {
-  if (capacityHistoryDisabled(opts.env)) return { ...NOTHING };
-  const nowMs = opts.nowMs ?? Date.now();
-  try {
-    const rows = historyRowsFromSamples(samples, { nowMs, source: opts.source });
-    if (rows.length === 0) return { ...NOTHING };
-    const file = opts.file ?? capacityHistoryPath();
-    ensurePrivateDirectory(dirname(file));
-    const tail = readChunk(file, TAIL_BYTES, 'tail');
-    return appendRows(file, tail, lastRowsBySeries(tail), rows, nowMs);
+    const fresh: CapacityHistoryRow[] = [];
+    for (const row of rows) {
+      const key = historySeriesKey(row.seat, row.window);
+      if (!shouldRecordRow(last.get(key), row)) continue;
+      fresh.push(row);
+      last.set(key, row);
+    }
+    if (fresh.length === 0) return { ...NOTHING };
+    // After a torn last line, start on a fresh one so only the fragment is lost.
+    const separator = tail && tail.size > 0 && !tail.endsWithNewline ? '\n' : '';
+    const text = `${separator}${fresh.map(serializeRow).join('\n')}\n`;
+    appendPrivate(file, text);
+    let compacted = false;
+    if (needsCompaction(file, (tail?.size ?? 0) + Buffer.byteLength(text), nowMs)) {
+      compactCapacityHistory(file, nowMs);
+      compacted = true;
+    }
+    return { appended: fresh.length, compacted, error: null };
   } catch (err) {
     return { appended: 0, compacted: false, error: errorText(err) };
   }
@@ -731,19 +611,13 @@ export function recordCapacityHistoryFromSnapshot(
   return appendCapacityHistory(snap.seats, { source, nowMs: opts.nowMs, file: opts.file, env: opts.env });
 }
 
-/**
- * Every readable row at or after `sinceMs`, in file order. `pool` narrows to
- * one series id — a pool id from a sample (`devin`, `codex-local`) or a seat
- * id; a pool's rows are stored under its id exactly as a seat's are under
- * the seat id. Never throws.
- */
-export function readCapacityHistory(opts: { sinceMs?: number; file?: string; pool?: string } = {}): CapacityHistoryRow[] {
+/** Every readable row at or after `sinceMs`, in file order. Never throws. */
+export function readCapacityHistory(opts: { sinceMs?: number; file?: string } = {}): CapacityHistoryRow[] {
   try {
     const chunk = readChunk(opts.file ?? capacityHistoryPath(), MAX_READ_BYTES, 'tail');
     if (!chunk) return [];
     const since = opts.sinceMs ?? Number.NEGATIVE_INFINITY;
-    return rowsOf(chunk).filter((row) => Date.parse(row.ts) >= since
-      && (opts.pool === undefined || row.seat === opts.pool));
+    return rowsOf(chunk).filter((row) => Date.parse(row.ts) >= since);
   } catch {
     return [];
   }
@@ -773,17 +647,16 @@ function thinEvenly(points: readonly Point[], max: number): Point[] {
   return out;
 }
 
-/** Group `rows` into bounded series for the last `days`; `pool` narrows to one series id (a pool id or a seat id). Pure. */
+/** Group `rows` into bounded per-seat-window series for the last `days`. Pure. */
 export function buildCapacityHistoryResponse(
   rows: readonly CapacityHistoryRow[],
-  opts: { nowMs: number; days: number; pool?: string },
+  opts: { nowMs: number; days: number },
 ): CapacityHistoryResponse {
   const sinceMs = opts.nowMs - opts.days * DAY;
   const groups = new Map<string, { seatId: string; window: CapacityHistoryWindow; rows: { t: number; used: number; resetsAt: string | null }[] }>();
   for (const row of rows) {
     const t = Date.parse(row.ts);
     if (!(t >= sinceMs) || t > opts.nowMs + FUTURE_SKEW_MS) continue;
-    if (opts.pool !== undefined && row.seat !== opts.pool) continue;
     const key = historySeriesKey(row.seat, row.window);
     let group = groups.get(key);
     if (!group) {

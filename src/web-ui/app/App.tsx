@@ -17,7 +17,6 @@ import { HashRouter } from 'react-router-dom';
 import { AppRoutes } from './routes.js';
 import { SkipToContent } from './SkipToContent.js';
 import { SessionGate } from '../components/auth/SessionGate.js';
-import { AskBar } from '../components/ask-bar/AskBar.js';
 import { ToastProvider } from '../components/primitives/Toast.js';
 import { useAuthPhase } from '../data/hooks.js';
 import { markCheckComplete } from '../data/auth-store.js';
@@ -59,8 +58,6 @@ export function App() {
         <HashRouter>
           <SkipToContent />
           <AppRoutes />
-          {/* The one-ask bar gates itself on the `oneAsk` flag — inert when off. */}
-          <AskBar />
         </HashRouter>
       )}
     </ToastProvider>

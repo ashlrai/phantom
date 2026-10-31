@@ -17,7 +17,15 @@
  *    that does not exist.
  */
 import { formatDuration, UNKNOWN } from './format.js';
-import type { OvernightDiscard, OvernightGate, OvernightMerge, OvernightRun, OvernightStatus, OvernightStopRule } from './overnight-contract.js';
+import type {
+  OvernightDiscard,
+  OvernightGate,
+  OvernightMerge,
+  OvernightRun,
+  OvernightStatus,
+  OvernightStopRule,
+  OvernightStopRuleKind,
+} from './overnight-contract.js';
 
 // ---------------------------------------------------------------------------
 // Narrowing
@@ -209,6 +217,18 @@ export function describeStopRule(rule: OvernightStopRule, now: Date = new Date()
       return `Stops at ${formatStopClock(rule.at)}${isNextDay(rule.at, now) ? ' tomorrow' : ''}.`;
     case 'after-iterations':
       return `Stops after ${rule.iterations} ${rule.iterations === 1 ? 'iteration' : 'iterations'}.`;
+  }
+}
+
+/** The short label each stop rule wears in the armed summary. */
+export function stopRuleLabel(kind: OvernightStopRuleKind): string {
+  switch (kind) {
+    case 'until-paused':
+      return 'Until paused';
+    case 'at-time':
+      return 'At a set time';
+    case 'after-iterations':
+      return 'After N iterations';
   }
 }
 

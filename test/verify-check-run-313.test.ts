@@ -48,9 +48,7 @@ import {
   ASHLR_VERIFY_CHECK_NAME,
   decideVerifyCheck,
   ensureFleetVerifyCheck,
-  partitionBlockingCheckContexts,
   postVerifyCheckRun,
-  type ObservedCheckContext,
   type VerifiedBinding,
 } from '../src/core/fleet/verify-check-run.js';
 import { withTempHome } from './helpers/authority-310b.js';
@@ -286,12 +284,8 @@ describe('G7 trusts ashlr/verify only from the fleet App', () => {
     expect(evaluateG7Checks({ ...local, runs: green, fleetAppId: String(FLEET_APP) })).toMatchObject({ verdict: 'pass', code: 'checks-green', state: 'green' });
     const red = [run('Vercel', 'success', VERCEL_APP, 1), run(ASHLR_VERIFY_CHECK_NAME, 'failure', FLEET_APP, 2)];
     expect(evaluateG7Checks({ ...local, runs: red, fleetAppId: String(FLEET_APP) })).toMatchObject({ verdict: 'refuse', code: 'required-check-failed' });
-    // A red non-required check is informational, never a refusal — reported in the row.
     const otherRed = [run('Vercel', 'failure', VERCEL_APP, 1), run(ASHLR_VERIFY_CHECK_NAME, 'success', FLEET_APP, 2)];
-    const informational = evaluateG7Checks({ ...local, runs: otherRed, fleetAppId: String(FLEET_APP) });
-    expect(informational).toMatchObject({ verdict: 'pass', code: 'checks-green', state: 'green' });
-    expect(informational.inputs['informational']).toEqual(['Vercel:red']);
-    expect(informational.reason).toMatch(/informational only\): Vercel/);
+    expect(evaluateG7Checks({ ...local, runs: otherRed, fleetAppId: String(FLEET_APP) }).verdict).toBe('refuse');
     // The newest App run wins (a re-verification after a red one).
     const rerun = [run(ASHLR_VERIFY_CHECK_NAME, 'failure', FLEET_APP, 2), run(ASHLR_VERIFY_CHECK_NAME, 'success', FLEET_APP, 3)];
     expect(evaluateG7Checks({ ...local, runs: rerun, fleetAppId: String(FLEET_APP) }).verdict).toBe('pass');
@@ -303,126 +297,6 @@ describe('G7 trusts ashlr/verify only from the fleet App', () => {
     expect(evaluateG7Checks({ ...server, runs: [run(ASHLR_VERIFY_CHECK_NAME, 'success', VERCEL_APP, 1)] }).verdict).toBe('wait');
     // No required checks at all is still the owner lane.
     expect(evaluateG7Checks({ ...server, required: [], runs: [run('Vercel', 'success', VERCEL_APP, 1)] }).code).toBe('no-required-checks');
-  });
-});
-
-describe('only required contexts block; non-required checks are informational', () => {
-  const run = (name: string, conclusion: string | null, appId: number, id: number, status = 'completed'): CheckRunObservation =>
-    ({ id, name, appId: String(appId), status, conclusion });
-  const obs = (name: string, state: ObservedCheckContext['state'], appId: string | null = null): ObservedCheckContext => ({ name, appId, state });
-  // The required contexts GitHub names on the branch (Merge Gate / CI Gate /
-  // Check (Linux)); Vercel is the classic non-required deploy preview.
-  const REQUIRED = [
-    { context: 'Merge Gate', appId: null },
-    { context: 'CI Gate', appId: '15368' },
-    { context: 'Check (Linux)', appId: null },
-  ];
-
-  it.each<{
-    case: string;
-    observed: ObservedCheckContext[];
-    blocking: { name: string; state: ObservedCheckContext['state'] }[];
-    informational: { name: string; state: ObservedCheckContext['state'] }[];
-  }>([
-    {
-      case: 'required-red: a failing required context is blocking',
-      observed: [obs('Merge Gate', 'red'), obs('CI Gate', 'green', '15368'), obs('Check (Linux)', 'green'), obs('Vercel', 'green', '8329')],
-      blocking: [{ name: 'Merge Gate', state: 'red' }, { name: 'CI Gate', state: 'green' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [{ name: 'Vercel', state: 'green' }],
-    },
-    {
-      case: 'nonrequired-red: a failing Vercel preview is informational',
-      observed: [obs('Merge Gate', 'green'), obs('CI Gate', 'green', '15368'), obs('Check (Linux)', 'green'), obs('Vercel', 'red', '8329')],
-      blocking: [{ name: 'Merge Gate', state: 'green' }, { name: 'CI Gate', state: 'green' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [{ name: 'Vercel', state: 'red' }],
-    },
-    {
-      case: 'nonrequired-pending: a deploying Vercel preview is informational too',
-      observed: [obs('Merge Gate', 'green'), obs('CI Gate', 'green', '15368'), obs('Check (Linux)', 'green'), obs('Vercel', 'pending', '8329')],
-      blocking: [{ name: 'Merge Gate', state: 'green' }, { name: 'CI Gate', state: 'green' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [{ name: 'Vercel', state: 'pending' }],
-    },
-    {
-      case: 'all-green: required green, nothing else observed',
-      observed: [obs('Merge Gate', 'green'), obs('CI Gate', 'green', '15368'), obs('Check (Linux)', 'green')],
-      blocking: [{ name: 'Merge Gate', state: 'green' }, { name: 'CI Gate', state: 'green' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [],
-    },
-    {
-      case: 'a required context nothing reported stays pending',
-      observed: [obs('Merge Gate', 'green'), obs('Check (Linux)', 'green'), obs('Vercel', 'red', '8329')],
-      blocking: [{ name: 'Merge Gate', state: 'green' }, { name: 'CI Gate', state: 'pending' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [{ name: 'Vercel', state: 'red' }],
-    },
-    {
-      case: 'a same-named run from another App satisfies nothing — it is informational itself',
-      observed: [obs('Merge Gate', 'green'), obs('CI Gate', 'red', '8329'), obs('Check (Linux)', 'green')],
-      blocking: [{ name: 'Merge Gate', state: 'green' }, { name: 'CI Gate', state: 'pending' }, { name: 'Check (Linux)', state: 'green' }],
-      informational: [{ name: 'CI Gate', state: 'red' }],
-    },
-  ])('partitionBlockingCheckContexts — $case', ({ observed, blocking, informational }) => {
-    expect(partitionBlockingCheckContexts({ required: REQUIRED, observed })).toEqual({ blocking, informational });
-  });
-
-  it.each<{
-    case: string;
-    input: Parameters<typeof evaluateG7Checks>[0];
-    verdict: string;
-    code: string;
-    informational?: string[];
-  }>([
-    {
-      case: 'required-red: a failing required context refuses (server)',
-      input: {
-        enforcement: 'server', required: REQUIRED, fleetAppId: null,
-        runs: [run('Merge Gate', 'failure', 15368, 1), run('CI Gate', 'success', 15368, 2), run('Check (Linux)', 'success', 15368, 3), run('Vercel', 'success', VERCEL_APP, 4)],
-        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
-      },
-      verdict: 'refuse', code: 'required-check-failed', informational: ['Vercel:green'],
-    },
-    {
-      case: 'required-red: a red ashlr/verify from the fleet App refuses (local)',
-      input: {
-        enforcement: 'local', required: [], fleetAppId: String(FLEET_APP),
-        runs: [run(ASHLR_VERIFY_CHECK_NAME, 'failure', FLEET_APP, 1), run('Vercel', 'success', VERCEL_APP, 2)],
-        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
-      },
-      verdict: 'refuse', code: 'required-check-failed', informational: ['Vercel:green'],
-    },
-    {
-      case: 'nonrequired-red: a failing Vercel preview never refuses (server)',
-      input: {
-        enforcement: 'server', required: REQUIRED, fleetAppId: null,
-        runs: [run('Merge Gate', 'success', 15368, 1), run('CI Gate', 'success', 15368, 2), run('Check (Linux)', 'success', 15368, 3), run('Vercel', 'failure', VERCEL_APP, 4)],
-        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
-      },
-      verdict: 'pass', code: 'checks-green', informational: ['Vercel:red'],
-    },
-    {
-      case: 'nonrequired-red: a failing Vercel preview never refuses (local)',
-      input: {
-        enforcement: 'local', required: [], fleetAppId: String(FLEET_APP),
-        runs: [run(ASHLR_VERIFY_CHECK_NAME, 'success', FLEET_APP, 1), run('Vercel', 'failure', VERCEL_APP, 2)],
-        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
-      },
-      verdict: 'pass', code: 'checks-green', informational: ['Vercel:red'],
-    },
-    {
-      case: 'all-green',
-      input: {
-        enforcement: 'server', required: REQUIRED, fleetAppId: null,
-        runs: [run('Merge Gate', 'success', 15368, 1), run('CI Gate', 'success', 15368, 2), run('Check (Linux)', 'success', 15368, 3), run('Vercel', 'success', VERCEL_APP, 4)],
-        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
-      },
-      verdict: 'pass', code: 'checks-green', informational: ['Vercel:green'],
-    },
-  ])('evaluateG7Checks — $case', ({ input, verdict, code, informational }) => {
-    const evaluation = evaluateG7Checks(input);
-    expect(evaluation).toMatchObject({ verdict, code });
-    expect(evaluation.inputs['informational']).toEqual(informational);
-    if (verdict === 'pass' && informational?.some((s) => s.endsWith(':red'))) {
-      expect(evaluation.reason).toMatch(/informational only\)/);
-    }
   });
 });
 

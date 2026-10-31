@@ -15,6 +15,7 @@ import {
   type ValueHypothesisV1,
 } from './value-portfolio.js';
 
+export const STRATEGIC_INVESTMENT_COMPILER_SCHEMA_VERSION = 1 as const;
 export const MAX_STRATEGIC_INVESTMENTS = 3;
 
 const SHA256_RE = /^(?:sha256:)?[a-f0-9]{64}$/;

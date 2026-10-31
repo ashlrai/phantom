@@ -458,3 +458,8 @@ export const openMuxedPanelStream: PanelStreamOpener = (tabId, after, handlers) 
   return sharedMux.subscribe(tabId, after, handlers);
 };
 
+/** Test hook: forget the shared connection. */
+export function resetSharedTerminalMuxForTest(): void {
+  sharedMux?.close();
+  sharedMux = null;
+}

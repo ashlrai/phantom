@@ -348,7 +348,6 @@
     "test/companion-workflow-smoke.test.ts",
     "test/contracts/phantom-secrets-cli-safety.test.mjs",
     "test/contracts/phantom-secrets-cli.test.mjs",
-    "test/desktop-nightly-build.test.ts",
     "test/docs-markdown-lane.test.ts",
     "test/documentation-navigation.test.ts",
     "test/ecosystem-index-docs.test.ts",

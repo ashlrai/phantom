@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto';
 
+export const VALUE_PORTFOLIO_SCHEMA_VERSION = 1 as const;
 export const VALUE_PORTFOLIO_PROTOCOL = 'living-end-state-portfolio-shadow-v1' as const;
 export const VALUE_PORTFOLIO_SCORING_POLICY = 'product-value-v1' as const;
 export const MAX_VALUE_HYPOTHESES = 12;

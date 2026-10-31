@@ -6,18 +6,12 @@
  * Acting happens in a throwaway detached worktree of the operator's checkout,
  * pinned to the exact head GitHub reported:
  *
- *   recut           the conflicting lane's changes replayed onto the current
- *                   base (`git merge --squash <head>` on a fresh checkout of
- *                   origin/<base>), pushed as `<head>-recut`, then opened as a
- *                   replacement PR. The old PR is never closed here — only
- *                   after the recut merges does `close-superseded` close it.
- *   merge-base      `git merge origin/<base>`, on a head a strict base would
- *                   refuse as behind; conflicts go to the fixer, and every
- *                   conflict marker must be gone before anything commits
+ *   merge-base      `git merge origin/<base>`, on a conflict or on a head a strict
+ *                   base would refuse as behind; conflicts go to the fixer, and
+ *                   every conflict marker must be gone before anything commits
  *   fix-ci          the fixer gets the failing checks' log tails
  *   address-review  the fixer gets the review items on this head
  *   rerun           one re-run of an infrastructure failure, through GitHub
- *   close-superseded  comment + close through GitHub, after the recut merged
  *
  * Then: no fixer commits or history edits; no weakened checks (G1b
  * `detectTestTampering`, G1 `protectedPathHits`, and diagnose.ts
@@ -67,11 +61,9 @@ import {
   type Observation,
   type Plan,
 } from './diagnose.js';
-import { closePr, commentOnPr, createPr, defaultGh, observe, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
-import type { PrView } from './diagnose.js';
+import { defaultGh, observe, rerunJob, type Gh } from './github.js';
 
 const mergeKey = (obs: Observation) => `merge-base:${obs.pr.headSha}:${obs.pr.baseSha}`;
-const recutKey = (obs: Observation) => `recut:${obs.pr.headSha}:${obs.pr.baseSha}`;
 
 export const DEFAULT_OWNED_PREFIXES = ['improve/', 'ashlr-cloud/', 'verse/', 'ashlr/proposal'] as const;
 
@@ -128,8 +120,8 @@ export interface TickResult {
   headSha: string;
   plan: Plan['action'];
   reason: string;
-  /** What happened when acting: pushed, recut (branch pushed and its PR opened), closed a superseded PR, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
-  result: 'planned' | 'pushed' | 'recut' | 'closed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
+  /** What happened when acting: pushed, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
+  result: 'planned' | 'pushed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
   detail: string[];
   newHead: string | null;
 }
@@ -141,13 +133,8 @@ export function loadState(repo: string, n: number): AutopilotState {
   try {
     const raw = JSON.parse(readFileSync(stateFile(repo, n), 'utf8')) as Partial<AutopilotState>;
     const base = emptyState();
-    const r = raw.recut && typeof raw.recut === 'object' ? raw.recut : null;
-    const recut = r && typeof r.branch === 'string' && r.branch && typeof r.fromHead === 'string' && r.fromHead
-      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead }
-      : undefined;
     return {
       pushes: Number.isSafeInteger(raw.pushes) ? raw.pushes! : 0,
-      recut,
       attempts: raw.attempts && typeof raw.attempts === 'object' ? raw.attempts : base.attempts,
       actedHeads: Array.isArray(raw.actedHeads) ? raw.actedHeads.slice(-50) : [],
       reruns: Array.isArray(raw.reruns) ? raw.reruns.slice(-100) : [],
@@ -201,9 +188,7 @@ async function stopNow(opts: TickOptions): Promise<string | null> {
 /** Git with repository hooks and fsmonitor off: nothing the fixer planted in the tree runs. */
 export const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'core.sshCommand=ssh',
   // Fixed diff path prefixes and quoting: parseDiff and the tamper scans read `+++ b/<path>`.
-  '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/', '-c', 'core.quotePath=false',
-  // Fixed conflict style: the leftover-marker check reads merge markers only.
-  '-c', 'merge.conflictStyle=merge'];
+  '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/', '-c', 'core.quotePath=false'];
 
 /**
  * A digest of everything that changes what git runs or where it pushes: the
@@ -262,32 +247,6 @@ export function parseDiff(nameStatus: string, patch: string): DiffFile[] {
   return [...files.values()];
 }
 
-/**
- * The live state of the replacement a previous recut opened, for `obs.recut`.
- * A recorded PR number is read directly; a recut whose open was never
- * confirmed (number 0) is found by its branch head. null = unreadable.
- */
-async function readRecut(repo: string, recut: { branch: string; number: number }, gh: Gh): Promise<Observation['recut']> {
-  try {
-    if (!recut.number) return await readPrByBranch(repo, recut.branch, gh);
-    const p = await readPr(repo, recut.number, gh);
-    return { number: p.number, state: p.state, merged: p.merged };
-  } catch {
-    return null;
-  }
-}
-
-/** The replacement PR a recut opens: the lane's title and base, the fresh branch, and its provenance. */
-function recutSpec(pr: PrView, branch: string): { title: string; head: string; base: string; body: string; draft: boolean } {
-  return {
-    title: pr.title || `recut of ${pr.headRef}`,
-    head: branch,
-    base: pr.baseRef,
-    draft: pr.draft,
-    body: `Recut of #${pr.number} (\`${pr.headRef}\` @ ${pr.headSha.slice(0, 8)}) onto the current \`${pr.baseRef}\`.\n\nThe original stays open until this merges; it is then closed as superseded.\n\nPhantom-Autopilot: recut`,
-  };
-}
-
 export async function tick(opts: TickOptions): Promise<TickResult> {
   const now = opts.now ?? (() => new Date());
   const gh = opts.gh ?? defaultGh;
@@ -307,42 +266,13 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     }
     const guards: Guards = { ...(await (opts.guards ?? defaultGuards)()), ownedPrefixes: opts.ownedPrefixes ?? DEFAULT_OWNED_PREFIXES };
     const state = loadState(opts.repo, opts.number);
-    // A recut supersedes this PR: the plan reads the replacement's live state.
-    if (state.recut) {
-      obs.recut = await readRecut(opts.repo, state.recut, gh);
-      if (obs.recut && !state.recut.number) {
-        state.recut.number = obs.recut.number;
-        saveState(opts.repo, opts.number, state);
-      }
-    }
     const p = decide(obs, guards, state, limits);
     const row: TickResult = { ...base, headSha: obs.pr.headSha, plan: p.action, reason: p.reason };
     if ('failures' in p && p.failures) row.detail.push(...p.failures.map((f) => `${f.cause}: ${f.why}`));
     row.detail.push(...(obs.droppedReviews ?? []));
 
-    if (!['merge-base', 'fix-ci', 'address-review', 'rerun', 'recut', 'close-superseded'].includes(p.action)) { record(row, now()); return row; }
+    if (!['merge-base', 'fix-ci', 'address-review', 'rerun'].includes(p.action)) { record(row, now()); return row; }
     if (!opts.apply) { row.result = 'planned'; record(row, now()); return row; }
-
-    if (p.action === 'close-superseded') {
-      const stopped = await stopNow(opts);
-      if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
-      try {
-        await commentOnPr(opts.repo, opts.number, `Superseded by #${p.recut}, which merged into ${obs.pr.baseRef}.`, gh);
-      } catch (err) {
-        row.detail.push(`could not leave the closing comment: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      try {
-        await closePr(opts.repo, opts.number, gh);
-      } catch (err) {
-        row.result = 'error';
-        row.detail.push(`could not close the PR: ${err instanceof Error ? err.message : String(err)}`);
-        record(row, now());
-        return row;
-      }
-      row.result = 'closed';
-      record(row, now());
-      return row;
-    }
 
     if (p.action === 'rerun') {
       const stopped = await stopNow(opts);
@@ -365,55 +295,16 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
       return row;
     }
 
-    if (p.action === 'recut' && state.recut && !state.recut.number) {
-      // The recut branch is already pushed; only its PR open is missing.
-      const stopped = await stopNow(opts);
-      if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
-      state.attempts[`recut-open:${state.recut.branch}`] = (state.attempts[`recut-open:${state.recut.branch}`] ?? 0) + 1;
-      saveState(opts.repo, opts.number, state);
-      try {
-        state.recut.number = await createPr(opts.repo, recutSpec(obs.pr, state.recut.branch), gh);
-        saveState(opts.repo, opts.number, state);
-        row.result = 'recut';
-        row.detail.push(`opened #${state.recut.number} on ${state.recut.branch}`);
-      } catch (err) {
-        row.result = 'error';
-        row.detail.push(`could not open the recut's PR: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      record(row, now());
-      return row;
-    }
-
     // Attempts are counted BEFORE acting, so a crash or a failed verify is never retried in a burst.
     if (p.action === 'merge-base') state.attempts[mergeKey(obs)] = (state.attempts[mergeKey(obs)] ?? 0) + 1;
-    if (p.action === 'recut') state.attempts[recutKey(obs)] = (state.attempts[recutKey(obs)] ?? 0) + 1;
     if (p.action === 'fix-ci') state.attempts[p.signature] = (state.attempts[p.signature] ?? 0) + 1;
     if (p.action === 'address-review') state.handledReviews.push(...p.reviews.map((r) => r.id));
     saveState(opts.repo, opts.number, state);
 
-    const outcome = await actInWorktree(opts, obs, p as Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' | 'recut' }>, run);
+    const outcome = await actInWorktree(opts, obs, p as Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' }>, run);
     Object.assign(row, { result: outcome.result, newHead: outcome.newHead });
     row.detail.push(...outcome.detail);
-    if (outcome.recutBranch) {
-      // The replacement branch is pushed; open its PR. The recut is recorded
-      // with number 0 first, so a failure here is finished next tick — never re-cut.
-      state.recut = { branch: outcome.recutBranch, number: 0, fromHead: obs.pr.headSha };
-      const stopped = await stopNow(opts);
-      if (stopped) {
-        row.result = 'refused';
-        row.detail.push(`${stopped}; the pushed recut branch's PR opens next tick`);
-      } else {
-        try {
-          state.recut.number = await createPr(opts.repo, recutSpec(obs.pr, outcome.recutBranch), gh);
-          row.result = 'recut';
-          row.detail.push(`opened #${state.recut.number} on ${outcome.recutBranch}`);
-        } catch (err) {
-          row.result = 'error';
-          row.detail.push(`the recut branch ${outcome.recutBranch} is pushed but its PR could not be opened: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-    if (outcome.result === 'pushed' || outcome.recutBranch) {
+    if (outcome.result === 'pushed') {
       state.pushes++;
       state.actedHeads.push(obs.pr.headSha);
       saveState(opts.repo, opts.number, state);
@@ -425,15 +316,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
   }
 }
 
-interface WorktreeOutcome {
-  result: TickResult['result'];
-  detail: string[];
-  newHead: string | null;
-  /** The fresh branch a recut pushed (`<headRef>-recut`); the caller opens its PR. */
-  recutBranch?: string;
-}
-
-async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' | 'recut' }>, run: Run): Promise<WorktreeOutcome> {
+async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Plan, { action: 'merge-base' | 'fix-ci' | 'address-review' }>, run: Run): Promise<Pick<TickResult, 'result' | 'detail' | 'newHead'>> {
   const { pr } = obs;
   const detail: string[] = [];
   const git = async (cwd: string, args: string[], timeoutMs = 120_000) => run('git', [...SAFE_GIT, ...args], { cwd, timeoutMs });
@@ -450,12 +333,8 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     if (remoteHead !== pr.headSha) return { result: 'refused', detail: [`the branch moved to ${remoteHead.slice(0, 8)} since GitHub was read; next tick re-reads`], newHead: null };
     // Captured before any untrusted code runs: the push goes here, not to whatever `origin` says later.
     const pushUrl = await must(opts.checkout, ['remote', 'get-url', '--push', 'origin']);
-    // A recut starts from the current base, not the PR head: the lane's changes
-    // are replayed on top, which is exactly what `merge --squash <head>` stages.
-    await must(opts.checkout, ['worktree', 'add', '--detach', wt, p.action === 'recut' ? `refs/remotes/origin/${pr.baseRef}` : pr.headSha]);
+    await must(opts.checkout, ['worktree', 'add', '--detach', wt, pr.headSha]);
     added = true;
-    // The worktree's start commit: the pre-merge head, or the fetched base for a recut.
-    const startSha = await must(wt, ['rev-parse', 'HEAD']);
     const abs = (p: string, from: string) => (isAbsolute(p) ? p : join(from, p));
     const commonDir = abs(await must(wt, ['rev-parse', '--git-common-dir']), wt);
     const wtGitDir = abs(await must(wt, ['rev-parse', '--git-dir']), wt);
@@ -475,18 +354,15 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     if (existsSync(nm) && !existsSync(join(wt, 'node_modules'))) { try { symlinkSync(nm, join(wt, 'node_modules'), 'dir'); linkedModules = true; } catch { /* verify will say so */ } }
 
     let message: string;
-    let targetRef = `refs/heads/${pr.headRef}`;
-    if (p.action === 'merge-base' || p.action === 'recut') {
-      const merged = await git(wt, p.action === 'merge-base'
-        ? ['merge', '--no-edit', '--no-ff', `refs/remotes/origin/${pr.baseRef}`]
-        : ['merge', '--squash', pr.headSha]);
+    if (p.action === 'merge-base') {
+      const merged = await git(wt, ['merge', '--no-edit', '--no-ff', `refs/remotes/origin/${pr.baseRef}`]);
       if (merged.code !== 0) {
         const conflicted = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (!conflicted.length) return { result: 'error', detail: [`merge failed without conflicts: ${merged.stderr.trim().slice(0, 200)}`], newHead: null };
-        if (!opts.fixer) { await git(wt, p.action === 'recut' ? ['reset', '--hard', 'HEAD'] : ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
+        if (!opts.fixer) { await git(wt, ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
         // The commit takes the whole index, but only the conflicted files are the fixer's to change.
         const stagedOutside = async () => {
-          const raw = await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--cached', '--raw', '--abbrev=40', startSha]);
+          const raw = await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--cached', '--raw', '--abbrev=40', pr.headSha]);
           return raw.split('\n').filter((l) => l && !conflicted.includes(l.slice(l.indexOf('\t') + 1))).join('\n');
         };
         const outsideBefore = await stagedOutside();
@@ -494,7 +370,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         detail.push(fx);
         const changedGit = tampered();
         if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
-        if (await must(wt, ['rev-parse', 'HEAD']) !== startSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD during the merge; nothing pushed'], newHead: null };
+        if (await must(wt, ['rev-parse', 'HEAD']) !== pr.headSha) return { result: 'refused', detail: [...detail, 'the fixer moved HEAD during the merge; nothing pushed'], newHead: null };
         if (await stagedOutside() !== outsideBefore) return { result: 'refused', detail: [...detail, 'the fixer changed the index outside the conflicted files; nothing pushed'], newHead: null };
         const left = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         const markers = conflicted.filter((f) => { try { return /^(<{7}|>{7}|={7})( |$)/m.test(readFileSync(join(wt, f), 'utf8')); } catch { return false; } });
@@ -503,24 +379,14 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         const rest = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (rest.length) return { result: 'refused', detail: [...detail, `unresolved: ${rest.join(', ')}`], newHead: null };
         // The resolution is the fixer's work: scan it like any fix, against the pre-merge head.
-        const resolved = parseDiff(await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-status', startSha, '--', ...conflicted]), (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '-U0', startSha, '--', ...conflicted])).stdout);
-        const weak = diffRefusals(opts.repo, resolved, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', startSha, '--', ...conflicted])).stdout);
+        const resolved = parseDiff(await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-status', pr.headSha, '--', ...conflicted]), (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '-U0', pr.headSha, '--', ...conflicted])).stdout);
+        const weak = diffRefusals(opts.repo, resolved, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', pr.headSha, '--', ...conflicted])).stdout);
         if (weak.length) return { result: 'refused', detail: [...detail, ...weak], newHead: null };
-      }
-      if (p.action === 'recut') {
-        // Everything staged is the lane's change set: a lane PR may never carry
-        // protected paths, and a recut may never smuggle one into a fresh PR.
-        const staged = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-only', startSha])).split('\n').filter(Boolean);
-        if (!staged.length) return { result: 'no-change', detail: [...detail, `the PR's changes are already in ${pr.baseRef}; there is nothing to recut`], newHead: null };
-        const protectedHits = protectedPathHits(staged, { selfRepo: isHubRepositoryLabel(opts.repo) });
-        if (protectedHits.length) return { result: 'refused', detail: [...detail, ...protectedHits.map((h) => `${h.path}: protected path (${h.why})`)], newHead: null };
-        await must(wt, ['commit', '--no-verify', '-m', `${(pr.title || `recut of ${pr.headRef}`).slice(0, 120)}\n\nSquashed recut of #${pr.number} (${pr.headRef} @ ${pr.headSha.slice(0, 8)}) onto ${pr.baseRef}.\n\nPhantom-Autopilot: recut`]);
-      } else if (merged.code !== 0) {
         await must(wt, ['commit', '--no-edit', '--no-verify']);
       }
       message = '';
       const before = await snapshot();
-      const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', startSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
+      const verified = await verify(plannedVerify, wt, run, (await git(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', pr.headSha, 'HEAD'])).stdout.split('\n').filter(Boolean));
       const afterVerify = tampered() ?? await moved(before);
       if (afterVerify) return { result: 'refused', detail: [...detail, afterVerify], newHead: null };
       if (verified) return { result: 'verify-failed', detail: [...detail, verified], newHead: null };
@@ -549,30 +415,14 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       await must(wt, ['commit', '--no-verify', '-m', `${message.slice(0, 120)}\n\n${p.reason.slice(0, 600)}\n\nPhantom-Autopilot: ${p.action}${p.action === 'fix-ci' ? ` ${p.signature} attempt ${p.attempt}` : ''}`]);
     }
     const newHead = await must(wt, ['rev-parse', 'HEAD']);
-    if (newHead === (p.action === 'merge-base' || p.action === 'recut' ? startSha : pr.headSha)) return { result: 'no-change', detail: [...detail, 'already up to date with the base'], newHead: null };
+    if (newHead === pr.headSha) return { result: 'no-change', detail: [...detail, 'already up to date with the base'], newHead: null };
     const changedGit = tampered();
     if (changedGit) return { result: 'refused', detail: [...detail, changedGit], newHead: null };
     const stopped = await stopNow(opts);
     if (stopped) return { result: 'refused', detail: [...detail, stopped], newHead: null };
-    if (p.action === 'recut') {
-      // One fresh branch per conflicting lane PR: <head>-recut, then -recut-2…
-      const listed = await git(opts.checkout, ['ls-remote', '--heads', pushUrl, `${pr.headRef}-recut*`]);
-      if (listed.code !== 0) return { result: 'error', detail: [...detail, `could not list origin's recut branches: ${(listed.stderr.trim().split('\n').pop() ?? '').slice(0, 200)}`], newHead: null };
-      const used = new Set(listed.stdout.split('\n').map((l) => l.split('\t')[1]?.replace('refs/heads/', '')).filter(Boolean));
-      let branch: string | null = null;
-      for (let i = 1; i <= 20 && !branch; i++) {
-        const candidate = i === 1 ? `${pr.headRef}-recut` : `${pr.headRef}-recut-${i}`;
-        if (!used.has(candidate)) branch = candidate;
-      }
-      if (!branch) return { result: 'refused', detail: [...detail, `every recut branch name under ${pr.headRef}-recut is taken on origin; a person cleans up`], newHead: null };
-      targetRef = `refs/heads/${branch}`;
-    }
     // A plain push: GitHub refuses it if the branch moved, and nothing here can force it.
-    const pushed = await git(wt, ['push', '--no-verify', pushUrl, `HEAD:${targetRef}`], 180_000);
+    const pushed = await git(wt, ['push', '--no-verify', pushUrl, `HEAD:refs/heads/${pr.headRef}`], 180_000);
     if (pushed.code !== 0) return { result: 'refused', detail: [...detail, `push refused: ${pushed.stderr.trim().split('\n').pop()?.slice(0, 200) ?? ''}`], newHead: null };
-    if (p.action === 'recut') {
-      return { result: 'pushed', detail: [...detail, `recut ${pr.headRef} onto ${pr.baseRef} as ${targetRef.replace('refs/heads/', '')}`], newHead, recutBranch: targetRef.replace('refs/heads/', '') };
-    }
     return { result: 'pushed', detail: [...detail, message || `merged ${pr.baseRef} into ${pr.headRef}`], newHead };
   } catch (err) {
     return { result: 'error', detail: [...detail, err instanceof Error ? err.message : String(err)], newHead: null };

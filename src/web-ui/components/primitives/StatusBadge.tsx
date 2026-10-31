@@ -44,14 +44,6 @@ const STATUS_TONE: Record<string, Tone> = {
   harmful: 'danger',
   cancelled: 'neutral',
   canceled: 'neutral',
-  // ask.status.v1 lifecycle (one-ask bar; schema/ask.v1).
-  claimed: 'running',
-  verifying: 'running',
-  pr_open: 'info',
-  in_merge_queue: 'info',
-  publish_only: 'success',
-  refused: 'danger',
-  reverted: 'danger',
   unknown: 'unknown',
 };
 

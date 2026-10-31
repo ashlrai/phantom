@@ -7,20 +7,15 @@
  *
  *   1. closed or merged                → done
  *   2. guardrails (KILL, pause, owner) → stop, said in words
- *   3. a live recut supersedes it      → wait on the replacement, close this
- *      PR once it merged, stop when it died unmerged or the head moved
- *   4. a merge conflict with the base  → recut: replay the PR's changes onto
- *      a fresh branch cut from the current base and open a replacement PR
- *      (the old PR is closed only after the recut merges, never before)
- *   5. the base must join the head     → merge-base (merge, never rebase): a
- *      head a strict base calls behind, or a source-binding refusal — the
- *      event's merge tree moved and only a fresh head renews it (a re-run of
- *      the frozen event cannot pass)
- *   6. a failure this PR caused        → fix-ci, with the failing log tails
- *   7. review feedback on this head    → address-review
- *   8. checks still running            → wait
- *   9. only failures that are not ours → rerun once (infrastructure), else stop
- *  10. everything green                → green (merging is the promotion gate's call)
+ *   3. the base must join the head     → merge-base (merge, never rebase): a
+ *      merge conflict, a head a strict base calls behind, or a source-binding
+ *      refusal — the event's merge tree moved and only a fresh head renews it
+ *      (a re-run of the frozen event cannot pass)
+ *   4. a failure this PR caused        → fix-ci, with the failing log tails
+ *   5. review feedback on this head    → address-review
+ *   6. checks still running            → wait
+ *   7. only failures that are not ours → rerun once (infrastructure), else stop
+ *   8. everything green                → green (merging is the promotion gate's call)
  *
  * A failure is NOT this PR's when the same check is red on the base head
  * (base-red), when GitHub reports the same check passing on this exact head
@@ -51,7 +46,6 @@ export interface PrView {
   merged: boolean;
   draft: boolean;
   author: string;
-  title: string;
   headRef: string;
   headSha: string;
   /** owner/name of the repository the head branch lives in. */
@@ -75,11 +69,6 @@ export interface ReviewItem {
 
 export interface Observation {
   pr: PrView;
-  /**
-   * The replacement PR this one was recut into, read fresh this tick.
-   * Present only when `state.recut` names one; null when it could not be read.
-   */
-  recut?: { number: number; state: 'open' | 'closed'; merged: boolean } | null;
   /** The login the autopilot acts as. */
   viewer: string;
   /** Every check run on the PR head, all attempts (`filter=all`). */
@@ -114,13 +103,7 @@ export interface Guards {
 export interface AutopilotState {
   /** Pushes this autopilot made to the PR. */
   pushes: number;
-  /**
-   * The replacement cut from this head: its branch, its PR number (0 until the
-   * open-PR call confirmed one), and the head it was cut from. While set, this
-   * PR is superseded — it waits for the recut and closes after it merges.
-   */
-  recut?: { branch: string; number: number; fromHead: string };
-  /** Fix attempts per failure signature, and `merge-base:<head>:<base>`/`recut:<head>:<base>` attempts. */
+  /** Fix attempts per failure signature, and `merge-base:<head>:<base>` merge attempts. */
   attempts: Record<string, number>;
   /** Heads the autopilot pushed from (a stale read of one is never acted on twice). */
   actedHeads: string[];
@@ -146,8 +129,6 @@ export type Plan =
   | { action: 'wait'; reason: string }
   | { action: 'green'; reason: string }
   | { action: 'merge-base'; reason: string }
-  | { action: 'recut'; reason: string }
-  | { action: 'close-superseded'; reason: string; recut: number }
   | { action: 'fix-ci'; reason: string; signature: string; failures: Failure[]; attempt: number }
   | { action: 'address-review'; reason: string; reviews: ReviewItem[] }
   | { action: 'rerun'; reason: string; checks: CheckRun[] };
@@ -260,31 +241,6 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
   const refusals = ownershipRefusals(obs, guards);
   if (refusals.length) return { action: 'stop', reason: `not this autopilot's PR: ${refusals.join('; ')}` };
 
-  // A recut supersedes this PR: its conflicts, checks and reviews are worked on
-  // the replacement branch now. Nothing here pushes this head again — it waits
-  // for the recut, closes once it merged, and only a person may move the head
-  // or revive a lane whose recut died unmerged.
-  const recut = state.recut;
-  if (recut && recut.fromHead === pr.headSha) {
-    if (obs.recut?.merged) {
-      return { action: 'close-superseded', reason: `recut #${obs.recut.number} merged into ${pr.baseRef}; closing this superseded PR`, recut: obs.recut.number };
-    }
-    if (obs.recut?.state === 'open') {
-      return { action: 'wait', reason: `recut #${obs.recut.number} (${recut.branch}) is open; this PR stays open until it merges` };
-    }
-    if (obs.recut) {
-      return { action: 'stop', reason: `recut #${obs.recut.number} (${recut.branch}) was closed without merging; a person decides whether the lane is recut again` };
-    }
-    if (recut.number) return { action: 'wait', reason: `could not read recut #${recut.number} this tick; next tick re-reads` };
-    // The branch was pushed but its PR was never confirmed (the create call
-    // failed or the tick died between). Finish the open, at most twice.
-    if ((state.attempts[`recut-open:${recut.branch}`] ?? 0) >= 2) {
-      return { action: 'stop', reason: `opening a PR for the recut branch ${recut.branch} failed twice; a person decides` };
-    }
-    return { action: 'recut', reason: `the recut branch ${recut.branch} is pushed but has no PR; opening it` };
-  }
-  if (recut) return { action: 'stop', reason: `the head moved after it was recut as ${recut.branch}; a person is driving this PR` };
-
   const acted = state.actedHeads.includes(pr.headSha);
   const latest = latestByName(obs.headChecks);
   const pending = latest.filter((c) => c.status !== 'completed');
@@ -297,10 +253,10 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
   };
 
   if (pr.mergeable === false || pr.mergeableState === 'dirty') {
-    if ((state.attempts[`recut:${pr.headSha}:${pr.baseSha}`] ?? 0) >= 1) {
-      return { action: 'stop', reason: `this head was already recut once and still conflicts with ${pr.baseRef}; it needs a person` };
+    if ((state.attempts[`merge-base:${pr.headSha}:${pr.baseSha}`] ?? 0) >= 1) {
+      return { action: 'stop', reason: `merging ${pr.baseRef} into this head already failed once; it needs a person` };
     }
-    return mutate() ?? { action: 'recut', reason: `PR #${pr.number} conflicts with ${pr.baseRef}; recutting it on the current ${pr.baseRef}` };
+    return mutate() ?? { action: 'merge-base', reason: `PR #${pr.number} conflicts with ${pr.baseRef}` };
   }
   if (own.length) {
     const signature = failureSignature(own);
@@ -357,7 +313,7 @@ export function untrusted(label: string, text: string): string {
 }
 
 /** The brief handed to the fixer agent. Plain, bounded, and specific about what it may not do. */
-export function fixBrief(p: Extract<Plan, { action: 'fix-ci' | 'address-review' | 'merge-base' | 'recut' }>, pr: PrView, extra: { conflicted?: string[] } = {}): string {
+export function fixBrief(p: Extract<Plan, { action: 'fix-ci' | 'address-review' | 'merge-base' }>, pr: PrView, extra: { conflicted?: string[] } = {}): string {
   const rules = [
     'Rules:',
     '- Fix the cause in the code. Do not skip, disable, delete, quarantine or loosen any test, check or lint rule.',
@@ -375,10 +331,7 @@ export function fixBrief(p: Extract<Plan, { action: 'fix-ci' | 'address-review' 
     const items = p.reviews.map((r) => `- ${r.author}${r.path ? ` on ${r.path}${r.line ? `:${r.line}` : ''}` : ''}${r.kind === 'changes-requested' ? ' (changes requested)' : ''}:\n${untrusted(`review:${r.author}`, r.body.slice(0, 1500))}`);
     return [...head, 'Reviewers left this feedback on the current head. Address each item that asks for a code change; leave questions and opinions you disagree with unchanged.', '', ...items, '', ...rules].join('\n');
   }
-  const direction = p.action === 'recut'
-    ? `Reapplying this PR's changes onto the current ${pr.baseRef} left conflicts in:`
-    : `Merging ${pr.baseRef} into this branch left conflicts in:`;
-  return [...head, direction, ...(extra.conflicted ?? []).map((f) => `- ${f}`), '', 'Resolve every conflict marker so both sides\' intended behavior is kept. Do not run `git add` or `git commit`.', '', ...rules].join('\n');
+  return [...head, `Merging ${pr.baseRef} into this branch left conflicts in:`, ...(extra.conflicted ?? []).map((f) => `- ${f}`), '', 'Resolve every conflict marker so both sides\' intended behavior is kept. Do not run `git add` or `git commit`.', '', ...rules].join('\n');
 }
 
 /**

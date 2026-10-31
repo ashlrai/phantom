@@ -152,3 +152,7 @@ export function isMilestoneComplete(
   return !!e && e.status === 'done' && e.gate_passed === true;
 }
 
+/** The step ids already verified for a milestone (fed to the agent on resume). */
+export function stepsDone(state: GoalLoopState, milestoneId: string): string[] {
+  return state.milestones[milestoneId]?.steps_done ?? [];
+}

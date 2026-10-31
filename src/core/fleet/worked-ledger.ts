@@ -948,6 +948,14 @@ export function recentlyDeclined(
   }
 }
 
+export function latestWorkedEvent(itemId: string): WorkedEvent | undefined {
+  try {
+    return latestWorkedEventForKeys(loadWorkedLedger().events, [itemId]);
+  } catch {
+    return undefined;
+  }
+}
+
 export function latestWorkedEventForKeys(
   events: readonly WorkedEvent[],
   itemIds: readonly string[],

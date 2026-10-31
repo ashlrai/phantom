@@ -71,7 +71,7 @@ function loadOrCreateClientProof(): string {
   return proof;
 }
 
-const clientProof = loadOrCreateClientProof();
+let clientProof = loadOrCreateClientProof();
 
 /** In-memory only. Never touches storage. Cleared by clearMutationToken(). */
 let mutationToken: string | null = null;
@@ -118,6 +118,17 @@ export function getAuthSnapshot(): AuthState {
 
 export function getReadClientProof(): string {
   if (isRemoteMobileMode()) throw new Error('Local read-client proof is unavailable on the phone gateway.');
+  return clientProof;
+}
+
+/** Regenerate the client proof (e.g. after an explicit "forget this device"). */
+export function resetReadClientProof(): string {
+  clientProof = randomHex64();
+  try {
+    sessionStorage.setItem(READ_CLIENT_STORAGE_KEY, clientProof);
+  } catch {
+    /* best-effort */
+  }
   return clientProof;
 }
 

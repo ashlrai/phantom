@@ -1436,7 +1436,7 @@ not model discovery, an entitlement claim, or a new concurrency identity:
 
 | Exact model | Worker `quotaScope` | Collector `bucketIds` |
 | --- | --- | --- |
-| `gpt-6.1-terra`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
+| `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
 | `gpt-5.3-codex-spark` | `codex-spark-v1` | `["codex_bengalfox"]` |
 
 General and Spark workers for one account must retain the **same `capacityKey`**,

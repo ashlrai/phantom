@@ -207,6 +207,10 @@ function loadFocus(): { focus: EcosystemFocus; byName: Map<string, StrategicTier
   }
 }
 
+export function resetEcosystemFocusCacheForTests(): void {
+  focusCache = null;
+}
+
 export function loadEcosystemFocus(): EcosystemFocus {
   return loadFocus().focus;
 }
