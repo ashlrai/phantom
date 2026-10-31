@@ -1,3 +1,6 @@
+import { seenCounts } from '../fleet-inbox/inbox-ack-model.js';
+import type { AnnotatedEntry } from '../fleet-inbox/inbox-ack-model.js';
+
 export const KNOWN_CHANNELS = ['telegram', 'desktop', 'page', 'terminal', 'email', 'fleet-say', 'mobile'] as const;
 export type ChannelKey = typeof KNOWN_CHANNELS[number] | 'other';
 
@@ -19,6 +22,19 @@ export function channelKey(source: string): ChannelKey {
 }
 
 export function channelLabel(key: ChannelKey): string { return labels[key]; }
+
+/** Per-channel ack rollup for the Channels pane: how many of Mason's messages still wait on a leader pass. */
+export function ackByChannel(entries: readonly AnnotatedEntry[]): Map<ChannelKey, { waiting: number; seen: number; overdue: boolean }> {
+  const groups = new Map<ChannelKey, AnnotatedEntry[]>();
+  for (const entry of entries) {
+    const key = channelKey(entry.source);
+    const group = groups.get(key);
+    if (group) group.push(entry); else groups.set(key, [entry]);
+  }
+  const result = new Map<ChannelKey, { waiting: number; seen: number; overdue: boolean }>();
+  for (const [key, group] of groups) result.set(key, seenCounts(group));
+  return result;
+}
 
 export interface ChannelRow {
   key: ChannelKey; label: string; lastAt: string | null; preview: string | null;
