@@ -193,7 +193,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -232,6 +232,10 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'devin', load: async () => (await import('../devin/devin-api.js')).handleDevinApi },
   // 3.15 Jev decisions: GET /api/verse/jev (core/decide/jev-api.ts), read-only.
   { id: 'jev', load: async () => (await import('../decide/jev-api.js')).handleJevApi },
+  // Fleet runs history: GET /api/verse/runs-history (core/verse/runs-history-api.ts),
+  // the durable per-minute lane series; read-only, sampling happens on read.
+  { id: 'runs-history', load: async () => (await import('./runs-history-api.js')).handleRunsHistoryApi },
+  { id: 'release-pr', load: async () => (await import('./ops-release-pr-api.js')).handleReleasePrApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -394,6 +398,9 @@ function notLandedOr(err: unknown, file: string): typeof NOT_LANDED {
  * contract test fails if the two disagree.
  */
 const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<WorkbenchImport>>> = {
+  'agent-bus': async () => {
+    try { return (await import('./agent-bus-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-bus-api.js'); }
+  },
   outcomes: async () => {
     try { return (await import('./outcomes-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'outcomes-api.js'); }
   },
@@ -420,6 +427,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   overnight: async () => {
     try { return (await import('./overnight-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'overnight-api.js'); }
+  },
+  'fleet-runs': async () => {
+    try { return (await import('./fleet-runs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runs-api.js'); }
   },
   'fleet-live': async () => {
     try { return (await import('./fleet-live-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-live-api.js'); }
@@ -1979,6 +1989,10 @@ export async function handleVerseApi(
   if (!isVerseApiPath(path)) return false;
 
   try {
+    if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
+      if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
+      return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
+    }
     if (path === `${VERSE_API_PREFIX}/adoption` || path.startsWith(`${VERSE_API_PREFIX}/adoption/`)) {
       // Metadata reads cannot evaluate legacy scheduler-owning mounted modules.
       if (path !== `${VERSE_API_PREFIX}/adoption` && path !== `${VERSE_API_PREFIX}/adoption/refresh`) {

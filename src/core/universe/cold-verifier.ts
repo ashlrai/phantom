@@ -4,9 +4,6 @@ import { performance } from 'node:perf_hooks';
 export const COLD_VERIFIER_LIMITS = Object.freeze({ diffBytes: 256 * 1024, logBytes: 64 * 1024, maxDurationMs: 30_000 });
 export interface ColdVerificationInput { schemaVersion: 1; specDigest: string; candidateDiff: string; testLog: string }
 export interface ColdVerificationRequest extends ColdVerificationInput { inputDigest: string }
-export interface ColdVerificationResponse {
-  inputDigest: string; invocationId: string; executionId: string; verdict: 'pass' | 'fail' | 'unavailable';
-}
 export type ColdVerifierTransport = (request: Readonly<ColdVerificationRequest>, context: Readonly<{
   executionId: string; invocationId: string; signal: AbortSignal;
 }>) => Promise<unknown> | unknown;

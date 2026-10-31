@@ -52,30 +52,31 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
   let admin: Awaited<ReturnType<typeof startRemoteAdminSocket>> | null = null;
   try {
     admin = await startRemoteAdminSocket(pairing, devices);
-    const watcher = createRemotePushWatcher({
-      read: async (since) => {
-        const target = `/api/verse/activity${since ? `?since=${encodeURIComponent(since)}` : ''}`;
-        const response = await fetch(`http://127.0.0.1:${hub.port}${target}`, {
-          headers: { 'x-ashlr-token': hub.readToken }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
-        });
-        if (response.status !== 200 || !response.headers.get('content-type')?.startsWith('application/json') || !response.body) {
-          throw new Error('Local activity unavailable');
+    const readLocal = async (target: string): Promise<unknown> => {
+      const response = await fetch(`http://127.0.0.1:${hub.port}${target}`, {
+        headers: { 'x-ashlr-token': hub.readToken }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
+      });
+      if (response.status !== 200 || !response.headers.get('content-type')?.startsWith('application/json') || !response.body) {
+        throw new Error('Local activity unavailable');
+      }
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 1024 * 1024) { await reader.cancel(); throw new Error('Local activity too large'); }
+          chunks.push(value);
         }
-        const reader = response.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            size += value.byteLength;
-            if (size > 1024 * 1024) { await reader.cancel(); throw new Error('Local activity too large'); }
-            chunks.push(value);
-          }
-        } finally { reader.releaseLock(); }
-        return JSON.parse(Buffer.concat(chunks.map((part) => Buffer.from(part)), size).toString('utf8')) as unknown;
-      },
-      send: (kind) => push.send(kind),
+      } finally { reader.releaseLock(); }
+      return JSON.parse(Buffer.concat(chunks.map((part) => Buffer.from(part)), size).toString('utf8')) as unknown;
+    };
+    const watcher = createRemotePushWatcher({
+      read: (since) => readLocal(`/api/verse/activity${since ? `?since=${encodeURIComponent(since)}` : ''}`),
+      readFleet: () => readLocal('/api/verse/fleet/runs'),
+      send: (kind, detail) => push.send(kind, detail),
     });
     watcher.start();
     const activeAdmin = admin;

@@ -8,6 +8,7 @@
  * Command views and this screen never disagree):
  *   control    GET /api/verse/control              daemon, pause, kill switch
  *   live       GET /api/verse/fleet/live           state, summary, lanes, runs
+ *   runs       GET /api/verse/fleet/runs           Mac host numbers
  *   authority  GET /api/verse/authority            switch, grant
  *   budget     GET /api/verse/budget               mode
  *   decisions  GET /api/verse/authority/ledger?view=decisions
@@ -17,7 +18,7 @@
  * `ashlr fleet resume`), sign or widen a grant (Touch ID on the Mac), or
  * raise the budget above the grant's ceiling. Each says so where it applies.
  */
-import { useCallback, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useState } from 'react';
 import type { BudgetMode } from '../../../../../core/routing/types.js';
 import type { AutonomySwitch } from '../../../../../core/authority/types.js';
 import type { FleetLiveRun } from '../../../../../core/fleet/fleet-types.js';
@@ -31,15 +32,25 @@ import { BUDGET_MODE_OPTIONS, modeAboveCeiling } from '../../budget/budget-model
 import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
+import { hostView } from '../../fleet-host/fleet-host-model.js';
+import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
+import { isFleetRuns } from '../../ops/ops-runs-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { fleetLedgerQuery } from '../../usage/fleet-ledger-queries.js';
+import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
+import { FleetUsageCard } from '../FleetUsageCard.js';
+import { homeRunsQuery } from '../home-runs-query.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
+import { MobileSwitches } from '../MobileSwitches.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, ErrorState, Row, Section, ui, type RowProps, type Tone } from '../ui-parts.js';
 import styles from './FleetScreen.module.css';
+
+const QueueSection = lazy(() => import('../QueueSection.js').then(({ QueueSection }) => ({ default: QueueSection })));
 
 export const FLEET_POLL_MS = 15_000;
 const STOP = STOP_ACTION.kind === 'daemon' ? STOP_ACTION : null;
@@ -116,6 +127,9 @@ export function refreshFleetScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
+    refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
+    refetchQuery(fleetLedgerQuery.key, () => fleetLedgerQuery.fetch(), true),
+    refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
     refetchQuery(decisionsQuery.key, () => decisionsQuery.fetch(), true),
@@ -131,25 +145,36 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DecisionRow({ repo, prNumber, ...props }: RowProps & { repo: string; prNumber: number | null }) {
+  const url = decisionPrUrl(repo, prNumber);
+  const row = <Row {...props} />;
+  return url
+    ? <a className={styles.decisionRow} href={url} target="_blank" rel="noopener noreferrer">{row}</a>
+    : <div className={styles.decisionRow}>{row}</div>;
+}
+
 export function FleetScreen() {
   const { activity, permissions, reachability, navigate } = useMobile();
   const control = useQuery(verseControlQuery);
   const live = useQuery(fleetLiveQuery);
+  const runs = useQuery(homeRunsQuery);
   const authority = useQuery(authorityQuery);
   const budget = useQuery(budgetQuery);
   const decisions = useQuery(decisionsQuery);
   const refetchControl = useRefetch(verseControlQuery);
   const refetchLive = useRefetch(fleetLiveQuery);
+  const refetchRuns = useRefetch(homeRunsQuery);
   const refetchAuthority = useRefetch(authorityQuery);
   const refetchBudget = useRefetch(budgetQuery);
   const refetchDecisions = useRefetch(decisionsQuery);
   const poll = useCallback(() => {
     refetchControl();
     refetchLive();
+    refetchRuns();
     refetchAuthority();
     refetchBudget();
     refetchDecisions();
-  }, [refetchControl, refetchLive, refetchAuthority, refetchBudget, refetchDecisions]);
+  }, [refetchControl, refetchLive, refetchRuns, refetchAuthority, refetchBudget, refetchDecisions]);
   usePollWhileVisible(poll, FLEET_POLL_MS);
   const [reposOpen, setReposOpen] = useState(false);
 
@@ -250,6 +275,7 @@ export function FleetScreen() {
                 title={LANE_LABEL[lane.lane] ?? lane.lane}
                 subtitle={lane.capReason ?? undefined}
                 trailing={lane.slots === 0 ? 'off' : `${lane.busy} of ${lane.slots} busy`}
+                onClick={() => navigate({ screen: 'runs' })}
               />
             ))}
           </div>
@@ -330,6 +356,22 @@ export function FleetScreen() {
     );
   }
 
+  const hostRuns = runs.status !== 'error' && isFleetRuns(runs.data) ? runs.data : null;
+  const host = hostView(hostRuns, Date.now());
+  const load = hostRuns?.host?.load1 ?? null;
+  const hostUnavailable = load === null || host.memory.pct === null || host.disk.gb === null || host.tick.ageSeconds === null;
+  const tickSeconds = host.tick.ageSeconds === null ? null : Math.floor(host.tick.ageSeconds);
+  const tickAge = tickSeconds === null ? null : tickSeconds < 60 ? `${tickSeconds} s`
+    : tickSeconds < 3600 ? `${Math.floor(tickSeconds / 60)} min` : `${Math.floor(tickSeconds / 3600)} h`;
+  const hostParts = [
+    load === null ? null : { key: 'load', content: `load ${load}` },
+    host.memory.pct === null ? null : { key: 'memory', content: host.memory.pct < 10
+      ? <span data-tone="warning"><Badge tone="warning">mem {host.memory.pct}% free</Badge></span> : `mem ${host.memory.pct}% free` },
+    host.disk.gb === null ? null : { key: 'disk', content: host.disk.gb < 10
+      ? <span data-tone="warning"><Badge tone="warning">disk {host.disk.text} free</Badge></span> : `disk ${host.disk.text} free` },
+    tickAge === null ? null : { key: 'tick', content: `read ${tickAge} ago` },
+  ].filter((part) => part !== null);
+
   const decisionList = decisions.data?.value?.decisions ?? null;
   const endedRuns: FleetLiveRun[] = (snapshot?.runs ?? []).filter((r) => r.endedAt && r.outcome && RUN_OUTCOME[r.outcome]).slice(0, DECISION_ROWS);
   const now = Date.now();
@@ -341,8 +383,10 @@ export function FleetScreen() {
     ) : (
       <div className={ui.group}>
         {decisionList.slice(0, DECISION_ROWS).map((d) => (
-          <Row
+          <DecisionRow
             key={`${d.proposalId}-${d.at}`}
+            repo={d.repo}
+            prNumber={d.prNumber}
             leading={<Badge tone={toneOf(OUTCOME_TONE[d.outcome])}>{DECISION_WORD[d.outcome]}</Badge>}
             title={d.prNumber !== null ? `${repoShort(d.repo)} #${d.prNumber}` : repoShort(d.repo)}
             subtitle={d.why}
@@ -362,8 +406,10 @@ export function FleetScreen() {
               const o = RUN_OUTCOME[r.outcome!]!;
               const where = r.prNumber !== null ? `${repoShort(r.repo)} #${r.prNumber}` : repoShort(r.repo);
               return (
-                <Row
+                <DecisionRow
                   key={r.id}
+                  repo={r.repo}
+                  prNumber={r.prNumber}
                   leading={<Badge tone={o.tone}>{o.word}</Badge>}
                   title={r.title}
                   subtitle={r.hold?.reason ? `${where} · ${r.hold.reason}` : where}
@@ -380,7 +426,20 @@ export function FleetScreen() {
   return (
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
+      <MobileSwitches />
+      <Section title="This Mac" flat>
+        {runs.status === 'idle' || runs.status === 'loading' ? <SkeletonList rows={1} label="Loading Mac host numbers" /> : (
+          <div className={cx(ui.card, ui.stack)}>
+            {hostParts.length > 0 ? <p className={styles.detail}>
+              {hostParts.map((part, index) => <Fragment key={part.key}>{index > 0 ? ' · ' : null}{part.content}</Fragment>)}
+            </p> : null}
+            {hostUnavailable ? <p className={ui.muted}>Mac host numbers unavailable</p> : null}
+          </div>
+        )}
+      </Section>
       <Section title="Right now" flat>{liveBody}</Section>
+      <FleetUsageCard />
+      <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>
       <Section title="Recent decisions" flat>{decisionsBody}</Section>
