@@ -23,12 +23,13 @@ function Harness() {
   return ui.overlay === 'palette' ? <CommandPalette /> : null;
 }
 let fleetReads = 0;
+let snapshot: ReturnType<typeof fleetRunsFixture>;
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear(); evictAll(); resetVerseUi(); clearMutationToken();
   fleetReads = 0;
   const net = shellFetch(activity());
-  const snapshot = { ...fleetRunsFixture(), claudeLane: null,
+  snapshot = { ...fleetRunsFixture(), claudeLane: null,
     workers: [{ job: 'RQ-PHX-FOO', repo: 'phantom', lane: 'codex-personal', tier: 'mid', ageSeconds: 720 }],
     publishesLastHour: [{ job: 'RQ-PHX-FOO', lane: 'codex-personal', url: 'https://github.com/x/y/pull/1719', at: '2026-10-31T12:00:00Z' }],
   };
@@ -77,4 +78,25 @@ it('opens a published PR safely and records the action', async () => {
   expect(requestWorkerLogJob).not.toHaveBeenCalled();
   expect(getVerseUiState().recentActions).toContain('worker.pr');
   expect(getVerseUiState().overlay).toBeNull();
+});
+
+it('opens a queued job in the log pane', async () => {
+  snapshot = { ...snapshot, claimed: [{ job: 'RQ-PHX-QUEUED', lane: 'codex-personal', tier: 'mid', at: '2026-10-31T12:00:00Z' }] };
+  const user = userEvent.setup({ delay: null }); render(<Harness />);
+  await user.type(await openPalette(), '@RQ-PHX-QUEUED');
+  await screen.findByRole('option', { name: /RQ-PHX-QUEUED.*queued/ });
+  await user.keyboard('{Enter}');
+  expect(requestWorkerLogJob).toHaveBeenCalledWith('RQ-PHX-QUEUED');
+  expect(openDockPane).toHaveBeenCalledWith('worker-log');
+});
+it('opens a merged job PR and selects its log', async () => {
+  snapshot = { ...snapshot, workers: [], publishesLastHour: [{ job: 'RQ-PHX-MERGED', lane: 'codex-personal', url: 'https://github.com/x/y/pull/1811', at: '2026-10-31T12:00:00Z' }] };
+  const open = vi.fn(); vi.stubGlobal('open', open);
+  const user = userEvent.setup({ delay: null }); render(<Harness />);
+  await user.type(await openPalette(), '@RQ-PHX-MERGED');
+  await screen.findByRole('option', { name: /RQ-PHX-MERGED.*merged/ });
+  await user.keyboard('{Enter}');
+  expect(open).toHaveBeenCalledWith('https://github.com/x/y/pull/1811', '_blank', 'noopener,noreferrer');
+  expect(requestWorkerLogJob).toHaveBeenCalledWith('RQ-PHX-MERGED');
+  expect(openDockPane).toHaveBeenCalledWith('worker-log');
 });
