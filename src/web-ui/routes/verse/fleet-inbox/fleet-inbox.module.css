@@ -5,3 +5,9 @@
 .meta { font-size: var(--text-xs-size); color: var(--text-secondary); }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-3) 0; }
 .banner { padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-secondary); }
+.composer label { display: block; margin-bottom: var(--space-2); }
+.composer textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-input); color: var(--text-primary); font: inherit; }
+.composer textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.composerActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: var(--text-xs-size); }
+.composerActions button { margin-left: auto; }
+.highlight { background: var(--status-success-bg); box-shadow: inset 3px 0 var(--status-success-solid); padding-left: var(--space-3); }

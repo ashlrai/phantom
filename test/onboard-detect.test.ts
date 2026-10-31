@@ -15,9 +15,15 @@ import { join } from 'node:path';
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
-import { detectOnboardResources, persistOnboardPlanTier } from '../src/core/onboard.js';
+import {
+  detectOnboardResources,
+  listOnboardScheduledAgents,
+  persistOnboardPlanTier,
+  summarizeOnboardBalance,
+} from '../src/core/onboard.js';
 import { RESOURCE_CATALOG } from '../src/core/onboard/catalog.js';
-import { probeCliLogin, resolveCliOnPath } from '../src/core/readiness.js';
+import { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath } from '../src/core/readiness.js';
+import { saveAutomation } from '../src/core/automations/index.js';
 import { loadConfig } from '../src/core/config.js';
 import type { WebServerOptions } from '../src/core/types.js';
 
@@ -62,6 +68,14 @@ describe('detectOnboardResources', () => {
         installed: false, binaryPath: null, loginState: null, selectedPlanTier: null,
       });
     }
+    // keyEnvName rows report presence-only booleans; loopback endpoints probe.
+    for (const row of empty) {
+      const entry = RESOURCE_CATALOG.find((r) => r.id === row.id)!;
+      if (entry.keyEnvName) expect(typeof row.keyPresent).toBe('boolean');
+      else expect(row.keyPresent).toBeNull();
+      if (entry.validateEndpoint?.startsWith('http://127.0.0.1')) expect(typeof row.endpointUp).toBe('boolean');
+      else expect(row.endpointUp).toBeNull();
+    }
 
     fakeCli(bin, 'codex', 'echo "Logged in using ChatGPT"');
     fakeCli(bin, 'claude', 'echo "Not logged in"; exit 1');
@@ -95,6 +109,22 @@ describe('readiness probes', () => {
     expect(await probeCliLogin('fakecli login status')).toBe('unknown');
     expect(await probeCliLogin('definitely-not-a-real-binary-xyz status')).toBe('unknown');
   });
+
+  it('envKeyPresent is presence-only and probeLoopbackEndpoint refuses non-loopback urls', async () => {
+    const name = 'ASHLR_ONB7_TEST_KEY';
+    delete process.env[name];
+    expect(envKeyPresent(name)).toBe(false);
+    process.env[name] = 'onb7-sentinel-not-a-real-key';
+    expect(envKeyPresent(name)).toBe(true);
+    delete process.env[name];
+    // Outbound apikey validate endpoints are never dialed by the connect probe.
+    for (const entry of RESOURCE_CATALOG.filter((r) => r.kind === 'apikey')) {
+      expect(entry.validateEndpoint?.startsWith('https://')).toBe(true);
+      expect(await probeLoopbackEndpoint(entry.validateEndpoint!)).toBeNull();
+    }
+    // A loopback url probes (nothing serves the port here -> false, still real).
+    expect(await probeLoopbackEndpoint('http://127.0.0.1:9/unreachable')).toBe(false);
+  });
 });
 
 describe('persistOnboardPlanTier', () => {
@@ -126,6 +156,59 @@ const makeOpts = (overrides: Partial<WebServerOptions> = {}): WebServerOptions =
   ({ port: 0, open: false, allowDispatch: false, ...overrides });
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
+describe('scheduled agents + balance', () => {
+  const seedAgents = async () => {
+    await saveAutomation({
+      name: 'Nightly flaky test hunt', enabled: true,
+      trigger: { kind: 'schedule', rrule: 'freq=daily;byhour=2' },
+      lane: 'fleet', repos: ['*'],
+    });
+    await saveAutomation({
+      name: 'Issue watcher', enabled: true,
+      trigger: { kind: 'github-issues', labels: ['ashlr'], query: null, includePrs: false, pollMinutes: 15 },
+      lane: 'fleet', repos: ['*'],
+    });
+  };
+
+  it('listOnboardScheduledAgents reports schedule-triggered automations only', async () => {
+    expect((await listOnboardScheduledAgents()).agents).toEqual([]);
+    await seedAgents();
+    const report = await listOnboardScheduledAgents();
+    // The scheduler refuses to tick inside a test process - reported honestly.
+    expect(report.schedulerRunning).toBe(false);
+    expect(report.agents).toHaveLength(1);
+    expect(report.agents[0]).toMatchObject({
+      name: 'Nightly flaky test hunt', enabled: true, rrule: 'FREQ=DAILY;BYHOUR=2',
+    });
+    expect(report.agents[0]!.id).toMatch(/^au_/);
+    expect(report.agents[0]!.nextRunAt).toBeNull();
+  });
+
+  it('summarizeOnboardBalance marks real evidence and never invents usage', async () => {
+    useFakeBin();
+    const prevKey = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = 'onb7-sentinel-not-a-real-key';
+    await seedAgents();
+    const resources = await detectOnboardResources(cfg());
+    const agents = await listOnboardScheduledAgents();
+    const balance = await summarizeOnboardBalance(cfg(), resources, agents);
+    if (prevKey === undefined) delete process.env.XAI_API_KEY;
+    else process.env.XAI_API_KEY = prevKey;
+
+    const grok = byId(balance.resources, 'grok');
+    expect(grok).toMatchObject({ connected: true, evidence: 'key-present', usage: null });
+    expect(byId(balance.resources, 'this-computer')).toMatchObject({ connected: true, evidence: 'self' });
+    expect(byId(balance.resources, 'proactive-agents')).toMatchObject({ connected: true, evidence: 'scheduled-agents' });
+    // codex/claude-code rows carry the real local ledger count even signed out.
+    expect(byId(balance.resources, 'codex').usage).toMatchObject({ callsToday: expect.any(Number) });
+    expect(byId(balance.resources, 'openai').usage).toBeNull();
+    expect(byId(balance.resources, 'openai').planTiers).toEqual(['API']);
+    expect(balance.connected).toEqual(expect.arrayContaining(['grok', 'this-computer', 'proactive-agents']));
+    expect(balance.scheduledAgents).toEqual({ total: 1, enabled: 1 });
+    expect(JSON.stringify(balance)).not.toContain('onb7-sentinel');
+  });
+});
+
 describe('GET /api/onboard/status', () => {
   it('answers one detected row per catalog entry with no credential material', async () => {
     useFakeBin();
@@ -138,12 +221,43 @@ describe('GET /api/onboard/status', () => {
     const body = JSON.parse(res.body) as {
       dispatchEnabled: boolean;
       resources: Array<{ id: string; installed: boolean; loginCommand: string | null }>;
+      agents: { schedulerRunning: boolean; agents: unknown[] };
+      balance: { connected: string[]; scheduledAgents: { total: number; enabled: number }; resources: unknown[] };
     };
     expect(body.dispatchEnabled).toBe(false);
     expect(body.resources.map((r) => r.id)).toEqual(RESOURCE_CATALOG.map((r) => r.id));
     expect(byId(body.resources, 'codex').loginCommand).toBe('codex login');
+    expect(body.agents.agents).toEqual([]);
+    expect(body.balance.resources).toHaveLength(RESOURCE_CATALOG.length);
+    expect(body.balance.connected).toContain('this-computer');
     expect(res.body).not.toContain('s3ntinel-value');
     delete process.env.ASHLR_TEST_SENTINEL;
+  });
+
+  it('lists scheduled agents and the existing verse route toggles them', async () => {
+    useFakeBin();
+    const { automation } = await saveAutomation({
+      name: 'Nightly flaky test hunt', enabled: true,
+      trigger: { kind: 'schedule', rrule: 'freq=daily;byhour=2' },
+      lane: 'fleet', repos: ['*'],
+    });
+    const h = await startServer(cfg(), makeOpts({ allowDispatch: true }));
+    openHandles.push(h);
+    const get = () => request('GET', `http://127.0.0.1:${h.port}/api/onboard/status`, readAuthHeaders(h.port));
+    const body = JSON.parse((await get()).body) as {
+      agents: { agents: Array<{ id: string; enabled: boolean; rrule: string }> };
+      balance: { scheduledAgents: { total: number; enabled: number } };
+    };
+    expect(body.agents.agents).toEqual([
+      expect.objectContaining({ id: automation.id, enabled: true, rrule: 'FREQ=DAILY;BYHOUR=2' }),
+    ]);
+    expect(body.balance.scheduledAgents).toEqual({ total: 1, enabled: 1 });
+
+    const off = await request('POST', `http://127.0.0.1:${h.port}/api/verse/automations/${automation.id}/disable`,
+      { ...JSON_HEADERS, 'x-ashlr-token': h.token }, '{}');
+    expect(off.statusCode).toBe(200);
+    const after = JSON.parse((await get()).body) as { agents: { agents: Array<{ enabled: boolean }> } };
+    expect(after.agents.agents[0]!.enabled).toBe(false);
   });
 });
 

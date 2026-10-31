@@ -1,5 +1,9 @@
 # ashlr-router
 
+The separate, uncommissioned Mac router supervisor is documented in
+[SUPERVISOR.md](SUPERVISOR.md). Its commissioning and security prerequisites
+apply independently of this runner.
+
 A Mac launchd runner that claims labelled GitHub issues and opens one draft pull request per job. It does not merge, tag, or publish. The queue runs around the clock. There is no quiet-hours window.
 
 From a checkout of this branch:
