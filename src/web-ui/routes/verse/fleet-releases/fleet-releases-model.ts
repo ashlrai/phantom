@@ -1,4 +1,5 @@
 import type { OpsRepoReleaseV1, OpsReleasesV1 } from '../../../../core/verse/ops-types.js';
+import type { ReleasePr } from '../fleet/release-pr-query.js';
 
 type GitHub = NonNullable<OpsRepoReleaseV1['gh']>;
 type Release = NonNullable<GitHub['latestRelease']>;
@@ -49,6 +50,11 @@ export function runTone(run: Run): 'ok' | 'warn' | 'danger' | 'neutral' {
 export function releaseLabel(release: Release): { label: string; badge: 'draft' | 'prerelease' | null } {
   return { label: `${release.tag}${release.name && release.name !== release.tag ? ` · ${release.name}` : ''}`,
     badge: release.draft ? 'draft' : release.prerelease ? 'prerelease' : null };
+}
+
+/** The merge button's one enable rule: the row is green — not blocked, no pending, no failing checks. */
+export function releasePrMergeable(pr: ReleasePr): boolean {
+  return !pr.blocked && pr.pending === 0 && pr.failing.length === 0;
 }
 
 export function safeRepoHref(repo: string): string | null {
