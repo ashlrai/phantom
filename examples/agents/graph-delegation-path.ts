@@ -1,9 +1,11 @@
 /**
- * Read-only inventory query: npx tsx examples/agents/graph-delegation-path.ts --from NODE_ID --to NODE_ID
+ * Read-only inventory query: npx tsx examples/agents/graph-delegation-path.ts --from NODE_ID --to NODE_ID [--avoid NODE_ID ...]
  * Writes one schemaVersion 1 JSON object. Success is `ready` with nodeIds and edgeIds;
  * `not_found` (GRAPH_NODE_NOT_FOUND), `no_path` (GRAPH_NO_PATH), and `unavailable`
  * (GRAPH_UNAVAILABLE) exit 1. GRAPH_LOAD_FAILED also exits 1; GRAPH_USAGE exits 2.
  * Available results include complete, sources, and issues (null when unknown).
+ * With --avoid, results include requested avoidedNodeIds and, when the graph is
+ * available, missingAvoidedNodeIds; absence is qualified by graph completeness.
  * Inventory is not execution authority: this example never launches or delegates work.
  */
 import process from 'node:process';
@@ -11,7 +13,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadGraph } from '../../src/core/graph/loader.js';
 
-const usage = 'Usage: npx tsx examples/agents/graph-delegation-path.ts --from NODE_ID --to NODE_ID';
+const usage = 'Usage: npx tsx examples/agents/graph-delegation-path.ts --from NODE_ID --to NODE_ID [--avoid NODE_ID ...]';
 
 type Dependencies = {
   load?: typeof loadGraph;
@@ -27,20 +29,25 @@ export async function runGraphDelegationPath(args: string[], deps: Dependencies 
 
   let from: string | undefined;
   let to: string | undefined;
+  const avoided = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const value = args[i + 1];
     if (!value || !value.trim() || value.startsWith('--')) return fail('error', 'GRAPH_USAGE', usage, 2);
     if (arg === '--from' && from === undefined) from = value;
     else if (arg === '--to' && to === undefined) to = value;
+    else if (arg === '--avoid') avoided.add(value);
     else return fail('error', 'GRAPH_USAGE', usage, 2);
     i++;
   }
   if (!from || !to) return fail('error', 'GRAPH_USAGE', usage, 2);
+  if (avoided.has(from) || avoided.has(to)) return fail('error', 'GRAPH_USAGE', 'Cannot avoid a path endpoint.', 2);
+  const avoidResult = avoided.size ? { avoidedNodeIds: [...avoided] } : {};
 
   try {
     const graph = await (deps.load ?? loadGraph)();
-    if (graph.status === 'unavailable') return fail('unavailable', 'GRAPH_UNAVAILABLE', 'Graph inventory is unavailable.', 1);
+    if (graph.status === 'unavailable') return emit({ schemaVersion: 1, status: 'unavailable', ...avoidResult,
+      error: { code: 'GRAPH_UNAVAILABLE', message: 'Graph inventory is unavailable.' } }, 1);
     if (graph.status !== 'ready' || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error('Invalid graph');
     const nodes = new Set<string>();
     for (const node of graph.nodes) {
@@ -58,9 +65,10 @@ export async function runGraphDelegationPath(args: string[], deps: Dependencies 
       adjacency.set(edge.from, outgoing);
     }
     const provenance = { complete: graph.complete ?? null, sources: graph.sources ?? null, issues: graph.issues ?? null };
+    const avoidance = avoided.size ? { ...avoidResult, missingAvoidedNodeIds: [...avoided].filter(id => !nodes.has(id)) } : {};
     const missingNodeIds = [...new Set([from, to].filter((id) => !nodes.has(id)))];
     if (missingNodeIds.length) return emit({ schemaVersion: 1, status: 'not_found', from, to, missingNodeIds,
-      ...provenance, error: { code: 'GRAPH_NODE_NOT_FOUND', message: 'Node not found in the available graph.' } }, 1);
+      ...avoidance, ...provenance, error: { code: 'GRAPH_NODE_NOT_FOUND', message: 'Node not found in the available graph.' } }, 1);
 
     // Enqueue each existing node at most once; adjacency retains loader edge order.
     const previous = new Map<string, { node: string; edge: string } | null>([[from, null]]);
@@ -68,12 +76,12 @@ export async function runGraphDelegationPath(args: string[], deps: Dependencies 
     for (let i = 0; i < queue.length && !previous.has(to); i++) {
       const current = queue[i]!;
       for (const edge of adjacency.get(current) ?? []) {
-        if (previous.has(edge.to)) continue;
+        if (avoided.has(edge.to) || previous.has(edge.to)) continue;
         previous.set(edge.to, { node: current, edge: edge.id });
         queue.push(edge.to);
       }
     }
-    if (!previous.has(to)) return emit({ schemaVersion: 1, status: 'no_path', from, to, ...provenance,
+    if (!previous.has(to)) return emit({ schemaVersion: 1, status: 'no_path', from, to, ...avoidance, ...provenance,
       error: { code: 'GRAPH_NO_PATH', message: 'No delegation path exists in the available graph.' } }, 1);
     const nodeIds = [to];
     const edgeIds: string[] = [];
@@ -86,7 +94,7 @@ export async function runGraphDelegationPath(args: string[], deps: Dependencies 
       nodeIds.push(current);
     }
     return emit({ schemaVersion: 1, status: 'ready', from, to, nodeIds: nodeIds.reverse(),
-      edgeIds: edgeIds.reverse(), ...provenance }, 0);
+      edgeIds: edgeIds.reverse(), ...avoidance, ...provenance }, 0);
   } catch {
     // Loader and serialization errors may contain private information.
     return fail('error', 'GRAPH_LOAD_FAILED', 'Could not read graph data.', 1);
