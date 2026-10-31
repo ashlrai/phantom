@@ -127,6 +127,17 @@ export function withPaneOpen(state: DockState, requested: DockPaneId): DockState
   return { ...state, open: true, tabs, active: pane, splitWith: splitWith === pane ? null : splitWith };
 }
 
+/** Open the registered fleet panes in preference order, preserving other tabs. */
+export function withFleetWorkspace(state: DockState, available: readonly DockPaneId[]): DockState {
+  const fleet = [...new Set(available)];
+  if (fleet.length === 0) return state;
+  return {
+    ...state, open: true,
+    tabs: [...fleet, ...state.tabs.filter((id) => !fleet.includes(id))],
+    active: fleet[0]!, splitWith: fleet[1] ?? null,
+  };
+}
+
 /** The pane's toggle: open & focus it, or — when it is already the visible pane — close the dock. */
 export function withPaneToggled(state: DockState, requested: DockPaneId): DockState {
   const pane = normalizePaneId(requested);
@@ -213,6 +224,10 @@ export function withChatSwitch(state: DockState, from: string | null, to: string
 
 export function openDockPane(pane: DockPaneId): void {
   setState(withPaneOpen(current().state, pane));
+}
+
+export function openFleetWorkspace(available: readonly DockPaneId[]): void {
+  setState(withFleetWorkspace(current().state, available));
 }
 
 export function toggleDockPane(pane: DockPaneId): void {

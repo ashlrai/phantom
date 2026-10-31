@@ -30,6 +30,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'overview',
     label: 'Overview',
     leaves: [
+      { path: '/connect', label: 'Connect Resources', description: 'Explore available resources.', implemented: true },
       {
         path: '/overview',
         label: 'Fleet Dashboard',
