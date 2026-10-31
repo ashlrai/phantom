@@ -76,3 +76,19 @@ export function stallNote(summary: ReturnType<typeof decisionSummary>, _tickAt: 
   return summary.launched === 0 && summary.skipped > 0
     ? `No launches in the journal window; last skip: ${summary.lastSkipReason ?? '—'}${repeatedCount > 0 ? ` · ${repeatedCount} bets skipped 3+ ticks in a row` : ''}` : null;
 }
+
+export function normalizeQuery(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 80);
+}
+
+export function matchesQuery(row: { repo: string; title: string; reason: string; target?: string; holdKind?: string }, query: string): boolean {
+  const normalized = normalizeQuery(query);
+  if (normalized === '') return true;
+  const haystack = [row.repo, row.title, row.reason, row.target, row.holdKind].join('\n').toLowerCase();
+  return normalized.split(' ').every(term => haystack.includes(term));
+}
+
+export function searchRows<T extends { repo: string; title: string; reason: string }>(rows: T[], query: string): T[] {
+  const normalized = normalizeQuery(query);
+  return normalized === '' ? rows : rows.filter(row => matchesQuery(row, normalized));
+}
