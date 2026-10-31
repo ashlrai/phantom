@@ -36,7 +36,7 @@ export async function cmdRouterQueue(args: string[], io: QueueIO = { input: proc
         if (bytes > STDIN_CAP[command]) throw new Error('oversized input record');
         chunks.push(buffer);
       }
-      const record: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const record: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)));
       io.output(command === 'merged' ? enqueueRouterFollowup(record) : routerQueueAskFanout(record));
     } else if (command === 'read') {
       io.output({ v: 1, jobs: readRouterQueue() });

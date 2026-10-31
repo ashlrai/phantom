@@ -30,7 +30,8 @@
  *
  * This module also owns the partition G7 applies to every check on a head:
  * only the required contexts block (on a local-enforcement repo that is the
- * App's `ashlr/verify`, plus whatever the branch names anyway); every other
+ * App's `ashlr/verify`, whatever the branch names anyway, and every GitHub
+ * Actions check run on the head — the secret scan included); every other
  * observed check — a Vercel preview, an advisory lint — is informational,
  * reported in the gate row but never part of the verdict
  * (partitionBlockingCheckContexts; the verdict itself lives in
@@ -49,6 +50,9 @@ import type { GithubCall, GithubReply, HostMergeDeps } from './host-merge.js';
 
 /** The check-run name rulesets require and G7 demands on local-enforcement repos. */
 export const ASHLR_VERIFY_CHECK_NAME = 'ashlr/verify';
+
+/** GitHub Actions' App id: on a local-enforcement repo every Actions check run blocks a merge (merge-gates.ts G7). */
+export const GITHUB_ACTIONS_APP_ID = '15368';
 
 /** Where to grant the missing permission (the exact per-App URL is printed by `ashlr authority setup`). */
 export const VERIFY_CHECK_PERMISSION_HINT =
