@@ -245,6 +245,7 @@ export function registerShellCommandHandlers(): () => void {
     // The clipboard code loads when asked for (copy-setup.ts), not at first paint.
     // Mind's Leader panel takes these once it mounts (leader-focus.ts waits for it).
     registerCommandHandler('leader.message', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'composer' })); }),
+    registerCommandHandler('fleet.interject', () => { void import('../fleet/interject-dialog-store.js').then((m) => m.openInterjectDialog()); }),
     registerCommandHandler('leader.directive', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'directive' })); }),
     registerCommandHandler('autonomy.copy-setup', () => { void import('./copy-setup.js').then((m) => m.copyAutonomySetupCommand()); }),
     // The repo wiki (3.15): the section takes the request once its chunk mounts (wiki-focus.ts).
