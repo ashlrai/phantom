@@ -36,7 +36,14 @@ export interface RailBadge {
   count?: number;
   tone?: 'running' | 'info' | 'warning' | 'danger' | 'success' | 'neutral';
   autonomy?: VerseAutonomyBadge;
+  fleet?: { runs?: FleetRunsBadge | null };
+  title?: string;
 }
+
+const fleetBadge = (badge: RailBadge, runs?: FleetRunsBadge | null): RailBadge => {
+  Object.defineProperty(badge, 'fleet', { value: { runs }, enumerable: false });
+  return badge;
+};
 
 export function autonomyTone(badge: VerseAutonomyBadge): NonNullable<RailBadge['tone']> {
   if (badge.stopped) return 'danger';
@@ -51,12 +58,14 @@ export function railBadgeFor(section: VerseSectionId, data: VerseActivityRespons
   if (section === 'fleet') {
     const autonomy = data?.autonomy ?? undefined;
     const spoken = autonomy ? `, ${autonomy.label}` : '';
-    if (runs && runs.workers > 0) return {
+    if (runs && runs.workers > 0) return fleetBadge({
       kind: 'count', count: runs.workers, autonomy,
-      spoken: `${spoken}, ${runs.workers} ${runs.workers === 1 ? 'worker' : 'workers'} running`,
+      spoken: `${spoken}, ${runs.lanes?.length || runs.personalPct != null ? describeFleetRuns(runs) : `${runs.workers} ${runs.workers === 1 ? 'worker' : 'workers'} running`}`,
       tone: fleetRunsTone(runs),
-    };
-    return autonomy ? { kind: 'autonomy', spoken, autonomy, tone: runs && fleetRunsTone(runs) === 'warning' ? 'warning' : autonomyTone(autonomy) } : null;
+    }, runs);
+    return fleetBadge(autonomy
+      ? { kind: 'autonomy', spoken, autonomy, tone: runs && fleetRunsTone(runs) === 'warning' ? 'warning' : autonomyTone(autonomy) }
+      : { kind: 'autonomy', spoken: '' }, runs);
   }
   if (!data) return null;
   switch (section) {
@@ -78,12 +87,27 @@ export function railBadgeFor(section: VerseSectionId, data: VerseActivityRespons
 }
 
 export function RailBadgeMark({ badge }: { badge: RailBadge }) {
+  return badge.fleet ? <FleetRailBadgeMark badge={badge} /> : <BadgeShape badge={badge} />;
+}
+
+function FleetRailBadgeMark({ badge }: { badge: RailBadge }) {
+  const liveRuns = useFleetRunsBadge();
+  const runs = liveRuns ?? badge.fleet?.runs;
+  const current = runs ? {
+    ...badge, kind: runs.workers > 0 || !badge.autonomy ? 'count' as const : 'autonomy' as const,
+    count: runs.workers, tone: fleetRunsTone(runs), title: describeFleetRuns(runs),
+  } : badge;
+  return <BadgeShape badge={current} />;
+}
+
+function BadgeShape({ badge }: { badge: RailBadge }) {
   const a = badge.autonomy;
   const shape = a ? (a.stopped ? 'stopped' : a.paused ? 'paused' : a.mode) : null;
-  const autonomy = shape ? <span className={styles.autonomy} data-shape={shape} data-tone={badge.tone} aria-hidden="true" data-badge="autonomy" /> : null;
+  const autonomyTitle = badge.kind === 'autonomy' ? badge.title : undefined;
+  const autonomy = shape ? <span className={styles.autonomy} data-shape={shape} data-tone={badge.tone} aria-hidden={autonomyTitle ? undefined : true} role={autonomyTitle ? 'img' : undefined} aria-label={autonomyTitle} data-badge="autonomy" title={autonomyTitle} /> : null;
   if (badge.kind === 'count') {
     const n = badge.count ?? 0;
-    return <>{autonomy}<span className={styles.count} data-autonomy={a ? 'true' : undefined} data-tone={badge.tone} aria-hidden="true" data-badge="count">{n > 99 ? '99+' : n}</span></>;
+    return <>{autonomy}<span className={styles.count} data-autonomy={a ? 'true' : undefined} data-tone={badge.tone} aria-hidden={badge.title ? undefined : true} role={badge.title ? 'img' : undefined} aria-label={badge.title} data-badge="count" title={badge.title}>{n > 99 ? '99+' : n}</span></>;
   }
   if (badge.kind === 'autonomy') return autonomy;
   return <span className={badge.kind === 'pulse' ? styles.pulse : styles.dot} data-tone={badge.tone} aria-hidden="true" data-badge={badge.kind} />;

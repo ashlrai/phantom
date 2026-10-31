@@ -7,7 +7,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { fleetSteeringQuery } from './fleet-steering-queries.js';
 import styles from './fleet-steering.module.css';
 import { leaderJournalQuery } from '../leader-journal/leader-journal-queries.js';
-import { lastExchange } from './last-exchange-model.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { lastExchange, pendingOrders, pendingText } from './last-exchange-model.js';
 import { buildSteering, fleetSourceHealth, summarizeReaction, type SteeringEntry } from './steering-model.js';
 
 const PREVIEW_CHARS = 160;
@@ -58,7 +59,9 @@ export function FleetSteeringPane({ visible }: PaneProps) {
   const refetch = useRefetch(fleetSteeringQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   const entries = useMemo(() => buildSteering(read.data), [read.data]);
-  const exchange = lastExchange(entries, journal.data, Date.now());
+  const nowMs = Date.now();
+  const exchange = lastExchange(entries, journal.data, nowMs);
+  const pending = pendingText(pendingOrders(read.data, nowMs));
   const missing = read.data === null || (read.error instanceof ApiError && read.error.status === 404);
   if (missing) return <p className={styles.message}>Live runs not in this build</p>;
   if (read.data === undefined) {
@@ -72,6 +75,11 @@ export function FleetSteeringPane({ visible }: PaneProps) {
   const degraded = sources.inbox !== 'healthy' || sources.runsDir !== 'healthy';
   return (
     <section className={styles.root} aria-label="Steering">
+      <p role="status" aria-label="Pending orders" className={styles.text} data-tone={pending.tone}
+        style={{ color: pending.tone === 'danger' ? 'var(--status-danger-fg)' : pending.tone === 'warning' ? 'var(--status-warning-fg)' : undefined }}>
+        {pending.text}
+      </p>
+      <Button size="sm" onClick={() => openInterjectDialog()}>Send another</Button>
       <p role="status" aria-label="Last exchange" className={styles.text} data-tone={exchange.tone}
         style={{ color: exchange.tone === 'danger' ? 'var(--status-danger-fg)' : exchange.tone === 'warning' ? 'var(--status-warning-fg)' : undefined }}>
         {exchange.text}
