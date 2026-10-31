@@ -33,6 +33,9 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
   allowedSenderIds: ReadonlySet<string>;
   /** Optional sink for another shared context. Must report success only after persistence. */
   write?: (envelope: ChannelEnvelope) => Promise<InboxAppendResult>;
+  /** Best-effort transport, not durable delivery. Calls are serialized; do not await
+   * another receive on this receiver from the callback. Receives only a detached ack. */
+  acknowledge?: (ack: ChannelAck) => Promise<void>;
 }
 
 /** Rolling window from first successful receipt, including across clock bucket
@@ -44,6 +47,11 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   const seen = new Map<string, { at: number; key: string }>();
   let tail = Promise.resolve();
   let lastTime = 0;
+  async function success(envelope: ChannelEnvelope, status: ChannelAck['status']): Promise<ChannelReceiveResult> {
+    const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status };
+    try { await options.acknowledge?.({ ...ack }); } catch { /* Transport is best-effort. */ }
+    return { ok: true, envelope, ack };
+  }
   async function receive(input: ChannelMessage): Promise<ChannelReceiveResult> {
     if (typeof input?.verifiedSenderId !== 'string' || !allowed.has(input.verifiedSenderId)) {
       return { ok: false, reason: 'sender-not-allowed' };
@@ -70,7 +78,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       channel: input.channel, verifiedSenderId: input.verifiedSenderId,
       receivedAt: new Date(now).toISOString(), body, dedupeKey,
     };
-    if (previous) return { ok: true, envelope, ack: { channel: input.channel, dedupeKey, status: 'duplicate' } };
+    if (previous) return success(envelope, 'duplicate');
     if (seen.size >= 10_000) return { ok: false, reason: 'full' };
     try {
       const result = options.write
@@ -78,8 +86,8 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
         : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
       if (!result.ok) return { ok: false, reason: result.reason };
       seen.set(hash, { at: now, key: dedupeKey });
-      return { ok: true, envelope, ack: { channel: input.channel, dedupeKey, status: 'accepted' } };
     } catch { return { ok: false, reason: 'write-failed' }; }
+    return success(envelope, 'accepted');
   }
   return (input) => {
     // Snapshot before queuing: callers cannot change identity/body while waiting.
