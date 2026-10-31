@@ -7,6 +7,7 @@ function QueueGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+q',
   id: 'fleet-queue',
   title: 'Queue',
   description: 'Parked and ready jobs by lane, with precheck skips',
