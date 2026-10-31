@@ -29,3 +29,18 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 if (typeof Element.prototype.scrollIntoView !== 'function') {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// Node >=25 ships an experimental `localStorage`/`sessionStorage` global that
+// resolves to undefined unless --localstorage-file is passed. Vitest's jsdom
+// environment skips populating any key Node already owns, so that inert stub
+// reaches tests instead of jsdom's real Storage. Re-point both globals at the
+// JSDOM instance's own storage — a no-op wherever the Node stub is absent.
+const jsdomWindow = (globalThis as { jsdom?: { window?: Pick<Window, 'localStorage' | 'sessionStorage'> } }).jsdom?.window;
+for (const key of ['localStorage', 'sessionStorage'] as const) {
+  if (jsdomWindow && typeof globalThis[key] === 'undefined' && typeof jsdomWindow[key] !== 'undefined') {
+    Object.defineProperty(globalThis, key, {
+      get: () => jsdomWindow[key],
+      configurable: true,
+    });
+  }
+}

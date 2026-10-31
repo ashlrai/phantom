@@ -356,6 +356,16 @@ function reconcileSessionSnapshot(current: VerseSessionState, incoming: VerseSes
     if (older) return current.session;
   }
   const snapshotAt = Date.parse(incoming.updatedAt);
+  // A detail/POST can capture the record before its result is appended, or
+  // arrive after SSE already delivered it. Replay the newest durable result
+  // without replacing a newer snapshot's result when this tab's log lags.
+  let result: Extract<VerseEvent, { type: 'assistant-status' }> | undefined;
+  for (const event of events) {
+    if (event.type === 'assistant-status' && event.phase === 'result') result = event;
+  }
+  if (result && (incoming.lastResult === undefined || Date.parse(result.at) >= snapshotAt)) {
+    incoming = { ...incoming, lastResult: result.text };
+  }
   const settlement = turnSettlement(events, turnId);
   if (settlement && Number.isFinite(snapshotAt) && snapshotAt < Date.parse(settlement.terminal.at)) {
     const settled = settledStatus({ ...incoming, status: 'running' }, events, turnId);
