@@ -110,7 +110,9 @@ if (argv[0] === 'exec') {
     out({ type: 'message_stop' });
     process.exit(0);
   }
-  out({ type: 'system', subtype: 'init', session_id: sid, model: flag('--model') });
+  // MODELSWITCH: the CLI reports running a model other than --model — an
+  // automatic switch the engine must log and surface.
+  out({ type: 'system', subtype: 'init', session_id: sid, model: prompt.includes('MODELSWITCH') ? 'claude-haiku-4-5' : flag('--model') });
   if (prompt.includes('HANG')) return hang();
   if (prompt.includes('FAIL')) return fail();
   // NOCONV: the vendor conversation is gone — exactly what claude prints when
@@ -450,6 +452,27 @@ describe('sendTurn — claude via account launcher', () => {
   it('buildTurnEnv keeps the engine subscription tokens the vendor CLIs need', () => {
     const env = buildTurnEnv({ ANTHROPIC_AUTH_TOKEN: 'ollama', MY_SECRET: 'x' }, { PATH: '/bin', HOME: '/h', AWS_SECRET_ACCESS_KEY: 'k', GITHUB_PAT: 'p' });
     expect(env).toEqual({ PATH: '/bin', HOME: '/h', ANTHROPIC_AUTH_TOKEN: 'ollama' });
+  });
+
+  it('an automatic model switch is noticed live and written to the log with both ids', async () => {
+    const logged: string[] = [];
+    engine.close();
+    engine = createEngine({ root, killGraceMs: 200, log: (level, message) => { logged.push(`${level}:${message}`); } });
+    const created = engine.createSession({ projectPath: project, seatId: 'claude-max', model: 'claude-opus-5' }, nativeLaunch(CLAUDE_SEAT));
+    const statuses: VerseEvent[] = [];
+    // Transient `status` events reach subscribers with the last persisted seq.
+    const off = engine.subscribe(created.id, 0, (event) => { if (event.type === 'status') statuses.push(event); });
+    const done = untilTurnDone(engine, created.id);
+    engine.sendTurn(created.id, 'MODELSWITCH please');
+    await done;
+    off();
+
+    const switchNotice = statuses.filter((e) => e.type === 'status' && e.kind === 'model-switch');
+    expect(switchNotice).toHaveLength(1);
+    expect((switchNotice[0] as { message: string }).message)
+      .toBe('requested claude-opus-5, running claude-haiku-4-5');
+    // The durable log line carries the same original→new pair.
+    expect(logged).toContain(`warn:session ${created.id}: model switch — requested claude-opus-5, running claude-haiku-4-5`);
   });
 });
 

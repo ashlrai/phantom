@@ -759,6 +759,10 @@ function relativeTime(iso: string): string {
  * `ashlr runs [--json]` — list past runs.
  */
 export async function cmdRuns(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    printRunsHelp();
+    return 0;
+  }
   const jsonMode = args.includes('--json');
 
   let listRuns: () => RunState[];
@@ -832,6 +836,16 @@ export async function cmdRuns(args: string[]): Promise<number> {
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
+
+function printRunsHelp(): void {
+  console.log('');
+  console.log(bold('  ashlr runs') + dim(' - list past runs'));
+  console.log('');
+  console.log('  ' + bold('Usage:'));
+  console.log('');
+  console.log(`    ${cyan('ashlr runs [--json]')}   ${dim('list past runs (newest first); details via `ashlr run show <id>`')}`);
+  console.log('');
+}
 
 function printRunHelp(): void {
   console.log('');

@@ -21,7 +21,6 @@ import {
   type ResourceEnvelopeV1,
 } from './value-portfolio.js';
 
-export const AGENT_NATIVE_KERNEL_SCHEMA_VERSION = 1 as const;
 export const AGENT_NATIVE_KERNEL_PROTOCOL = 'agent-native-kernel-shadow-v1' as const;
 
 const DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/;

@@ -1,3 +1,5 @@
+import { buildAccountCard } from './accounts-model.js';
+import type { Account } from './usage-contract.js';
 /**
  * AccountDetail.test.tsx — the depth view, pinned where depth turns into
  * invention: a health of `unknown` drawn as a fault, a flagged window given a
@@ -57,6 +59,21 @@ function detail(model: AccountCardModel, onClose = vi.fn()): void {
 }
 
 describe('AccountDetail', () => {
+  it('shows a weekly-only Claude account with no session cap', () => {
+    const weekly = { id: 'seven_day', label: null, usedPercent: 62, resetsAt: '2026-11-02T12:00:00.000Z', resetDescription: null, measured: true, limitReached: false };
+    const account: Account = {
+      id: 'claude-weekly', label: 'Claude weekly', provider: 'claude', planType: 'max',
+      state: 'observed', authentication: 'signed-in', health: null, reason: null,
+      observedAt: '2026-10-31T12:00:00.000Z', expiresAt: '2026-11-01T12:00:00.000Z',
+      windows: [weekly], binding: null, reconnectCommand: null, credits: null, notes: [], unsupported: null,
+    };
+    detail(buildAccountCard(account, null, Date.parse('2026-10-31T12:00:00.000Z')));
+    expect(screen.getByText('Week · all models')).toBeInTheDocument();
+    expect(screen.getByText('No session cap on this plan')).toBeInTheDocument();
+    expect(screen.getAllByRole('meter')).toHaveLength(1);
+    expect(screen.queryByText(/5-hour|rolling 5h/)).toBeNull();
+  });
+
   it.each([true, false, null, undefined])('shows credit control %s in card and detail without changing the subscription meter', (spendControlReached) => {
     const model = card({ id: 'codex-a', label: 'Codex A', engine: 'codex',
       binding: window({ id: 'primary', usedPct: 100 }),

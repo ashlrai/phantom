@@ -75,6 +75,7 @@ const NOTICE_WORD: Record<VerseStatusKind, string> = {
   retry: 'Retrying',
   preflight: 'Preflight',
   watchdog: 'Still running',
+  'model-switch': 'Model switch',
 };
 
 /** "14s" / "1m 3s" / "1h 2m". */
