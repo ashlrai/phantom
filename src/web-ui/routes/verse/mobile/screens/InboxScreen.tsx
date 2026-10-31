@@ -18,6 +18,7 @@ import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { inboxTailQuery } from '../inbox-tail-query.js';
+import { dedupeInboxEntries } from '../inbox-dedupe.js';
 import { inboxSeen, type InboxSeen } from '../inbox-seen-model.js';
 import { inboxPending } from '../inbox-pending-model.js';
 import { INBOX_NOT_IN_THIS_BUILD, INBOX_READ_LIMIT, inboxReadQuery, type FleetInboxReadEntry } from '../inbox-read-query.js';
@@ -43,7 +44,7 @@ function priorityTone(priority: string): Tone {
 }
 
 /** One entry: the channel, the priority when the sender set one, the time, then the words. */
-function InboxEntry({ entry, now, seen }: { entry: FleetInboxReadEntry; now: number; seen: InboxSeen }) {
+function InboxEntry({ entry, now, seen, repeats, otherSources }: { entry: FleetInboxReadEntry; now: number; seen: InboxSeen; repeats: number; otherSources: string[] }) {
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
   const long = entry.text.split('\n').length > 6 || entry.text.length > SIX_LINE_CHARS;
@@ -54,6 +55,7 @@ function InboxEntry({ entry, now, seen }: { entry: FleetInboxReadEntry; now: num
     <article className={styles.entry}>
       <header className={styles.entryHead}>
         <Badge>{entry.source}</Badge>
+        {repeats > 1 ? <span data-testid="inbox-repeats"><Badge>×{repeats}</Badge>{otherSources.length > 0 ? <span className={ui.faint}> · also via {otherSources.join(', ')}</span> : null}</span> : null}
         {entry.priority ? <Badge tone={priorityTone(entry.priority)}>{entry.priority}</Badge> : null}
         <time className={styles.entryTime} dateTime={stamp} title={entry.at}>{ago(entry.at, now)}</time>
       </header>
@@ -107,7 +109,8 @@ export function InboxScreen() {
     // A chip whose source dropped out of the latest read falls back to All.
     const active = source !== null && sources.some((s) => s.toLowerCase() === source.toLowerCase()) ? source : null;
     const shown = active === null ? data.entries : data.entries.filter((e) => e.source.toLowerCase() === active.toLowerCase());
-    const seen = inboxSeen(shown, snapshot.data?.snapshot, now);
+    const deduped = dedupeInboxEntries(shown);
+    const seen = inboxSeen(deduped.map(({ entry }) => entry), snapshot.data?.snapshot, now);
     const pending = inboxPending(seen.entries, snapshot.data?.snapshot, now);
     body = (
       <>
@@ -133,7 +136,7 @@ export function InboxScreen() {
             ) : null}
             {shown.length === 0 ? <EmptyState title="Nothing from this source." /> : (
               <div className={ui.group}>
-                {shown.map((entry, i) => <InboxEntry key={`${entry.at}-${i}`} entry={entry} now={now} seen={seen.entries[i]!} />)}
+                {deduped.map(({ entry, repeats, otherSources }, i) => <InboxEntry key={`${entry.at}-${i}`} entry={entry} repeats={repeats} otherSources={otherSources} now={now} seen={seen.entries[i]!} />)}
               </div>
             )}
           </>
