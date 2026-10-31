@@ -1,8 +1,13 @@
 import type { SwimlaneItem, SwimlaneLane } from '../../../components/charts/Swimlane.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { parseHeldReason } from '../fleet/held-reason.js';
 import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
 const HOUR = 3_600_000;
+const LANE_LABEL_MAX = 80;
+const heldStamp = new Intl.DateTimeFormat('en-US', {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
 type Worker = FleetRuns['workers'][number];
 export type LaneGroup = {
   lane: string; rows: Worker[];
@@ -56,6 +61,30 @@ export function jobFromItem(item: SwimlaneItem): string | null {
   return JOB_ID_RE.test(item.id) ? item.id : null;
 }
 
+/** `Nov 1 01:22` in the viewer's local zone (formatToParts keeps no comma). */
+function heldStampText(ms: number): string {
+  const parts = heldStamp.formatToParts(ms);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('month')} ${part('day')} ${part('hour')}:${part('minute')}`;
+}
+
+/** Lane header for the timeline: `codex-cmp 0/30`, plus `· held: <reason>`
+ *  when the lane is held so an empty lane reads as held, not idle. */
+export function laneLabel(
+  lane: { lane: string; running: number; target: number; held: boolean; heldReason: string | null },
+  nowMs: number,
+): string {
+  let label = `${lane.lane} ${lane.running}/${lane.target}`;
+  if (lane.held) {
+    const parsed = parseHeldReason(lane.heldReason);
+    label += ' · held';
+    if (parsed?.label) label += `: ${parsed.label.toLowerCase()}`;
+    const at = parsed?.at ? Date.parse(parsed.at) : NaN;
+    if (Number.isFinite(at)) label += parsed?.until && at > nowMs ? ` until ${heldStampText(at)}` : ` since ${heldStampText(at)}`;
+  }
+  return label.length > LANE_LABEL_MAX ? `${label.slice(0, LANE_LABEL_MAX - 1)}…` : label;
+}
+
 export function timelineLanes(runs: FleetRuns, nowMs: number): {
   lanes: SwimlaneLane[];
   from: number;
@@ -63,8 +92,8 @@ export function timelineLanes(runs: FleetRuns, nowMs: number): {
   longest: { job: string; lane: string; ageSeconds: number } | null;
   unknownAge: number;
 } {
-  const lanes: SwimlaneLane[] = runs.lanes.map(({ lane, running, target }, index) => ({
-    id: `lane-${index}`, label: `${lane} ${running}/${target}`, items: [],
+  const lanes: SwimlaneLane[] = runs.lanes.map((lane, index) => ({
+    id: `lane-${index}`, label: laneLabel(lane, nowMs), items: [],
   }));
   const byName = new Map(runs.lanes.map(({ lane }, index) => [lane, lanes[index]!]));
   let other: SwimlaneLane | undefined;
