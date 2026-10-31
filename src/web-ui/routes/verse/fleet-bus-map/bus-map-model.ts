@@ -132,3 +132,21 @@ export function topTalkers(agents: readonly BusMapAgent[], n: number): BusMapAge
   const limit = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
   return [...agents].sort(agentOrder).slice(0, limit);
 }
+
+/**
+ * "last hop 3 min ago" — how fresh the bus is, from the feed's last-hop
+ * stamp. "no hops recorded" when the feed has never seen a hop (or carries a
+ * stamp that does not parse): the pane's empty window and a dead bus are
+ * different states, and this string is what tells them apart.
+ */
+export function lastHopText(lastHopAt: string | null, nowMs: number): string {
+  const at = lastHopAt === null ? NaN : Date.parse(lastHopAt);
+  if (!Number.isFinite(at)) return 'no hops recorded';
+  const seconds = Math.max(0, Math.floor((nowMs - at) / 1000));
+  if (seconds < 60) return `last hop ${seconds} sec ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `last hop ${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `last hop ${hours} hr ago`;
+  return `last hop ${Math.floor(hours / 24)} days ago`;
+}

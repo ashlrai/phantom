@@ -1,17 +1,37 @@
-import { useMemo } from 'react';
-import { SkeletonLine } from '../../../components/primitives/index.js';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, SkeletonLine } from '../../../components/primitives/index.js';
+import { IconCopy } from '../../../components/primitives/icons.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { buildBusMap, topTalkers, truncateAgentId } from './bus-map-model.js';
+import { buildBusMap, lastHopText, topTalkers, truncateAgentId } from './bus-map-model.js';
 import styles from './fleet-bus-map.module.css';
 
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString();
 const MAX_AGENTS = 10;
 const shareText = (share: number) => usedPercentText(share * 100);
+
+/** Icon-only copy of a full agent id — the row only ever shows it truncated. */
+function CopyAgentId({ id }: { id: string }) {
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(id); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
+  return <>
+    <Button variant="ghost" size="sm" iconOnly icon={<IconCopy size={14} />}
+      aria-label={`Copy agent id ${id}`} title={`Copy agent id ${id}`} onClick={() => void copy()} />
+    {notice !== '' && <span role="status">{notice}</span>}
+  </>;
+}
 
 export function FleetBusMapPane({ visible }: PaneProps) {
   const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 0 });
@@ -22,11 +42,12 @@ export function FleetBusMapPane({ visible }: PaneProps) {
   if (read.data === undefined || read.data === null) return <div className={styles.root} role="status">{read.status === 'error' || read.data === null ? 'Bus is unavailable.' : <><span>Reading bus…</span><SkeletonLine /><SkeletonLine /></>}</div>;
   const data = read.data;
   const agents = topTalkers(map.agents, MAX_AGENTS);
+  const freshness = lastHopText(data.lastHopAt, Date.now());
   return <section className={styles.root} aria-label="Bus map">
-    <p className={styles.header}>{map.agents.length.toLocaleString()} agents · {map.totals.hops.toLocaleString()} hops · in {count(map.totals.inputTokens)} / out {count(map.totals.outputTokens)} tokens{data.hopsDropped > 0 && <> · {data.hopsDropped.toLocaleString()} hops dropped</>}</p>
+    <p className={styles.header}>{map.agents.length.toLocaleString()} agents · {map.totals.hops.toLocaleString()} hops · in {count(map.totals.inputTokens)} / out {count(map.totals.outputTokens)} tokens{data.hopsDropped > 0 && <> · {data.hopsDropped.toLocaleString()} hops dropped</>}<span> · {freshness}</span></p>
     {data.sources.hops !== 'healthy' && <p className={styles.notice} role="status">Bus hop data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Bus could not refresh. Showing the last reading.</p>}
-    {map.totals.hops === 0 ? <p className={styles.message}>No bus traffic in the recent window.</p> : <>
+    {map.totals.hops === 0 ? <p className={styles.message}>No bus traffic in the recent window.<span> · {freshness}</span></p> : <>
       <div className={styles.tableWrap}>
         <table className={styles.table} aria-label="Bus traffic by agent pair">
           <thead><tr>
@@ -60,6 +81,7 @@ export function FleetBusMapPane({ visible }: PaneProps) {
           {agents.map(agent => <li key={agent.id} className={styles.agentRow}>
             <span className={styles.agentId} title={agent.id}>{truncateAgentId(agent.id)}</span>
             <span className={styles.agentCounts}>{agent.sent.toLocaleString()} sent · {agent.received.toLocaleString()} received</span>
+            <CopyAgentId id={agent.id} />
           </li>)}
           {map.agents.length > agents.length && <li className={styles.agentCounts}>+ {map.agents.length - agents.length} more</li>}
         </ol>
