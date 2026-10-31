@@ -29,7 +29,7 @@ it('opens a tile and lays out only registered fleet panes with one store update'
   expect(getDockState().active).toBe('fleet-lanes');
   const listener = vi.fn();
   const unsubscribe = subscribeDockState(listener);
-  fireEvent.click(screen.getByRole('button', { name: 'Open fleet workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open all fleet panes' }));
   expect(getDockState()).toMatchObject({ open: true, active: 'fleet-lanes', splitWith: 'fleet-events', tabs: ['fleet-lanes', 'fleet-events'] });
   expect(listener).toHaveBeenCalledTimes(1);
   unsubscribe();

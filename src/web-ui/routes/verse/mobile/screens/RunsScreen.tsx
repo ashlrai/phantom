@@ -6,30 +6,38 @@
  *
  *   Reads   GET /api/verse/fleet/runs  (runs-queries.ts, polled 10 s while
  *           visible — the route the desktop's Live runs tile reads)
+ *           GET /api/verse/fleet/control/lanes — server target bounds;
+ *           also polled 10 s while visible, until the route returns 404.
  *   Writes  POST /api/verse/fleet/runs/inbox — runMobileAction, confirmless
  *           like a Leader send: token sheet if the hold lapsed, then POST,
  *           then a toast; a refused send keeps the words in the box.
+ *           POST /api/verse/fleet/control/lanes — confirmed target changes
+ *           through the same guard and the existing Ops query helper.
  *
  * The route family is still landing, so a 404 is its own state ("not in
  * this build yet"), never an error and never a zero. Nulls are honest
  * unknowns and print as —.
  */
-import { useId, useState } from 'react';
+import { lazy, Suspense, useId, useState } from 'react';
 import { getMutationToken } from '../../../../data/auth-store.js';
 import { refetchQuery } from '../../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { VerseControlLockedError } from '../../autonomy/control-queries.js';
+import { laneTargetsQuery } from '../../ops/lane-targets-queries.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { BusSection } from '../BusSection.js';
 import { busLiteQuery } from '../bus-query.js';
+import { mergeLaneRows } from '../lane-target-model.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { fleetRunsQuery, postFleetRunsInbox } from '../runs-queries.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { Badge, EmptyState, ErrorState, Meter, Row, Section, ui } from '../ui-parts.js';
 import styles from './RunsScreen.module.css';
+
+const LaneTargetSheet = lazy(() => import('../LaneTargetSheet.js').then((m) => ({ default: m.LaneTargetSheet })));
 
 export const RUNS_POLL_MS = 10_000;
 /** Worker rows before the list truncates (the Mac's Live runs has the rest). */
@@ -56,10 +64,11 @@ function untilText(iso: string, now: number): string {
   return `in ${Math.round(ms / 86_400_000)} d`;
 }
 
-/** Pull-to-refresh: force both reads fresh. */
+/** Pull-to-refresh: force runs, targets and bus reads fresh. */
 export function refreshRunsScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true),
+    refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
     refetchQuery(busLiteQuery.key, () => busLiteQuery.fetch(), true),
   ]);
 }
@@ -67,6 +76,12 @@ export function refreshRunsScreen(): Promise<unknown> {
 export function RunsScreen() {
   const { permissions, reachability, navigate } = useMobile();
   const runs = useQuery(fleetRunsQuery);
+  const targets = useQuery(laneTargetsQuery);
+  const refetchTargets = useRefetch(laneTargetsQuery);
+  usePollWhileVisible(refetchTargets, RUNS_POLL_MS, { enabled: targets.data !== null });
+  const [selected, setSelected] = useState<string | null>(null);
+  const lanes = mergeLaneRows(runs.data?.lanes ?? [], targets.data ?? null);
+  const selectedRow = lanes.find((lane) => lane.lane === selected);
   const refetch = useRefetch(fleetRunsQuery);
   const notInBuild = runs.error instanceof ApiError && runs.error.status === 404;
   // A missing route is not retried (the query memoizes it), so stop the clock too.
@@ -137,11 +152,13 @@ export function RunsScreen() {
         <Section title="Lanes" flat>
           {data.lanes.length === 0 ? <p className={cx(ui.card, ui.muted)}>No lanes reported.</p> : (
             <div className={ui.group}>
-              {data.lanes.map((lane) => (
+              {lanes.map((lane) => (
                 <Row
                   key={lane.lane}
                   title={lane.lane}
-                  subtitle={`${count(lane.running)}/${count(lane.target)} · queued ${count(lane.queued)}${lane.held && lane.heldReason ? ` · ${lane.heldReason}` : ''}`}
+                  label={`Adjust ${lane.lane} target`}
+                  onClick={canAct && targets.data != null ? () => setSelected(lane.lane) : undefined}
+                  subtitle={`${count(lane.running)} running · target ${count(lane.target)} · queued ${count(lane.queued)}${lane.held && lane.heldReason ? ` · ${lane.heldReason}` : ''}`}
                   trailing={lane.held ? <Badge tone="warning">held</Badge> : undefined}
                 />
               ))}
@@ -210,6 +227,11 @@ export function RunsScreen() {
   return (
     <Screen title="Live runs" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshRunsScreen} label="Live runs">
       {body}
+      {selectedRow ? <Suspense fallback={null}><LaneTargetSheet key={selectedRow.lane} row={selectedRow} open onClose={() => setSelected(null)}
+        onDone={() => {
+          void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true);
+          void refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
+        }} /></Suspense> : null}
     </Screen>
   );
 }
