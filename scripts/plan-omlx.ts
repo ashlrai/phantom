@@ -7,6 +7,6 @@ try {
   const plan = planOmlxConfig(JSON.parse(readFileSync(process.argv[2]!, 'utf8')));
   console.log(JSON.stringify(plan, null, 2));
 } catch {
-  console.error('oMLX planning refused: check version, fresh memguard snapshot and model budgets');
+  console.error('oMLX planning refused: check version, canary provenance, fresh memguard snapshot and model budgets');
   process.exitCode = 1;
 }

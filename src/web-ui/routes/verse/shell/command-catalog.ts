@@ -59,9 +59,6 @@ export const PALETTE_PREFIXES: Readonly<Record<'>' | '#', PaletteGroupId>> = { '
 /** An empty query shows the last this-many actions run. */
 export const PALETTE_RECENT_LIMIT = 5;
 
-/** The palette opens in under this (it lives in the shell chunk). */
-export const PALETTE_OPEN_BUDGET_MS = 50;
-
 // ===========================================================================
 // Commands
 // ===========================================================================
@@ -350,6 +347,8 @@ export const WORKBENCH_COMMANDS = [
   // Served by the shell (run-command.ts → leader/leader-focus.ts): it goes to
   // Mind and the conversation panel takes the ask once its chunk mounts.
   { id: 'leader.message', title: 'Message the Leader…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'ask', 'chat', 'strategy', 'memo', 'talk', 'telegram'] },
+  { id: 'fleet.digest', title: 'Fleet: copy live digest', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['status', 'digest', 'copy', 'telegram', 'paste', 'fleet'] },
+  { id: 'fleet.interject', title: 'Tell the fleet leaders…', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['interject', 'inbox', 'leaders', 'fleet', 'prompt', 'steer', 'say'] },
   { id: 'leader.directive', title: 'Add Leader directive…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'directive', 'instruction', 'rule', 'standing order'] },
   // ── The repo wiki (3.15) ────────────────────────────────────────────────
   // Served by the shell (run-command.ts → wiki/wiki-focus.ts): it opens the

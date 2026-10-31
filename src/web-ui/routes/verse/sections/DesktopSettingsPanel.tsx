@@ -19,7 +19,7 @@
  * In a browser there is no desktop app: the panel says so and offers no
  * switch (a disabled control would suggest a setting that exists here).
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Switch } from '../../../components/primitives/index.js';
 import { isDesktopShell } from '../../../app/desktop-shell.js';
 import {
@@ -28,7 +28,9 @@ import {
   type DesktopPreference,
   type DesktopState,
 } from '../../../app/desktop-state.js';
+import { readOptOut, subscribeOptOut, writeOptOut } from '../dock/fleet-workspace-auto.js';
 import { Panel, SettingRow } from './SettingRow.js';
+import { UpdateStatusRow } from './UpdateStatusRow.js';
 import styles from './SettingsSection.module.css';
 
 /** How long to wait for native's answer before saying it did not come. */
@@ -57,6 +59,16 @@ function notificationsNote(state: DesktopState): string {
   return base;
 }
 
+function FleetWorkspaceSetting() {
+  const optedOut = useSyncExternalStore(subscribeOptOut, () => readOptOut(localStorage), () => false);
+  return (
+    <SettingRow label="Open the fleet workspace automatically when the fleet is running">
+      <Switch aria-label="Open the fleet workspace automatically when the fleet is running"
+        checked={!optedOut} onChange={next => writeOptOut(localStorage, !next)} />
+    </SettingRow>
+  );
+}
+
 export function DesktopSettingsPanel() {
   const state = useDesktopState();
   const [pending, setPending] = useState<DesktopPreference | null>(null);
@@ -78,6 +90,7 @@ export function DesktopSettingsPanel() {
   if (state === null) {
     return (
       <Panel title="Desktop">
+        <UpdateStatusRow />
         <p className={styles.panelNote} aria-busy={isDesktopShell() || undefined}>
           {isDesktopShell()
             ? 'Reading the desktop app’s settings…'
@@ -106,6 +119,8 @@ export function DesktopSettingsPanel() {
 
   return (
     <Panel title="Desktop">
+      <UpdateStatusRow />
+      <FleetWorkspaceSetting />
       <SettingRow
         label={`System-wide shortcut (${state.hotkey.accelerator})`}
         description={<span data-tone={hotkeyBroken ? 'warning' : undefined} role={hotkeyBroken ? 'status' : undefined}>{hotkeyNote(state)}</span>}
