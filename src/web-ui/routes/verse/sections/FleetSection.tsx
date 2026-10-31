@@ -36,6 +36,7 @@ import { budgetPreviewQuery, budgetQuery } from '../budget/budget-queries.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { paletteBlock, useGrantFlow } from '../command/AutonomyBar.js';
 import { anchorId } from '../command/nav.js';
+import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
@@ -139,6 +140,7 @@ export function FleetSection() {
             <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
           </div>
           <InterjectBox />
+          <WorkersCard />
           {/* The one-time setup checklist (the only step list left); every other
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
