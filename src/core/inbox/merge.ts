@@ -343,13 +343,17 @@ function resolveDefaultBranchHead(repo: string, base: string): string | null {
   );
 }
 
-/** Resolve the protected remote branch head without fetching or mutating refs. */
+/**
+ * Resolve the remote branch head without fetching or mutating refs.
+ * Uses the exact ref path (refs/heads/<name>) so ls-remote never tail-matches
+ * a similarly-named branch (e.g. feat/master would match bare 'master').
+ */
 export function resolveRemoteBranchHead(repo: string, base: string, remote = 'origin'): string | null {
-  const out = gitTry(repo, ['ls-remote', '--heads', remote, base]);
+  const out = gitTry(repo, ['ls-remote', '--heads', remote, `refs/heads/${base}`]);
   if (!out) return null;
-  const first = out.split('\n').find((line) => line.trim().length > 0);
-  if (!first) return null;
-  const [sha] = first.trim().split(/\s+/);
+  const firstLine = out.trim();
+  if (!firstLine) return null;
+  const [sha] = firstLine.split(/\s+/);
   return /^[0-9a-f]{40}$/i.test(sha ?? '') ? sha! : null;
 }
 

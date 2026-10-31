@@ -23,6 +23,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.count[data-autonomy='true'] { right: 7px; }
+.count[data-tone='running'] {
+  background: var(--status-running-bg);
+  box-shadow: 0 0 0 2px var(--bg-canvas), inset 0 0 0 1px var(--status-running-solid);
+  color: var(--status-running-fg);
+}
+
 .dot,
 .pulse {
   position: absolute;
