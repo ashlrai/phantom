@@ -80,10 +80,13 @@ export interface ListLiveWorkersOptions {
   now?: () => number;
 }
 
-/**
- * Elapsed-time text (`[[dd-]hh:]mm:ss`) to whole seconds.
- * "05:12" → 312, "02:03:04" → 7384, "1-02:03:04" → 93784; anything that does
- * not fit the shape (empty, extra fields, seconds/minutes ≥ 60) → null.
+/** Elapsed-time text (`[[dd-]hh:]mm:ss`) to whole seconds.
+ *
+ * Returns null when parsed day/hour/minute/second components are not all
+ * non-negative safe integers, or when the total seconds exceed
+ * Number.MAX_SAFE_INTEGER (hundreds-of-digits day fields, totals above 2⁵³-1).
+ * Valid formats — "05:12" → 312, "02:03:04" → 7384, "1-02:03:04" → 93784 —
+ * are preserved exactly.
  */
 export function parseEtime(text: string): number | null {
   const m = ETIME_RE.exec(text.trim());
@@ -93,7 +96,11 @@ export function parseEtime(text: string): number | null {
   if (minutes >= 60 || seconds >= 60) return null;
   const days = m[1] === undefined ? 0 : Number(m[1]);
   const hours = m[2] === undefined ? 0 : Number(m[2]);
-  return days * 86_400 + hours * 3_600 + minutes * 60 + seconds;
+  if (!Number.isSafeInteger(days) || !Number.isSafeInteger(hours)) return null;
+  if (days < 0 || hours < 0) return null;
+  const total = days * 86_400 + hours * 3_600 + minutes * 60 + seconds;
+  if (!Number.isSafeInteger(total)) return null;
+  return total;
 }
 
 /** A token that looks like a filesystem path (`/…`, `~/…`, `--out=/…`, `x=/Users/…`). */

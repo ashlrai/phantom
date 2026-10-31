@@ -433,7 +433,7 @@ export function OnboardingFlow() {
   const dismiss = useCallback(() => dismissOnboarding(), []);
   const cardRef = useRef<HTMLElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
-  // Focus follows a fold / unfold the operator asked for — never a mount:
+  // Focus follows a fold / unfold or step change the operator asked for — never a mount:
   // the chip appearing on first launch must not steal focus from the composer.
   const moveFocus = useRef(false);
 
@@ -446,12 +446,17 @@ export function OnboardingFlow() {
     collapseOnboarding();
   }, []);
 
+  const changeStep = (next: number) => {
+    moveFocus.current = true;
+    setOnboardingStep(next);
+  };
+
   useEffect(() => {
     if (!moveFocus.current) return;
     moveFocus.current = false;
     if (expanded) cardRef.current?.focus();
     else chipRef.current?.focus();
-  }, [expanded]);
+  }, [expanded, index]);
 
   // Escape folds the card back to the chip — but ONLY when the focus is
   // inside the card.
@@ -544,7 +549,7 @@ export function OnboardingFlow() {
             Skip setup
           </Button>
           {index > 0 ? (
-            <Button variant="subtle" size="sm" onClick={() => setOnboardingStep(index - 1)}>
+            <Button variant="subtle" size="sm" onClick={() => changeStep(index - 1)}>
               Back
             </Button>
           ) : null}
@@ -563,7 +568,7 @@ export function OnboardingFlow() {
               Start a first chat
             </Button>
           ) : (
-            <Button variant="primary" size="sm" onClick={() => setOnboardingStep(index + 1)}>
+            <Button variant="primary" size="sm" onClick={() => changeStep(index + 1)}>
               Next
             </Button>
           )}
