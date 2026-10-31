@@ -78,7 +78,7 @@ describe('InboxScreen reads', () => {
     fireEvent.click(within(group).getByRole('button', { name: 'All' }));
     expect(screen.getByText('newest from the phone')).toBeInTheDocument();
     // No second read: the filter is client-side over the page already held.
-    expect(stub.calls).toHaveLength(1);
+    expect(stub.calls.filter((c) => c.url.startsWith('/api/verse/fleet/runs/inbox'))).toHaveLength(1);
   });
 
   it('clamps a long message behind Show more', async () => {
@@ -118,7 +118,7 @@ describe('InboxScreen reads', () => {
     expect(await screen.findByText('Couldn’t load the inbox')).toBeInTheDocument();
     expect(screen.getByText('The inbox is rebuilding.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(stub.calls).toHaveLength(2));
+    await waitFor(() => expect(stub.calls.filter((c) => c.url.startsWith('/api/verse/fleet/runs/inbox'))).toHaveLength(2));
   });
 
   it('backs out to More and pull-to-refresh forces a fresh read', async () => {

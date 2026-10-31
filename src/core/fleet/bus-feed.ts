@@ -9,7 +9,7 @@ export const VERSE_FLEET_LIVE_BUS_PATH = '/api/verse/fleet/live/bus';
 export type BusFeedSourceState = 'healthy' | 'missing' | 'degraded';
 export interface BusFeedHop { id: string; from: string; to: string; inputTokens: number | null; outputTokens: number | null }
 export type BusFeedEventKind = 'inbox' | 'orch' | 'incident' | 'lane-hold' | 'launch' | 'published' | 'other';
-export interface BusFeedEvent { at: string; kind: BusFeedEventKind; text: string }
+export interface BusFeedEvent { at: string; atIso?: string; kind: BusFeedEventKind; text: string }
 export interface FleetBusFeedV1 {
   v: 1;
   hops: BusFeedHop[];
@@ -45,14 +45,23 @@ export function parseDispatchEvents(text: string): BusFeedEvent[] {
   for (const line of text.split('\n')) {
     const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)(.*)$/.exec(line);
     if (!match) continue;
-    const timestamp = match[1].replace(' ', 'T') + 'Z';
+    const timestamp = match[1].replace(' ', 'T');
     const parsed = new Date(timestamp);
-    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 19) !== timestamp.slice(0, 19)) continue;
+    const parts = [timestamp.slice(0, 4), timestamp.slice(5, 7), timestamp.slice(8, 10),
+      timestamp.slice(11, 13), timestamp.slice(14, 16), timestamp.slice(17, 19)].map(Number);
+    if (!Number.isFinite(parsed.getTime()) ||
+      [parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate(), parsed.getHours(), parsed.getMinutes(), parsed.getSeconds()]
+        .some((value, index) => value !== parts[index])) continue;
+    const offset = -parsed.getTimezoneOffset();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const atIso = `${timestamp}${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
     const token = match[2];
     const kinds: Record<string, BusFeedEventKind> = { INBOX: 'inbox', INCIDENT: 'incident',
       LANE_HOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published' };
     const kind = token.startsWith('ORCH-') ? 'orch' : (Object.hasOwn(kinds, token) ? kinds[token] : 'other');
-    events.push({ at: scrubSecrets(match[1]), kind, text: scrubSecrets(token + match[3]).slice(0, 400) });
+    // Some historical offsets contain seconds and cannot be represented by an ISO minute offset.
+    events.push({ at: scrubSecrets(match[1]), ...(Date.parse(atIso) === parsed.getTime() ? { atIso } : {}),
+      kind, text: scrubSecrets(token + match[3]).slice(0, 400) });
   }
   const known = events.filter((event) => event.kind !== 'other').length;
   let fillers = Math.max(0, 5 - known);
@@ -74,8 +83,10 @@ async function tail(file: () => string): Promise<{ state: BusFeedSourceState; te
       bytes += result.bytesRead;
     }
     let text = buffer.subarray(0, bytes).toString('utf8');
+    const partialFinalRow = text.length > 0 && !text.endsWith('\n');
+    if (partialFinalRow) text = text.slice(0, text.lastIndexOf('\n') + 1);
     if (offset > 0) text = text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : '';
-    return { state: 'healthy', text };
+    return { state: partialFinalRow ? 'degraded' : 'healthy', text };
   } catch (error) {
     return { state: !handle && (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', text: '' };
   } finally { await handle?.close().catch(() => undefined); }

@@ -1,4 +1,5 @@
 import type { RunsHistory, RunsSample } from '../../../../core/fleet/runs-history.js';
+import { isNoFleet, NO_FLEET_TEXT } from '../fleet/no-fleet.js';
 
 const MINUTE = 60_000;
 export const MAX_GAP_MS = 5 * MINUTE;
@@ -66,6 +67,7 @@ export function launchGaps(history: RunsHistory): Array<{ fromMs: number; toMs: 
 }
 
 export function headline(history: RunsHistory, now: number): string {
+  if (!history.samples.length && isNoFleet(history.sourceState)) return NO_FLEET_TEXT;
   const quality = `${history.sourceState !== 'healthy' ? ` · source ${history.sourceState}` : ''}${history.dropped > 0 ? ` · ${history.dropped.toLocaleString()} dropped` : ''}`;
   if (!history.samples.length) return `No capacity history yet (the sampler starts when this pane is open)${quality}`;
   const hours = Math.max(0, (Date.parse(history.to) - Date.parse(history.from)) / (60 * MINUTE));

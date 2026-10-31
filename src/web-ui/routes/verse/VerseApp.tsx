@@ -174,6 +174,7 @@ const importPalette = () => import('./shell/CommandPalette.js');
 const importDrawer = () => import('./shell/NeedsYouDrawer.js');
 const importShortcuts = () => import('./shell/ShortcutsOverlay.js');
 const importGearTray = () => import('./shell/GearTray.js');
+const importConsoleNotifications = () => import('./shell/ConsoleNotifications.js');
 // The first-run tour's store and its flow: the gate reads the one and loads the other.
 const importOnboarding = () => import('./onboarding/OnboardingGate.js');
 const importRailStatus = () => import('./shell/RailStatus.js');
@@ -187,6 +188,8 @@ const Palette = preloadedLazy(() => importPalette().then((m) => m.CommandPalette
 const Drawer = preloadedLazy(() => importDrawer().then((m) => m.NeedsYouDrawer), false);
 const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsOverlay), false);
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
+const ConsoleBell = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleBell })));
+const ConsoleNotificationCenter = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleNotificationCenter })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
 const InterjectDialog = lazy(() => import('./fleet/InterjectDialog.js').then((m) => ({ default: m.InterjectDialog })));
@@ -346,6 +349,16 @@ export function VerseApp() {
     return () => { alive = false; };
   }, []);
 
+  const [notificationsReady, setNotificationsReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void importConsoleNotifications().then(
+      () => { if (alive) setNotificationsReady(true); },
+      (err) => console.error('[verse] notifications failed to load', err),
+    );
+    return () => { alive = false; };
+  }, []);
+
   // ── the global commands the shell serves, and run-command's toasts ─────
   useShellCommands();
 
@@ -413,10 +426,14 @@ export function VerseApp() {
   // URL carries one.
   useEffect(() => {
     if (typeof window === 'undefined' || !/[?&](?:chat|pane|terminal)=/.test(window.location.search)) return;
-    void import('./shell/deep-link.js').then(({ consumeDeepLink }) => {
+    void import('./shell/deep-link.js').then(async ({ consumeDeepLink, resolveDeepLinkPane }) => {
       const link = consumeDeepLink();
       if (link?.terminal) window.dispatchEvent(new CustomEvent(VERSE_OPEN_TERMINAL_EVENT, { detail: { ...link.terminal, sessionId: link.sessionId } }));
-      else if (link) openWorkbenchLink(link.sessionId, link.paneId);
+      else if (link) {
+        const registry = link.paneId ? await import('./panes/index.js') : null;
+        const paneId = resolveDeepLinkPane(link.paneId, (id) => registry?.getPane(id) != null);
+        openWorkbenchLink(link.sessionId, paneId);
+      }
     }, () => undefined);
   }, []);
   // "Go to that card": whoever raises it (drawer, Command, Mind), the shell reveals it.
@@ -560,6 +577,9 @@ export function VerseApp() {
               <ResourcesBar expanded={expanded} />
             </Suspense>
           ) : rail ? <RailCapacityButton rail={rail} expanded={expanded} /> : null}
+          <Suspense fallback={null}>
+            {notificationsReady ? <ConsoleBell expanded={expanded} compact={compact} /> : null}
+          </Suspense>
           <Tooltip label="Settings and more" placement="right" disabled={expanded || compact || trayOpen}>
             <button
               ref={gearRef}
@@ -609,6 +629,9 @@ export function VerseApp() {
         ))}
       </main>
 
+      <Suspense fallback={null}>
+        {notificationsReady ? <ConsoleNotificationCenter /> : null}
+      </Suspense>
       {/* Lazy chunks (see "Off the first-paint path"); each mounts only while it can draw. */}
       <Suspense fallback={null}>
         {gearReady || trayOpen ? <GearTray open={trayOpen} anchorRef={gearRef} onClose={() => setTrayOpen(false)} compact={compact} /> : null}

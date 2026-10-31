@@ -28,7 +28,7 @@ function isReleasePr(value: unknown): boolean {
       && ['pass', 'fail', 'pending', 'skipped'].includes(String(check.state)) && nullableString(check.url));
 }
 
-function isReleasePrData(value: unknown): value is ReleasePrData {
+export function isReleasePrData(value: unknown): value is ReleasePrData {
   return object(value) && value.v === 1 && typeof value.generatedAt === 'string'
     && (value.sourceState === 'healthy' || value.sourceState === 'degraded') && Array.isArray(value.repos)
     && value.repos.every(repo => object(repo) && typeof repo.repo === 'string' && typeof repo.path === 'string'

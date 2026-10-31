@@ -18,6 +18,8 @@
  * shape, or when the runs-dir source is not healthy/degraded — then the
  * Fleet and All splits may never claim "All clear" on its behalf.
  */
+import { formatDateTime } from '../../../components/format/locale-format.js';
+import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 
@@ -32,6 +34,7 @@ export interface FleetNeedsYouItem {
   /** The plain next step, in operator language — never a path. */
   nextStep: string;
   target: FleetNeedsYouTarget;
+  open?: { kind: 'pane'; paneId: string } | { kind: 'terminal'; command: string };
 }
 
 export interface FleetNeedsYouResult {
@@ -42,6 +45,8 @@ export interface FleetNeedsYouResult {
 
 /** The drawer's poll cadence while it is open. */
 export const FLEET_NEEDS_YOU_POLL_MS = 15_000;
+export const LEADER_PASS_CADENCE_MS = 15 * 60_000;
+export const LEADER_OVERDUE_MS = 2 * LEADER_PASS_CADENCE_MS;
 
 /**
  * A server status line is printed only when it cannot smuggle a path or a
@@ -64,6 +69,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (lane !== null && /down/i.test(lane)) {
     items.push({
       id: 'claude-lane-down',
+      open: { kind: 'terminal', command: '~/.ashlr-runs/bin/fix-claude-lane.sh' },
       severity: 'urgent',
       title: 'The Claude lane is down',
       detail: SAFE_STATUS.test(lane) ? `Claude lane: ${lane}` : 'The lane reported itself down.',
@@ -100,6 +106,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (pulse.state === 'incident') {
     items.push({
       id: 'stall-incident',
+      open: { kind: 'pane', paneId: 'leader-journal' },
       severity: 'urgent',
       title: pulse.headline,
       detail: pulse.detail ?? 'Nothing started and nothing merged for 30 minutes.',
@@ -108,15 +115,71 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     });
   }
 
+  const newestPass = newestLeaderPassMs(snapshot.leaders, Date.parse(snapshot.generatedAt));
+  if (answered && snapshot.switches.length === 0 && snapshot.paused !== true && pulse.state !== 'incident'
+    && (snapshot.leaders.length === 0 || (newestPass !== null && nowMs - newestPass > LEADER_OVERDUE_MS))) {
+    const waiting = snapshot.inbox.filter(entry => {
+      if (snapshot.leaders.length === 0) return true;
+      const at = parseInboxAt(entry.at, nowMs);
+      return at !== null && newestPass !== null && at > newestPass;
+    }).length;
+    items.push({
+      id: 'leader-overdue',
+      open: { kind: 'pane', paneId: 'leader-journal' },
+      severity: 'urgent',
+      title: newestPass === null ? 'No leader process is running' : `No leader pass for ${Math.floor((nowMs - newestPass) / 60_000)} minutes`,
+      detail: waiting === 0 ? 'Nothing is waiting in the inbox yet' : `${waiting} inbox entries are waiting on a leader`,
+      nextStep: 'Check the leaders in Ops and restart the leader loop if it stopped', target: 'ops',
+    });
+  }
+
   for (const l of snapshot.lanes) {
     if (!l.held) continue;
     items.push({
       id: `lane-held:${l.lane}`,
+      open: { kind: 'pane', paneId: 'fleet-lanes' },
       severity: 'attention',
       title: `Lane ${l.lane} is held`,
       detail: l.heldReason ?? 'No reason recorded',
       nextStep: 'Check the lane in Ops ▸ Live runs',
       target: 'ops',
+    });
+  }
+
+  const personal = snapshot.codexPersonal;
+  const personalLane = snapshot.lanes.find((l) => l.lane === 'codex-personal');
+  const heldForLimit = personalLane?.held && /usage|limit/i.test(personalLane.heldReason ?? '');
+  const used = personal?.usedPct;
+  const resetMs = personal?.resetsAt ? Date.parse(personal.resetsAt) : NaN;
+  const reset = Number.isFinite(resetMs)
+    ? formatDateTime(resetMs, 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    : null;
+  if ((used != null && used >= 100) || heldForLimit) {
+    items.push({
+      id: 'supply-personal-out',
+      open: { kind: 'pane', paneId: 'fleet-supply' },
+      severity: (personalLane?.queued ?? 0) > 0 ? 'urgent' : 'attention',
+      title: `Personal Codex is out${reset ? ` until ${reset}` : ''}`,
+      detail: personalLane ? `${personalLane.queued} jobs are waiting on it` : 'Queue size is unknown',
+      nextStep: 'Those jobs wait for the reset; the leaders should route new work elsewhere',
+      target: 'fleet',
+    });
+  } else if (used != null && used >= 90) {
+    const asOf = personal?.asOf ? Date.parse(personal.asOf) : NaN;
+    const minutes = Number.isFinite(asOf) && asOf <= nowMs
+      ? Math.max(0, Math.round((asOf + (100 - used) / 4 * 3_600_000 - nowMs) / 60_000))
+      : null;
+    const detail = [
+      personalLane ? `${personalLane.queued} jobs queued on codex-personal` : null,
+      minutes !== null ? `out in about ${minutes} min` : null,
+      reset ? `resets ${reset}` : null,
+    ].filter((part): part is string => part !== null).join(' · ');
+    items.push({
+      id: 'supply-personal-low',
+      open: { kind: 'pane', paneId: 'fleet-supply' },
+      severity: 'attention',
+      title: `Personal Codex is at ${used}%`, detail,
+      nextStep: 'Move new work to Devin and local lanes before it runs out', target: 'fleet',
     });
   }
 
@@ -127,6 +190,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (pressure.length > 0) {
     items.push({
       id: 'host-pressure',
+      open: { kind: 'pane', paneId: 'fleet-host' },
       severity: 'attention',
       title: 'This Mac is under pressure',
       detail: pressure.join(' · '),

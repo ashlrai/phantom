@@ -16,6 +16,10 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { ago } from '../../command/ladder-model.js';
+import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { inboxTailQuery } from '../inbox-tail-query.js';
+import { inboxSeen, type InboxSeen } from '../inbox-seen-model.js';
+import { inboxPending } from '../inbox-pending-model.js';
 import { INBOX_NOT_IN_THIS_BUILD, INBOX_READ_LIMIT, inboxReadQuery, type FleetInboxReadEntry } from '../inbox-read-query.js';
 import { useMobile } from '../mobile-context.js';
 import { cx, Screen, SkeletonList } from '../ui.js';
@@ -28,7 +32,8 @@ const SIX_LINE_CHARS = 6 * 54;
 /** Pull-to-refresh: force the read fresh. */
 export function refreshInboxScreen(): Promise<unknown> {
   const query = inboxReadQuery(INBOX_READ_LIMIT);
-  return refetchQuery(query.key, () => query.fetch(), true);
+  return Promise.allSettled([refetchQuery(query.key, () => query.fetch(), true),
+    refetchQuery(inboxTailQuery.key, () => inboxTailQuery.fetch(), true)]);
 }
 
 function priorityTone(priority: string): Tone {
@@ -38,7 +43,7 @@ function priorityTone(priority: string): Tone {
 }
 
 /** One entry: the channel, the priority when the sender set one, the time, then the words. */
-function InboxEntry({ entry, now }: { entry: FleetInboxReadEntry; now: number }) {
+function InboxEntry({ entry, now, seen }: { entry: FleetInboxReadEntry; now: number; seen: InboxSeen }) {
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
   const long = entry.text.split('\n').length > 6 || entry.text.length > SIX_LINE_CHARS;
@@ -52,6 +57,7 @@ function InboxEntry({ entry, now }: { entry: FleetInboxReadEntry; now: number })
         {entry.priority ? <Badge tone={priorityTone(entry.priority)}>{entry.priority}</Badge> : null}
         <time className={styles.entryTime} dateTime={stamp} title={entry.at}>{ago(entry.at, now)}</time>
       </header>
+      <Badge tone={seen.tone === 'ok' ? 'success' : seen.tone}>{seen.ackLabel}</Badge>
       <p id={textId} className={cx(styles.entryText, long && !expanded && styles.entryClamped)}>{entry.text}</p>
       {long ? (
         <button type="button" className={cx(ui.btn, ui.plain, styles.moreToggle)} aria-expanded={expanded} aria-controls={textId} onClick={() => setExpanded((v) => !v)}>
@@ -80,6 +86,10 @@ export function InboxScreen() {
   const query = inboxReadQuery(INBOX_READ_LIMIT);
   const inbox = useQuery(query);
   const refetch = useRefetch(query);
+  const snapshot = useQuery(inboxTailQuery);
+  const refetchSnapshot = useRefetch(inboxTailQuery);
+  const [, setClockTick] = useState(0);
+  usePollWhileVisible(() => { setClockTick(tick => tick + 1); refetchSnapshot(); }, 20_000, { enabled: inbox.data != null && inbox.data.entries.length > 0 });
   const [source, setSource] = useState<string | null>(null);
 
   const data = inbox.data;
@@ -97,6 +107,8 @@ export function InboxScreen() {
     // A chip whose source dropped out of the latest read falls back to All.
     const active = source !== null && sources.some((s) => s.toLowerCase() === source.toLowerCase()) ? source : null;
     const shown = active === null ? data.entries : data.entries.filter((e) => e.source.toLowerCase() === active.toLowerCase());
+    const seen = inboxSeen(shown, snapshot.data?.snapshot, now);
+    const pending = inboxPending(seen.entries, snapshot.data?.snapshot, now);
     body = (
       <>
         {data.sourceState !== 'healthy' ? (
@@ -106,6 +118,7 @@ export function InboxScreen() {
               : 'The inbox read is degraded — this may not be everything.'}
           </Banner>
         ) : null}
+        {shown.length > 0 ? <Banner tone={pending.tone === 'ok' ? 'info' : pending.tone}>{pending.text}</Banner> : null}
         {data.entries.length === 0 ? (
           <EmptyState title="Nothing yet." body="Use the box on Live runs." />
         ) : (
@@ -120,7 +133,7 @@ export function InboxScreen() {
             ) : null}
             {shown.length === 0 ? <EmptyState title="Nothing from this source." /> : (
               <div className={ui.group}>
-                {shown.map((entry, i) => <InboxEntry key={`${entry.at}-${i}`} entry={entry} now={now} />)}
+                {shown.map((entry, i) => <InboxEntry key={`${entry.at}-${i}`} entry={entry} now={now} seen={seen.entries[i]!} />)}
               </div>
             )}
           </>

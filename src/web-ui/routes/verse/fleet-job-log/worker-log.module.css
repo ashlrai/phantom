@@ -6,3 +6,10 @@
 .meta, .hint { color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
 .meta a { color: var(--text-link); }
 .log { flex: 1; min-height: 5rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.changes { flex: 0 1 auto; max-height: 45%; overflow: auto; border-top: 1px solid var(--border-default); padding-top: var(--space-2); font-size: var(--text-xs-size); }
+.changes ul { list-style: none; padding: 0; margin: var(--space-1) 0; }
+.file { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-1) 0; color: var(--text-secondary); }
+.file code { overflow-wrap: anywhere; color: var(--text-primary); }
+.log > div { min-height: 1lh; }
+.match { background: var(--bg-surface-raised, #394451); }
+.match[aria-current='true'] { outline: 2px solid var(--text-link); outline-offset: -2px; }

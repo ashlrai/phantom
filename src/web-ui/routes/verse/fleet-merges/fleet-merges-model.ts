@@ -1,4 +1,4 @@
-export interface Merged { repo: string; number: number; title: string; href: string | null }
+export interface Merged { repo: string; number: number; title: string; href: string | null; job: string | null; lane: string | null; at: string | null }
 export interface Pending { job: string; lane: string | null; href: string | null; at: string }
 export interface Lane { lane: string; merged24h: number | null; mergeRate24h: number | null }
 
@@ -9,10 +9,14 @@ const prHref = (value: unknown): string | null => typeof value === 'string' && /
 
 export function readMerges(snapshot: unknown): { merged: Merged[]; pending: Pending[]; lanes: Lane[]; count: number | null; sourceState: string | null } {
   const data = record(snapshot), merges = record(data.mergesLastHour), sources = record(data.sources);
+  const publishes = Array.isArray(data.publishesLastHour) ? data.publishesLastHour.map(record) : [];
   const merged: Merged[] = (Array.isArray(merges.items) ? merges.items : []).flatMap(raw => {
     const item = record(raw), number = count(item.number);
     if (typeof item.repo !== 'string' || number === null || number === 0 || typeof item.title !== 'string') return [];
-    return [{ repo: item.repo, number, title: item.title, href: prHref(`https://github.com/${item.repo}/pull/${number}`) }];
+    const href = prHref(`https://github.com/${item.repo}/pull/${number}`);
+    const publish = publishes.find(p => href && prHref(p.url) === href);
+    const job = typeof publish?.job === 'string' ? publish.job : item.title.match(/\bRQ-[A-Za-z0-9._-]+\b/)?.[0] ?? null;
+    return [{ repo: item.repo, number, title: item.title, href, job, lane: typeof publish?.lane === 'string' ? publish.lane : null, at: typeof publish?.at === 'string' ? publish.at : null }];
   }).sort((a, b) => b.number - a.number);
   const pending: Pending[] = (Array.isArray(data.publishesLastHour) ? data.publishesLastHour : []).flatMap(raw => {
     const item = record(raw);
