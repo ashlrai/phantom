@@ -161,6 +161,7 @@ function printResourcesHelp(): void {
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
   console.log('  Usage: phm resources [--json] [--watch]');
+  console.log('         phm resources sample [--json]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
   console.log('         phm resources launcher --help');
   console.log('         phm resources profile --help');
@@ -173,6 +174,31 @@ function printResourcesHelp(): void {
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'sample') {
+    if (args.length > 2 || args[1] !== undefined && !['--json', '--help', '-h'].includes(args[1])) {
+      process.stderr.write('Usage: phm resources sample [--json]\n');
+      return 2;
+    }
+    if (args[1] === '--help' || args[1] === '-h') {
+      console.log('Usage: phm resources sample [--json]\nRequires telemetry.machine.enabled = true. Updates ~/.ashlr-runs/fleet.json.');
+      return 0;
+    }
+    const { loadConfig } = await import('../core/config.js');
+    const { machineTelemetryEnabled, sampleMachineForDispatch } = await import('../core/resources/telemetry-store.js');
+    let cfg: unknown;
+    try { cfg = loadConfig(); } catch {
+      process.stderr.write('Machine telemetry configuration is unavailable.\n'); return 1;
+    }
+    if (!machineTelemetryEnabled(cfg)) {
+      process.stderr.write('Machine telemetry is disabled; set telemetry.machine.enabled = true.\n'); return 2;
+    }
+    const sample = await sampleMachineForDispatch(cfg);
+    if (!sample) {
+      process.stderr.write('Machine telemetry unavailable: fleet state is locked, invalid or not writable.\n'); return 1;
+    }
+    console.log(JSON.stringify(sample, null, 2));
+    return 0;
+  }
   if (args[0] === 'claude-promotion') {
     const { cmdClaudePromotion } = await import('./claude-promotion.js');
     return cmdClaudePromotion(args.slice(1));

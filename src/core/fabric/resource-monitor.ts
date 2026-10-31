@@ -1515,6 +1515,9 @@ export async function getBackendResourceState(
  */
 export async function getResourceSnapshot(cfg: unknown): Promise<ResourceSnapshot> {
   try {
+    // Machine observations refresh on dispatch resource reads, independently of the provider cache.
+    const { sampleMachineForDispatch } = await import('../resources/telemetry-store.js');
+    await sampleMachineForDispatch(cfg);
     const now = Date.now();
 
     // Determine which backends to sense (based on allowedBackends config)
