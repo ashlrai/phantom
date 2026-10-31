@@ -32,6 +32,7 @@ import { BUDGET_MODE_OPTIONS, modeAboveCeiling } from '../../budget/budget-model
 import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
+import { releasePrQuery } from '../../fleet/release-pr-query.js';
 import { hostView } from '../../fleet-host/fleet-host-model.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { isFleetRuns } from '../../ops/ops-runs-model.js';
@@ -41,6 +42,7 @@ import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
@@ -129,6 +131,7 @@ export function refreshFleetScreen(): Promise<unknown> {
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
     refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
     refetchQuery(fleetLedgerQuery.key, () => fleetLedgerQuery.fetch(), true),
+    refetchQuery(releasePrQuery.key, () => releasePrQuery.fetch(), true),
     refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
@@ -439,6 +442,7 @@ export function FleetScreen() {
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
       <FleetUsageCard />
+      <MobileReleaseCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>

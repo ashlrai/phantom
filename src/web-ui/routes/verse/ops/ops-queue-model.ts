@@ -10,6 +10,7 @@ export interface FleetQueueV1 {
   parked: number;
   malformed: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
+  nextUp?: Array<{ lane: string; jobs: string[] }>;
   groups: ParkedGroup[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
@@ -33,6 +34,7 @@ export const isFleetQueue: Check<FleetQueueV1> = shape({
   v: (v): v is 1 => v === 1, generatedAt: str, sources: shape({ ready: source, skips: source }),
   total: num, ready: num, parked: num, malformed: num,
   byLane: array(shape({ lane: str, ready: num, parked: num, phantom: optional(count), other: optional(count), otherRepos: optional(array(str)) })),
+  nextUp: optional(array(shape({ lane: str, jobs: array(str) }))),
   groups: array(shape({ reason: str, lane: nullable(str), count: num, jobs: array(str) })),
   skips: array(shape({ at: str, job: str, code: str, reason: str })), skipsLast24h: nullable(num),
 });
