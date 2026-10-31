@@ -1,0 +1,92 @@
+{
+  "schema": "ashlr.radar-local-bench.v1",
+  "suite": "triage",
+  "labels": ["work:fleet", "work:cloud", "work:devin", "work:interactive", "skip"],
+  "instruction": "You classify automation triggers for an engineering fleet. Reply with EXACTLY ONE label and nothing else.\n\nLabels:\n- work:fleet — small, well-scoped maintenance an unattended local agent can finish safely (focused bug fix, lint/type errors, dependency bumps, tests, docs).\n- work:cloud — substantial multi-file engineering on a GitHub repository that benefits from a long, capable autonomous run (features, migrations, cross-cutting refactors).\n- work:devin — a well-specified, self-contained ticket on a GitHub repository that a remote agent can own end to end.\n- work:interactive — needs the operator in the loop: ambiguous requirements, product or design judgement, exploration, or sensitive/protected areas (secrets, rulesets, releases).\n- skip — not a concrete actionable engineering task: a question, discussion, duplicate, vague epic, or anything needing a human decision first.",
+  "cases": [
+    {
+      "id": "lint-fix",
+      "input": "Title: Fix eslint no-unused-vars errors in src/cli/run.ts\nBody: Three unused imports and one unused local, flagged by the lane lint. Mechanical cleanup, no behavior change.\nLabels: lint",
+      "expected": "work:fleet",
+      "tokensIn": 220,
+      "tokensOut": 3
+    },
+    {
+      "id": "epic-tracking",
+      "input": "Title: Epic: v4 fleet rollout\nBody: Umbrella tracking issue for the staged fleet rollout. Children are filed separately; this issue collects status.\nLabels: tracking, meta",
+      "expected": "skip",
+      "tokensIn": 215,
+      "tokensOut": 2
+    },
+    {
+      "id": "question-howto",
+      "input": "Title: Question: how do I run the bench suite locally?\nBody: New contributor asking which npm script runs the local benchmark on their checkout.\nLabels: question",
+      "expected": "skip",
+      "tokensIn": 210,
+      "tokensOut": 2
+    },
+    {
+      "id": "config-store-migration",
+      "input": "Title: Migrate the run-state store from JSON files to SQLite across the daemon, CLI and web layers\nBody: Cross-cutting migration touching ~30 files including the writer, the readers, and migration tooling with rollback.\nLabels: refactor, storage",
+      "expected": "work:cloud",
+      "tokensIn": 235,
+      "tokensOut": 4
+    },
+    {
+      "id": "self-contained-importer",
+      "input": "Title: Write an importer for the legacy lessons JSONL format\nBody: Self-contained ticket: parse test/fixtures/lessons-bench.json shape, validate rows, emit the new schema. Acceptance tests are described in the body.\nLabels: ticket",
+      "expected": "work:devin",
+      "tokensIn": 230,
+      "tokensOut": 4
+    },
+    {
+      "id": "design-decision",
+      "input": "Title: Should we split the queue daemon into per-repo workers?\nBody: Investigate contention on the single-server queue and recommend whether to partition. Needs a design decision before any code lands.\nLabels: design, research",
+      "expected": "work:interactive",
+      "tokensIn": 230,
+      "tokensOut": 4
+    },
+    {
+      "id": "secret-rotation",
+      "input": "Title: Rotate the telemetry ingest key used by the cycle collector\nBody: The quarterly credential rotation. Custody of secrets is reserved to the owner; agents must not create or rotate keys.\nLabels: security, secrets",
+      "expected": "work:interactive",
+      "tokensIn": 225,
+      "tokensOut": 4
+    },
+    {
+      "id": "dependabot-batch",
+      "input": "Title: Bump devDependency patch versions (rollup batch)\nBody: Nine patch-level bumps grouped by the deps workflow; update the lockfile and fix any trivial lint fallout.\nLabels: dependencies",
+      "expected": "work:fleet",
+      "tokensIn": 215,
+      "tokensOut": 3
+    },
+    {
+      "id": "flaky-test",
+      "input": "Title: Fix the flake in test/m15.router-replay.test.ts\nBody: The retry assertion races CI under load; tighten the wait so the replay ordering assertion is stable. Single test file.\nLabels: test, flake",
+      "expected": "work:fleet",
+      "tokensIn": 225,
+      "tokensOut": 3
+    },
+    {
+      "id": "oauth-feature",
+      "input": "Title: Add OAuth device-flow login to the CLI\nBody: Implement the device authorization grant end to end: polling loop, token persistence, expiry refresh, and the login/logout commands across two packages.\nLabels: feature, auth",
+      "expected": "work:cloud",
+      "tokensIn": 230,
+      "tokensOut": 4
+    },
+    {
+      "id": "thanks-comment",
+      "input": "Title: Thank you!\nBody: Appreciation comment on the merged fix, no question asked and no work described.\nLabels: discussion",
+      "expected": "skip",
+      "tokensIn": 200,
+      "tokensOut": 2
+    },
+    {
+      "id": "changelog-regen",
+      "input": "Title: Regenerate the changelog after the 3.30.0 release\nBody: Mechanical regeneration from the release notes and merged-PR list; review the diff and commit.\nLabels: chore, release-notes",
+      "expected": "work:fleet",
+      "tokensIn": 215,
+      "tokensOut": 3
+    }
+  ]
+}
