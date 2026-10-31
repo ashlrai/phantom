@@ -6,7 +6,7 @@ export interface UpdateServerStatus {
   installedVersion: string | null; headSha: string | null; headAt: string | null;
   originSha: string | null; branch: string | null; behind: number | null; ahead: number | null;
   dirty: boolean | null; lastFetchAt: string | null; processStartedAt: string | null;
-  uptimeSeconds: number | null; canFastForward: boolean;
+  uptimeSeconds: number | null; canFastForward: boolean | null;
 }
 export type ServerObservation = UpdateServerStatus | { kind: 'notInBuild' } | null;
 const nullableString = (value: unknown) => value === null || typeof value === 'string';
@@ -22,7 +22,7 @@ function validStatus(value: unknown): value is UpdateServerStatus {
     && sha(v['originSha']) && nullableString(v['branch']) && nullableCount(v['behind']) && nullableCount(v['ahead'])
     && (v['dirty'] === null || typeof v['dirty'] === 'boolean') && timestamp(v['lastFetchAt'])
     && timestamp(v['processStartedAt']) && (v['uptimeSeconds'] === null || (typeof v['uptimeSeconds'] === 'number' && Number.isFinite(v['uptimeSeconds']) && v['uptimeSeconds'] >= 0))
-    && typeof v['canFastForward'] === 'boolean';
+    && (v['canFastForward'] === null || typeof v['canFastForward'] === 'boolean');
 }
 
 export const updateStatusQuery: QueryDef<Exclude<ServerObservation, null>> = {
