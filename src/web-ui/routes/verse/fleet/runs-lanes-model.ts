@@ -1,4 +1,5 @@
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
+import { queueDrainEta } from './queue-drain-eta.js';
 import { tickStaleness } from './tick-staleness.js';
 
 export type RunsLane = FleetRunsV1['lanes'][number];
@@ -28,7 +29,27 @@ export function narrowRunsLanes(v: unknown): RunsLanes | null {
 }
 export const sortLanes = (lanes: RunsLane[]): RunsLane[] => [...lanes].sort((a, b) => b.running - a.running || a.lane.localeCompare(b.lane));
 export const laneFill = (lane: RunsLane): string => `${lane.running} / ${lane.target}`;
-export const laneNote = (lane: RunsLane): string | null => lane.held ? `held: ${lane.heldReason || 'reason unknown'}` : lane.queued > 0 ? `queued ${lane.queued}` : null;
+export function laneDrain(lane: RunsLane): ReturnType<typeof queueDrainEta> {
+  // Oct 31 median job durations, in minutes.
+  const avgJobMinutes = lane.lane === 'codex-personal' ? 13 : lane.lane === 'devin' ? 70 : 15;
+  const result = queueDrainEta({ ...lane, avgJobMinutes });
+  // A lane with no capacity cannot drain until its target changes.
+  if (!lane.held && lane.target === 0 && lane.queued > 0) {
+    return { ...result, state: 'saturated', drainMinutes: null };
+  }
+  return result;
+}
+export function drainText(result: ReturnType<typeof queueDrainEta> & { queued: number }): string {
+  switch (result.state) {
+    case 'held': return 'held';
+    case 'idle': return `${result.freeSlots} free · waiting for jobs`;
+    case 'draining': return `queued ${result.queued} · drains in ~${result.drainMinutes} min`;
+    case 'saturated': return `saturated · ${result.queued} queued, 0 free`;
+  }
+}
+export const laneNote = (lane: RunsLane): string => lane.held
+  ? `held: ${lane.heldReason || 'reason unknown'}`
+  : drainText({ ...laneDrain(lane), queued: lane.queued });
 export function headerText(data: RunsLanes, nowMs: number): string {
   if (data.paused) return 'dispatcher paused';
   if (data.switches.length) return `switches on: ${data.switches.join(', ')}`;
