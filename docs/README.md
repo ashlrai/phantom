@@ -35,6 +35,8 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
+| Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
+| A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |

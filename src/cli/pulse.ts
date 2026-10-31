@@ -17,6 +17,7 @@
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import type { ActivityRollup, BudgetAlert, CostForecast, GovernanceStatus } from '../core/types.js';
 import type { AshlrConfig } from '../core/types.js';
+import type { PromptPromotionRecord, PromptPromotionsRegistry } from '../core/eval/prompt-promotions.js';
 import { tokenEvidenceLabel } from '../core/run/token-evidence.js';
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,22 @@ async function loadEvalGovernance(): Promise<EvalGovernanceFn | null> {
     }
   }
   return _evalGovernance ?? null;
+}
+
+type LoadPromptPromotionsFn = () => PromptPromotionsRegistry | null;
+
+let _loadPromptPromotions: LoadPromptPromotionsFn | null | undefined = undefined;
+
+async function loadPromptPromotionsFn(): Promise<LoadPromptPromotionsFn | null> {
+  if (_loadPromptPromotions === undefined) {
+    try {
+      const mod = await import('../core/eval/prompt-promotions.js') as { loadPromptPromotions: LoadPromptPromotionsFn };
+      _loadPromptPromotions = mod.loadPromptPromotions;
+    } catch {
+      _loadPromptPromotions = null;
+    }
+  }
+  return _loadPromptPromotions ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +288,15 @@ function renderDayBars(rollup: ActivityRollup): void {
 // Rich dashboard renderer
 // ---------------------------------------------------------------------------
 
-function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null, governance?: GovernanceStatus | null): void {
+/** Render one promoted prompt variant's before/after line. */
+function renderPromotionLine(p: PromptPromotionRecord): string {
+  const before = p.before.value === null ? 'unknown' : `${(p.before.value * 100).toFixed(1)}%`;
+  const after = p.after.value === null ? 'unknown' : `${(p.after.value * 100).toFixed(1)}%`;
+  const lift = `${p.liftPoints >= 0 ? '+' : ''}${(p.liftPoints * 100).toFixed(1)} pts`;
+  return `${cyan(p.classId)}: ${bold(p.variant)}  ${dim(`${before} →`)} ${green(bold(after))} merge (${dim(`n ${p.before.n}→${p.after.n}`)})  ${green(lift)}`;
+}
+
+function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null, governance?: GovernanceStatus | null, promptRegistry?: PromptPromotionsRegistry | null): void {
   const { window: win, since, totals, byProject, byModel, budget } = rollup;
 
   // ── Header ────────────────────────────────────────────────────────────────
@@ -303,6 +328,12 @@ function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null,
   console.log(`  ${bold('Budget')}   ${renderBudgetLine(budget)}`);
   if (governance) {
     console.log(`  ${bold('Governance')} ${renderGovernanceLine(governance)}`);
+  }
+  if (promptRegistry && promptRegistry.promoted.length > 0) {
+    console.log(`  ${bold('Prompt variants')}  ${dim(`promoted by ${promptRegistry.experimentId}`)}`);
+    for (const p of promptRegistry.promoted) {
+      console.log(`    ${renderPromotionLine(p)}`);
+    }
   }
   console.log('');
 
@@ -459,10 +490,11 @@ export async function cmdPulse(args: string[]): Promise<number> {
   // Load buildRollup (lazy; degrades if M5 core not yet built).
   // Load buildForecast lazily; degrades gracefully if M15 module not yet built.
   // Load evalGovernance lazily; degrades gracefully if M19 module not yet built.
-  const [buildRollup, buildForecast, evalGovernance] = await Promise.all([
+  const [buildRollup, buildForecast, evalGovernance, loadPromptRegistry] = await Promise.all([
     loadBuildRollup(),
     loadBuildForecast(),
     loadEvalGovernance(),
+    loadPromptPromotionsFn(),
   ]);
 
   if (!buildRollup) {
@@ -519,6 +551,17 @@ export async function cmdPulse(args: string[]): Promise<number> {
     }
   }
 
+  // Load the prompt-variant promotions registry (RQ-SELFOPT-PROMPT-OPT;
+  // absent registry → the dashboard section is simply skipped).
+  let promptRegistry: PromptPromotionsRegistry | null = null;
+  if (loadPromptRegistry) {
+    try {
+      promptRegistry = loadPromptRegistry();
+    } catch {
+      promptRegistry = null;
+    }
+  }
+
   // Machine output.
   // BACKWARD-COMPAT (M15): emit the ActivityRollup at the TOP LEVEL (as shipped
   // through M14) and attach `forecast` as a purely additive field. Existing
@@ -526,15 +569,16 @@ export async function cmdPulse(args: string[]): Promise<number> {
   // { totals, byProject, byModel, budget } from the top level — keep working,
   // while new consumers read the additive `.forecast`.
   // M19: also attach `governance` as a purely additive field.
+  // RQ-SELFOPT-PROMPT-OPT: `promptVariants` is additive the same way.
   if (parsed.json) {
-    const out: ActivityRollup & { forecast: CostForecast | null; governance: GovernanceStatus | null } =
-      { ...rollup, forecast, governance };
+    const out: ActivityRollup & { forecast: CostForecast | null; governance: GovernanceStatus | null; promptVariants: PromptPromotionsRegistry | null } =
+      { ...rollup, forecast, governance, promptVariants: promptRegistry };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
     return rollup.budget.level === 'over' ? 1 : 0;
   }
 
   // Rich dashboard
-  renderDashboard(rollup, forecast, governance);
+  renderDashboard(rollup, forecast, governance, promptRegistry);
 
   return rollup.budget.level === 'over' ? 1 : 0;
 }

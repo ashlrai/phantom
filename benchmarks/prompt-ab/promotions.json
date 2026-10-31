@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-28T15:27:15.459Z",
+  "experimentId": "prompt-ab-2026-10-28",
+  "dataset": {
+    "id": "prompt-ab-2026-10-28",
+    "sha256": "de1488606aba8bfa53ad3be1047523c60b98e5ab1b62fee294d27512a41dbd55",
+    "jobs": 65
+  },
+  "classes": [
+    "docs",
+    "tests",
+    "secrets"
+  ],
+  "promoted": [
+    {
+      "classId": "docs",
+      "experimentId": "prompt-ab-2026-10-28",
+      "variant": "prompt:adaptive",
+      "control": "prompt:plain",
+      "before": {
+        "value": 0.3333333333333333,
+        "ci95": [
+          0.19230498083676134,
+          0.5121994835545616
+        ],
+        "n": 30
+      },
+      "after": {
+        "value": 0.7777777777777778,
+        "ci95": [
+          0.5924307113336742,
+          0.8939276054763996
+        ],
+        "n": 27
+      },
+      "liftPoints": 0.4444444444444445,
+      "costPerMergedPrBefore": 1.7150000000000003,
+      "costPerMergedPrAfter": 1.1142857142857143,
+      "decidedAt": "2026-10-28T15:27:15.459Z",
+      "datasetSha256": "de1488606aba8bfa53ad3be1047523c60b98e5ab1b62fee294d27512a41dbd55"
+    }
+  ],
+  "held": [
+    {
+      "classId": "tests",
+      "variant": "prompt:adaptive",
+      "verdict": "not-significant"
+    },
+    {
+      "classId": "secrets",
+      "variant": "prompt:adaptive",
+      "verdict": "insufficient-data"
+    }
+  ]
+}
