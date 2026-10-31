@@ -56,7 +56,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   let body: string[] = [];
   const finish = (): void => {
     if (heading === undefined) return;
-    const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)\s*$/.exec(heading);
+    const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)(?:.*)$/.exec(heading);
     entries.push({
       at: match?.[1] ?? heading,
       source: match?.[2] ?? 'unknown',
@@ -91,7 +91,8 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const entry = formatInboxEntry(clean, source, now);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
-    await appendFile(join(runsDir, 'dispatch-events.log'), `${seconds} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' });
+    // The inbox owns acceptance; the dispatch event is only observational.
+    await appendFile(join(runsDir, 'dispatch-events.log'), `${seconds} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' }).catch(() => undefined);
     return { ok: true, at, bytes: Buffer.byteLength(entry, 'utf8') };
   } catch {
     return { ok: false, reason: 'write-failed' };
