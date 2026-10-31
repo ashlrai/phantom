@@ -20,6 +20,52 @@ function isTTY(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
+export interface SelectionFailure {
+  message: string;
+  /** 2 when a headless caller omitted the query. 1 when nothing was selected. */
+  code: number;
+}
+
+/**
+ * Text for `go` / `open` when the picker returns null.
+ * A headless caller gets the reason and the command to run. A terminal
+ * cancel stays the short line.
+ */
+export function selectionFailure(
+  command: 'go' | 'open',
+  opts: { headless: boolean; query: string; itemCount: number },
+): SelectionFailure {
+  if (!opts.headless) return { message: 'Nothing selected.', code: 1 };
+  const lines = ['Nothing selected. stdin is not a terminal, so the picker did not run.'];
+  if (opts.itemCount === 0) {
+    lines.push('  The index has no items. Run: phm status');
+    return { message: lines.join('\n'), code: 1 };
+  }
+  switch (command) {
+    case 'go':
+      if (!opts.query) {
+        lines.push('  Re-run: phm go <name>');
+        lines.push('  Print a path: phm go <name> --cd');
+        return { message: lines.join('\n'), code: 2 };
+      }
+      lines.push(`  "${opts.query}" matched more than one item. Pass a more specific name.`);
+      lines.push('  Re-run: phm go <name> --cd');
+      return { message: lines.join('\n'), code: 1 };
+    case 'open':
+      if (!opts.query) {
+        lines.push('  Re-run: phm open <name>');
+        return { message: lines.join('\n'), code: 2 };
+      }
+      lines.push(`  "${opts.query}" matched more than one item. Pass a more specific name.`);
+      lines.push('  Re-run: phm open <name>');
+      return { message: lines.join('\n'), code: 1 };
+    default: {
+      const unexpected: never = command;
+      return { message: `Nothing selected. (${unexpected})`, code: 1 };
+    }
+  }
+}
+
 /** True when `fzf` can be found on PATH without throwing. */
 function hasFzf(): boolean {
   try {

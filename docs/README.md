@@ -99,6 +99,9 @@ records the source checkout's overview and full command table.
 
 ## For coding agents
 
+Command scores and the remaining agent gaps are in
+[CLI agent readiness](CLI-AGENT-READINESS.md).
+
 Start with the selected command registry from the binary you intend to use:
 
 ```sh
