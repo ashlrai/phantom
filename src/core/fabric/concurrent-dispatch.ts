@@ -93,7 +93,7 @@ export interface DispatchPlan {
   /** Items that could not be assigned to an eligible backend. */
   unassigned: WorkItem[];
   /**
-   * Per-backend slot count at plan time (for observability / test assertions).
+   * Per-backend measured slot count at plan time (execution hard governor).
    * Keyed by backend; includes all backends from the snapshot.
    */
   slotsMap: Map<EngineId, number>;
@@ -103,9 +103,9 @@ export interface DispatchPlan {
 export interface DispatchResult {
   item: WorkItem;
   backend: EngineId;
-  /** True when dispatchFn was actually called (not halted by kill switch). */
+  /** True when dispatchFn was actually called (not held by capacity or kill switch). */
   attempted: boolean;
-  /** Settled result from the injected dispatchFn; null when kill-halted. */
+  /** Settled result from the injected dispatchFn; null when held. */
   settled: PromiseSettledResult<unknown> | null;
 }
 
@@ -387,9 +387,9 @@ export function planConcurrentDispatch(
  *  - Group assignments by backend.
  *  - Launch one Promise per backend group; all groups start in PARALLEL.
  *  - Within each backend group, run items with up to slot-cap concurrency
- *    (concurrent waves of slotCount items at a time).
- *  - Kill-switch checked before each wave and before each item.
- *  - Promise.allSettled at the wave level — one backend failure never
+ *    with each completion immediately draining the next queued item.
+ *  - Kill-switch checked before each item.
+ *  - Promise.allSettled across backend groups — one backend failure never
  *    crashes other backends.
  *  - dispatchFn is the ONLY I/O seam. Sync throws are caught and recorded
  *    as 'rejected' settled results.
@@ -407,7 +407,6 @@ export async function runConcurrentDispatch(
   cfg: ConcurrentDispatchCfg,
 ): Promise<DispatchResult[]> {
   if (cfg.admission) return runAdmittedDispatch(plan, dispatchFn, killSwitchFn, cfg.admission);
-  const maxSlots = Math.max(1, cfg.maxSlotsPerBackend ?? 3);
 
   // Group assignments by backend.
   const byBackend = new Map<EngineId, DispatchAssignment[]>();
@@ -425,7 +424,7 @@ export async function runConcurrentDispatch(
 
   for (const [backend, group] of byBackend) {
     // Get slot count from plan's slotsMap (hard governor).
-    const slotCount = Math.max(1, plan.slotsMap.get(backend) ?? maxSlots);
+    const slotCount = measuredSlots(plan, backend);
     backendTasks.push(runBackendGroup(backend, group, slotCount, dispatchFn, killSwitchFn));
   }
 
@@ -466,7 +465,8 @@ async function runAdmittedDispatch(
       for (const index of pending) {
         const { item, backend } = plan.assignments[index]!;
         if (stopped()) { hold(index); continue; }
-        const slots = plan.slotsMap.get(backend) ?? 0;
+        const slots = measuredSlots(plan, backend);
+        if (slots === 0) { hold(index); continue; }
         if ((active.get(backend) ?? 0) >= slots || !admission.canStart(backend)) continue;
         pending.delete(index);
         admission.start(backend);
@@ -495,11 +495,13 @@ async function runAdmittedDispatch(
   });
 }
 
-/**
- * Run a group of assignments for a single backend with up to `slotCount`
- * concurrent dispatches at a time (wave-based bounded concurrency).
- * Never throws.
- */
+/** Invalid or absent measurements never authorize execution. */
+function measuredSlots(plan: DispatchPlan, backend: EngineId): number {
+  const slots = plan.slotsMap.get(backend);
+  return typeof slots === 'number' && Number.isSafeInteger(slots) && slots > 0 ? slots : 0;
+}
+
+/** Each bounded worker claims another item on completion, without a wave barrier. */
 async function runBackendGroup(
   backend: EngineId,
   group: DispatchAssignment[],
@@ -507,54 +509,25 @@ async function runBackendGroup(
   dispatchFn: (item: WorkItem, backend: EngineId) => Promise<unknown>,
   killSwitchFn: () => boolean,
 ): Promise<DispatchResult[]> {
-  const results: DispatchResult[] = [];
-  const concurrency = Math.max(1, slotCount);
-
-  // Process in waves of `concurrency` items.
-  for (let waveStart = 0; waveStart < group.length; waveStart += concurrency) {
-    // Kill-switch check between waves.
-    if (killSwitchFn()) {
-      for (let j = waveStart; j < group.length; j++) {
-        results.push({ item: group[j]!.item, backend, attempted: false, settled: null });
-      }
-      break;
-    }
-
-    const wave = group.slice(waveStart, waveStart + concurrency);
-
-    // Launch all items in this wave concurrently.
-    const wavePromises = wave.map(async (assignment): Promise<DispatchResult> => {
-      // Per-item kill-switch check.
-      if (killSwitchFn()) {
-        return { item: assignment.item, backend, attempted: false, settled: null };
-      }
+  const results: DispatchResult[] = group.map(({ item }) => ({
+    item, backend, attempted: false, settled: null,
+  }));
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < group.length) {
+      const index = next++;
+      const { item } = group[index]!;
+      if (killSwitchFn()) continue;
       let settled: PromiseSettledResult<unknown>;
       try {
-        const value = await dispatchFn(assignment.item, backend);
-        settled = { status: 'fulfilled', value };
-      } catch (err) {
-        settled = { status: 'rejected', reason: err };
+        settled = { status: 'fulfilled', value: await dispatchFn(item, backend) };
+      } catch (reason) {
+        settled = { status: 'rejected', reason };
       }
-      return { item: assignment.item, backend, attempted: true, settled };
-    });
-
-    const waveSettled = await Promise.allSettled(wavePromises);
-    for (let wi = 0; wi < waveSettled.length; wi++) {
-      const s = waveSettled[wi]!;
-      if (s.status === 'fulfilled') {
-        results.push(s.value);
-      } else {
-        // Per-item handler never rejects, but if it did:
-        results.push({
-          item: wave[wi]!.item,
-          backend,
-          attempted: false,
-          settled: { status: 'rejected', reason: s.reason },
-        });
-      }
+      results[index] = { item, backend, attempted: true, settled };
     }
   }
-
+  await Promise.all(Array.from({ length: Math.min(slotCount, group.length) }, () => worker()));
   return results;
 }
 

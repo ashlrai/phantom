@@ -56,7 +56,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   let body: string[] = [];
   const finish = (): void => {
     if (heading === undefined) return;
-    const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)\s*$/.exec(heading);
+    const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)(?:.*)$/.exec(heading);
     entries.push({
       at: match?.[1] ?? heading,
       source: match?.[2] ?? 'unknown',

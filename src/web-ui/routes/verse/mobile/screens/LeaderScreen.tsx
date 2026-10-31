@@ -43,6 +43,7 @@ import { OPERATOR_DIRECTIVE_MAX, type DirectiveChip, type LeaderThreadKind, type
 import { isApprovable } from '../../mind/leader-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { sinceText } from '../connectivity.js';
+import { LeaderPasses } from '../LeaderPasses.js';
 import { MicButton } from '../MicButton.js';
 import { MobileComposer } from '../MobileComposer.js';
 import { runMobileAction } from '../mobile-actions.js';
@@ -505,6 +506,7 @@ export function LeaderScreen() {
         />
       )}
     >
+      <LeaderPasses />
       {reachability === 'offline' ? (
         <Banner>This phone is offline. Showing the last conversation ({sinceText(thread.updatedAt).toLowerCase()}).</Banner>
       ) : reachability === 'unreachable' ? (
