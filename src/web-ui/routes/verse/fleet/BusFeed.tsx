@@ -17,10 +17,11 @@ export function BusFeed({ now }: { now: number }) {
   usePollWhileVisible(() => { if (!busFeedMissing()) refetch(); }, 10_000, { enabled: !busFeedMissing() });
   if (busFeedMissing()) return <p>Agent bus is not in this build yet.</p>;
   if (query.status === 'loading' || query.status === 'idle') return <SkeletonLine />;
-  if (query.error || !query.data) return <p>Agent bus is unavailable.</p>;
+  if (!query.data) return <p>Agent bus is unavailable.</p>;
   const data = query.data;
   const rows = busTimeline(data);
   return <div className={styles.feed}>
+    {query.error && query.updatedAt !== null ? <p role="status">Agent bus could not refresh · showing the reading from {new Date(query.updatedAt).toLocaleTimeString('en-GB')}</p> : null}
     <div className={styles.header}>
       <span>Agent bus · {data.hops.length ? `${data.hops.length} hops · last hop ${relativeAt(data.lastHopAt, now)}` : 'no hops yet'}</span>
       {query.status === 'refreshing' ? <RefreshIndicator /> : null}
