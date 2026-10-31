@@ -169,12 +169,19 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
-    const lane = result.lanes.find(row => row.lane === 'codex-personal');
+    let lane = result.lanes.find(row => row.lane === 'codex-personal');
     const statusAt = result.asOf ? Date.parse(result.asOf) : NaN;
-    if (lane && personal?.weekly?.usedPct != null &&
+    if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
         Number.isFinite(observed) && observed <= now &&
-        (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null)) {
+        (!lane || (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null))) {
+      if (!lane) {
+        lane = { lane: 'codex-personal', running: null, target: null, held: null,
+          window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
+          burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null,
+          source: null, deadSignal: null };
+        result.lanes.push(lane);
+      }
       lane.usedPct = personal.weekly.usedPct;
       lane.resetAt = personal.weekly.resetsAt;
       lane.burnPctPerHour = personal.weekly.burnPctPerHour;
