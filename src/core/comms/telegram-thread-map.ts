@@ -85,6 +85,17 @@ function empty(): ThreadMapFile {
   return { v: 1, entries: [], buttons: {}, nextToken: 1, deliveredMemos: {} };
 }
 
+function validMessageId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function validEntry(value: unknown): value is TelegramThreadEntry {
+  if (!object(value) || !validMessageId(value['tg']) || typeof value['at'] !== 'string' || typeof value['kind'] !== 'string' ||
+      !['message', 'question', 'answer', 'memo', 'directive', 'update', 'action', 'notification', 'mason'].includes(value['kind'])) return false;
+  return ['threadId', 'memoId', 'questionId'].every(key => value[key] === undefined || typeof value[key] === 'string') &&
+    (value['actionIds'] === undefined || Array.isArray(value['actionIds']) && value['actionIds'].every(id => typeof id === 'string'));
+}
+
 function load(): ThreadMapFile {
   try {
     const p = mapPath();
@@ -92,7 +103,7 @@ function load(): ThreadMapFile {
     const parsed = JSON.parse(readFileSync(p, 'utf8')) as Partial<ThreadMapFile>;
     return {
       v: 1,
-      entries: Array.isArray(parsed.entries) ? parsed.entries.filter((e) => typeof e?.tg === 'number') : [],
+      entries: Array.isArray(parsed.entries) ? parsed.entries.filter(validEntry) : [],
       buttons: parsed.buttons && typeof parsed.buttons === 'object' ? parsed.buttons : {},
       nextToken: typeof parsed.nextToken === 'number' && parsed.nextToken > 0 ? parsed.nextToken : 1,
       deliveredMemos: parsed.deliveredMemos && typeof parsed.deliveredMemos === 'object' ? parsed.deliveredMemos : {},
@@ -133,7 +144,7 @@ export function recordTelegramMessages(
   tgMessageIds: readonly number[],
   entry: Omit<TelegramThreadEntry, 'tg' | 'at'> & { at?: string },
 ): void {
-  const ids = tgMessageIds.filter((n) => typeof n === 'number' && Number.isFinite(n));
+  const ids = tgMessageIds.filter(validMessageId);
   if (ids.length === 0) return;
   const file = load();
   const at = entry.at ?? new Date().toISOString();
@@ -149,7 +160,7 @@ export function recordTelegramMessages(
 
 /** The thread entry for a Telegram message id, if we sent (or recorded) it. */
 export function lookupTelegramMessage(tg: number | undefined): TelegramThreadEntry | null {
-  if (typeof tg !== 'number') return null;
+  if (!validMessageId(tg)) return null;
   const file = load();
   for (let i = file.entries.length - 1; i >= 0; i--) {
     if (file.entries[i]!.tg === tg) return file.entries[i]!;
@@ -157,12 +168,14 @@ export function lookupTelegramMessage(tg: number | undefined): TelegramThreadEnt
   return null;
 }
 
-/** The FIRST Telegram message id that carries a thread message (the one to reply to). */
+/** The most recently recorded Telegram message id carrying a thread message. */
 export function telegramIdForThread(threadId: string | undefined): number | undefined {
   if (!threadId) return undefined;
   const file = load();
-  const hit = file.entries.find((e) => e.threadId === threadId);
-  return hit?.tg;
+  for (let i = file.entries.length - 1; i >= 0; i--) {
+    if (file.entries[i]!.threadId === threadId) return file.entries[i]!.tg;
+  }
+  return undefined;
 }
 
 /** Register a button target; returns the token to embed in callback_data. */
