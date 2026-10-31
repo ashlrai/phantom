@@ -45,7 +45,11 @@ export function NotificationItem({ item }: { item: AppNotification }) {
         )}
       </p>
       <div className={styles.actions}>
-        {item.actionHref ? (
+        {item.actionRun ? (
+          <button type="button" className={styles.actionLink} onClick={item.actionRun} data-focus-key={`notification-${item.id}-action`}>
+            {item.actionLabel ?? 'Open'}
+          </button>
+        ) : item.actionHref ? (
           <a className={styles.actionLink} href={item.actionHref.startsWith('/') ? `#${item.actionHref}` : item.actionHref} data-focus-key={`notification-${item.id}-action`}>
             {item.actionLabel ?? 'Open'}
           </a>

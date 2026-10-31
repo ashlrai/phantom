@@ -3,7 +3,7 @@ import type { GraphSnapshot } from './loader.js';
 export type GraphDirection = 'in' | 'out' | 'both';
 const NODE_LIMIT = 500;
 
-/** Return the induced subgraph of nodes reached by a deterministic, bounded BFS. */
+/** Return the induced inventory subgraph and its deterministic, bounded BFS paths. */
 export function graphNeighborhood(graph: GraphSnapshot, nodeId: string, direction: GraphDirection, depth: number) {
   const nodes = new Map<string, (typeof graph.nodes)[number]>();
   for (const node of graph.nodes) {
@@ -25,16 +25,18 @@ export function graphNeighborhood(graph: GraphSnapshot, nodeId: string, directio
   }
 
   const visited = new Set([nodeId]);
-  const queue = [{ id: nodeId, level: 0 }];
+  const queue: { id: string; distance: number; predecessor: string | null }[] = [
+    { id: nodeId, distance: 0, predecessor: null },
+  ];
   let truncated = false;
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
-    if (current.level >= depth) continue;
+    if (current.distance >= depth) continue;
     for (const neighbor of [...(adjacency.get(current.id) ?? [])].sort()) {
       if (visited.has(neighbor)) continue;
       if (visited.size === NODE_LIMIT) { truncated = true; continue; }
       visited.add(neighbor);
-      queue.push({ id: neighbor, level: current.level + 1 });
+      queue.push({ id: neighbor, distance: current.distance + 1, predecessor: current.id });
     }
   }
 
@@ -50,5 +52,5 @@ export function graphNeighborhood(graph: GraphSnapshot, nodeId: string, directio
     }
     return 0;
   });
-  return { nodeId, direction, depth, truncated, nodes: queue.map(({ id }) => nodes.get(id)!), edges };
+  return { nodeId, direction, depth, truncated, nodes: queue.map(({ id }) => nodes.get(id)!), edges, traversal: queue };
 }

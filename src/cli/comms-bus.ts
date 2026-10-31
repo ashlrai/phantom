@@ -2,12 +2,13 @@ import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
-import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
+import { appendBusInbox, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
+phm comms bus status
 phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>]
+phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
@@ -19,9 +20,12 @@ Use --to=<address> or --from=<address> for labels that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
+Status reports metadata only; expired records still occupy retained capacity. It never resets cursors.
+Missing or unavailable stores have unknown counts and bytes (null); unavailable exits 1.
 TTL milliseconds from original receipt; receivedAt is epoch milliseconds. Read never renews TTL.
 Watch polls immediately, then every interval (100..60000 ms, default 1000); each successful poll
 emits one JSON page, including empty pages, and resumes from its emitted nextCursor.
+Use --max-pages 1..10000 to stop after that many successful pages (default: unlimited).
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
@@ -68,9 +72,10 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  let pages = 0;
   deps.signal?.addEventListener('abort', stop, { once: true });
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
@@ -81,6 +86,7 @@ async function watch(after: number, limit: number, interval: number, filters: Bu
       if (page.status === 'ok') {
         emit(JSON.stringify(filterPage(page, filters)));
         after = page.nextCursor;
+        if (++pages === maxPages) return 0;
       } else if (page.status !== 'retryable') {
         emit(JSON.stringify(page));
         return 1;
@@ -96,22 +102,28 @@ async function watch(after: number, limit: number, interval: number, filters: Bu
 
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'read', 'watch'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'read', 'watch', 'status'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
+  if (verb === 'status') {
+    if (rest.length !== 0) return invalid();
+    const inspection = inspectBusInbox(options);
+    console.log(JSON.stringify(inspection));
+    return inspection.source === 'unavailable' ? 1 : 0;
+  }
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i]!, inline = /^(--to|--from)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
     const address = key === '--to' || key === '--from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from', '--priority'] : ['--after', '--limit', '--to', '--from', '--priority'];
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--to', '--from', '--priority'] : ['--after', '--limit', '--to', '--from', '--priority'];
     if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && !values.has('--file')) return invalid();
-  for (const key of ['--after', '--limit', '--interval-ms']) {
+  for (const key of ['--after', '--limit', '--interval-ms', '--max-pages']) {
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
@@ -125,7 +137,9 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   if (verb === 'watch') {
     const interval = Number(values.get('--interval-ms') ?? 1000);
     if (interval < 100 || interval > 60000) return invalid();
-    return watch(after, limit, interval, filters, options, deps);
+    const maxPages = values.has('--max-pages') ? Number(values.get('--max-pages')) : undefined;
+    if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
+    return watch(after, limit, interval, maxPages, filters, options, deps);
   }
   let result;
   if (verb === 'post') {
