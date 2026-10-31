@@ -630,6 +630,14 @@ export interface PrSnapshot {
   baseRef: string;
   authorLogin: string | null;
   labels: string[];
+  /**
+   * GitHub's mergeability read: `mergeable` (boolean, null while GitHub is
+   * still computing) and `mergeable_state` (`clean` / `unstable` / `behind` /
+   * `dirty` / `blocked` / `draft` / `unknown` …). Unknown strings pass
+   * through unchanged — callers treat anything unexpected as "unknown".
+   */
+  mergeable: boolean | null;
+  mergeableState: string;
 }
 
 function parsePr(body: unknown, repo: string): PrSnapshot | null {
@@ -665,6 +673,8 @@ function parsePr(body: unknown, repo: string): PrSnapshot | null {
     baseRef,
     authorLogin: str(obj(b?.['user'])?.['login']),
     labels,
+    mergeable: typeof b?.['mergeable'] === 'boolean' ? (b['mergeable'] as boolean) : null,
+    mergeableState: str(b?.['mergeable_state']) ?? 'unknown',
   };
 }
 
@@ -1483,6 +1493,45 @@ export async function closeFleetPr(req: FleetPrRequest, deps: HostMergeDeps = de
 /** Reopen a fleet PR closed by closeFleetPr — the inverse a Leader veto runs. Same authorship rule. */
 export async function reopenFleetPr(req: FleetPrRequest, deps: HostMergeDeps = defaultHostMergeDeps()): Promise<FleetPrResult> {
   return changeFleetPrState(req, 'open', deps);
+}
+
+/**
+ * Merge the base branch into a fleet PR's head on GitHub — the update-branch
+ * effect (`gh pr update-branch`, merge method only: this REST endpoint has
+ * no rebase). Same authorship rule as close/reopen, and the update is pinned
+ * to `expectedHeadSha`: a push between the caller's classify and this call is
+ * a refusal, never a merge-commit on a branch we stopped recognizing.
+ */
+export async function updateFleetPrBranch(
+  req: { repo: string; number: number; expectedHeadSha: string },
+  deps: HostMergeDeps = defaultHostMergeDeps(),
+): Promise<FleetPrResult> {
+  const result = (ok: boolean, reason: string, state: FleetPrResult['state']): FleetPrResult => ({
+    ok,
+    reason: scrubSecrets(reason).slice(0, 400),
+    repo: req.repo,
+    number: req.number,
+    state,
+  });
+  if (!NAME_WITH_OWNER_RE.test(req.repo) || !Number.isSafeInteger(req.number) || req.number < 1 || !SHA_RE.test(req.expectedHeadSha)) {
+    return result(false, 'invalid repo, PR number or expected head SHA', 'unknown');
+  }
+  const pr = await readPr(req.repo, req.number, deps);
+  if (typeof pr === 'string') return result(false, pr, 'unknown');
+  const current: FleetPrResult['state'] = pr.merged ? 'merged' : pr.state;
+  if (pr.authorLogin !== FLEET_APP_BOT_LOGIN || !pr.headRef.startsWith(FLEET_BRANCH_PREFIX) ||
+    (pr.headRepo !== null && pr.headRepo.toLowerCase() !== req.repo.toLowerCase())) {
+    return result(false, `PR #${req.number} was not authored by ${FLEET_APP_BOT_LOGIN} on an ${FLEET_BRANCH_PREFIX} branch`, current);
+  }
+  if (pr.merged) return result(false, `PR #${req.number} is already merged`, 'merged');
+  if (pr.state !== 'open') return result(false, `PR #${req.number} is not open`, current);
+  if (pr.headSha !== req.expectedHeadSha) {
+    return result(false, `PR #${req.number}'s head moved since it was classified (${pr.headSha.slice(0, 12)}); reclassify it`, current);
+  }
+  const reply = await gh(deps, req.repo, 'PUT', `/pulls/${req.number}/update-branch`, { expected_head_sha: req.expectedHeadSha });
+  // 202 Accepted — GitHub merges the base into the head and re-runs checks.
+  if (reply.status !== 202) return result(false, `GitHub refused the branch update: ${githubMessage(reply)}`, current);
+  return result(true, `PR #${req.number} is being updated from ${pr.baseRef}; checks will run again`, current);
 }
 
 // ---------------------------------------------------------------------------

@@ -1083,9 +1083,10 @@ export interface G7ChecksInput {
 const OK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 const RED_CONCLUSIONS = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
 
-type CheckState = 'green' | 'red' | 'pending';
+export type CheckState = 'green' | 'red' | 'pending';
 
-function runState(run: CheckRunObservation): CheckState {
+/** G7's run→state mapping; exported for the merge autopilot's identical read. */
+export function runState(run: CheckRunObservation): CheckState {
   if (run.status !== 'completed') return 'pending';
   if (run.conclusion && OK_CONCLUSIONS.has(run.conclusion)) return 'green';
   if (run.conclusion && RED_CONCLUSIONS.has(run.conclusion)) return 'red';
@@ -1093,7 +1094,8 @@ function runState(run: CheckRunObservation): CheckState {
   return 'pending';
 }
 
-function statusState(status: StatusObservation): CheckState {
+/** G7's status→state mapping; exported for the merge autopilot's identical read. */
+export function statusState(status: StatusObservation): CheckState {
   if (status.state === 'success') return 'green';
   if (status.state === 'failure' || status.state === 'error') return 'red';
   return 'pending';
