@@ -9,7 +9,7 @@ import { formatRelative } from '../autonomy/format.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { readCase, readOutcomes, type OutcomesView } from './fleet-outcomes-model.js';
+import { filterCases, outcomeChips, readCase, readOutcomes, type OutcomesView } from './fleet-outcomes-model.js';
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
 import styles from './fleet-outcomes.module.css';
 
@@ -69,6 +69,7 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
   usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
   const data = useMemo(() => readOutcomes(read.data), [read.data]);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<ExecutionFeedbackOutcome | 'all'>('all');
 
   if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) {
     return <p className={styles.message}>Outcomes not in this build</p>;
@@ -79,8 +80,12 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
   if (data === null || data.state === 'unavailable' || data.sourceState === null) {
     return <p className={styles.message}>Outcomes are unavailable on this Mac.</p>;
   }
+  const chips = outcomeChips(data);
+  // A later poll can drop the outcome a chip was filtering on; fall back to All.
+  const chip = chips.find(item => item.outcome === outcome) ?? chips[0]!;
+  const cases = filterCases(data, chip.outcome);
   return <section className={styles.root} aria-label="Outcomes">
-    <p className={styles.header}>{data.cases.length} cases since {formatRelative(data.since)} · {countOf(data, 'producer-succeeded')} produced · {countOf(data, 'failed')} failed</p>
+    <p className={styles.header}>{data.cases.length} cases since {formatRelative(data.since)} · {countOf(data, 'producer-succeeded')} produced · {countOf(data, 'failed')} failed{data.refreshedAt !== null ? ` · refreshed ${formatRelative(data.refreshedAt)}` : ''}</p>
     {data.state === 'stale' && <p className={styles.notice} role="status">Showing the last reading.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Outcomes could not refresh. Showing the last reading.</p>}
     {data.notes.map(note => <p key={note} className={styles.notice} role="status">{note}</p>)}
@@ -91,9 +96,12 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
           segments={data.mix.map(row => ({ id: row.outcome, label: row.label, color: toneColor(OUTCOME_TONE[row.outcome]) }))}
           values={[data.mix.map(row => row.total ?? row.observed)]} />}
     <section>
+      <div className={styles.filters} role="radiogroup" aria-label="Filter cases">
+        {chips.map(item => <button key={item.outcome} type="button" role="radio" aria-checked={item.outcome === chip.outcome} onClick={() => setOutcome(item.outcome)}>{item.label} {item.count}</button>)}
+      </div>
       <h3 className={styles.heading}>Cases</h3>
-      {data.cases.length === 0 ? <p className={styles.message}>No cases recorded in the window.</p>
-        : <ul className={styles.list} aria-label="Cases">{data.cases.map(item =>
+      {cases.length === 0 ? <p className={styles.message}>{data.cases.length === 0 ? 'No cases recorded in the window.' : `No ${chip.label.toLowerCase()} cases in the window.`}</p>
+        : <ul className={styles.list} aria-label="Cases">{cases.map(item =>
           <li key={item.caseId}>
             <button type="button" className={styles.caseRow} title={item.caseId} aria-pressed={selectedCaseId === item.caseId}
               onClick={() => setSelectedCaseId(item.caseId)}>
