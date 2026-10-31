@@ -30,15 +30,17 @@ export interface TagProps {
   dot?: boolean;
   title?: string;
   className?: string;
+  'data-overdue'?: boolean;
 }
 
-export function Tag({ children, engine, mono = false, size = 'md', dot = false, title, className }: TagProps) {
+export function Tag({ children, engine, mono = false, size = 'md', dot = false, title, className, 'data-overdue': overdue }: TagProps) {
   const showDot = dot || engine !== undefined;
   return (
     <span
       className={`${styles.tag} ${styles[size]} ${mono ? styles.mono : ''} ${className ?? ''}`}
       title={title}
       data-engine={engine}
+      data-overdue={overdue}
     >
       {showDot ? (
         <span

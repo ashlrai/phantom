@@ -93,7 +93,7 @@ describe('OnboardingFlow — the chip', () => {
   it('starts as a one-line chip naming the step, not the full card', () => {
     render(<OnboardingFlow />);
     const chip = screen.getByRole('region', { name: 'Getting started' });
-    expect(chip).toHaveTextContent('Getting started1/6');
+    expect(chip).toHaveTextContent('Getting started1/7');
     expect(within(chip).getByRole('button', { name: /Getting started/ })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('Welcome to Phantom')).not.toBeInTheDocument();
     // The chip reads nothing: no step has mounted, so no step's query ran.
@@ -105,7 +105,7 @@ describe('OnboardingFlow — the chip', () => {
     render(<OnboardingFlow />);
     await user.click(screen.getByRole('button', { name: /Getting started/ }));
     expect(screen.getByText('Welcome to Phantom')).toBeInTheDocument();
-    expect(screen.getByText('Getting started · 1 of 6')).toBeInTheDocument();
+    expect(screen.getByText('Getting started · 1 of 7')).toBeInTheDocument();
     expect(getOnboardingState().expanded).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Minimize getting started' }));
@@ -121,7 +121,7 @@ describe('OnboardingFlow — the chip', () => {
     render(<OnboardingFlow />);
     await stepTo(user, 2);
     await user.click(screen.getByRole('button', { name: 'Minimize getting started' }));
-    expect(screen.getByRole('region', { name: 'Getting started' })).toHaveTextContent('3/6');
+    expect(screen.getByRole('region', { name: 'Getting started' })).toHaveTextContent('3/7');
     expect(JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toMatchObject({ expanded: false, step: 2 });
   });
 
@@ -144,7 +144,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
   it('opens on a first run and names the step it is on', () => {
     render(<OnboardingFlow />);
     expect(screen.getByText('Welcome to Phantom')).toBeInTheDocument();
-    expect(screen.getByText('Getting started · 1 of 6')).toBeInTheDocument();
+    expect(screen.getByText('Getting started · 1 of 7')).toBeInTheDocument();
   });
 
   it('welcomes in one sentence', () => {
@@ -221,7 +221,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
     expect(getOnboardingState().dismissedAt).toBeNull();
   });
 
-  it('walks forward and back through all six steps', async () => {
+  it('walks forward and back through all seven steps', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
     await stepTo(user, 1);
@@ -232,7 +232,11 @@ describe('OnboardingFlow — presence and dismissal', () => {
     expect(screen.getByText('Your seats')).toBeInTheDocument();
     await stepTo(user, 2);
     expect(screen.getByText('Turn on autonomy')).toBeInTheDocument();
-    await stepTo(user, 2);
+    await stepTo(user, 1);
+    expect(screen.getByText('Your fleet')).toBeInTheDocument();
+    await stepTo(user, 1);
+    expect(screen.getByText('Three ways to stop')).toBeInTheDocument();
+    await stepTo(user, 1);
     expect(screen.getByText('Make it yours')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
   });
@@ -240,7 +244,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
   it('the last step records completion and hands the shell a new-chat request', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 5);
+    await stepTo(user, 6);
     await user.click(screen.getByRole('button', { name: 'Start a first chat' }));
 
     expect(getOnboardingState().completedAt).not.toBeNull();
@@ -350,7 +354,7 @@ describe('OnboardingFlow — what it says about the machine', () => {
   it('states the three stops at their real blast radius, and never calls the kill switch a pause', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 4);
+    await stepTo(user, 5);
 
     expect(screen.getByText('Pause')).toBeInTheDocument();
     expect(screen.getByText('Stop loop')).toBeInTheDocument();
@@ -460,7 +464,7 @@ describe('OnboardingFlow — what it says about the machine', () => {
   it('points at Settings from the last step', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 5);
+    await stepTo(user, 6);
     await user.click(screen.getByRole('button', { name: 'Open Settings' }));
     expect(getVerseUiState().section).toBe('settings');
     // Opening Settings does not answer the tour — it is still there to finish.
