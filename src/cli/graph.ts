@@ -2,6 +2,7 @@
 import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborhood.js';
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph <nodes|edges> [--agent <bare-agent-id>] [--json]
        phm graph node <node-id> [--json]
        phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--edge-kind can-message|can-delegate|reviews|routes-to] [--json]
 
@@ -17,6 +18,10 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
   --edge-kind Filter neighbors traversal to one exact edge kind (same values as edges --kind).
   --from      Filter edges by exact source ID; use --from=<id> for option-like IDs.
   --to        Filter edges by exact destination ID; use --to=<id> for option-like IDs.
+  --agent     Resolve a bare agent ID from loaded agent metadata. For nodes, include
+              the agent and its direct outgoing routes-to targets; for edges,
+              include incident edges. Composes with --kind, --from, and --to.
+              A missing agent returns GRAPH_NODE_NOT_FOUND; partial data may omit bindings.
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
@@ -44,6 +49,7 @@ interface Options {
   edgeKind: string | null;
   from: string | null;
   to: string | null;
+  agent: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
@@ -51,7 +57,7 @@ function isCommand(value: string): value is GraphCommand {
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null, agent: null };
   let directionSeen = false;
   let depthSeen = false;
   for (let i = 0; i < args.length; i++) {
@@ -65,6 +71,11 @@ function parse(args: string[]): Options {
       const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
       if (value === undefined || !kinds.includes(value)) throw new Error(`Kind must be ${kinds.join(', ')}.`);
       options.kind = value;
+    } else if ((options.command === 'nodes' || options.command === 'edges') && /^(--agent)(=|$)/.test(arg)) {
+      const separator = arg.indexOf('=');
+      const value = separator === -1 ? args[++i] : arg.slice(separator + 1);
+      if (options.agent !== null || !value || value.startsWith('-')) throw new Error('Invalid --agent filter.');
+      options.agent = value;
     } else if (options.command === 'neighbors' && arg === '--edge-kind' && options.edgeKind === null) {
       const value = args[++i];
       if (value === undefined || !(EDGE_KINDS as readonly string[]).includes(value)) throw new Error(`Edge kind must be ${EDGE_KINDS.join(', ')}.`);
@@ -98,10 +109,11 @@ function parse(args: string[]): Options {
   return options;
 }
 
-function fail(options: Pick<Options, 'command' | 'json'>, code: ErrorCode, message: string): number {
+function fail(options: Pick<Options, 'command' | 'json'>, code: ErrorCode, message: string,
+  evidence?: { complete?: boolean; sources?: unknown; issues?: unknown }): number {
   if (options.json) {
     console.log(JSON.stringify({ schemaVersion: 1, command: options.command,
-      status: code === 'GRAPH_UNAVAILABLE' ? 'unavailable' : code === 'GRAPH_NODE_NOT_FOUND' ? 'not_found' : 'error', error: { code, message } }));
+      status: code === 'GRAPH_UNAVAILABLE' ? 'unavailable' : code === 'GRAPH_NODE_NOT_FOUND' ? 'not_found' : 'error', error: { code, message }, ...evidence }));
   } else {
     console.error(`graph: ${message}`);
     if (code === 'GRAPH_USAGE') console.error('Run `phm graph --help` for usage.');
@@ -152,21 +164,37 @@ export async function cmdGraph(args: string[]): Promise<number> {
       console.log(JSON.stringify(result, null, options.json ? undefined : 2));
       return 0;
     }
+    let agentId: string | null = null;
+    let agentNodeIds: Set<unknown> | null = null;
+    if (options.agent !== null) {
+      const matches = graph.nodes.filter((node) => node?.kind === 'agent' && node.agentId === options.agent && typeof node.id === 'string');
+      if (matches.length === 0) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Agent not found in loaded graph.',
+        { complete: graph.complete, sources: graph.sources, issues: graph.issues });
+      if (matches.length !== 1) throw new Error('Ambiguous agent metadata');
+      agentId = matches[0]!.id as string;
+      agentNodeIds = new Set([agentId]);
+      for (const edge of graph.edges) {
+        if (edge?.kind === 'routes-to' && edge.from === agentId && typeof edge.to === 'string') agentNodeIds.add(edge.to);
+      }
+    }
     const records = command === 'nodes' || command === 'edges'
       ? graph[command].filter((record) =>
         (options.kind === null || record?.kind === options.kind)
         && (options.from === null || record?.from === options.from)
-        && (options.to === null || record?.to === options.to))
+        && (options.to === null || record?.to === options.to)
+        && (agentId === null || (command === 'nodes' ? agentNodeIds!.has(record?.id)
+          : record?.from === agentId || record?.to === agentId)))
       : null;
     const data = command === 'status'
       ? { counts: { nodes: graph.nodes.length, edges: graph.edges.length } }
       : { [command]: records };
     if (options.json) {
       console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data,
-        ...(options.from !== null || options.to !== null ? { filters: {
+        ...(options.from !== null || options.to !== null || options.agent !== null ? { filters: {
           ...(options.kind !== null ? { kind: options.kind } : {}),
           ...(options.from !== null ? { from: options.from } : {}),
           ...(options.to !== null ? { to: options.to } : {}),
+          ...(options.agent !== null ? { agent: options.agent } : {}),
         } } : {}),
         complete: graph.complete, sources: graph.sources, issues: graph.issues }));
     } else if (command === 'status') {
