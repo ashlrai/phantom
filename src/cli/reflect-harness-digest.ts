@@ -1,6 +1,6 @@
 import { readHarnessDigest } from '../core/learn/harness-digest-reader.js';
 
-const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>] [--stale-days <n>] [--needs-refresh] [--check]
+const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
 Read a local digest (maximum 1 MiB) and emit dated HTTPS citations as JSON.
 Dates are UTC calendar days; older than N days is stale (default 7, boundary is fresh).
 Missing, invalid, or future dates have null checkedAt and stale, with an issue.
@@ -10,14 +10,17 @@ future_checked, missing_urls. Only links on Source lines are included.
 With --source, select all records and issues matching an exact ID (S followed by digits).
 With --needs-refresh, include only stale or undated selected sources and sources whose
 IDs are referenced by selected issues; v and selected issues are preserved.
+With --with-takeaways, include only selected sources with nonempty takeaway arrays;
+this composes with --needs-refresh and preserves v and selected issues.
 With --check, exit 0 for a non-empty selection with all sources fresh and no issues;
 exit 1 for an empty selection, stale or undated sources, issues, or read failure.
-Without --source, the check always evaluates the full digest, even with --needs-refresh.
-With --source, the check evaluates the selection before --needs-refresh.
+Without --source, the check always evaluates the full digest, even with display filters.
+With --source, the check evaluates the selection before --needs-refresh and --with-takeaways.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
 Options: --file <markdown>  Input file; --json  Required JSON output;
          --source <id>  Exact source ID; --stale-days <n>  Non-negative integer;
          --needs-refresh  Filter sources;
+         --with-takeaways  Filter sources to those with takeaways;
          --check  Check freshness;
          --help, -h  Show help.`;
 
@@ -30,6 +33,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   let json = false;
   let check = false;
   let needsRefresh = false;
+  let withTakeaways = false;
   let sourceId: string | undefined;
   let staleDays: number | undefined;
   const usage = (): number => {
@@ -41,6 +45,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     if (arg === '--json' && !json) json = true;
     else if (arg === '--check' && !check) check = true;
     else if (arg === '--needs-refresh' && !needsRefresh) needsRefresh = true;
+    else if (arg === '--with-takeaways' && !withTakeaways) withTakeaways = true;
     else if (arg === '--file' && file === undefined) {
       const value = args[++i];
       if (!value || value.startsWith('-')) return usage();
@@ -67,8 +72,10 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     issues: result.issues.filter(issue => issue.id === sourceId),
   };
   const issueIds = new Set(selected.issues.map(issue => issue.id));
-  const output = needsRefresh
-    ? { ...selected, sources: selected.sources.filter(source => source.stale !== false || issueIds.has(source.id)) }
+  const output = needsRefresh || withTakeaways
+    ? { ...selected, sources: selected.sources.filter(source =>
+      (!needsRefresh || source.stale !== false || issueIds.has(source.id)) &&
+      (!withTakeaways || (source.takeaways?.length ?? 0) > 0)) }
     : selected;
   process.stdout.write(JSON.stringify(output) + '\n');
   return check && (selected.sources.length === 0 || selected.issues.length > 0 || selected.sources.some(source => source.stale !== false)) ? 1 : 0;
