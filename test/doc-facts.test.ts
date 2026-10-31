@@ -30,6 +30,7 @@ const DOCS = [
   'docs/HUB-REFERENCE.md',
   'docs/MISSION-OS.md',
   'docs/README.md',
+  'docs/SELF-HOSTING.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
