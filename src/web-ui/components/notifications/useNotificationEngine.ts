@@ -4,8 +4,8 @@
  * this exactly once (NotificationCenter does, unconditionally, regardless
  * of whether its panel is open) — it has no UI of its own.
  *
- * All four queries share the authenticated SSE refresh channel. Runs/inbox
- * have direct events; daemon observations invalidate control-snapshot and
+ * The existing four queries share the authenticated SSE refresh channel.
+ * Runs/inbox have direct events; daemon observations invalidate control-snapshot and
  * fleet-activity observations invalidate fleet. useQuery fetches initially
  * and subscribes to those cache updates, so a second notification poller
  * would duplicate the same expensive reads even with the panel closed.
@@ -14,6 +14,8 @@ import { useEffect } from 'react';
 import { useQuery } from '../../data/hooks.js';
 import { controlSnapshotQuery, fleetStatusQuery, runsQuery, inboxQuery } from '../../data/queries.js';
 import { deriveNotifications } from './deriveNotifications.js';
+import { deriveFleetRunsNotifications } from './deriveFleetRunsNotifications.js';
+import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { reconcileNotifications } from './notification-store.js';
 
 export function useNotificationEngine(): void {
@@ -21,11 +23,13 @@ export function useNotificationEngine(): void {
   const fleet = useQuery(fleetStatusQuery);
   const runs = useQuery(runsQuery);
   const inbox = useQuery(inboxQuery);
+  const fleetRuns = useQuery(fleetRunsNotifyQuery);
 
   const controlData = control.data;
   const fleetData = fleet.data;
   const runsData = runs.data;
   const inboxData = inbox.data;
+  const fleetRunsData = fleetRuns.data;
 
   useEffect(() => {
     reconcileNotifications(
@@ -34,7 +38,7 @@ export function useNotificationEngine(): void {
         fleet: fleetData,
         runs: runsData,
         inbox: inboxData,
-      }),
+      }).concat(deriveFleetRunsNotifications(fleetRunsData, Date.now())),
     );
-  }, [controlData, fleetData, runsData, inboxData]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData]);
 }
