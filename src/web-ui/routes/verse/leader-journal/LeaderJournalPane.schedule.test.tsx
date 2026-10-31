@@ -11,7 +11,7 @@ it('shows the overdue badge and updates its tone as time passes while visible', 
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T12:27:00Z'));
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-    v: 1, generatedAt: '2026-01-01T12:27:00Z', sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
+    v: 1, generatedAt: '2026-01-01T12:27:00Z', notes: [], sources: { orchestration: 'healthy', planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
     passes: [{ at: '2026-01-01T12:00:00Z', sections: [] }], ingest: [], ingested: [], rejectedLastHour: 0,
   })));
   const view = render(<LeaderJournalPane visible />);
