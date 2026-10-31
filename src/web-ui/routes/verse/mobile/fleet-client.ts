@@ -16,6 +16,9 @@
  * control and budget modules have no business in the first-paint bundle.
  */
 import type { BudgetMode } from '../../../../core/routing/types.js';
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+import { apiPost } from '../../../data/client.js';
+import { VerseMutationLockedError } from '../verse-queries.js';
 import type { DaemonVerb } from './fleet-state.js';
 
 export interface FleetActionResult {
@@ -26,6 +29,7 @@ export interface FleetActionResult {
 export interface MobileFleetClient {
   daemon(verb: DaemonVerb): Promise<FleetActionResult>;
   setBudgetMode(mode: BudgetMode): Promise<FleetActionResult>;
+  interject(text: string): Promise<{ at: string }>;
 }
 
 export const defaultFleetClient: MobileFleetClient = {
@@ -38,6 +42,14 @@ export const defaultFleetClient: MobileFleetClient = {
     const { updateBudget } = await import('../budget/budget-queries.js');
     await updateBudget({ mode });
     return { note: null };
+  },
+  async interject(text) {
+    const token = getMutationToken();
+    if (!token) throw new VerseMutationLockedError();
+    const result = await apiPost<{ ok?: unknown; at?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom mobile' }, token);
+    if (!result || result.ok !== true || typeof result.at !== 'string' || !result.at) throw new Error('The message could not be confirmed. Refresh and check the inbox.');
+    touchMutationHold();
+    return { at: result.at };
   },
 };
 

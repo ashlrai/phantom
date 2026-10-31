@@ -846,16 +846,14 @@ export function ChatSection() {
           otherRunning={otherRunning} />
         </Suspense>
       </div>
-      {dockOpen ? (
-        <Suspense fallback={null}>
-          <DockHost presentation={presentation} windowWidth={windowWidth} columnWidth={dockWidth} columnMax={dockColumnMax} columnHeight={chatHeight} session={view.session} seats={seats}
+      <Suspense fallback={null}>
+        <DockHost presentation={presentation} windowWidth={windowWidth} columnWidth={dockWidth} columnMax={dockColumnMax} columnHeight={chatHeight} session={view.session} seats={seats}
             events={view.events} roots={roots.roots} rootsData={roots.data} rootsError={roots.error} turnFiles={turnFiles}
             otherRunning={otherRunning} dispatchEnabled={dispatchEnabled} onOpenSession={setSelectedId}
             onHandoff={setHandoffFor}
             // Accounts & capacity live in Apps & Accounts (C6) since 3.10.
             onOpenAccounts={openAccounts} onSendToChat={sendToChat} onAddToMessage={addToMessage} />
-        </Suspense>
-      ) : null}
+      </Suspense>
 
       {newChat.open ? (
         <Suspense fallback={null}>
