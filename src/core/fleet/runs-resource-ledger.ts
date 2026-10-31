@@ -14,9 +14,14 @@ export interface ResourceLaneRow {
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
 }
+export interface ApiModelUsage {
+  model: string; rows: number; errors: number; inputTokens: number; outputTokens: number;
+  usd: number | null; lastAt: string;
+}
 export interface ApiSpendSummary {
   rowsToday: number; errorsToday: number; tokensOutToday: number; tokensInToday: number;
   usdToday: number | null; usdWeek: number | null; lastAt: string | null; models: string[];
+  modelUsageToday: ApiModelUsage[]; modelUsageTodayOmitted: number;
 }
 export interface ResourceLedgerV1 {
   v: 1; generatedAt: string; sources: Record<'status' | 'apiSpend' | 'jobs', 'healthy' | 'missing' | 'degraded'>;
@@ -30,6 +35,7 @@ const safeName = (v: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.tes
 const missing = (e: unknown): boolean => object(e) && e.code === 'ENOENT';
 const STATUS_MAX = 1024 * 1024;
 const SPEND_TAIL = 512 * 1024;
+const MODEL_USAGE_MAX = 100;
 
 async function readBounded(path: string, limit: number, tail: boolean): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -53,12 +59,13 @@ async function readBounded(path: string, limit: number, tail: boolean): Promise<
 
 /** Offset follows Date#getTimezoneOffset: minutes west of UTC. Week starts Monday. */
 function parseSpend(lines: string, nowMs: number, tzOffsetMinutes: number): { summary: ApiSpendSummary; corrupt: boolean } {
-  const summary: ApiSpendSummary = { rowsToday: 0, errorsToday: 0, tokensOutToday: 0, tokensInToday: 0, usdToday: null, usdWeek: null, lastAt: null, models: [] };
+  const summary: ApiSpendSummary = { rowsToday: 0, errorsToday: 0, tokensOutToday: 0, tokensInToday: 0, usdToday: null, usdWeek: null, lastAt: null, models: [], modelUsageToday: [], modelUsageTodayOmitted: 0 };
   const offset = tzOffsetMinutes * 60_000;
   const localNow = new Date(nowMs - offset);
   const today = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate()) + offset;
   const week = today - ((localNow.getUTCDay() + 6) % 7) * 86_400_000;
   const models = new Set<string>();
+  const usage = new Map<string, ApiModelUsage>();
   let lastMs = -Infinity;
   let corrupt = false;
   for (const line of lines.split(/\r?\n/)) {
@@ -80,8 +87,24 @@ function parseSpend(lines: string, nowMs: number, tzOffsetMinutes: number): { su
     summary.tokensInToday += number(row.input_tokens) ?? 0;
     summary.tokensOutToday += number(row.output_tokens) ?? 0;
     if (cost !== null) summary.usdToday = (summary.usdToday ?? 0) + cost;
+    if (typeof row.model === 'string' && safeName(row.model)) {
+      let model = usage.get(row.model);
+      if (!model) {
+        model = { model: row.model, rows: 0, errors: 0, inputTokens: 0, outputTokens: 0, usd: null, lastAt: at };
+        usage.set(row.model, model);
+      }
+      model.rows++;
+      if (row.is_error === true) model.errors++;
+      model.inputTokens += number(row.input_tokens) ?? 0;
+      model.outputTokens += number(row.output_tokens) ?? 0;
+      if (cost !== null) model.usd = (model.usd ?? 0) + cost;
+      if (ms > Date.parse(model.lastAt)) model.lastAt = at;
+    }
   }
   summary.models = [...models].sort();
+  const modelUsage = [...usage.values()].sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0);
+  summary.modelUsageToday = modelUsage.slice(0, MODEL_USAGE_MAX);
+  summary.modelUsageTodayOmitted = Math.max(0, modelUsage.length - MODEL_USAGE_MAX);
   return { summary, corrupt };
 }
 export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes = new Date(nowMs).getTimezoneOffset()): ApiSpendSummary {
