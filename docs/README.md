@@ -163,3 +163,6 @@ documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+
+- [Provider agnostic routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): YAML schedules, CLI account failover,
+  per-attempt ledger, Markdown status and a single Mac launchd tick.

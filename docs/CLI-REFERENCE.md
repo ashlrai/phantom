@@ -24,10 +24,10 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     memory          Memory - shared genome (recall, learn, genome, …)
     knowledge       Knowledge - portfolio RAG + graph (knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (enroll, …)
-    observability   Observability - cost, telemetry, audit (pulse, …)
+    observability   Observability - cost, telemetry, audit (router-calibration, queue, pulse, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, …)
-    safety          Safety - sandboxes, invariants, activation (daemon, sandbox, …)
-    web             Surfaces - TUI + web dashboard (tui, dash, dashboard, …)
+    safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
+    web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
 
   phm init · phm doctor · phm verse  start here: onboard, health check, console
@@ -49,7 +49,7 @@ Phantom - every command (phm or ashlr)
     ls [category]                                                                                                  List all indexed items, optionally filtered by category.
     open [query]                                                                                                   Open the best match in your editor; no query opens an interactive picker.
     tidy [--apply]                                                                                                 Show (or apply) tidy moves for loose Desktop files.
-    config [get <k>|set <k> <v>]                                                                                   Read/write a config value. No args prints a summary.
+    config [list|get <k>|set <k> <v>]                                                                              Read/write a config value. `list` prints a summary; no args prints the path.
     config effective [--json]                                                                                      Read-only effective autonomy/daemon/foundry/backend settings.
     config set <k> --json <v>                                                                                      Set a structured (array/object) config value as JSON.
     config path                                                                                                    Print the path to config.json.
@@ -101,7 +101,7 @@ Phantom - every command (phm or ashlr)
 
   Knowledge - portfolio RAG + graph
     knowledge build            Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
-    ask "<question>"           Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in.
+    ask "<question>"           Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
     knowledge impact <target>  Show references + dependents of a file/symbol within and across enrolled repos.
     knowledge graph            Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).
     wiki build [repo] [--all]  Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
@@ -128,6 +128,7 @@ Phantom - every command (phm or ashlr)
     inbox submit <id> --yes                                                                                                                                       Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.
     inbox reject <id>                                                                                                                                             Discard a pending proposal; applies nothing.
     inbox --json                                                                                                                                                  Emit JSON for inbox list, show, approve, submit, or automerge results.
+    drive [--once --dry-run] [--tick <seconds>]                                                                                                                   Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.
     daemon start --once                                                                                                                                           Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.
     daemon start --once --dry-run                                                                                                                                 Plan only: which backlog items WOULD be worked (no swarm/proposal).
     daemon start --once --drain diagnostic-reslices --limit 3                                                                                                     Dormant non-dry diagnostic drain; compiled daemon trust roots are empty.
@@ -143,6 +144,7 @@ Phantom - every command (phm or ashlr)
     fleet evidence doctor <source>                                                                                                                                Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.
     fleet direction [--json]                                                                                                                                      Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.
     fleet automerge-canary status|prepare-shadow|activate-shadow|halt                                                                                             Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.
+    fleet xreview run|decide --request <file>                                                                                                                     Cross-model review on another pool (no tools, no credentials) and the deterministic SHA-bound auto-merge decision; never merges.
     fleet pause                                                                                                                                                   Pause the fleet: engage the global kill switch (idempotent).
     fleet resume                                                                                                                                                  Resume the fleet: release the global kill switch (idempotent).
     recovery list|inspect                                                                                                                                         Inspect bounded metadata-only prepared/committed tool-effect evidence.
@@ -175,9 +177,11 @@ Phantom - every command (phm or ashlr)
     cloud launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin.
     playbook list|show|new|edit|run <id>                                                                                                                          Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).
     openai-agents sessions|inspect|turns [session-id] [--json]                                                                                                    Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.
+    metrics ingest --jobs <file> --status <file>                                                                                                                  Read local lane and tier merge metrics and advisory routing priors; always JSON.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    routines list|status|run|migrate|tick|launchd                                                                                                                 Balance UTC cron routines across CLI accounts and local models; record attempts and generate Markdown status.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
     jev status [--json]                                                                                                                                           Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.
@@ -219,26 +223,34 @@ Phantom - every command (phm or ashlr)
     health                                                                                                                                                        Score every ENROLLED repo on quality (tests/docs/deps/security/debt/CI/conventions); ranked, read-only.
     health <repo>                                                                                                                                                 Per-repo health detail with the per-dimension breakdown + worst offenders (ENROLLED only).
     health propose                                                                                                                                                Emit deterministic safe-fix advisories as PENDING inbox proposals (never auto-applies).
+    sweep report [--repo <dir>]                                                                                                                                   Write a local weekly deletion review report from a Phantom checkout.
     digest                                                                                                                                                        Write an ORG-LEVEL portfolio digest (health, goals, costs, today) to ~/.ashlr/digests/ (LOCAL-FIRST; reads only).
     digest --notify                                                                                                                                               Also deliver the digest via a configured Slack/Discord webhook (OPT-IN; no-op when unconfigured).
 
   Observability - cost, telemetry, audit
-    pulse [--window 1d|7d|30d]                                            Local observability dashboard: tokens, cost, sessions, commits.
-    pulse --json                                                          Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
-    pulse --project <name>                                                Restrict pulse rollup to a single project.
-    pulse-export                                                          Fleet→pulse OTLP backfill/manual export.
-    pulse-test                                                            Fleet→pulse connectivity + auth probe (read-only).
-    resources [--json] [--watch]                                          Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
-    usage                                                                 Frontier usage table: per-engine calls/tokens/cost + window state.
-    telemetry [status]                                                    M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
-    telemetry test                                                        Emit a synthetic metadata-only test span; report sink+ok.
-    audit [N] [--json] [--action <verb>] [--result <r>] [--since <when>]  Tail the append-only audit trail (newest-first); filter by action/result/since (read-only).
-    receipt list|status|show <run>|verify <run>|timeline <run> [--json]   Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]  Compare recorded router predictions with outcomes and usage.
+    queue report --events <file> [--json]                                    Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    pulse [--window 1d|7d|30d]                                               Local observability dashboard: tokens, cost, sessions, commits.
+    pulse --json                                                             Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
+    pulse --project <name>                                                   Restrict pulse rollup to a single project.
+    pulse-export                                                             Fleet→pulse OTLP backfill/manual export.
+    pulse-test                                                               Fleet→pulse connectivity + auth probe (read-only).
+    resource [--json] [--directory <fleet-directory>]                        Refresh the shared resource.v1 view in fleet.json from recorded inputs.
+    resources [--json] [--watch]                                             Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
+    budget <show|add> [--json]                                               Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
+    usage                                                                    Frontier usage table: per-engine calls/tokens/cost + window state.
+    queue stats [--json] [--window <seconds>]                                Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
+    telemetry [status]                                                       M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
+    telemetry test                                                           Emit a synthetic metadata-only test span; report sink+ok.
+    audit [N] [--json] [--action <verb>] [--result <r>] [--since <when>]     Tail the append-only audit trail (newest-first); filter by action/result/since (read-only).
+    receipt list|status|show <run>|verify <run>|timeline <run> [--json]      Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
     mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
+    autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
+    metrics <summary|dashboard|record|recommend|ingest>                              Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest.
     improve propose [--open-pr --repo <dir>]                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
     improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
     steward disk [--apply] [--json]                                                  Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).
@@ -258,6 +270,8 @@ Phantom - every command (phm or ashlr)
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                              Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]  Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
+    worktrees report [--dir <path>] [--json]                                           Report worktree age, size, last log time and job state.
+    node bootstrap --dry-run [--json]                                                  Plan a persistent Linux node; registry integration is a stub, no provisioning.
     sandbox list                                                                       List active git-worktree sandboxes (M21 safety foundation).
     sandbox diff <id>                                                                  Show diff of a sandbox vs its base HEAD.
     sandbox cleanup <id>                                                               Remove a sandbox worktree and scratch branch.
@@ -272,6 +286,7 @@ Phantom - every command (phm or ashlr)
     demo [--no-cleanup] [--json]                                                       Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
+    top [--once] [--json]         Read-only per-pool capacity and reset pressure snapshot.
     tui [--once]                  Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
     dash [--once]                 Alias of `tui` - interactive terminal dashboard.
     dashboard [--stop|--status]   Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).

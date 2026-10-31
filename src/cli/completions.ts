@@ -42,7 +42,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'openai-agents',
   'benchmark', 'queue',
   // 3.15 automations.
-  'automations',
+  'automations', 'routines', 'top',
   // 3.15 Jev decision layer.
   'jev',
   // 3.15 private repo wiki.
@@ -135,6 +135,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
+  routines: ['list', 'status', 'run', 'migrate', 'tick', 'launchd'],
   automations: ['list', 'templates', 'add', 'enable', 'disable', 'remove', 'fire', 'help'],
   // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).
   universe: ['demo', 'init', 'run', 'status', 'archive', 'campaign', 'portfolio', 'integration', 'deliver', 'deliveries', 'graph', 'compare',
