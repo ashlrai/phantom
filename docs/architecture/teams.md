@@ -265,3 +265,26 @@ narrow or widen it. Everything else runs without ceremony.
 3. Whether `merge` should stay consequential for green, reviewed PRs.
 4. Which Telegram chats map to which teams/departments, and who approves leader-agent access grants.
 5. Steward default quotas, and whether to schedule `--apply` automatically.
+
+## Local workspace invitations
+
+With `phm serve --allow-dispatch`, POST `/api/teams/<team>/invites` with
+`{}` (or `{"ttlMs":3600000}`) to create an invitation. The caller must be the
+locally derived human owner/admin of an existing team. Both invitation routes
+require the normal `X-Ashlr-Token` mutation authority and JSON content type;
+a read session or invitation alone does not grant mutation authority.
+
+The response contains `link`, a fragment route relative to the console root:
+`#/teams/<team>/accept?invite=<capability>`, plus `team` and `expiresAt` (epoch
+milliseconds). The default and maximum lifetime is seven days. Treat this link
+as a capability; it is returned once, never stored in the log, and kept out of
+HTTP request URLs by hash routing. Only its SHA-256 digest is persisted.
+
+The accept screen requires explicit confirmation and an unlocked mutation
+session. POST `/api/teams/<team>/invites/accept` with `{"token":"<capability>"}`
+joins the locally derived human as a member. Expired, previously redeemed,
+unknown and other-team capabilities are rejected without membership changes.
+Redemption and membership use one append under the team lock, so a restart
+cannot reopen an already consumed invitation. Existing members cannot redeem
+a link. Invitations do not grant admin/owner roles or introduce remote account
+authentication: the existing same-OS-user trust boundary still applies.

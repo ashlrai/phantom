@@ -20,6 +20,7 @@
  * changes here once the legacy app is retired and server.ts gains a real
  * SPA catch-all.
  */
+import { TeamInviteAccept } from '../routes/TeamInviteAccept.js';
 import { DecisionInbox } from '../routes/verse/inbox/DecisionInbox.js';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from '../components/layout/Shell.js';
@@ -48,6 +49,7 @@ import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="/teams/:team/accept" element={<TeamInviteAccept />} />
       <Route element={<Shell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         {ALL_NAV_LEAVES.map((leaf) =>
