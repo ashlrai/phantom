@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampStep, FLEET_STEP_POINTS, ONBOARDING_STEPS } from './onboarding-model.js';
+import { clampStep, fleetStepPoints, FLEET_STEP_POINTS, ONBOARDING_STEPS } from './onboarding-model.js';
 
 describe('fleet onboarding step', () => {
   it('sits between autonomy and stops and keeps stored steps in bounds', () => {
@@ -14,6 +14,7 @@ describe('fleet onboarding step', () => {
   });
 
   it('names the fleet surfaces and only the intended paths', () => {
+    expect(fleetStepPoints('present')).toEqual(FLEET_STEP_POINTS);
     expect(FLEET_STEP_POINTS.map((point) => point.label)).toEqual([
       'Fleet workspace', "Leaders' inbox", 'Kill switches',
     ]);
