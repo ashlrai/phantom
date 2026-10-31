@@ -1444,6 +1444,40 @@ binary is installed.
 Setup (plan, training opt-out, GitHub integration, service user, `ashlr devin
 connect`, ACU budget, the CLI) and limits: [`docs/DEVIN.md`](DEVIN.md).
 
+## Watch and steer the fleet (3.30)
+
+Open **Ops ▸ Live runs**, the default Ops view, to watch the fleet on this Mac.
+The tiles show real workers (processes launched by the dispatcher on this Mac),
+merges in the last hour from GitHub (`org:ashlrai`), personal Codex used %
+(read from the Codex CLI's own session logs for the personal account; no auth
+file is opened), and leader passes.
+
+The lanes table lists `codex-cmp`, `codex-personal`, `claude`, `devin`,
+`claude-api` and `codex-local`, with running, target, queued and held counts,
+tokens in 1h and merged in 24h. You can also inspect workers, publishes, the
+event tail and the inbox tail. A dash means **not known**, never zero. A quiet
+“not in this build yet” line means that API family has not landed.
+
+Under **Fleet control** on **Fleet** (⌘2), use **Tell the leaders** to append
+your text to `~/.ashlr-runs/leader/MASON-INBOX.md` under a heading of the form
+`## <date> ET (Mason, Phantom desktop) PRIORITY P0`. Leaders read newest-first.
+Secret-shaped text is refused rather than redacted. The equivalent CLI/API call
+is `POST /api/verse/fleet/runs/inbox` with `{"text": "..."}` and the mutation
+token; the entry is also logged to `dispatch-events.log`.
+
+The view shows kill switches as red chips. Each is a file whose existence stops
+its named activity: `~/.ashlr-runs/HOLD` stops the Claude lane; `PAUSE`,
+`ORCH_OFF`, `OPUS_LEADER_OFF`, `PUBLISH_HOLD`, and `queue/DISABLE` (dispatcher)
+are under `~/.ashlr-runs`. Removing a switch file resumes its activity.
+
+In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
+commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
+is possible, and the native updater phase. Use **Check now** to refresh. The
+browser never installs anything.
+
+- `GET /api/verse/fleet/runs` reads the fleet runs view.
+- `GET /api/verse/ops/self-update` reads update status.
+
 ## Fleet ▸ Advanced — the daemon cockpit
 
 In 3.10 the V2 Autonomy panels live under **Fleet ▸ Advanced**. They set the
@@ -1905,6 +1939,9 @@ clear it or remove a surviving lease merely to make a status look healthy.
 - Auto-update is inert until a signing key is configured.
 
 ## Local module map
+
+- `src/core/verse/fleet-runs-api.ts`
+- `src/core/fleet/runs-dir-state.ts`
 
 Open **Wiki → Module map** for an enrolled repository to follow imports between
 modules, find files or exported symbols, and open cited source lines. The map
