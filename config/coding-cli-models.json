@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-26T02:38:00.000Z",
+  "source": "Mac model inventory, Masbot read-only checks, 2026-10-25 10:38 PM ET",
+  "meteredEnabledByDefault": false,
+  "machine": {
+    "chip": "Apple M5 Max",
+    "ramGb": 128,
+    "diskUsedPercent": 93,
+    "diskFreeGiB": 139,
+    "note": "No large model pulls without an explicit owner OK."
+  },
+  "concurrency": {
+    "codex": 1,
+    "claude": 1,
+    "grok": 1,
+    "devin": 1,
+    "cursor": 1,
+    "ollama": 1,
+    "omlx": 1
+  },
+  "backends": {
+    "codex": { "billing": "subscription", "bin": "codex", "enabledByDefault": true },
+    "claude": { "billing": "subscription", "bin": "claude", "enabledByDefault": true },
+    "grok": { "billing": "metered", "bin": "grok", "enabledByDefault": false, "meteredReason": "grok models reported You are using XAI_API_KEY" },
+    "devin": { "billing": "metered", "bin": null, "enabledByDefault": false, "secretName": "DEVIN_API_KEY", "orgId": "org-c65eb6611a9c4a3697fa7e6630d101d6" },
+    "cursor": { "billing": "subscription", "bin": "cursor-agent", "enabledByDefault": false },
+    "omlx": { "billing": "loopback", "bin": null, "enabledByDefault": true, "baseUrl": "http://127.0.0.1:8000/v1" },
+    "ollama": { "billing": "local", "bin": "ollama", "enabledByDefault": true, "fallbackFor": "omlx" },
+    "lmstudio": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false },
+    "mlx": { "billing": "local", "bin": null, "enabledByDefault": false, "installed": false }
+  },
+  "accounts": [
+    { "id": "codex-primary", "backend": "codex", "homeEnv": "CODEX_HOME", "requiresHome": false },
+    { "id": "codex-secondary", "backend": "codex", "homeEnv": "CODEX_HOME_ALT", "requiresHome": true }
+  ],
+  "tiers": {
+    "frontier": [
+      { "intent": "Astra 6", "backend": "codex", "candidate": "gpt-6-astra", "accountStatus": "unverified" },
+      { "intent": "Fable 5.1", "backend": "claude", "candidate": "fable", "accountStatus": "unverified" }
+    ],
+    "workhorse": [
+      { "intent": "Sol 6.1", "backend": "codex", "candidate": "gpt-6.1-sol", "accountStatus": "rejected", "note": "ChatGPT account rejected this name. The CLI default, with no model flag, succeeded." },
+      { "intent": "Sol 6.1 fallback", "backend": "codex", "candidate": "gpt-6-sol", "accountStatus": "unverified" },
+      { "intent": "Opus 5.5", "backend": "claude", "candidate": "opus", "accountStatus": "unverified" }
+    ],
+    "cheap": [
+      { "intent": "Luna", "backend": "codex", "candidate": "gpt-6-luna", "accountStatus": "unverified" },
+      { "intent": "Sonnet", "backend": "claude", "candidate": "sonnet", "accountStatus": "unverified" }
+    ],
+    "local": [
+      { "intent": "local workhorse", "backend": "ollama", "candidate": "qwen3.8:27b-ctx64k", "accountStatus": "listed", "sizeGb": 29 },
+      { "intent": "local workhorse q8", "backend": "ollama", "candidate": "qwen3.8:27b-q8_0", "accountStatus": "listed", "sizeGb": 29 },
+      { "intent": "local smaller", "backend": "ollama", "candidate": "gpt-oss:20b", "accountStatus": "listed", "sizeGb": 13 },
+      { "intent": "local embed", "backend": "ollama", "candidate": "bge-m3", "accountStatus": "listed", "sizeGb": 1, "task": "embed" }
+    ]
+  },
+  "cacheListings": {
+    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-reserve", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review"],
+    "claudeAliases": ["fable", "opus", "sonnet"],
+    "grok": ["grok-build-0.1", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning", "grok-4.20-multi-agent-0309", "grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7"],
+    "rejectedOnAccount": ["gpt-6.1-sol", "gpt-5.5"]
+  }
+}

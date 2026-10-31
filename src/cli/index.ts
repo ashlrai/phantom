@@ -1723,6 +1723,15 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
+  const subCmd = args[0];
+
+  // `config set <key> --help` (or `set --help <value>`) used to store "--help"
+  // as the value or the key. Refuse with the usage line before any config IO.
+  // A bare `config set --help` is the verb's own help and prints usage (exit 0).
+  if (subCmd === 'set' && (args.includes('--help') || args.includes('-h')) && args.length > 2) {
+    die('Usage: ashlr config set <key> <value>', 2);
+  }
+
   if (wantsHelp(args)) {
     printCoreUsage('config', 'Read/write config values; no args prints a summary.', [
       ['phm config get <key>', 'read a dot-path value (sensitive leaves print <redacted>)'],
@@ -1731,13 +1740,6 @@ async function cmdConfig(args: string[]): Promise<void> {
       ['phm config effective [--json]', 'read-only effective autonomy/daemon/foundry/backend settings'],
     ]);
     return;
-  }
-  const subCmd = args[0];
-
-  // `config set <key> --help` (or `set --help <value>`) used to store "--help"
-  // as the value or the key. Refuse with the usage line before any config IO.
-  if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
-    die('Usage: ashlr config set <key> <value>', 2);
   }
 
   if (subCmd === 'effective') {

@@ -616,4 +616,7 @@ export const REAL_IO_TEST_FILES = [
   'test/affected-map-audit.test.ts', // spawnSync node scripts/audit-affected-map.mjs against temp repo fixtures
   'test/integration/locus-credential-boundary.test.ts', // spawnSync node children prove credential redaction across the process boundary
   'test/m30.merge-queue-reaper.test.ts', // execFileSync bash drives a real git fixture and the reaper script end to end
+  'test/collision-free-edits.test.ts', // execFileSync git builds real temp repo fixtures for concurrent fragment merges
+  'test/desktop-nightly-build.test.ts', // spawnSync runs the nightly build script and tar against real artifacts
+  'test/improve-reverted.test.ts', // execFileSync git builds a real temp repo fixture to detect a revert
 ];

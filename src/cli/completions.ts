@@ -52,7 +52,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget',
+  'worktrees', 'drive', 'budget', 'top',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -88,7 +88,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'recover-state', 'resolve-state', 'install', 'uninstall', 'service-status',
     'pause', 'resume', 'doctor',
   ],
-  worker: ['setup', 'status'],
+  worker: ['setup', 'status', 'plan', 'drain'],
   fleet: [
     'status', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
@@ -108,6 +108,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   vision: ['show', 'review', 'preview', 'shadow', 'approve', 'reconcile', 'set'],
   eval: ['attention', 'swe-bench', 'router'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
+  learn: ['mine'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],

@@ -35,6 +35,7 @@
  */
 import type { VerseSeat, VerseSeatCapacity } from '../verse/types.js';
 import type { BudgetEngine } from './policy.js';
+import type { BillingClass } from './billing-class.js';
 import { costBasisOf, isWindowlessEngine, seatTier, type CostBasis, type ResourceTier } from './tiers.js';
 import { reasonSentences } from './seat-reasons.js';
 import type { SeatBudgetPolicy, SeatHeadroom, SeatReason } from './types.js';
@@ -109,6 +110,13 @@ export interface SeatCapacity {
   tier?: ResourceTier;
   /** 3.15 ADDITIVE. What one more turn costs; absent = the engine's default basis. */
   costBasis?: CostBasis;
+  /**
+   * Coding-CLI billing class. Absent keeps the historical cost-basis reading.
+   * `metered` seats stay ineligible for the coding-CLI pass until `meteredOptIn`.
+   */
+  billingClass?: BillingClass;
+  /** Explicit operator enable for a metered API backend such as grok via XAI_API_KEY. */
+  meteredOptIn?: boolean;
   /**
    * 3.15 ADDITIVE. The provider exposes NO usage window by design (Devin
    * meters in ACUs / plan usage, not windows). Interactive ranking then scores

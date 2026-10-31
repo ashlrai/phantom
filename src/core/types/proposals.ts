@@ -1,4 +1,5 @@
 /** Shared proposals contracts. Public entry point: ../types.ts. */
+import type { BillingClass } from '../routing/billing-class.js';
 import type { RepairDepth, WorkSource } from './backlog.js';
 import type { DelegationScopeSummary } from './delegation.js';
 import type { EngineTier } from './engines.js';
@@ -308,6 +309,12 @@ export interface Proposal {
    */
   engineModel?: string;
   engineTier?: EngineTier;
+  /**
+   * Coding-CLI billing class. When set, local, loopback, subscription and
+   * metered producers are refused merge authority even if the tier is frontier.
+   * Absent keeps the historical tier gate for fleet proposals.
+   */
+  billingClass?: BillingClass;
   /** M47.1: sha256 of the (scrubbed) diff at signing time. */
   diffHash?: string;
   /**
