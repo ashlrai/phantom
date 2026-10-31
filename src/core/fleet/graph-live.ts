@@ -688,10 +688,14 @@ export function joinGraphLive(
     });
   }
 
-  const outNodes: GraphLiveNode[] = nodes.map((node) => ({
-    ...node,
-    live: node.kind === 'mcp' ? liveUntracked() : liveById.get(node.id) ?? liveUntracked(),
-  }));
+  const outNodes: GraphLiveNode[] = nodes.map((node) => {
+    const live = node.kind === 'mcp' ? liveUntracked() : liveById.get(node.id) ?? liveUntracked();
+    return {
+      ...node,
+      ...(node.kind === 'engine-account' ? { seatIds: [...node.seatIds] } : {}),
+      live: { ...live, quota: live.quota === null ? null : { ...live.quota }, reasons: [...live.reasons] },
+    };
+  });
 
   const byState: Record<GraphLiveState, number> = {
     ready: 0, limited: 0, exhausted: 0, held: 0, stale: 0, unknown: 0, untracked: 0,

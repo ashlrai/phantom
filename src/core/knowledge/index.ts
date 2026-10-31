@@ -600,10 +600,12 @@ function readChunksFile(file: string, onInvalidVector?: () => void): KnowledgeCh
           // Keep searchable text from older or corrupt records, but never expose
           // an invalid vector to retrieval or write it back during indexing.
           if (parsed.vector !== undefined && !isValidVector(parsed.vector)) {
-            delete parsed.vector;
+            const { vector: _vector, ...lexicalChunk } = parsed;
             onInvalidVector?.();
+            chunks.push(lexicalChunk);
+          } else {
+            chunks.push(parsed);
           }
-          chunks.push(parsed);
         }
       } catch {
         // skip malformed lines
@@ -620,10 +622,10 @@ function isKnowledgeChunk(v: unknown): v is KnowledgeChunk {
   if (typeof v !== 'object' || v === null) return false;
   const obj = v as Record<string, unknown>;
   return (
-    typeof obj['repo'] === 'string' &&
-    typeof obj['file'] === 'string' &&
-    typeof obj['startLine'] === 'number' &&
-    typeof obj['endLine'] === 'number' &&
+    typeof obj['repo'] === 'string' && obj['repo'].trim().length > 0 &&
+    typeof obj['file'] === 'string' && obj['file'].trim().length > 0 &&
+    typeof obj['startLine'] === 'number' && Number.isInteger(obj['startLine']) && obj['startLine'] > 0 &&
+    typeof obj['endLine'] === 'number' && Number.isInteger(obj['endLine']) && obj['endLine'] >= obj['startLine'] &&
     typeof obj['text'] === 'string'
   );
 }
