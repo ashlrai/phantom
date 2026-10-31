@@ -36,7 +36,7 @@ export function formatWholePercent(fraction: number | null | undefined): string 
  * as "spent"). `used` is 0–100 and is clamped; not a number is "—".
  *
  * Every place that prints a used percent goes through this — a bar reading
- * "99%" beside a summary reading "100% of 5-hour window used" is one seat
+ * "99%" beside a summary reading "100% of weekly window used" is one seat
  * described two ways. Bar WIDTHS stay numeric; only the words use this.
  */
 export function percentText(used: number): string {
