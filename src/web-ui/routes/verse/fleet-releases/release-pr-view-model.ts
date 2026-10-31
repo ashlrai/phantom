@@ -5,7 +5,19 @@ type ReleasePrRow = {
   headline: string; tone: 'ok' | 'warn' | 'danger' | 'neutral';
   checks: { name: string; state: ReleaseCheckState; href: string | null }[];
   href: string | null; notes: string[];
-} | { headline: 'No release PR open'; tone: 'neutral' };
+};
+
+export function blockerLine(row: Pick<ReleasePrRow, 'checks' | 'tone'>): string | null {
+  if (row.tone !== 'danger' && row.tone !== 'warn') return null;
+  const failing = row.checks.filter(check => check.state === 'fail').map(check => check.name);
+  const pending = row.checks.filter(check => check.state === 'pending').map(check => check.name);
+  return [failing.length ? `Blocked by: ${failing.join(', ')}` : null,
+    pending.length ? `Waiting on: ${pending.join(', ')}` : null].filter(Boolean).join(' · ') || null;
+}
+
+export function releaseTellPrefill(repo: string, prNumber: number, line: string): string {
+  return `Re release PR #${prNumber} (${repo}): ${line}. `;
+}
 
 function safeHref(value: string | null): string | null {
   if (!value || value.length > 2048) return null;
@@ -17,8 +29,8 @@ function safeHref(value: string | null): string | null {
   }
 }
 
-export function releasePrRows(result: ReleasePrResult | undefined, nowMs: number): Map<string, ReleasePrRow> {
-  const rows = new Map<string, ReleasePrRow>();
+export function releasePrRows(result: ReleasePrResult | undefined, nowMs: number): Map<string, ReleasePrRow | { headline: 'No release PR open'; tone: 'neutral' }> {
+  const rows = new Map<string, ReleasePrRow | { headline: 'No release PR open'; tone: 'neutral' }>();
   if (!result || result.kind === 'notInBuild') return rows;
   for (const { repo, pr, notes } of result.data.repos) {
     rows.set(repo.toLowerCase(), pr ? {
