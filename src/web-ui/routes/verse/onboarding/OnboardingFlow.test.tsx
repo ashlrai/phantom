@@ -115,6 +115,27 @@ describe('OnboardingFlow — the chip', () => {
     expect(getOnboardingState()).toMatchObject({ open: true, expanded: false, dismissedAt: null, completedAt: null });
   });
 
+  it('opens with Enter and returns focus to the chip on Escape so Space can reopen it', async () => {
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await user.tab();
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Minimize getting started' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    await user.keyboard(' ');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    expect(getOnboardingState()).toMatchObject({ open: true, dismissedAt: null, completedAt: null });
+  });
+
+  it('does not take focus from the app when first mounted', () => {
+    render(<><button autoFocus>Composer</button><OnboardingFlow /></>);
+    expect(screen.getByRole('button', { name: 'Composer' })).toHaveFocus();
+  });
+
   it('keeps the step it was on, so the chip counts where the operator left off', async () => {
     const user = userEvent.setup();
     expandOnboarding();
@@ -239,6 +260,44 @@ describe('OnboardingFlow — presence and dismissal', () => {
     await stepTo(user, 1);
     expect(screen.getByText('Make it yours')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+  });
+
+  it('tabs through the controls and out of the card in both directions', async () => {
+    const user = userEvent.setup();
+    render(<><button>Before</button><OnboardingFlow /><button>After</button></>);
+    screen.getByRole('region', { name: 'Welcome to Phantom' }).focus();
+    for (const name of ['Minimize getting started', 'Skip setup', 'Next', 'After']) {
+      await user.tab();
+      expect(screen.getByRole('button', { name })).toHaveFocus();
+    }
+    for (const name of ['Next', 'Skip setup', 'Minimize getting started', 'Before']) {
+      await user.tab({ shift: true });
+      expect(screen.getByRole('button', { name })).toHaveFocus();
+    }
+    await user.keyboard('{Escape}');
+    expect(getOnboardingState().expanded).toBe(true);
+  });
+
+  it('focuses the updated card after keyboard step changes, including removed Back and Next controls', async () => {
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    screen.getByRole('button', { name: 'Next' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Your seats' })).toHaveFocus();
+    screen.getByRole('button', { name: 'Back' }).focus();
+    await user.keyboard(' ');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    for (const title of ['Your seats', 'Local runtime', 'Turn on autonomy', 'Three ways to stop', 'Make it yours']) {
+      screen.getByRole('button', { name: 'Next' }).focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByRole('region', { name: title })).toHaveFocus();
+    }
+    screen.getByRole('button', { name: 'Back' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Three ways to stop' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    expect(getOnboardingState()).toMatchObject({ step: 4, expanded: false, dismissedAt: null, completedAt: null });
   });
 
   it('the last step records completion and hands the shell a new-chat request', async () => {

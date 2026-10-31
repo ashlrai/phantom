@@ -1,13 +1,31 @@
-/** A navigation-only guide shared by the tour and its Settings disclosure. */
+/** A first-result guide shared by the tour and its Settings disclosure. */
+import { useState } from 'react';
+import { useQuery, useRefresh } from '../../../data/hooks.js';
+import { agentsBoardQuery } from '../agents/agents-queries.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { requestAgentsFocus } from '../agents/agents-focus.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import styles from './onboarding.module.css';
 
 export function FirstResultGuide() {
+  const [open, setOpen] = useState(false);
+  const results = useQuery(agentsBoardQuery, { enabled: open });
+  const retry = useRefresh(agentsBoardQuery);
   return (
-    <details className={styles.guide}>
+    <details className={styles.guide} onToggle={event => setOpen(event.currentTarget.open)}>
       <summary>Get one verified result</summary>
+      <div role="status">
+        {results.status === 'error' ? <>
+          <p>Agent results are unavailable. Phantom may be offline or unreachable. We cannot tell whether you have a result to review.
+            Check your connection to Phantom, then retry.</p>
+          <Button variant="ghost" size="sm" onClick={retry}>Retry results</Button>
+        </> : results.status === 'loading' || results.status === 'refreshing' || results.status === 'idle'
+          ? <p>Checking agent results…</p>
+          : results.data?.cards.length === 0
+            ? <p>No agent results yet. Choose a first task below to start a small change, then review its diff and test output.
+              This guide does not run a task or verify a result for you.</p>
+            : <p>Open Agents to review your work. An agent appearing here does not mean its result has been verified or accepted.</p>}
+      </div>
       <dl>
         <dt>1. Choose a repository</dt>
         <dd>Open a repository you can safely work on in Chat. Check the selected folder before asking for changes.</dd>
