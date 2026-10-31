@@ -250,7 +250,8 @@ export async function rerunJob(repo: string, jobId: number, gh: Gh = defaultGh):
 export async function readPrByBranch(repo: string, branch: string, gh: Gh = defaultGh): Promise<{ number: number; state: 'open' | 'closed'; merged: boolean } | null> {
   const owner = repo.split('/')[0]!;
   const raw = await api(gh, `repos/${assertRepo(repo)}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=10`);
-  const hit = (Array.isArray(raw) ? raw : []).map(obj).find((p) => str(obj(p['head'])['ref']) === branch);
+  if (!Array.isArray(raw)) throw new Error('Invalid PR branch lookup');
+  const hit = raw.map(obj).find((p) => str(obj(p['head'])['ref']) === branch);
   if (!hit || !Number.isSafeInteger(Number(hit['number']))) return null;
   return { number: Number(hit['number']), state: hit['state'] === 'open' ? 'open' : 'closed', merged: hit['merged_at'] != null };
 }

@@ -24,7 +24,9 @@ function recut(repo, number, pr) {
         `(expected source head ${pr.head.sha}) through the existing RQ recut path. ` +
         'Re-read the source and existing replacements before acting; a changed source head cancels this request. ' +
         'Reuse a pending recut instead of creating another. Recut on current master, preserve the intended change, ' +
-        'and run affected tests and required checks. Leave merging to the protected merge queue. ' +
+        'and rerun affected tests and required checks for the replacement head; never reuse source-head results. ' +
+        'Requeue the replacement only while it remains eligible, with checks bound to its new head. ' +
+        'Leave merging to the protected merge queue. ' +
         'Apply CLOSE-STALE C1-C6 before closing anything superseded; if those criteria are unavailable, ' +
         'leave the original open. No admin bypass, force-push to ashlrai branches, or ruleset changes.',
     },

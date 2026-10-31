@@ -431,6 +431,50 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0]).toBe(r.newHead);
   });
 
+  it('recovers an ambiguous PR open without duplicates, even when lookup is unavailable', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    let posts = 0;
+    let unavailable = false;
+    const gh: Gh = async (args) => {
+      if (args[args.length - 1]!.startsWith('repos/o/r/pulls?') && unavailable) throw new Error('offline');
+      if (args[1] === '-X' && args[2] === 'POST' && args[3] === 'repos/o/r/pulls') {
+        posts++;
+        // Durable intent must precede the external side effect.
+        const state = JSON.parse(readFileSync(join(f.root, 'home', 'autopilot', 'state', 'o__r__7.json'), 'utf8'));
+        expect(state.recut).toMatchObject({ number: 0, fromHead: f.head });
+        await f.gh(args);
+        throw new Error('response lost');
+      }
+      return f.gh(args);
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    expect(await tick(opts)).toMatchObject({ result: 'error' });
+    unavailable = true;
+    expect(await tick(opts)).toMatchObject({ plan: 'wait', result: 'none' });
+    unavailable = false;
+    expect((await tick(opts)).plan).toBe('wait');
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(posts).toBe(1);
+  });
+
+  it('verifies the recut head on freshly fetched main rather than reusing source checks', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    writeFileSync(join(f.clone, 'latest.js'), 'module.exports = 2;\n');
+    git(f.clone, 'add', 'latest.js');
+    git(f.clone, 'commit', '-qm', 'main advances after observation');
+    const latest = git(f.clone, 'rev-parse', 'HEAD');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const evidence = join(f.root, 'verified-head');
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer],
+      verify: [['node', '-e', `require('node:fs').writeFileSync(${JSON.stringify(evidence)}, require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD']))`]],
+      ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r, r.detail.join(' | ')).toMatchObject({ result: 'recut' });
+    expect(readFileSync(evidence, 'utf8').trim()).toBe(r.newHead);
+    git(f.clone, 'fetch', '-q', 'origin', 'improve/sum-recut');
+    expect(git(f.clone, 'rev-parse', 'FETCH_HEAD^')).toBe(latest);
+  });
+
   it('pushes a conflict resolution that touches only the conflicted files', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
     const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });

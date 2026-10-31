@@ -80,6 +80,9 @@ test('hands conflicts to RQ without updating, closing, or merging the source', (
   assert.equal(result.status, 'recut-required');
   assert.equal(result.headSha, sha);
   assert.equal(result.ask.schema, 'ask.v1');
+  assert.match(result.ask.task, /current master/);
+  assert.match(result.ask.task, /never reuse source-head results/);
+  assert.match(result.ask.task, /Requeue the replacement only while it remains eligible/);
   assert.deepEqual(result.ask.repos, [repo]);
   assert.match(result.ask.task, /CLOSE-STALE C1-C6/);
   assert.match(result.ask.task, /leave the original open/);

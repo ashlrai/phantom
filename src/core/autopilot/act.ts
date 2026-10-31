@@ -264,12 +264,10 @@ export function parseDiff(nameStatus: string, patch: string): DiffFile[] {
 
 /**
  * The live state of the replacement a previous recut opened, for `obs.recut`.
- * A recorded PR number is read directly; a recut whose open was never
- * confirmed (number 0) is found by its branch head. null = unreadable.
+ * A recorded PR number is read directly. null = unreadable.
  */
 async function readRecut(repo: string, recut: { branch: string; number: number }, gh: Gh): Promise<Observation['recut']> {
   try {
-    if (!recut.number) return await readPrByBranch(repo, recut.branch, gh);
     const p = await readPr(repo, recut.number, gh);
     return { number: p.number, state: p.state, merged: p.merged };
   } catch {
@@ -309,7 +307,17 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     const state = loadState(opts.repo, opts.number);
     // A recut supersedes this PR: the plan reads the replacement's live state.
     if (state.recut) {
-      obs.recut = await readRecut(opts.repo, state.recut, gh);
+      // An unavailable lookup is not evidence that no PR exists. Retrying
+      // creation after an ambiguous POST could otherwise duplicate the PR.
+      try {
+        obs.recut = state.recut.number
+          ? await readRecut(opts.repo, state.recut, gh)
+          : await readPrByBranch(opts.repo, state.recut.branch, gh);
+      } catch {
+        const row: TickResult = { ...base, headSha: obs.pr.headSha, reason: 'could not read the pending recut; retry next tick' };
+        record(row, now());
+        return row;
+      }
       if (obs.recut && !state.recut.number) {
         state.recut.number = obs.recut.number;
         saveState(opts.repo, opts.number, state);
@@ -398,6 +406,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
       // The replacement branch is pushed; open its PR. The recut is recorded
       // with number 0 first, so a failure here is finished next tick — never re-cut.
       state.recut = { branch: outcome.recutBranch, number: 0, fromHead: obs.pr.headSha };
+      saveState(opts.repo, opts.number, state);
       const stopped = await stopNow(opts);
       if (stopped) {
         row.result = 'refused';
