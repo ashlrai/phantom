@@ -1,0 +1,4 @@
+.root { min-width: 0; }
+.row { border-bottom: 1px solid var(--border-subtle); padding: var(--space-2) 0; }
+.controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.readout { font-variant-numeric: tabular-nums; }

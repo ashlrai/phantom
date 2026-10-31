@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { InterjectBox } from './InterjectBox.js';
+import { DRAFT_KEY } from './interject-ack-model.js';
 import { FleetSection } from '../sections/FleetSection.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
@@ -15,7 +16,7 @@ function stub(status = 201, body: unknown = { at: '2026-10-31T12:00:00Z' }, inbo
   vi.stubGlobal('fetch', fetcher);
   return fetcher;
 }
-beforeEach(() => { evictAll(); setMutationToken(token); });
+beforeEach(() => { sessionStorage.clear(); evictAll(); setMutationToken(token); });
 afterEach(() => { vi.useRealTimers(); clearMutationToken(); vi.unstubAllGlobals(); });
 
 it('types and sends with command-enter, confirms, clears and refreshes', async () => {
@@ -125,4 +126,38 @@ it('disables the composer during sending and ignores composing Enter', async () 
   expect(screen.getByRole('button', { name: 'Sending…' })).toBeDisabled();
   await act(async () => { finish(Response.json({ at: '2026-10-31T12:00:00Z' })); });
   expect(box).toBeEnabled();
+});
+
+it('shows leader pass states and source chips from the snapshot', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    generatedAt: '2026-07-10T17:00:00Z', lastTick: null,
+    leaders: [{ label: 'one', ageSeconds: 1800 }, { label: 'two', ageSeconds: 600 }],
+    inbox: [{ at: '2026-07-10 12:30', source: 'Telegram', text: 'Before' },
+      { at: '2026-07-10 12:55', source: 'terminal', text: 'After' }],
+  })));
+  render(<InterjectBox />);
+  const list = await screen.findByRole('list');
+  const rows = within(list).getAllByRole('listitem');
+  expect(within(rows[0]!).getByText('Waiting for the next leader pass (every 15 min)')).toBeInTheDocument();
+  expect(within(rows[1]!).getByText('Seen by a leader pass')).toBeInTheDocument();
+  expect(within(rows[1]!).getByText('Telegram')).toBeInTheDocument();
+});
+
+it('reports unknown leader status for older responses', async () => {
+  stub(201, {}, [{ at: '2026-07-10 12:30', source: 'Telegram', text: 'Hello' }]);
+  render(<InterjectBox />);
+  expect(await screen.findByText('Leader status unknown')).toBeInTheDocument();
+});
+
+it('restores a draft after remount and removes it on successful send', async () => {
+  stub();
+  const view = render(<InterjectBox />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep this' } });
+  expect(sessionStorage.getItem(DRAFT_KEY)).toBe('Keep this');
+  view.unmount();
+  render(<InterjectBox />);
+  expect(screen.getByRole('textbox')).toHaveValue('Keep this');
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await screen.findByText(/^Sent ·/);
+  expect(sessionStorage.getItem(DRAFT_KEY)).toBeNull();
 });
