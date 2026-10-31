@@ -16,6 +16,7 @@ export function readFleetPresence(snapshot: unknown): FleetPresence {
 export function whatsNewCopy(presence: FleetPresence): {
   bullets: string[];
   primary: { label: string; action: 'fleet-workspace' | 'fleet-sources' | 'settings' };
+  secondary: { label: string; action: 'interject' } | null;
 } {
   if (presence === 'present') return {
     bullets: [
@@ -25,6 +26,7 @@ export function whatsNewCopy(presence: FleetPresence): {
       'Pair a device to use the mobile remote at /verse/m/.',
     ],
     primary: { label: 'Open fleet workspace', action: 'fleet-workspace' },
+    secondary: { label: 'Tell the leaders', action: 'interject' },
   };
   return {
     bullets: [
@@ -36,5 +38,6 @@ export function whatsNewCopy(presence: FleetPresence): {
     primary: presence === 'missing'
       ? { label: 'Open Settings ▸ Fleet sources', action: 'fleet-sources' }
       : { label: 'Open Settings', action: 'settings' },
+    secondary: null,
   };
 }
