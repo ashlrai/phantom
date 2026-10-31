@@ -119,7 +119,7 @@ export function ConnectionPanel() {
         </p>
       </div>
 
-      <h4 className={styles.panelTitle}>Fleet on this Mac</h4>
+      <h4 className={styles.panelTitle} data-verse-anchor="fleet-sources">Fleet on this Mac</h4>
       <FleetSourcesRows />
       <PairedDevicesRows />
 
