@@ -1,0 +1,68 @@
+import { useState, type FormEvent } from 'react';
+import { ApiError, readFailureReason } from '../../../data/client.js';
+import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { getMobileFleetClient } from './fleet-client.js';
+import { inboxTailQuery } from './inbox-tail-query.js';
+import { canShowActions, useMobile } from './mobile-context.js';
+import { showMobileToast } from './mobile-toast.js';
+import { Button } from './ui.js';
+import { Row, Section, ui } from './ui-parts.js';
+
+function time(at: string): string {
+  const date = new Date(at);
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+export function MobileInterject() {
+  const { permissions } = useMobile();
+  const query = useQuery(inboxTailQuery);
+  const refetch = useRefetch(inboxTailQuery);
+  const refresh = useRefresh(inboxTailQuery);
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [missingWrite, setMissingWrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const missing = missingWrite || (query.error instanceof ApiError && query.error.status === 404);
+  usePollWhileVisible(refetch, 20_000, { enabled: !missing });
+
+  async function send(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await getMobileFleetClient().interject(text.trim());
+      setText('');
+      showMobileToast(`Landed ${time(result.at)}`, 'success');
+      refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setMissingWrite(true);
+      else setError(err instanceof ApiError ? err.detail ?? err.message : err instanceof Error ? err.message : 'The message could not be sent.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Tell the leaders">
+      {missing ? <Row title="This build has no fleet inbox yet." /> : <>
+        {canShowActions(permissions) ? (
+          <form className={`${ui.stack} ${ui.row}`} onSubmit={(event) => void send(event)}>
+            <label className="visually-hidden" htmlFor="mobile-interject">Message to the leaders</label>
+            <textarea id="mobile-interject" className={ui.textarea} maxLength={6000} value={text} disabled={busy}
+              placeholder="A prompt, a thought, a correction. The next leader pass reads it."
+              onChange={(event) => setText(event.target.value)} />
+            {error ? <p className={ui.error} role="alert">{error}</p> : null}
+            <Button type="submit" variant="primary" disabled={busy || !text.trim()}>{busy ? 'Sending…' : 'Send'}</Button>
+          </form>
+        ) : null}
+        {query.error ? <Row title="Couldn’t read the inbox" subtitle={readFailureReason(query.error)} /> : null}
+        {query.data?.slice(0, 3).map((entry, index) => (
+          <Row key={`${entry.at}-${index}`} title={entry.text.slice(0, 80)} subtitle={`${entry.source} · ${time(entry.at)}`} />
+        ))}
+        {query.status === 'success' && query.data?.length === 0 ? <Row title="No inbox entries yet" /> : null}
+      </>}
+    </Section>
+  );
+}

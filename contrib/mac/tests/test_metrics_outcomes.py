@@ -41,6 +41,15 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(metrics.reconcile(self.path, lambda _: self.fail('already resolved')), (0, 0))
         self.assertEqual(self.path.read_bytes(), before)
 
+    def test_merged_outcome_does_not_infer_failure_from_optional_or_later_checks(self):
+        def lookup(url):
+            return dict(FIXTURES[url], statusCheckRollup=[
+                {'name': 'optional', 'conclusion': 'FAILURE'},
+                {'name': 'post-merge', 'status': 'IN_PROGRESS'}])
+        self.assertEqual(metrics.reconcile(self.path, lookup), (3, 0))
+        self.assertEqual([r['outcome'] for r in metrics.records(self.path.read_text())[3:]],
+                         ['MERGED', 'MERGED', 'CLOSED'])
+
     def test_open_failure_and_retry(self):
         def lookup(url):
             if url.endswith('101'):
