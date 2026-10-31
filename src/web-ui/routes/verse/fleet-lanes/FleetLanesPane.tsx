@@ -2,7 +2,7 @@ import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { headline, laneBars, workerRows } from './fleet-lanes-model.js';
+import { burnLine, burnTotals, formatTokens, headline, laneBars, workerRows } from './fleet-lanes-model.js';
 import styles from './fleet-lanes.module.css';
 
 function pullUrl(repo: string, number: number): string | null {
@@ -33,10 +33,12 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
       : <>
         {read.status === 'error' ? <p className={styles.muted} role="status">Fleet runs could not refresh. Showing the last reading.</p> : null}
         {data.sources.runsDir !== 'healthy' ? <p className={styles.muted}>Runs directory: {data.sources.runsDir}</p> : null}
-        <section className={styles.section} aria-label="Lane capacity">
+        <section className={styles.section} aria-labelledby="fleet-lanes-capacity">
+          <h3 id="fleet-lanes-capacity" className={styles.title}>Lane capacity</h3>
+          <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {data.lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {laneBars(data).map((lane) => <li key={lane.lane} className={styles.lane}>
-              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span></div>
+              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
               <div className={styles.track} role="img" aria-label={`${lane.lane}: ${lane.running} running of ${lane.target} target`}>
                 {lane.fillPct !== null ? <div className={styles.fill} data-tone={lane.tone} style={{ width: `${lane.fillPct}%` }} /> : null}
               </div>

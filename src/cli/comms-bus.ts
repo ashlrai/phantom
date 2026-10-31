@@ -1,13 +1,16 @@
 import { dirname, resolve } from 'node:path';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
-import { parseBusEnvelope, MAX_BUS_ENVELOPE_BYTES } from '../core/fleet/bus-envelope.js';
-import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
+import { parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES } from '../core/fleet/bus-envelope.js';
+import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json>
-phm comms bus read [--after <cursor>] [--limit <n>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--interval-ms <ms>]
+phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>]
+phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--interval-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
+Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
+Both filters must match when supplied together. Limit applies before filtering, not to match count.
+Use --to=<address> or --from=<address> for labels that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
@@ -24,6 +27,15 @@ export interface CommsBusDependencies {
   emit?: (json: string) => void;
 }
 
+type AddressFilters = { to?: string; from?: string };
+
+function filterPage(page: BusInboxPage, filters: AddressFilters): BusInboxPage {
+  if (page.status !== 'ok' || filters.to === undefined && filters.from === undefined) return page;
+  return { ...page, messages: page.messages.filter(({ envelope }) =>
+    (filters.to === undefined || envelope.to === filters.to) &&
+    (filters.from === undefined || envelope.from === filters.from)) };
+}
+
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
@@ -33,7 +45,7 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+async function watch(after: number, limit: number, interval: number, filters: AddressFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
   deps.signal?.addEventListener('abort', stop, { once: true });
@@ -44,7 +56,7 @@ async function watch(after: number, limit: number, interval: number, options: Bu
       const page = list(after, limit, options);
       if (controller.signal.aborted) break;
       if (page.status === 'ok') {
-        emit(JSON.stringify(page));
+        emit(JSON.stringify(filterPage(page, filters)));
         after = page.nextCursor;
       } else if (page.status !== 'retryable') {
         emit(JSON.stringify(page));
@@ -67,9 +79,12 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
-  for (let i = 0; i < rest.length; i += 2) {
-    const key = rest[i]!, value = rest[i + 1];
-    if (!(verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms'] : ['--after', '--limit']).includes(key) || values.has(key) || !value || value.startsWith('-')) return invalid();
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i]!, inline = /^(--to|--from)=(.*)$/s.exec(token);
+    const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
+    const address = key === '--to' || key === '--from';
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from'] : ['--after', '--limit', '--to', '--from'];
+    if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && !values.has('--file')) return invalid();
@@ -77,12 +92,16 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
+  const filters = { to: values.get('--to'), from: values.get('--from') };
+  for (const label of [filters.to, filters.from]) {
+    if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
+  }
   const after = Number(values.get('--after') ?? 0), limit = Number(values.get('--limit') ?? 50);
   if (limit < 1 || limit > 100) return invalid();
   if (verb === 'watch') {
     const interval = Number(values.get('--interval-ms') ?? 1000);
     if (interval < 100 || interval > 60000) return invalid();
-    return watch(after, limit, interval, options, deps);
+    return watch(after, limit, interval, filters, options, deps);
   }
   let result;
   if (verb === 'post') {
@@ -90,7 +109,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
     const parsed = read.ok ? parseBusEnvelope(read.text) : null;
     result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
-  } else result = listBusInboxAfter(after, limit, options);
+  } else result = filterPage(listBusInboxAfter(after, limit, options), filters);
   console.log(JSON.stringify(result));
   return busStatusExitCode(result.status);
 }

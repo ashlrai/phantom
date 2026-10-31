@@ -59,6 +59,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Queue Mac bridge builds and tests within a shared memory budget | [Memory admission — source guide](https://github.com/ashlrai/phantom/blob/master/scripts/mac-bridge/MEMORY.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
+| Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](ECOSYSTEM-RELEASE-CONTRACTS.md) |
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
@@ -138,6 +139,8 @@ inspect both campaign and delivery outcomes and reconcile receipts before retryi
 A local branch is not a merge, release or production acceptance. Keep scope,
 resource reserves and acceptance criteria explicit; routine execution can proceed
 within them without turning discovery or a passing trial into broader authority.
+
+For an opt-in versioned source installation, see [versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md) (source).
 
 To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
 

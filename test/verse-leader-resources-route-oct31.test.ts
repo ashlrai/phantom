@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -22,8 +22,11 @@ describe('leader resources route', () => {
     const root = join(homedir(), '.ashlr-runs');
     await mkdir(join(root, 'queue'), { recursive: true });
     await copyFile(join(process.cwd(), 'test/fixtures/runs-resource-ledger/status.json'), join(root, 'queue/status.json'));
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    const rows = Array.from({ length: 8 }, (_, i) => JSON.stringify({ event: 'finish', lane: 'claude-api', empty: true, exit_code: 1, ts: new Date(i * 1000).toISOString() }));
+    await writeFile(join(root, 'metrics/jobs.jsonl'), 'x'.repeat(512 * 1024) + '\n' + rows.join('\n') + '\ninvalid\n');
     try {
-      expect(await request(PATH)).toMatchObject({ handled: true, status: 200, body: { v: 1, sources: { status: 'healthy', apiSpend: 'missing' }, lanes: [{ lane: 'codex-personal' }, { lane: 'claude', window: 'weekly' }, { lane: 'claude-api', window: 'credits' }, { lane: 'local', window: 'none' }] } });
+      expect(await request(PATH)).toMatchObject({ handled: true, status: 200, body: { v: 1, sources: { status: 'healthy', apiSpend: 'missing', jobs: 'degraded' }, jobsMalformedRows: 1, lanes: [{ lane: 'codex-personal', deadSignal: { lastFinishes: 0, emptyFailures: 0, state: 'ok' } }, { lane: 'claude', window: 'weekly' }, { lane: 'claude-api', window: 'credits', deadSignal: { lane: 'claude-api', lastFinishes: 8, emptyFailures: 8, state: 'dead' } }, { lane: 'local', window: 'none' }] } });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('rejects query strings and other methods', async () => {
