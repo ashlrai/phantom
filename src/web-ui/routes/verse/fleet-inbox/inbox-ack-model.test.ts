@@ -13,15 +13,15 @@ describe('inbox acknowledgements', () => {
   it('uses the newest pass and the shared source labels', () => {
     const result = annotateAck(entries, runs, now);
     expect(result.map(e => e.ack)).toEqual(['seen', 'waiting', 'unknown']);
-    expect(result.map(e => e.ackLabel)).toEqual(['Seen by a leader pass', 'Waiting for the next pass (posted 4 m ago)', 'Unknown']);
+    expect(result.map(e => e.ackLabel)).toEqual(['Seen by a leader pass', 'Waiting · next pass in ~10 min', 'Unknown']);
     expect(result.map(e => e.sourceLabel)).toEqual(['Phantom desktop', 'Telegram', 'Email']);
-    expect(seenCounts(result)).toEqual({ seen: 1, waiting: 1 });
+    expect(seenCounts(result)).toEqual({ seen: 1, waiting: 1, overdue: false });
   });
 
   it('reports unknown without a usable snapshot or pass', () => {
     for (const snapshot of [undefined, {}, { ...runs, generatedAt: 'bad' }, { ...runs, leaders: [{ ageSeconds: null }] }, { ...runs, leaders: [null] }]) {
       expect(annotateAck(entries, snapshot, now).every(e => e.ack === 'unknown')).toBe(true);
     }
-    expect(seenCounts(annotateAck(entries, undefined, now))).toEqual({ seen: 0, waiting: 0 });
+    expect(seenCounts(annotateAck(entries, undefined, now))).toEqual({ seen: 0, waiting: 0, overdue: false });
   });
 });

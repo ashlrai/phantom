@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
+import { useDesktopUpdates, type DesktopUpdateState } from '../../../app/desktop-updates.js';
 import { getQuerySnapshot } from '../../../data/cache.js';
 import { ApiError, apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -41,6 +42,23 @@ export function updateEntryLabel(status: SelfUpdateStatus): string | null {
   return `Update available · ${status.behind} ${status.behind === 1 ? 'commit' : 'commits'} behind`;
 }
 
+export function nativeUpdateLabel(state: DesktopUpdateState | null): string | null {
+  if (!state) return null;
+  const update = state.version === null ? 'update' : `Phantom ${state.version}`;
+  switch (state.phase) {
+    case 'available': return `${update} available`;
+    case 'downloading': return `Downloading ${update}${state.bytesTotal && state.bytesTotal > 0 ? ` · ${Math.round(state.bytesReceived / state.bytesTotal * 100)}%` : ''}`;
+    case 'staged':
+    case 'waiting-for-idle':
+    case 'waiting-for-app-quit': return `${update} ready · installs when idle`;
+    case 'installing': return `Installing ${update}…`;
+    case 'installed': return `${update} installed · restarts when idle`;
+    case 'adoption-held': return 'Update held · open Settings';
+    case 'failed': return 'Update failed · open Settings';
+    default: return null;
+  }
+}
+
 let missing: ApiError | null = null;
 export const selfUpdateBadgeQuery: QueryDef<unknown> = {
   key: 'verse-self-update-badge',
@@ -62,6 +80,7 @@ const subscribeVisibility = (listener: () => void): (() => void) => {
 const visible = (): boolean => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
 export function useSelfUpdateBadge(): { label: string } | null {
+  const native = useDesktopUpdates();
   const isVisible = useSyncExternalStore(subscribeVisibility, visible, () => true);
   const query = useQuery(selfUpdateBadgeQuery, { enabled: isVisible });
   const refetch = useRefetch(selfUpdateBadgeQuery);
@@ -72,6 +91,6 @@ export function useSelfUpdateBadge(): { label: string } | null {
   }, [isVisible, refetch, query.error]);
   const current = isVisible ? query : getQuerySnapshot<unknown>(selfUpdateBadgeQuery.key);
   const status = missing ? null : readSelfUpdate(current.data);
-  const label = status ? updateEntryLabel(status) : null;
+  const label = nativeUpdateLabel(native) ?? (status ? updateEntryLabel(status) : null);
   return label ? { label } : null;
 }
