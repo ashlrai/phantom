@@ -122,6 +122,30 @@ capped at 32 KB.
 
 Human CLI: `phm team view | join | approve | deny | claim | release | say`.
 
+### Member readiness and onboarding
+
+Use the [team onboarding walkthrough](../TEAM.md#start-here-role-context-and-next-action)
+before the first task and after returning. `phm team view --team <id>` shows
+protocol roles, current claims, open handoffs, pending approvals and recent
+messages; `--json` returns the full state, including handoff detail and context
+references. Context packs are retrieved separately through `phm_team_context_get`.
+The view is evidence to review, not a readiness or access certification.
+
+Phase 1 logs are local to `$ASHLR_HOME`: matching team IDs on different machines
+do not share state. Confirm the authoritative log before joining an empty view;
+the first joining human becomes owner. Join/approval identity is derived from
+the local OS user and optional owner configuration, never from `--as`.
+A member cannot self-promote with `join --role admin`.
+
+Keep two questions separate: protocol role controls team operations; repository
+and connector access comes from their respective owners. For missing access,
+contact the owner/admin through an approved channel with the task reference,
+required scope and redacted failure, then retry the original check. For missing
+context, confirm owner/project/person scope and request a cited entry; do not
+broaden client boundaries. Returning members re-read current task sources and
+resolve claims before editing. Online presence, a successful join or an empty
+context pack alone cannot establish readiness.
+
 ## 5. Shared context and context-window efficiency
 
 * Scope filter first: `client:<x>` entries are returned only to `client:<x>`

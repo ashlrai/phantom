@@ -16,7 +16,13 @@ const USAGE = `Usage: phm team <view|join|invite|role|link|approve|deny|claim|re
   approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
   claim <owner/repo> [--branch b] [--path p] [--reason r] [--ttl-min n]
   release <claimId>
-  say <text...>                Post a message to the team channel`;
+  say <text...>                Post a message to the team channel
+
+Start: view --team <id>; confirm the authoritative local log and your task with the owner.
+Team names do not sync machines. Roles do not grant repository or connector access.
+Missing access/context: ask the owner/admin with a task reference and redacted error.
+Returning: review handoff details with view --json, source links and claims before editing.
+Guide: docs/TEAM.md`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -45,7 +51,13 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
         for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
         const pending = s.approvals.filter((a) => a.state === 'pending');
-        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — phm team approve ${a.id}`);
+        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — human owner/admin: phm team approve ${a.id} --team ${team}`);
+        for (const m of s.messages.slice(-5)) lines.push(`  # ${m.channel} ${m.from} (${m.ts}): ${m.text}`);
+        lines.push('Local log only: matching team names on other machines do not sync state.');
+        lines.push(s.members.length === 0
+          ? `Next: confirm this is the intended local log with the team owner, then join from a human terminal: phm team join --team ${team}`
+          : `Next: confirm your role and task with the owner; review handoff details and context refs: phm team view --team ${team} --json`);
+        lines.push('Before editing: re-read task sources and resolve claims. Missing access/context: ask the owner/admin with the task reference and redacted error; retry the blocked check.');
         return out(s, lines.join('\n'));
       }
       case 'invite': case 'role': case 'link': {
