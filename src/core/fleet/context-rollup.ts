@@ -98,9 +98,16 @@ function contractFrom(options: ContextRollupOptions): ContextRollupContract | nu
   return { cadenceMs, minimumTerminalTrajectories };
 }
 
-function rollupTimestamps(value: unknown, observedMs: number): string[] | null {
+interface PersistedRollupMark {
+  /** Ledger publication timestamp; governs cadence. */
+  emittedAt: string;
+  /** Source-evidence watermark the publication covered; governs no-new-evidence. */
+  sourceMaxAt: string;
+}
+
+function persistedRollupMarks(value: unknown, observedMs: number): PersistedRollupMark[] | null {
   if (!Array.isArray(value)) return null;
-  const timestamps: string[] = [];
+  const marks: PersistedRollupMark[] = [];
   for (const candidate of value) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const row = candidate as Record<string, unknown>;
@@ -118,9 +125,9 @@ function rollupTimestamps(value: unknown, observedMs: number): string[] | null {
       Date.parse(row['contextRollupSourceMaxTs']) > Date.parse(row['ts']) ||
       Date.parse(row['ts']) > observedMs
     ) return null;
-    timestamps.push(row['ts']);
+    marks.push({ emittedAt: row['ts'], sourceMaxAt: row['contextRollupSourceMaxTs'] });
   }
-  return timestamps;
+  return marks;
 }
 
 function sanitizeCounts(value: unknown): Partial<ContextRollupCounts> | null {
@@ -154,9 +161,9 @@ export function decideContextRollup(
   const observedMs = Date.parse(input.observedAt);
   const latestSourceMs = Date.parse(input.latestSourceAt);
   if (latestSourceMs > observedMs) return { disposition: 'noop', reason: 'malformed-input' };
-  const timestamps = rollupTimestamps(input.persistedRollupEvents, observedMs);
+  const marks = persistedRollupMarks(input.persistedRollupEvents, observedMs);
   const suppliedCounts = sanitizeCounts(input.counts);
-  if (!timestamps || !suppliedCounts) return { disposition: 'noop', reason: 'malformed-input' };
+  if (!marks || !suppliedCounts) return { disposition: 'noop', reason: 'malformed-input' };
   if (
     suppliedCounts.eligibleEvents !== undefined &&
     suppliedCounts.eligibleEvents !== input.eligibleEventCount
@@ -166,14 +173,27 @@ export function decideContextRollup(
     return { disposition: 'noop', reason: 'below-trajectory-threshold' };
   }
 
-  const latestRollupAt = timestamps.length > 0
-    ? timestamps.reduce((latest, value) => value > latest ? value : latest)
-    : null;
+  // Governing record rule: the newest publication wins. Cadence is measured
+  // from the maximum emission `ts`; evidence freshness is measured against
+  // that publication's own `contextRollupSourceMaxTs`, never against its
+  // emission time. When several records share the maximum emission `ts`,
+  // the maximum source watermark among them governs. An older publication's
+  // larger watermark is deliberately not adopted: only the latest
+  // publication's coverage counts, so a republished rollup self-heals a
+  // watermark regression with at most one extra emission. Selection reduces
+  // over the validated records, so persisted order never changes the result.
+  const latestRollup = marks.reduce<PersistedRollupMark | null>((latest, mark) =>
+    latest === null ||
+    mark.emittedAt > latest.emittedAt ||
+    (mark.emittedAt === latest.emittedAt && mark.sourceMaxAt > latest.sourceMaxAt)
+      ? mark
+      : latest, null);
+  const latestRollupAt = latestRollup?.emittedAt ?? null;
   if (
-    latestRollupAt !== null &&
-    observedMs - Date.parse(latestRollupAt) < contract.cadenceMs
+    latestRollup !== null &&
+    observedMs - Date.parse(latestRollup.emittedAt) < contract.cadenceMs
   ) return { disposition: 'noop', reason: 'cadence-active' };
-  if (latestRollupAt !== null && latestSourceMs <= Date.parse(latestRollupAt)) {
+  if (latestRollup !== null && latestSourceMs <= Date.parse(latestRollup.sourceMaxAt)) {
     return { disposition: 'noop', reason: 'no-new-evidence' };
   }
 

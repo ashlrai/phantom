@@ -440,6 +440,12 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
       sendJson(res, 200, await statusCache.value);
       return true;
     }
+    if (path === '/api/verse/ops/leader-journal' && method === 'GET') {
+      if (!queryParam(req, res, [])) return true;
+      const { readLeaderJournal } = await import('../fleet/leader-journal.js');
+      sendJson(res, 200, await readLeaderJournal({ now }));
+      return true;
+    }
     if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'POST') {
       if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
       if (!passesMutationGate(req, res, ctx.token)) return true;
