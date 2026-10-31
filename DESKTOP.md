@@ -26,6 +26,12 @@ See `desktop/README.md` for full setup, build, and open-item details, and
 - The webview only ever loads `http://127.0.0.1:7777`; the CSP and the
   init-script origin check both pin it there.
 
+## Watch and steer
+
+Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
+`~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
+[Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).
+
 ## Desktop control ("computer use", macOS)
 
 Chat seats can drive apps on this Mac through the `computer_*` tools
