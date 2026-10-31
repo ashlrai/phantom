@@ -73,10 +73,16 @@ const mergesShape: Shape = { count: 'number?', items: [{ repo: 'string', number:
 
 async function personal(now: number): Promise<unknown> {
   const { collectCodexSessionUsages, buildCodexResourceReport } = await import('../fleet/codex-session-usage.js');
-  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: join(homedir(), '.codex'), CODEX_HOME_ALT: join(homedir(), '.codex-2') } });
-  const account = buildCodexResourceReport(usages.filter(u => u.accountId === 'codex-personal'), [], now).resources[0];
-  if (!account || !account.session) return null;
-  return { usedPct: account.session.usedPct, resetsAt: account.session.resetsAt, asOf: account.observedAt };
+  // Isolate the personal home before normalizing the collector's slot identity.
+  const home = homedir();
+  const personalHome = join(home, '.codex-2');
+  const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: home });
+  const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
+  const account = report.resources.find(resource => resource.state === 'current' && resource.weekly?.usedPct != null &&
+    (resource.weekly.windowMinutes === null || resource.weekly.windowMinutes > 315) &&
+    resource.observedAt !== null && Date.parse(resource.observedAt) <= now);
+  if (!account?.weekly) return null;
+  return { usedPct: account.weekly.usedPct, resetsAt: account.weekly.resetsAt, asOf: account.observedAt };
 }
 export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
