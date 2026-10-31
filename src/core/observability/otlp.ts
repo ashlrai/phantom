@@ -296,11 +296,57 @@ export function spansFromSwarm(swarm: SwarmRun): GenAiSpan[] {
 /** Metadata retained from untrusted native-client OTLP spans. */
 export interface ReceivedOtelSpan {
   source: 'claude-code' | 'xai';
-  event: 'api_request' | 'safety_event';
+  event: 'api_request' | 'api_refusal' | 'tool_decision' | 'safety_event';
+  /**
+   * Derived refusal signal. Claude Code 2.1.312 stopped emitting
+   * `claude_code.safety_event`, so refusals are read off each vendor's result
+   * stream instead: a `claude_code.api_refusal` event, a `refusal` or
+   * `content_filter` stop/finish reason, a rejected or cancelled tool
+   * permission decision, or a legacy `safety_event` record. Refusal metrics
+   * count this flag, never the event name alone.
+   */
+  refusal?: boolean;
+  /** Corrected `effort` attribute: the effort level in force on the request. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /**
+   * Corrected `mcp_server.name` attribute: the real name of a fixed-URL remote
+   * MCP server, or the 'custom'/'third-party' redaction placeholders.
+   */
+  mcpServerName?: string;
+  /** Companion `mcp_tool.name` attribute, same redaction as `mcp_server.name`. */
+  mcpToolName?: string;
+  /**
+   * `server_fallback_hop` on an api_refusal: true when the API's server-side
+   * model fallback already retried this refusal on a different model (the user
+   * never saw it), false when the request ended in the refusal.
+   */
+  serverFallbackHop?: boolean;
   usage: Partial<Record<'input_tokens' | 'output_tokens' | 'cache_read_tokens' |
     'cache_creation_tokens' | 'cache_creation_5m' | 'cache_creation_1h', number>>;
   costUsd?: number;
 }
+
+/**
+ * Claude Code event names retained from the native stream — matched against a
+ * `claude_code.<event>` span name or the `event.name` attribute. CC 2.1.312 no
+ * longer emits `safety_event`; refusals arrive on the result stream as
+ * `api_refusal` events, refusal stop/finish reasons and rejected
+ * `tool_decision`/`tool.blocked_on_user` records instead.
+ */
+const CLAUDE_EVENTS = new Set([
+  'api_request',
+  'llm_request',
+  'api_refusal',
+  'tool_decision',
+  'tool.blocked_on_user',
+  'safety_event',
+]);
+
+/** Values allowed on the corrected `effort` attribute (CC >= 2.1.274). */
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+/** Stop/finish reasons that mark a refusal in a vendor result stream. */
+const REFUSAL_REASONS = new Set(['refusal', 'content_filter']);
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -320,10 +366,41 @@ function receivedNumber(value: unknown, integer: boolean): number | undefined {
     (!integer || Number.isSafeInteger(n)) ? n : undefined;
 }
 
+/** Bounded metadata label: non-empty and length-capped, else undefined. */
+function receivedLabel(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 200
+    ? value.trim() : undefined;
+}
+
+/** Strict boolean decoding from OTLP boolValue or 'true'/'false' strings. */
+function receivedBool(value: unknown): boolean | undefined {
+  return value === true || value === 'true' ? true
+    : value === false || value === 'false' ? false : undefined;
+}
+
+/**
+ * True when a result-stream finish reason marks a refusal: `stop_reason`,
+ * `finish_reason`, or a `gen_ai.response.finish_reasons` string list carrying
+ * 'refusal' or 'content_filter' (OpenAI-compatible vendors such as xAI).
+ */
+function refusalFinishReason(attrs: Map<string, unknown>): boolean {
+  const reasons: unknown[] = [attrs.get('stop_reason'), attrs.get('finish_reason')];
+  const listed = attrs.get('gen_ai.response.finish_reasons');
+  if (typeof listed === 'string') reasons.push(listed);
+  else if (Array.isArray(listed)) reasons.push(...listed);
+  return reasons.some(reason => typeof reason === 'string' &&
+    reason.split(',').some(part => REFUSAL_REASONS.has(part.trim())));
+}
+
 /**
  * Decode OTLP/HTTP JSON without forwarding names, resources, ids, arbitrary
  * attributes or event bodies. Unknown spans are ignored; malformed envelopes
  * are refused. Cache lifetimes remain separate and are never added twice.
+ *
+ * Refusals come from the vendor result stream, not a dedicated event name:
+ * `claude_code.api_refusal`, refusal stop/finish reasons and rejected tool
+ * decisions all surface through `ReceivedOtelSpan.refusal`, as do legacy
+ * `claude_code.safety_event` records for pre-2.1.312 streams.
  */
 export function parseNativeOtelTrace(payload: unknown): ReceivedOtelSpan[] {
   const resources = record(payload).resourceSpans;
@@ -337,18 +414,48 @@ export function parseNativeOtelTrace(payload: unknown): ReceivedOtelSpan[] {
         for (const attr of list(span.attributes)) {
           const a = record(attr);
           const v = record(a.value);
-          if (typeof a.key === 'string') attrs.set(a.key, v.intValue ?? v.doubleValue ?? v.stringValue);
+          if (typeof a.key !== 'string') continue;
+          const scalar = v.intValue ?? v.doubleValue ?? v.stringValue ?? v.boolValue;
+          if (scalar !== undefined) {
+            attrs.set(a.key, scalar);
+            continue;
+          }
+          const strings = list(record(v.arrayValue).values)
+            .map(item => record(item).stringValue)
+            .filter((s): s is string => typeof s === 'string');
+          if (strings.length > 0) attrs.set(a.key, strings);
         }
-        const safety = span.name === 'claude_code.safety_event' || attrs.get('event.name') === 'safety_event';
-        const claude = safety || span.name === 'claude_code.api_request';
-        const xai = attrs.get('gen_ai.system') === 'xai' || attrs.get('gen_ai.provider.name') === 'xai';
-        if (!claude && !xai) continue;
+        const name = typeof span.name === 'string' ? span.name : '';
+        const spanEvent = name.startsWith('claude_code.') ? name.slice('claude_code.'.length) : '';
+        const namedEvent = attrs.get('event.name');
+        const claudeEvent = typeof namedEvent === 'string' && CLAUDE_EVENTS.has(namedEvent) ? namedEvent
+          : CLAUDE_EVENTS.has(spanEvent) ? spanEvent : '';
+        const xai = !claudeEvent &&
+          (attrs.get('gen_ai.system') === 'xai' || attrs.get('gen_ai.provider.name') === 'xai');
+        if (!claudeEvent && !xai) continue;
+        const decision = attrs.get('decision');
+        const refusal = claudeEvent === 'safety_event' || claudeEvent === 'api_refusal' ||
+          decision === 'reject' || decision === 'cancelled' || refusalFinishReason(attrs);
         const received: ReceivedOtelSpan = {
-          source: claude ? 'claude-code' : 'xai',
-          event: safety ? 'safety_event' : 'api_request',
+          source: claudeEvent ? 'claude-code' : 'xai',
+          event: claudeEvent === 'safety_event' ? 'safety_event'
+            : claudeEvent === 'api_refusal' ? 'api_refusal'
+            : claudeEvent === 'tool_decision' || claudeEvent === 'tool.blocked_on_user' ? 'tool_decision'
+            : 'api_request',
           usage: {},
         };
-        if (!safety) {
+        if (refusal) received.refusal = true;
+        const effort = attrs.get('effort');
+        if (typeof effort === 'string' && EFFORT_LEVELS.has(effort)) {
+          received.effort = effort as NonNullable<ReceivedOtelSpan['effort']>;
+        }
+        const mcpServer = receivedLabel(attrs.get('mcp_server.name'));
+        if (mcpServer !== undefined) received.mcpServerName = mcpServer;
+        const mcpTool = receivedLabel(attrs.get('mcp_tool.name'));
+        if (mcpTool !== undefined) received.mcpToolName = mcpTool;
+        const hop = receivedBool(attrs.get('server_fallback_hop'));
+        if (hop !== undefined) received.serverFallbackHop = hop;
+        if (received.event === 'api_request') {
           for (const key of ['input_tokens', 'output_tokens', 'cache_read_tokens',
             'cache_creation_tokens', 'cache_creation_5m', 'cache_creation_1h'] as const) {
             const n = receivedNumber(attrs.get(key) ?? attrs.get(`gen_ai.usage.${key}`), true);

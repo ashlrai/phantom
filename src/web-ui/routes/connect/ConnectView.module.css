@@ -1,0 +1,13 @@
+.page { max-width: 1100px; padding: var(--space-6) 0; }
+.page h1 { font-size: var(--text-2xl-size); margin: 0 0 var(--space-3); }
+.intro { color: var(--text-secondary); margin-bottom: var(--space-6); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: var(--space-4); }
+.card { border: 1px solid var(--border-strong); border-radius: 12px; padding: var(--space-5); min-width: 0; }
+.card h2 { font-size: var(--text-lg-size); margin: var(--space-2) 0; }
+.card p { color: var(--text-secondary); }
+.step { color: var(--text-secondary); font-size: var(--text-sm-size); }
+.card ul { list-style: none; padding: 0; margin: var(--space-4) 0 0; }
+.card li { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.badge { display: grid; place-items: center; flex: 0 0 2rem; height: 2rem; border: 1px solid var(--border-strong); border-radius: 6px; font-weight: 600; }
+.card small { display: block; color: var(--text-secondary); margin-top: 2px; }
+.card a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

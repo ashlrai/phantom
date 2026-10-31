@@ -53,9 +53,36 @@ const ACTIVITY = {
   recentTicksFreshness: { stale: false, ageMs: 0 },
 };
 
+const LANES = {
+  schema: 'fleet.lanes.v1',
+  generatedAt: new Date().toISOString(),
+  mergeWindowMinutes: 60,
+  sources: {
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 3, dropped: 0 },
+    queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 4 },
+    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 2, dropped: 0 },
+    usage: { state: 'missing', files: [], pools: 0, dropped: 0 },
+    budgets: { state: 'healthy' },
+  },
+  lanes: [
+    {
+      lane: 'devin',
+      queueDepth: 2,
+      liveJobs: 1,
+      mergesPerHour: 2,
+      credit: {
+        state: 'observed', label: '12.5 ACU', remainingPct: null, remainingCredits: 12.5,
+        creditsUnit: 'acus', resetAt: null, burnPerHour: null, projectedExhaustionAt: null,
+        observedAt: '2026-10-28T01:00:00.000Z', source: 'budget-ledger',
+      },
+    },
+  ],
+};
+
 function respondFor(fleetBody: unknown) {
   return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
+    if (url.startsWith('/api/fleet/lanes')) return new Response(JSON.stringify(LANES), { status: 200 });
     if (url.startsWith('/api/fleet-activity')) return new Response(JSON.stringify(ACTIVITY), { status: 200 });
     if (url.startsWith('/api/fleet')) return new Response(JSON.stringify(fleetBody), { status: 200 });
     return new Response('not found', { status: 404 });
