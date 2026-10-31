@@ -19,6 +19,7 @@
  * A2's own fix argv (through C6's capacity rows).
  */
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
+import type { FleetPresence } from './fleet-presence.js';
 import type { LocalModelsSnapshot } from '../usage/usage-contract.js';
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepMeta[] = [
   {
     id: 'fleet',
     title: 'Your fleet',
-    subtitle: 'Watch and steer your fleet in one place.',
+    subtitle: 'Fleet availability and sources on this Mac.',
   },
   {
     id: 'stops',
@@ -78,6 +79,15 @@ export const FLEET_STEP_POINTS: readonly { label: string; detail: string }[] = [
   { label: "Leaders' inbox", detail: 'Your prompts and interjections land in MASON-INBOX.md, which leaders read every pass.' },
   { label: 'Kill switches', detail: 'HOLD, PAUSE and other switches in Fleet ▸ Switches stop dispatch at once.' },
 ];
+
+export function fleetStepPoints(presence: FleetPresence): readonly { label: string; detail: string }[] {
+  if (presence === 'present') return FLEET_STEP_POINTS;
+  if (presence === 'missing') return [{
+    label: 'No fleet on this Mac yet (~/.ashlr-runs not found)',
+    detail: 'The fleet leaders create it on their first pass; Settings ▸ Connection ▸ Fleet sources shows each source',
+  }];
+  return [{ label: 'Fleet presence is not available yet', detail: 'Settings ▸ Connection ▸ Fleet sources shows each source.' }];
+}
 
 export function clampStep(step: number): number {
   if (!Number.isFinite(step)) return 0;
