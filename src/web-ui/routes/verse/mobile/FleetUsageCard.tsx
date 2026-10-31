@@ -1,8 +1,9 @@
+import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { apiSpendLine, asOfText, ledgerRows, runsOutText, sourceLabel } from '../usage/fleet-ledger-model.js';
 import { fleetLedgerQuery } from '../usage/fleet-ledger-queries.js';
-import { Row, Section } from './ui-parts.js';
+import { ErrorState, Row, Section } from './ui-parts.js';
 import { SkeletonList } from './ui.js';
 
 export function FleetUsageCard() {
@@ -31,8 +32,10 @@ export function FleetUsageCard() {
         />
       )) : query.status === 'idle' || query.status === 'loading' ? (
         <SkeletonList rows={2} label="Loading usage" />
+      ) : data === null ? (
+        <Row title="Ledger not readable from this Mac yet" />
       ) : (
-        <Row title={data === null ? 'Ledger not readable from this Mac yet' : 'Couldn’t read usage'} />
+        <ErrorState title="Couldn’t read usage" reason={readFailureReason(query.error)} onRetry={refetch} />
       )}
     </Section>
   );
