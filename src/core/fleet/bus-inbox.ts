@@ -79,7 +79,10 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
 }
 /** nextCursor advances over expired records, including an entirely expired page.
  * Scan is capped at 1 MiB / 1024 retained records; output at 100 envelopes.
- * TTL is always measured from the original receipt, never renewed on replay.
+ * TTL is measured from the original receipt using the supplied clock.
+ * Both times are nonnegative safe integers, so their nonnegative difference is
+ * safe; avoid adding TTL to receivedAt, which could exceed MAX_SAFE_INTEGER.
+ * A clock before receipt counts as zero elapsed and cannot inflate the wire TTL.
  */
 export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOptions = {}): BusInboxPage {
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) return { status: 'invalid' };
@@ -92,7 +95,10 @@ export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOption
     for (const row of rows) {
       if (row.cursor <= after) continue;
       nextCursor = row.cursor;
-      if (now - row.receivedAt < row.envelope.ttl) messages.push(row);
+      const elapsed = Math.max(0, now - row.receivedAt);
+      if (elapsed < row.envelope.ttl) {
+        messages.push({ ...row, envelope: { ...row.envelope, ttl: row.envelope.ttl - elapsed } });
+      }
       if (messages.length === limit) break;
     }
     return { status: 'ok', messages, nextCursor };

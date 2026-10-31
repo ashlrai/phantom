@@ -77,4 +77,14 @@ export const KNOWN_FAST_SPAWN_FILES = [
   // request on stdin — no git, no network, no waiting on another process's
   // output. 0.08s for the one test that spawns (2026-09-24).
   'test/scorecard-history-sea-310.test.ts', // <0.1s
+  // Marker false positive: the `execSync(` the guard matches is a string
+  // literal in the test's own pattern data ('execSync("ls")'), not a call —
+  // the file spawns nothing. 0.007s slowest test (2026-10-28).
+  'test/cross-review.test.ts', // <0.1s
+  // One real `node scripts/audit-affected-map.mjs` child per run against a
+  // temp fixture root — no git, no network. 0.82s slowest test (2026-10-28).
+  'test/affected-map-audit.test.ts', // 0.8s
+  // Real `bash -c` children running a stubbed curl + a fixture git dir — all
+  // hermetic, no network. 0.99s slowest test (2026-10-28).
+  'test/m30.merge-queue-reaper.test.ts', // 1.0s
 ];

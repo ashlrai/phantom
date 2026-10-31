@@ -26,7 +26,7 @@ import { useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 import styles from './RailStatus.module.css';
 import { usedPercentText } from '../percent-text.js';
-import { describeFleetRuns, useFleetRunsBadge, type FleetRunsBadge } from './fleet-runs-badge.js';
+import { describeFleetRuns, fleetRunsTone, useFleetRunsBadge, type FleetRunsBadge } from './fleet-runs-badge.js';
 
 export interface RailBadge {
   /** Appended to the rail button's accessible name (", 3 need you"). */
@@ -54,9 +54,9 @@ export function railBadgeFor(section: VerseSectionId, data: VerseActivityRespons
     if (runs && runs.workers > 0) return {
       kind: 'count', count: runs.workers, autonomy,
       spoken: `${spoken}, ${runs.workers} ${runs.workers === 1 ? 'worker' : 'workers'} running`,
-      tone: runs.switchesOn.length ? 'warning' : 'running',
+      tone: fleetRunsTone(runs),
     };
-    return autonomy ? { kind: 'autonomy', spoken, autonomy, tone: runs?.switchesOn.length ? 'warning' : autonomyTone(autonomy) } : null;
+    return autonomy ? { kind: 'autonomy', spoken, autonomy, tone: runs && fleetRunsTone(runs) === 'warning' ? 'warning' : autonomyTone(autonomy) } : null;
   }
   if (!data) return null;
   switch (section) {

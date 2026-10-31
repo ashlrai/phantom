@@ -33,10 +33,18 @@ export function fleetRunsBadge(data: unknown): FleetRunsBadge | null {
   return { workers: data.workers.length, merges: data.mergesLastHour.count as number | null, switchesOn: data.switches };
 }
 
+export function fleetRunsIdle(b: FleetRunsBadge): boolean {
+  return b.workers === 0 && b.merges === 0;
+}
+
+export function fleetRunsTone(b: FleetRunsBadge): 'warning' | 'running' {
+  return b.switchesOn.length || fleetRunsIdle(b) ? 'warning' : 'running';
+}
+
 export function describeFleetRuns(b: FleetRunsBadge): string {
   const merges = b.merges === null ? 'merges unknown' : `${b.merges} merged last hour`;
   const switches = b.switchesOn.length ? ` · switches on: ${b.switchesOn.join(', ')}` : '';
-  return `${b.workers} ${b.workers === 1 ? 'worker' : 'workers'} running · ${merges}${switches}`;
+  return `${b.workers} ${b.workers === 1 ? 'worker' : 'workers'} running · ${merges}${switches}${fleetRunsIdle(b) ? ' · fleet idle' : ''}`;
 }
 
 let missing: ApiError | null = null;

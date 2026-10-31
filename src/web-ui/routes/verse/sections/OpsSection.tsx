@@ -5,8 +5,9 @@
  * and from ⌘K ("Open Ops").
  */
 import { MergePulse } from '../ops/MergePulse.js';
+import { PublishFunnel } from '../ops/PublishFunnel.js';
 import { OpsView } from '../ops/OpsView.js';
 
 export function OpsSection() {
-  return <div><MergePulse /><OpsView /></div>;
+  return <div><MergePulse /><PublishFunnel /><OpsView /></div>;
 }
