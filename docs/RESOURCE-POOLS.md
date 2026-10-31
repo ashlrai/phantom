@@ -2521,7 +2521,10 @@ unmatched tasks, not a model ranking. Timing uses a monotonic clock around the
 worker adapter; it includes preparation and cleanup, excludes queue/reservation
 and durable settlement, and is not provider latency. Old receipts retain unknown
 timing. Each receipt and worker summary labels token scope; Claude main-loop
-counts exclude subagents. None of these counters establishes accepted work or a
+counts exclude subagents. Each worker row also reports `stops.oneMContextCredits`:
+how many of its failed receipts recorded `worker-1m-context-credits-stop`, the
+bounded classification for a native CLI stop over long-context usage credits.
+None of these counters establishes accepted work or a
 billing total. The optional versioned `execution` field preserves old-ledger
 readability; older Hub versions that reject it cannot read a newly measured
 ledger, so preserve a pre-upgrade ledger copy for rollback rather than stripping
@@ -2631,6 +2634,7 @@ fields to make an older reader accept it.
 | `worker-terminal-failed` / `worker-terminal-missing` / `worker-invalid-events` | Check the supported native event format and task scope. Partial output or process exit `0` is not sufficient completion evidence. |
 | `worker-service-tier-unavailable` | The provider refused the requested service tier. This reason is returned by the worker, not recorded on a receipt: the never-completed reservation is released back to admission as unavailable capacity (with a bounded retry hint), so the queued task reroutes to another worker instead of settling as failed. Check provider tier capacity or the enrolled worker list; the job itself does not need a new attempt. |
 | `worker-output-truncated` / `worker-output-token-limit` | Review task scope and configured response budget before a deliberate new attempt; do not accept the failed response. |
+| `worker-1m-context-credits-stop` | The native CLI stopped because the task's long-context mode required usage credits that were not available. Retry on a compatible smaller-context model or after the enrolled account's usage window resets, under a new task ID. This reason is a bounded classification of the recorded stop, not a billing measurement. |
 | `worker-timed-out` | Review the deadline and task scope, confirm cleanup, and refresh capacity evidence. |
 | `worker-termination-uncertain` | Stop the affected pool and reconcile process ownership and private receipt evidence. The slot remains occupied; do not delete the ledger to release it. |
 

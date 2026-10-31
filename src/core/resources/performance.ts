@@ -1,5 +1,5 @@
 /** Bounded descriptive measurements, never a quality score or routing policy. */
-import { validateResourcePool, type ResourcePool, type ResourceWorker } from './pool-policy.js';
+import { validateResourcePool, WORKER_1M_CONTEXT_CREDITS_STOP_REASON, type ResourcePool, type ResourceWorker } from './pool-policy.js';
 import type { ResourceTaskReceipt } from './pool-runtime.js';
 
 export const MAX_RESOURCE_EXECUTION_DURATION_MS = 86_400_000;
@@ -39,6 +39,12 @@ export interface ResourceWorkerPerformance {
   provider: ResourceWorker['provider'];
   model: string;
   counts: { total: number; reserved: number; completed: number; failed: number; timedOut: number; cancelled: number; uncertain: number };
+  /**
+   * Named terminal-stop tallies, a subset view over `counts` — never extra
+   * attempts. `oneMContextCredits` counts receipts the provider stopped on
+   * the fixed 'Usage credits required for 1M context' refusal.
+   */
+  stops: { oneMContextCredits: number };
   usage: ResourcePerformanceUsage;
   durations: ResourcePerformanceDuration[];
 }
@@ -108,6 +114,8 @@ function summarize(worker: ResourceWorker, rows: readonly ResourceTaskReceipt[])
   return { workerId: worker.id, provider: worker.provider, model: worker.model,
     counts: { total: rows.length, reserved: tally('reserved'), completed: tally('completed'), failed: tally('failed'),
       timedOut: tally('timed-out'), cancelled: tally('cancelled'), uncertain: tally('uncertain') },
+    stops: { oneMContextCredits: rows.filter((row) => row.status === 'failed' &&
+      row.reason === WORKER_1M_CONTEXT_CREDITS_STOP_REASON).length },
     usage: { reportedAttempts: reported.length, unknownAttempts: rows.length - reported.length,
       reportedInputTokens: reported.length ? input : null, reportedOutputTokens: reported.length ? output : null,
       totalInputTokens: complete ? input : null, totalOutputTokens: complete ? output : null, complete,
@@ -170,7 +178,7 @@ export function validateResourcePerformanceReport(value: unknown, poolValue: Res
   let total = 0;
   for (const [index, row] of value.workers.entries()) {
     const worker = pool.workers[index]!;
-    object(row, ['workerId', 'provider', 'model', 'counts', 'usage', 'durations']);
+    object(row, ['workerId', 'provider', 'model', 'counts', 'stops', 'usage', 'durations']);
     if (row.workerId !== worker.id || row.provider !== worker.provider || row.model !== worker.model) invalid();
     object(row.counts, COUNT_KEYS);
     const countValues = row.counts;
@@ -178,6 +186,10 @@ export function validateResourcePerformanceReport(value: unknown, poolValue: Res
     const counts = row.counts as ResourceWorkerPerformance['counts'];
     if (counts.total !== counts.reserved + counts.completed + counts.failed + counts.timedOut + counts.cancelled + counts.uncertain) invalid();
     total += counts.total;
+    object(row.stops, ['oneMContextCredits']);
+    // Every named stop is a failed terminal receipt; more stops than failures
+    // is as inconsistent as a count that exceeds total.
+    if (!count(row.stops.oneMContextCredits, counts.failed)) invalid();
     object(row.usage, ['reportedAttempts', 'unknownAttempts', ...TOKEN_KEYS, 'complete', 'scopes']);
     const usage = row.usage;
     if (!count(usage.reportedAttempts, counts.total - counts.reserved) || !count(usage.unknownAttempts, counts.total) ||

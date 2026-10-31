@@ -118,6 +118,13 @@ export const MAX_RESOURCE_OBSERVATION_WINDOWS = 8;
 export const MAX_RESOURCE_OBSERVATION_AGE_MS = 5 * 60_000;
 /** Sticky bounded-inventory denial, not a provider usage measurement. */
 export const RESOURCE_OBSERVATION_OVERFLOW = 'hub_observation_overflow';
+/**
+ * Fixed receipt reason for a Claude task the provider stopped on spent
+ * long-context allowance ("Usage credits required for 1M context"). Emitted
+ * by the worker adapter, tallied by the performance report — one literal so
+ * the two cannot drift.
+ */
+export const WORKER_1M_CONTEXT_CREDITS_STOP_REASON = 'worker-1m-context-credits-stop';
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 

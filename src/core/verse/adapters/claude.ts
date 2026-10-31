@@ -68,6 +68,7 @@ import {
   hasExpansiveMode,
 } from '../context-math.js';
 import { cliVersionFromExecutable, compareCliVersions, legacyModelOptionFallback } from '../model-windows.js';
+import { claudeRetryWatchdogEnv } from '../../resources/pool-cli-versions.js';
 import { loadVersePreferences } from '../preferences.js';
 import {
   VERSE_DEFAULT_CONTEXT_WINDOWS,
@@ -1444,6 +1445,23 @@ export function claudeThinkingDisplayArgs(session: Pick<VerseSession, 'engine'>,
   return ['--thinking-display', 'summarized'];
 }
 
+/**
+ * The nearest future reset across a seat's provider windows, in ms — the
+ * horizon a usage-limit wait may legitimately span. No windows, no reset
+ * times, or only lapsed resets → null: never invent a horizon the seat did
+ * not report.
+ */
+export function nearestResetWindowMs(windows: readonly { resetsAt: string | null }[], nowMs: number): number | null {
+  let nearest: number | null = null;
+  for (const window of windows) {
+    if (window.resetsAt === null) continue;
+    const delta = Date.parse(window.resetsAt) - nowMs;
+    if (!Number.isFinite(delta) || delta <= 0) continue;
+    if (nearest === null || delta < nearest) nearest = delta;
+  }
+  return nearest;
+}
+
 function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSeatLaunch): VerseTurnLaunch {
   if (!session.nativeSessionId) {
     throw new Error('claude session is missing its native session id');
@@ -1521,6 +1539,13 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
     ...claudeNativeSessionArgs(session, launch),
     '--', text,
   ];
+  // Unattended retry-watchdog tuning reaches only a build that defines it
+  // (Claude Code 2.1.311+, see pool-cli-versions.ts): the seat's nearest
+  // provider reset is the longest a usage-limit wait may span — wait until
+  // capacity frees, hand off when it resets beyond the horizon instead of
+  // sleeping through it.
+  const watchdogEnv = isLocal ? {} : claudeRetryWatchdogEnv(pinnedClaudeVersion(launch),
+    nearestResetWindowMs(launch.seat.health.windows, Date.now()) ?? 0);
   const env: Record<string, string> = isLocal
     ? {
       PATH: harness!.path,
@@ -1535,7 +1560,7 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
       // (`_TOKENS`), so the engine's env filter passes it through.
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(localContextWindow(session, launch)),
     }
-    : {};
+    : watchdogEnv;
   return { argv, cwd: session.projectPath, env, stdin: null };
 }
 
