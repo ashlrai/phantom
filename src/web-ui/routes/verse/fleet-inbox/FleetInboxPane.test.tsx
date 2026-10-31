@@ -45,7 +45,7 @@ it('falls back, sorts, filters by source and text, and quotes once', () => {
   ]);
   for (const source of ['Telegram', 'Phantom desktop', 'terminal']) expect(screen.getByRole('button', { name: source })).toBeInTheDocument();
   expect(container.querySelector('b')).toBeNull();
-  expect(useQuery).toHaveBeenCalledWith(fleetRunsQuery, { enabled: true });
+  expect(useQuery).toHaveBeenCalledWith(fleetRunsQuery);
   fireEvent.click(screen.getByRole('button', { name: 'Telegram' }));
   expect(screen.getAllByRole('article')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: 'Add to message' }));
@@ -59,7 +59,7 @@ it('prefers the dedicated route and groups entries', () => {
   query(fleetInboxQuery.key, { v: 1, sourceState: 'healthy', entries: Array.from({ length: 100 }, (_, i) => entries[i % 3]) });
   render(<FleetInboxPane {...props} />);
   expect(screen.getAllByRole('article')).toHaveLength(100);
-  expect(useQuery).toHaveBeenCalledWith(fleetRunsQuery, { enabled: false });
+  expect(useQuery).toHaveBeenCalledWith(fleetRunsQuery);
   expect(within(screen.getByRole('region', { name: '2026-01-01' })).getAllByRole('article')).toHaveLength(34);
 });
 it('keeps entries when degraded', () => {
