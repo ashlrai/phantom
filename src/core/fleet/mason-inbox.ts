@@ -29,15 +29,14 @@ function safeSource(source: string | undefined): string {
     ? source : DEFAULT_SOURCE;
 }
 
-function localTimestamp(date: Date): { at: string; seconds: string } {
+function localTimestamp(date: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === type)?.value ?? '';
-  const at = `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`;
-  return { at, seconds: `${at}:${part('second')}` };
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`;
 }
 
 function normaliseText(text: string): string {
@@ -45,7 +44,7 @@ function normaliseText(text: string): string {
 }
 
 export function formatInboxEntry(text: string, source: string, when: Date): string {
-  const { at } = localTimestamp(when);
+  const at = localTimestamp(when);
   return `\n## ${at} ET (Mason, ${safeSource(source)}) PRIORITY P0\n${normaliseText(text)}\n`;
 }
 
@@ -87,12 +86,13 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
     const source = safeSource(opts.source);
     const now = (opts.now ?? (() => new Date()))();
-    const { at, seconds } = localTimestamp(now);
+    const at = localTimestamp(now);
+    const eventTimestamp = now.toISOString().slice(0, 19).replace('T', ' ');
     const entry = formatInboxEntry(clean, source, now);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
     // The inbox owns acceptance; the dispatch event is only observational.
-    await appendFile(join(runsDir, 'dispatch-events.log'), `${seconds} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' }).catch(() => undefined);
+    await appendFile(join(runsDir, 'dispatch-events.log'), `${eventTimestamp} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' }).catch(() => undefined);
     return { ok: true, at, bytes: Buffer.byteLength(entry, 'utf8') };
   } catch {
     return { ok: false, reason: 'write-failed' };
