@@ -5,7 +5,7 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--json [--report] [--require-upstream] [--require-upstream-outputs]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--json [--report] [--require-upstream] [--require-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -16,10 +16,16 @@ regular file. Use --stdin to explicitly read a snapshot from standard input.
 2000 Unicode code points, without changing the snapshot.
 --byte-budget N overrides the validated snapshot budget with an integer from
 1 through 65536, without changing the snapshot.
+--fair-upstream reserves a small cited slice per distinct upstream output job
+before filling the remaining budget in priority order. When the budget cannot
+fit every citation and a code point, some outputs may be omitted.
 --json wraps the pack and its UTF-8 byte count in a versioned object.
 --report requires --json and adds requestedByteBudget, emittedBytes,
 emittedRecordCount, citedJobIds (distinct, in pack order), and
 truncatedRecordCount under report. Counts describe the emitted JSONL pack.
+With --fair-upstream, report.fairUpstreamMissingOutputJobIds lists eligible
+output jobs omitted from the pack in distinct dependency order; truncated
+citations establish presence only, not full source coverage.
 --require-upstream requires --json and adds check.missingUpstreamJobIds, in
 distinct input order. A task or output citation in the emitted pack covers an
 upstream, including the node's own ID if listed. This checks evidence coverage,
@@ -54,13 +60,18 @@ function snapshot(value: unknown): value is NodeContextPackInput {
     value.byteBudget > 0 && value.byteBudget <= MAX_PACK_BYTES;
 }
 
-export async function runKnowledgeContextPack(args: string[], stdin: Readable = process.stdin): Promise<number> {
+export async function runKnowledgeContextPack(
+  args: string[], stdin: Readable = process.stdin,
+  io: { stdout: (text: string) => void; stderr: (text: string) => void } = {
+    stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); },
+  },
+): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    process.stdout.write(HELP);
+    io.stdout(HELP);
     return 0;
   }
   const invalid = (message: string): number => {
-    process.stderr.write(`error: ${message}\n`);
+    io.stderr(`error: ${message}\n`);
     return 2;
   };
   let file: string | undefined;
@@ -69,6 +80,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   let report = false;
   let requireUpstream = false;
   let requireUpstreamOutputs = false;
+  let fairUpstream = false;
   let byteBudget: number | undefined;
   let query: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -77,11 +89,12 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
     else if (arg === '--require-upstream-outputs' && !requireUpstreamOutputs) requireUpstreamOutputs = true;
+    else if (arg === '--fair-upstream' && !fairUpstream) fairUpstream = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--require-upstream-outputs', '--byte-budget', '--help', '-h'].includes(value)) {
+          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--require-upstream-outputs', '--byte-budget', '--fair-upstream', '--help', '-h'].includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
@@ -120,7 +133,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
       }
     } catch {
       stdin.destroy();
-      process.stderr.write('error: snapshot unavailable (stdin read error)\n');
+      io.stderr('error: snapshot unavailable (stdin read error)\n');
       return 1;
     }
     text = Buffer.concat(chunks, bytes).toString('utf8');
@@ -130,7 +143,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
       anchorPath: dirname(absolute), maxFileBytes: MAX_SNAPSHOT_BYTES, remainingBytes: MAX_SNAPSHOT_BYTES,
     });
     if (!read.ok) {
-      process.stderr.write(`error: snapshot unavailable (${read.reason})\n`);
+      io.stderr(`error: snapshot unavailable (${read.reason})\n`);
       return read.reason === 'per-file-byte-limit' || read.reason === 'byte-limit' ||
         read.reason === 'unsafe-file' ? 2 : 1;
     }
@@ -142,26 +155,30 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   if (!snapshot(input)) return invalid('snapshot has an invalid shape or byteBudget');
   const effectiveBudget = byteBudget ?? input.byteBudget;
   const pack = buildNodeContextPack({
-    ...input, byteBudget: effectiveBudget,
+    ...input, byteBudget: effectiveBudget, fairUpstream,
     node: query === undefined ? input.node : { ...input.node, query },
   });
   const bytes = Buffer.byteLength(pack, 'utf8');
   const records = report || requireUpstream || requireUpstreamOutputs ? pack.split('\n').filter(Boolean).map(line =>
     JSON.parse(line) as { jobId: string; kind: 'task' | 'output'; truncated: boolean }) : [];
+  const outputJobIds = new Set(records.filter(record => record.kind === 'output').map(record => record.jobId));
+  const eligibleOutputJobIds = new Set(input.outputs.filter(record => record.jobId.trim() && record.text.trim() &&
+    record.jobId !== input.node.jobId).map(record => record.jobId));
   const details = report ? {
     requestedByteBudget: effectiveBudget,
     emittedBytes: bytes,
     emittedRecordCount: records.length,
     citedJobIds: [...new Set(records.map(record => record.jobId))],
     truncatedRecordCount: records.filter(record => record.truncated).length,
+    ...(fairUpstream ? { fairUpstreamMissingOutputJobIds: [...new Set(input.node.upstreamJobIds)]
+      .filter(id => eligibleOutputJobIds.has(id) && !outputJobIds.has(id)) } : {}),
   } : undefined;
   const citedJobIds = new Set(records.map(record => record.jobId));
   const missingUpstreamJobIds = requireUpstream
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !citedJobIds.has(id)) : [];
-  const outputJobIds = new Set(records.filter(record => record.kind === 'output').map(record => record.jobId));
   const missingUpstreamOutputJobIds = requireUpstreamOutputs
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !outputJobIds.has(id)) : [];
-  process.stdout.write(json
+  io.stdout(json
     ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}),
       ...(requireUpstream || requireUpstreamOutputs ? { check: {
         ...(requireUpstream ? { missingUpstreamJobIds } : {}),
