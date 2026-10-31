@@ -63,6 +63,7 @@ import {
 } from './dock-store.js';
 import { CloseGlyph, PanelBottomGlyph, PanelRightGlyph, SplitGlyph } from './dock-icons.js';
 import styles from './Dock.module.css';
+import { useAgentWorkspace, WORKSPACE_PANES } from './agent-workspace.js';
 
 /** What every pane gets besides its own id, visibility and presentation (PaneProps minus those). */
 export type DockPaneContext = Omit<PaneProps, 'paneId' | 'visible' | 'presentation' | 'requests'>;
@@ -119,6 +120,8 @@ export function Dock(props: DockProps) {
   const { presentation, windowWidth, columnWidth, columnMax = Number.POSITIVE_INFINITY, columnHeight = 0, pane: paneContext } = props;
   const { state, requests } = useDock();
   usePanes(); // re-render when a pane is registered, replaced or removed
+  const workspace = useAgentWorkspace(paneContext.sessionId);
+  const tiled = workspace && presentation === 'column' && WORKSPACE_PANES.some((id) => id === state.active);
   const panelRef = useRef<HTMLElement>(null);
   const tabRefs = useRef(new Map<DockPaneId, HTMLButtonElement>());
   const idBase = useId();
@@ -127,26 +130,26 @@ export function Dock(props: DockProps) {
   const [mounted, setMounted] = useState<ReadonlySet<DockPaneId>>(() => new Set(state.open && state.active ? [state.active] : []));
 
   const context: PaneContext = { sessionId: paneContext.sessionId, session: paneContext.session, roots: paneContext.roots };
-  const tabs = state.tabs.filter((id) => isPaneAvailable(id, context));
+  const tabs = (tiled ? [...new Set([...WORKSPACE_PANES, ...state.tabs])] : state.tabs).filter((id) => isPaneAvailable(id, context));
   const active = state.active !== null && tabs.includes(state.active) ? state.active : tabs[0] ?? null;
   const split = state.splitWith !== null && tabs.includes(state.splitWith) && state.splitWith !== active ? state.splitWith : null;
   const open = state.open && active !== null;
   const sheet = presentation === 'sheet' || presentation === 'bottom-sheet';
   const docked = !sheet;
   // Stacked panes only where there is height for two: not in a phone's sheet, not in the bottom row.
-  const canSplit = presentation === 'column' || presentation === 'sheet';
-  const showSplit = split !== null && canSplit;
+  const canSplit = !tiled && (presentation === 'column' || presentation === 'sheet');
+  const showSplit = !tiled && split !== null && canSplit;
 
   useEffect(() => {
     if (!open) return;
     setMounted((prev) => {
-      const want = [active, split].filter((p): p is DockPaneId => p !== null);
+      const want = (tiled ? [...WORKSPACE_PANES] : [active, split]).filter((p): p is DockPaneId => p !== null);
       const next = new Set([...prev].filter((p) => tabs.includes(p)));
       for (const p of want) next.add(p);
       if (next.size === prev.size && [...next].every((p) => prev.has(p))) return prev;
       return next;
     });
-  }, [open, active, split, tabs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps -- tabs is compared by content
+  }, [open, active, split, tiled, tabs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps -- tabs is compared by content
 
   // The panel is open: fetch every pane's code now, so a tab's first click
   // renders in the same frame instead of flashing its skeleton.
@@ -246,7 +249,7 @@ export function Dock(props: DockProps) {
       {presentation === 'bottom-sheet' ? <span className={styles.grabber} aria-hidden="true" /> : null}
       {/* Beside the chat, the head runs under the macOS title bar: it drags the window like the chat header does. */}
       <div className={styles.head} data-app-region={presentation === 'column' ? 'drag' : undefined}>
-        <div className={styles.tabs} role="tablist" aria-label="Dock panes">
+        <div className={styles.tabs} role="tablist" aria-label="Dock panes" aria-multiselectable={tiled || undefined}>
           {tabs.map((id) => {
             const registered = getPane(id)!;
             const Icon = registered.icon;
@@ -261,7 +264,7 @@ export function Dock(props: DockProps) {
                   type="button"
                   role="tab"
                   id={`${idBase}-tab-${id}`}
-                  aria-selected={selected}
+                  aria-selected={tiled ? WORKSPACE_PANES.some((pane) => pane === id) : selected}
                   aria-controls={`${idBase}-pane-${id}`}
                   tabIndex={selected ? 0 : -1}
                   className={styles.tab}
@@ -272,10 +275,10 @@ export function Dock(props: DockProps) {
                   <Icon size={14} />
                   <span className={styles.tabLabel}>{title}</span>
                 </button>
-                <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
+                {!tiled || !WORKSPACE_PANES.some((pane) => pane === id) ? <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
                   title={`Close ${title}`} tabIndex={-1} onClick={() => closeDockTab(id)}>
                   <CloseGlyph size={12} />
-                </button>
+                </button> : null}
               </div>
             );
           })}
@@ -311,9 +314,9 @@ export function Dock(props: DockProps) {
         </div>
       </div>
 
-      <div className={styles.body}>
-        {tabs.filter((p) => mounted.has(p) || p === active || p === split).map((id) => {
-          const shown = id === active || (id === split && showSplit);
+      <div className={styles.body} data-workspace={tiled || undefined}>
+        {tabs.filter((p) => mounted.has(p) || p === active || p === split || (tiled && WORKSPACE_PANES.some((id) => id === p))).map((id) => {
+          const shown = tiled ? WORKSPACE_PANES.some((pane) => pane === id) : id === active || (id === split && showSplit);
           const position = id === active ? 'top' : id === split ? 'bottom' : 'hidden';
           return (
             <div
@@ -330,6 +333,7 @@ export function Dock(props: DockProps) {
                 ? { flexBasis: `${(position === 'top' ? state.splitRatio : 1 - state.splitRatio) * 100}%`, order: position === 'top' ? 0 : 2 }
                 : undefined}
             >
+              {tiled ? <div className={styles.workspaceTitle}>{titleOf(id)}</div> : null}
               <PaneHost id={id} visible={shown} presentation={presentation} context={paneContext} requests={requests} />
             </div>
           );

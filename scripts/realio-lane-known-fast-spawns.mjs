@@ -17,6 +17,7 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.
   'test/changelog-sync.test.ts', // 1.22s slowest test, 2026-10-26 JSON fixture run; local Node/git only, no network
   'test/grokbot-lane.test.ts', // 0.37s max on 2026-10-26; bounded loopback webhook, mocked Secrets child
   'test/m81.engine-readiness.test.ts', // 0.04s on 2026-10-10; one bounded loopback fixture and system curl probe
@@ -43,8 +44,6 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/m392.queue-lease-epochs.test.ts', // 0.4s
   'test/m314.repo-execution-profile.test.ts', // 0.4s
   'test/m385.cutoff-checkpoint-windows.test.ts', // 0.4s
-  'test/affected-map-audit.test.ts', // 0.44s slowest, 2026-10-28 local run; bounded `node scripts/audit-affected-map.mjs` child on a small fixture dir
-  'test/m30.merge-queue-reaper.test.ts', // 0.38s slowest, 2026-10-28 local run; `bash -c` over inert gh/curl stubs, no git/network
   'test/m27.conventions.test.ts', // 0.4s
   'test/m24.state.test.ts', // 0.4s
   'test/m414.local-store-lock-unknown-owner.test.ts', // 0.3s
@@ -78,8 +77,4 @@ export const KNOWN_FAST_SPAWN_FILES = [
   // request on stdin — no git, no network, no waiting on another process's
   // output. 0.08s for the one test that spawns (2026-09-24).
   'test/scorecard-history-sea-310.test.ts', // <0.1s
-  // Marker false positive rather than a measured-cheap spawn — the
-  // `execSync("ls")`/`spawn` hits are string fixtures inside the it.each table
-  // fed to the added-content scanner; the file spawns nothing itself.
-  'test/cross-review.test.ts', // <0.1s
 ];
