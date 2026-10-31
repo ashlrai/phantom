@@ -66,7 +66,7 @@ it('shows the empty state, the degraded notice and the 404 message', async () =>
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sources: { runsDir: 'healthy', inbox: 'healthy' }, inbox: [], events: [] })));
   const view = render(<FleetSteeringPane {...props} />);
   expect(await screen.findByText('No orders yet. Use the interject box.')).toBeInTheDocument();
-  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.getByRole('status', { name: 'Last exchange' })).toHaveTextContent('no order recorded yet');
   view.unmount(); evictAll();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sources: { runsDir: 'degraded', inbox: 'healthy' }, inbox: [entry('2026-10-31 00:13', 'go')], events: [] })));
   const degraded = render(<FleetSteeringPane {...props} />);
@@ -85,9 +85,11 @@ it('does not fetch while hidden and polls every 10 s while visible', async () =>
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetSteeringPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(fetcher).toHaveBeenCalledTimes(2);
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(fetcher).toHaveBeenCalledTimes(3);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(fetcher).toHaveBeenCalledTimes(6);
 });

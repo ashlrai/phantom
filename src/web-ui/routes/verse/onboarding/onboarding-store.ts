@@ -104,8 +104,12 @@ export function isFirstRun(record: Pick<OnboardingRecord, 'completedAt' | 'dismi
   return record.completedAt === null && record.dismissedAt === null;
 }
 
+export function releaseKey(version: string | null): string | null {
+  return version?.match(/^(\d+\.\d+)(?:\.|$)/)?.[1] ?? null;
+}
+
 export function whatsNewPending(record: OnboardingRecord, appVersion: string): boolean {
-  return !isFirstRun(record) && record.seenRelease !== appVersion;
+  return !isFirstRun(record) && releaseKey(record.seenRelease) !== releaseKey(appVersion);
 }
 
 export function markReleaseSeen(appVersion: string): void {

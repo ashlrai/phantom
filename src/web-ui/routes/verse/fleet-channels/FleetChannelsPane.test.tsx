@@ -34,6 +34,21 @@ it('shows the channel board and opens the shared inbox', async () => {
   expect(openPane).toHaveBeenCalledWith('fleet-inbox');
 });
 
+it('shows when Mason was last heard on each channel and whether a pass read it', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(fleetRunsFixture({
+    inbox: [
+      { at: '2026-10-31 00:47', source: 'Telegram', text: 'fake telegram order' },
+      { at: '2026-10-31 00:59', source: 'email', text: 'fake email order' },
+    ],
+  }))));
+  render(<FleetChannelsPane {...props} />);
+  const rows = within(await screen.findByRole('list', { name: 'Channels' })).getAllByRole('listitem');
+  // The fixture's leader is 60 s old at 05:00Z: the newest pass ran at 04:59Z (00:59 ET).
+  expect(rows.find(row => row.textContent?.includes('Telegram'))).toHaveTextContent('last from you 13m ago · read by the 00:59 pass');
+  expect(rows.find(row => row.textContent?.includes('Email'))).toHaveTextContent('last from you 1m ago · waiting for a leader pass');
+  expect(rows.find(row => row.textContent?.includes('Mobile'))).toHaveTextContent('nothing yet');
+});
+
 it('shows a degraded source and refresh failures with cached data', async () => {
   const data = fixture();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...data, sources: { ...data.sources, inbox: 'degraded' } })));
