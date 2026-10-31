@@ -112,6 +112,15 @@ export function whatsNewPending(record: OnboardingRecord, appVersion: string): b
   return !isFirstRun(record) && releaseKey(record.seenRelease) !== releaseKey(appVersion);
 }
 
+/** The inverse of `whatsNewPending` for the running build — pure, so the
+ * Settings row can word itself ("Seen. / Not dismissed yet.") without
+ * duplicating the release-key comparison. On an unanswered first run the
+ * card is neither pending nor seen-able, and this still reports "seen":
+ * the row's button is disabled then anyway (the tour is on screen). */
+export function whatsNewSeen(record: OnboardingRecord, appVersion: string): boolean {
+  return !whatsNewPending(record, appVersion);
+}
+
 export function markReleaseSeen(appVersion: string): void {
   patch({ seenRelease: appVersion }, true);
 }
@@ -176,6 +185,14 @@ export function completeOnboarding(): void {
  * the replay does not re-arm the first run. */
 export function replayOnboarding(): void {
   patch({ open: true, expanded: true, step: 0 });
+}
+
+/** Settings → "Show what's new again". Forgets the acknowledged release so
+ * `whatsNewPending` is true again and the card comes back. The tour is never
+ * opened by this — if it is on screen it collapses back to the chip — and
+ * the stored answer is kept, so this cannot re-arm the first run. */
+export function replayWhatsNew(): void {
+  patch({ seenRelease: null, expanded: false }, true);
 }
 
 /** Test hygiene — forgets the stored answer and re-arms the first run (as the chip). */
