@@ -18,3 +18,7 @@
 .paused { fill: var(--text-tertiary); opacity: .12; }
 .held { fill: var(--status-unknown-solid); opacity: .2; }
 .muted { margin: 0; color: var(--text-tertiary); }
+
+.laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.laneButton:hover { text-decoration: underline; }
+.laneButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
