@@ -24,6 +24,7 @@ import type { EffectivePolicy } from '../../../../core/authority/types.js';
 import type { StatTileDelta } from '../../../components/charts/StatTile.js';
 import { asSentence, localTimes, parseLegacyReason } from '../fleet/why-seat-model.js';
 import { formatDateTime } from '../../../components/format/locale-format.js';
+import { isClaudeProvider, visibleWindows } from '../usage/provider-windows.js';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -103,6 +104,7 @@ export function meteredCost(d: FleetHistoryDay): number | null {
 const signedInt = (v: number) => `${v > 0 ? '+' : ''}${formatMetric(v)}`;
 const signedPts = (v: number) => `${v > 0 ? '+' : ''}${formatMetric(v)}`;
 const signedUsd = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${formatMetricUsd(Math.abs(v))}`;
+const signedSpan = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${formatSpan(Math.abs(v))}`;
 
 /** "2h 14m", "38m", "3d 2h". */
 export function formatSpan(ms: number | null): string {
@@ -156,6 +158,12 @@ export function buildKpis({ fleet, history, learning, policy }: KpiInputs): Kpi[
   const activeExp = active?.experimentId ? learning?.experiments.find((e) => e.id === active.experimentId) ?? null : null;
   const lift = activeExp?.lift ?? null;
 
+  // Cycle time — the END-TO-END dispatch → merge median (the whole loop, not
+  // the proposal → merge tail), plus the prior week's median as the "before".
+  const cycleNow = fleet?.summary.dispatchToMergeP50Ms7d ?? null;
+  const cyclePrior = fleet?.summary.dispatchToMergeP50MsPrior7d ?? null;
+  const cycleDelta = cycleNow !== null && cyclePrior !== null ? cycleNow - cyclePrior : null;
+
   return [
     {
       id: 'merged',
@@ -178,11 +186,14 @@ export function buildKpis({ fleet, history, learning, policy }: KpiInputs): Kpi[
     {
       id: 'cycle',
       label: 'Cycle time',
-      value: formatSpan(fleet?.summary.cycleTimeP50Ms7d ?? null),
-      delta: null,
+      value: formatSpan(fleet?.summary.dispatchToMergeP50Ms7d ?? null),
+      // The "before and after" reading: median dispatch → merge this week
+      // against the prior week; null whenever either side is unknown — a
+      // half-known comparison would be a judgement the data cannot back.
+      delta: cycleDelta === null ? null : { value: cycleDelta, versus: 'vs prior 7d', goodWhenPositive: false, format: signedSpan },
       trend: undefined,
-      trendLabel: 'Cycle time',
-      caption: 'median, proposal → merge, 7d',
+      trendLabel: 'Dispatch → merge cycle time',
+      caption: 'median dispatch → merge, 7d',
     },
     {
       id: 'spend',
@@ -223,6 +234,7 @@ export function kpisSayNothing({ fleet, history, learning }: Pick<KpiInputs, 'fl
     (mergedPrior ?? 0) === 0 &&
     (fleet?.summary.postMergeGreenPct7d ?? null) === null &&
     (fleet?.summary.cycleTimeP50Ms7d ?? null) === null &&
+    (fleet?.summary.dispatchToMergeP50Ms7d ?? null) === null &&
     (windowSum(days, meteredCost, 7) ?? 0) === 0 &&
     lift === null
   );
@@ -572,7 +584,7 @@ export function bindingResetText(
   nowMs: number,
 ): string | null {
   if (!seat?.capacity || binding === null || engine === 'local') return null;
-  for (const w of seat.capacity.windows) {
+  for (const w of visibleWindows(engine, seat.capacity.windows)) {
     const text = typeof w.resetDescription === 'string' ? w.resetDescription.trim() : '';
     if (text.length === 0) continue;
     if (classifyWindow(engine, { id: w.id, usedPercent: w.usedPercent, resetsAt: w.resetsAt, resetDescription: w.resetDescription, limitReached: w.limitReached }, nowMs) === binding) return text;
@@ -825,28 +837,31 @@ export function seatBurns(
       const engine = i?.engine ?? 'local';
       // API dollars have no subscription percentage or reset burn-down.
       if (engine === 'claude-api') return null;
-      const windowMs = h.bindingWindow ? WINDOW_MS[h.bindingWindow] : null;
+      // Anthropic lifted Claude's 5-hour limit: a server still reporting the
+      // session window as binding describes a window that no longer exists.
+      const bindingWindow = isClaudeProvider(engine) && h.bindingWindow === 'session' ? 'weekly' : h.bindingWindow;
+      const windowMs = bindingWindow ? WINDOW_MS[bindingWindow] : null;
       const reasons = seatReasons(h.reasons);
       const resetText =
-        bindingResetText(roster.get(h.seatId), engine, h.bindingWindow, nowMs) ??
-        (h.bindingWindow === null || engine === 'local' ? null : reasonResetText(reasons));
+        bindingResetText(roster.get(h.seatId), engine, bindingWindow, nowMs) ??
+        (bindingWindow === null || engine === 'local' ? null : reasonResetText(reasons));
       // A reset is only placed on a chart that has a window to put before it.
       const reset = windowMs === null ? null : bindingReset(h.resetAt, resetText, windowMs, nowMs);
       const start = reset && windowMs !== null ? reset.at - windowMs : null;
-      const key = h.bindingWindow ? seriesKey(h.seatId, h.bindingWindow) : null;
+      const key = bindingWindow ? seriesKey(h.seatId, bindingWindow) : null;
       const readings = key ? history[key] ?? [] : [];
       return {
         seatId: h.seatId,
         label: i?.label ?? h.seatId,
         engine,
-        window: h.bindingWindow,
+        window: bindingWindow,
         points: readings.filter((r) => start === null || r.t >= start).map((r) => ({ t: r.t, remaining: Math.max(0, 100 - r.used) })),
         start,
         resetAt: reset?.at ?? null,
         resetFrom: reset?.from ?? null,
         resetText,
         reservePercent: view.effective[h.seatId]?.reservePercent ?? 0,
-        line: bindingLine(h, view.effective[h.seatId]),
+        line: bindingLine({ ...h, bindingWindow }, view.effective[h.seatId]),
         enabled: view.effective[h.seatId]?.enabled ?? false,
         free: i?.free ?? false,
         eligible: h.eligibleForAutonomy,

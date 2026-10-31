@@ -60,7 +60,7 @@ export interface BudgetSeatRow {
   /** Remaining server reasons, verbatim (instants in local time). */
   more: string[];
   bars: BudgetBar[];
-  /** Whether the 5-hour ceiling control applies (subscription seats with a short window). */
+  /** Whether the 5-hour ceiling control applies (Codex subscription seats; Claude's 5-hour limit is gone). */
   hasSessionCeiling: boolean;
 }
 
@@ -114,7 +114,9 @@ function barsFor(engine: CapacityEngine, free: boolean, policy: SeatBudgetPolicy
         : `Weekly window ${percentText(used)} used; autonomy stops at ${round(reserveCeiling)}%, ${round(policy.reservePercent)}% kept for you.`,
     });
   }
-  if (h.sessionUsedPercent !== null || engine === 'claude') {
+  // Anthropic removed Claude's 5-hour limit — a stale session figure in the
+  // headroom read is not a window to draw. Codex still has one.
+  if (engine !== 'claude' && h.sessionUsedPercent !== null) {
     const used = h.sessionUsedPercent;
     const sessionCeiling = policy.maxSessionWindowPercent ?? 100;
     const ceiling = hasWeekly ? sessionCeiling : Math.min(sessionCeiling, reserveCeiling);
@@ -150,7 +152,7 @@ export function buildBudgetRows(view: BudgetView, nowMs: number = Date.now()): B
       why: reasons[0] ?? (info.free ? 'Local model — free.' : 'No reading yet.'),
       more: reasons.slice(1),
       bars: barsFor(info.engine, info.free, policy, headroom),
-      hasSessionCeiling: !info.free && (info.engine === 'claude' || info.engine === 'codex'),
+      hasSessionCeiling: !info.free && info.engine === 'codex',
     };
   });
 }

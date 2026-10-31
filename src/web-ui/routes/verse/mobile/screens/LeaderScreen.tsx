@@ -43,6 +43,9 @@ import { OPERATOR_DIRECTIVE_MAX, type DirectiveChip, type LeaderThreadKind, type
 import { isApprovable } from '../../mind/leader-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { sinceText } from '../connectivity.js';
+import { homeRunsQuery } from '../home-runs-query.js';
+import { inboxLinesFor } from '../leader-inbox-lines.js';
+import { LeaderPasses } from '../LeaderPasses.js';
 import { MicButton } from '../MicButton.js';
 import { MobileComposer } from '../MobileComposer.js';
 import { runMobileAction } from '../mobile-actions.js';
@@ -160,6 +163,7 @@ function Directives({ chips, loading, reason, canAct, offline, onRetire, onAdd }
 
 interface ThreadProps {
   rows: ThreadRow[];
+  inboxLabels: ReadonlyMap<string, string>;
   answered: ReadonlyMap<string, LeaderThreadMessage>;
   byId: ReadonlyMap<string, LeaderThreadMessage>;
   leaderActions: readonly LeaderAction[] | null;
@@ -178,6 +182,7 @@ function Bubble({ message, ctx }: { message: LeaderThreadMessage; ctx: ThreadPro
   const approvables = approvablesOf(message, ctx.leaderActions);
   return (
     <div className={styles.bubble} data-from={message.from} data-answering={ctx.answeringId === message.id ? '' : undefined}>
+      {ctx.inboxLabels.has(message.id) ? <><Badge tone="neutral">{ctx.inboxLabels.get(message.id)}</Badge><time dateTime={message.at}>{clockTime(message.at)}</time></> : null}
       {badge ? <Badge tone={badge.tone}>{badge.label}</Badge> : null}
       {question ? <span className={styles.replyTo}>Re: {previewText(question.text, 90)}</span> : null}
       {/* Untrusted text: plain, line breaks kept, never HTML. */}
@@ -243,6 +248,9 @@ export function LeaderScreen() {
   const { permissions, reachability } = useMobile();
   const thread = useQuery(leaderThreadQuery, { freshMs: 5_000 });
   const refetchThread = useRefetch(leaderThreadQuery);
+  const runs = useQuery(homeRunsQuery, { freshMs: 5_000 });
+  const refetchRuns = useRefetch(homeRunsQuery);
+  usePollWhileVisible(refetchRuns, LEADER_THREAD_POLL_MS);
   const directives = useQuery(leaderDirectivesQuery, { freshMs: 30_000 });
   const refetchDirectives = useRefetch(leaderDirectivesQuery);
   const leader = useQuery(leaderQuery, { freshMs: 30_000 });
@@ -278,7 +286,17 @@ export function LeaderScreen() {
   const messages = useMemo(() => entries.flatMap((e) => (e.type === 'message' ? [e.message] : [])), [entries]);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const answered = useMemo(() => answeredQuestions(messages), [messages]);
-  const rows = useMemo(() => groupThread(entries), [entries]);
+  const inboxLines = useMemo(() => inboxLinesFor(runs.data, messages, Date.now()), [runs.data, messages]);
+  const inboxLabels = useMemo(() => new Map(inboxLines.map(line => [line.key, line.label])), [inboxLines]);
+  const conversation = useMemo(() => [
+    ...inboxLines.map(line => {
+      const at = new Date(line.at).toISOString();
+      return { type: 'message' as const, key: line.key, at,
+        message: { id: line.key, at, from: 'mason' as const, channel: 'verse' as const, kind: 'message' as const, text: line.text } };
+    }),
+    ...entries,
+  ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)), [entries, inboxLines]);
+  const rows = useMemo(() => groupThread(conversation), [conversation]);
   const leaderActions = leader.data?.value?.actions ?? null;
 
   // A send's echo is dropped once a server read carries it.
@@ -289,7 +307,7 @@ export function LeaderScreen() {
   }, [page, received]);
 
   // Follow the conversation to its newest message (not when older pages load above).
-  const lastKey = entries.length ? entries[entries.length - 1]!.key : null;
+  const lastKey = conversation.length ? conversation[conversation.length - 1]!.key : null;
   useLayoutEffect(() => {
     if (lastKey) end.current?.scrollIntoView?.({ block: 'end' });
   }, [lastKey]);
@@ -299,6 +317,7 @@ export function LeaderScreen() {
     () =>
       Promise.all([
         refreshThread(),
+        refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
         refetchQuery(leaderDirectivesQuery.key, () => leaderDirectivesQuery.fetch(), true),
         refetchQuery(leaderQuery.key, () => leaderQuery.fetch(), true),
       ]),
@@ -416,7 +435,7 @@ export function LeaderScreen() {
     body = <SkeletonList rows={4} label="Loading the conversation" />;
   } else if (unavailable && entries.length === 0) {
     body = <ErrorState title="The conversation isn’t available" reason={read.reason ?? 'The Leader conversation did not answer.'} onRetry={() => void refreshThread()} />;
-  } else if (entries.length === 0) {
+  } else if (conversation.length === 0) {
     body = (
       <EmptyState
         title="No conversation yet — say hello"
@@ -435,6 +454,7 @@ export function LeaderScreen() {
         ) : null}
         <Thread
           rows={rows}
+          inboxLabels={inboxLabels}
           answered={answered}
           byId={byId}
           leaderActions={leaderActions}
@@ -505,6 +525,7 @@ export function LeaderScreen() {
         />
       )}
     >
+      <LeaderPasses />
       {reachability === 'offline' ? (
         <Banner>This phone is offline. Showing the last conversation ({sinceText(thread.updatedAt).toLowerCase()}).</Banner>
       ) : reachability === 'unreachable' ? (

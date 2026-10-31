@@ -36,7 +36,7 @@ export function formatWholePercent(fraction: number | null | undefined): string 
  * as "spent"). `used` is 0–100 and is clamped; not a number is "—".
  *
  * Every place that prints a used percent goes through this — a bar reading
- * "99%" beside a summary reading "100% of 5-hour window used" is one seat
+ * "99%" beside a summary reading "100% of weekly window used" is one seat
  * described two ways. Bar WIDTHS stay numeric; only the words use this.
  */
 export function percentText(used: number): string {
@@ -140,11 +140,11 @@ export function formatDuration(ms: number): string {
 }
 
 /** Compact age for dense table cells: "42s", "7m", "3h", "5d". */
-export function formatAge(iso: string | null | undefined): string {
+export function formatAge(iso: string | null | undefined, nowMs: number = Date.now()): string {
   if (!iso) return UNKNOWN;
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return UNKNOWN;
-  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  const seconds = Math.max(0, Math.round((nowMs - ms) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
@@ -153,8 +153,8 @@ export function formatAge(iso: string | null | undefined): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-export function formatRelative(iso: string | null | undefined): string {
-  const age = formatAge(iso);
+export function formatRelative(iso: string | null | undefined, nowMs: number = Date.now()): string {
+  const age = formatAge(iso, nowMs);
   return age === UNKNOWN ? UNKNOWN : `${age} ago`;
 }
 

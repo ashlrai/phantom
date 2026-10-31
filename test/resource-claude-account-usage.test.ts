@@ -79,7 +79,11 @@ describe('display-only native usage parser', () => {
     { result: TEXT.replace(RESET, 'Sep 11 at 99pm (America/New_York)') },
     { result: TEXT.replace('2% used', '2% used\u001b[31m') },
   ])('rejects unsupported, incomplete or inference-bearing payload %#', (patch) => {
-    expect(parseClaudeNativeUsage(JSON.stringify(envelope(patch)))).toBeNull();
+    const parsed = parseClaudeNativeUsage(JSON.stringify(envelope(patch)));
+    // Oct 31 order: Claude removed this account's session limit; weekly-only is complete.
+    if (patch.result === TEXT.replace('Current session: 0% used\n', '')) {
+      expect(parsed).toEqual(parseClaudeNativeUsage(JSON.stringify(envelope()))!.slice(1));
+    } else expect(parsed).toBeNull();
   });
   it.each(['not json', 'null', '[]', 'x'.repeat(32769)])('rejects malformed or oversized payload %#', (raw) => {
     expect(parseClaudeNativeUsage(raw)).toBeNull();
@@ -334,7 +338,12 @@ describe('current structured quota-only usage', () => {
     ['expired reset', (f: any[]) => { f[1].usage_report.rate_limits.limits[1].resets_at = OBSERVED; }],
   ])('refuses %s without invented snapshot', (_name, mutate) => {
     const frames = usageFrames(); mutate(frames);
-    expect(parseClaudeNativeUsageStream(stream(frames), OBSERVED)).toBeNull();
+    const parsed = parseClaudeNativeUsageStream(stream(frames), OBSERVED);
+    // Oct 31 order: Claude removed this account's session limit; weekly-only is complete.
+    if (_name === 'missing session meter') {
+      expect(parsed).toEqual({ ...parseClaudeNativeUsageStream(stream(), OBSERVED),
+        windows: parseClaudeNativeUsageStream(stream(), OBSERVED)!.windows.slice(1) });
+    } else expect(parsed).toBeNull();
   });
   it.each([
     ['2028-02-29T12:00:00.123456Z', '2028-02-29T12:00:00.123Z'],

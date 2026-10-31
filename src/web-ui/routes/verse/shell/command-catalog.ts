@@ -45,6 +45,8 @@ export * from './command-keys.js';
 /** Result groups, in the order the palette shows them (SPEC-310C §1). */
 export const PALETTE_GROUPS = [
   { id: 'needs-you', label: 'Needs you' },
+  { id: 'panes', label: 'Panes' },
+  { id: 'workers', label: 'Workers' },
   { id: 'chats', label: 'Chats' },
   { id: 'actions', label: 'Actions' },
   { id: 'go-to', label: 'Go to' },
@@ -53,14 +55,11 @@ export const PALETTE_GROUPS = [
 ] as const;
 export type PaletteGroupId = (typeof PALETTE_GROUPS)[number]['id'];
 
-/** A leading `>` limits results to actions; `#` to chats. */
-export const PALETTE_PREFIXES: Readonly<Record<'>' | '#', PaletteGroupId>> = { '>': 'actions', '#': 'chats' };
+/** A leading `>` limits results to actions; `#` to chats; `@` to workers. */
+export const PALETTE_PREFIXES: Readonly<Record<'>' | '#' | '@', PaletteGroupId>> = { '>': 'actions', '#': 'chats', '@': 'workers' };
 
 /** An empty query shows the last this-many actions run. */
 export const PALETTE_RECENT_LIMIT = 5;
-
-/** The palette opens in under this (it lives in the shell chunk). */
-export const PALETTE_OPEN_BUDGET_MS = 50;
 
 // ===========================================================================
 // Commands
@@ -350,6 +349,8 @@ export const WORKBENCH_COMMANDS = [
   // Served by the shell (run-command.ts → leader/leader-focus.ts): it goes to
   // Mind and the conversation panel takes the ask once its chunk mounts.
   { id: 'leader.message', title: 'Message the Leader…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'ask', 'chat', 'strategy', 'memo', 'talk', 'telegram'] },
+  { id: 'fleet.digest', title: 'Fleet: copy live digest', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['status', 'digest', 'copy', 'telegram', 'paste', 'fleet'] },
+  { ...bind('fleet.interject'), title: 'Tell the fleet leaders…', group: 'actions', section: 'App', keywords: ['interject', 'inbox', 'leaders', 'fleet', 'prompt', 'steer', 'say'] },
   { id: 'leader.directive', title: 'Add Leader directive…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'directive', 'instruction', 'rule', 'standing order'] },
   // ── The repo wiki (3.15) ────────────────────────────────────────────────
   // Served by the shell (run-command.ts → wiki/wiki-focus.ts): it opens the
