@@ -7,6 +7,7 @@
 .panel th, .panel td { padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
 .job { font: inherit; font-family: var(--font-mono); color: var(--text-primary); background: transparent; border: 0; cursor: pointer; text-decoration: underline; }
 .job:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-3); }
 .facts div { display: flex; gap: var(--space-3); margin-block: var(--space-2); overflow-wrap: anywhere; }
 .facts dd { margin: 0; }
 .log { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); }
