@@ -11,6 +11,7 @@ export interface ResourceLaneRow {
   tokensPerHour6h: number | null;
   projectedExhaustion: string | null;
   source: string | null;
+  deadSignal?: { lane: string; lastFinishes: number; emptyFailures: number; state: 'ok' | 'suspect' | 'dead' } | null;
 }
 export interface ApiSpendSummary {
   rowsToday: number;
@@ -25,7 +26,8 @@ export interface ApiSpendSummary {
 export interface ResourceLedgerV1 {
   v: 1;
   generatedAt: string;
-  sources: Record<'status' | 'apiSpend', 'healthy' | 'missing' | 'degraded'>;
+  sources: Record<'status' | 'apiSpend', 'healthy' | 'missing' | 'degraded'> & { jobs?: 'healthy' | 'missing' | 'degraded' };
+  jobsMalformedRows?: number | null;
   asOf: string | null;
   lanes: ResourceLaneRow[];
   apiSpend: ApiSpendSummary | null;
@@ -38,11 +40,12 @@ const nullableString = (v: unknown): boolean => v === null || typeof v === 'stri
 const date = (v: unknown): boolean => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const nullableDate = (v: unknown): boolean => v === null || date(v);
 const sourceState = (v: unknown): boolean => v === 'healthy' || v === 'missing' || v === 'degraded';
+const signal = (v: unknown, lane: string): boolean => v === undefined || v === null || (record(v) && v.lane === lane && number(v.lastFinishes) && Number.isInteger(v.lastFinishes) && v.lastFinishes <= 8 && number(v.emptyFailures) && Number.isInteger(v.emptyFailures) && v.emptyFailures <= v.lastFinishes && (v.state === 'ok' || v.state === 'suspect' || v.state === 'dead'));
 const laneRow = (v: unknown): boolean => record(v) && typeof v.lane === 'string' &&
   nullableNumber(v.running) && nullableNumber(v.target) && (v.held === null || typeof v.held === 'boolean') &&
   (v.window === 'weekly' || v.window === 'credits' || v.window === 'none') && nullableNumber(v.usedPct) &&
   nullableNumber(v.creditsRemaining) && nullableDate(v.resetAt) && nullableNumber(v.burnPctPerHour) &&
-  nullableNumber(v.tokensPerHour6h) && nullableDate(v.projectedExhaustion) && nullableString(v.source);
+  nullableNumber(v.tokensPerHour6h) && nullableDate(v.projectedExhaustion) && nullableString(v.source) && signal(v.deadSignal, v.lane);
 const spend = (v: unknown): boolean => record(v) && number(v.rowsToday) && number(v.errorsToday) &&
   number(v.tokensOutToday) && number(v.tokensInToday) && nullableNumber(v.usdToday) && nullableNumber(v.usdWeek) &&
   nullableDate(v.lastAt) && Array.isArray(v.models) && v.models.every((m: unknown) => typeof m === 'string');
@@ -50,7 +53,7 @@ const spend = (v: unknown): boolean => record(v) && number(v.rowsToday) && numbe
 /** Reject incompatible or malformed responses rather than displaying invented readings. */
 export function isResourceLedger(v: unknown): v is ResourceLedgerV1 {
   return record(v) && v.v === 1 && date(v.generatedAt) && record(v.sources) && sourceState(v.sources.status) &&
-    sourceState(v.sources.apiSpend) && nullableDate(v.asOf) && Array.isArray(v.lanes) && v.lanes.every(laneRow) &&
+    sourceState(v.sources.apiSpend) && (v.sources.jobs === undefined || sourceState(v.sources.jobs)) && (v.jobsMalformedRows === undefined || nullableNumber(v.jobsMalformedRows)) && nullableDate(v.asOf) && Array.isArray(v.lanes) && v.lanes.every(laneRow) &&
     (v.apiSpend === null || spend(v.apiSpend));
 }
 
@@ -79,6 +82,7 @@ export function ledgerRows(data: ResourceLedgerV1, nowMs: number) {
     runsOut: future(row.projectedExhaustion, nowMs, 'runs out'),
     running: row.running !== null && row.target !== null ? `${grouped(row.running)}/${grouped(row.target)}` : null,
     held: row.held === true,
+    deadSignal: row.deadSignal,
     source: row.source,
     tone: row.usedPct !== null && row.usedPct >= 90 ? 'bad' as const : row.usedPct !== null && row.usedPct >= 70 ? 'warn' as const : 'good' as const,
     caption: /claude/i.test(row.lane) ? 'Weekly window only. No 5-hour limit.' : null,
