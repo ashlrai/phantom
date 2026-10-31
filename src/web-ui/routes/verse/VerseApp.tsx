@@ -58,6 +58,8 @@ import { VERSE_ACTIVITY_SEEN_PATH, type VerseActivityCompletion } from '../../..
 import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
+import { gearUpdateSpoken } from './shell/gear-update-dot.js';
+import { useSelfUpdateBadge } from './shell/self-update-badge.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
@@ -188,6 +190,7 @@ const Palette = preloadedLazy(() => importPalette().then((m) => m.CommandPalette
 const Drawer = preloadedLazy(() => importDrawer().then((m) => m.NeedsYouDrawer), false);
 const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsOverlay), false);
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
+const GearUpdateDot = lazy(() => import('./shell/GearUpdateDot.js').then((m) => ({ default: m.GearUpdateDot })));
 const ConsoleBell = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleBell })));
 const ConsoleNotificationCenter = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleNotificationCenter })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
@@ -318,6 +321,7 @@ export function VerseApp() {
   const theme = useTheme();
   const toast = useToast();
   const activity = useActivity();
+  const updateLabel = useSelfUpdateBadge()?.label ?? null;
   const { compact } = useViewport();
   const platform = useMemo(() => detectKeyPlatform(), []);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -585,7 +589,7 @@ export function VerseApp() {
               ref={gearRef}
               type="button"
               className={styles.railButton}
-              aria-label={gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}
+              aria-label={`${gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}${gearUpdateSpoken(updateLabel)}`}
               aria-haspopup="menu"
               aria-expanded={trayOpen}
               aria-current={gearPage ? 'page' : undefined}
@@ -593,7 +597,7 @@ export function VerseApp() {
               data-active={gearPage ? true : undefined}
               onClick={() => setTrayOpen((v) => !v)}
             >
-              <span className={styles.railIcon}><GearIcon /></span>
+              <span className={styles.railIcon}><GearIcon /><Suspense fallback={null}><GearUpdateDot /></Suspense></span>
               {expanded || compact ? <span className={styles.railLabel}>{compact ? 'More' : 'Settings'}</span> : null}
             </button>
           </Tooltip>

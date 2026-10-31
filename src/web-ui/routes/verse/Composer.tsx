@@ -54,7 +54,7 @@ import type { VerseEffort, VersePermissionMode } from '../../../core/verse/workb
 import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
 import { refetchQuery } from '../../data/cache.js';
-import { postFleetInterjection } from './composer/fleet-interject.js';
+import { draftAfterSend, fleetSendStatus, postFleetInterjection } from './composer/fleet-interject.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
 import { opsRunsQuery } from './ops/ops-runs-queries.js';
@@ -773,8 +773,8 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setFleetStatus(null);
       try {
         const ack = await postFleetInterjection(fleet.text);
-        setDraft((current) => current === text ? '' : current);
-        setFleetStatus({ text: `Sent to the leaders · ${ack.at.slice(-5)}`, error: false });
+        setDraft((current) => draftAfterSend(ack.outcome, current, text));
+        setFleetStatus({ text: fleetSendStatus(ack), error: false });
       } catch (error) {
         setFleetStatus({ text: readFailureReason(error), error: true });
       } finally {
