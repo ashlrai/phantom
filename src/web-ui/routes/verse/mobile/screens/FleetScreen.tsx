@@ -33,6 +33,7 @@ import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
@@ -40,7 +41,7 @@ import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileSwitches } from '../MobileSwitches.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, ErrorState, Row, Section, ui, type RowProps, type Tone } from '../ui-parts.js';
 import styles from './FleetScreen.module.css';
 
 const QueueSection = lazy(() => import('../QueueSection.js').then(({ QueueSection }) => ({ default: QueueSection })));
@@ -134,6 +135,14 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span className={styles.statLabel}>{label}</span>
     </div>
   );
+}
+
+function DecisionRow({ repo, prNumber, ...props }: RowProps & { repo: string; prNumber: number | null }) {
+  const url = decisionPrUrl(repo, prNumber);
+  const row = <Row {...props} />;
+  return url
+    ? <a className={styles.decisionRow} href={url} target="_blank" rel="noopener noreferrer">{row}</a>
+    : <div className={styles.decisionRow}>{row}</div>;
 }
 
 export function FleetScreen() {
@@ -255,6 +264,7 @@ export function FleetScreen() {
                 title={LANE_LABEL[lane.lane] ?? lane.lane}
                 subtitle={lane.capReason ?? undefined}
                 trailing={lane.slots === 0 ? 'off' : `${lane.busy} of ${lane.slots} busy`}
+                onClick={() => navigate({ screen: 'runs' })}
               />
             ))}
           </div>
@@ -346,8 +356,10 @@ export function FleetScreen() {
     ) : (
       <div className={ui.group}>
         {decisionList.slice(0, DECISION_ROWS).map((d) => (
-          <Row
+          <DecisionRow
             key={`${d.proposalId}-${d.at}`}
+            repo={d.repo}
+            prNumber={d.prNumber}
             leading={<Badge tone={toneOf(OUTCOME_TONE[d.outcome])}>{DECISION_WORD[d.outcome]}</Badge>}
             title={d.prNumber !== null ? `${repoShort(d.repo)} #${d.prNumber}` : repoShort(d.repo)}
             subtitle={d.why}
@@ -367,8 +379,10 @@ export function FleetScreen() {
               const o = RUN_OUTCOME[r.outcome!]!;
               const where = r.prNumber !== null ? `${repoShort(r.repo)} #${r.prNumber}` : repoShort(r.repo);
               return (
-                <Row
+                <DecisionRow
                   key={r.id}
+                  repo={r.repo}
+                  prNumber={r.prNumber}
                   leading={<Badge tone={o.tone}>{o.word}</Badge>}
                   title={r.title}
                   subtitle={r.hold?.reason ? `${where} · ${r.hold.reason}` : where}
