@@ -45,6 +45,7 @@ export * from './command-keys.js';
 /** Result groups, in the order the palette shows them (SPEC-310C §1). */
 export const PALETTE_GROUPS = [
   { id: 'needs-you', label: 'Needs you' },
+  { id: 'panes', label: 'Panes' },
   { id: 'workers', label: 'Workers' },
   { id: 'chats', label: 'Chats' },
   { id: 'actions', label: 'Actions' },

@@ -24,6 +24,7 @@ import type { EffectivePolicy } from '../../../../core/authority/types.js';
 import type { StatTileDelta } from '../../../components/charts/StatTile.js';
 import { asSentence, localTimes, parseLegacyReason } from '../fleet/why-seat-model.js';
 import { formatDateTime } from '../../../components/format/locale-format.js';
+import { isClaudeProvider, visibleWindows } from '../usage/provider-windows.js';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -583,7 +584,7 @@ export function bindingResetText(
   nowMs: number,
 ): string | null {
   if (!seat?.capacity || binding === null || engine === 'local') return null;
-  for (const w of seat.capacity.windows) {
+  for (const w of visibleWindows(engine, seat.capacity.windows)) {
     const text = typeof w.resetDescription === 'string' ? w.resetDescription.trim() : '';
     if (text.length === 0) continue;
     if (classifyWindow(engine, { id: w.id, usedPercent: w.usedPercent, resetsAt: w.resetsAt, resetDescription: w.resetDescription, limitReached: w.limitReached }, nowMs) === binding) return text;
@@ -836,28 +837,31 @@ export function seatBurns(
       const engine = i?.engine ?? 'local';
       // API dollars have no subscription percentage or reset burn-down.
       if (engine === 'claude-api') return null;
-      const windowMs = h.bindingWindow ? WINDOW_MS[h.bindingWindow] : null;
+      // Anthropic lifted Claude's 5-hour limit: a server still reporting the
+      // session window as binding describes a window that no longer exists.
+      const bindingWindow = isClaudeProvider(engine) && h.bindingWindow === 'session' ? 'weekly' : h.bindingWindow;
+      const windowMs = bindingWindow ? WINDOW_MS[bindingWindow] : null;
       const reasons = seatReasons(h.reasons);
       const resetText =
-        bindingResetText(roster.get(h.seatId), engine, h.bindingWindow, nowMs) ??
-        (h.bindingWindow === null || engine === 'local' ? null : reasonResetText(reasons));
+        bindingResetText(roster.get(h.seatId), engine, bindingWindow, nowMs) ??
+        (bindingWindow === null || engine === 'local' ? null : reasonResetText(reasons));
       // A reset is only placed on a chart that has a window to put before it.
       const reset = windowMs === null ? null : bindingReset(h.resetAt, resetText, windowMs, nowMs);
       const start = reset && windowMs !== null ? reset.at - windowMs : null;
-      const key = h.bindingWindow ? seriesKey(h.seatId, h.bindingWindow) : null;
+      const key = bindingWindow ? seriesKey(h.seatId, bindingWindow) : null;
       const readings = key ? history[key] ?? [] : [];
       return {
         seatId: h.seatId,
         label: i?.label ?? h.seatId,
         engine,
-        window: h.bindingWindow,
+        window: bindingWindow,
         points: readings.filter((r) => start === null || r.t >= start).map((r) => ({ t: r.t, remaining: Math.max(0, 100 - r.used) })),
         start,
         resetAt: reset?.at ?? null,
         resetFrom: reset?.from ?? null,
         resetText,
         reservePercent: view.effective[h.seatId]?.reservePercent ?? 0,
-        line: bindingLine(h, view.effective[h.seatId]),
+        line: bindingLine({ ...h, bindingWindow }, view.effective[h.seatId]),
         enabled: view.effective[h.seatId]?.enabled ?? false,
         free: i?.free ?? false,
         eligible: h.eligibleForAutonomy,
