@@ -35,6 +35,7 @@ import {
 } from './proposal-mutation-lock.js';
 import { assertMayMutate, listEnrolled } from '../sandbox/policy.js';
 import {
+  removeTempWorktree,
   releaseTempWorktreeOwner,
   releaseTmpScratchOwner,
   writeTempWorktreeOwner,
@@ -225,15 +226,13 @@ async function applyPatch(
       releaseTmpScratchOwner(patchFile);
     }
 
-    // Always remove the worktree (removes the tmpWorktreeDir checkout).
-    // The branch itself remains in the repo — that's the desired output.
-    gitTry(repo, ['worktree', 'remove', '--force', tmpWorktreeDir]);
-    gitTry(repo, ['worktree', 'prune']);
-    releaseTempWorktreeOwner(tmpWorktreeDir);
+    // Plain removal reclaims ignored build output while preserving FIXUPs and
+    // unfinished changes. The published proposal branch remains the output.
+    const removed = removeTempWorktree(repo, tmpWorktreeDir);
 
     // If apply/commit failed, also delete the scratch branch to leave no
     // dangling refs. The branch is in our namespace so this is safe.
-    if (applyErr && branch.startsWith(PROPOSAL_BRANCH_PREFIX)) {
+    if (removed && applyErr && branch.startsWith(PROPOSAL_BRANCH_PREFIX)) {
       gitTry(repo, ['branch', '-D', branch]);
     }
   }

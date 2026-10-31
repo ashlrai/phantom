@@ -113,6 +113,8 @@ export interface SeatSubscriptionView {
    * — and must not be dressed in meters that imply otherwise.
    */
   kind: 'subscription' | 'local';
+  /** Claude may report weekly quotas without a session cap; empty readings stay unknown. */
+  sessionCap: 'none' | 'present' | 'unknown';
   /** Plan tier as the provider names it: "max", "pro", "SuperGrok". */
   plan: string | null;
   cls: SeatCapacityClass;
@@ -244,12 +246,25 @@ function creditsPhrase(raw: SeatCapacityRecord['credits']): { phrase: string | n
     title: providerTitle === null ? null : `${providerTitle} Not dollars or subscription percentage.`, reading: credits };
 }
 
+export const NO_SESSION_CAP_NOTE = 'No session cap on this plan';
+
+export function sessionCap(engine: VerseEngine, windows: readonly { id: string }[]): SeatSubscriptionView['sessionCap'] {
+  if (windows.length === 0) return 'unknown';
+  return engine === 'claude' && !windows.some((w) => /^(claude_)*five_hour$/.test(w.id)) ? 'none' : 'present';
+}
+
+function worstWindow(windows: SeatWindowView[]): SeatWindowView | null {
+  return windows.find((w) => w.limitReached) ?? windows.filter((w) => w.usedPercent !== null)
+    .reduce<SeatWindowView | null>((a, b) => a === null || (b.usedPercent ?? 0) > (a.usedPercent ?? 0) ? b : a, null);
+}
+
 function localView(seat: VerseSeat): SeatSubscriptionView {
   const unavailable = seatUnavailableReason(seat);
   const ready = seat.health.state === 'ready';
   const cls: SeatCapacityClass = unavailable !== null ? 'blocked' : ready ? 'ready' : 'unread';
   return {
     kind: 'local',
+    sessionCap: 'unknown',
     plan: null,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -279,6 +294,7 @@ function fallbackView(seat: VerseSeat, now: number): SeatSubscriptionView {
   const cls = unavailable !== null ? 'blocked' : legacy.cls;
   return {
     kind: 'subscription',
+    sessionCap: sessionCap(seat.engine, windows),
     plan: null,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -309,10 +325,13 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
 
   const quotaCurrent = nativeQuotaCurrent(seat, now);
   const windows = capacity.windows.map((w) => ({...toWindowView(seat.engine, w, now), current: quotaCurrent}));
-  // Resolve the server's CHOICE of binding window back to this seat's own
-  // view of it, so the two can never disagree about a reset or a label.
+  // Weekly-only Claude readings are complete even if an older server omitted
+  // the binding. Use the worst weekly window, including per-model limits.
+  // Other plans retain the server's choice, resolved to this seat's own window.
   const served = capacity.binding;
-  const binding = served === null
+  const weeklyOnly = sessionCap(seat.engine, windows) === 'none';
+  const weekly = windows.filter((w) => /^(claude_)*seven_day(?:_|$)/.test(w.id));
+  const binding = weeklyOnly && weekly.length > 0 ? worstWindow(weekly) : served === null
     ? null
     : (windows.find((w) => w.id === served.id) ?? {...toWindowView(seat.engine, served, now), current: quotaCurrent});
   const others = binding === null ? windows : windows.filter((w) => w.id !== binding.id);
@@ -357,6 +376,7 @@ export function seatSubscription(seat: VerseSeat, now: number = Date.now()): Sea
 
   return {
     kind: 'subscription',
+    sessionCap: sessionCap(seat.engine, windows),
     plan: capacity.planType,
     cls,
     word: SEAT_CAPACITY_WORD[cls],
@@ -445,6 +465,7 @@ export function seatSubscriptionSentence(seat: VerseSeat, view: SeatSubscription
   if (view.plan !== null) parts.push(view.plan);
   parts.push(view.word);
   parts.push(view.summary);
+  if (view.sessionCap === 'none') parts.push(NO_SESSION_CAP_NOTE);
   if (view.credits !== null) parts.push(view.credits);
   if (view.binding?.resetText != null) parts.push(view.binding.resetText);
   return parts.join(' · ');
