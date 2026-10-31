@@ -23,7 +23,7 @@ describe('resource ledger', () => {
   it('maps the ordered lanes and scrubs attribution', async () => {
     const root = await setup();
     const ledger = await readResourceLedger({ runsDir: root, now: () => now });
-    expect(ledger.sources).toEqual({ status: 'healthy', apiSpend: 'healthy' });
+    expect(ledger.sources).toEqual({ status: 'healthy', apiSpend: 'healthy', jobs: 'missing' });
     expect(ledger.asOf).toBe('2026-10-31T12:00:00Z');
     expect(ledger.lanes.map((l) => [l.lane, l.window])).toEqual([['codex-personal', 'weekly'], ['claude', 'weekly'], ['claude-api', 'credits'], ['local', 'none']]);
     expect(ledger.lanes[0]).toMatchObject({ running: 2, target: 3, held: false, usedPct: 45, resetAt: '2026-11-02T00:00:00Z', burnPctPerHour: 2, tokensPerHour6h: 1000, projectedExhaustion: '2026-11-01T00:00:00Z' });
@@ -54,14 +54,26 @@ describe('resource ledger', () => {
     expect(ledger.sources.apiSpend).toBe('degraded');
     expect(ledger.apiSpend).toMatchObject({ rowsToday: 1, tokensOutToday: 7 });
   });
+  it('distinguishes an empty jobs file from an unavailable or symlinked file', async () => {
+    const root = await setup();
+    const path = join(root, 'metrics/jobs.jsonl');
+    expect((await readResourceLedger({ runsDir: root })).lanes[0]!.deadSignal).toBeNull();
+    await writeFile(path, '');
+    expect((await readResourceLedger({ runsDir: root })).lanes[0]!.deadSignal).toEqual({ lane: 'codex-personal', lastFinishes: 0, emptyFailures: 0, state: 'ok' });
+    await rm(path);
+    await symlink(join(fixture, 'api-spend.jsonl'), path);
+    const ledger = await readResourceLedger({ runsDir: root });
+    expect(ledger.sources.jobs).toBe('degraded');
+    expect(ledger.lanes[0]!.deadSignal).toBeNull();
+  });
   it('isolates missing, oversized, malformed and symlinked sources', async () => {
     const root = await setup();
     await rm(join(root, 'queue/status.json'));
     await rm(join(root, 'metrics/api-spend.jsonl'));
-    expect(await readResourceLedger({ runsDir: root, now: () => now })).toMatchObject({ sources: { status: 'missing', apiSpend: 'missing' }, lanes: [], apiSpend: null });
+    expect(await readResourceLedger({ runsDir: root, now: () => now })).toMatchObject({ sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, lanes: [], apiSpend: null });
     await writeFile(join(root, 'queue/status.json'), ' '.repeat(1024 * 1024 + 1));
     await writeFile(join(root, 'metrics/api-spend.jsonl'), 'invalid\n');
-    expect((await readResourceLedger({ runsDir: root, now: () => now })).sources).toEqual({ status: 'degraded', apiSpend: 'degraded' });
+    expect((await readResourceLedger({ runsDir: root, now: () => now })).sources).toEqual({ status: 'degraded', apiSpend: 'degraded', jobs: 'missing' });
     await rm(join(root, 'queue/status.json'));
     await symlink(join(fixture, 'status.json'), join(root, 'queue/status.json'));
     expect((await readResourceLedger({ runsDir: root, now: () => now })).sources.status).toBe('degraded');

@@ -14,6 +14,7 @@
 import path from 'node:path';
 import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
+import { runKnowledgeContextPack } from './knowledge-context-pack.js';
 
 /**
  * Resolve user-supplied repo paths to absolute and partition them by enrollment.
@@ -107,6 +108,7 @@ function printKnowledgeHelp(): void {
     ['build [--repo <path>] [--allow-cloud]', 'Index enrolled repos (or a single repo) for ask/RAG.'],
     ['graph [--repo <path>] [--json]',        'Print the cross-repo knowledge graph (nodes + edges).'],
     ['impact <target> [--repo <path>] [--json]', 'What references/depends on a file or symbol?'],
+    ['context-pack --file <snapshot.json> [--json]', 'Build bounded context from a task/output snapshot.'],
   ];
   const w = Math.max(...subs.map(([s]) => s.length));
   for (const [sub, desc] of subs) {
@@ -118,6 +120,7 @@ function printKnowledgeHelp(): void {
   const opts: [string, string][] = [
     ['--repo <path>', 'Scope to a single enrolled repo (absolute path or name).'],
     ['--allow-cloud', 'Accepted by build for compatibility; indexing remains local.'],
+    ['--file <path>', 'Read a task/output snapshot for context-pack.'],
     ['--json',        'Emit structured JSON instead of human-readable output.'],
     ['--help',        'Show this help.'],
   ];
@@ -591,6 +594,9 @@ async function dispatchKnowledge(args: string[]): Promise<number> {
 
     case 'impact':
       return runImpact(subArgs);
+
+    case 'context-pack':
+      return runKnowledgeContextPack(subArgs);
 
     default:
       process.stderr.write(`error: Unknown knowledge subcommand or flag: ${sub}\n`);
