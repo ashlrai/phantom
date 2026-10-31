@@ -9,7 +9,7 @@ interface Readers {
 }
 
 const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges, text: getFleetJobText };
-const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log | --prompt | --notes] [--help]';
+const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log [--tail-lines N] | --prompt | --notes] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 function formatDetail(job: FleetJobDetailV1): string {
@@ -36,10 +36,19 @@ function formatChanges(job: FleetJobChangesV1): string {
 /** Read the host's existing job projections; no path options are accepted. */
 export async function cmdFleetJobRead(args: string[], deps: Readers = readers): Promise<number> {
   let id: string | undefined;
+  let maxTailLines: number | undefined;
   const seen = new Set<string>();
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
     const flag = arg === '-h' ? '--help' : arg;
-    if (['--json', '--changes', '--log', '--prompt', '--notes', '--help'].includes(flag)) {
+    if (flag === '--tail-lines') {
+      if (seen.has(flag)) return invalid();
+      seen.add(flag);
+      const count = args[++i];
+      if (!count || /[^0-9]/.test(count)) return invalid();
+      maxTailLines = Number(count);
+      if (!Number.isSafeInteger(maxTailLines) || maxTailLines < 1 || maxTailLines > 120) return invalid();
+    } else if (['--json', '--changes', '--log', '--prompt', '--notes', '--help'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
     } else if (!id && isFleetJobId(arg)) {
@@ -49,8 +58,9 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
     }
   }
   if (['--changes', '--log', '--prompt', '--notes'].filter(flag => seen.has(flag)).length > 1) return invalid();
+  if (seen.has('--tail-lines') && !seen.has('--log')) return invalid();
   if (seen.has('--help')) {
-    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts.`);
+    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log.\nAgent example: phm fleet job JOB1 --log --tail-lines 10 --json`);
     return 0;
   }
   if (!id) return invalid();
@@ -69,7 +79,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       const job = await deps.changes(id);
       console.log(seen.has('--json') ? JSON.stringify(job) : formatChanges(job));
     } else {
-      const job = await deps.detail(id);
+      const job = maxTailLines === undefined ? await deps.detail(id) : await deps.detail(id, { maxTailLines });
       if (seen.has('--log')) {
         if (seen.has('--json')) {
           console.log(JSON.stringify({ schema: 'fleet.job.log.v1', job: job.job, generatedAt: job.generatedAt, log: job.log, sources: { log: job.sources.log } }));
