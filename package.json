@@ -136,6 +136,7 @@
     "build": "npm run check:version && tsc -p tsconfig.json && node scripts/authority-surface.mjs && node scripts/copy-assets.mjs && node scripts/build-preparation-builtin.mjs && vite build --config vite.config.web.ts && node scripts/build-release-dependency-inventory.mjs && node scripts/build-identity.mjs",
     "build:preparation-builtin": "node scripts/build-preparation-builtin.mjs",
     "build:binary": "node scripts/build-sea.mjs",
+    "build:desktop:nightly": "node scripts/build-desktop-nightly.mjs",
     "release:canary": "node scripts/run-signed-release-canary.mjs",
     "verify:local-production": "node scripts/run-local-production-gate.mjs",
     "build:web": "vite build --config vite.config.web.ts",
@@ -166,7 +167,8 @@
     "lint:realio-lane": "node scripts/check-realio-lane-membership.mjs",
     "lint:verse-sync-io": "node scripts/check-verse-sync-io.mjs",
     "typecheck": "tsc --noEmit && npm run typecheck:web",
-    "typecheck:web": "tsc --noEmit -p src/web-ui/tsconfig.json"
+    "typecheck:web": "tsc --noEmit -p src/web-ui/tsconfig.json",
+    "test:fast": "node scripts/test-fast.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -185,6 +187,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.1.0",
+    "@vitest/coverage-v8": "4.1.12",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-unicode11": "^0.9.0",
