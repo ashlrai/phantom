@@ -1,5 +1,8 @@
 # Fleet HTTP API
 
+The machine-readable contract for this surface is [docs/api/fleet-openapi.json](api/fleet-openapi.json) (OpenAPI 3.1).
+`test/fleet-openapi-coverage.test.ts` keeps it aligned with the remote gateway's reviewed route policy.
+
 Phantom's fleet coordinates and observes local agent work, queues, controls,
 and the Leader. These loopback endpoints expose projections used by the desktop
 and phone. On the Mac, run records and the leader inbox normally live in
