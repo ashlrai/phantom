@@ -11,6 +11,8 @@ interface FleetRuns {
   diskFreeGb?: number | null;
   claudeLane: string | null;
   codexPersonal?: { resetsAt?: string | null } | null;
+  switches?: string[];
+  sources?: { runsDir?: string | null } | null;
   lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }>;
   workers: Array<{ ageSeconds: number | null }>;
   mergesLastHour: { count: number | null };
@@ -49,6 +51,10 @@ function isFleetRuns(v: unknown): v is FleetRuns {
     && nullableString(v.claudeLane)
     && (v.codexPersonal === undefined || v.codexPersonal === null || (record(v.codexPersonal)
       && (v.codexPersonal.resetsAt === undefined || nullableString(v.codexPersonal.resetsAt))))
+    && (v.switches === undefined || (Array.isArray(v.switches)
+      && v.switches.every((s: unknown) => typeof s === 'string')))
+    && (v.sources === undefined || v.sources === null || (record(v.sources)
+      && (v.sources.runsDir === undefined || nullableString(v.sources.runsDir))))
     && Array.isArray(v.lanes) && v.lanes.every((l: unknown) => record(l)
       && typeof l.lane === 'string' && l.lane.length > 0 && count(l.running) && count(l.target) && count(l.queued)
       && typeof l.held === 'boolean' && (l.heldReason === undefined || nullableString(l.heldReason)))
@@ -69,6 +75,18 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
     out.push({ id, category: 'fleet', severity, title, detail, ts: data.generatedAt,
       ...(actionHref && target ? { actionLabel: target.label, actionHref } : {}) });
   };
+  const switches = data.switches ?? [];
+  if (switches.length > 0) {
+    const names = switches.slice(0, 3).map((name) => scrub(name));
+    const rest = switches.length - names.length;
+    add('fleet-switches-on', 'high', `Dispatch paused by ${names.join(', ')}${rest > 0 ? ` +${rest} more` : ''}`,
+      'A HOLD switch file is stopping dispatch; clear it from Fleet controls.', { label: 'Open lanes', pane: 'fleet-lanes' });
+  }
+  if (data.sources?.runsDir === 'missing') {
+    add('fleet-runs-dir-missing', 'critical', 'Fleet runs directory is missing',
+      'The fleet cannot read runs, lanes or switches until it exists. Check the runs path on the Host pane.',
+      { label: 'Open host', pane: 'fleet-host' });
+  }
   const ages = data.workers.flatMap((w) => w.ageSeconds === null ? [] : [w.ageSeconds]);
   const starts = data.events.filter((e) => /^(launch|start)$/.test(e.kind)).map((e) => Date.parse(e.at));
   const age = ages.length ? Math.min(...ages) : starts.length ? (now - Math.max(...starts)) / 1000 : null;
