@@ -52,7 +52,7 @@
  * concise `memo` summary (bottleneck, move, top actions with class and veto
  * window) plus one `question` message per questionsForMason entry.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants as fsConstants, fchmodSync, fstatSync, fsyncSync, lstatSync, openSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -208,7 +208,14 @@ async function runDeps(d: LeaderThreadDeps, cfg?: AshlrConfig): Promise<LeaderRu
 
 type DeliveryState = 'pending' | 'sent' | 'failed';
 
+interface InputReceipt {
+  fingerprint: string;
+  result: AppendMasonMessageResult;
+}
+
 interface ThreadIndexV1 {
+  /** Channel/event hashes; retained across log rotation, never silently evicted. */
+  inputs?: Record<string, InputReceipt>;
   v: 1;
   updatedAt: string;
   /** Delivery state by message id (overrides the state the line was appended with). */
@@ -244,19 +251,34 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 
 function readIndex(): ThreadIndexV1 {
   const read = readPrivateFileCapped(indexPath(), MAX_INDEX_BYTES);
-  if (!read || read.truncated) return emptyIndex();
+  if (!read) {
+    // Only absence is safe to initialize: losing receipts could invoke twice.
+    try { lstatSync(indexPath()); }
+    catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return emptyIndex(); throw err; }
+    throw new LeaderThreadError(409, 'Leader thread index is unavailable');
+  }
+  if (read.truncated) throw new LeaderThreadError(409, 'Leader thread index is oversized');
   try {
     const parsed = JSON.parse(read.text) as Partial<ThreadIndexV1>;
-    if (parsed.v !== 1) return emptyIndex();
+    if (parsed.v !== 1 || (parsed.inputs !== undefined && !isRecord(parsed.inputs))) throw new Error('invalid index');
+    for (const [key, receipt] of Object.entries(parsed.inputs ?? {})) {
+      const result = receipt?.result;
+      if (!/^[a-f0-9]{64}$/.test(key) || !/^[a-f0-9]{64}$/.test(receipt?.fingerprint)
+        || !result || !isThreadMessage(result.message) || result.message.from !== 'mason'
+        || !['pending', 'completed'].includes(result.outcome ?? '')
+        || (result.reply !== null && (!isThreadMessage(result.reply) || result.reply.replyTo !== result.message.id))
+        || (result.outcome === 'pending' && result.reply !== null)) throw new Error('invalid input receipt');
+    }
     return {
       v: 1,
+      inputs: parsed.inputs,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
       delivery: isRecord(parsed.delivery) ? parsed.delivery as ThreadIndexV1['delivery'] : {},
       memosPosted: Array.isArray(parsed.memosPosted) ? parsed.memosPosted.filter((m): m is string => typeof m === 'string') : [],
       modelCalls: isRecord(parsed.modelCalls) ? parsed.modelCalls as Record<string, number> : {},
     };
   } catch {
-    return emptyIndex();
+    throw new LeaderThreadError(409, 'Leader thread index is malformed');
   }
 }
 
@@ -264,12 +286,14 @@ function writeIndex(index: ThreadIndexV1, nowMs: number): void {
   const days = Object.keys(index.modelCalls).sort().slice(-14);
   const modelCalls: Record<string, number> = {};
   for (const day of days) modelCalls[day] = index.modelCalls[day]!;
-  writePrivateFileAtomic(indexPath(), `${JSON.stringify({
+  const serialized = `${JSON.stringify({
     ...index,
     updatedAt: new Date(nowMs).toISOString(),
     memosPosted: index.memosPosted.slice(-MEMOS_POSTED_KEEP),
     modelCalls,
-  })}\n`);
+  })}\n`;
+  if (Buffer.byteLength(serialized) > MAX_INDEX_BYTES) throw new LeaderThreadError(409, 'Leader thread index is full');
+  writePrivateFileAtomic(indexPath(), serialized);
 }
 
 function isThreadMessage(x: unknown): x is LeaderThreadMessage {
@@ -934,7 +958,9 @@ const REPLY_PROMPT_CHARS = 40_000;
  */
 export async function appendMasonMessage(
   text: string,
-  opts: { channel: LeaderThreadChannel; replyTo?: string; cfg?: AshlrConfig; recordOnly?: boolean },
+  opts: { channel: LeaderThreadChannel; replyTo?: string; cfg?: AshlrConfig; recordOnly?: boolean;
+    /** Authenticated adapter metadata only; never evidence of operator identity. 1–128 ASCII characters. */
+    sourceEventId?: string },
 ): Promise<AppendMasonMessageResult> {
   const channel = checkChannel(opts.channel);
   const clean = checkMasonText(text);
@@ -942,9 +968,45 @@ export async function appendMasonMessage(
   const d = deps();
   const nowMs = d.now();
   const message = masonMessage(nowMs, { channel, kind: 'message', text: clean, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}) });
+  const eventId = opts.sourceEventId;
+  if (eventId !== undefined && (typeof eventId !== 'string' || !/^[A-Za-z0-9._:/-]{1,128}$/.test(eventId))) {
+    throw new LeaderThreadError(400, 'sourceEventId must be 1–128 ASCII event identifier characters');
+  }
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  const key = eventId === undefined ? undefined : hash(JSON.stringify([channel, eventId]));
+  // Compare original payload without persisting unsanitized operator text.
+  const fingerprint = hash(JSON.stringify([text, opts.replyTo ?? null, opts.recordOnly === true]));
+  if (key) {
+    const prior = withThreadLock(() => {
+      const index = readIndex();
+      const inputs = index.inputs ??= {};
+      const receipt = inputs[key];
+      if (receipt) {
+        if (receipt.fingerprint !== fingerprint) throw new LeaderThreadError(409, 'sourceEventId conflicts with an accepted payload');
+        return receipt.result;
+      }
+      if (Object.keys(inputs).length >= 64) throw new LeaderThreadError(409, 'Leader input receipt store is full');
+      inputs[key] = { fingerprint, result: { message, reply: null, outcome: 'pending' } };
+      // Reserve before any append/side effect. Any uncertain write stays pending.
+      writeIndex(index, nowMs);
+      return null;
+    });
+    if (prior) return prior;
+  }
   appendMessages([message], nowMs);
+  const finish = (result: AppendMasonMessageResult): AppendMasonMessageResult => {
+    if (!key) return result;
+    return withThreadLock(() => {
+      const index = readIndex();
+      const receipt = index.inputs?.[key];
+      if (!receipt || receipt.fingerprint !== fingerprint) throw new LeaderThreadError(409, 'Leader input receipt is unavailable');
+      receipt.result = { ...result, outcome: 'completed' };
+      writeIndex(index, d.now());
+      return receipt.result;
+    });
+  };
   // Explicit transport receipt: record words without model calls or implied authority.
-  if (opts.recordOnly) return { message, reply: null };
+  if (opts.recordOnly) return finish({ message, reply: null });
 
   let directive: OperatorDirective | undefined;
   const explicit = parseExplicitDirective(clean);
@@ -973,7 +1035,7 @@ export async function appendMasonMessage(
     delivery: replyDelivery(channel),
   });
   appendMessages([reply], replyAt);
-  return { message, reply, ...(directive ? { directive } : {}) };
+  return finish({ message, reply, ...(directive ? { directive } : {}) });
 }
 
 /** Exact cached canonical question read; it does not compose, run a memo, or probe resources. */
