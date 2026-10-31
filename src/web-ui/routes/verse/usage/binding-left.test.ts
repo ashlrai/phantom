@@ -5,25 +5,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import { bindingLeftPercent } from './binding-left.js';
+import type { CapacityRow, CapacityWindowRow } from './capacity-strip-model.js';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function win(over: Partial<{ id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }> = {}): {
-  id: string;
-  usedPercent: number | null;
-  limitReached: boolean;
-  binding: boolean;
-  label: string;
-} {
-  return { id: 'w', usedPercent: null, limitReached: false, binding: false, label: '', ...over };
+function win(over: Partial<CapacityWindowRow> = {}): CapacityWindowRow {
+  return { id: 'w', usedPercent: null, limitReached: false, binding: false, label: '', resetText: null, resetsAt: null, ...over };
 }
 
-function row(over: Partial<{ quotaCurrent: boolean; windows: { id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }[] }> = {}): {
-  quotaCurrent: boolean | undefined;
-  windows: { id: string; usedPercent: number | null; limitReached: boolean; binding: boolean; label: string }[];
-} {
+function row(over: Partial<Pick<CapacityRow, 'quotaCurrent' | 'windows'>> = {}): Pick<CapacityRow, 'quotaCurrent' | 'windows'> {
   return { quotaCurrent: true, windows: [], ...over };
 }
 

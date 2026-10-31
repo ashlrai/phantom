@@ -70,6 +70,6 @@ export async function cmdFleetCrossReview(args: string[]): Promise<number> {
   if (!isCommitSha(head)) return fail('--head must be the full lowercase head SHA observed now');
   const pauseFile = valueOf(rest, '--pause-file');
   if (pauseFile !== undefined && !pauseFile.startsWith('/')) return fail('--pause-file must be an absolute path');
-  printDecision(decideCrossReviewAtHead(parsed.request, policy.policy, head, pauseFile ? { pauseFile } : {}), null, json);
+  printDecision(await decideCrossReviewAtHead(parsed.request, policy.policy, head, pauseFile ? { pauseFile } : {}), null, json);
   return 0;
 }
