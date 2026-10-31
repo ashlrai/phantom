@@ -91,6 +91,18 @@ describe('operator documentation navigation', () => {
     expect(checkDocumentation({ root, mode: 'package', entrypoints: ['README.md'] }).ok).toBe(false);
   });
 
+  it('checks the Fleet API source references in a checkout, while allowing them in the package', () => {
+    const root = fixture({ 'docs/FLEET-API.md': '[Source](../src/core/fleet.ts)' });
+    const entrypoints = ['docs/FLEET-API.md'];
+    expect(checkDocumentation({ root, entrypoints }).ok).toBe(false);
+    expect(checkDocumentation({ root, mode: 'package', entrypoints }).ok).toBe(true);
+    mkdirSync(join(root, 'src/core'), { recursive: true });
+    writeFileSync(join(root, 'src/core/fleet.ts'), '// source\n');
+    expect(checkDocumentation({ root, entrypoints }).ok).toBe(true);
+    writeFileSync(join(root, 'docs/FLEET-API.md'), '[Escape](../src/../../outside.ts)');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints }).ok).toBe(false);
+  });
+
   it.each(['<a href=missing.md>Broken</a>', '<A HREF="missing.md">Broken</A>',
     '<img src="missing.png">', '<a title="quoted > text" href=missing.md>Broken</a>'])(
     'does not silently omit raw HTML file navigation: %s', (html) => {

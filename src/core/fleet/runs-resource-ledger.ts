@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneDeadSignals, type LaneDeadSignal } from './lane-dead-signal.js';
 import { redactHomePaths, scrubPrivateText } from '../util/scrub.js';
 
 export const VERSE_LEADER_RESOURCES_PATH = '/api/verse/leader/resources';
@@ -11,15 +12,15 @@ export interface ResourceLaneRow {
   window: 'weekly' | 'credits' | 'none';
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
-  source: string | null;
+  source: string | null; deadSignal: LaneDeadSignal | null;
 }
 export interface ApiSpendSummary {
   rowsToday: number; errorsToday: number; tokensOutToday: number; tokensInToday: number;
   usdToday: number | null; usdWeek: number | null; lastAt: string | null; models: string[];
 }
 export interface ResourceLedgerV1 {
-  v: 1; generatedAt: string; sources: Record<'status' | 'apiSpend', 'healthy' | 'missing' | 'degraded'>;
-  asOf: string | null; lanes: ResourceLaneRow[]; apiSpend: ApiSpendSummary | null;
+  v: 1; generatedAt: string; sources: Record<'status' | 'apiSpend' | 'jobs', 'healthy' | 'missing' | 'degraded'>;
+  asOf: string | null; lanes: ResourceLaneRow[]; apiSpend: ApiSpendSummary | null; jobsMalformedRows: number | null;
 }
 type Obj = Record<string, unknown>;
 const object = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -90,7 +91,8 @@ export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes 
 export async function readResourceLedger(opts: { runsDir?: string; now?: () => number } = {}): Promise<ResourceLedgerV1> {
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
-  const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing' }, asOf: null, lanes: [], apiSpend: null };
+  const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
+  let signals: ReturnType<typeof laneDeadSignals> | null = null;
   await Promise.all([
     (async () => {
       try {
@@ -109,9 +111,20 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
             window: lane === 'claude' || lane.startsWith('codex-') ? 'weekly' : credits !== null ? 'credits' : 'none',
             usedPct: number(b.weekly_used_pct), creditsRemaining: credits, resetAt: timestamp(b.reset_at),
             burnPctPerHour: number(b.burn_pct_per_hour), tokensPerHour6h: number(b.tokens_per_hour_6h), projectedExhaustion: timestamp(b.projected_exhaustion),
-            source: typeof b.source === 'string' ? redactHomePaths(scrubPrivateText(b.source, { emails: true })).replace(/\p{Cc}/gu, ' ').slice(0, 160) : null });
+            source: typeof b.source === 'string' ? redactHomePaths(scrubPrivateText(b.source, { emails: true })).replace(/\p{Cc}/gu, ' ').slice(0, 160) : null, deadSignal: null });
         }
       } catch (e) { result.sources.status = missing(e) ? 'missing' : 'degraded'; }
+    })(),
+    (async () => {
+      try {
+        const text = await readBounded(join(root, 'metrics/jobs.jsonl'), SPEND_TAIL, true);
+        const rows: unknown[] = text.split(/\r?\n/).filter(line => line.trim()).map(line => {
+          try { return JSON.parse(line) as unknown; } catch { return null; }
+        });
+        signals = laneDeadSignals(rows);
+        result.jobsMalformedRows = signals.malformedRows;
+        result.sources.jobs = signals.malformedRows ? 'degraded' : 'healthy';
+      } catch (e) { result.sources.jobs = missing(e) ? 'missing' : 'degraded'; }
     })(),
     (async () => {
       try {
@@ -121,5 +134,9 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       } catch (e) { result.sources.apiSpend = missing(e) ? 'missing' : 'degraded'; }
     })(),
   ]);
+  if (signals !== null) {
+    const byLane = new Map((signals as ReturnType<typeof laneDeadSignals>).lanes.map(signal => [signal.lane, signal]));
+    for (const lane of result.lanes) lane.deadSignal = byLane.get(lane.lane) ?? { lane: lane.lane, lastFinishes: 0, emptyFailures: 0, state: 'ok' };
+  }
   return result;
 }
