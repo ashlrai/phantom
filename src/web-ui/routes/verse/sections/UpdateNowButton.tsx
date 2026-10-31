@@ -3,15 +3,17 @@ import styles from './UpdateNowButton.module.css';
 import spinner from '../../../components/primitives/RefreshIndicator.module.css';
 import { Button } from '../../../components/primitives/Button.js';
 import { useToast } from '../../../components/primitives/Toast.js';
-import { applySelfUpdate } from './update-apply-client.js';
-import { applyOutcomeCopy } from './update-apply-copy.js';
+import { applySelfUpdate, type ApplyOutcome } from './update-apply-client.js';
+import { applyOutcomeCopy, applyStepsCopy } from './update-apply-copy.js';
 import type { ServerObservation } from './update-status-queries.js';
 
 export function UpdateNowButton({ status, onDone }: { status: ServerObservation | undefined; onDone: () => void }) {
   const toast = useToast();
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
-  const [copy, setCopy] = useState<ReturnType<typeof applyOutcomeCopy> | null>(null);
+  const [outcome, setOutcome] = useState<ApplyOutcome | null>(null);
+  const copy = outcome && applyOutcomeCopy(outcome);
+  const steps = outcome && 'steps' in outcome ? outcome.steps : undefined;
   const enabled = !!status && !('kind' in status) && status.canFastForward
     && status.behind !== null && status.behind > 0 && status.dirty !== true;
 
@@ -19,11 +21,12 @@ export function UpdateNowButton({ status, onDone }: { status: ServerObservation 
     if (!enabled || inFlight.current || !window.confirm('Update Phantom to the newest commit now?')) return;
     inFlight.current = true;
     setPending(true);
-    setCopy(null);
+    setOutcome(null);
     try {
-      const next = applyOutcomeCopy(await applySelfUpdate());
-      setCopy(next);
-      toast.show(next.text, next.tone === 'ok' ? 'success' : next.tone === 'danger' ? 'danger' : 'neutral');
+      const next = await applySelfUpdate();
+      setOutcome(next);
+      const message = applyOutcomeCopy(next);
+      toast.show(message.text, message.tone === 'ok' ? 'success' : message.tone === 'danger' ? 'danger' : 'neutral');
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -38,5 +41,11 @@ export function UpdateNowButton({ status, onDone }: { status: ServerObservation 
       {pending ? 'Updating…' : 'Update now'}
     </Button>
     <div className={styles.result} aria-live="polite" data-tone={copy?.tone}>{copy?.text}</div>
+    {!!steps?.length && <ol className={styles.steps} aria-label="Update steps">
+      {applyStepsCopy(steps).map((step, index) => <li key={index}>
+        {step.label} · {step.status} · {step.duration}
+        {step.status === 'failed' && steps[index]?.note && <div className={styles.note}>{steps[index].note}</div>}
+      </li>)}
+    </ol>}
   </div>;
 }
