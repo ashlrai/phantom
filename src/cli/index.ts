@@ -459,6 +459,12 @@ const loadTelemetryCmd = lazyCmd(
 
 // ─── M21 command loaders ────────────────────────────────────────────
 
+const loadNodeCmd = lazyCmd(
+  () => import('./node.js'),
+  (m) => m['cmdNode'] as Cmd,
+  'node command requires src/cli/node.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -1407,6 +1413,10 @@ async function cmdStatus(args: string[]): Promise<void> {
           `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
           `  ${dim('·')}  ${ciStr}${repoLabel}`
         );
+        if (gs.repo) {
+          const { collectMergeEtas, formatMergeEta } = await import('../core/merge-eta.js');
+          for (const eta of collectMergeEtas(cwd, gs.repo)) console.log(`    ${formatMergeEta(eta)}`);
+        }
         console.log('');
       }
     }
@@ -2219,6 +2229,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'top': {
+        const { cmdTop } = await import('./top.js');
+        process.exitCode = await cmdTop(rest);
+        break;
+      }
+
       case 'tui':
       case 'dash': {
         const cmdTui = await loadTuiCmd();
@@ -2286,6 +2302,12 @@ async function main(): Promise<void> {
       case 'worktrees': {
         const { cmdWorktrees } = await import('./worktrees.js');
         process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
+      case 'node': {
+        const cmdNode = await loadNodeCmd();
+        process.exitCode = await cmdNode(rest);
         break;
       }
 
