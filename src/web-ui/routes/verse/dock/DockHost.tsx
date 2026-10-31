@@ -17,6 +17,7 @@ import type { ChatTask } from '../chat/tasks-model.js';
 import { ChatPaneDataContext, type ChatPaneData } from '../panes/chat-pane-data.js';
 import type { PaneHost } from '../panes/index.js';
 import { Dock, type DockPaneContext } from './Dock.js';
+import { DockHelperBoundary } from './DockHelperBoundary.js';
 import { FleetWorkspaceAutoOpen } from './FleetWorkspaceAutoOpen.js';
 import { closeDockTab, openDockPane, requestDiff, requestTerminal, requestTerminalBelow } from './dock-store.js';
 
@@ -74,7 +75,9 @@ export function DockHost(props: DockHostProps) {
 
   return (
     <ChatPaneDataContext.Provider value={data}>
-      <FleetWorkspaceAutoOpen />
+      <DockHelperBoundary name="fleet-workspace-auto-open">
+        <FleetWorkspaceAutoOpen />
+      </DockHelperBoundary>
       <Dock presentation={props.presentation} windowWidth={props.windowWidth} columnWidth={props.columnWidth}
         columnMax={props.columnMax} columnHeight={props.columnHeight} pane={pane} />
     </ChatPaneDataContext.Provider>
