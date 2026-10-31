@@ -37,6 +37,7 @@ import { getMobileFleetClient } from '../fleet-client.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
+import { MobileSwitches } from '../MobileSwitches.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { Badge, Banner, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './FleetScreen.module.css';
@@ -380,6 +381,7 @@ export function FleetScreen() {
   return (
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
+      <MobileSwitches />
       <Section title="Right now" flat>{liveBody}</Section>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>

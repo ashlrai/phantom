@@ -17,6 +17,7 @@ import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import type {
   AshlrConfig,
   ActivityRollup,
+  JobLaneRollup,
   ProjectActivity,
   DailyUsage,
   ModelUsage,
@@ -381,6 +382,67 @@ export function rollupDay(ts: string): string {
   return Number.isFinite(ms) ? localDay(ms) : ts.slice(0, 10);
 }
 
+/**
+ * Read ~/.ashlr/jobs.jsonl (or $ASHLR_HOME/jobs.jsonl) outcome snapshots.
+ * Each row has lane, jobId, ts, optional project, startedAt, completedAt,
+ * prUrl and merged. Latest snapshot per lane/job wins, including updates
+ * outside the window. Jobs belong to the window by completedAt, else ts.
+ * Missing files and malformed rows contribute no observations.
+ */
+export function rollupJobLanes(sinceMs: number, now: number, project?: string): JobLaneRollup[] {
+  const latest = new Map<string, Record<string, unknown>>();
+  let contents: string;
+  try {
+    contents = readFileSync(join(process.env['ASHLR_HOME'] || join(homedir(), '.ashlr'), 'jobs.jsonl'), 'utf8');
+  } catch {
+    return [];
+  }
+  for (const line of contents.split('\n')) {
+    try {
+      const row: unknown = JSON.parse(line);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      const r = row as Record<string, unknown>;
+      if (typeof r['lane'] !== 'string' || !r['lane'].trim() ||
+          typeof r['jobId'] !== 'string' || !r['jobId'] ||
+          typeof r['ts'] !== 'string' || !Number.isFinite(Date.parse(r['ts']))) continue;
+      if (Date.parse(r['ts']) > now) continue;
+      const key = JSON.stringify([r['lane'], r['jobId']]);
+      const previous = latest.get(key);
+      if (!previous || Date.parse(r['ts']) >= Date.parse(previous['ts'] as string)) latest.set(key, r);
+    } catch {
+      // An interrupted append must not discard the rest of the ledger.
+    }
+  }
+  const lanes = new Map<string, { jobs: number; prs: Map<string, boolean>; durations: number[] }>();
+  for (const row of latest.values()) {
+    const timestamp = typeof row['completedAt'] === 'string' ? Date.parse(row['completedAt']) : Date.parse(row['ts'] as string);
+    if (!Number.isFinite(timestamp) || timestamp < sinceMs || timestamp > now) continue;
+    if (project && (typeof row['project'] !== 'string' ||
+        !(row['project'] === project || basename(row['project']) === project || row['project'].includes(project)))) continue;
+    const lane = row['lane'] as string;
+    const acc = lanes.get(lane) ?? { jobs: 0, prs: new Map<string, boolean>(), durations: [] };
+    lanes.set(lane, acc);
+    acc.jobs++;
+    if (typeof row['prUrl'] === 'string' && row['prUrl'].trim()) {
+      acc.prs.set(row['prUrl'], acc.prs.get(row['prUrl']) === true || row['merged'] === true);
+    }
+    if (typeof row['startedAt'] === 'string' && typeof row['completedAt'] === 'string') {
+      const start = Date.parse(row['startedAt']);
+      const end = Date.parse(row['completedAt']);
+      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) acc.durations.push(end - start);
+    }
+  }
+  return [...lanes].sort(([a], [b]) => a.localeCompare(b)).map(([lane, acc]) => {
+    const merged = [...acc.prs.values()].filter(Boolean).length;
+    return {
+      lane, jobs: acc.jobs, prs: acc.prs.size, merged,
+      mergeRate: acc.prs.size ? merged / acc.prs.size : null,
+      wallTimePerJobMs: acc.durations.length ? acc.durations.reduce((a, b) => a + b, 0) / acc.durations.length : null,
+      prsPerHour: now > sinceMs ? acc.prs.size / ((now - sinceMs) / 3_600_000) : 0,
+    };
+  });
+}
+
 export function buildRollup(
   window: '1d' | '7d' | '30d',
   cfg: AshlrConfig,
@@ -664,6 +726,7 @@ export function buildRollup(
     byProject,
     byDay,
     byModel,
+    byLane: rollupJobLanes(sinceMs, now, projectFilter),
     budget,
   };
 }
