@@ -8,7 +8,7 @@ import { useNow } from '../autonomy/use-ticker.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { laneShort } from './lane-label.js';
-import { headerText, laneFill, laneNote, sortLanes } from './runs-lanes-model.js';
+import { headerExtras, headerText, laneFill, laneNote, sortLanes } from './runs-lanes-model.js';
 import { runsLanesQuery } from './runs-lanes-queries.js';
 import { tickStaleness } from './tick-staleness.js';
 import { notInBuild } from './workers-card-queries.js';
@@ -20,9 +20,11 @@ export function RunsLanesCard() {
   const now = useNow();
   usePollWhileVisible(() => { void runQuery(runsLanesQuery.key, () => runsLanesQuery.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   const data = read.data;
+  const extras = data ? headerExtras(data, now) : [];
   return <section className={styles.panel} aria-labelledby={id}>
     <header className={styles.header}><h2 id={id}>Lanes on this Mac</h2>
       {data ? <span data-level={tickStaleness(data.lastTick, now).level}>{headerText(data, now)}</span> : null}
+      {extras.length ? <span data-testid="lanes-header-extras">{extras.join(' · ')}</span> : null}
     </header>
     {data && data.sources.runsDir !== 'healthy' ? <StatusBadge status="degraded">runs directory {data.sources.runsDir}</StatusBadge> : null}
     {read.error ? <EmptyState compact title="Lane refresh unavailable" body={notInBuild(read.error) ? 'The runs API is not in this build yet.' : 'Unable to read live lanes. Any rows below are from the last successful read.'} /> : null}
