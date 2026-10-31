@@ -10,11 +10,15 @@
  * gate is subscribed to for the life of the shell.
  */
 import { lazy } from 'react';
+import { APP_VERSION } from '../sections/app-version.js';
+import { whatsNewPending } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
 
 const OnboardingFlow = lazy(() => import('./OnboardingFlow.js').then((m) => ({ default: m.OnboardingFlow })));
 
+const WhatsNewCard = lazy(() => import('./WhatsNewCard.js').then((m) => ({ default: m.WhatsNewCard })));
+
 export function OnboardingGate() {
   const onboarding = useOnboarding();
-  return onboarding.open ? <OnboardingFlow /> : null;
+  return onboarding.open ? <OnboardingFlow /> : whatsNewPending(onboarding, APP_VERSION) ? <WhatsNewCard /> : null;
 }
