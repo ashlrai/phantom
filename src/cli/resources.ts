@@ -163,6 +163,7 @@ function printResourcesHelp(): void {
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
   console.log('  Usage: phm resources [--json] [--watch]');
+  console.log('         phm resources ledger [--json]');
   console.log('         phm resources personal [--json] [--home <absolute-path>]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
   console.log('         phm resources launcher --help');
@@ -177,6 +178,10 @@ function printResourcesHelp(): void {
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'ledger') {
+    const { cmdResourceLedger } = await import('./resource-ledger.js');
+    return cmdResourceLedger(args.slice(1));
+  }
   if (args[0] === 'personal') {
     let json = false;
     let help = false;

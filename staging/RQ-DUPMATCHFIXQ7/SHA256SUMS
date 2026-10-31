@@ -1,7 +1,4 @@
-338e61bf467005b794895904237e4a90af3e54d120fc858e33c4ad75fb1c2c0c  precheck.sh
-268651819bad68f7d5ed147714d9681a93a38b624d3d6d3b25271281c12c1b15  precheck_dup_match.bats
-b648b7e44f702a191bfdfc991f810de8f871d89541542cf730cdaeb3ca6a2ec1  precheck.sh.diff
-a9e1b7d0f1d998826e9ac894412e1177668becb9bad44c02471a471226688aac  NOTES.md
-
-## base sha256 (verify live file before install)
-eb0f2b2929ab466dbfaee825ccce860e42ff8354d50c0b3ad0c77823c4c73eb2  ~/.ashlr-runs/bin/precheck.sh (= RQ-EMPTY-SHAPE result)
+c1f2fa643a248bc77d4f80de244085c3c539da5312aab52ced789c5cfded4dd5  precheck.sh
+eb207a1b04e5acfd52e5e2e0d7692e60bfb2585527c5d56b8f83959c29c0d40c  precheck_dup_match.bats
+3b5eafa40d34de36ab9acb5854d00205d34c95d6f2cd87a2c284bac052c98d5b  precheck.sh.diff
+b1b9167e63eaa33a5a01e935370ff4480fdbb4f3d34731d65bb6410b9f73bed4  NOTES.md
