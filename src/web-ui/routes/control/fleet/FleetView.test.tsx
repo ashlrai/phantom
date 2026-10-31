@@ -83,6 +83,55 @@ describe('FleetView', () => {
     expect(screen.getByText('m1')).toBeInTheDocument();
   });
 
+  it.each([
+    [0, '0s'],
+    [999, '0s'],
+    [59_999, '59s'],
+    [60_000, '1m'],
+    [3_599_999, '59m'],
+    [3_600_000, '1h'],
+    [86_399_999, '23h'],
+    [86_400_000, '1d'],
+    [-60_000, '0s'],
+  ])('renders queue observation age at offset %i ms as %s', async (age, expected) => {
+    const clock = Date.parse('2026-10-28T12:00:00Z');
+    const source = {
+      provenance: 'persisted-backlog', sourceState: 'complete', freshness: 'fresh',
+      observedAt: new Date(clock - age).toISOString(), visibleItems: 5, actionableItems: 3, detail: '',
+    };
+    vi.stubGlobal('fetch', respondFor({
+      ...FLEET,
+      queue: { ...FLEET.queue, sources: {
+        cachedBacklog: source,
+        queuedAutonomy: { ...source, provenance: 'queued-autonomy' },
+      } },
+    }));
+    render(<MemoryRouter><FleetView now={() => clock} /></MemoryRouter>);
+
+    const label = await screen.findByText('Cached backlog observation age');
+    expect(label.nextElementSibling).toHaveTextContent(expected);
+    expect(screen.getByText('Queued autonomy observation age').nextElementSibling).toHaveTextContent(expected);
+  });
+
+  it.each([null, '', 'not-a-timestamp'])('withholds invalid queue observation age %s', async (observedAt) => {
+    const source = {
+      provenance: 'persisted-backlog', sourceState: 'complete', freshness: 'unknown',
+      observedAt, visibleItems: 5, actionableItems: 3, detail: '',
+    };
+    vi.stubGlobal('fetch', respondFor({
+      ...FLEET,
+      queue: { ...FLEET.queue, sources: {
+        cachedBacklog: source,
+        queuedAutonomy: { ...source, provenance: 'queued-autonomy' },
+      } },
+    }));
+    render(<MemoryRouter><FleetView now={() => Date.parse('2026-10-28T12:00:00Z')} /></MemoryRouter>);
+
+    const label = await screen.findByText('Cached backlog observation age');
+    expect(label.nextElementSibling).toHaveTextContent('—');
+    expect(screen.getByText('Queued autonomy observation age').nextElementSibling).toHaveTextContent('—');
+  });
+
   it('requires an explicit confirm dialog before the kill switch mutation can fire', async () => {
     vi.stubGlobal('fetch', respondFor(FLEET));
     render(
