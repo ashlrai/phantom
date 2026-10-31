@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js';
+import { version as packageVersion } from '../../../../../package.json';
 import { SettingsSection } from './SettingsSection.js';
 import { LIGHT_SURFACE, DARK_SURFACE, accentReadability } from './AppearancePanel.js';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
@@ -236,6 +237,9 @@ describe('SettingsSection', () => {
     expect(screen.getByTitle('Interface build version')).toHaveTextContent(`${APP_NAME} ${APP_VERSION}`);
     expect(screen.getByText('Interface build')).toBeInTheDocument();
     expect(screen.queryByText('Installed desktop')).toBeNull();
+    expect(APP_VERSION).toBe(packageVersion);
+    expect(screen.getByText(/Build versions identify this interface and desktop shell/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Source repository' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom');
   });
 
   it('distinguishes an installed desktop from a different interface build', () => {
