@@ -27,6 +27,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties }
 import { Button } from '../components/primitives/Button.js';
 import { useQuery, useRefetch } from '../data/hooks.js';
 import { APP_VERSION } from '../routes/verse/sections/app-version.js';
+import { subscribeChunkErrors } from './chunk-error.js';
 import { SIDECAR_RESTARTED_EVENT } from './sidecar-restart.js';
 import { decideReload, type UpdateReloadReading } from './update-reload-model.js';
 import { updateReloadQuery } from './update-reload-query.js';
@@ -51,6 +52,7 @@ export function UpdateReloadBanner() {
   const { data } = useQuery(updateReloadQuery, { enabled: isVisible });
   const refetch = useRefetch(updateReloadQuery);
   const firstRef = useRef<UpdateReloadReading | null>(null);
+  const [chunkError, setChunkError] = useState(false);
   const [dismissedSha, setDismissedSha] = useState<string | null>(readDismissed);
   // "Later" has no sha to remember on an interface-behind reading without a
   // headSha; sessionStorage dies with the page anyway, so a mount flag is
@@ -82,8 +84,13 @@ export function UpdateReloadBanner() {
     };
   }, [refetch]);
 
-  const decision = decideReload({ first: firstRef.current, current: reading, appVersion: APP_VERSION, dismissedSha });
-  if (!decision.show || (decision.sha === null && nullShaDismissed)) return null;
+  useEffect(() => subscribeChunkErrors(() => {
+    setChunkError(true);
+    refetch();
+  }), [refetch]);
+
+  const decision = decideReload({ first: firstRef.current, current: reading, appVersion: APP_VERSION, dismissedSha, chunkError });
+  if (!decision.show || (decision.reason !== 'chunk-missing' && decision.sha === null && nullShaDismissed)) return null;
 
   const later = (): void => {
     if (decision.sha === null) setNullShaDismissed(true);
@@ -97,7 +104,7 @@ export function UpdateReloadBanner() {
     <div role="status" style={barStyle}>
       <span style={messageStyle}>{decision.message}</span>
       <Button size="sm" variant="primary" onClick={() => window.location.reload()}>Reload</Button>
-      <Button size="sm" variant="ghost" onClick={later}>Later</Button>
+      {decision.reason !== 'chunk-missing' && <Button size="sm" variant="ghost" onClick={later}>Later</Button>}
     </div>
   );
 }
