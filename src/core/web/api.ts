@@ -1932,6 +1932,18 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/job/changes' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobChanges } = await import('../fleet/runs-job-changes.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobChanges(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
