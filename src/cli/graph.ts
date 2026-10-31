@@ -2,14 +2,16 @@
 import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborhood.js';
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph node <node-id> [--json]
        phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--json]
 
   nodes       List graph node records.
+  node        Retrieve one exact graph node record.
   edges       List graph edge records.
   status      Report graph availability and node/edge counts.
   neighbors   Find a node and its bounded graph neighborhood (default: both, depth 1).
               Returns at most 500 nodes and indicates whether results were truncated.
-              Use -- before a node ID that looks like an option.
+              Use -- before a node ID that looks like an option (also applies to node).
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
@@ -17,10 +19,10 @@ Read-only; graph data comes exclusively from the GRAPH-1 loader.
 Until GRAPH-1 is available, all data commands report GRAPH_UNAVAILABLE.
 Unavailable counts are unknown, never reported as zero.
 Exit codes: 0 success/help, 1 unavailable or loader failure, 2 invalid arguments.
-Neighbors also exits 1 when the node is not found.
+Node and neighbors also exit 1 when the node is not found.
 `;
 
-type GraphCommand = 'nodes' | 'edges' | 'status' | 'neighbors';
+type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors';
 type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND';
 
 interface Options {
@@ -33,7 +35,7 @@ interface Options {
 }
 
 function isCommand(value: string): value is GraphCommand {
-  return value === 'nodes' || value === 'edges' || value === 'status' || value === 'neighbors';
+  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors';
 }
 
 function parse(args: string[]): Options {
@@ -44,7 +46,7 @@ function parse(args: string[]): Options {
     const arg = args[i]!;
     if (arg === '--json' && !options.json) options.json = true;
     else if ((arg === '--help' || arg === '-h') && !options.help) options.help = true;
-    else if (options.command === 'neighbors' && arg === '--' && options.nodeId === null && i + 1 < args.length) {
+    else if ((options.command === 'neighbors' || options.command === 'node') && arg === '--' && options.nodeId === null && i + 1 < args.length) {
       options.nodeId = args[++i]!;
     } else if (options.command === 'neighbors' && arg === '--direction' && !directionSeen) {
       const value = args[++i];
@@ -56,14 +58,14 @@ function parse(args: string[]): Options {
       if (value === undefined || !/^[1-4]$/.test(value)) throw new Error('Depth must be an integer from 1 to 4.');
       options.depth = Number(value);
       depthSeen = true;
-    } else if (options.command === 'neighbors' && options.nodeId === null && !arg.startsWith('-')) {
+    } else if ((options.command === 'neighbors' || options.command === 'node') && options.nodeId === null && !arg.startsWith('-')) {
       options.nodeId = arg;
     }
     else if (isCommand(arg) && options.command === null) options.command = arg;
     else throw new Error('Invalid graph arguments.');
   }
   if (!options.help && options.command === null) throw new Error('A graph subcommand is required.');
-  if (!options.help && options.command === 'neighbors' && options.nodeId === null) throw new Error('A node ID is required.');
+  if (!options.help && (options.command === 'neighbors' || options.command === 'node') && options.nodeId === null) throw new Error('A node ID is required.');
   return options;
 }
 
@@ -102,6 +104,13 @@ export async function cmdGraph(args: string[]): Promise<number> {
       throw new Error('Invalid graph snapshot');
     }
     const command = options.command!;
+    if (command === 'node') {
+      const node = graph.nodes.find((record) => record?.id === options.nodeId);
+      if (!node) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
+      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', node,
+        complete: graph.complete, sources: graph.sources, issues: graph.issues }, null, options.json ? undefined : 2));
+      return 0;
+    }
     if (command === 'neighbors') {
       const neighborhood = graphNeighborhood(graph, options.nodeId!, options.direction, options.depth);
       if (!neighborhood) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
