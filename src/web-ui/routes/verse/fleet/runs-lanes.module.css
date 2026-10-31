@@ -1,0 +1,11 @@
+.panel { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.header { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3); }
+.header h2 { margin: 0; font-size: var(--text-md-size); }
+.header span { color: var(--text-secondary); }
+.header [data-level='fresh'] { color: var(--status-success-fg); }
+.header [data-level='late'] { color: var(--status-warning-fg); }
+.header [data-level='stale'] { color: var(--status-danger-fg); }
+.scroll { overflow-x: auto; }
+.panel table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.panel th, .panel td { padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+.panel td:last-child { overflow-wrap: anywhere; }
