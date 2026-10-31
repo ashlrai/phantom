@@ -1,3 +1,4 @@
 .graph { display: grid; gap: 12px; }
 .graph header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .danger { color: var(--status-danger-fg); background: var(--status-danger-bg); border: 1px solid var(--status-danger-solid); border-radius: 6px; padding: 4px 8px; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
