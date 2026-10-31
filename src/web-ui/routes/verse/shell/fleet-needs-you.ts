@@ -59,6 +59,11 @@ const SAFE_STATUS = /^[\w .:()-]{1,160}$/;
 const LOW_DISK_GB = 10;
 const LOW_MEM_PCT = 10;
 
+/** Match the Host pane's disk thresholds; unknown readings are not alerts. */
+export function diskLowSeverity(freeGb: number | null): 'danger' | 'warning' | null {
+  return freeGb === null ? null : freeGb < 5 ? 'danger' : freeGb < 20 ? 'warning' : null;
+}
+
 export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeedsYouResult {
   if (!isFleetRuns(snapshot)) return { answered: false, items: [] };
   const runsDir = snapshot.sources.runsDir;
@@ -180,6 +185,19 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       severity: 'attention',
       title: `Personal Codex is at ${used}%`, detail,
       nextStep: 'Move new work to Devin and local lanes before it runs out', target: 'fleet',
+    });
+  }
+
+  const diskSeverity = diskLowSeverity(snapshot.diskFreeGb);
+  if (diskSeverity !== null) {
+    items.push({
+      id: 'host-disk-low',
+      open: { kind: 'pane', paneId: 'fleet-host' },
+      severity: diskSeverity === 'danger' ? 'urgent' : 'attention',
+      title: diskSeverity === 'danger' ? 'Disk is critically full on this Mac' : 'Disk is nearly full on this Mac',
+      detail: `${snapshot.diskFreeGb} GB free. Workers clone repos and write logs here; a full disk halts every lane.`,
+      nextStep: 'Free space: empty ~/.ashlr-runs/archive and old worker clones, then recheck in the Host pane.',
+      target: 'ops',
     });
   }
 
