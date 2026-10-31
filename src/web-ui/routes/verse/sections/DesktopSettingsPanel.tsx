@@ -20,7 +20,8 @@
  * switch (a disabled control would suggest a setting that exists here).
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Switch } from '../../../components/primitives/index.js';
+import { Button, Switch } from '../../../components/primitives/index.js';
+import { useToast } from '../../../components/primitives/Toast.js';
 import { isDesktopShell } from '../../../app/desktop-shell.js';
 import {
   setDesktopPreference,
@@ -29,6 +30,7 @@ import {
   type DesktopState,
 } from '../../../app/desktop-state.js';
 import { readOptOut, subscribeOptOut, writeOptOut } from '../dock/fleet-workspace-auto.js';
+import { resetDockLayout } from './dock-reset.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import { UpdateStatusRow } from './UpdateStatusRow.js';
 import styles from './SettingsSection.module.css';
@@ -71,6 +73,7 @@ function FleetWorkspaceSetting() {
 
 export function DesktopSettingsPanel() {
   const state = useDesktopState();
+  const toast = useToast();
   const [pending, setPending] = useState<DesktopPreference | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
@@ -121,6 +124,9 @@ export function DesktopSettingsPanel() {
     <Panel title="Desktop">
       <UpdateStatusRow />
       <FleetWorkspaceSetting />
+      <SettingRow label="Dock layout" description="Forget saved tabs, splits and sizes and reopen the fleet workspace.">
+        <Button size="sm" onClick={() => { resetDockLayout(); toast.show('Dock layout reset'); }}>Reset</Button>
+      </SettingRow>
       <SettingRow
         label={`System-wide shortcut (${state.hotkey.accelerator})`}
         description={<span data-tone={hotkeyBroken ? 'warning' : undefined} role={hotkeyBroken ? 'status' : undefined}>{hotkeyNote(state)}</span>}

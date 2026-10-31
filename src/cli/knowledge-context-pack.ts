@@ -5,7 +5,7 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--json]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--json [--report]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -13,6 +13,9 @@ contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
 The snapshot must be at most 1 MiB. File input must be an owner-controlled
 regular file. Use --stdin to explicitly read a snapshot from standard input.
 --json wraps the pack and its UTF-8 byte count in a versioned object.
+--report requires --json and adds requestedByteBudget, emittedBytes,
+emittedRecordCount, citedJobIds (distinct, in pack order), and
+truncatedRecordCount under report. Counts describe the emitted JSONL pack.
 `;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -50,9 +53,11 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   let file: string | undefined;
   let useStdin = false;
   let json = false;
+  let report = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--report' && !report) report = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
     else if (arg === '--file' && file === undefined) {
       const value = args[++i];
@@ -60,6 +65,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
       file = value;
     } else return invalid(`Unexpected argument or flag: ${arg}`);
   }
+  if (report && !json) return invalid('--report requires --json');
   if (file !== undefined && useStdin) return invalid('--file and --stdin are mutually exclusive');
   if (file === undefined && !useStdin) return invalid('--file or --stdin is required');
 
@@ -100,8 +106,20 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   catch { return invalid('snapshot must be valid JSON'); }
   if (!snapshot(input)) return invalid('snapshot has an invalid shape or byteBudget');
   const pack = buildNodeContextPack(input);
+  const bytes = Buffer.byteLength(pack, 'utf8');
+  const details = report ? (() => {
+    const records = pack.split('\n').filter(Boolean).map(line =>
+      JSON.parse(line) as { jobId: string; truncated: boolean });
+    return {
+      requestedByteBudget: input.byteBudget,
+      emittedBytes: bytes,
+      emittedRecordCount: records.length,
+      citedJobIds: [...new Set(records.map(record => record.jobId))],
+      truncatedRecordCount: records.filter(record => record.truncated).length,
+    };
+  })() : undefined;
   process.stdout.write(json
-    ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes: Buffer.byteLength(pack, 'utf8') }) + '\n'
+    ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}) }) + '\n'
     : pack);
   return 0;
 }
