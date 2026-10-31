@@ -1,13 +1,15 @@
 import { getFleetJobDetail, isFleetJobId, type FleetJobDetailV1 } from '../core/fleet/runs-job-detail.js';
 import { getFleetJobChanges, type FleetJobChangesV1 } from '../core/fleet/runs-job-changes.js';
+import { getFleetJobText } from '../core/fleet/runs-job-texts.js';
 
 interface Readers {
   detail: typeof getFleetJobDetail;
   changes: typeof getFleetJobChanges;
+  text?: typeof getFleetJobText;
 }
 
-const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges };
-const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log] [--help]';
+const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges, text: getFleetJobText };
+const usage = 'Usage: phm fleet job <id> [--json] [--changes | --log | --prompt | --notes] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 function formatDetail(job: FleetJobDetailV1): string {
@@ -37,7 +39,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
   const seen = new Set<string>();
   for (const arg of args) {
     const flag = arg === '-h' ? '--help' : arg;
-    if (['--json', '--changes', '--log', '--help'].includes(flag)) {
+    if (['--json', '--changes', '--log', '--prompt', '--notes', '--help'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
     } else if (!id && isFleetJobId(arg)) {
@@ -46,14 +48,24 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers): 
       return invalid();
     }
   }
-  if (seen.has('--log') && seen.has('--changes')) return invalid();
+  if (['--changes', '--log', '--prompt', '--notes'].filter(flag => seen.has(flag)).length > 1) return invalid();
   if (seen.has('--help')) {
-    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail.`);
+    console.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts.`);
     return 0;
   }
   if (!id) return invalid();
   try {
-    if (seen.has('--changes')) {
+    if (seen.has('--prompt') || seen.has('--notes')) {
+      const kind = seen.has('--prompt') ? 'prompt' : 'notes';
+      const artifact = await (deps.text ?? getFleetJobText)(id, kind);
+      if (seen.has('--json')) {
+        console.log(JSON.stringify(artifact));
+      } else {
+        if (artifact.text) process.stdout.write(artifact.text.endsWith('\n') ? artifact.text : `${artifact.text}\n`);
+        process.stderr.write(`${kind}: ${artifact.state}; truncated: ${artifact.truncated ? 'yes' : 'no'}\n`);
+      }
+      return artifact.state === 'ok' ? 0 : 1;
+    } else if (seen.has('--changes')) {
       const job = await deps.changes(id);
       console.log(seen.has('--json') ? JSON.stringify(job) : formatChanges(job));
     } else {
