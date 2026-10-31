@@ -7,6 +7,7 @@
  * back a screen instead of leaving the app. Nothing secret ever goes in it —
  * only screen names and chat ids the read session can list anyway.
  */
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { useCallback, useSyncExternalStore } from 'react';
 
 export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'more';
@@ -23,6 +24,7 @@ export type MobileRoute =
   | { screen: 'more' }
   | { screen: 'fleet' }
   | { screen: 'runs' }
+  | { screen: 'worker'; job: string }
   | { screen: 'inbox' };
 
 const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox']);
@@ -31,6 +33,14 @@ const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'ru
 export function parseMobileHash(hash: string): MobileRoute {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   const [head, id, pane] = parts;
+  if (head === 'workers') {
+    try {
+      const job = decodeURIComponent(id ?? '');
+      return parts.length === 2 && JOB_ID_RE.test(job) ? { screen: 'worker', job } : { screen: 'runs' };
+    } catch {
+      return { screen: 'runs' };
+    }
+  }
   if (!head) return { screen: 'home' };
   if (head === 'agents' && id) {
     let decoded: string;
@@ -41,7 +51,7 @@ export function parseMobileHash(hash: string): MobileRoute {
     }
     return { screen: 'agent', id: decoded, pane: pane === 'changes' ? 'changes' : 'transcript' };
   }
-  if (SIMPLE.has(head)) return { screen: head as Exclude<MobileRoute['screen'], 'home' | 'agent'> } as MobileRoute;
+  if (SIMPLE.has(head)) return { screen: head as Exclude<MobileRoute['screen'], 'home' | 'agent' | 'worker'> } as MobileRoute;
   return { screen: 'home' };
 }
 
@@ -49,6 +59,8 @@ export function formatMobileHash(route: MobileRoute): string {
   switch (route.screen) {
     case 'home':
       return '#/';
+    case 'worker':
+      return JOB_ID_RE.test(route.job) ? `#/workers/${encodeURIComponent(route.job)}` : '#/runs';
     case 'agent':
       return `#/agents/${encodeURIComponent(route.id)}${route.pane === 'changes' ? '/changes' : ''}`;
     default:
@@ -72,6 +84,7 @@ export function tabOf(route: MobileRoute): MobileTab {
     case 'more':
     case 'fleet':
     case 'runs':
+    case 'worker':
     case 'inbox':
       return 'more';
   }

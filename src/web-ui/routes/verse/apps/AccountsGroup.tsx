@@ -1,6 +1,7 @@
 /**
  * routes/verse/apps/AccountsGroup.tsx — ACCOUNTS: every seat's plan,
- * connection (A2), 5-hour and weekly windows with their resets, and how much
+ * connection (A2), the windows each provider still applies — Claude's weekly
+ * window only since Anthropic lifted its 5-hour limit — and how much
  * is "Reserved for you" (A9) — the shared CapacityStrip in its accounts mode —
  * plus the one thing each seat needs from you.
  *

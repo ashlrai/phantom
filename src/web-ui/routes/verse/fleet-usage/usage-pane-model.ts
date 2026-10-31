@@ -3,13 +3,15 @@
  * the dock Usage pane: one dense row per provider account, the fleet
  * snapshot's own Codex personal figure, and tokens-per-lane.
  *
- * Windows are rendered EXACTLY as the provider reported them — a Claude
- * account carrying only a weekly window produces one meter here, never a
- * synthesized 5-hour one. Runs data is narrowed field-by-field (like
- * fleet-events-model) so a drifted or partial body degrades to nothing
- * rather than throwing at render time.
+ * Windows are rendered EXACTLY as the provider reported them, minus the one
+ * window that no longer exists: Anthropic removed Claude's 5-hour limit, so
+ * a stale `five_hour` in the payload is filtered out (provider-windows) and
+ * the row says why only the weekly window applies. Runs data is narrowed
+ * field-by-field (like fleet-events-model) so a drifted or partial body
+ * degrades to nothing rather than throwing at render time.
  */
 import type { Account, AccountProvider, AccountsSnapshot } from '../usage/usage-contract.js';
+import { visibleWindows, windowNote } from '../usage/provider-windows.js';
 
 // ---------------------------------------------------------------------------
 // Provider accounts (GET /api/verse/accounts, already narrowed to
@@ -35,6 +37,8 @@ export interface UsageRow {
   state: Account['state'];
   reason: string | null;
   windows: UsageWindowRow[];
+  /** One line when the provider retired a window (Claude's lifted 5-hour limit). */
+  note: string | null;
 }
 
 const PROVIDER_RANK: Record<AccountProvider, number> = { claude: 0, codex: 1, grok: 2 };
@@ -49,7 +53,7 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
       provider: account.provider,
       state: account.state,
       reason: account.reason,
-      windows: account.windows.map((w) => ({
+      windows: visibleWindows(account.provider, account.windows).map((w) => ({
         label: w.label ?? w.id,
         usedPercent: w.usedPercent,
         resetsAt: w.resetsAt,
@@ -57,6 +61,7 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
         limitReached: w.limitReached,
         measured: w.measured,
       })),
+      note: windowNote(account.provider),
     }))
     .sort((a, b) => PROVIDER_RANK[a.provider] - PROVIDER_RANK[b.provider] || a.label.localeCompare(b.label));
 }

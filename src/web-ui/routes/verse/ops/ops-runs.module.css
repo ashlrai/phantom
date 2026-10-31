@@ -3,5 +3,8 @@
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
 .table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--text-xs-size); }
 .table th, .table td { text-align: left; vertical-align: top; padding: var(--space-1); border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.jobLink { display: inline; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.jobLink:hover { text-decoration: underline; }
+.jobLink:focus-visible { outline: 2px solid var(--focus-ring, currentColor); outline-offset: 2px; }
 .events { font-family: var(--font-mono); white-space: pre-wrap; }
 @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
