@@ -5,6 +5,7 @@ function BriefGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+f',
   id: 'fleet-brief', title: 'Fleet brief', description: 'Copyable one-screen fleet status', needsSession: false,
   icon: BriefGlyph,
   component: lazyPane(() => import('./FleetBriefPane.js').then((m) => m.FleetBriefPane)),
