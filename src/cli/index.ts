@@ -2680,6 +2680,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'route': {
+        const { cmdRoute } = await import('./route.js');
+        process.exitCode = await cmdRoute(rest);
+        break;
+      }
+
       case 'usage': {
         // M194: frontier usage table — per-engine calls/tokens/cost + window state.
         const cmdUsage = await loadUsageCmd();

@@ -52,6 +52,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ budgets: PoolBudgetSnapshot }',
   },
   {
+    usage: 'phm route job --input <job.json|-> [--metrics <feed.json|->] [--plan <plan.json|->] [--budgets <snapshot.json|->] [--json]',
+    description: 'Choose a queue job\'s pool, tier and serving model by expected merged impact per token under per-pool budget pressure. Advisory; never dispatches, spends or writes.',
+    safety: 'read',
+    jsonShape: 'JobRouteDecision (schemaVersion 1)',
+  },
+  {
     usage: 'phm resource --json [--directory <fleet-directory>]',
     description: 'Refresh the shared resource projection in fleet.json from recorded usage and machine telemetry; no provider calls or dispatch.',
     safety: 'append',
@@ -703,6 +709,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
+  { cmd: 'route job --input <job.json|-> [--metrics <feed.json|->] [--plan <plan.json|->] [--budgets <snapshot.json|->]', desc: 'Expected-value routing: pick a queue job\'s pool, tier and model by merged impact per token under budget pressure (advisory; never dispatches).', topic: 'autonomy' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },

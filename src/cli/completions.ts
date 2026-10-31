@@ -52,7 +52,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget',
+  'worktrees', 'drive', 'budget', 'route',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -64,6 +64,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['report', '--help'],
+  route: ['job', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'help'],
   config: ['get', 'set', 'path', 'effective'],
