@@ -18,8 +18,10 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
-import { saveConfig, defaultConfig, INDEX_PATH } from './config.js';
+import { loadConfig, saveConfig, defaultConfig, INDEX_PATH } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
+import { RESOURCE_CATALOG } from './onboard/catalog.js';
+import { probeCliLogin, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
@@ -802,4 +804,77 @@ export async function setupWizard(
   nextSteps.push('try: ashlr run / ashlr swarm / ashlr tui');
 
   return { steps, ready: base.ready && daemonStep.status !== 'manual', nextSteps };
+}
+
+// ---------------------------------------------------------------------------
+// RQ-ONB-2 DETECT - per-catalog-resource status for GET /api/onboard/status
+// ---------------------------------------------------------------------------
+
+/**
+ * One catalog row joined with live detection. loginState is the CLI's own
+ * status-command verdict (never a token file), null when no probe ran;
+ * loginCommand is operator guidance, never executed by us.
+ */
+export interface OnboardResourceStatus {
+  id: string;
+  installed: boolean;
+  binaryPath: string | null;
+  loginState: CliLoginVerdict | null;
+  loginCommand: string | null;
+  selectedPlanTier: string | null;
+}
+
+/** GET /api/onboard/status response body. */
+export interface OnboardStatusReport {
+  generatedAt: string;
+  /** Mirrors the server's mutation surface so the picker can gate honestly. */
+  dispatchEnabled: boolean;
+  resources: OnboardResourceStatus[];
+}
+
+/**
+ * Per-catalog-entry detection. Read-only: `which` for the binary and the CLI's
+ * own status command for the login verdict (never token files or ~/.codex
+ * contents). Probed in parallel, each bounded. Never throws.
+ */
+export async function detectOnboardResources(cfg: AshlrConfig): Promise<OnboardResourceStatus[]> {
+  return Promise.all(RESOURCE_CATALOG.map(async (entry) => {
+    const binaryPath = entry.cliBinary ? resolveCliOnPath(entry.cliBinary) : null;
+    const pick = cfg.onboard?.planTiers?.[entry.id];
+    return {
+      id: entry.id,
+      installed: binaryPath !== null,
+      binaryPath,
+      loginState: binaryPath && entry.loginCheckCommand
+        ? await probeCliLogin(entry.loginCheckCommand)
+        : null,
+      loginCommand: entry.loginCommand ?? entry.cliBinary,
+      selectedPlanTier: typeof pick === 'string' && entry.planTiers.includes(pick) ? pick : null,
+    };
+  }));
+}
+
+/**
+ * Persist a Connect plan-tier pick to cfg.onboard.planTiers in
+ * ~/.ashlr/config.json. Validated strictly against the catalog; null clears.
+ * A fresh load/save pair keeps config fields written since boot intact.
+ */
+export function persistOnboardPlanTier(
+  body: unknown,
+): { ok: true; resourceId: string; planTier: string | null } | { ok: false; error: string } {
+  const { resourceId, planTier } = (body ?? {}) as { resourceId?: unknown; planTier?: unknown };
+  const entry = RESOURCE_CATALOG.find((r) => r.id === resourceId);
+  if (!entry || entry.planTiers.length === 0) {
+    return { ok: false, error: 'unknown resource or it has no plan tiers' };
+  }
+  if (planTier !== null && (typeof planTier !== 'string' || !entry.planTiers.includes(planTier))) {
+    return { ok: false, error: `planTier must be null or one of: ${entry.planTiers.join(', ')}` };
+  }
+  const cfg = loadConfig();
+  const planTiers = { ...(cfg.onboard?.planTiers ?? {}) };
+  if (planTier === null) delete planTiers[entry.id];
+  else planTiers[entry.id] = planTier;
+  cfg.onboard = { ...(cfg.onboard ?? {}), planTiers };
+  saveConfig(cfg);
+  return { ok: true, resourceId: entry.id, planTier };
 }

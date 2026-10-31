@@ -24,9 +24,10 @@
  *   G7  GitHub       App PR; every required check green on the head SHA; no
  *                    checks ⇒ owner lane; SHA-pinned squash merge. On a
  *                    local-enforcement repo the App's own host-verified
- *                    `ashlr/verify` run must be green (3.13). Non-required
- *                    checks are informational — a red Vercel preview never
- *                    refuses (verify-check-run.ts).
+ *                    `ashlr/verify` run must be green (3.13) and every GitHub
+ *                    Actions check run blocks — the secret scan included.
+ *                    Other Apps' checks are informational — a red Vercel
+ *                    preview never refuses (verify-check-run.ts).
  *
  * Everything here is PURE (inputs in, verdict out) except `recordGateRow`,
  * which appends to the ledger through an injected sink. The orchestration —
@@ -67,7 +68,7 @@ import {
   type ReviewModelFamily,
 } from './reviewer-independence.js';
 import type { FleetMergeStateV1 } from './fleet-merge-state.js';
-import { ASHLR_VERIFY_CHECK_NAME, partitionBlockingCheckContexts, type ObservedCheckContext } from './verify-check-run.js';
+import { ASHLR_VERIFY_CHECK_NAME, GITHUB_ACTIONS_APP_ID, partitionBlockingCheckContexts, type ObservedCheckContext } from './verify-check-run.js';
 import {
   GATE_ORDER,
   MERGE_RISK_RANK,
@@ -1150,10 +1151,12 @@ export function evaluateG7Checks(input: G7ChecksInput): GateEvaluation & { state
   } else {
     // Local enforcement: GitHub protects nothing here, so the merge waits on
     // the fleet App's own host-verified `ashlr/verify` (3.13) — plus whatever
-    // contexts the branch requires anyway. Every other observed check is
-    // informational: a deploy-only green (a Vercel preview) proves nothing
-    // and a red one blocks nothing; a same-named run from any other App
-    // satisfies the verify context never.
+    // contexts the branch requires anyway and EVERY check run GitHub Actions
+    // reported on the head: nothing names the repo's own CI server-side, so a
+    // red or pending Actions run (the secret scan included) blocks here or it
+    // blocks nowhere. Only another App's check is informational: a deploy-only
+    // green (a Vercel preview) proves nothing and a red one blocks nothing; a
+    // same-named run from any other App satisfies the verify context never.
     const fleetAppId = input.fleetAppId ?? null;
     if (observed.length === 0 && fleetAppId === null) {
       return out(evaluation(
@@ -1172,9 +1175,19 @@ export function evaluateG7Checks(input: G7ChecksInput): GateEvaluation & { state
         { enforcement: 'local', required: [`${ASHLR_VERIFY_CHECK_NAME}@fleet-app`], states: observed.map((s) => `${s.name}:${s.state}`).sort() },
       ), 'none');
     }
-    blocking = input.required.some((r) => r.context === ASHLR_VERIFY_CHECK_NAME && r.appId === fleetAppId)
-      ? input.required
+    const pinned: RequiredCheck[] = input.required.some((r) => r.context === ASHLR_VERIFY_CHECK_NAME && r.appId === fleetAppId)
+      ? [...input.required]
       : [...input.required, { context: ASHLR_VERIFY_CHECK_NAME, appId: fleetAppId }];
+    // Every Actions run becomes a required context pinned to the Actions App
+    // unless a required entry already accepts it as a source (context@* or
+    // context@15368 the branch names anyway).
+    for (const run of latestRuns) {
+      if (run.appId !== GITHUB_ACTIONS_APP_ID) continue;
+      if (!pinned.some((r) => r.context === run.name && (r.appId === null || r.appId === GITHUB_ACTIONS_APP_ID))) {
+        pinned.push({ context: run.name, appId: GITHUB_ACTIONS_APP_ID });
+      }
+    }
+    blocking = pinned;
   }
   const partition = partitionBlockingCheckContexts({ required: blocking, observed });
   const inputs = {
