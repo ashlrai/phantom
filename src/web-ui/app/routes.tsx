@@ -40,6 +40,7 @@ import { SecurityView } from '../routes/control/security/SecurityView.js';
 import { GoalsView } from '../routes/goals/GoalsView.js';
 import { InboxView } from '../routes/inbox/InboxView.js';
 import { AgentOsView } from '../routes/agent-os/AgentOsView.js';
+import { ConnectView } from '../routes/connect/ConnectView.js';
 import { UniverseView } from '../routes/universe/UniverseView.js';
 import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
 
@@ -57,6 +58,7 @@ export function AppRoutes() {
             />
           ),
         )}
+        <Route path="/connect" element={<ConnectView />} />
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
