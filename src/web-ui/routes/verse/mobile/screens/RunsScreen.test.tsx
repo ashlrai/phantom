@@ -11,10 +11,11 @@ import { clearMutationToken, setMutationToken } from '../../../../data/auth-stor
 import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
 import { MobileGuardSheet } from '../MobileGuardSheet.js';
+import { resetBusMissingForTest } from '../bus-query.js';
 import { MobileToasts, resetMobileToastsForTest } from '../mobile-toast.js';
 import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from '../mobile.test-support.js';
 import { resetFleetRunsMissingForTest } from '../runs-queries.js';
-import { RunsScreen } from './RunsScreen.js';
+import { refreshRunsScreen, RunsScreen } from './RunsScreen.js';
 
 function healthy(): Record<string, unknown> {
   return {
@@ -49,10 +50,20 @@ afterEach(() => {
   resetGuard();
   resetMobileToastsForTest();
   resetFleetRunsMissingForTest();
+  resetBusMissingForTest();
   vi.unstubAllGlobals();
 });
 
 describe('RunsScreen reads', () => {
+  it('refreshes both runs and bus data', async () => {
+    const bus = { v: 1, hops: [], events: [{ at: '2026-10-31T11:00:00Z', kind: 'launch', text: 'Bus launch' }], sources: { hops: 'healthy', events: 'healthy' } };
+    const { calls } = stubFetch({ 'GET /api/verse/fleet/runs': healthy(), 'GET /api/verse/fleet/live/bus': bus });
+    mount();
+    expect(await screen.findByText('Bus launch')).toBeInTheDocument();
+    await refreshRunsScreen();
+    expect(calls.filter((call) => call.url === '/api/verse/fleet/runs')).toHaveLength(2);
+    expect(calls.filter((call) => call.url === '/api/verse/fleet/live/bus?limit=20')).toHaveLength(2);
+  });
   it('shows a skeleton while the snapshot loads', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
     mount();
