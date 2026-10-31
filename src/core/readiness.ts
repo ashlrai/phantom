@@ -330,6 +330,8 @@ export function readDaemonHealth(): {
   pidAlive: boolean;
   recoveryBlocked: boolean;
   recoveryReason: string | null;
+  /** ISO timestamp of the daemon's last recorded tick (daemon.json), or null. */
+  lastTickAt: string | null;
 } {
   try {
     // Peek at the RAW persisted flag BEFORE loadDaemonStateStrict() applies the H5
@@ -370,6 +372,7 @@ export function readDaemonHealth(): {
         pidAlive: false,
         recoveryBlocked: true,
         recoveryReason,
+        lastTickAt: null,
       };
     }
     const state = strict.state;
@@ -410,6 +413,7 @@ export function readDaemonHealth(): {
       pidAlive,
       recoveryBlocked: false,
       recoveryReason: null,
+      lastTickAt: typeof state.lastTickAt === 'string' ? state.lastTickAt : null,
     };
   } catch {
     return {
@@ -419,6 +423,7 @@ export function readDaemonHealth(): {
       pidAlive: false,
       recoveryBlocked: true,
       recoveryReason: 'daemon state health could not be inspected strictly',
+      lastTickAt: null,
     };
   }
 }

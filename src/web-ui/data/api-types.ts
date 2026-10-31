@@ -418,3 +418,6 @@ export type {
 
 /** RQ-ONB-2 DETECT: GET /api/onboard/status row + report shapes. */
 export type { OnboardResourceStatus, OnboardStatusReport } from '../../core/onboard.js';
+
+/** RQ-ONB-5 PAIR-COMPUTER: pairing status + pair/unpair result shapes. */
+export type { OnboardComputerStatus, ComputerPairResult } from '../../core/onboard.js';

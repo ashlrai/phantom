@@ -1952,11 +1952,12 @@ export async function handleApi(
     // command supplies the login verdict (never token files or ~/.codex
     // contents). Read-only like /api/orient; probes are bounded.
     if (path === '/api/onboard/status' && method === 'GET') {
-      const { detectOnboardResources } = await import('../onboard.js');
+      const { detectOnboardResources, detectComputerPairing } = await import('../onboard.js');
       sendJson(res, 200, {
         generatedAt: new Date().toISOString(),
         dispatchEnabled: ctx.allowDispatch,
         resources: await detectOnboardResources(cfg),
+        computer: detectComputerPairing(cfg),
       });
       return true;
     }
@@ -1983,6 +1984,31 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, result);
+      return true;
+    }
+
+    // ── POST /api/onboard/pair + /api/onboard/unpair ── RQ-ONB-5: "This
+    // computer" pairing reusing stepDaemonService + stepEnroll; unpair clears
+    // the record only. Same posture as plan-tier: 404 w/o dispatch, token
+    // required. Bodies are not read.
+    if (path === '/api/onboard/pair' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      const { pairThisComputer } = await import('../onboard.js');
+      sendJson(res, 200, await pairThisComputer(cfg));
+      return true;
+    }
+    if (path === '/api/onboard/unpair' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      const { unpairThisComputer } = await import('../onboard.js');
+      sendJson(res, 200, unpairThisComputer());
       return true;
     }
 

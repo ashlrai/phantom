@@ -15,6 +15,7 @@ import { emitAgentDecision } from './agent-decisions.js';
 import { apiPost } from './client.js';
 import { getMutationToken, touchMutationHold } from './auth-store.js';
 import { invalidate, invalidatePrefix } from './cache.js';
+import type { ComputerPairResult } from './api-types.js';
 
 class MissingMutationTokenError extends Error {
   constructor() {
@@ -83,4 +84,13 @@ export async function openTarget(req: OpenTargetRequest): Promise<void> {
 /** RQ-ONB-2: persist a Connect plan-tier pick; null clears it. */
 export async function setResourcePlanTier(resourceId: string, planTier: string | null): Promise<void> {
   await post('/api/onboard/plan-tier', { resourceId, planTier });
+}
+
+/** RQ-ONB-5: pair / unpair this computer (daemon service + enroll steps server-side). */
+export async function pairThisComputer(): Promise<ComputerPairResult> {
+  return post<ComputerPairResult>('/api/onboard/pair', {});
+}
+
+export async function unpairThisComputer(): Promise<ComputerPairResult> {
+  return post<ComputerPairResult>('/api/onboard/unpair', {});
 }

@@ -1111,6 +1111,13 @@ export interface AshlrConfig {
   /** RQ-ONB-2: Connect plan picks (resource id -> tier), written by POST /api/onboard/plan-tier. */
   onboard?: {
     planTiers?: Record<string, string>;
+    /** RQ-ONB-5: "This computer" pairing record, written by POST /api/onboard/pair; cleared by unpair. */
+    computer?: {
+      /** ISO timestamp pairing first completed; kept across re-pairs. */
+      pairedAt: string;
+      /** ISO timestamp the last pair observed the daemon service in place. */
+      lastSeenAt: string;
+    };
   };
   /**
    * M111: Multi-machine fleet work-queue coordination. DEFAULT ABSENT (off) -

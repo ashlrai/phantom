@@ -4,8 +4,6 @@
 // N ad hoc guesses. Files that genuinely need more than this (m482's real npm
 // pack/install contract, h5's 500-cycle leak-containment sweep) keep their own
 // larger per-file/per-test override on top of this floor.
-import { INTEGRATION_REAL_IO_TEST_FILES } from '../integration/lane-membership.mjs';
-
 export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 
 /**
@@ -45,11 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
-  // test/integration/lane-membership.mjs names the integration suites that run
-  // real source CLI + Locus subprocesses with private HOME/log/argv fixtures.
-  // Spread (not concatenated) so this array stays the single source of truth
-  // for both vitest.config.ts and the lane-membership guard below.
-  ...INTEGRATION_REAL_IO_TEST_FILES,
+  // test/integration/* entries are named literally below; the integration
+  // lane's own view derives by filtering this list (the single source of truth).
   'test/autopilot.test.ts', // Real temp git origin/clone/worktree, fixer and verify subprocesses, and a real push.
   'test/slowest-tests.test.ts', // Real Node subprocesses exercise file/stdin input, output and CLI exit codes.
   'test/model-inventory-files.test.ts', // Real temporary fleet files, atomic inventory lock and rename preservation.
@@ -595,6 +590,7 @@ export const REAL_IO_TEST_FILES = [
   'test/h7.doctor-probes.test.ts', // hermetic real temp git repo + real fs fixture — 5.4s slowest test in the quiet baseline
   'test/h7.no-new-outward.test.ts', // hermetic real temp git repo + real fs fixture — 3.3s slowest test in the quiet baseline
   'test/h7.onboard.test.ts', // hermetic real temp git repo + real fs fixture — 2.8s slowest test in the quiet baseline
+  'test/onboard-pair.test.ts', // real git via makeRepo, real loopback binds via startServer and launchctl probes in serviceStatus
   'test/h7.preflight.test.ts', // hermetic real temp git repo + real fs fixture — 1.2s slowest test in the quiet baseline
   'test/h7.rollback.test.ts', // hermetic real temp git repo + real fs fixture — 7.8s slowest test in the quiet baseline
   'test/h8.cleanup-comment-only.test.ts', // hermetic real temp git repo + real fs fixture — 0.0s slowest test in the quiet baseline

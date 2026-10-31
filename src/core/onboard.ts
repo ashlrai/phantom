@@ -21,12 +21,13 @@ import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
 import { loadConfig, saveConfig, defaultConfig, INDEX_PATH } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
 import { RESOURCE_CATALOG } from './onboard/catalog.js';
-import { probeCliLogin, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
+import { probeCliLogin, readDaemonHealth, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
 import { runDoctor } from './doctor.js';
 import { serviceStatus, install } from './daemon/service.js';
+import type { ServiceActivity } from './daemon/service-activity.js';
 import {
   assertResidentServiceInstallAuthorized,
   RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE,
@@ -830,6 +831,8 @@ export interface OnboardStatusReport {
   /** Mirrors the server's mutation surface so the picker can gate honestly. */
   dispatchEnabled: boolean;
   resources: OnboardResourceStatus[];
+  /** RQ-ONB-5: "This computer" pairing status (service + enroll + last-seen). */
+  computer: OnboardComputerStatus;
 }
 
 /**
@@ -877,4 +880,116 @@ export function persistOnboardPlanTier(
   cfg.onboard = { ...(cfg.onboard ?? {}), planTiers };
   saveConfig(cfg);
   return { ok: true, resourceId: entry.id, planTier };
+}
+
+// RQ-ONB-5 PAIR-COMPUTER - "This computer" pairing for the Connect surface.
+// The desktop app opens the same /connect route, so this status drives both.
+
+/** Live pairing status for the "This computer" card on /connect. */
+export interface OnboardComputerStatus {
+  /** True when a pairing record exists in cfg.onboard.computer. */
+  paired: boolean;
+  /** ISO timestamp pairing first completed; kept across re-pairs. */
+  pairedAt: string | null;
+  /** Last observed daemon sign: persisted heartbeat or a fresher lastTickAt. */
+  lastSeenAt: string | null;
+  serviceInstalled: boolean;
+  serviceActivity: ServiceActivity;
+  daemonRunning: boolean;
+  /** Repos in the enrollment registry (0 when empty). */
+  enrolledRepos: number;
+}
+
+/** Read-only join of the persisted record with live daemon + enrollment state.
+ *  Reuses the same probes as the pair steps; never throws, degrades per facet. */
+export function detectComputerPairing(cfg: AshlrConfig): OnboardComputerStatus {
+  const record = cfg.onboard?.computer;
+  const pairedAt = typeof record?.pairedAt === 'string' ? record.pairedAt : null;
+  let lastSeenAt = typeof record?.lastSeenAt === 'string' ? record.lastSeenAt : null;
+  let serviceInstalled = false;
+  let serviceActivityState: ServiceActivity = 'inactive';
+  let daemonRunning = false;
+  try {
+    const status = serviceStatus();
+    serviceInstalled = status.installed;
+    serviceActivityState = serviceActivity(status);
+    const health = readDaemonHealth();
+    daemonRunning = health.running;
+    if (health.lastTickAt !== null && (lastSeenAt === null || health.lastTickAt > lastSeenAt)) {
+      lastSeenAt = health.lastTickAt;
+    }
+  } catch { /* a probe that cannot answer leaves the facet degraded, not paired */ }
+  let enrolledRepos = 0;
+  try {
+    enrolledRepos = listEnrolled().length;
+  } catch { /* registry unreadable: report zero, stay honest */ }
+  return {
+    paired: pairedAt !== null,
+    pairedAt,
+    lastSeenAt,
+    serviceInstalled,
+    serviceActivity: serviceActivityState,
+    daemonRunning,
+    enrolledRepos,
+  };
+}
+
+/** Result of POST /api/onboard/{pair,unpair}: step verdicts plus fresh status. */
+export interface ComputerPairResult {
+  /** True when the daemon service step is in place and the record persisted. */
+  ok: boolean;
+  steps: OnboardStep[];
+  computer: OnboardComputerStatus;
+}
+
+/** Step runners, injectable so tests can drive both step outcomes hermetically. */
+export interface ComputerPairDeps {
+  daemonService?: () => Promise<OnboardStep>;
+  enroll?: (cfg: AshlrConfig, opts: { yes: boolean }) => Promise<OnboardStep>;
+}
+
+/**
+ * Pair this computer: the daemon-service step, then enroll --yes (the desktop
+ * path has no prompt). The record persists only when the service step is 'ok';
+ * enroll failures stay visible in steps but do not un-pair a working service.
+ * Idempotent: re-pair keeps pairedAt and refreshes lastSeenAt.
+ */
+export async function pairThisComputer(
+  cfg: AshlrConfig,
+  deps: ComputerPairDeps = {},
+): Promise<ComputerPairResult> {
+  const daemonStep = await (deps.daemonService ?? stepDaemonService)();
+  const enrollStep = await (deps.enroll ?? stepEnroll)(cfg, { yes: true });
+  if (daemonStep.status === 'ok') {
+    try {
+      const fresh = loadConfig();
+      const now = new Date().toISOString();
+      const existing = fresh.onboard?.computer;
+      fresh.onboard = {
+        ...(fresh.onboard ?? {}),
+        computer: { pairedAt: existing?.pairedAt ?? now, lastSeenAt: now },
+      };
+      saveConfig(fresh);
+    } catch { /* persistence failure is reported by the fresh status below */ }
+  }
+  return {
+    ok: daemonStep.status === 'ok',
+    steps: [daemonStep, enrollStep],
+    computer: detectComputerPairing(loadConfig()),
+  };
+}
+
+/**
+ * Unpair this computer: drop the pairing record only. The daemon service and
+ * the enrolled repos stay (uninstall / unenroll are their own commands).
+ */
+export function unpairThisComputer(): ComputerPairResult {
+  const cfg = loadConfig();
+  if (cfg.onboard?.computer !== undefined) {
+    const onboard = { ...cfg.onboard };
+    delete onboard.computer;
+    cfg.onboard = onboard;
+    saveConfig(cfg);
+  }
+  return { ok: true, steps: [], computer: detectComputerPairing(loadConfig()) };
 }

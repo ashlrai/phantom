@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { RESOURCE_CATALOG, type ResourceKind } from '../../../core/onboard/catalog.js';
 import { apiGet } from '../../data/client.js';
-import { setResourcePlanTier } from '../../data/mutations.js';
-import type { OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
+import { pairThisComputer, setResourcePlanTier, unpairThisComputer } from '../../data/mutations.js';
+import type { OnboardComputerStatus, OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
 import styles from './ConnectView.module.css';
 
 const STEPS: readonly { kind: ResourceKind; title: string; description: string }[] = [
@@ -21,10 +21,24 @@ function statusText(resource: OnboardResourceStatus): string {
   return 'Installed - sign-in unknown';
 }
 
+function serviceText(computer: OnboardComputerStatus): string {
+  if (computer.daemonRunning) return 'daemon running';
+  if (!computer.serviceInstalled) return 'daemon service not installed';
+  if (computer.serviceActivity === 'running') return 'daemon running';
+  return `daemon service ${computer.serviceActivity}`;
+}
+
+function formatWhen(iso: string): string {
+  const time = Date.parse(iso);
+  return Number.isFinite(time) ? new Date(time).toLocaleString() : iso;
+}
+
 export function ConnectView() {
   const [report, setReport] = useState<OnboardStatusReport | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairNote, setPairNote] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +61,24 @@ export function ConnectView() {
       setSaveFailed(true);
     }
   }
+
+  async function togglePair(paired: boolean) {
+    setPairBusy(true);
+    setPairNote(null);
+    try {
+      const result = paired ? await unpairThisComputer() : await pairThisComputer();
+      setPairNote(result.ok
+        ? null
+        : result.steps.map((s) => s.detail).join(' ') || 'Pairing did not complete.');
+      setReport(await apiGet<OnboardStatusReport>('/api/onboard/status'));
+    } catch {
+      setPairNote(paired ? 'Unpair request failed.' : 'Pair request failed.');
+    } finally {
+      setPairBusy(false);
+    }
+  }
+
+  const computer = report?.computer;
 
   return (
     <div className={styles.page}>
@@ -78,6 +110,27 @@ export function ConnectView() {
                       )}
                       {detected?.installed && detected.loginCommand && detected.loginState !== 'logged-in' && (
                         <small>Run <code>{detected.loginCommand}</code></small>
+                      )}
+                      {step.kind === 'computer' && computer && (
+                        <>
+                          <small className={styles.status}>
+                            {computer.paired ? 'Paired' : 'Not paired'} · {serviceText(computer)} · {computer.enrolledRepos} repo(s) enrolled
+                          </small>
+                          {computer.pairedAt && <small>Paired {formatWhen(computer.pairedAt)}</small>}
+                          {computer.lastSeenAt && <small>Last seen {formatWhen(computer.lastSeenAt)}</small>}
+                          <span className={styles.pairRow}>
+                            <button
+                              type="button"
+                              className={styles.pairButton}
+                              disabled={picksLocked || pairBusy}
+                              onClick={() => void togglePair(computer.paired)}
+                            >
+                              {computer.paired ? 'Unpair' : 'Pair this computer'}
+                            </button>
+                            {picksLocked && <small>Pairing needs this server running with dispatch enabled.</small>}
+                          </span>
+                          {pairNote && <small role="alert" className={styles.notice}>{pairNote}</small>}
+                        </>
                       )}
                       {step.kind === 'subscription' && resource.planTiers.length > 0 && (
                         <select

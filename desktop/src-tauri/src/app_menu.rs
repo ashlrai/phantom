@@ -18,13 +18,20 @@ use std::sync::Mutex;
 
 use tauri::{
     menu::{AboutMetadataBuilder, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
-    AppHandle, Manager, Runtime,
+    AppHandle, Manager, Runtime, Url,
 };
 
 use crate::shell_contract;
 
+/// The sidecar URL `Connect Resources…` navigates to: the same `#/connect`
+/// hash route the browser console uses, on the loopback origin.
+fn connect_url() -> String {
+    format!("{}/#/connect", crate::SERVE_ORIGIN)
+}
+
 /// Menu item ids handled by [`handle_menu_event`].
 pub const ID_SETTINGS: &str = "app.settings";
+pub const ID_CONNECT: &str = "app.connect";
 pub const ID_RELOAD: &str = "view.reload";
 pub const ID_TOGGLE_THEME: &str = "view.toggle-theme";
 pub const ID_ZOOM_IN: &str = "view.zoom-in";
@@ -83,6 +90,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let settings = MenuItemBuilder::with_id(ID_SETTINGS, "Settings…")
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
+    // No accelerator: the page owns every letter chord (see the key test).
+    let connect = MenuItemBuilder::with_id(ID_CONNECT, "Connect Resources…").build(app)?;
 
     let app_menu = Submenu::with_items(
         app,
@@ -92,6 +101,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &about,
             &PredefinedMenuItem::separator(app)?,
             &settings,
+            &connect,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::services(app, None)?,
             &PredefinedMenuItem::separator(app)?,
@@ -181,6 +191,15 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str, main_window_l
                 shell_contract::COMMAND_TOGGLE_THEME,
             ));
         }
+        ID_CONNECT => {
+            // Navigate to the same /connect route the web console serves; the
+            // init script hands the reloaded page its tokens (shell contract).
+            let _ = window.show();
+            let _ = window.set_focus();
+            if let Ok(url) = Url::parse(&connect_url()) {
+                let _ = window.navigate(url);
+            }
+        }
         ID_RELOAD => {
             let _ = window.reload();
         }
@@ -203,6 +222,11 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str, main_window_l
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connect_opens_the_sidecars_own_connect_route() {
+        assert_eq!(connect_url(), "http://127.0.0.1:7777/#/connect");
+    }
 
     #[test]
     fn zoom_is_bounded_in_both_directions() {
