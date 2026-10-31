@@ -5,13 +5,20 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-function eligible(pr, repo) {
-  return pr.state === 'open' && pr.draft === false && Boolean(pr.auto_merge) &&
+// Cheap scope check usable on pull-list rows (which carry no auto_merge or
+// mergeable fields): the batch drain in scripts/ci/merge-drain.mjs pre-filters
+// with this before paying for a per-PR read.
+export function bridgeScope(pr, repo) {
+  return pr.state === 'open' && pr.draft === false &&
     pr.base?.repo?.full_name === repo && pr.head?.repo?.full_name === repo &&
     pr.base?.ref === 'master' && /^codex-bridge\/[A-Za-z0-9_-]+$/.test(pr.head?.ref ?? '');
 }
 
-function recut(repo, number, pr) {
+export function eligible(pr, repo) {
+  return bridgeScope(pr, repo) && Boolean(pr.auto_merge);
+}
+
+export function recut(repo, number, pr) {
   // Key by source head, not moving master: supervisor retries must not fan out
   // duplicate recuts each time another PR merges. No PR text enters the ask.
   const id = createHash('sha256').update(`${repo}:${number}:${pr.head.sha}`).digest('hex');

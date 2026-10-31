@@ -43,8 +43,9 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/m392.queue-lease-epochs.test.ts', // 0.4s
   'test/m314.repo-execution-profile.test.ts', // 0.4s
   'test/m385.cutoff-checkpoint-windows.test.ts', // 0.4s
-  'test/affected-map-audit.test.ts', // 0.44s slowest, 2026-10-28 local run; bounded `node scripts/audit-affected-map.mjs` child on a small fixture dir
-  'test/m30.merge-queue-reaper.test.ts', // 0.38s slowest, 2026-10-28 local run; `bash -c` over inert gh/curl stubs, no git/network
+  // test/affected-map-audit.test.ts and test/m30.merge-queue-reaper.test.ts
+  // moved up to REAL_IO_TEST_FILES; keeping them here too double-classifies
+  // them and trips this guard's stale-entry check.
   'test/m27.conventions.test.ts', // 0.4s
   'test/m24.state.test.ts', // 0.4s
   'test/m414.local-store-lock-unknown-owner.test.ts', // 0.3s
@@ -52,6 +53,16 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/m382.enrollment-cutoff-snapshot.test.ts', // 0.3s
   'test/m2.doctor-exit-code.test.ts', // 0.3s
   'test/m415.policy-durability-races.test.ts', // 0.3s
+  // Bounded spawnSync of the repo check script (`node ... --check`) plus a
+  // `tar -tzf` listing on a staged artifact — stubbed PATH toolchain per the
+  // file header, no git/network. 2.29s file total, 2026-10-29 local run.
+  'test/desktop-nightly-build.test.ts',
+  // execFileSync git porcelain against a scratch repo in a temp dir — real
+  // but cheap, bounded fixture, no network. 0.71s test total, 2026-10-29.
+  'test/collision-free-edits.test.ts',
+  // execFileSync git (init/commit) in a temp-dir repo, same bounded pattern.
+  // 0.20s test total, 2026-10-29 local run.
+  'test/improve-reverted.test.ts',
   'test/post-merge-credit-import-cycle.test.ts', // 0.2s
   'test/m147.telegram-comms.test.ts', // 0.2s
   'test/cli-tidy-json.test.ts', // 0.2s
