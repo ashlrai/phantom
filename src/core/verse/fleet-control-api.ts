@@ -108,6 +108,33 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
 let actionInFlight: Promise<unknown> | null = null;
 
 export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, method) => {
+  if (path === '/api/verse/fleet/control/lanes') {
+    try {
+      const { readLaneTargets, setLaneTarget, parseLaneTargetAction, LaneTargetError } = await import('../fleet/runs-lane-targets.js');
+      if (method === 'GET') {
+        if (noQuery(req, res)) sendJson(res, 200, await readLaneTargets());
+      } else if (method === 'POST') {
+        const body = await readMutationBody(ctx, req, res);
+        if (!body) return true;
+        const action = parseLaneTargetAction(body);
+        if (!action) { sendInvalid(res, 'invalid lane target'); return true; }
+        if (actionInFlight) {
+          sendJson(res, 409, { code: 'busy', error: 'Another fleet control action is still running — try again in a moment.' });
+          return true;
+        }
+        const run = setLaneTarget(action.lane, action.target);
+        actionInFlight = run;
+        try { sendJson(res, 200, await run); }
+        catch (error) {
+          if (error instanceof LaneTargetError) sendJson(res, error.status, { code: error.code, error: error.message });
+          else throw error;
+        } finally { actionInFlight = null; }
+      } else sendJson(res, 405, { error: 'method not allowed' });
+    } catch {
+      sendJson(res, 500, { code: 'fleet-control-failed', error: 'the fleet control request failed' });
+    }
+    return true;
+  }
   if (path === '/api/verse/fleet/control/switches') {
     try {
       const { readRunsSwitches, setRunsSwitch, parseSwitchAction } = await import('../fleet/runs-switches.js');
