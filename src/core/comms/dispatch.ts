@@ -66,6 +66,7 @@ import {
   sendReportViaTelegram,
   type SendPacer,
 } from './telegram-channel.js';
+import { recordTelegramToInbox } from './telegram-inbox-bridge.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
@@ -330,6 +331,9 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
 
   // Everything else is Mason talking to the Leader. Auth: telegram.ts already
   // dropped messages from foreign chat ids, so this path is Mason-only.
+  // The same verified message is also receipted into MASON-INBOX.md through
+  // the shared channel receiver (channel `telegram`, deduped, acked here).
+  await recordTelegramToInbox(event, text, cfg);
   await converseWithLeader(event, text, cfg);
 }
 
