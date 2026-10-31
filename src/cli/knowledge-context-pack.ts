@@ -5,13 +5,15 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--byte-budget N] [--json [--report] [--require-upstream]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--json [--report] [--require-upstream]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
 {jobId, text}, and a positive integer byteBudget (at most 65536).
 The snapshot must be at most 1 MiB. File input must be an owner-controlled
 regular file. Use --stdin to explicitly read a snapshot from standard input.
+--query <text> overrides the snapshot query with nonblank text of at most
+2000 Unicode code points, without changing the snapshot.
 --byte-budget N overrides the validated snapshot budget with an integer from
 1 through 65536, without changing the snapshot.
 --json wraps the pack and its UTF-8 byte count in a versioned object.
@@ -63,12 +65,21 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   let report = false;
   let requireUpstream = false;
   let byteBudget: number | undefined;
+  let query: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
+    else if (arg === '--query' && query === undefined) {
+      const value = args[++i];
+      if (!value?.trim() || Array.from(value).length > 2000 ||
+          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--byte-budget', '--help', '-h'].includes(value)) {
+        return invalid('--query requires nonblank text of at most 2000 characters');
+      }
+      query = value;
+    }
     else if (arg === '--byte-budget' && byteBudget === undefined) {
       const value = args[++i];
       if (!value || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > MAX_PACK_BYTES) {
@@ -123,7 +134,10 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   catch { return invalid('snapshot must be valid JSON'); }
   if (!snapshot(input)) return invalid('snapshot has an invalid shape or byteBudget');
   const effectiveBudget = byteBudget ?? input.byteBudget;
-  const pack = buildNodeContextPack({ ...input, byteBudget: effectiveBudget });
+  const pack = buildNodeContextPack({
+    ...input, byteBudget: effectiveBudget,
+    node: query === undefined ? input.node : { ...input.node, query },
+  });
   const bytes = Buffer.byteLength(pack, 'utf8');
   const records = report || requireUpstream ? pack.split('\n').filter(Boolean).map(line =>
     JSON.parse(line) as { jobId: string; truncated: boolean }) : [];
