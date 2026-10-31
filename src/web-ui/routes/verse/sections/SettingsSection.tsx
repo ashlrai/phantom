@@ -24,6 +24,7 @@ import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
 import { ResidentAwakePanel } from './ResidentAwakePanel.js';
 import { ShortcutsPanel } from './ShortcutsPanel.js';
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel.js';
+import { ConnectorsSettings } from '../../settings/connectors/ConnectorsView.js';
 import styles from './SettingsSection.module.css';
 
 export function SettingsSection() {
@@ -44,6 +45,7 @@ export function SettingsSection() {
           <DesktopSettingsPanel />
           <ResidentAwakePanel />
           <ConnectionPanel />
+          <ConnectorsSettings />
           <ShortcutsPanel />
           <OnboardingPanel />
           <AboutPanel />
