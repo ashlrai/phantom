@@ -20,6 +20,8 @@ function isRun(value: unknown): boolean {
 function isRepo(value: unknown): boolean {
   if (!record(value) || typeof value.repo !== 'string' || typeof value.path !== 'string'
     || !nullableString(value.version) || !nullableString(value.latestTag) || !nullableString(value.releaseWorkflow)
+    || !(value.commitsSinceTag === undefined || value.commitsSinceTag === null
+      || (typeof value.commitsSinceTag === 'number' && Number.isSafeInteger(value.commitsSinceTag) && value.commitsSinceTag >= 0))
     || !Array.isArray(value.notes) || !value.notes.every(note => typeof note === 'string')) return false;
   return value.gh === null || (record(value.gh) && isRelease(value.gh.latestRelease) && isRun(value.gh.latestRun));
 }
@@ -32,7 +34,8 @@ export function isOpsReleases(value: unknown): value is OpsReleasesV1 {
 
 export function orderRepos(repos: readonly OpsRepoReleaseV1[]): OpsRepoReleaseV1[] {
   const phantom = (repo: string) => repo === 'phantom' || repo.endsWith('/phantom');
-  return [...repos].sort((a, b) => Number(phantom(b.repo)) - Number(phantom(a.repo)) || a.repo.localeCompare(b.repo));
+  return [...repos].sort((a, b) => (b.commitsSinceTag ?? -1) - (a.commitsSinceTag ?? -1)
+    || Number(phantom(b.repo)) - Number(phantom(a.repo)) || a.repo.localeCompare(b.repo));
 }
 
 export function runTone(run: Run): 'ok' | 'warn' | 'danger' | 'neutral' {
