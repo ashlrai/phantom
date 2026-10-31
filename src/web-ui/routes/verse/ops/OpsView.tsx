@@ -1,8 +1,9 @@
 /**
  * routes/verse/ops/OpsView.tsx : the Ops tray section body: the desktop
- * command center's five views behind one segmented switch.
+ * command center's six views behind one segmented switch.
  *
  *   Live runs   current Mac workers and fleet activity
+ *   Queue       parked jobs and precheck drops
  *   Board       every task with its assignee, estimate and outcome
  *   Fleet       lanes, router holds and decisions, A/B calibration results
  *   Releases    read-only release status per enrolled repo
@@ -15,6 +16,7 @@
 import { useState } from 'react';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { OpsRuns } from './OpsRuns.js';
+import { OpsQueue } from './OpsQueue.js';
 import { OpsBoard } from './OpsBoard.js';
 import { OpsFleet } from './OpsFleet.js';
 import { OpsLeaders } from './OpsLeaders.js';
@@ -22,10 +24,11 @@ import { OpsReleases } from './OpsReleases.js';
 import styles from './ops.module.css';
 import runsStyles from './ops-runs.module.css';
 
-type OpsView = 'runs' | 'board' | 'fleet' | 'releases' | 'leaders';
+type OpsView = 'runs' | 'queue' | 'board' | 'fleet' | 'releases' | 'leaders';
 
 const VIEWS: ReadonlyArray<{ value: OpsView; label: string }> = [
   { value: 'runs', label: 'Live runs' },
+  { value: 'queue', label: 'Queue' },
   { value: 'board', label: 'Board' },
   { value: 'fleet', label: 'Fleet & router' },
   { value: 'releases', label: 'Releases' },
@@ -44,6 +47,7 @@ export function OpsView() {
         aria-label="Ops view"
       />
       {view === 'runs' ? <OpsRuns />
+        : view === 'queue' ? <OpsQueue />
         : view === 'board' ? <OpsBoard />
         : view === 'fleet' ? <OpsFleet />
         : view === 'releases' ? <OpsReleases />
