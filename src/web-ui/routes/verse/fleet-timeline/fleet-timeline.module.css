@@ -8,3 +8,6 @@
 .refresh:hover { background: var(--bg-hover); }
 .refresh:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 .muted { margin: 0; color: var(--text-tertiary); }
+
+.groupHeadline { margin: 0 0 var(--space-2); color: var(--text-secondary); }
+.refresh[aria-pressed='true'] { border-color: var(--border-focus); background: var(--bg-selected); }
