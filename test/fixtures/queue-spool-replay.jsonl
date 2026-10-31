@@ -1,4 +1,0 @@
-{"eventId":"hop-001","jobId":"job-001","at":"2026-10-26T10:00:00.000Z","station":"READY","kind":"arrival","prompt":"fixture content must stay local"}
-{"eventId":"hop-002","jobId":"job-001","at":"2026-10-26T10:00:01.000Z","station":"READY","kind":"start"}
-{"eventId":"hop-001","jobId":"job-001","at":"2026-10-26T10:00:00.000Z","station":"READY","kind":"arrival"}
-{"eventId":"hop-003","jobId":"job-001","at":"2026-10-26T10:00:02.000Z","station":"READY","kind":"complete"}

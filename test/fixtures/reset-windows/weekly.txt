@@ -1,2 +1,0 @@
-{"pool":"codex-personal","window":"weekly","resetAt":"2026-10-30T19:00:00-04:00"}
-{"pool":"claude-work","window":"weekly","resetAt":"2026-11-01T00:00:00Z"}
