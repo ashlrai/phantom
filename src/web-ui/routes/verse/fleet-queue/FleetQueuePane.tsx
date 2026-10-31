@@ -1,17 +1,20 @@
 import { SkeletonLine } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { JobRefs } from '../fleet/JobRefs.js';
 import { explainReason, explainSkip, laneRows } from '../ops/ops-queue-model.js';
 import { opsQueueQuery } from '../ops/ops-queue-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import styles from './fleet-queue.module.css';
 
-export function FleetQueuePane({ visible }: PaneProps) {
+export function FleetQueuePane({ visible, host }: PaneProps) {
   const read = useQuery(opsQueueQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(opsQueueQuery);
   usePollWhileVisible(refetch, 15_000, { enabled: visible });
   const data = read.data;
+  const openJob = (job: string) => { requestWorkerLogJob(job); host.openPane('worker-log'); };
 
   if (data === null) return <p className={styles.message}>Queue not in this build</p>;
   if (data === undefined) return <div className={styles.root} role="status">{read.status === 'error' ? 'Queue is unavailable.' : <><span>Reading queue…</span><SkeletonLine /><SkeletonLine /></>}</div>;
@@ -26,12 +29,12 @@ export function FleetQueuePane({ visible }: PaneProps) {
     <section aria-label="Parked groups"><h3 className={styles.heading}>Parked groups</h3>
       {data.groups.length === 0 ? <p className={styles.message}>No parked jobs.</p> : <ul className={styles.list}>{data.groups.map((group, index) => <li className={styles.row} key={`${group.reason}:${group.lane}:${index}`}>
         <span>{explainReason(group.reason).title} · {group.lane ?? 'any lane'} · {group.count}</span>
-        {group.jobs.length > 0 && <span className={styles.muted}>{group.jobs.slice(0, 8).join(', ')}{group.jobs.length > 8 ? ` +${group.jobs.length - 8} more` : ''}</span>}
+        {group.jobs.length > 0 && <span className={styles.muted}><JobRefs text={group.jobs.slice(0, 8).join(', ')} onOpenJob={openJob} />{group.jobs.length > 8 ? ` +${group.jobs.length - 8} more` : ''}</span>}
       </li>)}</ul>}
     </section>
     <section aria-label="Precheck skips"><h3 className={styles.heading}>Precheck skips</h3>
       {data.skips.length === 0 ? <p className={styles.message}>No precheck skips.</p> : <ul className={styles.list}>{[...data.skips].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).map((skip, index) => <li className={styles.row} key={`${skip.at}:${skip.job}:${index}`}>
-        <span>{skip.job} · {skip.code} · {explainSkip(skip.code, skip.reason)}</span> <time className={styles.muted} dateTime={skip.at}>{formatRelative(skip.at)}</time>
+        <span><JobRefs text={`${skip.job} · ${skip.code} · ${explainSkip(skip.code, skip.reason)}`} onOpenJob={openJob} /></span> <time className={styles.muted} dateTime={skip.at}>{formatRelative(skip.at)}</time>
       </li>)}</ul>}
     </section>
   </section>;
