@@ -12,6 +12,9 @@
  *
  * The self-update and release PR probes have no SSE event, so each gets a
  * visibility-gated poller at the same 60 s cadence as its own surface.
+ * The resource-ledger probe has no SSE event either, so it shares the
+ * Usage pane's visibility-gated ledger read and polls on the same 60 s
+ * cadence as the other probes.
  * The native updater uses event-driven state and never polls.
  */
 import { useEffect } from 'react';
@@ -20,9 +23,11 @@ import { useQuery, useRefetch } from '../../data/hooks.js';
 import { controlSnapshotQuery, fleetStatusQuery, runsQuery, inboxQuery } from '../../data/queries.js';
 import { releasePrQuery } from '../../routes/verse/fleet/release-pr-query.js';
 import { updateStatusQuery } from '../../routes/verse/sections/update-status-queries.js';
+import { fleetLedgerQuery } from '../../routes/verse/usage/fleet-ledger-queries.js';
 import { usePollWhileVisible } from '../../routes/verse/shell/section-visibility.js';
 import { deriveNotifications } from './deriveNotifications.js';
 import { deriveFleetRunsNotifications } from './deriveFleetRunsNotifications.js';
+import { deriveFleetLedgerNotifications } from './deriveFleetLedgerNotifications.js';
 import { deriveFleetMergeNotifications } from './deriveFleetMergeNotifications.js';
 import { deriveReleasePrNotifications } from './deriveReleasePrNotifications.js';
 import { deriveUpdateNotifications } from './deriveUpdateNotifications.js';
@@ -40,9 +45,11 @@ export function useNotificationEngine(): void {
   const fleetRuns = useQuery(fleetRunsNotifyQuery);
   const update = useQuery(updateStatusQuery);
   const releasePr = useQuery(releasePrQuery);
+  const ledger = useQuery(fleetLedgerQuery);
   const nativeUpdates = useDesktopUpdates();
   usePollWhileVisible(useRefetch(updateStatusQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(releasePrQuery), NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(fleetLedgerQuery), NOTIFY_POLL_MS);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -51,6 +58,7 @@ export function useNotificationEngine(): void {
   const fleetRunsData = fleetRuns.data;
   const updateData = update.data;
   const releasePrData = releasePr.data;
+  const ledgerData = ledger.data;
 
   useEffect(() => {
     const now = Date.now();
@@ -63,9 +71,10 @@ export function useNotificationEngine(): void {
       }).concat(
         deriveFleetRunsNotifications(fleetRunsData, now),
         deriveFleetMergeNotifications(fleetRunsData, now),
+        deriveFleetLedgerNotifications(ledgerData, now),
         deriveUpdateNotifications(updateData ?? null, now, nativeUpdates),
         deriveReleasePrNotifications(releasePrData, now),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, updateData, releasePrData, nativeUpdates]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, updateData, releasePrData, ledgerData, nativeUpdates]);
 }
