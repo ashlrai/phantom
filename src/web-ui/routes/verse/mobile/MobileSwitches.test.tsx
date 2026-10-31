@@ -103,7 +103,7 @@ describe('MobileSwitches writes', () => {
     const stub = stubFetch({
       'GET /api/verse/fleet/runs': () => runsSnapshot([]),
       'GET /api/verse/fleet/control/switches': () => controlResponse({ PAUSE: pauseOn }),
-      'POST /api/verse/fleet/control/switches': (body) => {
+      'POST /api/verse/fleet/control/switches': (body: Record<string, unknown> | null) => {
         pauseOn = body?.['on'] === true;
         return controlResponse({ PAUSE: pauseOn });
       },
@@ -128,7 +128,7 @@ describe('MobileSwitches writes', () => {
     const stub = stubFetch({
       'GET /api/verse/fleet/runs': () => runsSnapshot(['HOLD']),
       'GET /api/verse/fleet/control/switches': () => controlResponse({ HOLD: true }),
-      'POST /api/verse/fleet/control/switches': (body) => controlResponse({ HOLD: body?.['on'] === true }),
+      'POST /api/verse/fleet/control/switches': (body: Record<string, unknown> | null) => controlResponse({ HOLD: body?.['on'] === true }),
     });
     mount();
     fireEvent.click(await screen.findByRole('switch', { name: 'Hold all dispatch' }));

@@ -1,0 +1,31 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.message, .notice, .loading { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.notice { color: var(--text-primary); }
+.loading { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* One dense row per provider account: label on the left, its reported
+   windows on the right — exactly as many meters as the provider sent. */
+.rows { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.row { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.account { flex: none; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.windows { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; min-width: 0; }
+.reason { color: var(--text-secondary); overflow-wrap: anywhere; }
+.asOf { color: var(--text-tertiary); }
+
+/* label — thin track — percent — reset countdown */
+.window { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.windowLabel { flex: none; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.track { flex: 1 1 auto; display: block; min-width: 2rem; height: 4px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; background: var(--accent-500); transition: width var(--duration-base, 180ms) var(--ease-standard); }
+.track[data-tone='warn'] .fill { background: var(--status-warning-solid); }
+.track[data-tone='danger'] .fill { background: var(--status-danger-solid); }
+.pct { flex: none; min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
+.flag { flex: none; color: var(--status-danger-solid); font-weight: 600; }
+.reset { flex: none; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.laneSection { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0 0 var(--space-2); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.table { border-collapse: collapse; width: 100%; }
+.table th { padding: 0 var(--space-2) var(--space-1) 0; color: var(--text-tertiary); font-weight: 400; text-align: left; }
+.table td { padding: 0 var(--space-2) 0 0; font-variant-numeric: tabular-nums; }
+.num { text-align: right; }
