@@ -22,6 +22,7 @@ describe('hostView', () => {
   });
   it('represents missing and invalid readings as unknown', () => {
     expect(hostView(null, now)).toEqual({
+      load: { ratio: null, text: 'Load unknown', caption: 'Unknown', tone: 'unknown' },
       memory: { pct: null, tone: 'ok' }, disk: { gb: null, text: '—', tone: 'ok' }, tick: { ageSeconds: null, text: '—', tone: 'ok' },
       paused: null, switches: [], claudeLane: { text: 'Unknown', down: false }, orchestratorAgents: null,
     });

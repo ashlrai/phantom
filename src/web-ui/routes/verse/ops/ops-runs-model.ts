@@ -10,16 +10,18 @@ function shape<S extends Record<string, Check<unknown>>>(schema: S): Check<{ [K 
     v !== null && typeof v === 'object' && !Array.isArray(v)
     && Object.entries(schema).every(([key, check]) => check((v as Record<string, unknown>)[key]));
 }
+const optional = <T>(check: Check<T>): Check<T | undefined> => (v): v is T | undefined => v === undefined || check(v);
 const n = nullable(num);
 const s = nullable(str);
 const source: Check<'healthy' | 'degraded' | 'missing' | 'not-landed'> = (v): v is 'healthy' | 'degraded' | 'missing' | 'not-landed' =>
   v === 'healthy' || v === 'degraded' || v === 'missing' || v === 'not-landed';
-export const isFleetRuns = shape({
+const fleetRunsShape = shape({
   v: ((v): v is 1 => v === 1), generatedAt: str,
   sources: shape({ runsDir: source, workers: source, inbox: source, codex: source, merges: source }),
   lastTick: s, paused: nullable(bool), memFreePct: n, diskFreeGb: n, switches: array(str), claudeLane: s,
   lanes: array(shape({ lane: str, running: num, target: num, queued: num, held: bool, heldReason: s, tokensLastHour: n, merged24h: n, mergeRate24h: n })),
   workers: array(shape({ job: str, repo: str, lane: str, tier: str, ageSeconds: n })),
+  claimed: optional(array(shape({ job: str, lane: str, tier: str, at: str }))),
   leaders: array(shape({ label: str, ageSeconds: n })), orchestratorAgents: n,
   publishesLastHour: array(shape({ job: str, lane: s, url: s, at: str })),
   mergesLastHour: shape({ count: n, items: array(shape({ repo: str, number: num, title: str })) }),
@@ -28,7 +30,12 @@ export const isFleetRuns = shape({
   inbox: array(shape({ at: str, source: str, text: str })),
   drop: nullable(shape({ pending: array(shape({ lane: str, file: str })), done: num })),
 });
-export type FleetRuns = typeof isFleetRuns extends Check<infer T> ? T : never;
+const hostShape = nullable(shape({ load1: n, load5: n, load15: n, cores: n, ratio: n }));
+type Host = typeof hostShape extends Check<infer T> ? T : never;
+type BaseFleetRuns = typeof fleetRunsShape extends Check<infer T> ? T : never;
+export type FleetRuns = BaseFleetRuns & { host?: Host };
+export const isFleetRuns: Check<FleetRuns> = (v): v is FleetRuns =>
+  fleetRunsShape(v) && (!('host' in v) || hostShape(v.host));
 export const countText = (n: number | null): string => n === null ? '—' : String(n);
 export function ageText(seconds: number | null): string {
   if (seconds === null) return '—';
