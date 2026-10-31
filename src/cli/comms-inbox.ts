@@ -1,17 +1,20 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--limit <1..200>] [--json]
+const HELP = `phm comms inbox read [--source <label>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--limit <1..200>] [--watch [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
 --priority selects entries with exactly that priority; entries without a priority do not match.
 --after selects timestamps strictly later than the instant and reports omittedUndated; inbox local times are Eastern.
 Ambiguous or nonexistent Eastern times and unparseable timestamps count as undated.
+--watch emits complete snapshots immediately and after each interval (default 1000 ms); stop with SIGINT or SIGTERM.
+Snapshots can repeat entries and do not provide a delivery cursor.
 The local process owner is the trust boundary; this does not authenticate internet or email senders.
 Input must be an owner-controlled stable regular UTF-8 text file, or stdin with --file - (maximum ${INBOX_MAX_CHARS} characters).
 Default duplicate receipts persist across receiver restarts in the shared runs context.`;
@@ -87,7 +90,19 @@ async function readStdin(stream: Readable): Promise<string | undefined> {
   }
 }
 
-export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Readable } = {}): (args: string[]) => Promise<number> {
+type WatchSignal = 'SIGINT' | 'SIGTERM';
+type SignalSource = {
+  on: (event: WatchSignal, listener: () => void) => unknown;
+  off: (event: WatchSignal, listener: () => void) => unknown;
+};
+type CommandOptions = {
+  runsDir?: string;
+  stdin?: Readable;
+  signals?: SignalSource;
+  wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+};
+
+export function createCommsInboxCommand(options: CommandOptions = {}): (args: string[]) => Promise<number> {
   const receive = createChannelReceiver({ allowedSenderIds: new Set([LOCAL_OPERATOR]), runsDir: options.runsDir });
   return async (args: string[]): Promise<number> => {
     if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
@@ -97,11 +112,23 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, priority: string | undefined, json = false;
+    let file: string | undefined, after: Instant | undefined, priority: string | undefined, json = false, watch = false;
+    let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
       if (arg === '--json' && !json) json = true;
+      else if (verb === 'read' && arg === '--watch' && !watch) watch = true;
+      else if (verb === 'read' && (arg === '--interval-ms' || arg === '--max-samples')) {
+        const value = rest[++i];
+        const number = Number(value);
+        const maximum = arg === '--interval-ms' ? 60_000 : 10_000;
+        const minimum = arg === '--interval-ms' ? 1_000 : 1;
+        if (value === undefined || !/^\d+$/.test(value) || !Number.isSafeInteger(number) || number < minimum || number > maximum ||
+          (arg === '--interval-ms' ? intervalMs !== undefined : maxSamples !== undefined)) return invalid();
+        if (arg === '--interval-ms') intervalMs = number;
+        else maxSamples = number;
+      }
       else if (arg === '--file' && verb === 'post' && file === undefined) {
         const value = rest[++i];
         if (!value || value !== '-' && value.startsWith('-')) return invalid();
@@ -115,27 +142,57 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
         priority = value;
       } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--watch', '--interval-ms', '--max-samples', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
     if (verb === 'read') {
+      if (!watch && (intervalMs !== undefined || maxSamples !== undefined)) return invalid();
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
       const filtered = queryParams.size > 0 || after !== undefined || priority !== undefined;
-      const result = await readInboxEntries(filtered ? { ...options, limit: Number.MAX_SAFE_INTEGER } : options);
-      let omittedUndated = 0;
-      const datedEntries = after === undefined ? result.entries : result.entries.filter(entry => {
-        const instant = entryInstant(entry.at);
-        if (instant === undefined) { omittedUndated++; return false; }
-        return laterThan(instant, after!);
-      });
-      const matchingEntries = priority === undefined ? datedEntries : datedEntries.filter(entry => entry.priority === priority);
-      const entries = filtered ? projectInboxRead({ ...result, entries: matchingEntries }, query)!.entries : result.entries;
-      console.log(JSON.stringify({ ...result, entries, ...(after === undefined ? {} : { omittedUndated }) }));
-      return result.sourceState === 'degraded' ? 1 : 0;
+      const readSnapshot = async () => {
+        const result = await readInboxEntries({ runsDir: options.runsDir, ...(filtered ? { limit: Number.MAX_SAFE_INTEGER } : {}) });
+        let omittedUndated = 0;
+        const datedEntries = after === undefined ? result.entries : result.entries.filter(entry => {
+          const instant = entryInstant(entry.at);
+          if (instant === undefined) { omittedUndated++; return false; }
+          return laterThan(instant, after!);
+        });
+        const matchingEntries = priority === undefined ? datedEntries : datedEntries.filter(entry => entry.priority === priority);
+        const entries = filtered ? projectInboxRead({ ...result, entries: matchingEntries }, query)!.entries : result.entries;
+        return { ...result, entries, ...(after === undefined ? {} : { omittedUndated }) };
+      };
+      if (!watch) {
+        const result = await readSnapshot();
+        console.log(JSON.stringify(result));
+        return result.sourceState === 'degraded' ? 1 : 0;
+      }
+      const controller = new AbortController();
+      const signals = options.signals ?? process;
+      const stop = (): void => controller.abort();
+      signals.on('SIGINT', stop);
+      signals.on('SIGTERM', stop);
+      try {
+        for (let samples = 0; !controller.signal.aborted && (maxSamples === undefined || samples < maxSamples); samples++) {
+          const result = await readSnapshot();
+          if (controller.signal.aborted) break;
+          console.log(JSON.stringify(result));
+          if (result.sourceState === 'degraded') return 1;
+          if (maxSamples !== undefined && samples + 1 >= maxSamples) break;
+          try {
+            await (options.wait ?? ((ms, signal) => delay(ms, undefined, { signal })))(intervalMs ?? 1000, controller.signal);
+          } catch (error) {
+            if (!controller.signal.aborted) throw error;
+          }
+        }
+        return 0;
+      } finally {
+        signals.off('SIGINT', stop);
+        signals.off('SIGTERM', stop);
+      }
     }
     let text: string;
     if (file === '-') {
