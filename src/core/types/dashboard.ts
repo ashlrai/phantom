@@ -22,7 +22,7 @@ export interface DashboardSnapshot {
   /** Ecosystem tools roll-up: installed vs. total probed. */
   tools: { installed: number; total: number };
   /** Activity roll-up over the dashboard window (sessions/tokens/cost/commits). */
-  activity: { sessions: number; tokens: number; estCostUsd: number; commits: number };
+  activity: { sessions: number; tokens: number; estCostUsd: number; commits: number; hopEfficiency?: import('../observability/hop-events.js').HopRollup };
   /** Recent runs (most-recent first), each with status + cumulative tokens. */
   runs: { id: string; goal: string; status: string; tokens: number }[];
   /** Active/recent swarms with live task burndown + optional current phase. */
