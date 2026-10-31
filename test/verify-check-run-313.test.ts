@@ -408,6 +408,24 @@ describe('only required contexts block; non-required checks are informational', 
       verdict: 'pass', code: 'checks-green', informational: ['Vercel:red'],
     },
     {
+      case: 'actions-red: a failing GitHub Actions check refuses (local)',
+      input: {
+        enforcement: 'local', required: [], fleetAppId: String(FLEET_APP),
+        runs: [run(ASHLR_VERIFY_CHECK_NAME, 'success', FLEET_APP, 1), run('secret-scan', 'failure', 15368, 2)],
+        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
+      },
+      verdict: 'refuse', code: 'required-check-failed', informational: [],
+    },
+    {
+      case: 'actions-pending: a running GitHub Actions check waits (local)',
+      input: {
+        enforcement: 'local', required: [], fleetAppId: String(FLEET_APP),
+        runs: [run(ASHLR_VERIFY_CHECK_NAME, 'success', FLEET_APP, 1), run('secret-scan', null, 15368, 2, 'in_progress')],
+        statuses: [], pendingSinceMs: NOW - 60_000, nowMs: NOW,
+      },
+      verdict: 'wait', code: 'checks-pending', informational: [],
+    },
+    {
       case: 'all-green',
       input: {
         enforcement: 'server', required: REQUIRED, fleetAppId: null,
