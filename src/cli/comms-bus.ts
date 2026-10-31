@@ -1,13 +1,15 @@
 import { dirname, resolve } from 'node:path';
+import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
-const HELP = `phm comms bus post --file <envelope.json>
+const HELP = `phm comms bus post --file <envelope.json|->
 phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>]
 phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
+Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
@@ -26,11 +28,28 @@ Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means 
 
 export interface CommsBusDependencies {
   signal?: AbortSignal;
+  stdin?: Readable;
   list?: typeof listBusInboxAfter;
   emit?: (json: string) => void;
 }
 
 type BusFilters = { to?: string; from?: string; priority?: string };
+
+async function readStdin(stdin: Readable): Promise<string | null> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    for await (const chunk of stdin) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > MAX_BUS_ENVELOPE_BYTES) return null;
+      chunks.push(buffer);
+    }
+    return Buffer.concat(chunks, bytes).toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
   if (page.status !== 'ok' || filters.to === undefined && filters.from === undefined && filters.priority === undefined) return page;
@@ -88,7 +107,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
     const address = key === '--to' || key === '--from';
     const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from', '--priority'] : ['--after', '--limit', '--to', '--from', '--priority'];
-    if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-'))) return invalid();
+    if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && !values.has('--file')) return invalid();
@@ -110,9 +129,15 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   }
   let result;
   if (verb === 'post') {
-    const file = resolve(values.get('--file')!);
-    const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
-    const parsed = read.ok ? parseBusEnvelope(read.text) : null;
+    const input = values.get('--file')!;
+    let text: string | null;
+    if (input === '-') text = await readStdin(deps.stdin ?? process.stdin);
+    else {
+      const file = resolve(input);
+      const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
+      text = read.ok ? read.text : null;
+    }
+    const parsed = text === null ? null : parseBusEnvelope(text);
     result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
   } else result = filterPage(listBusInboxAfter(after, limit, options), filters);
   console.log(JSON.stringify(result));
