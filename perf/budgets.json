@@ -1,0 +1,43 @@
+{
+  "schema": "ashlr.perf-budgets.v1",
+  "tolerance": 0.2,
+  "defaults": { "warmup": 2, "runs": 8 },
+  "measured": {
+    "updated": "2026-10-28",
+    "runner": "node",
+    "node": "v26.9.0",
+    "host": "macOS arm64 (Apple Silicon), local dev machine",
+    "note": "baseline_ms values are reference medians for a hosted CI runner class; they were seeded from local medians with headroom for slower shared runners. Re-baseline on the real runner with --update-baseline."
+  },
+  "targets": [
+    {
+      "id": "phm-version",
+      "description": "phm --version — thin wrapper + CLI entry import cost",
+      "command": "node bin/ashlr --version",
+      "baseline_ms": 400,
+      "requires_files": ["dist/cli/index.js"]
+    },
+    {
+      "id": "phm-status",
+      "description": "phm status — attention board on a fresh HOME",
+      "command": "node bin/ashlr status",
+      "baseline_ms": 800,
+      "requires_files": ["dist/cli/index.js"]
+    },
+    {
+      "id": "phm-doctor",
+      "description": "phm doctor — health check; spawns tool probes so it is the slowest cold path",
+      "command": "node bin/ashlr doctor",
+      "baseline_ms": 10000,
+      "requires_files": ["dist/cli/index.js"]
+    },
+    {
+      "id": "phantom-wrapper-warm",
+      "description": "phantom --version — warm call through the npm wrapper shim to the native binary",
+      "command": "phantom --version",
+      "baseline_ms": 250,
+      "optional": true,
+      "requires_bin": "phantom"
+    }
+  ]
+}
