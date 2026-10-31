@@ -27,6 +27,24 @@ function formatRuns(state: FleetRunsDirState): string {
   ].join('\n');
 }
 
+function readiness(state: FleetRunsDirState) {
+  // A failed root stat also produces runsDirPresent=false; only ENOENT is known absent.
+  const directoryPresent = state.runsDirPresent ? true : state.sourceState === 'missing' ? false : null;
+  const eligibleLaneIds = state.sources.status === 'healthy'
+    ? state.lanes.filter(lane => lane.held === false && lane.running < lane.target).map(lane => lane.lane)
+    : null;
+  const reasons: string[] = [];
+  if (directoryPresent === false) reasons.push('runs_directory_absent');
+  if (directoryPresent === null) reasons.push('runs_directory_unknown');
+  if (state.sourceState !== 'healthy') reasons.push(`sources_${state.sourceState}`);
+  if (state.paused === true) reasons.push('host_paused');
+  if (state.paused === null) reasons.push('pause_unknown');
+  if (eligibleLaneIds === null) reasons.push('lane_capacity_unknown');
+  else if (eligibleLaneIds.length === 0) reasons.push('no_eligible_lanes');
+  return { ready: reasons.length === 0, reasons, eligibleLaneIds, directoryPresent,
+    sourceState: state.sourceState, sources: state.sources, paused: state.paused };
+}
+
 function formatJournal(state: LeaderJournalV1): string {
   return [
     `Fleet journal: ${health(state.sources)}`,
@@ -59,7 +77,7 @@ function waitForTick(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
 export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
-  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>]`;
+  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>]${verb === 'runs' ? ' [--check-ready]' : ''}`;
   const seen = new Set<string>();
   let lane: string | undefined;
   let interval = 5000;
@@ -72,6 +90,8 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       // Applied to each journal snapshot after it is read.
     } else if (flag === '--watch' && !seen.has(flag)) {
       // The watch loop is entered after all arguments have been validated.
+    } else if (flag === '--check-ready' && verb === 'runs' && !seen.has(flag)) {
+      // Readiness is evaluated once after argument validation.
     } else if (flag === '--interval-ms' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1000 && Number(args[i + 1]) <= 60000) {
       interval = Number(args[++i]);
     } else if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
@@ -80,13 +100,25 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
     }
     seen.add(flag);
   }
-  if (seen.has('--interval-ms') && !seen.has('--watch')) {
+  if ((seen.has('--interval-ms') && !seen.has('--watch')) ||
+      (seen.has('--check-ready') && (!seen.has('--json') || seen.has('--watch') || seen.has('--lane')))) {
     process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
     return 2;
   }
   if (seen.has('--help')) {
-    console.log(`${usage}${verb === 'journal' ? '\n--rejections-only shows reject and rejected ingest rows; source health and rejectedLastHour remain global. Passes and ingested rows are omitted.' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.`);
+    console.log(`${usage}${verb === 'journal' ? '\n--rejections-only shows reject and rejected ingest rows; source health and rejectedLastHour remain global. Passes and ingested rows are omitted.' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.${verb === 'runs' ? '\n--check-ready requires --json and cannot be combined with --watch or --lane. It reports one snapshot of directory presence, source health, pause state, reasons and observed unheld lane IDs below target; unknown values remain null. Exit 0 requires healthy sources, an unpaused host and eligible capacity; otherwise exit 1. This is evidence for the leader, not dispatch or authority.' : ''}`);
     return 0;
+  }
+  if (seen.has('--check-ready')) {
+    try {
+      const result = readiness(await deps.runs());
+      console.log(JSON.stringify(result));
+      return result.ready ? 0 : 1;
+    } catch {
+      console.log(JSON.stringify({ ready: false, reasons: ['source_unavailable'], eligibleLaneIds: null,
+        directoryPresent: null, sourceState: null, sources: null, paused: null }));
+      return 1;
+    }
   }
   const readOnce = async (signal?: AbortSignal): Promise<void> => {
     // Each reader returns its existing bounded, scrubbed and versioned projection.
