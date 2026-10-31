@@ -11,7 +11,7 @@ const fixture: FleetRuns = {
 };
 
 it('computes live counts and availability without requiring registrations', () => {
-  const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, ['fleet-lanes', 'fleet-events']);
+  const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, [{ id: 'fleet-lanes', title: 'Lanes' }, { id: 'fleet-events', title: 'Fleet events' }]);
   expect(tiles.map(({ id, count }) => [id, count])).toEqual([
     ['fleet-lanes', '1/2'], ['fleet-events', '1'], ['fleet-inbox', '1'], ['fleet-bus', '—'],
     ['fleet-merges', '2'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '—'],

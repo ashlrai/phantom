@@ -1,15 +1,17 @@
 import { dirname, resolve } from 'node:path';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
-import { parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES } from '../core/fleet/bus-envelope.js';
+import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json>
-phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--interval-ms <ms>]
+phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>]
+phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
-Both filters must match when supplied together. Limit applies before filtering, not to match count.
+All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
+Expired records advance the cursor but do not count toward the limit.
+Priority is a routing attribute, not authority.
 Use --to=<address> or --from=<address> for labels that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
@@ -27,13 +29,14 @@ export interface CommsBusDependencies {
   emit?: (json: string) => void;
 }
 
-type AddressFilters = { to?: string; from?: string };
+type BusFilters = { to?: string; from?: string; priority?: string };
 
-function filterPage(page: BusInboxPage, filters: AddressFilters): BusInboxPage {
-  if (page.status !== 'ok' || filters.to === undefined && filters.from === undefined) return page;
+function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
+  if (page.status !== 'ok' || filters.to === undefined && filters.from === undefined && filters.priority === undefined) return page;
   return { ...page, messages: page.messages.filter(({ envelope }) =>
     (filters.to === undefined || envelope.to === filters.to) &&
-    (filters.from === undefined || envelope.from === filters.from)) };
+    (filters.from === undefined || envelope.from === filters.from) &&
+    (filters.priority === undefined || envelope.priority === filters.priority)) };
 }
 
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
@@ -45,7 +48,7 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, filters: AddressFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+async function watch(after: number, limit: number, interval: number, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
   deps.signal?.addEventListener('abort', stop, { once: true });
@@ -83,7 +86,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--to|--from)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
     const address = key === '--to' || key === '--from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from'] : ['--after', '--limit', '--to', '--from'];
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from', '--priority'] : ['--after', '--limit', '--to', '--from', '--priority'];
     if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-'))) return invalid();
     values.set(key, value);
   }
@@ -92,7 +95,8 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { to: values.get('--to'), from: values.get('--from') };
+  const filters = { to: values.get('--to'), from: values.get('--from'), priority: values.get('--priority') };
+  if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
   for (const label of [filters.to, filters.from]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
