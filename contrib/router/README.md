@@ -150,7 +150,7 @@ The model flag is omitted when the probe rejected the configured model. Codex pr
 
 - A metered Grok login is detected and then skipped. There is no key exception and no `grok update`.
 - Claude's recorded model list is the aliases `fable`, `opus`, and `sonnet`. `claude auth status` decides whether Claude is logged in.
-- Codex can reject a catalog name, including `gpt-6.1-sol`. `gpt-6-astra` stays unverified until the exec probe accepts it. A runtime rejection retries once without `--model`.
+- Codex can reject a catalog name, including `gpt-6.1-sol`. `gpt-6-astra` stays unverified until the exec probe accepts it. A runtime rejection drops the model into `probed_bad`, retries once without `--model`, and reroutes a codex job to the next pool when the default is rejected too. The pool stays up; an unknown model is never treated as an auth failure.
 - The work `~/.codex` pool stays dead after an auth failure until the pool state is edited by hand.
 - Local oMLX applies a unified diff and never downloads. It is off by default. `omlx-mac.sh download` is a separate, disk-guarded step.
 - `phantom route --json` is optional. An invalid pick falls back to the spend order. A returned `ollama` cli is treated as `omlx`.
