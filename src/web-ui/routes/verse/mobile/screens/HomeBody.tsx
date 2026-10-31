@@ -26,6 +26,7 @@ import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { verseBootstrapQuery } from '../../verse-bootstrap-query.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { fleetStateView, type FleetHeadline } from '../fleet-state.js';
+import { personalLine } from '../home-personal-line.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
@@ -95,6 +96,7 @@ export function HomeBody() {
   const { activity, permissions, navigate, needsCount } = useMobile();
   const control = useQuery(verseControlQuery);
   const live = useQuery(fleetLiveQuery);
+  const runs = useQuery(homeRunsQuery);
   const refetchControl = useRefetch(verseControlQuery);
   const refetchLive = useRefetch(fleetLiveQuery);
   const poll = useCallback(() => {
@@ -115,6 +117,7 @@ export function HomeBody() {
   const canAct = canShowActions(permissions);
   const action = fleet.action;
   const showAction = action !== null && (action.kind === 'open-fleet' || canAct);
+  const personal = personalLine(runs.data, Date.now());
 
   return (
     <>
@@ -174,6 +177,7 @@ export function HomeBody() {
         )}
       </Section>
 
+      {personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
       <HomeRuns />
       <MobileInterject />
 
