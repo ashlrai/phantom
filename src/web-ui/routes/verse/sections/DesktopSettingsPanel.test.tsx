@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { STORAGE_KEY } from '../dock/fleet-workspace-auto.js';
 import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
 
@@ -13,7 +14,7 @@ beforeEach(() => localStorage.clear());
 afterEach(() => localStorage.clear());
 
 it('turns fleet workspace auto-opening off and on', () => {
-  render(<DesktopSettingsPanel />);
+  render(<ToastProvider><DesktopSettingsPanel /></ToastProvider>);
   const toggle = screen.getByRole('switch', { name: 'Open the fleet workspace automatically when the fleet is running' });
   expect(toggle).toHaveAttribute('aria-checked', 'true');
   fireEvent.click(toggle);
