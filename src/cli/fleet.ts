@@ -2308,6 +2308,10 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
   if (metrics.verifyPassRate > 0 || metrics.proposalsCreated > 0) {
     console.log(`    verify pass rate:   ${pct(metrics.verifyPassRate)}`);
   }
+  if (metrics.crossReview) {
+    const { share, comparable, unknown } = metrics.crossReview;
+    console.log(`    cross-provider reviews: ${share === null ? 'unavailable' : pct(share)} (${comparable} comparable, ${unknown} unknown)`);
+  }
   console.log(`    trivial ratio:      ${pct(metrics.trivialRatio)}`);
   console.log(`    empty-diff rate:    ${pct(metrics.emptyRate)}`);
   console.log(`    avg diff lines:     ${metrics.avgDiffLines.toFixed(1)}`);
@@ -2427,6 +2431,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'merge-throughput') {
+    const { cmdMergeThroughput } = await import('./telemetry.js');
+    return cmdMergeThroughput(args.slice(1));
+  }
   if (args[0] === 'queue') {
     const { cmdRouterQueue } = await import('./router-queue.js');
     return cmdRouterQueue(args.slice(1));
@@ -2440,8 +2448,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
-  // released it. automerge-canary and xreview own their own help and refusals.
-  if (sub !== 'automerge-canary' && sub !== 'xreview' && (rest.includes('--help') || rest.includes('-h'))) {
+  // released it. automerge-canary, xreview and grok-usage own their own help and refusals.
+  if (!['automerge-canary', 'xreview', 'grok-usage'].includes(sub) && (rest.includes('--help') || rest.includes('-h'))) {
     printFleetHelp();
     return 0;
   }
@@ -2467,6 +2475,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   }
 
   switch (sub) {
+    case 'grok-usage': {
+      const { cmdFleetGrokUsage } = await import('./fleet-grok-usage.js');
+      return cmdFleetGrokUsage(rest);
+    }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
@@ -2527,6 +2539,7 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
@@ -2534,6 +2547,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
+  console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
