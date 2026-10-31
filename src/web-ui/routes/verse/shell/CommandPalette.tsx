@@ -156,7 +156,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     }
     if (payload.kind === 'worker') {
       if (payload.url) window.open(payload.url, '_blank', 'noopener,noreferrer');
-      else {
+      if (!payload.url || payload.selectLog) {
         requestWorkerLogJob(payload.job);
         openDockPane('worker-log');
       }
