@@ -4,9 +4,10 @@
  *
  * One page that answers "what can I run with on this Mac, and is it ready":
  *
- *   ACCOUNTS         each seat's plan, connection, 5-hour and weekly windows
- *                    with resets, "Reserved for you N%", and Reconnect / Fix /
- *                    Edit budget — the shared CapacityStrip;
+ *   ACCOUNTS         each seat's plan, connection, and quota windows with
+ *                    resets (weekly only for Claude — Anthropic lifted its
+ *                    5-hour limit), "Reserved for you N%", and Reconnect /
+ *                    Fix / Edit budget — the shared CapacityStrip;
  *   DESKTOP          Ollama's switches for Claude Desktop and Hermes Desktop,
  *                    shown OFF with Restore (SPEC-310C §0.5);
  *   TERMINAL AGENTS  installed version or "not installed", the agent's own
