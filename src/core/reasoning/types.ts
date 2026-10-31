@@ -106,15 +106,6 @@ export interface ReasoningDigest {
   trends: ReasoningTrendDay[];
 }
 
-/** GET /api/reasoning/steps?q=&sessionId=&limit= */
-export interface ReasoningStepsQuery {
-  /** Case-insensitive substring over step text. */
-  q?: string;
-  sessionId?: string;
-  /** Default REASONING_STEPS_DEFAULT_LIMIT, clamped to REASONING_STEPS_MAX_LIMIT. */
-  limit?: number;
-}
-
 export interface ReasoningStepsResponse {
   /** Newest first. */
   steps: ReasoningStepV1[];
