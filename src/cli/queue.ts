@@ -5,6 +5,7 @@ import { estimateQueueStats } from '../core/queue/stats.js';
 
 const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
        phm queue report --events <file> [--json]
+       phm queue add|claim|done|block|list|import|export [options]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
   Windows default to 1h, 24h and 7d. Rates per second; wait in seconds.
@@ -15,7 +16,9 @@ report: read local JSON/JSONL station visits: {station, arrivedAt, startedAt?, c
   lambda = arrivals/window; mu = 1/mean completed service time; rho = lambda/mu.
   W = mean completed arrival-to-completion time. Rates: jobs/hour; W: hours.
   Single-server stations; bottleneck = highest known rho (alphabetical ties).
-  Unknown metrics print n/a; incomplete visits count toward arrivals only.`;
+  Unknown metrics print n/a; incomplete visits count toward arrivals only.
+
+Job queue: use phm queue <command> --help for options; see docs/QUEUE.md.`;
 
 async function cmdQueueStats(args: string[]): Promise<number> {
   let windows: number[] | undefined;
@@ -74,6 +77,18 @@ async function cmdQueueReport(args: string[]): Promise<number> {
 }
 
 export async function cmdQueue(args: string[]): Promise<number> {
+  let command: string | undefined;
+  const valueOptions = new Set(['--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') { command = args[i + 1]; break; }
+    if (valueOptions.has(arg)) { i++; continue; }
+    if (!arg.startsWith('-')) { command = arg; break; }
+  }
+  if (['add', 'claim', 'done', 'block', 'list', 'import', 'export'].includes(command ?? '') ||
+      args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
+    return (await import('./job-queue.js')).cmdJobQueue(args);
+  }
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);

@@ -1,0 +1,8 @@
+{
+  "_comment": "Exact toolchain pins for the reproducible unsigned desktop nightly dev build (scripts/build-desktop-nightly.mjs). Kept identical to the RUST_VERSION / NODE_VERSION / BUN_VERSION / TAURI_CLI_VERSION env pins in .github/workflows/release-desktop.yml and the publisher toolchain in scripts/desktop-release-policy.mjs; test/desktop-nightly-build.test.ts refuses drift.",
+  "node": "22.23.2",
+  "npm": "10.9.8",
+  "bun": "1.3.14",
+  "rust": "1.97.1",
+  "tauriCli": "2.11.4"
+}
