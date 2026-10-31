@@ -21,9 +21,11 @@ export type MobileRoute =
   | { screen: 'needs' }
   | { screen: 'leader' }
   | { screen: 'more' }
-  | { screen: 'fleet' };
+  | { screen: 'fleet' }
+  | { screen: 'runs' }
+  | { screen: 'inbox' };
 
-const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet']);
+const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox']);
 
 /** `#/agents/abc/changes` → the route. Anything unrecognised is Home, never an error. */
 export function parseMobileHash(hash: string): MobileRoute {
@@ -69,6 +71,8 @@ export function tabOf(route: MobileRoute): MobileTab {
       return 'leader';
     case 'more':
     case 'fleet':
+    case 'runs':
+    case 'inbox':
       return 'more';
   }
 }

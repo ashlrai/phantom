@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 /**
  * M20 doctor-fix tests — hermetic, tmp HOME, mocked fs + child_process.
  *
@@ -45,15 +46,20 @@ afterEach(() => {
 // Mock child_process
 // ---------------------------------------------------------------------------
 
-const mockExecFile = vi.fn();
+const mockExecFile = vi.fn((_cmd: string, _args: string[], _options: unknown, callback?: (error: Error, stdout: string, stderr: string) => void) => {
+  // Async inventory probes must complete just like the synchronous absent-tool mock.
+  callback?.(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', '');
+});
 const mockExecFileSync = vi.fn();
 const mockSpawnSync = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
-const mockSpawn = vi.fn(() => ({
-  stdout: { on: vi.fn() },
-  stderr: { on: vi.fn() },
-  on: vi.fn(),
-  pid: 99999,
-}));
+const mockSpawn = vi.fn(() => {
+  const child = new EventEmitter() as EventEmitter & { stdout: null; stderr: null; unref: () => void };
+  child.stdout = null;
+  child.stderr = null;
+  child.unref = () => {};
+  queueMicrotask(() => child.emit('error', Object.assign(new Error('not found'), { code: 'ENOENT' })));
+  return child;
+});
 
 vi.mock('node:child_process', () => ({
   execFile: (...args: unknown[]) => mockExecFile(...args),

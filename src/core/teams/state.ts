@@ -17,12 +17,13 @@ export interface Claim { id: string; target: ClaimTarget; holder: string; reason
 export type HandoffState = 'awaiting-approval' | 'open' | 'accepted' | 'completed' | 'declined';
 export interface Handoff { id: string; from: string; to: string | null; title: string; detail: string; action: ConsequentialAction | null; contextRefs: string[]; state: HandoffState; approvalId: string | null; assignee: string | null; result: string | null; updatedAt: string }
 export interface Approval { id: string; handoffId: string; action: ConsequentialAction; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
-export interface TeamState { team: string; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
+export interface TeamState { team: string; repos: string[]; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
 
 export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): TeamState {
   const members = new Map<string, Member>();
+  const repos = new Set<string>();
   const claims = new Map<string, Claim>();
   const handoffs = new Map<string, Handoff>();
   const approvals = new Map<string, Approval>();
@@ -39,13 +40,15 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
     const p = ev.payload;
     const m = touch(ev.actor, ev.ts);
     switch (ev.type) {
+      case 'member.invited':
+      case 'member.role-changed':
       case 'member.joined': {
         const target = str(p.memberId, ev.actor.id);
         const role = p.role as TeamRole | undefined;
         // Presence, claims and declared caller aliases cannot found ownership.
         // The CLI derives the joining human locally; raw logs retain their
         // documented same-OS-user trust boundary.
-        if (ev.actor.kind === 'human' && m.kind === 'human' && target === ev.actor.id && !foundingHumanJoined) {
+        if (ev.actor.kind === 'human' && m.kind === 'human' && target === ev.actor.id && ev.type === 'member.joined' && !foundingHumanJoined) {
           if (![...members.values()].some(member => member.kind === 'human' && ['owner', 'admin'].includes(member.role))) m.role = 'owner';
           foundingHumanJoined = true;
         }
@@ -56,6 +59,9 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         else if (!existing && target.startsWith('human:') && humanRole && humanRoleGrant) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
         break;
       }
+      case 'repo.linked':
+        if (ev.actor.kind === 'human' && ['owner', 'admin'].includes(m.role) && /^[\w.-]+\/[\w.-]+$/.test(str(p.repo))) repos.add(str(p.repo));
+        break;
       case 'agent.registered':
         m.capabilities = Array.isArray(p.capabilities) ? (p.capabilities as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 32) : [];
         break;
@@ -91,7 +97,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
   }
   for (const mem of members.values()) mem.online = now - Date.parse(mem.lastSeen) < PRESENCE_WINDOW_MS;
   for (const c of claims.values()) if (Date.parse(c.expiresAt) <= now) claims.delete(c.id);
-  return { team, members: [...members.values()], claims: [...claims.values()], handoffs: [...handoffs.values()], approvals: [...approvals.values()], messages: messages.slice(-50), eventCount: events.length };
+  return { team, repos: [...repos], members: [...members.values()], claims: [...claims.values()], handoffs: [...handoffs.values()], approvals: [...approvals.values()], messages: messages.slice(-50), eventCount: events.length };
 }
 
 export function teamState(team: string): TeamState { return foldTeam(team, readEvents(team)); }

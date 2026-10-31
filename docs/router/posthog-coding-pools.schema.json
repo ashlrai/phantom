@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Phantom coding pools dashboard recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "tiles"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "tiles": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "query"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "query": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "source"],
+            "properties": {
+              "kind": { "const": "DataTableNode" },
+              "source": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "query"],
+                "properties": {
+                  "kind": { "const": "HogQLQuery" },
+                  "query": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
