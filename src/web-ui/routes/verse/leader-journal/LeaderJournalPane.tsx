@@ -3,12 +3,23 @@ import { Button } from '../../../components/primitives/Button.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import fleetStyles from '../fleet/fleet.module.css';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
 import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passSchedule, passSummary } from './leader-journal-model.js';
 import { leaderJournalQuery } from './leader-journal-queries.js';
 import styles from './leader-journal.module.css';
+
+function openLog(id: string) {
+  if (!JOB_ID_RE.test(id)) return;
+  requestWorkerLogJob(id);
+  openDockPane('worker-log');
+}
 
 export function LeaderJournalPane({ visible }: PaneProps) {
   const [query, setQuery] = useState('');
@@ -49,7 +60,7 @@ export function LeaderJournalPane({ visible }: PaneProps) {
               {data.sources.orchestration !== 'healthy' ? <p className={styles.note}>Leader notes source missing.</p> : null}
               {notes.length === 0 ? <p className={styles.note}>{searching ? 'No notes match' : 'No leader notes yet.'}</p> : notes.map((note, index) => <details className={styles.pass} key={`${note.at}-${index}`} open={searching || index === 0}>
                 <summary>{note.at}{note.bullets[0] ? <span> · {note.bullets[0]}</span> : null}</summary>
-                <ul>{note.bullets.map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet}</li>)}</ul>
+                <ul>{note.bullets.map((bullet, bulletIndex) => <li key={bulletIndex}><JobRefs text={bullet} onOpenJob={openLog} /></li>)}</ul>
               </details>)}
             </section>
             <section className={styles.section} aria-labelledby="journal-passes">
@@ -60,7 +71,7 @@ export function LeaderJournalPane({ visible }: PaneProps) {
                 <summary><time dateTime={pass.at}>{pass.at}</time>{passSummary(pass) ? <span> · {passSummary(pass)}</span> : null}</summary>
                 {pass.sections.map((section, sectionIndex) => <div key={`${section.title}-${sectionIndex}`}>
                   <h4>{section.title}</h4>
-                  <ul>{section.bullets.map((bullet, bulletIndex) => <li key={bulletIndex} className={matchedBullets.has(bullet) ? styles.match : undefined}>{bullet}</li>)}</ul>
+                  <ul>{section.bullets.map((bullet, bulletIndex) => <li key={bulletIndex} className={matchedBullets.has(bullet) ? styles.match : undefined}><JobRefs text={bullet} onOpenJob={openLog} /></li>)}</ul>
                 </div>)}
               </details>)}
             </section>
@@ -72,7 +83,7 @@ export function LeaderJournalPane({ visible }: PaneProps) {
               {data.ingested.length ? <div className={styles.tableWrap}><table className={styles.table}>
                 <caption>Ingested jobs</caption>
                 <thead><tr><th scope="col">Time</th><th scope="col">ID</th><th scope="col">Lane · tier</th><th scope="col">Leader</th></tr></thead>
-                <tbody>{data.ingested.map((row, index) => <tr key={`${row.id}-${row.at}-${index}`}><td><time dateTime={row.at}>{row.at}</time></td><td title={row.title}>{row.id}</td><td>{row.lane} · {row.tier}</td><td>{row.leader}</td></tr>)}</tbody>
+                <tbody>{data.ingested.map((row, index) => <tr key={`${row.id}-${row.at}-${index}`}><td><time dateTime={row.at}>{row.at}</time></td><td title={row.title}><button type="button" className={fleetStyles.refButton} aria-label={`Open log for ${row.id}`} onClick={() => openLog(row.id)}>{row.id}</button>{row.title ? <> · <JobRefs text={row.title} onOpenJob={openLog} /></> : null}</td><td>{row.lane} · {row.tier}</td><td>{row.leader}</td></tr>)}</tbody>
               </table></div> : <p className={styles.note}>No ingested jobs recorded.</p>}
               {data.ingest.length ? <ul className={styles.ingest}>{data.ingest.map((row, index) => <li key={`${row.file}-${index}`} data-tone={ingestTone(row)}><span>{row.verb} · {row.file}</span>{row.reason !== null ? <span> · {row.reason}</span> : null}</li>)}</ul> : <p className={styles.note}>No ingest events recorded.</p>}
             </section>
