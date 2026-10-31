@@ -11,6 +11,7 @@ export interface ResourceLaneRow {
   tokensPerHour6h: number | null;
   projectedExhaustion: string | null;
   source: string | null;
+  observation?: unknown;
   deadSignal?: { lane: string; lastFinishes: number; emptyFailures: number; state: 'ok' | 'suspect' | 'dead' } | null;
 }
 export interface ApiSpendSummary {
@@ -64,6 +65,24 @@ export function easternClock(atMs: number, weekday = false): string {
     timeZone: 'America/New_York', ...(weekday ? { weekday: 'short' } : {}),
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(atMs).replace(',', '')} ET`;
+}
+
+export function sourceLabel(source: string | null): string {
+  if (source === 'codex-personal-sessions') return 'personal Codex session logs';
+  if (source === 'status') return 'dispatchd status';
+  return source !== null && /^[A-Za-z0-9 _.:-]{1,40}$/.test(source) ? source : 'unknown';
+}
+
+export function staleness(asOf: string | null, nowMs: number, staleAfterMs = 15 * 60_000): { state: 'fresh' | 'stale' | 'unknown'; text: string } {
+  const at = asOf === null ? NaN : Date.parse(asOf);
+  if (!Number.isFinite(at) || !Number.isFinite(nowMs) || at > nowMs) return { state: 'unknown', text: 'age unknown' };
+  return { state: nowMs - at >= staleAfterMs ? 'stale' : 'fresh', text: `as of ${easternClock(at)}` };
+}
+
+export function laneAsOf(row: ResourceLaneRow, ledgerAsOf: string | null): string | null {
+  if (row.source !== 'codex-personal-sessions') return ledgerAsOf;
+  return record(row.observation) && row.observation.source === row.source && typeof row.observation.asOf === 'string'
+    ? row.observation.asOf : null;
 }
 
 export function runsOutText(row: ResourceLaneRow, nowMs: number): string | null {

@@ -21,6 +21,27 @@ export function decisionSummary(fleet: OpsFleetV1) {
   };
 }
 
+export function repeatedSkips(fleet: OpsFleetV1, minRuns = 3): Array<{ itemId: string; title: string; runs: number; since: string; reason: string }> {
+  const groups = new Map<string, typeof fleet.decisions>();
+  for (const d of fleet.decisions) {
+    if (!d || typeof d.itemId !== 'string' || typeof d.at !== 'string' || typeof d.dispatched !== 'boolean') continue;
+    const group = groups.get(d.itemId) ?? [];
+    group.push(d);
+    groups.set(d.itemId, group);
+  }
+  const repeats: ReturnType<typeof repeatedSkips> = [];
+  for (const [itemId, group] of groups) {
+    group.sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+    const streak = group.findIndex(d => d.dispatched);
+    const runs = streak === -1 ? group.length : streak;
+    if (runs < minRuns || runs === 0) continue;
+    const newest = group[0];
+    const reason = [newest.skipReason, newest.why, newest.summary].find(value => typeof value === 'string') ?? '—';
+    repeats.push({ itemId, title: typeof newest.title === 'string' ? newest.title : itemId, runs, since: group[runs - 1].at, reason });
+  }
+  return repeats.sort((a, b) => b.runs - a.runs || a.title.localeCompare(b.title));
+}
+
 export function holdRows(fleet: OpsFleetV1) {
   return fleet.held.map((h, index) => ({
     key: `${h.itemId}:${h.at}:${index}`, repo: h.repo, title: h.title,
@@ -32,7 +53,7 @@ export function holdRows(fleet: OpsFleetV1) {
   });
 }
 
-export function stallNote(summary: ReturnType<typeof decisionSummary>, _tickAt: string | null, _nowMs: number): string | null {
+export function stallNote(summary: ReturnType<typeof decisionSummary>, _tickAt: string | null, _nowMs: number, repeatedCount = 0): string | null {
   return summary.launched === 0 && summary.skipped > 0
-    ? `No launches in the journal window; last skip: ${summary.lastSkipReason ?? '—'}` : null;
+    ? `No launches in the journal window; last skip: ${summary.lastSkipReason ?? '—'}${repeatedCount > 0 ? ` · ${repeatedCount} bets skipped 3+ ticks in a row` : ''}` : null;
 }
