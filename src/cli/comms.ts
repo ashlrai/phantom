@@ -21,6 +21,7 @@
  */
 
 import { cmdCommsBus } from './comms-bus.js';
+import { cmdCommsInbox } from './comms-inbox.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { loadConfig } from '../core/config.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
@@ -506,10 +507,11 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
+  console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
@@ -543,6 +545,7 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
 
 export async function cmdComms(args: string[]): Promise<number> {
   if (args[0] === 'bus') return cmdCommsBus(args.slice(1));
+  if (args[0] === 'inbox') return cmdCommsInbox(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
