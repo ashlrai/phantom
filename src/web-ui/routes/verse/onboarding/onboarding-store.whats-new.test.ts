@@ -19,12 +19,12 @@ it.each([completeOnboarding, dismissOnboarding])('answering the tour acknowledge
 
 it('persists acknowledgment across reloads and offers the next release', async () => {
   completeOnboarding();
-  markReleaseSeen('next');
-  expect(JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toMatchObject({ seenRelease: 'next' });
+  markReleaseSeen('3.30.0');
+  expect(JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toMatchObject({ seenRelease: '3.30.0' });
   vi.resetModules();
   const fresh = await import('./onboarding-store.js');
-  expect(fresh.whatsNewPending(fresh.getOnboardingState(), 'next')).toBe(false);
-  expect(fresh.whatsNewPending(fresh.getOnboardingState(), 'future')).toBe(true);
+  expect(fresh.whatsNewPending(fresh.getOnboardingState(), '3.30.1')).toBe(false);
+  expect(fresh.whatsNewPending(fresh.getOnboardingState(), '3.31.0')).toBe(true);
 });
 
 it('loads a legacy completed tour with a null release', async () => {
