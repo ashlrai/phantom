@@ -95,6 +95,20 @@ export function outcomeLabel(outcome: string): string {
   return outcome ? outcome[0]!.toUpperCase() + outcome.slice(1) : 'Unknown';
 }
 
+export function filterCases(view: OutcomesView, outcome: ExecutionFeedbackOutcome | 'all'): OutcomeCaseRow[] {
+  return outcome === 'all' ? view.cases : view.cases.filter(item => item.outcome === outcome);
+}
+
+export function outcomeChips(view: OutcomesView): Array<{ outcome: ExecutionFeedbackOutcome | 'all'; label: string; count: number }> {
+  const chips: Array<{ outcome: ExecutionFeedbackOutcome | 'all'; label: string; count: number }> =
+    [{ outcome: 'all', label: 'All', count: view.cases.length }];
+  for (const row of view.mix) {
+    const count = row.total ?? row.observed;
+    if (count > 0) chips.push({ outcome: row.outcome, label: row.label, count });
+  }
+  return chips;
+}
+
 export function stageLabel(stage: string): string {
   if (stage === 'pr-opened') return 'PR opened';
   if (stage === 'post-merge') return 'Post-merge CI';
