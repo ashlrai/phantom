@@ -6,11 +6,12 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
+const HELP = `phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
+--contains <text> is a literal case-insensitive substring match on message text (not regex) over the same bounded inbox tail, applied before the limit.
 --priority selects entries with exactly that priority; entries without a priority do not match.
 --after and --before select timestamps strictly inside the supplied bounds and report omittedUndated; inbox local times are Eastern.
 When both are supplied, --after must be earlier than --before.
@@ -114,7 +115,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, json = false, watch = false, receiptOnly = false;
+    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, contains: string | undefined, json = false, watch = false, receiptOnly = false;
     let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
@@ -148,8 +149,13 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
         priority = value;
       } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
+      } else if (verb === 'read' && arg === '--contains' && contains === undefined) {
+        const value = rest[++i];
+        if (value === undefined || !value.trim() ||
+          ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value)) return invalid();
+        contains = value;
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
@@ -159,6 +165,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
+      const needle = contains === undefined ? undefined : contains.toLowerCase();
       const readSnapshot = async () => {
         const result = await readInboxEntries({ runsDir: options.runsDir, limit: Number.MAX_SAFE_INTEGER });
         let omittedUndated = 0;
@@ -168,7 +175,11 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           return (after === undefined || laterThan(instant, after)) && (before === undefined || laterThan(before, instant));
         });
         const matchingEntries = priority === undefined ? datedEntries : datedEntries.filter(entry => entry.priority === priority);
-        const entries = projectInboxRead({ ...result, entries: matchingEntries }, query)!.entries;
+        // Match on projected entries so redaction and the source filter still apply; the limit then keeps the newest matches.
+        const projected = projectInboxRead({ ...result, entries: matchingEntries },
+          needle === undefined ? query : { ...query, limit: Number.MAX_SAFE_INTEGER })!.entries;
+        const entries = needle === undefined ? projected
+          : projected.filter(entry => entry.text.toLowerCase().includes(needle)).slice(-query.limit);
         return { ...result, entries, ...(after === undefined && before === undefined ? {} : { omittedUndated }) };
       };
       if (!watch) {
