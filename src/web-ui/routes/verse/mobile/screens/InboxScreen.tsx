@@ -17,13 +17,14 @@ import { readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { sinceText } from '../connectivity.js';
 import { inboxTailQuery } from '../inbox-tail-query.js';
 import { dedupeInboxEntries } from '../inbox-dedupe.js';
 import { inboxSeen, type InboxSeen } from '../inbox-seen-model.js';
 import { inboxPending } from '../inbox-pending-model.js';
 import { INBOX_NOT_IN_THIS_BUILD, INBOX_READ_LIMIT, inboxReadQuery, type FleetInboxReadEntry } from '../inbox-read-query.js';
 import { useMobile } from '../mobile-context.js';
-import { cx, Screen, SkeletonList } from '../ui.js';
+import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { Badge, Banner, EmptyState, ErrorState, ui, type Tone } from '../ui-parts.js';
 import styles from './InboxScreen.module.css';
 
@@ -84,7 +85,7 @@ function sourcesPresent(entries: readonly FleetInboxReadEntry[]): string[] {
 }
 
 export function InboxScreen() {
-  const { navigate } = useMobile();
+  const { navigate, reachability } = useMobile();
   const query = inboxReadQuery(INBOX_READ_LIMIT);
   const inbox = useQuery(query);
   const refetch = useRefetch(query);
@@ -114,6 +115,9 @@ export function InboxScreen() {
     const pending = inboxPending(seen.entries, snapshot.data?.snapshot, now);
     body = (
       <>
+        {reachability === 'unreachable' ? (
+          <Banner>Can’t reach your Mac. Showing the last inbox read ({sinceText(inbox.updatedAt).toLowerCase()}).</Banner>
+        ) : null}
         {data.sourceState !== 'healthy' ? (
           <Banner>
             {data.sourceState === 'missing'
@@ -123,7 +127,7 @@ export function InboxScreen() {
         ) : null}
         {shown.length > 0 ? <Banner tone={pending.tone === 'ok' ? 'info' : pending.tone}>{pending.text}</Banner> : null}
         {data.entries.length === 0 ? (
-          <EmptyState title="Nothing yet." body="Use the box on Live runs." />
+          <EmptyState title="Nothing yet." body="Use the box on Live runs." action={<Button variant="tinted" onClick={() => navigate({ screen: 'runs' })}>Go to Live runs</Button>} />
         ) : (
           <>
             {sources.length > 1 ? (
