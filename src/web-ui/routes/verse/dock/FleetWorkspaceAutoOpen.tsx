@@ -21,16 +21,20 @@ export function FleetWorkspaceAutoOpen() {
 
   useEffect(() => {
     if (!visible || !runs.data || !Array.isArray(runs.data.workers) || !Array.isArray(runs.data.leaders)) return;
-    const snapshot = getDockState();
-    if (query.error || !shouldAutoOpen({ runs: runs.data, dockTabs: snapshot.tabs, optOut: readOptOut(localStorage), alreadyRanThisSession: hasAutoOpened() })) return;
-    const present = fleetPanesPresent(listPanes().map(pane => pane.id));
-    if (present.length === 0) return;
-    markAutoOpened();
-    openFleetWorkspace(present);
-    toast.show('Fleet is running on this Mac. Opened the fleet workspace.', 'neutral', [
-      { label: 'Undo', onClick: () => hydrateDockState(snapshot) },
-      { label: "Don't do this again", onClick: () => writeOptOut(localStorage, true) },
-    ]);
-  }, [runs.data, toast, visible]);
+    try {
+      const snapshot = getDockState();
+      if (runs.error || !shouldAutoOpen({ runs: runs.data, dockTabs: snapshot.tabs, optOut: readOptOut(localStorage), alreadyRanThisSession: hasAutoOpened() })) return;
+      const present = fleetPanesPresent(listPanes().map(pane => pane.id));
+      if (present.length === 0) return;
+      markAutoOpened();
+      openFleetWorkspace(present);
+      toast.show('Fleet is running on this Mac. Opened the fleet workspace.', 'neutral', [
+        { label: 'Undo', onClick: () => hydrateDockState(snapshot) },
+        { label: "Don't do this again", onClick: () => writeOptOut(localStorage, true) },
+      ]);
+    } catch {
+      // Auto-open is optional and must never take down the dock.
+    }
+  }, [runs.data, runs.error, toast, visible]);
   return null;
 }
