@@ -6,6 +6,9 @@ apply independently of this runner.
 
 A Mac launchd runner that claims labelled GitHub issues and opens one draft pull request per job. It does not merge, tag, or publish. The queue runs around the clock. There is no quiet-hours window.
 
+The separate, uninstalled PR supervisor and its commissioning requirements are
+documented in [SUPERVISOR.md](SUPERVISOR.md).
+
 From a checkout of this branch:
 
 ```bash
