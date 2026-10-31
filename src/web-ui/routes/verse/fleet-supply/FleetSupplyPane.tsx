@@ -7,6 +7,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { exhaustionByLane, soonestExhaustion } from './supply-exhaustion-model.js';
 import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
+import { heldUntilText } from './held-until-text.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, supplyHeadline, totalShortfall, TYPICAL_RUN_SECONDS } from './supply-model.js';
 import styles from './fleet-supply.module.css';
 
@@ -43,7 +44,7 @@ export function FleetSupplyPane({ visible }: PaneProps) {
       <table className={styles.table} aria-label="Job supply per lane">
         <thead><tr><th scope="col">Lane</th><th scope="col">Running/target</th><th scope="col">Free now</th><th scope="col">Freeing ≤{HORIZON_SECONDS / 60} m</th><th scope="col">Waiting</th><th scope="col">Shortfall</th></tr></thead>
         <tbody>{rows.map((row, index) => <tr key={`${row.lane}-${index}`}>
-          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{row.held && <span className={styles.held}>{row.heldReason || 'Held'}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
+          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{row.held && <span className={styles.held} title={row.heldReason ?? undefined}>{heldUntilText(row.heldReason, Date.now())}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
           <td>{row.running}/{row.target}</td><td>{row.freeNow}</td><td>{row.freeingSoon}</td>
           <td>{row.pendingFiles + row.queued}</td><td>{row.shortfall > 0 ? <strong>{row.shortfall}</strong> : row.shortfall}</td>
         </tr>)}</tbody>
