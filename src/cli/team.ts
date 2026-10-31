@@ -8,7 +8,7 @@ import {
 } from '../core/teams/index.js';
 
 const USAGE = `Usage: phm team <view|join|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
-  view                         Members, presence, claims, handoffs and pending approvals
+  view                         Roles, shared context, setup guidance, claims and handoffs
   join [--role admin]          Join as the local human (first human becomes owner; --as is ignored)
   approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
   claim <owner/repo> [--branch b] [--path p] [--reason r] [--ttl-min n]
@@ -37,11 +37,23 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         const s = teamState(team);
         if (json) return out(s, '');
         const lines = [`Team ${team} — ${s.members.length} members, ${s.claims.length} claims, ${s.handoffs.filter((h) => h.state !== 'completed' && h.state !== 'declined').length} open handoffs`];
-        for (const m of s.members) lines.push(`  ${m.online ? '●' : '○'} ${m.id} (${m.role}${m.provider ? `, ${m.provider}` : ''})${m.status ? ` — ${m.status}` : ''}`);
+        const teamFlag = `--team ${team}`;
+        const roleLabels = { owner: 'human owner; approves consequential actions', admin: 'human admin; approves consequential actions', member: 'human member; cannot approve consequential actions', agent: 'agent; cannot approve consequential actions' };
+        if (!s.members.length) lines.push('  No members yet.');
+        for (const m of s.members) lines.push(`  ${m.online ? '●' : '○'} ${m.id} (${roleLabels[m.role]}${m.provider ? `, ${m.provider}` : ''})${m.status ? ` — ${m.status}` : ''}`);
+        lines.push('  Presence: ● seen within 5 minutes; ○ inactive (membership is retained).');
+        lines.push('  Shared context: phm_team_context_add / phm_team_context_get (MCP); select this team and an explicit personal, company or client:<name> owner scope.');
+        if (!s.members.some((m) => m.kind === 'human' && (m.role === 'owner' || m.role === 'admin'))) {
+          lines.push(`  Next: phm team join ${teamFlag} — the first human to join becomes owner; --as does not select that identity.`);
+        } else if (!s.members.some((m) => m.kind === 'agent')) {
+          lines.push(`  Next: register an agent with phm_team_register (team: ${team}) and its capabilities.`);
+        } else {
+          lines.push('  Next: retrieve scoped shared context before claiming work or accepting a handoff.');
+        }
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
         for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
         const pending = s.approvals.filter((a) => a.state === 'pending');
-        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — phm team approve ${a.id}`);
+        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — phm team approve ${a.id} ${teamFlag} (human owner/admin only)`);
         return out(s, lines.join('\n'));
       }
       case 'join': { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }

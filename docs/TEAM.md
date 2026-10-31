@@ -5,6 +5,38 @@ independent fleet on their own machine. Shared visibility is provided by
 ashlr-pulse: both teammates point at the same pulse instance and see each
 other's fleet activity attributed by owner.
 
+## Local team at a glance
+
+Run `phm team view --team <id>` for member roles, recent presence, claims,
+open handoffs and pending approvals. The view also explains shared context
+and the next setup action. `--json` retains the raw team-state schema.
+
+| Role | Responsibility |
+| --- | --- |
+| `owner` | First human to explicitly join; can decide consequential-action approvals |
+| `admin` | Human granted that role by an owner/admin; can decide approvals |
+| `member` | Human collaborator; cannot decide approvals |
+| `agent` | Agent collaborator with registered capabilities; cannot decide approvals |
+
+For an empty team, run `phm team join --team <id>`. Joining uses the local
+human identity; `--as` cannot choose an owner or grant admin rights. If agents
+arrive first, the first human still needs to join. Once a human owner/admin is
+present, register an agent through `phm_team_register` with the same team id
+and its capabilities. An inactive member remains a member: presence only
+means an event was seen within five minutes.
+
+Agents add shared context through `phm_team_context_add` with a title, text,
+source and scope, then retrieve a compact cited pack with
+`phm_team_context_get`. Use the same team id and an explicit owner scope
+(`personal`, `company`, or `client:<name>`); narrow by project/person as needed.
+Retrieve relevant context before claiming work or accepting a handoff. Keep
+credentials out of messages and context; use Phantom Secrets references.
+
+This protocol is local to `$ASHLR_HOME/teams/<team>` (normally
+`~/.ashlr/teams/<team>`). Matching team ids on separate machines do not sync
+membership, context or approvals. Pulse below shares activity metrics; see
+[the teams architecture](architecture/teams.md) for the protocol and sync roadmap.
+
 ---
 
 ## The team model
