@@ -46,29 +46,50 @@ function formatParked(state: FleetQueueV1): string {
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
 export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers): Promise<number> {
-  const usage = `Usage: phm fleet ${verb} [--json] [--help]`;
+  const usage = `Usage: phm fleet ${verb} [--json]${verb === 'journal' ? '' : ' [--lane <lane>]'} [--help]`;
   const seen = new Set<string>();
-  for (const arg of args) {
+  let lane: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
     const flag = arg === '-h' ? '--help' : arg;
-    if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
+    if (flag === '--lane' && verb !== 'journal' && !seen.has(flag) && /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(args[i + 1] ?? '')) {
+      lane = args[++i];
+    } else if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
       process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
       return 2;
     }
     seen.add(flag);
   }
-  if (seen.has('--help')) { console.log(usage); return 0; }
+  if (seen.has('--help')) {
+    console.log(verb === 'journal' ? usage : `${usage}\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.`);
+    return 0;
+  }
   try {
     // Each reader returns its existing bounded, scrubbed and versioned projection.
     if (verb === 'runs') {
       const state = await deps.runs();
-      console.log(seen.has('--json') ? JSON.stringify(state) : formatRuns(state));
+      if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatRuns(state));
+      else {
+        const filtered = { ...state, lanes: state.lanes.filter(row => row.lane === lane),
+          claimed: state.claimed.filter(row => row.lane === lane),
+          publishesLastHour: state.publishesLastHour.filter(row => row.lane === lane),
+          events: [], drop: { ...state.drop, pending: state.drop.pending.filter(row => row.lane === lane) },
+          laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'sourceState', 'drop.done', 'other non-row fields', 'switches'], omitted: ['events'] } };
+        console.log(seen.has('--json') ? JSON.stringify(filtered) : `Lane filter: ${filtered.laneFilter.lane}; source health and other non-row values are global; unattributed events omitted\n${formatRuns(filtered)}`);
+      }
     } else if (verb === 'journal') {
       const state = await deps.journal();
       console.log(seen.has('--json') ? JSON.stringify(state) : formatJournal(state));
     } else {
       // Match the desktop queue endpoint's additional public-output scrub.
       const state = sanitizePublicJson(await deps.parked()) as FleetQueueV1;
-      console.log(seen.has('--json') ? JSON.stringify(state) : formatParked(state));
+      if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatParked(state));
+      else {
+        const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
+          groups: state.groups.filter(row => row.lane === lane), skips: [],
+          laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'total', 'ready', 'parked', 'malformed', 'skipsLast24h'], omitted: ['skips'] } };
+        console.log(seen.has('--json') ? JSON.stringify(filtered) : `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n${formatParked(filtered)}`);
+      }
     }
     return 0;
   } catch {
