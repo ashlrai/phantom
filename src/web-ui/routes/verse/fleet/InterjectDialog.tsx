@@ -3,7 +3,7 @@ import { Button } from '../../../components/primitives/Button.js';
 import { Dialog } from '../../../components/primitives/Dialog.js';
 import { ApiError } from '../../../data/client.js';
 import { VerseMutationLockedError } from '../verse-queries.js';
-import { closeInterjectDialog, postInterjection, useInterjectDialogOpen } from './interject-dialog-store.js';
+import { closeInterjectDialog, postInterjection, takeInterjectPrefill, useInterjectDialogOpen } from './interject-dialog-store.js';
 import styles from './interject-dialog.module.css';
 
 function errorMessage(error: unknown): string {
@@ -24,11 +24,22 @@ function InterjectDialogBody() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const active = useRef(true);
   const sending = useRef(false);
+  const pendingCaret = useRef<string | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [landed, setLanded] = useState('');
 
+  useEffect(() => {
+    const prefill = takeInterjectPrefill();
+    if (prefill !== null) { pendingCaret.current = prefill; setText(prefill); }
+  }, []);
+  useEffect(() => {
+    if (pendingCaret.current !== null && text === pendingCaret.current) {
+      inputRef.current?.setSelectionRange(text.length, text.length);
+      pendingCaret.current = null;
+    }
+  }, [text]);
   useEffect(() => {
     active.current = true;
     return () => { active.current = false; };

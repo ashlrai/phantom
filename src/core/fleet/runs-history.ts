@@ -21,7 +21,7 @@
  * Privacy: samples hold COUNTS ONLY — lane names, running/target/queued,
  * held, workers, leaders, paused. No job ids, prompts, log text or paths.
  */
-import { appendFile, mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -154,7 +154,16 @@ export async function appendRunsSample(sample: RunsSample, opts: AppendRunsSampl
   const file = opts.file ?? runsHistoryFile();
   const now = opts.now ?? Date.now;
   await mkdir(dirname(file), { recursive: true });
-  await appendFile(file, `${JSON.stringify(sample)}\n`, 'utf8');
+  const handle = await open(file, 'a+');
+  try {
+    const { size } = await handle.stat();
+    const lastByte = Buffer.alloc(1);
+    const { bytesRead } = size > 0 ? await handle.read(lastByte, 0, 1, size - 1) : { bytesRead: 0 };
+    const separator = bytesRead > 0 && lastByte[0] !== 0x0a ? '\n' : '';
+    await handle.writeFile(`${separator}${JSON.stringify(sample)}\n`, 'utf8');
+  } finally {
+    await handle.close();
+  }
   const info = await stat(file);
   if (info.size <= RUNS_HISTORY_MAX_BYTES) return;
   const cutoff = now() - RUNS_HISTORY_RETAIN_MS;
