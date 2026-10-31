@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { parseInboxReadQuery, projectInboxRead } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 
 export interface FleetRunsApiDeps {
@@ -116,6 +117,15 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         flight = build().then(value => { cached = { at: now(), value }; return value; }).finally(() => { flight = undefined; });
       }
       sendJson(res, 200, flight ? await flight : cached!.value);
+      return true;
+    }
+    if (method === 'GET' && path === VERSE_FLEET_RUNS_INBOX_PATH) {
+      let query: ReturnType<typeof parseInboxReadQuery>;
+      try { query = parseInboxReadQuery(new URL(req.url ?? '/', 'http://localhost').searchParams); }
+      catch { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid query string' }); return true; }
+      if ('error' in query) { sendJson(res, 400, { code: 'VERSE_INVALID', error: query.error }); return true; }
+      try { sendJson(res, 200, projectInboxRead(await inbox(query.limit), query)); }
+      catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
       return true;
     }
     if (method !== 'POST' || path !== VERSE_FLEET_RUNS_INBOX_PATH) return false;
