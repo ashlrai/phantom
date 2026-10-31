@@ -18,12 +18,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  resolveNpmCliLaunch,
-  runTrustedNpmCli,
-} from './helpers/built-release-inventory.js';
-import { requireBuiltDist } from './helpers/require-built-dist.js';
-
 // These cases run REAL `npm pack` + `npm install` into temp dirs, so their
 // runtime is bound by actual package-manager and filesystem work and exceeds
 // 30s whenever the machine is loaded.
@@ -35,7 +29,10 @@ import { requireBuiltDist } from './helpers/require-built-dist.js';
 // inside the run. A test-harness timeout firing first only hides whether that
 // control passed; it never makes it pass.
 vi.setConfig({ testTimeout: 180_000, hookTimeout: 180_000 });
-requireBuiltDist();
+import {
+  resolveNpmCliLaunch,
+  runTrustedNpmCli,
+} from '../scripts/build-release-dependency-inventory.mjs';
 import {
   buildRuntimeReleaseDependencyInventory,
   observeInstalledRuntimeDependencies,
@@ -1035,6 +1032,7 @@ describe('release artifact contract v1', () => {
   it.each([
     { name: 'explicit companion inventory guide', guides: ['docs/COMPANIONS.md'], sibling: 'docs/COMPANIONS-PRIVATE.md' },
     { name: 'explicit memory foundation and evaluation guides', guides: ['docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md'], sibling: 'docs/MEMORY-EVALUATION-PRIVATE.md' },
+    { name: 'explicit model inventory guide', guides: ['docs/MODEL-INVENTORY.md'], sibling: 'docs/MODEL-INVENTORY-PRIVATE.md' },
     { name: 'three explicit Agents guides', guides: ['docs/OPENAI-AGENTS-INTEGRATION.md', 'docs/DOTS-COMPANION.md', 'docs/AGENT-HARNESS-EVOLUTION.md'], sibling: 'docs/OPENAI-AGENTS-PRIVATE.md' },
     { name: 'explicit reset-aware scheduling guide', guides: ['docs/RESET-AWARE-SCHEDULING.md'], sibling: 'docs/RESET-AWARE-PRIVATE.md' },
     { name: 'explicit execution feedback guide', guides: ['docs/EXECUTION-FEEDBACK.md'], sibling: 'docs/EXECUTION-FEEDBACK-PRIVATE.md' },

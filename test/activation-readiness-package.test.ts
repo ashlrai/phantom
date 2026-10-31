@@ -14,7 +14,6 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { AshlrConfig } from '../src/core/types.js';
-import { requireBuiltDist } from './helpers/require-built-dist.js';
 
 const originalHomeEnvironment = {
   HOME: process.env['HOME'],
@@ -66,15 +65,14 @@ afterEach(() => {
 describe('compiled activation-readiness surface', () => {
   it('projects fail-closed activation through dist, the CLI, and copied dashboard assets', async () => {
     const home = isolateHome();
-    requireBuiltDist([
-      'dist/core/fleet/status.js',
-      'dist/cli/index.js',
-      'dist/core/web/public/app.js',
-    ]);
     const distStatusPath = join(process.cwd(), 'dist', 'core', 'fleet', 'status.js');
+    const distCliPath = join(process.cwd(), 'dist', 'cli', 'index.js');
     const binPath = join(process.cwd(), 'bin', 'ashlr');
     const distDashboardPath = join(process.cwd(), 'dist', 'core', 'web', 'public', 'app.js');
+    expect(existsSync(distStatusPath)).toBe(true);
+    expect(existsSync(distCliPath)).toBe(true);
     expect(existsSync(binPath)).toBe(true);
+    expect(existsSync(distDashboardPath)).toBe(true);
 
     const module = await import(pathToFileURL(distStatusPath).href) as {
       buildFleetStatus(cfg: AshlrConfig): Promise<{

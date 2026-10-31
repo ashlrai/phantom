@@ -495,6 +495,7 @@ function rootPackageIsPortable(
     'docs/COMPANIONS.md',
     'docs/MEMORY-FOUNDATION.md',
     'docs/MEMORY-EVALUATION.md',
+    'docs/MODEL-INVENTORY.md',
     'docs/QUICKSTART.md',
     'docs/AUTOMATIC-OUTCOMES.md',
     'docs/VERSE.md',
