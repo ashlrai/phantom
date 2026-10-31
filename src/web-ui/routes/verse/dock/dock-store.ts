@@ -24,6 +24,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   DOCK_LAYOUT,
+  DOCK_PANE_IDS,
   VERSE_UI_STORAGE_KEY,
   normalizePaneId,
   sanitizeDockState,
@@ -59,6 +60,7 @@ const NO_REQUESTS: DockRequests = { terminal: null, preview: null, diff: null };
 let snapshot: DockSnapshot | null = null;
 let nonce = 0;
 const listeners = new Set<() => void>();
+let scheduleRegistryPrune: (() => void) | undefined;
 
 function readPersisted(): DockState {
   try {
@@ -102,6 +104,7 @@ export function getDockState(): DockState {
 /** C1 may push the persisted field in (on load, or when another tab wrote it). */
 export function hydrateDockState(raw: unknown): void {
   setState(sanitizeDockState(raw));
+  scheduleRegistryPrune?.();
 }
 
 /** Test seam: back to defaults with no requests; next read re-hydrates from storage. */
@@ -117,6 +120,46 @@ export function resetDockStore(): void {
 // Transitions (pure over DockState, exported for tests)
 // ---------------------------------------------------------------------------
 
+/** Remove missing panes from the current layout and every remembered chat. */
+export function withUnknownTabsPruned(state: DockState, known: ReadonlySet<string>): DockState {
+  if (known.size === 0) return state;
+  const builtins = new Set<string>(DOCK_PANE_IDS);
+  const prune = (layout: DockLayout): DockLayout => {
+    const tabs = layout.tabs.filter((id) => known.has(id) || builtins.has(id));
+    const split = layout.splitWith && tabs.includes(layout.splitWith) ? layout.splitWith : null;
+    const active = layout.active && tabs.includes(layout.active) ? layout.active : split ?? tabs[0] ?? null;
+    const splitWith = split === active ? null : split;
+    const open = layout.open && tabs.length > 0;
+    if (tabs.length === layout.tabs.length && active === layout.active && splitWith === layout.splitWith && open === layout.open) return layout;
+    return { ...layout, tabs, active, splitWith, open };
+  };
+  const layout = prune(state);
+  let changed = layout !== state;
+  const byChat = Object.fromEntries(Object.entries(state.byChat).map(([id, saved]) => {
+    const next = prune(saved);
+    if (next !== saved) changed = true;
+    return [id, next];
+  }));
+  return changed ? { ...state, ...layout, byChat } : state;
+}
+
+/** Attach after discovery finishes; batch synchronous registry publications. */
+export function watchDockPaneRegistry(list: () => readonly { id: string }[], subscribe: (listener: () => void) => () => void): void {
+  let queued = false;
+  scheduleRegistryPrune = () => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      const state = current().state;
+      const next = withUnknownTabsPruned(state, new Set(list().map((pane) => pane.id)));
+      if (next !== state) setState(next);
+    });
+  };
+  subscribe(scheduleRegistryPrune);
+  scheduleRegistryPrune();
+}
+
 /** Open `pane` (adding its tab) and make it the visible one. A legacy id opens the pane it became. */
 export function withPaneOpen(state: DockState, requested: DockPaneId): DockState {
   const pane = normalizePaneId(requested);
@@ -125,6 +168,17 @@ export function withPaneOpen(state: DockState, requested: DockPaneId): DockState
   // Opening the pane that is the split's lower half swaps it to the top.
   const splitWith = state.splitWith === pane ? (state.active !== pane ? state.active : null) : state.splitWith;
   return { ...state, open: true, tabs, active: pane, splitWith: splitWith === pane ? null : splitWith };
+}
+
+/** Open the registered fleet panes in preference order, preserving other tabs. */
+export function withFleetWorkspace(state: DockState, available: readonly DockPaneId[]): DockState {
+  const fleet = [...new Set(available)];
+  if (fleet.length === 0) return state;
+  return {
+    ...state, open: true,
+    tabs: [...fleet, ...state.tabs.filter((id) => !fleet.includes(id))],
+    active: fleet[0]!, splitWith: fleet[1] ?? null,
+  };
 }
 
 /** The pane's toggle: open & focus it, or — when it is already the visible pane — close the dock. */
@@ -213,6 +267,10 @@ export function withChatSwitch(state: DockState, from: string | null, to: string
 
 export function openDockPane(pane: DockPaneId): void {
   setState(withPaneOpen(current().state, pane));
+}
+
+export function openFleetWorkspace(available: readonly DockPaneId[]): void {
+  setState(withFleetWorkspace(current().state, available));
 }
 
 export function toggleDockPane(pane: DockPaneId): void {

@@ -7,7 +7,6 @@
  * the shell's file.
  */
 import type { ReactNode, SVGProps } from 'react';
-import type { BuiltinPaneId } from '../shell/dock-catalog.js';
 
 export interface GlyphProps extends Omit<SVGProps<SVGSVGElement>, 'children' | 'viewBox'> {
   size?: number;
@@ -111,13 +110,3 @@ export function PanelBottomGlyph(p: GlyphProps) {
   return <Glyph {...p}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="M1.75 9.5h12.5" /></Glyph>;
 }
 
-export const DOCK_PANE_GLYPH: Readonly<Record<BuiltinPaneId, (p: GlyphProps) => ReactNode>> = {
-  terminal: TerminalGlyph,
-  browser: PreviewGlyph,
-  diff: ReviewGlyph,
-  files: FilesGlyph,
-  sources: SourcesGlyph,
-  reasoning: ReasoningGlyph,
-  tasks: TasksGlyph,
-  context: ContextGlyph,
-};

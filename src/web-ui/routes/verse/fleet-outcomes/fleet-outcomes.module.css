@@ -1,0 +1,11 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.header, .message, .notice { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.notice { color: var(--text-primary); }
+.heading { margin: 0 0 var(--space-2); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
+.row a { color: var(--accent-500); }
+.caseRow { composes: row; width: 100%; padding: 0; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.caseRow[aria-pressed='true'] { color: var(--accent-500); }
+.dim { color: var(--text-secondary); }
+.timelineHead { display: flex; align-items: start; justify-content: space-between; gap: var(--space-2); }
