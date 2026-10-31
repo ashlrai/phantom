@@ -74,7 +74,8 @@ import { listSwarms, loadSwarm } from '../swarm/store.js';
 import { buildRollup } from '../observability/rollup.js';
 import { loadGenome } from '../genome/store.js';
 import { recall } from '../genome/recall.js';
-import { listProposals, loadProposal, setStatus } from '../inbox/store.js';
+import { decideApprovalRequest, listProposals, loadProposal, setStatus } from '../inbox/store.js';
+import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
 import {
   readPublicDaemonObservation,
   type PublicDaemonObservation,
@@ -1698,7 +1699,7 @@ export async function handleApi(
         };
       }
 
-      sendJson(res, 200, { ...proposal, decisionEvidence });
+      sendJson(res, 200, { ...proposal, decisionEvidence, approvalRequest: approvalRequestForProposal(proposal) });
       return true;
     }
 
@@ -1718,13 +1719,40 @@ export async function handleApi(
       const parts = sub.split('/');
       const id = parts[0] ?? '';
       const action = parts[1] ?? '';
-      if (!id || (action !== 'approve' && action !== 'reject') || parts.length > 2) {
+      if (!id || !['approve', 'reject', 'decision'].includes(action) || parts.length > 2) {
         sendJson(res, 404, { error: `not found: ${method} ${path}` });
         return true;
       }
 
       // Same token + Content-Type gate as handleDispatch.
       if (!passesMutationGate(req, res, ctx.token)) {
+        return true;
+      }
+
+      // Approval cards persist consent only. They must never fall through to
+      // the legacy approve-and-apply route below.
+      if (action === 'decision') {
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req, 4096));
+        } catch {
+          sendJson(res, 400, { error: 'expected a bounded JSON approval decision' });
+          return true;
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'revision' && key !== 'decision') ||
+          !('revision' in body) || !isApprovalRequestRevision(body.revision) ||
+          !('decision' in body) || (body.decision !== 'approve' && body.decision !== 'deny')) {
+          sendJson(res, 400, { error: 'expected revision and decision (approve or deny)' });
+          return true;
+        }
+        const result = decideApprovalRequest(id, body.revision, body.decision);
+        const statusCode = result.ok ? 200 : result.code === 'not-found' ? 404 : result.code === 'conflict' ? 409 : 503;
+        sendJson(res, statusCode, result.ok ? result : {
+          ...result, error: result.code === 'conflict'
+            ? 'This approval request changed or was already decided. Reload it before deciding.'
+            : 'Approval decision unavailable.',
+        });
         return true;
       }
 

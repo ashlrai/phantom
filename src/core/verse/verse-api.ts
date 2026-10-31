@@ -421,6 +421,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   overnight: async () => {
     try { return (await import('./overnight-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'overnight-api.js'); }
   },
+  'fleet-runs': async () => {
+    try { return (await import('./fleet-runs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runs-api.js'); }
+  },
   'fleet-live': async () => {
     try { return (await import('./fleet-live-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-live-api.js'); }
   },
