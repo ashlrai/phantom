@@ -54,8 +54,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
 import type { EffectiveConfigSnapshot, EffectiveConfigValue } from '../core/effective-config.js';
 import { buildIndex, loadIndex, writeIndex } from '../core/index-engine.js';
@@ -67,10 +65,11 @@ import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocatio
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
-import { classifyRepos, printStatusJson } from './status.js';
+import { runStatus, requireIndex, printNoReposHelp, relativeTime } from './status.js';
+import { failCliCommand } from './cli-error.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
-import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
+import type { AshlrConfig, IndexedItem } from '../core/types.js';
 
 // ─── Lazy command loaders ───────────────────────────────────────────
 //
@@ -81,9 +80,6 @@ import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, Mc
 // exits 1. The fallback message format is identical across every command.
 
 type Cmd = (args: string[]) => Promise<number>;
-type GetToolsRegistryFn = () => ToolsRegistry;
-type DiscoverMcpServersFn = () => McpRegistry;
-
 /**
  * Build a lazy loader for a CLI command export.
  * @param importer  dynamic import of the command module
@@ -126,34 +122,6 @@ const loadCompanionsCmd = lazyCmd(
   (m) => m.cmdCompanions as Cmd,
   'companions command requires src/cli/companions.ts.',
 );
-
-// Cache slots — undefined = not yet attempted; null = attempted & failed
-let _getToolsRegistry: GetToolsRegistryFn | null | undefined = undefined;
-let _discoverMcpServers: DiscoverMcpServersFn | null | undefined = undefined;
-
-async function tryGetToolsRegistry(): Promise<GetToolsRegistryFn | null> {
-  if (_getToolsRegistry === undefined) {
-    try {
-      const mod = await import('../core/tools-registry.js') as { getToolsRegistry: GetToolsRegistryFn };
-      _getToolsRegistry = mod.getToolsRegistry;
-    } catch {
-      _getToolsRegistry = null;
-    }
-  }
-  return _getToolsRegistry ?? null;
-}
-
-async function tryDiscoverMcpServers(): Promise<DiscoverMcpServersFn | null> {
-  if (_discoverMcpServers === undefined) {
-    try {
-      const mod = await import('../core/mcp-registry.js') as { discoverMcpServers: DiscoverMcpServersFn };
-      _discoverMcpServers = mod.discoverMcpServers;
-    } catch {
-      _discoverMcpServers = null;
-    }
-  }
-  return _discoverMcpServers ?? null;
-}
 
 // ─── M4 command loaders ────────────────────────────────────────────
 
@@ -267,11 +235,6 @@ const loadEcosystemCmd = lazyCmd(
 
 // ─── M5 lazy imports (graceful degradation if modules not yet built) ──────────
 
-import type { ActivityRollup } from '../core/types.js';
-type BuildRollupFn = (window: '1d' | '7d' | '30d', cfg: AshlrConfig, opts?: { project?: string }) => ActivityRollup;
-
-let _buildRollup: BuildRollupFn | null | undefined = undefined;
-
 const loadPulseCmd = lazyCmd(
   () => import('./pulse.js' as unknown as string),
   (m) => m.cmdPulse as Cmd,
@@ -283,18 +246,6 @@ const loadPulseTestCmd = lazyCmd(
   (m) => m.cmdPulseTest as Cmd,
   'pulse-test command requires src/cli/pulse.ts (M91 module not yet built).',
 );
-
-async function tryBuildRollup(): Promise<BuildRollupFn | null> {
-  if (_buildRollup === undefined) {
-    try {
-      const mod = (await import('../core/observability/rollup.js' as unknown as string)) as { buildRollup: BuildRollupFn };
-      _buildRollup = mod.buildRollup;
-    } catch {
-      _buildRollup = null;
-    }
-  }
-  return _buildRollup ?? null;
-}
 
 // ─── M6 command loaders ────────────────────────────────────────────
 
@@ -776,54 +727,6 @@ const loadAutomationsCmd = lazyCmd(
   'automations command requires a current build of src/cli/automations.ts (3.15 automations).',
 );
 
-// ─── M18 integration reads (best-effort, never throw, used in cmdStatus) ──────
-
-import type { GithubStatus, VercelStatus, Identity } from '../core/types.js';
-
-type GithubStatusFn = (cwd: string) => GithubStatus;
-type VercelStatusFn = (cwd: string) => VercelStatus;
-type GetIdentityFn  = () => Identity;
-
-let _githubStatus: GithubStatusFn | null | undefined = undefined;
-let _vercelStatus: VercelStatusFn | null | undefined = undefined;
-let _getIdentity:  GetIdentityFn  | null | undefined = undefined;
-
-async function tryGithubStatus(): Promise<GithubStatusFn | null> {
-  if (_githubStatus === undefined) {
-    try {
-      const mod = (await import('../core/integrations/github.js' as unknown as string)) as { githubStatus: GithubStatusFn };
-      _githubStatus = mod.githubStatus;
-    } catch {
-      _githubStatus = null;
-    }
-  }
-  return _githubStatus ?? null;
-}
-
-async function tryVercelStatus(): Promise<VercelStatusFn | null> {
-  if (_vercelStatus === undefined) {
-    try {
-      const mod = (await import('../core/integrations/vercel.js' as unknown as string)) as { vercelStatus: VercelStatusFn };
-      _vercelStatus = mod.vercelStatus;
-    } catch {
-      _vercelStatus = null;
-    }
-  }
-  return _vercelStatus ?? null;
-}
-
-async function tryGetIdentity(): Promise<GetIdentityFn | null> {
-  if (_getIdentity === undefined) {
-    try {
-      const mod = (await import('../core/integrations/identity.js' as unknown as string)) as { getIdentity: GetIdentityFn };
-      _getIdentity = mod.getIdentity;
-    } catch {
-      _getIdentity = null;
-    }
-  }
-  return _getIdentity ?? null;
-}
-
 // ─── ANSI helpers ──────────────────────────────────────────────────────────────
 
 // index.ts colorizes regardless of TTY, so we bind the shared colorizers with
@@ -837,19 +740,6 @@ function die(msg: string, code = 1): never {
   process.exit(code);
 }
 
-
-/** Ensure the index exists; auto-build if missing. Returns the index. */
-function requireIndex(cfg: AshlrConfig): AshlrIndex {
-  let idx = loadIndex();
-  if (!idx) {
-    // Informational chatter goes to stderr so stdout stays clean for capture
-    // (e.g. `cd $(ashlr go foo --cd)`).
-    console.error(dim('No index found — building now…'));
-    idx = buildIndex(cfg);
-    writeIndex(idx);
-  }
-  return idx;
-}
 
 /** Score an item against a query string (higher = better match). */
 function scoreItem(item: IndexedItem, query: string): number {
@@ -878,23 +768,6 @@ function filterItems(items: IndexedItem[], query: string): IndexedItem[] {
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score)
     .map(({ item }) => item);
-}
-
-/** Days since a date string. */
-function daysSince(iso: string): number {
-  return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24);
-}
-
-/** Format a short relative time. */
-function relativeTime(iso: string | null): string {
-  if (!iso) return gray('—');
-  const days = daysSince(iso);
-  if (days < 1) return green('today');
-  if (days < 2) return green('yesterday');
-  if (days < 7) return green(`${Math.floor(days)}d ago`);
-  if (days < 30) return yellow(`${Math.floor(days)}d ago`);
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return red(`${Math.floor(days / 365)}y ago`);
 }
 
 /**
@@ -1110,337 +983,6 @@ function printItemSummary(item: IndexedItem): void {
   }
   console.log(`  last modified: ${relativeTime(item.lastModified)}`);
   console.log('');
-}
-
-// ─── Command: status ─────────────────────────────────────────────────────────
-
-/**
- * Printed when the index contains zero git repos. The overwhelmingly common
- * cause is that `roots` doesn't point at where the user's code lives — e.g. a
- * default config carried over from another machine (the defaults assume
- * ~/Desktop/github). Rather than a bare "0 repos tracked", show which roots
- * were scanned, whether each one exists, and the exact commands to fix it.
- */
-function printNoReposHelp(cfg: AshlrConfig): void {
-  console.log(yellow('  No git repos are being tracked yet.'));
-  console.log('');
-  console.log(`  phm scanned these ${bold('roots')} ${dim('— folders expected to CONTAIN your repos:')}`);
-  console.log('');
-  if (cfg.roots.length === 0) {
-    console.log(`    ${red('✗')} ${dim('(no roots configured)')}`);
-  } else {
-    for (const root of cfg.roots) {
-      const exists = existsSync(root);
-      const mark = exists ? yellow('•') : red('✗');
-      const tag  = exists ? gray('exists, no repos found inside') : red('missing');
-      console.log(`    ${mark} ${root}  ${dim('—')} ${tag}`);
-    }
-  }
-  console.log('');
-  console.log(`  ${bold('Fix it')} ${dim('— point phm at the folder that holds your repos')}`);
-  console.log(`  ${dim('(repos must be direct children, e.g.')} ${cyan('<root>/my-app/.git')}${dim('):')}`);
-  console.log('');
-  console.log(`    ${cyan('1.')} Set your roots:`);
-  // Only this platform's quoting: a Linux user should not have to skip past PowerShell.
-  if (process.platform === 'win32') {
-    console.log(`       ${dim('Windows PowerShell — note the doubled')} ${bold('""')} ${dim('quotes:')}`);
-    console.log(`       ${cyan('phm config set roots --json \'[""C:/Users/you/code""]\'')}`);
-  } else {
-    console.log(`       ${cyan(`phm config set roots --json '${JSON.stringify([`${homedir()}/code`])}'`)}`);
-  }
-  console.log(`       ${dim('…or edit')} ${cyan(CONFIG_PATH)} ${dim('directly.')}`);
-  console.log('');
-  console.log(`    ${cyan('2.')} Rebuild the index:  ${cyan('phm index --refresh')}`);
-  console.log('');
-  console.log(`  ${dim('Then re-run')} ${cyan('phm status')}${dim('.')}`);
-  console.log('');
-}
-
-async function cmdStatus(args: string[]): Promise<void> {
-  const cfg = loadConfig();
-  const idx = requireIndex(cfg);
-
-  if (args.includes('--json')) {
-    await printStatusJson(cfg, idx, {
-      getToolsRegistry: tryGetToolsRegistry,
-      discoverMcpServers: tryDiscoverMcpServers,
-      buildRollup: tryBuildRollup,
-      githubStatus: tryGithubStatus,
-      vercelStatus: tryVercelStatus,
-      getIdentity: tryGetIdentity,
-    });
-    return;
-  }
-
-  const { repos, dirty, offSync, stale } = classifyRepos(idx, cfg.staleDays);
-
-  // Zero repos → the index is empty or roots are misconfigured. Show actionable
-  // setup guidance instead of an empty attention board, then stop.
-  if (repos.length === 0) {
-    console.log('');
-    console.log(bold('  ashlr status') + gray(' — 0 repos tracked'));
-    console.log('');
-    printNoReposHelp(cfg);
-    return;
-  }
-
-  const nameW  = 30;
-  const branchW = 18;
-  const gitW   = 16;
-  const timeW  = 14;
-
-  function printRepoTable(items: IndexedItem[]): void {
-    if (items.length === 0) {
-      console.log(`  ${dim('(none)')}`);
-      return;
-    }
-    console.log(
-      `  ${bold(pad('Repo', nameW))}  ` +
-      `${bold(pad('Branch', branchW))}  ` +
-      `${bold(pad('Git', gitW))}  ` +
-      `${bold(pad('Last commit', timeW))}`
-    );
-    console.log(
-      `  ${'─'.repeat(nameW)}  ${'─'.repeat(branchW)}  ${'─'.repeat(gitW)}  ${'─'.repeat(timeW)}`
-    );
-    for (const item of items) {
-      const g = item.git as GitStatus;
-      const dirtyStr = g.dirty > 0
-        ? red(`${g.dirty}`)
-        : '';
-      const syncStr  = g.ahead > 0 || g.behind > 0
-        ? yellow(`↑${g.ahead} ↓${g.behind}`)
-        : '';
-      const gitCol = [dirtyStr, syncStr].filter(Boolean).join('  ') || green('ok');
-      console.log(
-        `  ${pad(cyan(item.name), nameW)}  ` +
-        `${pad(g.branch, branchW)}  ` +
-        `${pad(gitCol, gitW)}  ` +
-        `${relativeTime(g.lastCommit)}`
-      );
-    }
-  }
-
-  console.log('');
-  console.log(bold('  ashlr status') + gray(` — ${repos.length} repos tracked`));
-  console.log('');
-
-  if (dirty.length > 0) {
-    console.log(bold(red(`  Dirty (${dirty.length})`)));
-    printRepoTable(dirty);
-    console.log('');
-  }
-
-  if (offSync.length > 0) {
-    console.log(bold(yellow(`  Off-sync (${offSync.length})`)));
-    printRepoTable(offSync);
-    console.log('');
-  }
-
-  if (stale.length > 0) {
-    console.log(bold(gray(`  Stale — >  ${cfg.staleDays}d (${stale.length})`)));
-    printRepoTable(stale);
-    console.log('');
-  }
-
-  const cleanActive = repos.filter(i =>
-    !dirty.includes(i) && !offSync.includes(i) && !stale.includes(i)
-  );
-
-  console.log(
-    `  ${green(`${cleanActive.length} clean`)}  ` +
-    `${red(`${dirty.length} dirty`)}  ` +
-    `${yellow(`${offSync.length} off-sync`)}  ` +
-    `${gray(`${stale.length} stale`)}`
-  );
-  console.log('');
-
-  // ── M3 Ecosystem summary (graceful degradation if modules not yet built) ──
-  const [getToolsRegistryFn, discoverMcpServersFn] = await Promise.all([
-    tryGetToolsRegistry(),
-    tryDiscoverMcpServers(),
-  ]);
-
-  const ecosystemParts: string[] = [];
-
-  if (getToolsRegistryFn) {
-    try {
-      const reg = getToolsRegistryFn();
-      const installedNames = reg.tools
-        .filter(t => t.installed)
-        .map(t => t.id)
-        .slice(0, 5); // show up to 5 names; remainder implied by count
-      const moreCount = reg.installedCount - installedNames.length;
-      const nameList = installedNames.join(', ') + (moreCount > 0 ? `, +${moreCount}` : '');
-      ecosystemParts.push(
-        `${bold('Tools:')} ${cyan(`${reg.installedCount}/${reg.tools.length} installed`)}` +
-        (installedNames.length > 0 ? ` ${dim('—')} ${gray(nameList)}` : '')
-      );
-    } catch {
-      // silently skip on error
-    }
-  }
-
-  if (discoverMcpServersFn) {
-    try {
-      const mcpReg = discoverMcpServersFn();
-      ecosystemParts.push(
-        `${bold('MCP servers:')} ${cyan(`${mcpReg.servers.length} discovered`)}`
-      );
-    } catch {
-      // silently skip on error
-    }
-  }
-
-  if (ecosystemParts.length > 0) {
-    console.log(`  ${ecosystemParts.join(`  ${dim('·')}  `)}`);
-    console.log('');
-  }
-
-  // ── M5 Activity summary (best-effort; silently skipped on error) ──────────
-  try {
-    const buildRollupFn = await tryBuildRollup();
-    if (buildRollupFn) {
-      const rollup = buildRollupFn('7d', cfg);
-      const t = rollup.totals;
-      const tokK = ((t.tokensIn + t.tokensOut) / 1000).toFixed(1);
-      const cost = t.estCostUsd.toFixed(2);
-      const BUDGET_SUFFIX: Record<string, string> = {
-        over: `  ${red('● over budget')}`,
-        warn: `  ${yellow('● near cap')}`,
-      };
-      const budgetSuffix = BUDGET_SUFFIX[rollup.budget.level] ?? '';
-      console.log(
-        `  ${bold('Activity (7d):')} ${cyan(`${t.sessions} sessions`)}  ${dim('·')}  ` +
-        `${cyan(`${tokK}k tokens`)}  ${dim('·')}  ` +
-        `${cyan(`$${cost}`)}  ${dim('·')}  ` +
-        `${cyan(`${t.commits} commits`)}` +
-        budgetSuffix
-      );
-      console.log('');
-    }
-  } catch {
-    // silently omit — never break status
-  }
-
-  // ── M7 Genome summary (best-effort; silently omitted on error) ────────────
-  try {
-    const genomeMod = await import('../core/genome/store.js' as unknown as string) as {
-      genomeHealth: (cfg: AshlrConfig) => import('../core/types.js').GenomeHealth;
-    };
-    const health = genomeMod.genomeHealth(cfg);
-    console.log(
-      `  ${bold('Memory:')} ${cyan(`${health.totalEntries} genome entries`)} across ` +
-      `${cyan(`${health.projects} project${health.projects !== 1 ? 's' : ''}`)}` +
-      (health.embeddingsAvailable ? `  ${dim('·')}  ${gray('embeddings available')}` : '')
-    );
-    console.log('');
-  } catch {
-    // silently omit — genome may not be built yet; never break status
-  }
-
-  // ── M18 GitHub / Vercel / Identity one-liners (best-effort; never break status) ──
-  // All reads are bounded (reuse installed CLIs; they own auth) and silently
-  // omitted when not applicable (not a gh repo, no vercel link, not logged in).
-  const cwd = process.cwd();
-
-  // GitHub: only surface when cwd is a gh repo
-  try {
-    const ghStatusFn = await tryGithubStatus();
-    if (ghStatusFn) {
-      const gs = ghStatusFn(cwd);
-      if (gs.isRepo) {
-        const ciStr = gs.ci === 'passing'
-          ? green('CI passing')
-          : gs.ci === 'failing'
-            ? red('CI failing')
-            : gs.ci === 'pending'
-              ? yellow('CI pending')
-              : dim('no CI');
-        const repoLabel = gs.repo ? gray(` (${gs.repo})`) : '';
-        console.log(
-          `  ${bold('GitHub:')} ${cyan(`${gs.openPrs} open PR${gs.openPrs !== 1 ? 's' : ''}`)}` +
-          `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
-          `  ${dim('·')}  ${ciStr}${repoLabel}`
-        );
-        console.log('');
-      }
-    }
-  } catch {
-    // silently omit — never break status
-  }
-
-  // Vercel: only surface when a project is linked
-  try {
-    const vcStatusFn = await tryVercelStatus();
-    if (vcStatusFn) {
-      const vs = vcStatusFn(cwd);
-      if (vs.linked) {
-        const stateStr = vs.latestState
-          ? (vs.latestState === 'READY' ? green(vs.latestState) : yellow(vs.latestState))
-          : dim('unknown');
-        const urlStr = vs.url ? `  ${dim('·')}  ${cyan(vs.url)}` : '';
-        console.log(`  ${bold('Vercel:')} ${stateStr}${urlStr}`);
-        console.log('');
-      }
-    }
-  } catch {
-    // silently omit — never break status
-  }
-
-  // Identity: only surface when phantom is logged in
-  try {
-    const identityFn = await tryGetIdentity();
-    if (identityFn) {
-      const id = identityFn();
-      if (id.loggedIn && id.user) {
-        const tierStr = id.tier ? `  ${dim('·')}  tier ${cyan(id.tier)}` : '';
-        const teamStr = id.team ? `  ${dim('·')}  team ${cyan(id.team)}` : '';
-        console.log(`  ${bold('You:')} ${cyan(id.user)}${tierStr}${teamStr}`);
-        console.log('');
-      }
-    }
-  } catch {
-    // silently omit — never break status
-  }
-
-  // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
-  try {
-    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
-    const custody = gatherCustodyStatus();
-    if (custody) {
-      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
-      console.log('');
-    }
-  } catch {
-    // silently omit; never break status
-  }
-
-  // Phantom strict preflight: only when the spawn gate is on (value-free)
-  try {
-    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
-    const pre = gatherPreflightStatus();
-    if (pre) {
-      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
-      console.log('');
-    }
-  } catch {
-    // silently omit; never break status
-  }
-
-  // ── M253 Resource Control Plane summary (best-effort; never break status) ──
-  try {
-    const resourcesMod = await import('./resources.js' as unknown as string) as {
-      resourceStatusLine: (cfg: unknown) => Promise<string | null>;
-    };
-    const line = await resourcesMod.resourceStatusLine(cfg);
-    if (line) {
-      console.log(`  ${line}`);
-      console.log('');
-    }
-  } catch {
-    // silently omit — resource sensing never breaks the status command
-  }
 }
 
 // ─── Command: ls ─────────────────────────────────────────────────────────────
@@ -1913,7 +1455,7 @@ async function main(): Promise<void> {
         break;
 
       case 'status':
-        await cmdStatus(rest);
+        await runStatus(rest);
         break;
 
       case 'ls':
@@ -2651,12 +2193,7 @@ async function main(): Promise<void> {
       }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Distinguish "not implemented" stubs from real errors
-    if (msg.includes('not implemented')) {
-      die(`Module not yet implemented: ${msg}\nThis command depends on a core module that hasn't been built yet.`);
-    }
-    die(msg);
+    failCliCommand(err);
   }
 }
 
