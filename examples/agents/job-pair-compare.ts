@@ -4,13 +4,17 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getFleetJobDetail, isFleetJobId, type FleetJobDetailV1 } from '../../src/core/fleet/runs-job-detail.js';
 import { getFleetJobChanges, type FleetJobChangesV1 } from '../../src/core/fleet/runs-job-changes.js';
+import { getFleetJobText, type FleetJobTextV1 } from '../../src/core/fleet/runs-job-texts.js';
 import { redactHomePaths, scrubSecrets } from '../../src/core/util/scrub.js';
 
-const USAGE = `Usage: npx tsx examples/agents/job-pair-compare.ts --before ID --after ID
+const USAGE = `Usage: npx tsx examples/agents/job-pair-compare.ts --before ID --after ID [--with-notes]
 
 Compare artifact facts, not success verdicts. File sets describe observed paths;
 complete is false when either changes source is missing, degraded, or truncated.
 Line totals are null when unavailable or when any observed file has unknown counts.
+With --with-notes, compare distinct scrubbed nonblank lines in source order, up to
+40 added and 40 removed. Incomplete sources produce an incomplete observed delta;
+notes are worker claims, not evidence of passing tests or a successful merge.
 Exit codes: 0 comparison, 1 reader error, 2 invalid arguments.
 Errors are JSON: {"schema":"fleet.job-pair-compare.error.v1","error":"invalid_arguments"|"reader_unavailable"}.
 `;
@@ -18,19 +22,48 @@ Errors are JSON: {"schema":"fleet.job-pair-compare.error.v1","error":"invalid_ar
 type Dependencies = {
   readDetail?: (job: string) => Promise<FleetJobDetailV1>;
   readChanges?: (job: string) => Promise<FleetJobChangesV1>;
+  readNotes?: (job: string, kind: 'notes') => Promise<FleetJobTextV1>;
   write?: (text: string) => void;
 };
 
-function parseArgs(args: readonly string[]): { before: string; after: string } | null {
-  if (args.length !== 4) return null;
+function parseArgs(args: readonly string[]): { before: string; after: string; withNotes: boolean } | null {
   const options = new Map<string, string>();
-  for (let i = 0; i < args.length; i += 2) {
-    const key = args[i]!, value = args[i + 1]!;
+  let withNotes = false;
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i]!;
+    if (key === '--with-notes') {
+      if (withNotes) return null;
+      withNotes = true;
+      continue;
+    }
+    const value = args[++i];
+    if (!value) return null;
     if (!['--before', '--after'].includes(key) || options.has(key) || !isFleetJobId(value)) return null;
     options.set(key, value);
   }
   const before = options.get('--before'), after = options.get('--after');
-  return before && after ? { before, after } : null;
+  return before && after ? { before, after, withNotes } : null;
+}
+
+async function notesComparison(beforeJob: string, afterJob: string, read: NonNullable<Dependencies['readNotes']>) {
+  const get = async (job: string): Promise<FleetJobTextV1> => {
+    try { return await read(job, 'notes'); }
+    catch { return { v: 1, job, kind: 'notes', state: 'unreadable', bytes: null, truncated: false, text: '' }; }
+  };
+  const [before, after] = await Promise.all([get(beforeJob), get(afterJob)]);
+  const lines = (source: FleetJobTextV1) => new Set(source.state === 'ok'
+    ? source.text.split(/\r?\n/).map(line => redactHomePaths(scrubSecrets(line)).trim()).filter(Boolean)
+    : []);
+  const oldLines = lines(before), newLines = lines(after);
+  const added = [...newLines].filter(line => !oldLines.has(line));
+  const removed = [...oldLines].filter(line => !newLines.has(line));
+  const source = (value: FleetJobTextV1) => ({ state: value.state, truncated: value.truncated });
+  return {
+    before: source(before), after: source(after),
+    complete: [before, after].every(value => value.state === 'ok' && !value.truncated),
+    added: added.slice(0, 40), removed: removed.slice(0, 40),
+    addedOmitted: Math.max(0, added.length - 40), removedOmitted: Math.max(0, removed.length - 40),
+  };
 }
 
 function attempt(detail: FleetJobDetailV1, changes: FleetJobChangesV1) {
@@ -69,6 +102,9 @@ export async function runJobPairCompare(args: readonly string[], deps: Dependenc
     const before = new Set(beforeChanges.files.map(file => file.path));
     const after = new Set(afterChanges.files.map(file => file.path));
     const display = (paths: string[]) => paths.map(path => redactHomePaths(scrubSecrets(path))).sort();
+    const notes = options.withNotes
+      ? await notesComparison(options.before, options.after, deps.readNotes ?? getFleetJobText)
+      : undefined;
     emit({
       schema: 'fleet.job-pair-compare.v1',
       before: attempt(beforeDetail, beforeChanges), after: attempt(afterDetail, afterChanges),
@@ -78,6 +114,7 @@ export async function runJobPairCompare(args: readonly string[], deps: Dependenc
         removed: display([...before].filter(path => !after.has(path))),
         common: display([...before].filter(path => after.has(path))),
       },
+      ...(notes ? { notes } : {}),
     });
     return 0;
   } catch {
