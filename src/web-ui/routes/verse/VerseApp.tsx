@@ -67,6 +67,7 @@ import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
 import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
+import { useWindowTitle } from './shell/window-title.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
 import { useFocusMode } from './shell/focus-mode.js';
@@ -308,6 +309,7 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 export function VerseApp() {
+  useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
