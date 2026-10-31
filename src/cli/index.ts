@@ -33,6 +33,7 @@
  *   cloud <launch|list|refresh|improve|budget|backlog>  Claude Code cloud sessions that deliver draft PRs (3.11).
  *   openai-agents <sessions|inspect|turns>  Read managed OpenAI Agents API metadata; no execution.
  *   benchmark run|--compare-reports  Local-agent trials or offline receipt comparison.
+ *   daily-fix <validate|filter|dispatch|parse-fixup>  Daily CI re-run: validate inputs, show filter, generate dispatch.
  *   devin <connect|status|launch|list|refresh|message|budget>  Devin sessions that deliver PRs through the gates (3.15).
  *   automations <list|templates|add|enable|disable|remove|fire>  Issues, red builds, schedules and webhooks become work (3.15).
  *   jev <status|test>          Jev typed decisions: status by kind, and one live test decision (3.15).
@@ -183,6 +184,12 @@ const loadBenchmarkCmd = lazyCmd(
   'benchmark command requires a current build of src/cli/benchmark.ts.',
 );
 
+
+const loadDailyFixCmd = lazyCmd(
+  () => import('./daily-fix.js'),
+  (m) => m.cmdDailyFix as Cmd,
+  'daily-fix command requires a current build of src/cli/daily-fix.ts.',
+);
 const loadSkillsCmd = lazyCmd(
   () => import('./skills.js' as unknown as string),
   (m) => m.cmdSkills as Cmd,
@@ -2099,6 +2106,12 @@ async function main(): Promise<void> {
         break;
       }
 
+
+      case 'daily-fix': {
+        const cmdDailyFix = await loadDailyFixCmd();
+        process.exitCode = await cmdDailyFix(rest);
+        break;
+      }
       case 'benchmark': {
         process.exitCode = await (await loadBenchmarkCmd())(rest);
         break;
