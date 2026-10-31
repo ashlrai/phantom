@@ -3,9 +3,12 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { OpsSelfUpdateActionResult, OpsSelfUpdateV1 } from './ops-types.js';
+import type { OpsSelfUpdateActionResult } from './ops-types.js';
+
+import { readSelfUpdateLastApply, type OpsSelfUpdateWithLastApply, type SelfUpdateLastApply } from './self-update-last.js';
 
 export interface SelfUpdateDeps {
+  readLastApply?: () => SelfUpdateLastApply | null;
   runGit?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string }>;
   repoRoot?: () => string | null;
   readPackageVersion?: (root: string) => string | null;
@@ -53,11 +56,13 @@ const runGit: NonNullable<SelfUpdateDeps['runGit']> = (args, cwd) => new Promise
   }, (error, stdout) => done({ code: error ? 1 : 0, stdout }));
 });
 
-export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<OpsSelfUpdateV1> {
+export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<OpsSelfUpdateWithLastApply> {
   const now = (deps.now ?? Date.now)();
   const uptimeSeconds = process.uptime();
-  const result: OpsSelfUpdateV1 = {
-    v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
+  let lastApply: SelfUpdateLastApply | null = null;
+  try { lastApply = (deps.readLastApply ?? readSelfUpdateLastApply)(); } catch { /* History is advisory. */ }
+  const result: OpsSelfUpdateWithLastApply = {
+    lastApply, v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
     installedVersion: null, repoRoot: false, headSha: null, headAt: null, originSha: null,
     branch: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
     processStartedAt: new Date(now - uptimeSeconds * 1000).toISOString(), uptimeSeconds, pid: process.pid,

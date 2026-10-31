@@ -2420,6 +2420,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
+  graph:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'phantom fleet graph [--json] [--queue-dir <abs>]' },
   lanes:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet lanes [--json] [--queue-dir <abs>]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
@@ -2438,6 +2439,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
   if (args[0] === 'queue') {
     const { cmdRouterQueue } = await import('./router-queue.js');
     return cmdRouterQueue(args.slice(1));
+  }
+  if (args[0] === 'runs' || args[0] === 'journal' || args[0] === 'parked') {
+    const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
+    return cmdFleetRunsRead(args[0], args.slice(1));
   }
   const [sub, ...rest] = args;
 
@@ -2485,6 +2490,15 @@ export async function cmdFleet(args: string[]): Promise<number> {
       return cmdFleetStatus(rest.includes('--json'));
     case 'watch':
       return cmdFleetWatch(rest.includes('--json'));
+    case 'graph': {
+      const at = rest.indexOf('--queue-dir');
+      const queueDir = at >= 0 ? rest[at + 1] : undefined;
+      if (at >= 0 && (!queueDir || !isAbsolute(queueDir))) return 2;
+      const { buildFleetGraph } = await import('../core/fleet/graph.js');
+      const graph = await buildFleetGraph({ queueDir });
+      console.log(rest.includes('--json') ? JSON.stringify(graph) : graph.nodes.map(n => `${n.id} (${n.status ?? 'unknown'})`).join('\n'));
+      return 0;
+    }
     case 'lanes':
       return cmdFleetLanes(rest);
     case 'direction':
@@ -2537,9 +2551,13 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
+  console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
+  console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
+  console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
