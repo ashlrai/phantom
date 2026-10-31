@@ -17,6 +17,29 @@ export interface LeaderJournalV1 {
   rejectedLastHour: number | null;
 }
 
+export function passIngestCounts(passes: readonly JournalPass[], ingested: readonly DropIngestedRow[], nowMs: number): Map<string, number> {
+  const counts = new Map(passes.map((pass) => [pass.at, 0]));
+  const sorted = passes.map((pass) => ({ at: pass.at, time: Date.parse(pass.at) }))
+    .filter((pass) => Number.isFinite(pass.time)).sort((a, b) => a.time - b.time);
+  for (const row of ingested) {
+    const time = Date.parse(row.at);
+    if (!Number.isFinite(time)) continue;
+    for (let i = 0; i < sorted.length; i++) {
+      const pass = sorted[i];
+      const next = sorted[i + 1];
+      if (time >= pass.time && (next ? time < next.time : time <= nowMs)) {
+        counts.set(pass.at, (counts.get(pass.at) ?? 0) + 1);
+        break;
+      }
+    }
+  }
+  return counts;
+}
+
+export function passWroteText(count: number): { text: string; tone: 'neutral' | 'warning' } {
+  return { text: `wrote ${count} jobs`, tone: count === 0 ? 'warning' : 'neutral' };
+}
+
 export function passSchedule(passes: readonly JournalPass[], nowMs: number): {
   lastAtMs: number | null;
   eta: ReturnType<typeof nextPassEta> | null;
