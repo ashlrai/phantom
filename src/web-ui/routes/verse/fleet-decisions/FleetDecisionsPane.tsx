@@ -7,7 +7,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { opsFleetQuery } from '../ops/ops-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { decisionRows, decisionSummary, holdRows, stallNote, type Filter } from './fleet-decisions-model.js';
+import { decisionRows, decisionSummary, holdRows, repeatedSkips, stallNote, type Filter } from './fleet-decisions-model.js';
 import styles from './fleet-decisions.module.css';
 
 export function FleetDecisionsPane({ visible, host }: PaneProps) {
@@ -17,7 +17,7 @@ export function FleetDecisionsPane({ visible, host }: PaneProps) {
   usePollWhileVisible(refetch, 15_000, { enabled: visible });
   if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <p className={styles.message}>Decisions not in this build</p>;
   if (read.data === undefined) return <p className={styles.message} role="status">{read.status === 'error' ? 'Decisions are unavailable.' : 'Reading decisions…'}</p>;
-  const fleet = read.data, summary = decisionSummary(fleet), note = stallNote(summary, fleet.tickAt, Date.now());
+  const fleet = read.data, summary = decisionSummary(fleet), repeats = repeatedSkips(fleet), note = stallNote(summary, fleet.tickAt, Date.now(), repeats.length);
   const decisions = decisionRows(fleet, filter), held = holdRows(fleet);
   const openJob = (job: string) => { requestWorkerLogJob(job); host.openPane('worker-log'); };
   return <section className={styles.root} aria-label="Router decisions">
@@ -29,6 +29,13 @@ export function FleetDecisionsPane({ visible, host }: PaneProps) {
     <div className={styles.filters} role="radiogroup" aria-label="Filter decisions">
       {(['all', 'launched', 'skipped'] as const).map(value => <button key={value} type="button" role="radio" aria-checked={filter === value} onClick={() => setFilter(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}
     </div>
+    {repeats.length > 0 && <section aria-label="Repeated skips"><h3 className={styles.heading}>Repeated skips</h3>
+      <ul className={styles.list}>{repeats.map(r => <li key={r.itemId} className={styles.row}>
+        <div><JobRefs text={r.title} onOpenJob={openJob} /></div>
+        <div>skipped {r.runs} ticks in a row since <time dateTime={r.since}>{formatRelative(r.since)}</time></div>
+        <div><JobRefs text={r.reason} onOpenJob={openJob} /></div>
+      </li>)}</ul>
+    </section>}
     <ul className={styles.list} aria-label="Decisions">{decisions.map(d => <li key={d.key} className={styles.row}>
       <div><strong className={styles.badge}>{d.launched ? 'Launched' : 'Skipped'}</strong> {d.repo} · <JobRefs text={d.title} onOpenJob={openJob} /></div>
       <div>Target: {d.target} · {d.candidates} candidates · <time dateTime={d.at}>{formatRelative(d.at)}</time></div>
