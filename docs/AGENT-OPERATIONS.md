@@ -174,6 +174,21 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   exist, and there are no tidy rules without a `~/Desktop`.
 - `phm status [--json]` is the attention board (dirty, off-sync and stale
   repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI.
+  In a GitHub repository, status also lists advisory per-PR merge ETA ranges
+  (JSON: `github.mergeEtas`). It reads up to ten oldest open PRs and their
+  actual GitHub merge-queue positions; PRs outside the queue show `unknown`.
+  Supply historical **required** check durations in
+  `~/.ashlr/merge-check-history.json`, a JSON array such as
+  `[{"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":300000},
+  {"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":480000}]`.
+  Use completed-check timestamps from your CI history exporter; status never
+  writes history or changes a PR. Each currently required check needs at least
+  two samples from that repository. The range uses the slowest parallel
+  check's observed 10th–90th percentile durations, multiplied by queue position
+  under a conservative serial-slot assumption. Reviews, reruns and queue
+  batching can change actual timing; these ranges are estimates, not deadlines.
+  Missing/malformed history, unavailable required checks, or an unknown queue
+  position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.

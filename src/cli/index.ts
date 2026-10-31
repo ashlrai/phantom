@@ -1413,6 +1413,10 @@ async function cmdStatus(args: string[]): Promise<void> {
           `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
           `  ${dim('·')}  ${ciStr}${repoLabel}`
         );
+        if (gs.repo) {
+          const { collectMergeEtas, formatMergeEta } = await import('../core/merge-eta.js');
+          for (const eta of collectMergeEtas(cwd, gs.repo)) console.log(`    ${formatMergeEta(eta)}`);
+        }
         console.log('');
       }
     }
