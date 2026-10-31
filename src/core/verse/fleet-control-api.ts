@@ -108,6 +108,30 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
 let actionInFlight: Promise<unknown> | null = null;
 
 export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, method) => {
+  if (path === '/api/verse/fleet/control/switches') {
+    try {
+      const { readRunsSwitches, setRunsSwitch, parseSwitchAction } = await import('../fleet/runs-switches.js');
+      if (method === 'GET') {
+        if (noQuery(req, res)) sendJson(res, 200, await readRunsSwitches());
+      } else if (method === 'POST') {
+        const body = await readMutationBody(ctx, req, res);
+        if (!body) return true;
+        const action = parseSwitchAction(body);
+        if (!action) { sendInvalid(res, 'invalid switch'); return true; }
+        if (actionInFlight) {
+          sendJson(res, 409, { code: 'busy', error: 'Another fleet control action is still running — try again in a moment.' });
+          return true;
+        }
+        const run = setRunsSwitch(action.id, action.on);
+        actionInFlight = run;
+        try { sendJson(res, 200, await run); }
+        finally { actionInFlight = null; }
+      } else sendJson(res, 405, { error: 'method not allowed' });
+    } catch {
+      sendJson(res, 500, { code: 'fleet-control-failed', error: 'the fleet control request failed' });
+    }
+    return true;
+  }
   const isRoot = path === VERSE_FLEET_CONTROL_PATH;
   const isQueue = path === VERSE_FLEET_CONTROL_QUEUE_PATH;
   const isRunLog = path.startsWith(VERSE_FLEET_CONTROL_RUNS_PREFIX) && path.endsWith('/log');
@@ -155,8 +179,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
         sendJson(res, 409, { code: 'busy', error: 'Another fleet control action is still running — try again in a moment.' });
         return true;
       }
-      const d = await currentDeps();
-      const run = applyFleetControlAction(action, d);
+      const run = currentDeps().then((d) => applyFleetControlAction(action, d));
       actionInFlight = run;
       try {
         sendJson(res, 200, await run);

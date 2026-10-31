@@ -50,6 +50,7 @@ import { foldTeam, type Handoff, type Member } from '../teams/state.js';
 import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { fetchOrigin, readSelfUpdateStatus, type SelfUpdateDeps } from './self-update-status.js';
 import { probeReleases, type OpsReleaseProbeDeps } from './ops-releases.js';
 import {
   OPS_BOARD_JOURNAL_WINDOW_MS,
@@ -65,6 +66,7 @@ import {
   VERSE_OPS_LEADERS_PATH,
   VERSE_OPS_PATH,
   VERSE_OPS_RELEASES_PATH,
+  VERSE_OPS_SELF_UPDATE_PATH,
   type OpsBoardColumn,
   type OpsBoardV1,
   type OpsFleetV1,
@@ -80,6 +82,7 @@ import {
 
 /** Test seams : production defaults are the real buses, never fixtures. */
 export interface OpsApiDeps {
+  selfUpdate?: SelfUpdateDeps;
   now?: () => number;
   fleetTasks?: () => TaskQueueRead;
   teamEvents?: (team: string) => TeamEvent[];
@@ -422,9 +425,34 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
   const enrolled = deps.enrolled ?? (() => listEnrolled());
   const releases = deps.releases ?? ((paths: readonly string[]) => probeReleases(paths, deps.releaseDeps));
   const post = deps.postMessage ?? defaultPost;
+  let statusCache: { at: number; value: ReturnType<typeof readSelfUpdateStatus> } | null = null;
 
   return async (ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, path: string, method: string): Promise<boolean> => {
     if (path !== VERSE_OPS_PATH && !path.startsWith(`${VERSE_OPS_PATH}/`)) return false;
+
+    if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'GET') {
+      if (!queryParam(req, res, [])) return true;
+      if (!statusCache || now() - statusCache.at >= 2000) {
+        const entry = { at: Infinity, value: readSelfUpdateStatus(deps.selfUpdate) };
+        statusCache = entry;
+        void entry.value.then(() => { entry.at = now(); });
+      }
+      sendJson(res, 200, await statusCache.value);
+      return true;
+    }
+    if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'POST') {
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      try {
+        const body: unknown = JSON.parse(await readBody(req));
+        if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).length !== 1 || !('action' in body) || body.action !== 'fetch') throw new Error('bad');
+      } catch { sendInvalid(res, 'expected {action:"fetch"}'); return true; }
+      const result = await fetchOrigin(deps.selfUpdate);
+      statusCache = null;
+      sendJson(res, 200, result);
+      return true;
+    }
 
     if (method === 'GET' && path === VERSE_OPS_BOARD_PATH) {
       if (!queryParam(req, res, ['team'])) return true;
