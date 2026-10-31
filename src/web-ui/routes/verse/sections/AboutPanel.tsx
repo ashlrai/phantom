@@ -13,6 +13,7 @@ import { aboutUpdateLines } from './about-update-model.js';
 import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js';
 import { Panel } from './SettingRow.js';
 import { updateStatusQuery } from './update-status-queries.js';
+import { versionSkewNote } from './version-skew.js';
 import styles from './SettingsSection.module.css';
 
 export function AboutPanel() {
@@ -25,6 +26,7 @@ export function AboutPanel() {
   const observation = query.status === 'error' ? null : query.data ?? null;
   const status = aboutUpdateLines(observation, Date.now());
   const serverVersion = observation && !('kind' in observation) ? observation.installedVersion : null;
+  const skew = versionSkewNote({ desktop: desktopVersion, iface: APP_VERSION, server: serverVersion });
   return (
     <Panel title="About">
       <div className={`${styles.row} ${styles.rowStacked}`}>
@@ -40,6 +42,7 @@ export function AboutPanel() {
             </p>
           ) : null}
           {serverVersion ? <p className={styles.aboutLine}><span>Installed Phantom</span><Tag mono>v{serverVersion}</Tag></p> : null}
+          {skew ? <p className={styles.aboutLine} data-tone={skew.tone}><Tag size="sm" className={styles[skew.tone === 'warning' ? 'aboutStatus_behind' : 'aboutStatus_unknown']}>{skew.text}</Tag></p> : null}
           <p className={styles.aboutLine} aria-live="polite">
             <Tag size="sm" className={styles[`aboutStatus_${status.tone}`]}>{status.headline}</Tag>
           </p>
