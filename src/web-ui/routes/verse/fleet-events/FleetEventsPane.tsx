@@ -9,7 +9,7 @@ import { JobRefs } from '../fleet/JobRefs.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { diffNew, filterByKinds, readFeed, sortNewestFirst, type FeedItem } from './fleet-events-model.js';
+import { diffNew, filterByKinds, readFeed, sortNewestFirst, summarizeKinds, type FeedItem } from './fleet-events-model.js';
 import { fleetEventsQuery } from './fleet-events-queries.js';
 import styles from './fleet-events.module.css';
 
@@ -47,6 +47,7 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
     <p className={styles.header}>Leaders: {leaders} · {feed.agents ?? '—'} agents · {feed.pending ?? '—'} job files pending</p>
     {feed.sourceState !== 'healthy' && <p className={styles.notice} role="status">Dispatcher events may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
+    <p className={styles.summary}>{summarizeKinds(items)}</p>
     <div className={styles.controls}>
       <div className={styles.filters} aria-label="Filter event kinds">{kinds.map(value => <Button key={value} size="sm" variant="subtle" aria-pressed={kind === value} onClick={() => setKind(kind === value ? null : value)}>{value}</Button>)}</div>
       <Button size="sm" aria-pressed={paused} onClick={togglePause}>{paused ? `Resume${arrivals.length ? ` · ${arrivals.length} new` : ''}` : 'Pause'}</Button>
