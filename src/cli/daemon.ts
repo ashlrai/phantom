@@ -133,7 +133,6 @@ type DaemonSubcommand =
   | 'resume'
   | 'status'
   | 'doctor'
-  | 'health'
   | 'activation-preflight'
   | 'activate'
   | 'recover-state'
@@ -149,7 +148,6 @@ const DAEMON_SUBCOMMANDS = new Set<DaemonSubcommand>([
   'resume',
   'status',
   'doctor',
-  'health',
   'activation-preflight',
   'activate',
   'recover-state',
@@ -182,7 +180,6 @@ const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   pause: 'Usage: ashlr daemon pause',
   resume: 'Usage: ashlr daemon resume',
   status: 'Usage: ashlr daemon status [--json]',
-  health: 'Usage: ashlr daemon health [--json]',
   doctor:
     'Usage: ashlr daemon doctor [--clear-stale] [--json]\n' +
     '  Proves whether the resident daemon is really running (lock heartbeat + process identity),\n' +
@@ -210,7 +207,6 @@ Subcommands:
   resume          Lift the pause
   stop            Request an orderly daemon shutdown (WIDE: sets the global kill switch)
   status          Show daemon state [--json]
-  health          Show liveness, log freshness, frontier clients and restart recommendation [--json]
   doctor          Prove the daemon is really running; --clear-stale fixes a stale record
   activation-preflight  Verify operator-custodied signed release and rollback evidence (read-only)
   activate        Permit-gated 3.2.7 selection while preserving the exact stopped service state
@@ -1119,39 +1115,6 @@ function describeAgeMs(ms: number | null): string {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
-async function cmdDaemonHealth(jsonMode: boolean): Promise<number> {
-  try {
-    const { readDaemonHealth } = await import('../core/daemon/guard-health.js');
-    const { listFrontierClients } = await import('../core/generative/invent.js');
-    const loadConfig = await importConfig(true, true);
-    let clients: import('../core/daemon/guard-health.js').DaemonHealthClient[] | null = null;
-    try {
-      if (loadConfig) {
-        clients = (await listFrontierClients(loadConfig()))
-          .filter((client) => client.available)
-          .map(({ id, engine, model }) => ({ id, engine, model }));
-      }
-    } catch {
-      // Unknown configuration/availability is not an empty, healthy inventory.
-    }
-    const health = readDaemonHealth(clients);
-    if (jsonMode) {
-      console.log(JSON.stringify(health, null, 2));
-    } else {
-      console.log(`Daemon alive: ${health.alive === null ? 'unknown' : health.alive ? 'yes' : 'no'}`);
-      console.log(`Last tick: ${health.lastTickAt ?? 'unknown'}`);
-      console.log(`Last log write: ${health.lastLogWriteAt ?? 'unknown'} (${health.logState})`);
-      console.log(`Frontier clients resolved: ${health.frontierClientsResolved?.map((client) => client.id).join(', ') || 'none or unknown'}`);
-      console.log(`Supervisor: ${health.supervisor.reason}; restart recommended: ${health.supervisor.restartRecommended}`);
-    }
-    return health.healthy ? 0 : 1;
-  } catch {
-    if (jsonMode) console.log(JSON.stringify({ error: 'daemon-health-unavailable' }));
-    else console.error('error: daemon health is unavailable. No state was changed.');
-    return 1;
-  }
-}
-
 async function cmdDaemonDoctor(jsonMode: boolean, clearStale: boolean): Promise<number> {
   const col = makeColors(process.stdout.isTTY === true);
   let mod: typeof import('../core/daemon/liveness.js');
@@ -1696,7 +1659,7 @@ export async function cmdDaemon(args: string[]): Promise<number> {
   } else {
     const allowed = sub === 'install'
       ? INSTALL_FLAGS
-      : sub === 'status' || sub === 'health' || sub === 'service-status'
+      : sub === 'status' || sub === 'service-status'
         ? JSON_FLAG
         : sub === 'doctor'
           ? DOCTOR_FLAGS
@@ -1716,8 +1679,6 @@ export async function cmdDaemon(args: string[]): Promise<number> {
       return cmdDaemonPause(false);
     case 'status':
       return cmdDaemonStatus(rest.includes('--json'));
-    case 'health':
-      return cmdDaemonHealth(rest.includes('--json'));
     case 'doctor':
       return cmdDaemonDoctor(rest.includes('--json'), rest.includes('--clear-stale'));
     case 'activation-preflight':

@@ -511,11 +511,6 @@ const loadDaemonCmd = lazyCmd(
   'daemon command requires src/cli/daemon.ts (M24 module not yet built).',
 );
 
-const loadDriveCmd = lazyCmd(
-  () => import('./drive.js'),
-  (m) => m.cmdDrive as Cmd,
-  'drive command requires src/cli/drive.ts.',
-);
 
 // ─── M25 command loaders ────────────────────────────────────────────
 
@@ -1976,13 +1971,6 @@ async function main(): Promise<void> {
   const rest = argv.slice(1);
 
   try {
-    switch (cmd) {
-      case 'router-calibration': {
-        const { cmdRouterCalibration } = await import('./router-calibration.js');
-        process.exitCode = await cmdRouterCalibration(rest);
-        break;
-      }
-
       case 'index':
         cmdIndex(rest);
         break;
@@ -2017,13 +2005,6 @@ async function main(): Promise<void> {
         process.exitCode = await cmdDoctor(rest);
         break;
       }
-
-      case 'autopilot': {
-        const { cmdAutopilot } = await import('./autopilot.js');
-        process.exitCode = await cmdAutopilot(rest);
-        break;
-      }
-
       case 'metrics': {
         const { cmdMetrics } = await import('./metrics.js');
         process.exitCode = await cmdMetrics(rest);
@@ -2321,13 +2302,6 @@ async function main(): Promise<void> {
         process.exitCode = await cmdDaemon(rest);
         break;
       }
-
-      case 'drive': {
-        process.exitCode = await (await loadDriveCmd())(rest);
-        break;
-      }
-
-      case 'worker': {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);

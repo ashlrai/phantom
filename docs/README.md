@@ -25,6 +25,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| [Driver operator runbook](DRIVER.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
