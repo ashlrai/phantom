@@ -46,7 +46,7 @@ export function hubStorePath(): string;
  * hub store size, staleness (lastLearnedAt), and whether a local
  * embedding-capable model is available. Never throws.
  */
-export function genomeHealth(cfg: AshlrConfig): GenomeHealth;
+export function genomeHealth(cfg: AshlrConfig, snapshot?: { ollamaModels: readonly string[] }): GenomeHealth;
 ```
 
 ### `src/core/genome/recall.ts`
@@ -123,3 +123,7 @@ export async function cmdGenome(args: string[]): Promise<number>;
 
 Zero new runtime deps. Each agent writes ONLY its file(s). No git commit.
 Build against this contract; do not redefine contract types.
+
+`genomeHealth` accepts an optional invocation-scoped Ollama model snapshot to
+reuse a completed provider probe. An empty list means unavailable/no models;
+omitting the snapshot retains the standalone synchronous probe.
