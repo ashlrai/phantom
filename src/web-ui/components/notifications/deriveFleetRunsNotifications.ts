@@ -1,4 +1,6 @@
 import type { AppNotification, NotificationSeverity } from './types.js';
+import { ackState, newestLeaderPassMs, parseInboxAt } from '../../routes/verse/fleet/interject-ack-model.js';
+import { LEADER_OVERDUE_MS } from '../../routes/verse/shell/fleet-needs-you.js';
 
 type RecordValue = Record<string, unknown>;
 interface FleetRuns {
@@ -16,6 +18,20 @@ const count = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 const date = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const nullableString = (v: unknown) => v === null || typeof v === 'string';
 const scrub = (v: string) => v.replace(/[A-Za-z0-9_-]{32,}/g, '…');
+const etTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+const masonSource = (source: string) => {
+  const value = source.trim().toLowerCase();
+  return !/leader|system/.test(value) && (value.includes('mason')
+    || /^(desktop|phantom desktop|mobile|phone|telegram|email|terminal|cli|page|fleet-say)$/.test(value));
+};
+const inboxDetail = (text: string) => scrub(text.replace(/\s+/g, ' ').trim().replace(/\S*[\\/]\S*/g, '…')).slice(0, 80).trim();
+const textHash = (text: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < Math.min(text.length, 24); i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+  return (hash >>> 0).toString(36);
+};
 
 /** Narrow only the public projection; arbitrary or incomplete shapes are silent. */
 function isFleetRuns(v: unknown): v is FleetRuns {
@@ -61,6 +77,31 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
   if (data.drop && data.drop.pending.length > 0) {
     const detail = `${data.drop.pending.length} leader job files waiting for ingest`;
     add('fleet-drop-pending', 'info', 'Leader jobs awaiting ingest', detail);
+  }
+  // The inbox and leaders are optional in older or incomplete projections.
+  const snapshot = data as unknown as RecordValue;
+  if (Array.isArray(snapshot.inbox)) {
+    const leaders = Array.isArray(snapshot.leaders) ? snapshot.leaders.flatMap((leader: unknown) => {
+      if (!record(leader) || (leader.ageSeconds !== null && !count(leader.ageSeconds))) return [];
+      return [{ ageSeconds: leader.ageSeconds as number | null }];
+    }) : undefined;
+    const newestPass = newestLeaderPassMs(leaders, Date.parse(data.generatedAt));
+    for (const entry of snapshot.inbox) {
+      if (!record(entry) || typeof entry.at !== 'string' || typeof entry.source !== 'string'
+        || typeof entry.text !== 'string' || !masonSource(entry.source)) continue;
+      const at = parseInboxAt(entry.at, now);
+      if (at === null || at > now || now - at > 24 * 60 * 60_000) continue;
+      const state = ackState(at, newestPass);
+      const time = etTime.format(at);
+      const detail = inboxDetail(entry.text);
+      if (state === 'seen' && newestPass !== null) {
+        add(`fleet-inbox-read:${entry.at}:${textHash(entry.text)}`, 'critical',
+          `Your ${time} message was read by the ${etTime.format(newestPass)} leader pass`, detail);
+      } else if (now - at >= LEADER_OVERDUE_MS) {
+        add(`fleet-inbox-overdue:${entry.at}`, 'medium',
+          `Your ${time} message has waited ${Math.floor((now - at) / 60_000)} min for a leader pass`, detail);
+      }
+    }
   }
   return out;
 }
