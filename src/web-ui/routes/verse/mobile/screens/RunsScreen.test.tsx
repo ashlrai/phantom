@@ -123,7 +123,7 @@ describe('RunsScreen reads', () => {
     expect(await screen.findByText('Bus launch')).toBeInTheDocument();
     await refreshRunsScreen();
     expect(calls.filter((call) => call.url === '/api/verse/fleet/runs')).toHaveLength(2);
-    expect(calls.filter((call) => call.url === '/api/verse/fleet/live/bus?limit=20')).toHaveLength(2);
+    expect(calls.filter((call) => call.url === '/api/verse/fleet/live/bus?limit=50')).toHaveLength(2);
   });
   it('shows a skeleton while the snapshot loads', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
