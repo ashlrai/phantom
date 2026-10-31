@@ -188,6 +188,7 @@ const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsO
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
+const InterjectDialog = lazy(() => import('./fleet/InterjectDialog.js').then((m) => ({ default: m.InterjectDialog })));
 
 const OnboardingGate = lazy(() => importOnboarding().then((m) => ({ default: m.OnboardingGate })));
 const ResourcesChrome = lazy(() => importResources().then((m) => ({ default: m.ResourcesChrome })));
@@ -621,6 +622,7 @@ export function VerseApp() {
         {ui.overlay === 'needs-you' ? <Drawer.Slot /> : null}
         {ui.overlay === 'shortcuts' ? <Shortcuts.Slot /> : null}
       </Suspense>
+      <Suspense fallback={null}><InterjectDialog /></Suspense>
       {voiceHud ? <Suspense fallback={null}><VoiceHud /></Suspense> : null}
       {guardOpen ? <Suspense fallback={null}><GuardHost /></Suspense> : null}
       {computerUse ? (
