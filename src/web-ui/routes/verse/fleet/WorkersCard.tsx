@@ -13,6 +13,8 @@ import { laneShort } from './lane-label.js';
 import { notInBuild, workersQuery } from './workers-card-queries.js';
 import { JobDetailSheet } from './JobDetailSheet.js';
 import { ageStateText, workerAgeState } from './worker-age-state.js';
+import { openInterjectDialog } from './interject-dialog-store.js';
+import { workerTellPrefill } from './workers-tell.js';
 import styles from './workers-card.module.css';
 
 export function WorkersCard() {
@@ -41,7 +43,11 @@ export function WorkersCard() {
           return <tr key={worker.job} className={state === 'stuck' ? styles.rowStuck : state === 'long' ? styles.rowLong : undefined}><td><button className={styles.job} onClick={() => setJob(worker.job)} aria-label={`Job ${worker.job}`}>{worker.job}</button></td>
             <td>{worker.repo}</td><td><Tag title={worker.lane}>{laneShort(worker.lane)}</Tag></td><td aria-label={`Tier ${worker.tier}`}>{worker.tier}</td>
             <td data-age-state={state} aria-label={worker.ageSeconds === null ? 'Age unknown' : `Age ${Math.floor(worker.ageSeconds)} seconds`}>{worker.ageSeconds === null ? '—' : ageText(worker.ageSeconds)}{state !== 'normal' ? <> <Tag title={ageStateText(state, worker.lane) ?? undefined}>{state === 'long' ? 'long' : 'stuck?'}</Tag></> : null}</td>
-            <td>{url ? <a href={url} target="_blank" rel="noreferrer" aria-label={`PR for job ${worker.job}`}>PR</a> : '—'}</td></tr>;
+            <td>{url ? <a href={url} target="_blank" rel="noreferrer" aria-label={`PR for job ${worker.job}`}>PR</a> : '—'}
+              {state === 'stuck' ? <Button size="sm" variant="ghost" aria-label={`Tell the leaders about ${worker.job}`} onClick={event => {
+                event.stopPropagation();
+                openInterjectDialog({ prefill: workerTellPrefill(worker) });
+              }}>Tell the leaders</Button> : null}</td></tr>;
         })}</tbody></table></div>}
     {job ? <JobDetailSheet key={job} job={job} onClose={() => setJob(null)} /> : null}
   </section>;

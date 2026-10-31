@@ -19,7 +19,7 @@
  */
 import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.js';
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
-import { Suspense, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
@@ -30,6 +30,8 @@ import { historicalLeftPercent } from './resource-usage-history.js';
 import { useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { personalReader } from '../usage/codex-burn-queries.js';
+import { pacePerHour, readings, recordReading } from '../usage/codex-burn-model.js';
+import { personalRunwayText } from './personal-runway-text.js';
 import { formatResetInstant } from '../seat-subscription.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
@@ -358,13 +360,24 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     ),
   }));
   const personal = personalRead.error === undefined && personalRead.data?.sourceState === 'healthy' ? personalRead.data.reading : null;
+  const lastPersonalAsOf = useRef<string | null>(null);
+  const [personalHistory, setPersonalHistory] = useState(readings);
+  useEffect(() => {
+    if (!personal || personal.usedPct === null || personal.asOf === null || personal.asOf === lastPersonalAsOf.current) return;
+    recordReading(personal, Date.now());
+    lastPersonalAsOf.current = personal.asOf;
+    setPersonalHistory(readings());
+  }, [personal]);
   const personalLeft = personal?.usedPct == null ? null : 100 - personal.usedPct;
   const personalAge = localObservationAge(personal?.asOf, now);
+  const personalPace = pacePerHour(personalHistory, now);
+  const personalRunway = personalRunwayText({ usedPct: personal?.usedPct ?? null, pacePerHour: personalPace, nowMs: now });
+  const personalPaceStatus = personalRunway ?? (personalPace === null ? 'pace unknown yet' : null);
   const personalStatus = personal
-    ? `Personal Codex weekly · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? formatResetInstant(personal.resetsAt, now) ?? 'reset unknown' : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs`
+    ? `Personal Codex weekly · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? formatResetInstant(personal.resetsAt, now) ?? 'reset unknown' : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs${personalPaceStatus ? ` · ${personalPaceStatus}` : ''}`
     : `no session-log reading yet · source ${personalRead.error !== undefined ? 'unavailable' : personalRead.data?.sourceState ?? 'unknown'}`;
   const personalRow: BarRow = { key: 'codex-personal:sessions', engine: 'codex', name: 'Codex personal · session logs',
-    leftPercent: personalLeft, level: personalLevel(personalLeft), value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used`,
+    leftPercent: personalLeft, level: personalLevel(personalLeft), value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
     summary: `Codex personal · session logs: ${personalStatus}`, detail: [] };
   entries.push({ key: personalRow.key, name: personalRow.name, content: (
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
