@@ -7,6 +7,7 @@ function HostGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+h',
   id: 'fleet-host',
   title: 'Mac host',
   description: 'Memory, disk, tick and switches on the fleet Mac',
