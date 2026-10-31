@@ -3,6 +3,7 @@ import { Button, StatusBadge } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { APP_VERSION, installedDesktopVersion } from './app-version.js';
+import { UpdateNowButton } from './UpdateNowButton.js';
 import { SettingRow } from './SettingRow.js';
 import { describeUpdateStatus } from './update-status-model.js';
 import { updateStatusQuery } from './update-status-queries.js';
@@ -22,6 +23,7 @@ export function UpdateStatusRow() {
     <SettingRow label="Updates" description={<span aria-live="polite">{status.headline}<br />{status.detail}</span>}>
       <StatusBadge status={status.tone} tone={status.tone} />
       <Button size="sm" onClick={() => { if (status.canRefresh) refreshDesktopUpdates(); refresh(); }}>Check now</Button>
+      <UpdateNowButton status={query.data} onDone={refresh} />
     </SettingRow>
   );
 }

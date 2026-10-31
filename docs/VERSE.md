@@ -15,6 +15,34 @@ and `Phantom.app`. The historical 3.25.0 release used `Ashlr.app`; older
 screenshots and references retain their captured names. See
 [the product naming guide](PHANTOM-BRAND.md).
 
+## First local session
+
+From public **Connect**, follow the [Quickstart](QUICKSTART.md#from-public-connect-to-your-first-local-session)
+to install a qualified release, check `phm --version` and open `phm verse`.
+The public experience does not establish a working local account or hosted
+session. `phm doctor` checks the machine, not provider entitlement or quota.
+
+Before sending a task, inspect **Resources** for the intended account's chat
+readiness. Use the provider's own CLI sign-in, a configured API resource or a
+running tool-capable local model. An account saved in Phantom, a listed model
+or a successful connection does not establish usable capacity. Missing, stale
+or unavailable readings do not prove readiness; inspect the hold reason and
+finish setup or choose another eligible resource. API credits, subscription
+allowances and local hardware retain their separate limits and costs.
+
+Choose **Work with me** → **New chat**, select a scratch project or public
+repository you can edit, and confirm the folder. **Automatic** selects an
+eligible resource; **Advanced** lets you choose an account or model. If none is
+eligible, finish resource setup before sending. Saving the project does not
+enroll it for unattended work.
+
+Try: “Fix one typo in README.md, show the diff and report the checks you ran.
+Leave the change uncommitted.” Review the actual diff and verification results;
+a completion message alone does not establish delivery. Fleet activation is
+optional and separate from this interactive session.
+
+## Workspaces and resources
+
 The two primary workspaces are **Work with me** and **Work for me**.
 Work with me opens Chat for interactive engineering: guide a model, inspect
 its tools and context, and review changes beside the conversation. Work for me

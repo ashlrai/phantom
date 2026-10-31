@@ -6,6 +6,8 @@
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/phantom-backend.tsbuildinfo",
     "strict": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,

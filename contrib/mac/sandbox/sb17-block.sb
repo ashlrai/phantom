@@ -1,0 +1,3 @@
+; SB-17 RQ-SBDENYLSDQ7 SANDBOX-DENY-OSA (Security PASS 14:15): block app launches at the IPC layer (NSWorkspace, LSOpen, pyobjc/subprocess helpers), not just the /usr/bin/open binary. Deny-only append; emitted LAST in every lane profile.
+(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd"))
+(deny appleevent-send)
