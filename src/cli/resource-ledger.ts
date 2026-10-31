@@ -52,6 +52,7 @@ export async function cmdResourceLedger(
   let help = false;
   let watch = false;
   let interval: number | undefined;
+  let maxSamples: number | undefined;
   let lane: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -74,19 +75,29 @@ export async function cmdResourceLedger(
       }
       interval = Number(raw);
     }
+    else if (arg === '--max-samples' && maxSamples === undefined) {
+      const raw = args[++i];
+      if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > 10000) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      maxSamples = Number(raw);
+    }
     else {
       process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
       return 2;
     }
   }
-  if (interval !== undefined && !watch) {
+  if ((interval !== undefined || maxSamples !== undefined) && !watch) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000]] [--lane <lane>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000]] [--lane <lane>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
+    console.log('--max-samples stops after that many successfully emitted snapshots; read errors do not count.');
+    console.log('JSONL example: phm resources ledger --watch --max-samples 2 --json');
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
     return 0;
   }
@@ -98,6 +109,7 @@ export async function cmdResourceLedger(
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     try {
+      let samples = 0;
       while (!stop.signal.aborted) {
         let ledger: ResourceLedgerV1 | undefined;
         try { ledger = await read(); } catch {
@@ -108,8 +120,9 @@ export async function cmdResourceLedger(
           const view = filterLane(ledger, lane);
           if (json) console.log(JSON.stringify(view));
           else printLedger(view);
+          samples++;
         }
-        if (stop.signal.aborted) break;
+        if (stop.signal.aborted || samples === maxSamples) break;
         await new Promise<void>(resolve => {
           const finish = () => {
             clearTimeout(timer);
