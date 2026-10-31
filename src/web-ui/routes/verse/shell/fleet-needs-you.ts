@@ -18,6 +18,7 @@
  * shape, or when the runs-dir source is not healthy/degraded — then the
  * Fleet and All splits may never claim "All clear" on its behalf.
  */
+import { formatDateTime } from '../../../components/format/locale-format.js';
 import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
@@ -136,6 +137,40 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       detail: l.heldReason ?? 'No reason recorded',
       nextStep: 'Check the lane in Ops ▸ Live runs',
       target: 'ops',
+    });
+  }
+
+  const personal = snapshot.codexPersonal;
+  const personalLane = snapshot.lanes.find((l) => l.lane === 'codex-personal');
+  const heldForLimit = personalLane?.held && /usage|limit/i.test(personalLane.heldReason ?? '');
+  const used = personal?.usedPct;
+  const resetMs = personal?.resetsAt ? Date.parse(personal.resetsAt) : NaN;
+  const reset = Number.isFinite(resetMs)
+    ? formatDateTime(resetMs, 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    : null;
+  if ((used != null && used >= 100) || heldForLimit) {
+    items.push({
+      id: 'supply-personal-out',
+      severity: (personalLane?.queued ?? 0) > 0 ? 'urgent' : 'attention',
+      title: `Personal Codex is out${reset ? ` until ${reset}` : ''}`,
+      detail: personalLane ? `${personalLane.queued} jobs are waiting on it` : 'Queue size is unknown',
+      nextStep: 'Those jobs wait for the reset; the leaders should route new work elsewhere',
+      target: 'fleet',
+    });
+  } else if (used != null && used >= 90) {
+    const asOf = personal?.asOf ? Date.parse(personal.asOf) : NaN;
+    const minutes = Number.isFinite(asOf) && asOf <= nowMs
+      ? Math.max(0, Math.round((asOf + (100 - used) / 4 * 3_600_000 - nowMs) / 60_000))
+      : null;
+    const detail = [
+      personalLane ? `${personalLane.queued} jobs queued on codex-personal` : null,
+      minutes !== null ? `out in about ${minutes} min` : null,
+      reset ? `resets ${reset}` : null,
+    ].filter((part): part is string => part !== null).join(' · ');
+    items.push({
+      id: 'supply-personal-low', severity: 'attention',
+      title: `Personal Codex is at ${used}%`, detail,
+      nextStep: 'Move new work to Devin and local lanes before it runs out', target: 'fleet',
     });
   }
 

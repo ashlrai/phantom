@@ -20,10 +20,10 @@ it('sorts by running then lane without mutating the input', () => {
 });
 it('formats fill and prioritizes held reasons over queued notes', () => {
   expect(laneFill(lane)).toBe('24 / 24');
-  expect(laneNote(lane)).toBe('queued 2');
+  expect(laneNote(lane)).toBe('queued 2 · drains in ~13 min');
   expect(laneNote({ ...lane, held: true, heldReason: 'quota' })).toBe('held: quota');
   expect(laneNote({ ...lane, held: true })).toBe('held: reason unknown');
-  expect(laneNote({ ...lane, queued: 0 })).toBeNull();
+  expect(laneNote({ ...lane, queued: 0 })).toBe('saturated · 0 queued, 0 free');
 });
 it('prioritizes pause then switches then tick age and tone', () => {
   const runs = narrowRunsLanes(data)!;
