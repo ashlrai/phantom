@@ -12,6 +12,10 @@ export function sortNewestFirst(items: readonly FeedItem[]): FeedItem[] {
 export function filterByKinds(items: readonly FeedItem[], kinds: ReadonlySet<string>): FeedItem[] {
   return kinds.size ? items.filter(item => kinds.has(item.kind)) : [...items];
 }
+export function filterByText(items: readonly FeedItem[], text: string): FeedItem[] {
+  const needle = text.trim().toLocaleLowerCase();
+  return needle ? items.filter(item => item.text.toLocaleLowerCase().includes(needle) || item.kind.toLocaleLowerCase().includes(needle)) : [...items];
+}
 export function diffNew(previousIds: ReadonlySet<string>, items: readonly FeedItem[]): FeedItem[] {
   return items.filter(item => !previousIds.has(item.id));
 }
