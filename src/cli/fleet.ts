@@ -2444,6 +2444,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
     return cmdFleetRunsRead(args[0], args.slice(1));
   }
+  if (args[0] === 'job') {
+    const { cmdFleetJobRead } = await import('./fleet-job-read.js');
+    return cmdFleetJobRead(args.slice(1));
+  }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
@@ -2556,6 +2560,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
   console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
+  console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
