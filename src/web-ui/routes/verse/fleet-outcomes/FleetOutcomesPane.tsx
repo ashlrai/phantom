@@ -6,6 +6,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { readCase, readOutcomes, type OutcomesView } from './fleet-outcomes-model.js';
@@ -62,7 +63,7 @@ function CaseTimeline({ caseId, visible, onClose }: { caseId: string; visible: b
   </section>;
 }
 
-export function FleetOutcomesPane({ visible }: PaneProps) {
+export function FleetOutcomesPane({ visible, host }: PaneProps) {
   const read = useQuery(outcomesQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(outcomesQuery);
   usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
@@ -98,9 +99,15 @@ export function FleetOutcomesPane({ visible }: PaneProps) {
               onClick={() => setSelectedCaseId(item.caseId)}>
               <span>{item.label}</span>
               {item.failureKind ? <span className={styles.dim}>· {item.failureKind}</span> : null}
-              <span className={styles.dim}>· {item.proposalRecorded ? 'PR recorded' : 'no PR'}</span>
               {at(item.endedAt)}
             </button>
+            <span className={styles.dim}> · {item.prLink
+              ? <a href={item.prLink.url} target="_blank" rel="noreferrer">{item.prLink.label}</a>
+              : item.proposalRecorded ? 'PR recorded' : 'no PR'}</span>
+            {item.jobId ? <Button size="sm" variant="subtle" onClick={() => {
+              requestWorkerLogJob(item.jobId!);
+              host.openPane('worker-log');
+            }}>Open worker log</Button> : null}
           </li>)}</ul>}
     </section>
     {selectedCaseId ? <CaseTimeline caseId={selectedCaseId} visible={visible} onClose={() => setSelectedCaseId(null)} /> : null}
