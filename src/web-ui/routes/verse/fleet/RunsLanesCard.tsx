@@ -28,8 +28,8 @@ export function RunsLanesCard() {
     {read.status === 'loading' ? <SkeletonLine /> : data ? data.lanes.length === 0 ? <p>No lanes reported on this Mac.</p>
       : <div className={styles.scroll}><table><thead><tr>{['Lane', 'Running/Target', 'Queued', 'Tokens 1h', 'Merged 24h', 'Note'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
         <tbody>{sortLanes(data.lanes).map(lane => <tr key={lane.lane}>
-          <th scope="row" title={lane.lane}>{laneShort(lane.lane)}</th><td>{laneFill(lane)}</td><td>{lane.queued}</td>
-          <td>{lane.tokensLastHour ?? '—'}</td><td>{lane.merged24h ?? '—'}</td><td>{laneNote(lane) ?? '—'}</td>
+          <th scope="row" title={lane.lane}>{laneShort(lane.lane)}</th><td>{laneFill(lane)}</td><td title={laneNote(lane)}>{lane.queued}</td>
+          <td>{lane.tokensLastHour ?? '—'}</td><td>{lane.merged24h ?? '—'}</td><td>{laneNote(lane)}</td>
         </tr>)}</tbody></table></div> : null}
   </section>;
 }
