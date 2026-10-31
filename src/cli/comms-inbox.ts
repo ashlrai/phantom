@@ -7,8 +7,9 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
 const HELP = `phm comms inbox read [--source <label>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
-phm comms inbox post --file <text-file|-> [--json]
+phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
+--receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
 --priority selects entries with exactly that priority; entries without a priority do not match.
 --after and --before select timestamps strictly inside the supplied bounds and report omittedUndated; inbox local times are Eastern.
@@ -113,12 +114,13 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, json = false, watch = false;
+    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, json = false, watch = false, receiptOnly = false;
     let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
       if (arg === '--json' && !json) json = true;
+      else if (verb === 'post' && arg === '--receipt-only' && !receiptOnly) receiptOnly = true;
       else if (verb === 'read' && arg === '--watch' && !watch) watch = true;
       else if (verb === 'read' && (arg === '--interval-ms' || arg === '--max-samples')) {
         const value = rest[++i];
@@ -146,7 +148,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
         priority = value;
       } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || ['--source', '--limit', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
       } else return invalid();
     }
@@ -214,7 +216,12 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       text = input.text;
     }
     const result = await receive({ channel: 'cli', verifiedSenderId: LOCAL_OPERATOR, body: text });
-    console.log(JSON.stringify(result.ok ? { ok: true, ack: result.ack } : result));
+    const output = receiptOnly
+      ? result.ok
+        ? { ok: true, ack: { channel: result.ack.channel, dedupeKey: result.ack.dedupeKey, status: result.ack.status } }
+        : { ok: false, reason: result.reason }
+      : result.ok ? { ok: true, ack: result.ack } : result;
+    console.log(JSON.stringify(output));
     return result.ok ? 0 : 1;
   };
 }
