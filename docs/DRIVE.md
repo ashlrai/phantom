@@ -217,6 +217,24 @@ crash can leave PUBLISHING, which must receive the same reconciliation. Neither
 state is selected automatically for publication. Do not infer success from a
 worker exit when its completion artifact is missing.
 
+### Claude API lane health
+
+For `claude-api`, every completed job (including FAILED and publication states)
+must retain `completedAtMs` (nonnegative epoch milliseconds), integer `exitCode`
+and boolean `emptyFinish` (true when completion produced no file changes).
+Missing or malformed completion evidence rejects the snapshot. Retain this
+history across ticks and restarts; publication must not erase it.
+
+Two code 13 exits or strictly more than 50% empty finishes in a rolling hour
+park this lane. The JSON tick log and `write-status` report carry `laneHealth`
+with the reason and `probeAtMs`. Five minutes after the latest failed/empty
+finish, one eligible queued job may probe recovery; STARTING/RUNNING jobs block
+additional probes. A zero exit with changes restores normal capacity and clears
+the failure window. Quiet time alone does not prove recovery. Other pools keep
+receiving eligible jobs; probes obey all existing admission, routing and capacity
+gates. The host bridge must retain the history and map the health report into
+its native status schema; no separate inference call is made by the supervisor.
+
 ### Pool routing
 
 A job's kind is the uppercase token leading its id after an optional `RQ-`
