@@ -11,7 +11,7 @@
  * rather than taking the CLI down.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
@@ -127,13 +127,3 @@ export function clearOwnershipRecord(path = ownershipRecordPath()): void {
   }
 }
 
-/** Move a record aside without destroying it, for a corrupt-state postmortem. */
-export function quarantineOwnershipRecord(path = ownershipRecordPath()): string | null {
-  try {
-    const target = `${path}.stale-${new Date().toISOString().replace(/[:.]/g, '')}`;
-    renameSync(path, target);
-    return target;
-  } catch {
-    return null;
-  }
-}
