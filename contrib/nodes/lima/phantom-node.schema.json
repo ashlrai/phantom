@@ -1,0 +1,160 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "minimumLimaVersion",
+    "vmType",
+    "arch",
+    "cpus",
+    "memory",
+    "disk",
+    "images",
+    "mounts",
+    "ssh",
+    "containerd",
+    "propagateProxyEnv",
+    "env",
+    "portForwards"
+  ],
+  "properties": {
+    "minimumLimaVersion": {
+      "type": "string",
+      "pattern": "^2\\.\\d+\\.\\d+$"
+    },
+    "vmType": {
+      "const": "vz"
+    },
+    "arch": {
+      "const": "aarch64"
+    },
+    "cpus": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2
+    },
+    "memory": {
+      "const": "4GiB"
+    },
+    "disk": {
+      "const": "40GiB"
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "arch",
+          "digest"
+        ],
+        "properties": {
+          "location": {
+            "type": "string",
+            "pattern": "^https://cloud-images\\.ubuntu\\.com/releases/noble/release-[0-9]{8}/ubuntu-24\\.04-server-cloudimg-arm64\\.img$"
+          },
+          "arch": {
+            "const": "aarch64"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "mounts": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "ssh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "localPort",
+        "loadDotSSHPubKeys",
+        "forwardAgent",
+        "forwardX11",
+        "forwardX11Trusted"
+      ],
+      "properties": {
+        "localPort": {
+          "const": 0
+        },
+        "loadDotSSHPubKeys": {
+          "const": false
+        },
+        "forwardAgent": {
+          "const": false
+        },
+        "forwardX11": {
+          "const": false
+        },
+        "forwardX11Trusted": {
+          "const": false
+        }
+      }
+    },
+    "containerd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "user"
+      ],
+      "properties": {
+        "system": {
+          "const": false
+        },
+        "user": {
+          "const": false
+        }
+      }
+    },
+    "propagateProxyEnv": {
+      "const": false
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "portForwards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "guestIP",
+          "guestPortRange",
+          "proto",
+          "ignore"
+        ],
+        "properties": {
+          "guestIP": {
+            "const": "0.0.0.0"
+          },
+          "guestPortRange": {
+            "const": [
+              1,
+              65535
+            ]
+          },
+          "proto": {
+            "const": "any"
+          },
+          "ignore": {
+            "const": true
+          }
+        }
+      }
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Constrained Phantom node profile, using Lima v2.0.0 templates/default.yaml field types. Not a complete upstream Lima schema. Security and capacity changes require deliberate profile review."
+}

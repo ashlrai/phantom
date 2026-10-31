@@ -103,6 +103,7 @@ export function meteredCost(d: FleetHistoryDay): number | null {
 const signedInt = (v: number) => `${v > 0 ? '+' : ''}${formatMetric(v)}`;
 const signedPts = (v: number) => `${v > 0 ? '+' : ''}${formatMetric(v)}`;
 const signedUsd = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${formatMetricUsd(Math.abs(v))}`;
+const signedSpan = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${formatSpan(Math.abs(v))}`;
 
 /** "2h 14m", "38m", "3d 2h". */
 export function formatSpan(ms: number | null): string {
@@ -156,6 +157,12 @@ export function buildKpis({ fleet, history, learning, policy }: KpiInputs): Kpi[
   const activeExp = active?.experimentId ? learning?.experiments.find((e) => e.id === active.experimentId) ?? null : null;
   const lift = activeExp?.lift ?? null;
 
+  // Cycle time — the END-TO-END dispatch → merge median (the whole loop, not
+  // the proposal → merge tail), plus the prior week's median as the "before".
+  const cycleNow = fleet?.summary.dispatchToMergeP50Ms7d ?? null;
+  const cyclePrior = fleet?.summary.dispatchToMergeP50MsPrior7d ?? null;
+  const cycleDelta = cycleNow !== null && cyclePrior !== null ? cycleNow - cyclePrior : null;
+
   return [
     {
       id: 'merged',
@@ -178,11 +185,14 @@ export function buildKpis({ fleet, history, learning, policy }: KpiInputs): Kpi[
     {
       id: 'cycle',
       label: 'Cycle time',
-      value: formatSpan(fleet?.summary.cycleTimeP50Ms7d ?? null),
-      delta: null,
+      value: formatSpan(fleet?.summary.dispatchToMergeP50Ms7d ?? null),
+      // The "before and after" reading: median dispatch → merge this week
+      // against the prior week; null whenever either side is unknown — a
+      // half-known comparison would be a judgement the data cannot back.
+      delta: cycleDelta === null ? null : { value: cycleDelta, versus: 'vs prior 7d', goodWhenPositive: false, format: signedSpan },
       trend: undefined,
-      trendLabel: 'Cycle time',
-      caption: 'median, proposal → merge, 7d',
+      trendLabel: 'Dispatch → merge cycle time',
+      caption: 'median dispatch → merge, 7d',
     },
     {
       id: 'spend',
@@ -223,6 +233,7 @@ export function kpisSayNothing({ fleet, history, learning }: Pick<KpiInputs, 'fl
     (mergedPrior ?? 0) === 0 &&
     (fleet?.summary.postMergeGreenPct7d ?? null) === null &&
     (fleet?.summary.cycleTimeP50Ms7d ?? null) === null &&
+    (fleet?.summary.dispatchToMergeP50Ms7d ?? null) === null &&
     (windowSum(days, meteredCost, 7) ?? 0) === 0 &&
     lift === null
   );

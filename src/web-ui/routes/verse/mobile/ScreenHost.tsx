@@ -13,6 +13,8 @@ const importNewAgent = () => import('./screens/NewAgentScreen.js');
 const importNeedsYou = () => import('./screens/NeedsYouScreen.js');
 const importLeader = () => import('./screens/LeaderScreen.js');
 const importFleet = () => import('./screens/FleetScreen.js');
+const importRuns = () => import('./screens/RunsScreen.js');
+const importInbox = () => import('./screens/InboxScreen.js');
 const importMore = () => import('./screens/MoreScreen.js');
 
 const AgentsScreen = lazy(() => importAgents().then((m) => ({ default: m.AgentsScreen })));
@@ -21,10 +23,12 @@ const NewAgentScreen = lazy(() => importNewAgent().then((m) => ({ default: m.New
 const NeedsYouScreen = lazy(() => importNeedsYou().then((m) => ({ default: m.NeedsYouScreen })));
 const LeaderScreen = lazy(() => importLeader().then((m) => ({ default: m.LeaderScreen })));
 const FleetScreen = lazy(() => importFleet().then((m) => ({ default: m.FleetScreen })));
+const RunsScreen = lazy(() => importRuns().then((m) => ({ default: m.RunsScreen })));
+const InboxScreen = lazy(() => importInbox().then((m) => ({ default: m.InboxScreen })));
 const MoreScreen = lazy(() => importMore().then((m) => ({ default: m.MoreScreen })));
 
 /** Most-visited first: Needs you and Agents are what a phone is opened for. */
-const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importMore];
+const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importInbox, importMore];
 
 /** Warm every screen chunk (the shell calls this once the phone is idle); failures are the mount's to report. */
 export function prefetchMobileScreens(): void {
@@ -45,6 +49,10 @@ export function ScreenHost({ route }: { route: Exclude<MobileRoute, { screen: 'h
       return <LeaderScreen />;
     case 'fleet':
       return <FleetScreen />;
+    case 'runs':
+      return <RunsScreen />;
+    case 'inbox':
+      return <InboxScreen />;
     case 'more':
       return <MoreScreen />;
   }

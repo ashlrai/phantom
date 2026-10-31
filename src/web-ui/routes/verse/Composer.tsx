@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model.
+ * handoff, compact, new, plan, effort, model, fleet and lane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -52,6 +52,12 @@ import { createPortal } from 'react-dom';
 import type { VerseSeat } from '../../data/api-types.js';
 import type { VerseEffort, VersePermissionMode } from '../../../core/verse/workbench-types.js';
 import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
+import { readFailureReason } from '../../data/client.js';
+import { refetchQuery } from '../../data/cache.js';
+import { postFleetInterjection } from './composer/fleet-interject.js';
+import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
+import { laneTargetsQuery } from './ops/lane-targets-queries.js';
+import { opsRunsQuery } from './ops/ops-runs-queries.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
 import { IconPlus } from '../../components/primitives/icons.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
@@ -66,6 +72,8 @@ import {
   applyCompletion,
   insertAttachmentRef,
   matchSlashCommands,
+  parseFleetCommand,
+  parseLaneCommand,
   mentionFor,
   removeAttachmentRef,
   type ComposerTrigger,
@@ -235,6 +243,13 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [listening, setListening] = useState(false);
   const [sentHere, setSentHere] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+  const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean } | null>(null);
+  const laneConfirmation = useRef<LaneConfirmation | null>(null);
+  useEffect(() => {
+    if (!fleetStatus) return;
+    const timer = setTimeout(() => setFleetStatus(null), 8000);
+    return () => clearTimeout(timer);
+  }, [fleetStatus]);
   const [historyAt, setHistoryAt] = useState(-1);
   const [initialHistory] = useState(() => loadHistory(sessionId));
   const history = useRef<string[]>(initialHistory);
@@ -302,7 +317,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const queueFull = (queue?.items.length ?? 0) >= VERSE_QUEUE_MAX;
   const hasText = text.trim().length > 0;
   const blockedByUpload = attachments.uploading;
-  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (!running || managerMode || (queueAvailable && !queueFull));
+  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/fleet(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
   const showHint = !hintSeen && !sentHere;
   const showHandoffHelp = handoffDraft && !sentHere && hasText;
   const cost = useMemo(
@@ -523,11 +538,14 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Every command but /compact consumes its own text.
+    // Fleet, lane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
+      case 'fleet':
+      case 'lane':
       case 'compact': {
-        const next = applyCompletion(draft, trigger, '/compact');
+        if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
+        const next = applyCompletion(draft, trigger, command.title);
         setDraft(next.text);
         placeCaret(next.caret);
         return;
@@ -695,6 +713,61 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     if (disabled || sending || tooLong) return;
     const value = text.trim();
     if (!value) return;
+    const lane = parseLaneCommand(text);
+    if (lane) {
+      if ('error' in lane) {
+        laneConfirmation.current = null;
+        setFleetStatus({ text: lane.error, error: true });
+        return;
+      }
+      const now = Date.now();
+      if (confirmNeeded(laneConfirmation.current, lane, now)) {
+        laneConfirmation.current = { lane: lane.lane, until: now + 5000 };
+        setFleetStatus({ text: `Press Enter again to set ${lane.lane} to 0`, error: false });
+        return;
+      }
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runLaneCommand(lane);
+        if (!result.ok) {
+          setFleetStatus({ text: result.reason, error: true });
+          return;
+        }
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `${result.lane} target ${result.from} → ${result.to}`, error: false });
+        await Promise.all([
+          refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+          refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+        ]);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    laneConfirmation.current = null;
+    const fleet = parseFleetCommand(text);
+    if (fleet || /^\/fleet\s*$/.test(text)) {
+      if (!fleet) {
+        setFleetStatus({ text: 'Type what to tell the leaders', error: false });
+        return;
+      }
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const ack = await postFleetInterjection(fleet.text);
+        setDraft((current) => current === text ? '' : current);
+        setFleetStatus({ text: `Sent to the leaders · ${ack.at.slice(-5)}`, error: false });
+      } catch (error) {
+        setFleetStatus({ text: readFailureReason(error), error: true });
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     if (blockedByUpload) {
       setNote({ text: 'Wait for the attachments to finish uploading.', error: false });
       return;
@@ -974,6 +1047,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           aria-activedescendant={suggestOpen && suggestItems.length > 0 ? suggestOptionId(suggestId, boundedActive) : undefined}
           onChange={(event) => {
             setHistoryAt(-1);
+            laneConfirmation.current = null;
             setDraft(event.target.value);
             setDismissedTrigger(null);
             setCaret(event.target.selectionStart === event.target.selectionEnd ? event.target.selectionStart : null);
@@ -1046,6 +1120,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           <span className="visually-hidden"> This is an estimate; the provider counts the real total.</span>
         </p>
       ) : null}
+      {fleetStatus ? <p role={fleetStatus.error ? 'alert' : 'status'} className={`${styles.help} ${fleetStatus.error ? styles.helpError : ''}`}>{fleetStatus.text}</p> : null}
       <p id={helpId} className={`${styles.help} ${showHint || tooLong || listening || running || disabled || historyAt !== -1 || showHandoffHelp || note || controls.error || controls.loading || controls.pending || controls.unsupported || followUps.error ? '' : styles.helpQuiet}`}>
         {tooLong ? <span role="alert" className={styles.helpError}>Message is over 64 KB — trim it before sending.</span>
           : followUps.error ? <span role="alert" className={styles.helpError}>{followUps.error}</span>

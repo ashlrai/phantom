@@ -176,6 +176,8 @@ export function MoreScreen() {
       ) : null}
 
       <Section title="Go to">
+        <Row title="Live runs" subtitle="What is running on your Mac right now, and a line to the leaders" onClick={() => navigate({ screen: 'runs' })} />
+        <Row title="Inbox" subtitle="Everything you told the leaders, from every channel" onClick={() => navigate({ screen: 'inbox' })} />
         <Row title="Fleet" subtitle={remote ? 'Status, budget and actions allowed by this gateway' : 'Start, pause or stop; budget mode; the grant'} onClick={() => navigate({ screen: 'fleet' })} />
         {canAct ? <Row title="New agent" subtitle="Start an agent on one of your repos" onClick={() => navigate({ screen: 'new' })} /> : null}
         <Row title="Needs you" subtitle="Approvals and questions waiting on you" onClick={() => navigate({ screen: 'needs' })} />

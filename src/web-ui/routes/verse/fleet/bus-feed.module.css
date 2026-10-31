@@ -1,0 +1,12 @@
+.feed { min-width: 0; font-size: 12px; }
+.header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.list { list-style: none; padding: 0; margin: 8px 0 0; max-height: 360px; overflow: auto; }
+.row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 0; }
+.row time { flex-shrink: 0; }
+.text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hop { font-family: var(--font-mono); }
+.kind { color: inherit; flex-shrink: 0; }
+.row[data-tone='danger'] { color: var(--status-danger-fg); }
+.row[data-tone='warning'] { color: var(--status-warning-fg); }
+.row[data-tone='info'] { color: var(--status-info-fg); }
+.row[data-tone='running'] { color: var(--status-running-fg); }

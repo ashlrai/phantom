@@ -74,11 +74,6 @@ export type VerseBrowserAgentOp =
   | 'evaluate'
   | 'confirm';
 
-export const VERSE_BROWSER_AGENT_OPS: readonly VerseBrowserAgentOp[] = [
-  'status', 'navigate', 'screenshot', 'read-text', 'console',
-  'snapshot', 'network', 'tabs', 'history', 'resolve', 'act', 'evaluate', 'confirm',
-];
-
 /**
  * The three things an operator can switch on for a chat's agents. `browser`
  * is the whole grant (look + navigate); `browser_act` (click, type, …) comes
@@ -90,7 +85,6 @@ export const VERSE_BROWSER_SCOPES: readonly VerseBrowserScope[] = ['browser', 'b
 
 /** The operator's answer to a confirmation card. */
 export type VerseBrowserDecision = 'once' | 'chat' | 'deny';
-export const VERSE_BROWSER_DECISIONS: readonly VerseBrowserDecision[] = ['once', 'chat', 'deny'];
 
 /** `confirm` command args: what the card shows. All of it is display text. */
 export interface VerseBrowserConfirmRequest {
