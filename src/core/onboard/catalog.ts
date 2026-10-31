@@ -8,6 +8,8 @@ export interface CatalogResource {
   planTiers: readonly string[];
   cliBinary: string | null;
   loginCheckCommand: string | null;
+  /** Guided login text when it differs from the bare CLI name (e.g. `codex login`). Never executed by us. */
+  loginCommand?: string;
   keyEnvName: string | null;
   validateEndpoint: string | null;
   docsUrl: string;
@@ -15,8 +17,8 @@ export interface CatalogResource {
 }
 
 export const RESOURCE_CATALOG: readonly CatalogResource[] = [
-  { id: 'codex', kind: 'subscription', displayName: 'Codex', planTiers: ['Plus', 'Pro', 'Business', 'Enterprise'], cliBinary: 'codex', loginCheckCommand: 'codex login status', keyEnvName: null, validateEndpoint: null, docsUrl: 'https://developers.openai.com/codex/', logoPath: null },
-  { id: 'claude-code', kind: 'subscription', displayName: 'Claude Code', planTiers: ['Pro', 'Max', 'Team', 'Enterprise'], cliBinary: 'claude', loginCheckCommand: 'claude auth status', keyEnvName: null, validateEndpoint: null, docsUrl: 'https://code.claude.com/docs/en/overview', logoPath: null },
+  { id: 'codex', kind: 'subscription', displayName: 'Codex', planTiers: ['Plus', 'Pro', 'Business', 'Enterprise'], cliBinary: 'codex', loginCheckCommand: 'codex login status', loginCommand: 'codex login', keyEnvName: null, validateEndpoint: null, docsUrl: 'https://developers.openai.com/codex/', logoPath: null },
+  { id: 'claude-code', kind: 'subscription', displayName: 'Claude Code', planTiers: ['Pro', 'Max', 'Team', 'Enterprise'], cliBinary: 'claude', loginCheckCommand: 'claude auth status', loginCommand: 'claude auth login', keyEnvName: null, validateEndpoint: null, docsUrl: 'https://code.claude.com/docs/en/overview', logoPath: null },
   { id: 'devin', kind: 'subscription', displayName: 'Devin', planTiers: ['Core', 'Team', 'Enterprise'], cliBinary: null, loginCheckCommand: null, keyEnvName: null, validateEndpoint: null, docsUrl: 'https://docs.devin.ai/', logoPath: null },
   { id: 'grok', kind: 'apikey', displayName: 'Grok / xAI', planTiers: ['API'], cliBinary: null, loginCheckCommand: null, keyEnvName: 'XAI_API_KEY', validateEndpoint: 'https://api.x.ai/v1/models', docsUrl: 'https://docs.x.ai/', logoPath: null },
   { id: 'cursor', kind: 'subscription', displayName: 'Cursor', planTiers: ['Hobby', 'Pro', 'Business', 'Enterprise'], cliBinary: 'cursor', loginCheckCommand: null, keyEnvName: null, validateEndpoint: null, docsUrl: 'https://cursor.com/docs', logoPath: null },
