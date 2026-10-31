@@ -9,6 +9,9 @@ import type { QueryDef } from '../../../data/queries.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { useNow } from '../autonomy/use-ticker.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { JobRefs } from '../fleet/JobRefs.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
 import { ChannelBadge } from '../leader/ThreadItems.js';
 import { leaderDirectivesQuery, leaderThreadQuery, sendLeaderMessage } from '../leader/thread-data.js';
@@ -20,6 +23,7 @@ import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
 import { fleetInbox, lineChannel, lineSourceLabel, mergeThread, type MergedLine } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
+import { mentionedRefs } from './thread-refs.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -41,6 +45,7 @@ function LineView({ line }: { line: MergedLine }) {
   }
   const channel = lineChannel(line.source);
   const label = lineSourceLabel(line.source);
+  const refs = leader ? mentionedRefs(line.text) : [];
   return (
     <section className={leader ? leaderStyles.group : `${leaderStyles.group} ${styles.masonLine}`} data-from={line.who} data-source={line.source} aria-label={`${leader ? 'Leader' : 'You'}, ${clock}`}>
       <header className={leaderStyles.groupHead}>
@@ -52,7 +57,12 @@ function LineView({ line }: { line: MergedLine }) {
       <div className={leaderStyles.groupBody}>
         <div className={leaderStyles.entry}>
           {leader
-            ? <div className={leaderStyles.leaderText}><div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div></div>
+            ? <div className={leaderStyles.leaderText}>
+              <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
+              {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
+                {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
+              </span>)}</div> : null}
+            </div>
             : <div className={leaderStyles.masonItem}><p className={leaderStyles.bubble}>{line.text}</p></div>}
         </div>
       </div>
