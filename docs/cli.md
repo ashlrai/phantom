@@ -26,7 +26,7 @@ Topic summary and discovery hints.
     observability   Observability - cost, telemetry, audit (router-calibration, queue, pulse, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
-    web             Surfaces - TUI + web dashboard (tui, dash, dashboard, …)
+    web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
 
   phm init · phm doctor · phm verse  start here: onboard, health check, console
@@ -286,6 +286,7 @@ Every command, grouped by topic.
     demo [--no-cleanup] [--json]                                                       Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
+    top [--once] [--json]         Read-only per-pool capacity and reset pressure snapshot.
     tui [--once]                  Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
     dash [--once]                 Alias of `tui` - interactive terminal dashboard.
     dashboard [--stop|--status]   Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).

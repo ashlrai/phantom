@@ -1,6 +1,8 @@
 // Supervisor hook: update one already-authorized bridge PR, then let GitHub CI
 // and auto-merge enforce protection. Conflicts emit an RQ recut handoff;
-// the supervisor must ingest it through fleet queue ask under its queue lock.
+// the supervisor must ingest it through fleet queue ask under its queue lock,
+// or pipe a verified CONFLICTING observation to `phm fleet queue conflicted`
+// for the durable (prUrl, headSha)-deduplicated recut path.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
