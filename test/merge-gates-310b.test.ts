@@ -364,22 +364,44 @@ describe('G7 — required checks (no checks → owner lane)', () => {
     expect(evaluateG7Checks({ ...base, required: [{ context: 'lint', appId: null }], runs: [], statuses: [{ context: 'lint', state: 'success' }] }).verdict).toBe('pass');
   });
 
-  it('local enforcement needs the App\'s green ashlr/verify; every other check is informational (3.13)', () => {
+  it('local enforcement needs the App\'s green ashlr/verify; Actions checks block, other Apps are informational (3.13)', () => {
     const local = { ...base, enforcement: 'local' as const, required: [] };
     const verify = (conclusion: string | null, appId = '424242', id = 9) => run('ashlr/verify', conclusion, conclusion === null ? 'in_progress' : 'completed', appId, id);
     expect(evaluateG7Checks({ ...local, runs: [] })).toMatchObject({ verdict: 'owner-lane', code: 'no-checks' });
     // 3.13: a green deploy-only / CI check alone no longer proves anything on a local repo.
     expect(evaluateG7Checks({ ...local, runs: [run('build', 'success')] })).toMatchObject({ verdict: 'owner-lane', code: 'no-verify-check' });
     expect(evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('success')] }).verdict).toBe('pass');
-    // Only required contexts block: a red non-required check is informational, a red ashlr/verify refuses.
+    // A red check from ANOTHER App stays informational; a red ashlr/verify refuses.
     const nonRequiredRed = evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('success'), run('lint', 'failure', 'completed', '1', 2)] });
     expect(nonRequiredRed).toMatchObject({ verdict: 'pass', code: 'checks-green' });
-    expect(nonRequiredRed.inputs['informational']).toEqual(['build:green', 'lint:red']);
+    expect(nonRequiredRed.inputs['informational']).toEqual(['lint:red']);
     expect(evaluateG7Checks({ ...local, fleetAppId: '424242', runs: [run('build', 'success'), verify('failure')] }).verdict).toBe('refuse');
     // A required context the branch names anyway still blocks on a local repo.
     const alsoRequired = { ...local, fleetAppId: '424242', required: [{ context: 'ci/test', appId: '15368' }] };
     expect(evaluateG7Checks({ ...alsoRequired, runs: [verify('success'), run('ci/test', 'failure', 'completed', '15368', 2)] }).verdict).toBe('refuse');
     expect(evaluateG7Checks({ ...alsoRequired, runs: [verify('success'), run('ci/test', 'success', 'completed', '15368', 2)] }).verdict).toBe('pass');
+  });
+
+  it('local enforcement: every GitHub Actions check run blocks — red refuses, pending waits, green passes', () => {
+    const local = { ...base, enforcement: 'local' as const, required: [], fleetAppId: '424242' };
+    const verified = run('ashlr/verify', 'success', 'completed', '424242', 9);
+    // The repo's own CI — the secret scan included — pins itself: nothing requires it server-side (post-#1365 review).
+    const redScan = evaluateG7Checks({ ...local, runs: [verified, run('secret-scan', 'failure', 'completed', '15368', 2)] });
+    expect(redScan).toMatchObject({ verdict: 'refuse', code: 'required-check-failed' });
+    expect(redScan.reason).toMatch(/secret-scan/);
+    const pendingScan = evaluateG7Checks({ ...local, runs: [verified, run('secret-scan', null, 'in_progress', '15368', 2)] });
+    expect(pendingScan).toMatchObject({ verdict: 'wait', code: 'checks-pending' });
+    expect(evaluateG7Checks({ ...local, pendingSinceMs: NOW - 25 * 60 * 60 * 1000, runs: [verified, run('secret-scan', null, 'in_progress', '15368', 2)] }))
+      .toMatchObject({ verdict: 'refuse', code: 'checks-timeout' });
+    const greenScan = evaluateG7Checks({ ...local, runs: [verified, run('secret-scan', 'success', 'completed', '15368', 2)] });
+    expect(greenScan).toMatchObject({ verdict: 'pass', code: 'checks-green' });
+    expect(greenScan.inputs['required']).toEqual(['ashlr/verify@424242', 'secret-scan@15368']);
+    // A same-named run from another App satisfies nothing — and never blocks.
+    expect(evaluateG7Checks({ ...local, runs: [verified, run('secret-scan', 'failure', 'completed', '999', 2)] }).verdict).toBe('pass');
+    // An Actions run the branch already names under any source blocks through that context — pinned once.
+    const named = evaluateG7Checks({ ...local, required: [{ context: 'build', appId: null }], runs: [verified, run('build', 'failure', 'completed', '15368', 2)] });
+    expect(named).toMatchObject({ verdict: 'refuse', code: 'required-check-failed' });
+    expect(named.inputs['required']).toEqual(['ashlr/verify@424242', 'build@*']);
   });
 
   it('unreadable checks wait', () => {
