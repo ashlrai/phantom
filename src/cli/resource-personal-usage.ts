@@ -44,6 +44,8 @@ export function cmdResourcePersonalUsage(opts: { json: boolean; home?: string })
     console.log(`  Freshness: ${resource.state} | observed: ${resource.observedAt ?? 'unknown'}`);
     console.log(windowText('Session', resource.session));
     console.log(windowText('Weekly', resource.weekly));
+    const burn = resource.weekly?.burnPctPerHour;
+    console.log(`  Weekly measured burn: ${burn == null ? 'unknown' : `${burn}%/hour`} | projected exhaustion: ${resource.weekly?.projectedExhaustionAt ?? 'unknown'} | evidence: ${resource.state}`);
   }
   return report.resources[0]?.state === 'current' ? 0 : 1;
 }
