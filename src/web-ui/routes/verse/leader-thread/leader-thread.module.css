@@ -18,6 +18,13 @@
   padding-left: var(--space-2);
 }
 
+.refs {
+  margin-top: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
 .note {
   flex: none;
   margin: 0;
