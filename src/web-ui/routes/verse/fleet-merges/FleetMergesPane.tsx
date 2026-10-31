@@ -4,6 +4,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { safeHref } from '../cloud/cloud-model.js';
+import { JobRefs } from '../fleet/JobRefs.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
@@ -41,7 +42,7 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     <section><h3 className={styles.heading}>Merged in the last hour</h3>
       {data.merged.length === 0 ? <p className={styles.message}>No merged PRs reported.</p> : <ul className={styles.list} aria-label="Merged PRs">{data.merged.map((item, index) => {
         const href = safeHref(item.href, 'github.com');
-        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span>{item.title}</span></li>;
+        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span></li>;
       })}</ul>}
     </section>
     <section><h3 className={styles.heading}>Publishes waiting</h3>

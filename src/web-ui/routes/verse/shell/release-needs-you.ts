@@ -29,6 +29,7 @@ export function deriveReleaseNeedsYou(result: ReleasePrResult | undefined, nowMs
       detail: `${reason} · ${openAge(pr.openedAt, nowMs)}`,
       nextStep: 'Open the release PR; Merge Gate reruns after the fix lands',
       target: 'fleet',
+      open: { kind: 'pane', paneId: 'fleet-releases' },
     }];
   });
 }

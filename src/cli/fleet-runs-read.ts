@@ -59,7 +59,7 @@ function waitForTick(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
 export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
-  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? '' : ' [--lane <lane>]'}${verb === 'runs' ? ' [--watch] [--interval-ms <1000..60000>]' : ''}`;
+  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? '' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>]`;
   const seen = new Set<string>();
   let lane: string | undefined;
   let interval = 5000;
@@ -68,9 +68,9 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
     const flag = arg === '-h' ? '--help' : arg;
     if (flag === '--lane' && verb !== 'journal' && !seen.has(flag) && /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(args[i + 1] ?? '')) {
       lane = args[++i];
-    } else if (flag === '--watch' && verb === 'runs' && !seen.has(flag)) {
+    } else if (flag === '--watch' && !seen.has(flag)) {
       // The watch loop is entered after all arguments have been validated.
-    } else if (flag === '--interval-ms' && verb === 'runs' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1000 && Number(args[i + 1]) <= 60000) {
+    } else if (flag === '--interval-ms' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1000 && Number(args[i + 1]) <= 60000) {
       interval = Number(args[++i]);
     } else if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
       process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
@@ -83,7 +83,7 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
     return 2;
   }
   if (seen.has('--help')) {
-    console.log(verb === 'journal' ? usage : `${usage}\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.${verb === 'runs' ? '\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.' : ''}`);
+    console.log(`${usage}${verb === 'journal' ? '' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.`);
     return 0;
   }
   const readOnce = async (signal?: AbortSignal): Promise<void> => {
@@ -102,10 +102,12 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       }
     } else if (verb === 'journal') {
       const state = await deps.journal();
+      if (signal?.aborted) return;
       console.log(seen.has('--json') ? JSON.stringify(state) : formatJournal(state));
     } else {
       // Match the desktop queue endpoint's additional public-output scrub.
       const state = sanitizePublicJson(await deps.parked()) as FleetQueueV1;
+      if (signal?.aborted) return;
       if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatParked(state));
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
@@ -128,8 +130,8 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
           await readOnce(controller.signal);
         } catch {
           if (controller.signal.aborted) break;
-          if (seen.has('--json')) console.log(JSON.stringify({ error: 'fleet runs unavailable' }));
-          else process.stderr.write('error: fleet runs unavailable\n');
+          if (seen.has('--json')) console.log(JSON.stringify({ error: `fleet ${verb} unavailable` }));
+          else process.stderr.write(`error: fleet ${verb} unavailable\n`);
         }
         if (!controller.signal.aborted) await (watchOptions.wait ?? waitForTick)(interval, controller.signal);
       }
