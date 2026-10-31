@@ -1,11 +1,12 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { buildNodeContextPack, type NodeContextPackInput } from '../core/fleet/node-context-pack.js';
+import { summarizeNodeContextCoverage } from '../core/fleet/node-context-coverage.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--json [--report] [--require-upstream] [--require-upstream-outputs]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--json [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -35,6 +36,11 @@ knowledge command also emits its standard JSON error line on failure.
 check.missingUpstreamOutputJobIds in distinct input order. Only emitted output
 citations count, including truncated outputs. This checks evidence presence,
 not task success. Missing outputs return 1 with the partial pack.
+--require-complete-upstream-outputs requires --json and adds
+check.upstreamOutputCoverage: one {jobId, state} per distinct non-self upstream,
+in input order. States are missing-output (no nonblank output), omitted (output
+not emitted), truncated (only truncated citations), or included (at least one
+complete output citation). Returns 1 unless every state is included.
 `;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -80,6 +86,7 @@ export async function runKnowledgeContextPack(
   let report = false;
   let requireUpstream = false;
   let requireUpstreamOutputs = false;
+  let requireCompleteUpstreamOutputs = false;
   let fairUpstream = false;
   let byteBudget: number | undefined;
   let query: string | undefined;
@@ -89,12 +96,13 @@ export async function runKnowledgeContextPack(
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
     else if (arg === '--require-upstream-outputs' && !requireUpstreamOutputs) requireUpstreamOutputs = true;
+    else if (arg === '--require-complete-upstream-outputs' && !requireCompleteUpstreamOutputs) requireCompleteUpstreamOutputs = true;
     else if (arg === '--fair-upstream' && !fairUpstream) fairUpstream = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--require-upstream-outputs', '--byte-budget', '--fair-upstream', '--help', '-h'].includes(value)) {
+          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--help', '-h'].includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
@@ -114,6 +122,7 @@ export async function runKnowledgeContextPack(
   if (report && !json) return invalid('--report requires --json');
   if (requireUpstream && !json) return invalid('--require-upstream requires --json');
   if (requireUpstreamOutputs && !json) return invalid('--require-upstream-outputs requires --json');
+  if (requireCompleteUpstreamOutputs && !json) return invalid('--require-complete-upstream-outputs requires --json');
   if (file !== undefined && useStdin) return invalid('--file and --stdin are mutually exclusive');
   if (file === undefined && !useStdin) return invalid('--file or --stdin is required');
 
@@ -178,12 +187,16 @@ export async function runKnowledgeContextPack(
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !citedJobIds.has(id)) : [];
   const missingUpstreamOutputJobIds = requireUpstreamOutputs
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !outputJobIds.has(id)) : [];
+  const upstreamOutputCoverage = requireCompleteUpstreamOutputs
+    ? summarizeNodeContextCoverage(input, pack).upstream : [];
   io.stdout(json
     ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}),
-      ...(requireUpstream || requireUpstreamOutputs ? { check: {
+      ...(requireUpstream || requireUpstreamOutputs || requireCompleteUpstreamOutputs ? { check: {
         ...(requireUpstream ? { missingUpstreamJobIds } : {}),
         ...(requireUpstreamOutputs ? { missingUpstreamOutputJobIds } : {}),
+        ...(requireCompleteUpstreamOutputs ? { upstreamOutputCoverage } : {}),
       } } : {}) }) + '\n'
     : pack);
-  return missingUpstreamJobIds.length || missingUpstreamOutputJobIds.length ? 1 : 0;
+  return missingUpstreamJobIds.length || missingUpstreamOutputJobIds.length ||
+    upstreamOutputCoverage.some(({ state }) => state !== 'included') ? 1 : 0;
 }
