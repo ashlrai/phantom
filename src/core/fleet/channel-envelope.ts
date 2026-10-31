@@ -5,7 +5,10 @@
 import { CHANNEL_RECEIPT_LIMIT, createLocalChannelDedupeStore, type ChannelDedupeStore } from './channel-dedupe-store.js';
 import { createHash } from 'node:crypto';
 import { appendInboxEntry, INBOX_MAX_CHARS, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
+import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
 import { scrubSecrets } from '../util/scrub.js';
+
+export type { ChannelPublishState } from './channel-bus-publish.js';
 
 export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
@@ -29,7 +32,7 @@ export interface ChannelAck {
   status: 'accepted' | 'duplicate';
 }
 export type ChannelReceiveResult =
-  | { ok: true; envelope: ChannelEnvelope; ack: ChannelAck }
+  | { ok: true; envelope: ChannelEnvelope; ack: ChannelAck; publishState?: ChannelPublishState }
   | { ok: false; reason: 'dedupe-store-unavailable' | 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
 
 export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDir' | 'now'> {
@@ -45,6 +48,16 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
   acknowledge?: (ack: ChannelAck) => Promise<void>;
   /** Maximum acknowledgement wait in milliseconds, a positive timer-safe integer. */
   acknowledgementTimeoutMs?: number;
+  /** Mirror of an accepted receipt onto the durable agent bus
+   * (`phm comms bus read`). A function replaces the default sink entirely;
+   * null disables mirroring. When omitted, the default sink publishes through
+   * `publishChannelEnvelope` rooted at `busRoot` — and, to keep test receivers
+   * hermetic, runs only when `busRoot` is set or `runsDir` is unset: a
+   * runsDir-scoped receiver without `busRoot` never creates the canonical
+   * store. Production adapters pass neither option and reach it. */
+  publish?: ((envelope: ChannelEnvelope) => Promise<void>) | null;
+  /** Store root for the default bus publish sink (see `appendBusInbox`). */
+  busRoot?: string;
 }
 
 /** Rolling window from first successful receipt, including across clock bucket
@@ -62,8 +75,21 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     ? undefined : createLocalChannelDedupeStore(options.runsDir));
   let tail = Promise.resolve();
   let lastTime = 0;
-  async function success(envelope: ChannelEnvelope, status: ChannelAck['status']): Promise<ChannelReceiveResult> {
+  async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], at: number): Promise<ChannelReceiveResult> {
     const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status };
+    // Bus mirroring is best effort and observational: it runs after the durable
+    // write committed, before acknowledge, and outside the ack timeout. Its
+    // outcome is reported as publishState and never alters the receipt or ack.
+    let publishState: ChannelPublishState = 'skipped';
+    if (status === 'accepted') {
+      if (typeof options.publish === 'function') {
+        try { await options.publish({ ...envelope }); publishState = 'published'; }
+        catch { publishState = 'failed'; }
+      } else if (options.publish === undefined &&
+        (options.busRoot !== undefined || options.runsDir === undefined)) {
+        publishState = await publishChannelEnvelope({ ...envelope }, { root: options.busRoot, now: () => at });
+      }
+    }
     if (options.acknowledge) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -73,7 +99,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       } catch { /* Transport is best-effort. */ }
       finally { if (timer !== undefined) clearTimeout(timer); }
     }
-    return { ok: true, envelope, ack };
+    return { ok: true, envelope, ack, publishState };
   }
   async function receive(input: ChannelMessage): Promise<ChannelReceiveResult> {
     if (typeof input?.verifiedSenderId !== 'string' || !allowed.has(input.verifiedSenderId)) {
@@ -118,7 +144,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     };
     try {
       const result = store ? await store.transaction(work) : await work(seen, () => {});
-      return 'envelope' in result ? success(result.envelope, result.status) : result;
+      return 'envelope' in result ? success(result.envelope, result.status, now) : result;
     } catch { return { ok: false, reason: 'dedupe-store-unavailable' }; }
   }
   return (input) => {
