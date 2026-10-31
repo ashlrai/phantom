@@ -24,7 +24,8 @@ export function WhatsNewCard() {
 
   function openPrimary() {
     if (copy.primary.action !== 'fleet-workspace') {
-      setVerseSection('settings');
+      if (copy.primary.action === 'fleet-sources') setVerseSection('settings', 'fleet-sources');
+      else setVerseSection('settings');
       markReleaseSeen(APP_VERSION);
       return;
     }
