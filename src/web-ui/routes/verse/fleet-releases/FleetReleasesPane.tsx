@@ -1,12 +1,13 @@
-import { SkeletonLine, StatusBadge } from '../../../components/primitives/index.js';
+import { Button, SkeletonLine, StatusBadge } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { orderRepos, releaseLabel, runTone, safeRepoHref } from './fleet-releases-model.js';
 import { opsReleasesQuery } from './fleet-releases-queries.js';
-import { releasePrRows } from './release-pr-view-model.js';
+import { blockerLine, releasePrRows, releaseTellPrefill } from './release-pr-view-model.js';
 import styles from './fleet-releases.module.css';
 
 export function FleetReleasesPane({ visible }: PaneProps) {
@@ -32,6 +33,9 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       const release = repo.gh?.latestRelease ? releaseLabel(repo.gh.latestRelease) : null;
       const run = repo.gh?.latestRun;
       const pr = prRows.get(repo.repo.toLowerCase());
+      const line = pr && 'checks' in pr ? blockerLine(pr) : null;
+      const prNumber = prRead.data?.kind === 'available'
+        ? prRead.data.data.repos.find(row => row.repo.toLowerCase() === repo.repo.toLowerCase())?.pr?.number : undefined;
       const prNotes = pr && 'notes' in pr ? pr.notes : prRead.data?.kind === 'available'
         ? prRead.data.data.repos.find(row => row.repo.toLowerCase() === repo.repo.toLowerCase())?.notes ?? [] : [];
       const tone = run ? runTone(run) : 'neutral';
@@ -40,6 +44,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
         {pr && <div className={styles.prBlock}>
           <div className={styles.headline} data-tone={pr.tone}>{'href' in pr && pr.href ? <a href={pr.href} target="_blank" rel="noopener noreferrer">{pr.headline}</a> : pr.headline}</div>
+          {line && <><div role="status">{line}</div>{prNumber !== undefined && <Button size="sm" onClick={() => openInterjectDialog({ prefill: releaseTellPrefill(repo.repo, prNumber, line) })}>Tell the leaders</Button>}</>}
           {'checks' in pr && pr.checks.length > 0 && <div className={styles.checks} aria-label="Release PR checks">{pr.checks.map((check, checkIndex) => {
             const label = `${check.name} · ${check.state}`;
             const className = `${styles.chip} ${styles[check.state]}`;
