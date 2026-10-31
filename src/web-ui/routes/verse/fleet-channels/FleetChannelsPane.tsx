@@ -2,6 +2,7 @@ import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
+import { requestInboxChannel } from '../fleet-inbox/inbox-source-request.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { channelPresenceLine, deriveChannelPresence, leaderPassMs, presenceForChannel } from './channel-last-seen.js';
@@ -33,7 +34,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
       <span className={styles.counts}>{row.lastHour} / 1 h · {row.last24h} / 24 h</span>
       <p className={styles.presence}>{channelPresenceLine(presenceForChannel(presence, row.key, KNOWN_CHANNELS), passMs)}</p>
       {row.preview !== null && <p className={styles.preview}>{row.preview}</p>}
-      <Button size="sm" onClick={() => host.openPane('fleet-inbox')}>Open inbox</Button>
+      <Button size="sm" onClick={() => { requestInboxChannel(row.key); host.openPane('fleet-inbox'); }}>Open inbox</Button>
     </li>)}</ul>
     {data.silent.length > 0 && <p className={styles.message}>Silent: {data.silent.join(', ')}</p>}
   </section>;
