@@ -4,3 +4,7 @@
 .list { display: flex; flex-direction: column; gap: var(--space-3); list-style: none; margin: 0; padding: 0; }
 .row { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
 .verdict { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+.laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.laneButton:hover { text-decoration: underline; }
+.laneButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }

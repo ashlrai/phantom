@@ -171,6 +171,23 @@ interface NativeToolImpl extends NativeToolDef {
 
 const TOOLS: NativeToolImpl[] = [
   {
+    name: 'phantom_fleet_graph',
+    description: 'Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./fleet/graph-seed.js')).seedFleetGraph(),
+  },
+  {
+    name: 'phantom_fleet_session',
+    description: 'Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { collectCodexSessionUsages, buildCodexResourceReport } = await import('./fleet/codex-session-usage.js');
+      return buildCodexResourceReport(collectCodexSessionUsages(), [], Date.now());
+    },
+  },
+  {
     name: 'phm_proactive_agents_list', description: 'List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending.',
     inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
@@ -1163,12 +1180,18 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
+  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session';
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
     rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
       ? (rawArgs as Record<string, unknown>)
       : {};
   const argKeys = Object.keys(args).sort().join(',') || '(none)';
+
+  if (fleetObservation && Object.keys(args).length > 0) {
+    auditNativeCall(`${name} — invalid observation arguments`, 'error');
+    return textResult({ error: 'Fleet observation tools accept no arguments' }, true);
+  }
 
   if (!tool) {
     auditNativeCall(`${name} keys=${argKeys} — unknown native tool`, 'error');
@@ -1198,6 +1221,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
+    if (fleetObservation) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1213,12 +1237,27 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       return textResult(payload, true);
     }
     auditNativeCall(`${tool.name} keys=${argKeys} — ok`, 'ok');
+    if (fleetObservation) {
+      // Scrub strings before serialization so redaction cannot consume JSON
+      // delimiters. Oversized graphs must remain parseable, never sliced JSON.
+      const text = JSON.stringify(payload, (key, value: unknown) =>
+        /^(env|environment)$/i.test(key) ? undefined :
+          typeof value === 'string' ? scrubSecrets(value) : value,
+      );
+      return text.length > MAX_OUTPUT_CHARS
+        ? { isError: true, content: [{ type: 'text', text: '{"error":"Fleet observation exceeds output limit"}' }] }
+        : { content: [{ type: 'text', text }] };
+    }
     if (tool.name === 'phm_task_context') {
       const { renderOutcomeTaskContextText } = await import('./verse/outcome-task-context-output.js');
       return { content: [{ type: 'text', text: renderOutcomeTaskContextText(payload as import('./verse/outcome-task-context.js').OutcomeTaskContextResult) }] };
     }
     return textResult(payload);
   } catch (err) {
+    if (fleetObservation) {
+      auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');
+      return textResult({ error: 'Fleet observation unavailable' }, true);
+    }
     const msg = err instanceof Error ? err.message : String(err);
     auditNativeCall(`${tool.name} keys=${argKeys} — error: ${msg}`, 'error');
     return textResult(`${tool.name} failed: ${msg}`, true);

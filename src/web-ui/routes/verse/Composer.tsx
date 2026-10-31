@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model, fleet.
+ * handoff, compact, new, plan, effort, model, fleet, lane and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -53,7 +53,11 @@ import type { VerseSeat } from '../../data/api-types.js';
 import type { VerseEffort, VersePermissionMode } from '../../../core/verse/workbench-types.js';
 import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
+import { refetchQuery } from '../../data/cache.js';
 import { postFleetInterjection } from './composer/fleet-interject.js';
+import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
+import { laneTargetsQuery } from './ops/lane-targets-queries.js';
+import { opsRunsQuery } from './ops/ops-runs-queries.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
 import { IconPlus } from '../../components/primitives/icons.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
@@ -69,6 +73,8 @@ import {
   insertAttachmentRef,
   matchSlashCommands,
   parseFleetCommand,
+  parseLaneCommand,
+  parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
   type ComposerTrigger,
@@ -83,7 +89,9 @@ import { SuggestMenu, suggestOptionId, type SuggestItem } from './composer/Sugge
 import { useAttachmentDrafts, useFollowUpQueue, useSessionControls } from './composer/useComposerData.js';
 import { FOOTER_FOLD_SHEET, useFooterFold } from './composer/useFooterFold.js';
 import { useTokenGate } from './context/use-token-gate.js';
+import { openDockPane } from './dock/dock-store.js';
 import { ComposerSeatBlock } from './health/ComposerSeatBlock.js';
+import { listPanes } from './panes/pane-registry.js';
 import type { SeatChoice } from './SeatSelector.js';
 import { useViewport } from './shell/viewport.js';
 import { getVerseSessionHead } from './verse-store.js';
@@ -239,6 +247,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [sentHere, setSentHere] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean } | null>(null);
+  const laneConfirmation = useRef<LaneConfirmation | null>(null);
   useEffect(() => {
     if (!fleetStatus) return;
     const timer = setTimeout(() => setFleetStatus(null), 8000);
@@ -532,10 +541,12 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet and compact insert text; other commands consume their token.
+    // Fleet, lane, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
       case 'fleet':
+      case 'lane':
+      case 'pane':
       case 'compact': {
         if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
         const next = applyCompletion(draft, trigger, command.title);
@@ -706,6 +717,52 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     if (disabled || sending || tooLong) return;
     const value = text.trim();
     if (!value) return;
+    const pane = parsePaneCommand(text, listPanes());
+    if (pane) {
+      if ('error' in pane) {
+        setFleetStatus({ text: pane.error, error: true });
+      } else {
+        openDockPane(pane.id);
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `Opened ${pane.title}`, error: false });
+      }
+      return;
+    }
+    const lane = parseLaneCommand(text);
+    if (lane) {
+      if ('error' in lane) {
+        laneConfirmation.current = null;
+        setFleetStatus({ text: lane.error, error: true });
+        return;
+      }
+      const now = Date.now();
+      if (confirmNeeded(laneConfirmation.current, lane, now)) {
+        laneConfirmation.current = { lane: lane.lane, until: now + 5000 };
+        setFleetStatus({ text: `Press Enter again to set ${lane.lane} to 0`, error: false });
+        return;
+      }
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runLaneCommand(lane);
+        if (!result.ok) {
+          setFleetStatus({ text: result.reason, error: true });
+          return;
+        }
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `${result.lane} target ${result.from} → ${result.to}`, error: false });
+        await Promise.all([
+          refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+          refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+        ]);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    laneConfirmation.current = null;
     const fleet = parseFleetCommand(text);
     if (fleet || /^\/fleet\s*$/.test(text)) {
       if (!fleet) {
@@ -1005,6 +1062,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           aria-activedescendant={suggestOpen && suggestItems.length > 0 ? suggestOptionId(suggestId, boundedActive) : undefined}
           onChange={(event) => {
             setHistoryAt(-1);
+            laneConfirmation.current = null;
             setDraft(event.target.value);
             setDismissedTrigger(null);
             setCaret(event.target.selectionStart === event.target.selectionEnd ? event.target.selectionStart : null);
