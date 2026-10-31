@@ -36,6 +36,7 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
   let takeawayBytes = 0;
   let takeawayCount = 0;
   let seenTakeaways = new Set<string>();
+  let fence: { character: string; length: number } | null = null;
 
   const finishTakeaway = (): void => {
     if (!source || !takeaway) return;
@@ -92,6 +93,17 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
   };
 
   for (const line of markdown.split(/\r\n?|\n/)) {
+    if (fence) {
+      const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
+      if (closing && closing[1]![0] === fence.character && closing[1]!.length >= fence.length) fence = null;
+      continue;
+    }
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (opening && (opening[1]![0] !== '`' || !opening[2]!.includes('`'))) {
+      finishTakeaway();
+      fence = { character: opening[1]![0]!, length: opening[1]!.length };
+      continue;
+    }
     if (takeaway && /^[ \t]+\S/.test(line)) {
       takeaway.push(line.trim());
       continue;
