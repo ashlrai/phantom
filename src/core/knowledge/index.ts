@@ -79,6 +79,14 @@ const EMBED_TEXT_LIMIT = 2000;
 /** Timeout for a single Ollama embedding request (ms). */
 const EMBED_TIMEOUT_MS = 10_000;
 
+/** Upper bound on the number of components in a local embedding. */
+const MAX_VECTOR_DIMENSIONS = 16_384;
+
+function isValidVector(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= MAX_VECTOR_DIMENSIONS &&
+    value.every((component: unknown) => typeof component === 'number' && Number.isFinite(component));
+}
+
 // ---------------------------------------------------------------------------
 // Skip lists
 // ---------------------------------------------------------------------------
@@ -520,8 +528,7 @@ async function fetchEmbedding(
       return null;
     }
     const embedding = (body as { embedding: unknown[] }).embedding;
-    if (!embedding.every((v) => typeof v === 'number')) return null;
-    return embedding as number[];
+    return isValidVector(embedding) ? embedding : null;
   } catch {
     return null;
   } finally {
@@ -580,7 +587,7 @@ export function loadChunks(repo?: string): KnowledgeChunk[] {
 }
 
 /** Parse a single JSONL chunks file. Returns [] on any error. */
-function readChunksFile(file: string): KnowledgeChunk[] {
+function readChunksFile(file: string, onInvalidVector?: () => void): KnowledgeChunk[] {
   const chunks: KnowledgeChunk[] = [];
   try {
     const raw = fs.readFileSync(file, 'utf8');
@@ -590,6 +597,12 @@ function readChunksFile(file: string): KnowledgeChunk[] {
       try {
         const parsed = JSON.parse(trimmed) as unknown;
         if (isKnowledgeChunk(parsed)) {
+          // Keep searchable text from older or corrupt records, but never expose
+          // an invalid vector to retrieval or write it back during indexing.
+          if (parsed.vector !== undefined && !isValidVector(parsed.vector)) {
+            delete parsed.vector;
+            onInvalidVector?.();
+          }
           chunks.push(parsed);
         }
       } catch {
@@ -624,6 +637,8 @@ async function indexFile(
   filePath: string,
   embedModel: { available: false } | { available: true; model: string },
   ollamaBase: string,
+  dimensions: { value?: number },
+  previousChunks: KnowledgeChunk[],
 ): Promise<KnowledgeChunk[]> {
   // Read file with byte cap
   let raw: string;
@@ -640,6 +655,13 @@ async function indexFile(
 
   const textChunks = chunkText(raw);
   const result: KnowledgeChunk[] = [];
+  const previousVectors = new Map<string, number[][]>();
+  for (const chunk of previousChunks) {
+    if (!isValidVector(chunk.vector)) continue;
+    const vectors = previousVectors.get(chunk.text) ?? [];
+    vectors.push(chunk.vector);
+    previousVectors.set(chunk.text, vectors);
+  }
 
   for (const tc of textChunks) {
     const scrubbedText = scrubSecrets(tc.text);
@@ -647,8 +669,15 @@ async function indexFile(
     let vector: number[] | undefined;
     if (embedModel.available) {
       const vec = await fetchEmbedding(ollamaBase, embedModel.model, scrubbedText);
-      if (vec !== null) vector = vec;
+      if (vec !== null && (dimensions.value === undefined || vec.length === dimensions.value)) vector = vec;
     }
+    // An old embedding is safe to reuse only for exactly the same scrubbed
+    // text. Changed text remains searchable without a stale embedding.
+    if (vector === undefined) {
+      vector = previousVectors.get(scrubbedText)?.find((v) =>
+        dimensions.value === undefined || v.length === dimensions.value);
+    }
+    if (vector !== undefined) dimensions.value ??= vector.length;
 
     const chunk: KnowledgeChunk = {
       repo: repoPath,
@@ -723,12 +752,13 @@ export async function buildKnowledge(
 
   let totalChunks = 0;
   let indexedRepos = 0;
+  const dimensions: { value?: number } = {};
 
   for (let i = 0; i < repos.length; i++) {
     const repoPath = repos[i]!;
     let repoChunks = 0;
     try {
-      repoChunks = await indexRepo(repoPath, embedModel, ollamaBase);
+      repoChunks = await indexRepo(repoPath, embedModel, ollamaBase, dimensions);
       totalChunks += repoChunks;
       if (repoChunks >= 0) indexedRepos++;
     } catch {
@@ -752,6 +782,7 @@ async function indexRepo(
   repoPath: string,
   embedModel: { available: false } | { available: true; model: string },
   ollamaBase: string,
+  dimensions: { value?: number },
 ): Promise<number> {
   const deadline = Date.now() + REPO_BUDGET_MS;
 
@@ -773,24 +804,20 @@ async function indexRepo(
     }
   });
 
-  const existingChunks = loadChunks(repoPath);
+  let invalidVectorFound = false;
+  const existingChunks = readChunksFile(chunksFile(repoPath), () => { invalidVectorFound = true; });
   const liveFiles = new Set(allFiles.map((f) => path.relative(repoPath, f)));
 
   if (changedFiles.length === 0) {
     // Absence proves deletion only after a complete listing, never after an
     // unreadable directory or a capped walk. Preserve survivor values/vectors
     // and the incremental timestamp; deletion itself adds no new chunks.
-    if (collection.complete) {
-      const survivors = existingChunks.filter((c) => liveFiles.has(c.file));
-      if (survivors.length !== existingChunks.length) writeChunks(repoPath, survivors);
-    }
+    const survivors = collection.complete ? existingChunks.filter((c) => liveFiles.has(c.file)) : existingChunks;
+    if (invalidVectorFound || survivors.length !== existingChunks.length) writeChunks(repoPath, survivors);
     return 0;
   }
 
-  const reindexedFiles = new Set(changedFiles.map((f) => path.relative(repoPath, f)));
-  const keptChunks = existingChunks.filter(
-    (c) => !reindexedFiles.has(c.file) && (!collection.complete || liveFiles.has(c.file)),
-  );
+  const reindexedFiles = new Set<string>();
 
   let newChunks: KnowledgeChunk[] = [];
   let totalRepoBytesRead = 0;
@@ -826,11 +853,17 @@ async function indexRepo(
     }
     totalRepoBytesRead += size;
 
-    const fileChunks = await indexFile(repoPath, filePath, embedModel, ollamaBase);
+    const relFile = path.relative(repoPath, filePath);
+    const fileChunks = await indexFile(repoPath, filePath, embedModel, ollamaBase, dimensions,
+      existingChunks.filter((c) => c.file === relFile));
+    reindexedFiles.add(relFile);
     newChunks = newChunks.concat(fileChunks);
   }
 
   // Write all chunks (kept + new) back atomically
+  const keptChunks = existingChunks.filter(
+    (c) => !reindexedFiles.has(c.file) && (!collection.complete || liveFiles.has(c.file)),
+  );
   const allChunks = [...keptChunks, ...newChunks];
   writeChunks(repoPath, allChunks);
 
