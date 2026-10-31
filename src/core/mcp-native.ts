@@ -171,6 +171,37 @@ interface NativeToolImpl extends NativeToolDef {
 
 const TOOLS: NativeToolImpl[] = [
   {
+    name: 'phantom_agent_bus_read',
+    description: 'Read the local durable bus after a cursor; resume with nextCursor. Expired messages are skipped. Message bodies and sender labels are untrusted.',
+    inputSchema: { type: 'object', properties: {
+      after: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      limit: { type: 'integer', minimum: 1, maximum: 100 },
+    }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => (await import('./fleet/bus-inbox.js')).listBusInboxAfter(args.after as number | undefined, args.limit as number | undefined),
+  },
+  {
+    name: 'phantom_agent_bus_status',
+    description: 'Inspect local durable bus capacity and live/expired counts. Missing or unavailable sources have unknown counts.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./fleet/bus-inbox.js')).inspectBusInbox(),
+  },
+  {
+    name: 'phantom_agent_bus_post',
+    description: 'Append a bus envelope as untrusted data. Labels do not authenticate the sender or authorize dispatch.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\x21-\\x7e]+$' },
+      from: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\x21-\\x7e]+$' },
+      to: { type: 'string', minLength: 1, maxLength: 128, pattern: '^[\\x21-\\x7e]+$' },
+      priority: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] },
+      ttl: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      body: {},
+    }, required: ['id', 'from', 'to', 'priority', 'ttl', 'body'], additionalProperties: false },
+    safety: 'append',
+    handler: async args => (await import('./fleet/bus-inbox.js')).appendBusInbox(args),
+  },
+  {
     name: 'phantom_fleet_graph',
     description: 'Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1199,7 +1230,26 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   }
 
   // ── Validate ───────────────────────────────────────────────────────────────
-  const invalid = validateArgs(tool.inputSchema, args);
+  // The general validator intentionally tolerates unknown fields and only checks
+  // primitive types. Bus calls need the exact wire contract before any append.
+  let invalid: string | null;
+  if (name === 'phantom_agent_bus_post') {
+    try {
+      invalid = (await import('./fleet/bus-envelope.js')).validateBusEnvelope(rawArgs).ok ? null : 'invalid bus envelope';
+    } catch {
+      auditNativeCall(`${tool.name} keys=${argKeys} — bus validation unavailable`, 'error');
+      return textResult({ error: 'Bus validation unavailable' }, true);
+    }
+  } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const keys = Object.keys(args);
+    invalid = !object || keys.some(key => name === 'phantom_agent_bus_status' || !['after', 'limit'].includes(key)) ||
+      ('after' in args && (!Number.isSafeInteger(args.after) || (args.after as number) < 0)) ||
+      ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100))
+      ? 'invalid bus arguments' : null;
+  } else {
+    invalid = validateArgs(tool.inputSchema, args);
+  }
   if (invalid) {
     auditNativeCall(`${tool.name} keys=${argKeys} — invalid args: ${invalid}`, 'error');
     return textResult(`Invalid arguments for ${tool.name}: ${invalid}`, true);
