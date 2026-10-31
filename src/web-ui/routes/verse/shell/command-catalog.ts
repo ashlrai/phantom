@@ -45,6 +45,7 @@ export * from './command-keys.js';
 /** Result groups, in the order the palette shows them (SPEC-310C §1). */
 export const PALETTE_GROUPS = [
   { id: 'needs-you', label: 'Needs you' },
+  { id: 'workers', label: 'Workers' },
   { id: 'chats', label: 'Chats' },
   { id: 'actions', label: 'Actions' },
   { id: 'go-to', label: 'Go to' },
@@ -53,8 +54,8 @@ export const PALETTE_GROUPS = [
 ] as const;
 export type PaletteGroupId = (typeof PALETTE_GROUPS)[number]['id'];
 
-/** A leading `>` limits results to actions; `#` to chats. */
-export const PALETTE_PREFIXES: Readonly<Record<'>' | '#', PaletteGroupId>> = { '>': 'actions', '#': 'chats' };
+/** A leading `>` limits results to actions; `#` to chats; `@` to workers. */
+export const PALETTE_PREFIXES: Readonly<Record<'>' | '#' | '@', PaletteGroupId>> = { '>': 'actions', '#': 'chats', '@': 'workers' };
 
 /** An empty query shows the last this-many actions run. */
 export const PALETTE_RECENT_LIMIT = 5;
